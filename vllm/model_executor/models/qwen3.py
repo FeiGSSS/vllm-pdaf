@@ -33,6 +33,7 @@ from transformers import Qwen3Config
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config import CacheConfig, VllmConfig
 from vllm.distributed import get_pp_group, get_tensor_model_parallel_world_size
+from vllm.forward_context import get_forward_context, is_forward_context_available
 from vllm.logger import init_logger
 from vllm.model_executor.layers.attention.encoder_only_attention import (
     Attention,
@@ -157,9 +158,118 @@ class Qwen3Attention(nn.Module):
         k_by_head = self.k_norm(k_by_head)
         k = k_by_head.view(k.shape)
         q, k = self.rotary_emb(positions, q, k)
+        self._maybe_report_pap_attention_boundary(q, k, v)
         attn_output = self.attn(q, k, v)
+        remote_attn_output = self._maybe_compute_pap_remote_attention(q, attn_output)
+        if remote_attn_output is not None:
+            attn_output = remote_attn_output
         output, _ = self.o_proj(attn_output)
         return output
+
+    def _maybe_compute_pap_remote_attention(
+        self, q: torch.Tensor, fallback_output: torch.Tensor
+    ) -> torch.Tensor | None:
+        if not is_forward_context_available():
+            return None
+        try:
+            forward_context = get_forward_context()
+            additional_kwargs = forward_context.additional_kwargs or {}
+            if not additional_kwargs.get("pap_remote_attention"):
+                return None
+
+            request_id = self._select_pap_request_id(
+                additional_kwargs.get("pap_request_ids")
+            )
+            if request_id is None:
+                return None
+
+            metadata = forward_context.attn_metadata
+            attn_metadata = (
+                metadata.get(self.attn.layer_name)
+                if isinstance(metadata, dict)
+                else None
+            )
+            if attn_metadata is None:
+                return None
+            if int(getattr(attn_metadata, "max_query_len", 0)) != 1:
+                return None
+            seq_lens = getattr(attn_metadata, "seq_lens", None)
+            block_table = getattr(attn_metadata, "block_table", None)
+            kv_cache = getattr(self.attn, "kv_cache", None)
+            if seq_lens is None or block_table is None or kv_cache is None:
+                return None
+            if seq_lens.shape[0] != 1 or block_table.shape[0] != 1:
+                return None
+
+            from vllm.pap.shadow_attention import compute_remote_attention_output
+            from vllm.v1.attention.backends.utils import get_kv_cache_layout
+
+            query = q.view(-1, self.num_heads, self.head_dim)
+            seq_len = int(seq_lens.detach().cpu()[0].item())
+            remote_output = compute_remote_attention_output(
+                request_id=request_id,
+                layer_name=self.attn.layer_name,
+                query=query,
+                kv_cache=kv_cache,
+                block_table=block_table,
+                seq_len=seq_len,
+                num_kv_heads=self.num_kv_heads,
+                scale=float(self.scaling),
+                layout=get_kv_cache_layout(),
+                endpoint=additional_kwargs.get("pap_attention_endpoint"),
+            )
+            return remote_output.to(
+                device=fallback_output.device, dtype=fallback_output.dtype
+            ).view_as(fallback_output)
+        except Exception:
+            logger.warning("failed to compute PAP remote attention", exc_info=True)
+            return None
+
+    @staticmethod
+    def _select_pap_request_id(request_ids: Any) -> str | None:
+        if not request_ids:
+            return None
+        for request_id in request_ids:
+            request_id_str = str(request_id)
+            if request_id_str.startswith(("cmpl-", "chatcmpl-")):
+                return request_id_str
+        return None
+
+    def _maybe_report_pap_attention_boundary(
+        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
+    ) -> None:
+        if not is_forward_context_available():
+            return
+        try:
+            forward_context = get_forward_context()
+            additional_kwargs = forward_context.additional_kwargs or {}
+            if not additional_kwargs.get("pap_shadow_attention"):
+                return
+
+            metadata = forward_context.attn_metadata
+            attn_metadata = (
+                metadata.get(self.attn.layer_name)
+                if isinstance(metadata, dict)
+                else None
+            )
+            max_seq_len = getattr(attn_metadata, "max_seq_len", None)
+            from vllm.pap.shadow_attention import maybe_report_qkv_boundary
+
+            maybe_report_qkv_boundary(
+                layer_name=self.attn.layer_name,
+                query=q,
+                key=k,
+                value=v,
+                request_ids=additional_kwargs.get("pap_request_ids"),
+                num_scheduled_tokens=additional_kwargs.get("pap_num_scheduled_tokens"),
+                num_reqs=additional_kwargs.get("pap_num_reqs"),
+                num_actual_tokens=additional_kwargs.get("pap_num_actual_tokens"),
+                max_seq_len=max_seq_len,
+                enabled=additional_kwargs.get("pap_shadow_attention"),
+                endpoint=additional_kwargs.get("pap_attention_endpoint"),
+            )
+        except Exception:
+            logger.warning("failed to report PAP attention boundary", exc_info=True)
 
 
 class Qwen3DecoderLayer(nn.Module):

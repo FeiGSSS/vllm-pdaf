@@ -1177,6 +1177,38 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 batch_descriptor=batch_descriptor,
                 slot_mapping=slot_mappings_by_layer,
                 skip_compiled=skip_compiled,
+                additional_kwargs={
+                    "pap_request_ids": tuple(input_batch.req_ids),
+                    "pap_num_scheduled_tokens": tuple(
+                        int(num_tokens)
+                        for num_tokens in input_batch.num_scheduled_tokens[
+                            : input_batch.num_reqs
+                        ]
+                    ),
+                    "pap_num_reqs": input_batch.num_reqs,
+                    "pap_num_actual_tokens": input_batch.num_tokens,
+                    "pap_shadow_attention": (
+                        self.vllm_config.kv_transfer_config.get_from_extra_config(
+                            "pap_shadow_attention", False
+                        )
+                        if self.vllm_config.kv_transfer_config is not None
+                        else False
+                    ),
+                    "pap_remote_attention": (
+                        self.vllm_config.kv_transfer_config.get_from_extra_config(
+                            "pap_remote_attention", False
+                        )
+                        if self.vllm_config.kv_transfer_config is not None
+                        else False
+                    ),
+                    "pap_attention_endpoint": (
+                        self.vllm_config.kv_transfer_config.get_from_extra_config(
+                            "pap_attention_endpoint", None
+                        )
+                        if self.vllm_config.kv_transfer_config is not None
+                        else None
+                    ),
+                },
             ):
                 self.kv_connector.pre_forward(scheduler_output)
                 model_output = self.model(**model_inputs)
