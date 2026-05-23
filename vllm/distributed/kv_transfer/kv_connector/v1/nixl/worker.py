@@ -1738,6 +1738,9 @@ class NixlConnectorWorker:
                 )
                 continue
 
+            if meta.remote is None:
+                continue
+
             assert meta.remote is not None
             if self.use_host_buffer:
                 self.sync_recved_kv_to_device(req_id, meta)
@@ -1981,6 +1984,15 @@ class NixlConnectorWorker:
             self._reqs_to_process.discard(req_id)
             # We should never get an abort after setting an expiry timer
             assert req_id not in self._reqs_to_send
+
+        for req_id in metadata.reqs_to_finish_recv:
+            self._recving_metadata[req_id] = ReqMeta(
+                local_block_ids=(),
+                local_physical_block_ids=(),
+                tp_size=1,
+                remote=None,
+            )
+            self._recving_transfers[req_id] = []
 
         # Add to requests that are waiting to be read and track expiration.
         for req_id, expiration_time in metadata.reqs_to_send.items():

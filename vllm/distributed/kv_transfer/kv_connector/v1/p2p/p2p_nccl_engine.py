@@ -363,7 +363,21 @@ class P2pNcclEngine:
                 data["shape"], dtype=getattr(torch, data["dtype"]), device=self.device
             )
 
+        logger.debug(
+            "PAP P2P GET nccl recv start %s👈%s tensor_id=%s rank=%s src=%s",
+            self.zmq_address,
+            remote_address,
+            tensor_id,
+            rank,
+            rank ^ 1,
+        )
         self.recv(comm, tensor, rank ^ 1, self.recv_stream)
+        logger.debug(
+            "PAP P2P GET nccl recv done %s👈%s tensor_id=%s",
+            self.zmq_address,
+            remote_address,
+            tensor_id,
+        )
 
         return tensor
 
@@ -393,6 +407,15 @@ class P2pNcclEngine:
             elif data["cmd"] == "PUT":
                 tensor_id = data["tensor_id"]
                 try:
+                    logger.debug(
+                        "PAP P2P PUT recv begin %s👈%s tensor_id=%s "
+                        "shape=%s dtype=%s",
+                        self.zmq_address,
+                        remote_address.decode(),
+                        tensor_id,
+                        data["shape"],
+                        data["dtype"],
+                    )
                     with torch.cuda.stream(self.recv_stream):
                         tensor = torch.empty(
                             data["shape"],
@@ -401,7 +424,22 @@ class P2pNcclEngine:
                         )
                     self.router_socket.send_multipart([remote_address, b"0"])
                     comm, rank = self.comms[remote_address.decode()]
+                    logger.debug(
+                        "PAP P2P PUT nccl recv start %s👈%s tensor_id=%s "
+                        "rank=%s src=%s",
+                        self.zmq_address,
+                        remote_address.decode(),
+                        tensor_id,
+                        rank,
+                        rank ^ 1,
+                    )
                     self.recv(comm, tensor, rank ^ 1, self.recv_stream)
+                    logger.debug(
+                        "PAP P2P PUT nccl recv done %s👈%s tensor_id=%s",
+                        self.zmq_address,
+                        remote_address.decode(),
+                        tensor_id,
+                    )
                     tensor_size = tensor.element_size() * tensor.numel()
                     if self.buffer_size + tensor_size > self.buffer_size_threshold:
                         # Store Tensor in memory pool
@@ -432,6 +470,12 @@ class P2pNcclEngine:
                     self.recv_store[tensor_id] = tensor
                     self.have_received_tensor_id(tensor_id)
                     self.recv_store_cv.notify()
+                logger.debug(
+                    "PAP P2P PUT recv_store updated %s👈%s tensor_id=%s",
+                    self.zmq_address,
+                    remote_address.decode(),
+                    tensor_id,
+                )
 
             elif data["cmd"] == "GET":
                 tensor_id = data["tensor_id"]
@@ -453,7 +497,22 @@ class P2pNcclEngine:
 
                 if data["ret"] == 0:
                     comm, rank = self.comms[remote_address.decode()]
+                    logger.debug(
+                        "PAP P2P GET nccl send start %s👉%s tensor_id=%s "
+                        "rank=%s dst=%s",
+                        self.zmq_address,
+                        remote_address.decode(),
+                        tensor_id,
+                        rank,
+                        rank ^ 1,
+                    )
                     self.send(comm, tensor.to(self.device), rank ^ 1, self.send_stream)
+                    logger.debug(
+                        "PAP P2P GET nccl send done %s👉%s tensor_id=%s",
+                        self.zmq_address,
+                        remote_address.decode(),
+                        tensor_id,
+                    )
             else:
                 logger.warning(
                     "🚧Unexpected, Received message from %s, data:%s",
@@ -530,7 +589,21 @@ class P2pNcclEngine:
             )
             return False
 
+        logger.debug(
+            "PAP P2P PUT nccl send start %s👉%s tensor_id=%s rank=%s dst=%s",
+            self.zmq_address,
+            item.remote_address,
+            item.tensor_id,
+            rank,
+            rank ^ 1,
+        )
         self.send(comm, tensor.to(self.device), rank ^ 1, self.send_stream)
+        logger.debug(
+            "PAP P2P PUT nccl send done %s👉%s tensor_id=%s",
+            self.zmq_address,
+            item.remote_address,
+            item.tensor_id,
+        )
 
         if self.send_type == "PUT_ASYNC":
             self.have_sent_tensor_id(item.tensor_id)

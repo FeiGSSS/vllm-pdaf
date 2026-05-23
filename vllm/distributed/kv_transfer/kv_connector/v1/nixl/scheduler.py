@@ -67,6 +67,12 @@ class NixlConnectorScheduler:
             + vllm_config.parallel_config.data_parallel_index
         )
         assert vllm_config.kv_transfer_config is not None
+        self.pap_true_split_performance = (
+            vllm_config.kv_transfer_config.get_from_extra_config(
+                "pap_mode", ""
+            )
+            == "true_split_performance"
+        )
         self._kv_lease_duration: int = (
             vllm_config.kv_transfer_config.get_from_extra_config(
                 "kv_lease_duration", 30
@@ -109,6 +115,7 @@ class NixlConnectorScheduler:
         # Reqs to send and their expiration time
         self._reqs_need_send: dict[ReqId, float] = {}
         self._reqs_in_batch: set[ReqId] = set()
+        self._reqs_to_finish_recv: set[ReqId] = set()
         # Reqs to remove from processed set because they're not to send after
         # remote prefill or aborted.
         self._reqs_not_processed: set[ReqId] = set()
@@ -393,6 +400,17 @@ class NixlConnectorScheduler:
         if (
             params is not None
             and params.get("do_remote_decode")
+            and params.get("pap_attention_kv_installed")
+        ):
+            # PAP true-split installs prefill KV directly on the Attention
+            # workers. Projection still receives the remote block descriptor for
+            # lifecycle bookkeeping, but it must not pull those KV blocks into
+            # the Projection worker cache.
+            return 0, False
+
+        if (
+            params is not None
+            and params.get("do_remote_decode")
             and params.get("remote_block_ids")
             and all(
                 p in params
@@ -458,7 +476,9 @@ class NixlConnectorScheduler:
             and self.is_bidirectional_kv_xfer_enabled
             and not params.get("_remote_blocks_processed")
         ):
-            if params.get("remote_block_ids"):
+            if self.pap_true_split_performance:
+                self._reqs_to_finish_recv.add(request.request_id)
+            elif params.get("remote_block_ids"):
                 if all(
                     p in params
                     for p in (
@@ -555,6 +575,7 @@ class NixlConnectorScheduler:
 
         meta.reqs_to_send = self._reqs_need_send
         meta.reqs_in_batch = self._reqs_in_batch
+        meta.reqs_to_finish_recv.update(self._reqs_to_finish_recv)
         meta.reqs_not_processed = self._reqs_not_processed
 
         # Package heartbeats, throttled by heartbeat_interval.
@@ -567,6 +588,7 @@ class NixlConnectorScheduler:
         # Clear the list once workers start the transfers
         self._reqs_need_recv.clear()
         self._reqs_in_batch = set()
+        self._reqs_to_finish_recv = set()
         self._reqs_not_processed = set()
         self._reqs_need_send = {}
 

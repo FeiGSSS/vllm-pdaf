@@ -168,6 +168,7 @@ class NixlConnectorMetadata(KVConnectorMetadata):
         self.reqs_to_save: dict[ReqId, ReqMeta] = {}
         self.reqs_to_send: dict[ReqId, float] = {}
         self.reqs_in_batch: set[ReqId] = set()
+        self.reqs_to_finish_recv: set[ReqId] = set()
         self.reqs_not_processed: set[ReqId] = set()
         # Heartbeat data grouped by remote engine, sent by D worker to P.
         self.heartbeat_by_engine: dict[EngineId, HeartbeatInfo] = {}

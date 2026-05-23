@@ -7,9 +7,16 @@ import torch
 
 from vllm.pap.remote_attention import (
     compute_attention_output,
+    compute_segmented_attention_output,
+    deserialize_compact_attention_batch,
+    deserialize_compact_attention_response,
     deserialize_attention_result,
+    deserialize_tensor_bundle,
     gather_paged_kv,
+    serialize_compact_attention_batch,
+    serialize_compact_attention_response,
     serialize_attention_result,
+    serialize_tensor_bundle,
 )
 
 
@@ -44,6 +51,62 @@ def test_compute_attention_output_matches_manual_gqa() -> None:
         "qhk,khd->qhd", torch.softmax(scores, dim=-1), expanded_value
     )
     assert torch.allclose(output, expected)
+
+
+def test_compute_segmented_attention_output_matches_full_kv() -> None:
+    query = torch.tensor([[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [2.0, 0.0]]])
+    key = torch.tensor(
+        [
+            [[1.0, 0.0], [0.0, 1.0]],
+            [[0.0, 1.0], [1.0, 0.0]],
+            [[1.0, 1.0], [1.0, 1.0]],
+        ]
+    )
+    value = torch.tensor(
+        [
+            [[1.0, 10.0], [2.0, 20.0]],
+            [[3.0, 30.0], [4.0, 40.0]],
+            [[5.0, 50.0], [6.0, 60.0]],
+        ]
+    )
+
+    segmented = compute_segmented_attention_output(
+        query=query,
+        segments=[(key[:2], value[:2]), (key[2:], value[2:])],
+        scale=1 / math.sqrt(2),
+    )
+    full = compute_attention_output(
+        query=query,
+        key=key,
+        value=value,
+        scale=1 / math.sqrt(2),
+    )
+
+    assert torch.allclose(segmented, full)
+
+
+def test_compute_segmented_attention_output_honors_segmented_flag(
+    monkeypatch,
+) -> None:
+    query = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]])
+    key = torch.tensor([[[1.0, 0.0]], [[0.0, 1.0]]])
+    value = torch.tensor([[[2.0, 0.0]], [[0.0, 4.0]]])
+
+    monkeypatch.setenv("PAP_REMOTE_ATTENTION_CUDA_SEGMENTED", "1")
+
+    segmented = compute_segmented_attention_output(
+        query=query,
+        segments=[(key[:1], value[:1]), (key[1:], value[1:])],
+        scale=1.0,
+    )
+    full = compute_attention_output(
+        query=query,
+        key=key,
+        value=value,
+        scale=1.0,
+    )
+
+    assert torch.allclose(segmented, full)
 
 
 def test_gather_paged_kv_supports_nhd_layout() -> None:
@@ -121,3 +184,55 @@ def test_attention_result_round_trips_bfloat16() -> None:
 
     assert decoded.dtype == torch.bfloat16
     assert torch.equal(decoded, result.cpu())
+
+
+def test_tensor_bundle_round_trips_multiple_tensors() -> None:
+    metadata = {"request_id": "cmpl-1", "seq_len": 7}
+    query = torch.arange(8, dtype=torch.float32).reshape(1, 4, 2)
+    key = torch.arange(4, dtype=torch.bfloat16).reshape(1, 2, 2)
+
+    decoded_metadata, tensors = deserialize_tensor_bundle(
+        serialize_tensor_bundle(metadata, {"query": query, "key": key})
+    )
+
+    assert decoded_metadata == metadata
+    assert torch.equal(tensors["query"], query)
+    assert torch.equal(tensors["key"], key)
+
+
+def test_compact_attention_batch_round_trips() -> None:
+    qkv = torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]], dtype=torch.float32)
+    payload = serialize_compact_attention_batch(
+        [
+            {
+                "request_id": "cmpl-req",
+                "layer_name": "model.layers.0.self_attn.attn",
+                "scale": 1.0,
+                "block_id": 4,
+                "slot": 64,
+                "seq_len": 1,
+                "q_size": 2,
+                "kv_size": 2,
+                "num_heads": 1,
+                "num_kv_heads": 1,
+                "head_dim": 2,
+            }
+        ],
+        [qkv],
+    )
+
+    items, qkv_tensors = deserialize_compact_attention_batch(payload)
+
+    assert items[0]["request_id"] == "cmpl-req"
+    assert items[0]["block_id"] == 4
+    assert items[0]["q_size"] == 2
+    assert torch.equal(qkv_tensors[0], qkv)
+
+    response = serialize_compact_attention_response(
+        [torch.tensor([[[3.0, 5.0]]], dtype=torch.float32)]
+    )
+
+    assert torch.equal(
+        deserialize_compact_attention_response(response)[0],
+        torch.tensor([[[3.0, 5.0]]], dtype=torch.float32),
+    )

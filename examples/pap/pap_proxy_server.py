@@ -25,19 +25,21 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 try:
     from examples.pap.pd_payloads import (
-        build_decode_payload as build_projection_payload,
-    )
-    from examples.pap.pd_payloads import (
+        attach_pap_prefill_attention_params,
         build_prefill_payload,
         enrich_prefill_kv_params,
+    )
+    from examples.pap.pd_payloads import (
+        build_decode_payload as build_projection_payload,
     )
 except ModuleNotFoundError:  # pragma: no cover - direct script execution
     from pd_payloads import (  # type: ignore[no-redef]
-        build_decode_payload as build_projection_payload,
-    )
-    from pd_payloads import (
+        attach_pap_prefill_attention_params,
         build_prefill_payload,
         enrich_prefill_kv_params,
+    )
+    from pd_payloads import (
+        build_decode_payload as build_projection_payload,
     )
 
 logging.basicConfig(
@@ -64,6 +66,28 @@ def _headers(request_id: str | None = None) -> dict[str, str]:
     if request_id:
         headers["X-Request-Id"] = request_id
     return headers
+
+
+def prefill_prefix_len_from_kv_params(
+    kv_transfer_params: dict[str, Any],
+) -> int | None:
+    """Return the number of prompt KV tokens exported by Prefill."""
+    value = kv_transfer_params.get("remote_num_tokens")
+    if value is None:
+        return None
+    try:
+        prefix_len = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"invalid remote_num_tokens in Prefill kv_transfer_params: {value!r}"
+        ) from exc
+    if prefix_len < 0:
+        raise ValueError(
+            f"invalid remote_num_tokens in Prefill kv_transfer_params: {value!r}"
+        )
+    if prefix_len == 0:
+        return None
+    return prefix_len
 
 
 async def register_attention_handle(
@@ -161,9 +185,20 @@ async def _handle_openai_request(api_path: str, request: Request):
     request_id = request.headers.get("X-Request-Id", uuid.uuid4().hex)
     conversation_id = str(req_data.pop("conversation_id", ""))
     client_stream = bool(req_data.get("stream", False))
-    prefix_len = None
-
-    prefill_payload = build_prefill_payload(req_data)
+    attention_session = await register_attention_handle(
+        request.app.state.attention,
+        request_id=request_id,
+        conversation_id=conversation_id,
+        prefill_endpoint=request.app.state.prefill.base_url,
+        kv_transfer_params={},
+        prefix_len=None,
+    )
+    prefill_payload = attach_pap_prefill_attention_params(
+        build_prefill_payload(req_data),
+        pap_attention_endpoint=request.app.state.attention.base_url,
+        pap_prefill_kv_handle=str(attention_session.get("prefill_kv_handle")),
+        pap_mode=request.app.state.args.pap_mode,
+    )
     t0 = time.time()
     prefill_resp = await _post_json(
         request.app.state.prefill,
@@ -178,23 +213,21 @@ async def _handle_openai_request(api_path: str, request: Request):
         prefill_host=request.app.state.prefill.host,
         prefill_nixl_port=request.app.state.args.prefill_nixl_port,
     )
+    prefix_len = prefill_prefix_len_from_kv_params(kv_params)
     logger.info(
-        "request_id=%s prefill_ms=%d prefill_kv_keys=%s",
+        "request_id=%s prefill_ms=%d prefill_prefix_len=%s prefill_kv_keys=%s",
         request_id,
         prefill_ms,
+        prefix_len,
         sorted(kv_params.keys()),
     )
 
-    await register_attention_handle(
-        request.app.state.attention,
-        request_id=request_id,
-        conversation_id=conversation_id,
-        prefill_endpoint=request.app.state.prefill.base_url,
-        kv_transfer_params=kv_params,
-        prefix_len=prefix_len,
+    projection_payload = build_projection_payload(
+        req_data,
+        kv_params,
+        pap_prefill_kv_handle=attention_session.get("prefill_kv_handle"),
+        pap_attention_kv_installed=True,
     )
-
-    projection_payload = build_projection_payload(req_data, kv_params)
     logger.info(
         "request_id=%s projection_kv_keys=%s attention_endpoint=%s",
         request_id,
@@ -253,6 +286,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--attention-port", type=int, default=8300)
     parser.add_argument("--projection-host", default="127.0.0.1")
     parser.add_argument("--projection-port", type=int, default=8200)
+    parser.add_argument("--pap-mode", default=os.environ.get("PAP_MODE", "true_split"))
     return parser.parse_args()
 
 

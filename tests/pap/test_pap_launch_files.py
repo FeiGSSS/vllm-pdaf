@@ -28,6 +28,19 @@ def test_pap_readme_documents_projection_as_decode_owner() -> None:
     assert "internal executor" in text
 
 
+def test_pap_design_doc_marks_prefill_to_attention_nixl_as_missing() -> None:
+    doc = ROOT / "docs" / "design" / "pap_prefill_attention_nixl.md"
+    text = doc.read_text()
+
+    assert "Prefill to Attention: same-GPU CUDA IPC" in text
+    assert "/v1/pap/attention/import-prefill-kv" in text
+    assert "Projection should not receive Prefill KV" in text
+    assert "Projection-to-Attention data plane must not be TCP/HTTP" in text
+    assert "OFFLOAD_KV" in text
+    assert "OFFLOAD_EXEC" in text
+    assert "PAP-prototype-http-tcp-data-plane" in text
+
+
 def test_pap_launch_mps_wrapper_preserves_env_assignments() -> None:
     script = ROOT / "examples" / "pap" / "launch_pap_qwen3_8b_nixl.sh"
     text = script.read_text()
@@ -54,3 +67,79 @@ def test_pap_baseline_launchers_use_deterministic_generation_config() -> None:
         text = (ROOT / "examples" / "pap" / name).read_text()
         assert "--generation-config vllm" in text
         assert '--output "$RESULT_PATH"' in text
+
+
+def test_pap_6pa2p_launch_uses_multi_proxy_and_expected_counts() -> None:
+    script = ROOT / "examples" / "pap" / "launch_pap_6pa2p_qwen3_8b_nixl.sh"
+    text = script.read_text()
+
+    assert 'PA_COUNT="${PAP_PA_COUNT:-6}"' in text
+    assert 'PROJECTION_COUNT="${PAP_PROJECTION_COUNT:-2}"' in text
+    assert "multi_pap_proxy_server.py" in text
+    assert "pap_attention_executor.py" in text
+    assert 'ATTENTION_TCP_PORT_BASE="${PAP_ATTENTION_TCP_PORT_BASE:-9300}"' in text
+    assert 'ATTENTION_ZMQ_PORT_BASE="${PAP_ATTENTION_ZMQ_PORT_BASE:-10300}"' in text
+    assert 'PROJECTION_ZMQ_PORT_BASE="${PAP_PROJECTION_ZMQ_PORT_BASE:-11300}"' in text
+    assert '--tcp-port "$attention_tcp_port"' in text
+    assert '--offload-exec-zmq-port "$attention_zmq_port"' in text
+    assert "pap_attention_tcp_endpoint" in text
+    assert "attention_zmq_port" in text
+    assert (
+        'PAP_REMOTE_ATTENTION_TRANSPORT="${PAP_REMOTE_ATTENTION_TRANSPORT:-tcp}"'
+        in text
+    )
+    assert 'PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT:-prototype_tcp}"' in text
+    assert 'PAP_REMOTE_ATTENTION_PARALLELISM="${PAP_REMOTE_ATTENTION_PARALLELISM:-16}"' in text
+    assert 'PAP_OFFLOAD_EXEC_TRANSPORT="$PAP_OFFLOAD_EXEC_TRANSPORT"' in text
+    assert "PAP_OFFLOAD_EXEC_ZMQ_PORT" in text
+    assert "PAP_OFFLOAD_EXEC_HOST=127.0.0.1" in text
+    assert "pap_remote_attention" in text
+    assert "PAP_MPS_PIPE_BASE_DIR" in text
+    assert "build_pap_groups_spec" in text
+    assert "build_projections_spec" in text
+    assert "exec env CUDA_VISIBLE_DEVICES=0" in text
+
+
+
+def test_pap_6pa2p_launch_supports_benchmark_service_mode() -> None:
+    script = ROOT / "examples" / "pap" / "launch_pap_6pa2p_qwen3_8b_nixl.sh"
+    text = script.read_text()
+
+    assert "PAP_SERVICE_ONLY" in text
+    assert "PAP_STATUS_FILE" in text
+    assert "PAP_SKIP_SMOKE_REQUEST" in text
+    assert 'echo "$PROXY_PORT" >"$STATUS_FILE"' in text
+    assert 'if [[ "${SERVICE_ONLY}" == "1" ]]' in text
+
+
+def test_pap_6pa2p_launch_declares_debug_mode_by_default() -> None:
+    script = ROOT / "examples" / "pap" / "launch_pap_6pa2p_qwen3_8b_nixl.sh"
+    text = script.read_text()
+
+    assert 'PAP_MODE="${PAP_MODE:-debug_remote_attention}"' in text
+    assert '"pap_mode":"%s"' in text
+    assert '"pap_mode":"$PAP_MODE"' not in text
+
+
+def test_pap_6pa2p_launch_isolates_vllm_init_ports() -> None:
+    script = ROOT / "examples" / "pap" / "launch_pap_6pa2p_qwen3_8b_nixl.sh"
+    text = script.read_text()
+
+    assert 'VLLM_PORT_BASE="${PAP_VLLM_PORT_BASE:-50000}"' in text
+    assert 'VLLM_PORT="$((VLLM_PORT_BASE + idx * 20))"' in text
+    assert 'VLLM_PORT="$((VLLM_PORT_BASE + PA_COUNT * 20 + idx * 20))"' in text
+
+
+def test_pap_6pa2p_launch_forwards_routing_policy_to_proxy() -> None:
+    script = ROOT / "examples" / "pap" / "launch_pap_6pa2p_qwen3_8b_nixl.sh"
+    text = script.read_text()
+
+    assert 'PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-round_robin}"' in text
+    assert '--routing-policy "$PAP_ROUTING_POLICY"' in text
+
+
+def test_papf_baseline_config_exposes_pap_mode() -> None:
+    config = Path("/home/fei/research/PD/test/baseline/papf/config.sh")
+    text = config.read_text()
+
+    assert 'PAP_MODE="${PAP_MODE:-debug_remote_attention}"' in text

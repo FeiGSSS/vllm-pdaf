@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import numpy as np
@@ -37,6 +37,7 @@ class NewRequestData:
     block_ids: tuple[list[int], ...]
     num_computed_tokens: int
     lora_request: LoRARequest | None
+    kv_transfer_params: dict[str, Any] | None = None
     prompt_embeds: "torch.Tensor | None" = None
     prompt_is_token_ids: list[bool] | None = None
 
@@ -59,6 +60,9 @@ class NewRequestData:
             block_ids=block_ids,
             num_computed_tokens=request.num_computed_tokens,
             lora_request=request.lora_request,
+            kv_transfer_params=None
+            if request.kv_transfer_params is None
+            else dict(request.kv_transfer_params),
             prompt_embeds=request.prompt_embeds,
             prompt_is_token_ids=request.prompt_is_token_ids,
             prefill_token_ids=prefill_token_ids,
@@ -67,6 +71,11 @@ class NewRequestData:
     def __repr__(self) -> str:
         prompt_embeds_shape = (
             self.prompt_embeds.shape if self.prompt_embeds is not None else None
+        )
+        kv_transfer_params_keys = (
+            sorted(self.kv_transfer_params.keys())
+            if self.kv_transfer_params is not None
+            else None
         )
         return (
             f"NewRequestData("
@@ -78,6 +87,7 @@ class NewRequestData:
             f"block_ids={self.block_ids},"
             f"num_computed_tokens={self.num_computed_tokens},"
             f"lora_request={self.lora_request},"
+            f"kv_transfer_params_keys={kv_transfer_params_keys},"
             f"prompt_embeds_shape={prompt_embeds_shape}"
             ")"
         )
@@ -93,6 +103,11 @@ class NewRequestData:
         prefill_token_ids_len = (
             len(self.prefill_token_ids) if self.prefill_token_ids is not None else None
         )
+        kv_transfer_params_keys = (
+            sorted(self.kv_transfer_params.keys())
+            if self.kv_transfer_params is not None
+            else None
+        )
         return (
             f"NewRequestData("
             f"req_id={self.req_id},"
@@ -103,6 +118,7 @@ class NewRequestData:
             f"block_ids={self.block_ids},"
             f"num_computed_tokens={self.num_computed_tokens},"
             f"lora_request={self.lora_request},"
+            f"kv_transfer_params_keys={kv_transfer_params_keys},"
             f"prompt_embeds_shape={prompt_embeds_shape}"
             ")"
         )

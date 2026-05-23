@@ -2,8 +2,10 @@ import asyncio
 
 from examples.pap.pap_proxy_server import (
     PAPServiceClient,
+    attach_pap_prefill_attention_params,
     build_prefill_payload,
     build_projection_payload,
+    prefill_prefix_len_from_kv_params,
     register_attention_handle,
 )
 
@@ -34,6 +36,25 @@ def test_build_prefill_payload_forces_single_token_non_streaming() -> None:
     assert "stream_options" not in payload
 
 
+def test_prefill_payload_can_attach_attention_import_params() -> None:
+    payload = attach_pap_prefill_attention_params(
+        build_prefill_payload({"model": "qwen", "prompt": "hello"}),
+        pap_attention_endpoint="http://127.0.0.1:8300",
+        pap_attention_tcp_endpoint="tcp://127.0.0.1:9300",
+        pap_prefill_kv_handle="req-7",
+        pap_mode="true_split_performance",
+    )
+
+    assert payload["kv_transfer_params"]["pap_attention_endpoint"] == (
+        "http://127.0.0.1:8300"
+    )
+    assert payload["kv_transfer_params"]["pap_attention_tcp_endpoint"] == (
+        "tcp://127.0.0.1:9300"
+    )
+    assert payload["kv_transfer_params"]["pap_prefill_kv_handle"] == "req-7"
+    assert payload["kv_transfer_params"]["pap_mode"] == "true_split_performance"
+
+
 def test_build_projection_payload_attaches_prefill_kv_params() -> None:
     payload = build_projection_payload(
         {"model": "qwen", "prompt": "hello"},
@@ -47,6 +68,36 @@ def test_build_projection_payload_attaches_prefill_kv_params() -> None:
 
     assert payload["kv_transfer_params"]["remote_engine_id"] == "prefill-0"
     assert payload["kv_transfer_params"]["remote_block_ids"] == [[4, 5]]
+
+
+def test_build_projection_payload_attaches_attention_prefill_handle() -> None:
+    kv_params = {"remote_engine_id": "prefill-0"}
+    payload = build_projection_payload(
+        {"model": "qwen", "prompt": "hello"},
+        kv_params,
+        pap_prefill_kv_handle="req-7",
+        pap_attention_kv_installed=True,
+    )
+
+    assert payload["kv_transfer_params"]["pap_prefill_kv_handle"] == "req-7"
+    assert payload["kv_transfer_params"]["pap_attention_kv_installed"] is True
+    assert "pap_prefill_kv_handle" not in kv_params
+
+
+def test_prefill_prefix_len_from_kv_params_uses_remote_num_tokens() -> None:
+    assert prefill_prefix_len_from_kv_params({"remote_num_tokens": 17}) == 17
+    assert prefill_prefix_len_from_kv_params({"remote_num_tokens": "19"}) == 19
+    assert prefill_prefix_len_from_kv_params({}) is None
+    assert prefill_prefix_len_from_kv_params({"remote_num_tokens": 0}) is None
+
+
+def test_prefill_prefix_len_from_kv_params_rejects_invalid_values() -> None:
+    try:
+        prefill_prefix_len_from_kv_params({"remote_num_tokens": "not-an-int"})
+    except ValueError as exc:
+        assert "remote_num_tokens" in str(exc)
+    else:
+        raise AssertionError("invalid remote_num_tokens should raise ValueError")
 
 
 class FakeAsyncClient:
