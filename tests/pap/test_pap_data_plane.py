@@ -197,6 +197,15 @@ def test_performance_mode_rejects_http_tcp_tensor_transports() -> None:
         )
 
 
+def test_performance_mode_accepts_installed_prefill_kv_with_control_transport() -> None:
+    performance_mode_requires_gpu_data_plane(
+        pap_mode="true_split_performance",
+        prefill_attention_transport=PAPTensorTransport.PROTOTYPE_HTTP,
+        projection_attention_transport=PAPTensorTransport.NCCL_P2P,
+        prefill_attention_kv_installed=True,
+    )
+
+
 def test_performance_mode_accepts_cuda_ipc_and_nccl() -> None:
     performance_mode_requires_gpu_data_plane(
         pap_mode="true_split_performance",

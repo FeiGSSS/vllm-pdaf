@@ -356,6 +356,9 @@ class Qwen3Attention(nn.Module):
         performance_mode = (
             additional_kwargs.get("pap_mode") == "true_split_performance"
         )
+        attention_kv_installed_by_request = set(
+            additional_kwargs.get("pap_attention_kv_installed_by_request") or ()
+        )
         if performance_mode:
             from vllm.pap.data_plane import (
                 performance_mode_requires_gpu_data_plane,
@@ -365,15 +368,16 @@ class Qwen3Attention(nn.Module):
                 pap_mode="true_split_performance",
                 prefill_attention_transport=PAPTensorTransport.PROTOTYPE_HTTP,
                 projection_attention_transport=offload_exec_transport,
+                prefill_attention_kv_installed=all(
+                    str(request_ids[req_index]) in attention_kv_installed_by_request
+                    for req_index in range(num_reqs)
+                ),
             )
         prefix_len_by_request = (
             additional_kwargs.get("pap_prefill_prefix_len_by_request") or {}
         )
         prefill_kv_handle_by_request = (
             additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
-        )
-        attention_kv_installed_by_request = set(
-            additional_kwargs.get("pap_attention_kv_installed_by_request") or ()
         )
         block_table = getattr(attn_metadata, "block_table", None)
         kv_cache = getattr(self.attn, "kv_cache", None)

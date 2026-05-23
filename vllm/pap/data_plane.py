@@ -199,13 +199,14 @@ def performance_mode_requires_gpu_data_plane(
     pap_mode: str | None,
     prefill_attention_transport: PAPTensorTransport,
     projection_attention_transport: PAPTensorTransport,
+    prefill_attention_kv_installed: bool = False,
 ) -> None:
     """Reject prototype tensor transports in true performance mode."""
 
     if pap_mode != "true_split_performance":
         return
     prototype = {PAPTensorTransport.PROTOTYPE_HTTP, PAPTensorTransport.PROTOTYPE_TCP}
-    if prefill_attention_transport in prototype:
+    if prefill_attention_transport in prototype and not prefill_attention_kv_installed:
         raise RuntimeError(
             "PAP true_split_performance requires CUDA IPC/shared KV transport "
             "for Prefill-to-Attention KV"

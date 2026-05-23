@@ -122,6 +122,7 @@ def test_qwen3_true_split_performance_rejects_prototype_transport() -> None:
     assert 'additional_kwargs.get("pap_mode") == "true_split_performance"' in method
     assert "performance_mode_requires_gpu_data_plane" in method
     assert "PAPTensorTransport.PROTOTYPE_HTTP" in method
+    assert "prefill_attention_kv_installed=all" in method
     assert "offload_exec_transport_from_env()" in method
     assert "import_prefill_kv_from_paged_cache" in method
 
