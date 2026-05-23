@@ -251,3 +251,4 @@ vllm/grpc/vllm_engine_pb2.pyi
 csrc/cpu/cpu_attn_dispatch_generated.h
 # PAP experiment runtime artifacts
 examples/pap/logs/
+HANDOFF.md
