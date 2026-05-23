@@ -218,6 +218,9 @@ class Qwen3Attention(nn.Module):
         if int(getattr(attn_metadata, "max_query_len", 0)) != 1:
             return False
 
+        if not self._pap_has_prefill_kv_imported():
+            return False
+
         num_scheduled_tokens = tuple(
             int(num_tokens)
             for num_tokens in additional_kwargs.get("pap_num_scheduled_tokens") or ()
@@ -233,13 +236,19 @@ class Qwen3Attention(nn.Module):
             num_tokens != 1 for num_tokens in num_scheduled_tokens[:num_reqs]
         )
 
+    def _pap_has_prefill_kv_imported(self) -> bool:
+        """Return True if prefill KV has been imported for at least one request."""
+        if not is_forward_context_available():
+            return False
+        additional_kwargs = get_forward_context().additional_kwargs or {}
+        kv_handles = additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
+        if not kv_handles:
+            return False
+        return True
+
     def _compute_pap_true_split_attention(
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
     ) -> torch.Tensor:
-        logger.info(
-            "PAP true_split compute layer=%s",
-            getattr(self.attn, "layer_name", "?"),
-        )
         if not is_forward_context_available():
             raise RuntimeError("PAP true_split requires forward context")
 
@@ -575,6 +584,9 @@ class Qwen3Attention(nn.Module):
 
         request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
         num_reqs = int(additional_kwargs.get("pap_num_reqs") or len(request_ids))
+        prefill_kv_handle_by_request = (
+            additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
+        )
         if num_reqs <= 0 or len(request_ids) < num_reqs:
             return
         num_scheduled_tokens = tuple(
