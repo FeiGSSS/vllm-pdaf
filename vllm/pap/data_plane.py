@@ -8,8 +8,7 @@ PAP keeps control-plane routing separate from tensor movement:
 * OFFLOAD_EXEC exchanges per-decode-step Q/K/V and O between Projection and
   Attention.
 
-HTTP/ZMQ may carry control metadata, but performance-mode tensor payloads must
-use GPU-direct transports such as CUDA IPC or NCCL/P2P.
+Control metadata travels over ZMQ/TCP. Tensor payloads use GPU-direct NCCL/P2P.
 """
 
 from __future__ import annotations
@@ -35,10 +34,8 @@ class PAPDataPlaneChannel(str, Enum):
 
 
 class PAPTensorTransport(str, Enum):
-    PROTOTYPE_HTTP = "prototype_http"
-    PROTOTYPE_TCP = "prototype_tcp"
-    CUDA_IPC = "cuda_ipc"
     NCCL_P2P = "nccl_p2p"
+    CUDA_IPC = "cuda_ipc"
 
 
 @dataclass(frozen=True)
@@ -72,14 +69,6 @@ class PAPOffloadKVDescriptor:
     def __post_init__(self) -> None:
         if self.seq_len < 0:
             raise ValueError("seq_len must be non-negative")
-        if self.transport in {
-            PAPTensorTransport.PROTOTYPE_HTTP,
-            PAPTensorTransport.PROTOTYPE_TCP,
-        }:
-            raise ValueError(
-                "OFFLOAD_KV performance descriptor cannot use HTTP/TCP tensor "
-                "transport"
-            )
 
 
 class PAPOffloadExecTransport(Protocol):
@@ -181,7 +170,9 @@ class PAPP2PNCCLOffloadExecTransport:
         deadline = time.monotonic() + float(
             os.environ.get("PAP_OFFLOAD_EXEC_RECV_TIMEOUT", "30")
         )
-        poll_seconds = float(os.environ.get("PAP_OFFLOAD_EXEC_RECV_POLL_SECONDS", "0.01"))
+        poll_seconds = float(
+            os.environ.get("PAP_OFFLOAD_EXEC_RECV_POLL_SECONDS", "0.01")
+        )
         while True:
             tensor = self.engine.recv_tensor(tensor_id, remote_address)
             if tensor is not None:
@@ -192,41 +183,6 @@ class PAPP2PNCCLOffloadExecTransport:
                     f"remote_address={remote_address}"
                 )
             time.sleep(poll_seconds)
-
-
-def performance_mode_requires_gpu_data_plane(
-    *,
-    pap_mode: str | None,
-    prefill_attention_transport: PAPTensorTransport,
-    projection_attention_transport: PAPTensorTransport,
-    prefill_attention_kv_installed: bool = False,
-) -> None:
-    """Reject prototype tensor transports in true performance mode."""
-
-    if pap_mode != "true_split_performance":
-        return
-    prototype = {PAPTensorTransport.PROTOTYPE_HTTP, PAPTensorTransport.PROTOTYPE_TCP}
-    if prefill_attention_transport in prototype and not prefill_attention_kv_installed:
-        raise RuntimeError(
-            "PAP true_split_performance requires CUDA IPC/shared KV transport "
-            "for Prefill-to-Attention KV"
-        )
-    if projection_attention_transport in prototype:
-        raise RuntimeError(
-            "PAP true_split_performance requires NCCL/P2P/NVLink transport for "
-            "Projection-to-Attention QKV/O"
-        )
-
-
-def offload_exec_transport_from_env() -> PAPTensorTransport:
-    value = os.environ.get("PAP_OFFLOAD_EXEC_TRANSPORT", "").lower()
-    if value in {"nccl", "nccl_p2p", "p2p_nccl"}:
-        return PAPTensorTransport.NCCL_P2P
-    if value in {"tcp", "prototype_tcp"}:
-        return PAPTensorTransport.PROTOTYPE_TCP
-    if value in {"http", "prototype_http", ""}:
-        return PAPTensorTransport.PROTOTYPE_HTTP
-    raise ValueError(f"unknown PAP_OFFLOAD_EXEC_TRANSPORT={value!r}")
 
 
 def build_p2p_nccl_offload_exec_transport(

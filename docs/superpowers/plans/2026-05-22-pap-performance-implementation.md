@@ -14,8 +14,8 @@
 
 - `examples/pap/launch_pap_6pa2p_qwen3_8b_nixl.sh`: add service-only mode so benchmark launchers can start PAP and leave it running without the one-request smoke path.
 - `tests/pap/test_pap_launch_files.py`: assert service-only mode, status file, and benchmark-safe defaults exist.
-- `/home/fei/research/PD/test/baseline/papf/config.sh`: new external baseline mode config for PAP.
-- `/home/fei/research/PD/test/baseline/papf/launch_service.sh`: new external baseline mode launcher that delegates to the PAP 6PA2P service-only launcher and writes the proxy port status file.
+- `/home/fei/research/PD/test/baseline/pap/config.sh`: new external baseline mode config for PAP.
+- `/home/fei/research/PD/test/baseline/pap/launch_service.sh`: new external baseline mode launcher that delegates to the PAP 6PA2P service-only launcher and writes the proxy port status file.
 - `tests/pap/test_pap_baseline_integration.py`: local tests that inspect the external launcher files when present and verify the contract expected by `run_benchmark.sh`.
 - `vllm/pap/mode.py`: new mode helper for `debug_remote_attention` vs `true_split`.
 - `tests/pap/test_pap_mode.py`: failing tests for mode parsing and for preventing performance benchmarks from accidentally using the debug path.
@@ -91,7 +91,7 @@ Run:
 
 Expected: PASS.
 
-## Task 2: Add Baseline papf Mode
+## Task 2: Add Baseline pap Mode
 
 - [ ] **Step 1: Write the failing integration test**
 
@@ -101,12 +101,12 @@ Create `tests/pap/test_pap_baseline_integration.py`:
 from pathlib import Path
 
 BASELINE = Path("/home/fei/research/PD/test/baseline")
-PAPF = BASELINE / "papf"
+PAP = BASELINE / "pap"
 
 
-def test_external_baseline_has_papf_mode_contract() -> None:
-    config = PAPF / "config.sh"
-    launcher = PAPF / "launch_service.sh"
+def test_external_baseline_has_pap_mode_contract() -> None:
+    config = PAP / "config.sh"
+    launcher = PAP / "launch_service.sh"
 
     assert config.exists()
     assert launcher.exists()
@@ -114,9 +114,9 @@ def test_external_baseline_has_papf_mode_contract() -> None:
     config_text = config.read_text()
     launcher_text = launcher.read_text()
 
-    assert "PAPF_PROXY_PORT" in config_text
+    assert "PAP_PROXY_PORT" in config_text
     assert "VLLM_BIN" in config_text
-    assert "/home/fei/research/PD/vllm-papf/.venv/bin/vllm" in config_text
+    assert "/home/fei/research/PD/vllm-pap/.venv/bin/vllm" in config_text
     assert "PAP_SERVICE_ONLY=1" in launcher_text
     assert "PAP_SKIP_SMOKE_REQUEST=1" in launcher_text
     assert "PAP_STATUS_FILE" in launcher_text
@@ -128,23 +128,23 @@ def test_external_baseline_has_papf_mode_contract() -> None:
 Run:
 
 ```bash
-.venv/bin/python -m pytest tests/pap/test_pap_baseline_integration.py::test_external_baseline_has_papf_mode_contract -v
+.venv/bin/python -m pytest tests/pap/test_pap_baseline_integration.py::test_external_baseline_has_pap_mode_contract -v
 ```
 
-Expected: FAIL because `/home/fei/research/PD/test/baseline/papf` does not exist.
+Expected: FAIL because `/home/fei/research/PD/test/baseline/pap` does not exist.
 
 - [ ] **Step 3: Create external baseline config**
 
-Create `/home/fei/research/PD/test/baseline/papf/config.sh`:
+Create `/home/fei/research/PD/test/baseline/pap/config.sh`:
 
 ```bash
 #!/bin/bash
 
 export BASELINE_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PROJECT_ROOT="/home/fei/research/PD"
-export PAPF_ROOT="${PAPF_ROOT:-${PROJECT_ROOT}/vllm-papf}"
-export VLLM_BIN="${VLLM_BIN:-${PAPF_ROOT}/.venv/bin/vllm}"
-export PYTHON_BIN="${PYTHON_BIN:-${PAPF_ROOT}/.venv/bin/python}"
+export PAP_ROOT="${PAP_ROOT:-${PROJECT_ROOT}/vllm-pap}"
+export VLLM_BIN="${VLLM_BIN:-${PAP_ROOT}/.venv/bin/vllm}"
+export PYTHON_BIN="${PYTHON_BIN:-${PAP_ROOT}/.venv/bin/python}"
 export MODEL_PATH="${MODEL_PATH:-/data/ssd1/llm-models/Qwen3-8B}"
 export BENCH_DIR="${PROJECT_ROOT}/refer_codes/vllm/benchmarks"
 export DATASET_PATH="${DATASET_PATH:-${BENCH_DIR}/sonnet_4x.txt}"
@@ -152,7 +152,7 @@ export DATASET_NAME="sonnet"
 
 export NUM_PROMPTS="${NUM_PROMPTS:-100}"
 export PREFIX_LEN="${PREFIX_LEN:-50}"
-export PAPF_PROXY_PORT="${PAPF_PROXY_PORT:-9000}"
+export PAP_PROXY_PORT="${PAP_PROXY_PORT:-9000}"
 export MAX_MODEL_LEN="${MAX_MODEL_LEN:-10000}"
 export MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-10000}"
 export MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
@@ -168,7 +168,7 @@ export RUNS_DIR="${RESULTS_ROOT}/runs"
 
 - [ ] **Step 4: Create external baseline launcher**
 
-Create `/home/fei/research/PD/test/baseline/papf/launch_service.sh`:
+Create `/home/fei/research/PD/test/baseline/pap/launch_service.sh`:
 
 ```bash
 #!/usr/bin/env bash
@@ -178,12 +178,12 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/config.sh"
 
 TOPOLOGY_RAW="${1:?topology is required}"
-STATUS_FILE="${2:-/tmp/papf_status}"
+STATUS_FILE="${2:-/tmp/pap_status}"
 TOPOLOGY="$(printf '%s' "${TOPOLOGY_RAW}" | tr '[:upper:]' '[:lower:]')"
 FAILURE_FILE="${STATUS_FILE}.failed"
 
 if [[ "${TOPOLOGY}" != "6pa2p" ]]; then
-  echo "Unsupported papf topology: ${TOPOLOGY_RAW}" >&2
+  echo "Unsupported pap topology: ${TOPOLOGY_RAW}" >&2
   exit 1
 fi
 
@@ -200,12 +200,12 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 0' INT TERM
 
-cd "${PAPF_ROOT}"
+cd "${PAP_ROOT}"
 
 PAP_SERVICE_ONLY=1 \
 PAP_SKIP_SMOKE_REQUEST=1 \
 PAP_STATUS_FILE="${STATUS_FILE}" \
-PAP_PROXY_PORT="${PAPF_PROXY_PORT}" \
+PAP_PROXY_PORT="${PAP_PROXY_PORT}" \
 PAP_MODEL_PATH="${MODEL_PATH}" \
 PAP_MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
 PAP_MAX_NUM_SEQS="${MAX_NUM_SEQS}" \
@@ -218,8 +218,8 @@ bash examples/pap/launch_pap_6pa2p_qwen3_8b_nixl.sh
 Run:
 
 ```bash
-bash -n /home/fei/research/PD/test/baseline/papf/config.sh
-bash -n /home/fei/research/PD/test/baseline/papf/launch_service.sh
+bash -n /home/fei/research/PD/test/baseline/pap/config.sh
+bash -n /home/fei/research/PD/test/baseline/pap/launch_service.sh
 .venv/bin/python -m pytest tests/pap/test_pap_baseline_integration.py -v
 ```
 
@@ -245,7 +245,7 @@ Run:
 PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.45 \
 PAP_PROJECTION_GPU_MEMORY_UTILIZATION=0.80 \
 bash /home/fei/research/PD/test/baseline/run_benchmark.sh \
-  --mode papf \
+  --mode pap \
   --topology 6pa2p \
   --input-lens 1024 \
   --output-lens 16 \
@@ -254,14 +254,14 @@ bash /home/fei/research/PD/test/baseline/run_benchmark.sh \
 ```
 
 Expected: service starts, benchmark JSON is written under
-`/home/fei/research/PD/test/baseline/papf/results/runs/<run-id>`.
+`/home/fei/research/PD/test/baseline/pap/results/runs/<run-id>`.
 
 - [ ] **Step 3: If launch fails, debug by logs**
 
 Inspect:
 
 ```bash
-latest=$(ls -1dt /home/fei/research/PD/test/baseline/papf/results/runs/* | head -n1)
+latest=$(ls -1dt /home/fei/research/PD/test/baseline/pap/results/runs/* | head -n1)
 find "$latest/service_logs" -maxdepth 1 -type f -print
 tail -n 120 "$latest/service_logs/proxy.log"
 tail -n 120 "$latest/service_logs/prefill_0.log"

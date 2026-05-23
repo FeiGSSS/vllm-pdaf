@@ -9,8 +9,6 @@ from vllm.pap.data_plane import (
     PAPP2PNCCLOffloadExecTransport,
     PAPTensorTransport,
     build_p2p_nccl_offload_exec_transport,
-    offload_exec_transport_from_env,
-    performance_mode_requires_gpu_data_plane,
 )
 
 
@@ -169,53 +167,3 @@ def test_p2p_nccl_offload_exec_transport_retries_empty_get(monkeypatch) -> None:
 
     assert received is out
     assert engine.calls == 2
-
-
-def test_offload_kv_descriptor_rejects_prototype_transport() -> None:
-    with pytest.raises(ValueError, match="OFFLOAD_KV"):
-        PAPOffloadKVDescriptor(
-            request_id="cmpl-1",
-            layer_name="layer0",
-            seq_len=32,
-            block_ids=(1, 2),
-            transport=PAPTensorTransport.PROTOTYPE_HTTP,
-        )
-
-
-def test_performance_mode_rejects_http_tcp_tensor_transports() -> None:
-    with pytest.raises(RuntimeError, match="Prefill-to-Attention"):
-        performance_mode_requires_gpu_data_plane(
-            pap_mode="true_split_performance",
-            prefill_attention_transport=PAPTensorTransport.PROTOTYPE_HTTP,
-            projection_attention_transport=PAPTensorTransport.NCCL_P2P,
-        )
-    with pytest.raises(RuntimeError, match="Projection-to-Attention"):
-        performance_mode_requires_gpu_data_plane(
-            pap_mode="true_split_performance",
-            prefill_attention_transport=PAPTensorTransport.CUDA_IPC,
-            projection_attention_transport=PAPTensorTransport.PROTOTYPE_TCP,
-        )
-
-
-def test_performance_mode_accepts_installed_prefill_kv_with_control_transport() -> None:
-    performance_mode_requires_gpu_data_plane(
-        pap_mode="true_split_performance",
-        prefill_attention_transport=PAPTensorTransport.PROTOTYPE_HTTP,
-        projection_attention_transport=PAPTensorTransport.NCCL_P2P,
-        prefill_attention_kv_installed=True,
-    )
-
-
-def test_performance_mode_accepts_cuda_ipc_and_nccl() -> None:
-    performance_mode_requires_gpu_data_plane(
-        pap_mode="true_split_performance",
-        prefill_attention_transport=PAPTensorTransport.CUDA_IPC,
-        projection_attention_transport=PAPTensorTransport.NCCL_P2P,
-    )
-
-
-def test_offload_exec_transport_from_env(monkeypatch) -> None:
-    monkeypatch.setenv("PAP_OFFLOAD_EXEC_TRANSPORT", "nccl")
-    assert offload_exec_transport_from_env() is PAPTensorTransport.NCCL_P2P
-    monkeypatch.setenv("PAP_OFFLOAD_EXEC_TRANSPORT", "tcp")
-    assert offload_exec_transport_from_env() is PAPTensorTransport.PROTOTYPE_TCP

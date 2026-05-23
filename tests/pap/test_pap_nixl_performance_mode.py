@@ -9,9 +9,8 @@ from vllm.distributed.kv_transfer.kv_connector.v1.nixl.worker import (
 )
 
 
-def _make_scheduler(pap_mode: str) -> NixlConnectorScheduler:
+def _make_scheduler() -> NixlConnectorScheduler:
     scheduler = object.__new__(NixlConnectorScheduler)
-    scheduler.pap_true_split_performance = pap_mode == "true_split_performance"
     scheduler._reqs_need_recv = {}
     scheduler._reqs_need_save = {}
     scheduler._reqs_need_send = {}
@@ -26,8 +25,8 @@ def _make_scheduler(pap_mode: str) -> NixlConnectorScheduler:
     return scheduler
 
 
-def test_pap_true_split_performance_skips_projection_kv_recv() -> None:
-    scheduler = _make_scheduler("true_split_performance")
+def test_pap_attention_kv_installed_skips_projection_kv_recv() -> None:
+    scheduler = _make_scheduler()
     request = SimpleNamespace(
         request_id="id-81",
         kv_transfer_params={
@@ -39,6 +38,7 @@ def test_pap_true_split_performance_skips_projection_kv_recv() -> None:
             "remote_host": "127.0.0.1",
             "remote_port": 5559,
             "pap_prefill_kv_handle": "req-81",
+            "pap_attention_kv_installed": True,
         },
     )
 
@@ -56,7 +56,7 @@ def test_pap_true_split_performance_skips_projection_kv_recv() -> None:
 
 
 def test_pap_attention_kv_installed_skips_remote_decode_match() -> None:
-    scheduler = _make_scheduler("true_split")
+    scheduler = _make_scheduler()
     scheduler._has_mamba = False
     scheduler.kv_recompute_threshold = 64
     request = SimpleNamespace(
@@ -78,7 +78,7 @@ def test_pap_attention_kv_installed_skips_remote_decode_match() -> None:
 
 
 def test_remote_decode_match_without_pap_attention_kv_installed() -> None:
-    scheduler = _make_scheduler("true_split")
+    scheduler = _make_scheduler()
     scheduler._has_mamba = False
     scheduler.kv_recompute_threshold = 64
     request = SimpleNamespace(

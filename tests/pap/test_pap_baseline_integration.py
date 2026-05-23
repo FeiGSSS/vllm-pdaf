@@ -1,12 +1,12 @@
 from pathlib import Path
 
 BASELINE = Path("/home/fei/research/PD/test/baseline")
-PAPF = BASELINE / "papf"
+PAP = BASELINE / "pap"
 
 
-def test_external_baseline_has_papf_mode_contract() -> None:
-    config = PAPF / "config.sh"
-    launcher = PAPF / "launch_service.sh"
+def test_external_baseline_has_pap_mode_contract() -> None:
+    config = PAP / "config.sh"
+    launcher = PAP / "launch_service.sh"
 
     assert config.exists()
     assert launcher.exists()
@@ -14,9 +14,9 @@ def test_external_baseline_has_papf_mode_contract() -> None:
     config_text = config.read_text()
     launcher_text = launcher.read_text()
 
-    assert "PAPF_PROXY_PORT" in config_text
+    assert "PAP_PROXY_PORT" in config_text
     assert "VLLM_BIN" in config_text
-    assert "/home/fei/research/PD/vllm-papf/.venv/bin/vllm" in config_text
+    assert "/home/fei/research/PD/vllm-pap/.venv/bin/vllm" in config_text
     assert "PAP_SERVICE_ONLY=1" in launcher_text
     assert "PAP_SKIP_SMOKE_REQUEST=1" in launcher_text
     assert "PAP_STATUS_FILE" in launcher_text
@@ -24,8 +24,8 @@ def test_external_baseline_has_papf_mode_contract() -> None:
 
 
 
-def test_external_baseline_papf_launcher_cleans_child_process_group() -> None:
-    launcher = PAPF / "launch_service.sh"
+def test_external_baseline_pap_launcher_cleans_child_process_group() -> None:
+    launcher = PAP / "launch_service.sh"
     text = launcher.read_text()
 
     assert "LAUNCH_PID" in text

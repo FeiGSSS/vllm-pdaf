@@ -241,13 +241,11 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self.lora_state = LoraState(max_num_reqs=self.max_num_reqs)
         # KV Connector if configured.
         self.kv_connector: KVConnector = NO_OP_KV_CONNECTOR
-        self.pap_attention_endpoint_by_req_id: dict[str, str] = {}
         self.pap_attention_tcp_endpoint_by_req_id: dict[str, str] = {}
         self.pap_offload_exec_zmq_endpoint_by_req_id: dict[str, str] = {}
         self.pap_prefill_prefix_len_by_req_id: dict[str, int] = {}
         self.pap_prefill_kv_handle_by_req_id: dict[str, str] = {}
         self.pap_attention_kv_installed_by_req_id: set[str] = set()
-        self.pap_mode_by_req_id: dict[str, str] = {}
 
         # For transferring state from execute_model to subsequent sample_tokens call.
         self.execute_model_state: ExecuteModelState | None = None
@@ -674,13 +672,11 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         return cuda_graph_size
 
     def _remove_request(self, req_id: str) -> bool:
-        self.pap_attention_endpoint_by_req_id.pop(req_id, None)
         self.pap_attention_tcp_endpoint_by_req_id.pop(req_id, None)
         self.pap_offload_exec_zmq_endpoint_by_req_id.pop(req_id, None)
         self.pap_prefill_prefix_len_by_req_id.pop(req_id, None)
         self.pap_prefill_kv_handle_by_req_id.pop(req_id, None)
         self.pap_attention_kv_installed_by_req_id.discard(req_id)
-        self.pap_mode_by_req_id.pop(req_id, None)
         if not self.req_states.remove_request(req_id):
             return False
         if self.encoder_cache is not None:
@@ -695,9 +691,6 @@ class GPUModelRunner(LoRAModelRunnerMixin):
     ) -> None:
         if not kv_transfer_params:
             return
-        endpoint = kv_transfer_params.get("pap_attention_endpoint")
-        if endpoint:
-            self.pap_attention_endpoint_by_req_id[req_id] = str(endpoint)
         tcp_endpoint = kv_transfer_params.get("pap_attention_tcp_endpoint")
         if tcp_endpoint:
             self.pap_attention_tcp_endpoint_by_req_id[req_id] = str(tcp_endpoint)
@@ -712,29 +705,6 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             self.pap_prefill_kv_handle_by_req_id[req_id] = str(prefill_kv_handle)
         if kv_transfer_params.get("pap_attention_kv_installed"):
             self.pap_attention_kv_installed_by_req_id.add(req_id)
-        pap_mode = kv_transfer_params.get("pap_mode")
-        if pap_mode:
-            self.pap_mode_by_req_id[req_id] = str(pap_mode)
-
-    def _pap_attention_endpoints_for_batch(
-        self, input_batch: InputBatch
-    ) -> dict[str, str]:
-        return {
-            req_id: endpoint
-            for req_id in input_batch.req_ids[: input_batch.num_reqs]
-            if (endpoint := self.pap_attention_endpoint_by_req_id.get(req_id))
-            is not None
-        }
-
-    def _pap_attention_tcp_endpoints_for_batch(
-        self, input_batch: InputBatch
-    ) -> dict[str, str]:
-        return {
-            req_id: endpoint
-            for req_id in input_batch.req_ids[: input_batch.num_reqs]
-            if (endpoint := self.pap_attention_tcp_endpoint_by_req_id.get(req_id))
-            is not None
-        }
 
     def _pap_offload_exec_zmq_endpoints_for_batch(
         self, input_batch: InputBatch
@@ -777,15 +747,28 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             if req_id in self.pap_attention_kv_installed_by_req_id
         }
 
-    def _pap_mode_for_batch(self, input_batch: InputBatch) -> str:
-        for req_id in input_batch.req_ids[: input_batch.num_reqs]:
-            if mode := self.pap_mode_by_req_id.get(req_id):
-                return mode
-        if self.vllm_config.kv_transfer_config is not None:
-            return self.vllm_config.kv_transfer_config.get_from_extra_config(
-                "pap_mode", "debug_remote_attention"
-            )
-        return "debug_remote_attention"
+    def _pap_attention_tcp_endpoints_for_batch(
+        self, input_batch: InputBatch
+    ) -> dict[str, str]:
+        return {
+            req_id: endpoint
+            for req_id in input_batch.req_ids[: input_batch.num_reqs]
+            if (endpoint := self.pap_attention_tcp_endpoint_by_req_id.get(req_id))
+            is not None
+        }
+
+    def _pap_enabled_for_batch(self, input_batch: InputBatch) -> bool:
+        ktc = self.vllm_config.kv_transfer_config
+        extra = ktc.kv_connector_extra_config if ktc is not None else {}
+        pap_enabled = extra.get("pap_enabled", False) if extra else False
+        if pap_enabled:
+            return True
+        num_reqs = getattr(input_batch, "num_reqs", 0)
+        for req_id in input_batch.req_ids[:num_reqs]:
+            if req_id in self.pap_attention_tcp_endpoint_by_req_id:
+                logger.info("PAP enabled via per-request TCP endpoint req_id=%s", req_id)
+                return True
+        return False
 
     def finish_requests(self, scheduler_output: SchedulerOutput) -> None:
         finished_req_ids = scheduler_output.finished_req_ids
@@ -1302,27 +1285,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     "pap_num_reqs": input_batch.num_reqs,
                     "pap_num_actual_tokens": input_batch.num_tokens,
                     "pap_positions": input_batch.positions,
-                    "pap_shadow_attention": (
-                        self.vllm_config.kv_transfer_config.get_from_extra_config(
-                            "pap_shadow_attention", False
-                        )
-                        if self.vllm_config.kv_transfer_config is not None
-                        else False
-                    ),
-                    "pap_remote_attention": (
-                        self.vllm_config.kv_transfer_config.get_from_extra_config(
-                            "pap_remote_attention", False
-                        )
-                        if self.vllm_config.kv_transfer_config is not None
-                        else False
-                    ),
-                    "pap_attention_endpoint": (
-                        self.vllm_config.kv_transfer_config.get_from_extra_config(
-                            "pap_attention_endpoint", None
-                        )
-                        if self.vllm_config.kv_transfer_config is not None
-                        else None
-                    ),
+                    "pap_enabled": self._pap_enabled_for_batch(input_batch),
                     "pap_attention_tcp_endpoint": (
                         self.vllm_config.kv_transfer_config.get_from_extra_config(
                             "pap_attention_tcp_endpoint", None
@@ -1330,13 +1293,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                         if self.vllm_config.kv_transfer_config is not None
                         else None
                     ),
-                    "pap_mode": (
-                        self._pap_mode_for_batch(input_batch)
-                    ),
                     "pap_block_size": self.vllm_config.cache_config.block_size,
-                    "pap_attention_endpoint_by_request": (
-                        self._pap_attention_endpoints_for_batch(input_batch)
-                    ),
                     "pap_attention_tcp_endpoint_by_request": (
                         self._pap_attention_tcp_endpoints_for_batch(input_batch)
                     ),

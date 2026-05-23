@@ -3,25 +3,9 @@
 
 from __future__ import annotations
 
-from enum import StrEnum
 
-
-class PAPMode(StrEnum):
-    DEBUG_REMOTE_ATTENTION = "debug_remote_attention"
-    TRUE_SPLIT = "true_split"
-    TRUE_SPLIT_PERFORMANCE = "true_split_performance"
-
-
-def parse_pap_mode(value: str | None) -> PAPMode:
-    if value is None or value == "":
-        return PAPMode.DEBUG_REMOTE_ATTENTION
-    try:
-        return PAPMode(value)
-    except ValueError as exc:
-        supported = ", ".join(mode.value for mode in PAPMode)
-        msg = f"unsupported PAP mode {value!r}; supported: {supported}"
-        raise ValueError(msg) from exc
-
-
-def is_debug_remote_attention(value: str | None) -> bool:
-    return parse_pap_mode(value) is PAPMode.DEBUG_REMOTE_ATTENTION
+def is_pap_enabled(additional_kwargs: dict | None) -> bool:
+    """Return True when the PAP attention path should be used for this forward."""
+    if not additional_kwargs:
+        return False
+    return bool(additional_kwargs.get("pap_enabled"))

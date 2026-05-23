@@ -22,27 +22,12 @@ def test_attention_executor_declares_offload_exec_zmq_port() -> None:
     assert "OFFLOAD_EXEC NCCL/P2P data plane listening" in text
 
 
-def test_attention_executor_does_not_start_offload_exec_by_default(
+def test_attention_executor_skips_offload_exec_when_zmq_port_is_none(
     monkeypatch,
 ) -> None:
     app = create_app()
-    monkeypatch.delenv("PAP_OFFLOAD_EXEC_TRANSPORT", raising=False)
-
-    maybe_start_offload_exec_transport(app=app, host="127.0.0.1", zmq_port=10300)
-
+    maybe_start_offload_exec_transport(app=app, host="127.0.0.1", zmq_port=None)
     assert app.state.offload_exec_transport is None
-
-
-def test_attention_executor_requires_zmq_port_for_nccl(monkeypatch) -> None:
-    app = create_app()
-    monkeypatch.setenv("PAP_OFFLOAD_EXEC_TRANSPORT", "nccl")
-
-    try:
-        maybe_start_offload_exec_transport(app=app, host="127.0.0.1", zmq_port=None)
-    except RuntimeError as exc:
-        assert "--offload-exec-zmq-port" in str(exc)
-    else:
-        raise AssertionError("nccl offload exec without zmq port should fail")
 
 
 def test_attention_executor_starts_offload_exec_transport(monkeypatch) -> None:
@@ -53,7 +38,6 @@ def test_attention_executor_starts_offload_exec_transport(monkeypatch) -> None:
         fake_build_transport.kwargs = kwargs
         return fake_transport
 
-    monkeypatch.setenv("PAP_OFFLOAD_EXEC_TRANSPORT", "nccl")
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_LOCAL_RANK", "2")
     monkeypatch.setattr(
         "examples.pap.pap_attention_executor.build_p2p_nccl_offload_exec_transport",

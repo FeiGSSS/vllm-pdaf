@@ -86,16 +86,12 @@ def test_pap_6pa2p_launch_uses_multi_proxy_and_expected_counts() -> None:
     assert '--offload-exec-zmq-port "$attention_zmq_port"' in text
     assert "pap_attention_tcp_endpoint" in text
     assert "attention_zmq_port" in text
-    assert (
-        'PAP_REMOTE_ATTENTION_TRANSPORT="${PAP_REMOTE_ATTENTION_TRANSPORT:-tcp}"'
-        in text
-    )
-    assert 'PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT:-prototype_tcp}"' in text
+    assert 'PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT:-nccl}"' in text
     assert 'PAP_REMOTE_ATTENTION_PARALLELISM="${PAP_REMOTE_ATTENTION_PARALLELISM:-16}"' in text
     assert 'PAP_OFFLOAD_EXEC_TRANSPORT="$PAP_OFFLOAD_EXEC_TRANSPORT"' in text
     assert "PAP_OFFLOAD_EXEC_ZMQ_PORT" in text
     assert "PAP_OFFLOAD_EXEC_HOST=127.0.0.1" in text
-    assert "pap_remote_attention" in text
+    assert "pap_enabled" in text
     assert "PAP_MPS_PIPE_BASE_DIR" in text
     assert "build_pap_groups_spec" in text
     assert "build_projections_spec" in text
@@ -114,13 +110,12 @@ def test_pap_6pa2p_launch_supports_benchmark_service_mode() -> None:
     assert 'if [[ "${SERVICE_ONLY}" == "1" ]]' in text
 
 
-def test_pap_6pa2p_launch_declares_debug_mode_by_default() -> None:
+def test_pap_6pa2p_launch_uses_performance_transport_by_default() -> None:
     script = ROOT / "examples" / "pap" / "launch_pap_6pa2p_qwen3_8b_nixl.sh"
     text = script.read_text()
 
-    assert 'PAP_MODE="${PAP_MODE:-debug_remote_attention}"' in text
-    assert '"pap_mode":"%s"' in text
-    assert '"pap_mode":"$PAP_MODE"' not in text
+    assert 'PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT:-nccl}"' in text
+    assert '"pap_enabled":true' in text
 
 
 def test_pap_6pa2p_launch_isolates_vllm_init_ports() -> None:
@@ -140,8 +135,8 @@ def test_pap_6pa2p_launch_forwards_routing_policy_to_proxy() -> None:
     assert '--routing-policy "$PAP_ROUTING_POLICY"' in text
 
 
-def test_papf_baseline_config_exposes_pap_mode() -> None:
-    config = Path("/home/fei/research/PD/test/baseline/papf/config.sh")
+def test_pap_baseline_config_exposes_pap_enabled() -> None:
+    config = Path("/home/fei/research/PD/test/baseline/pap/config.sh")
     text = config.read_text()
 
-    assert 'PAP_MODE="${PAP_MODE:-debug_remote_attention}"' in text
+    assert 'PAP_ENABLED="${PAP_ENABLED:-true}"' in text

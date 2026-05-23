@@ -25,7 +25,6 @@
 
 import os
 import time
-from collections import defaultdict
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
@@ -167,7 +166,7 @@ class Qwen3Attention(nn.Module):
         self.q_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
         self._pap_imported_prefill_kv: set[
-            tuple[str, str, str, int, str]
+            tuple[str, str, int, str]
         ] = set()
 
     def forward(
@@ -177,7 +176,6 @@ class Qwen3Attention(nn.Module):
     ) -> torch.Tensor:
         qkv, _ = self.qkv_proj(hidden_states)
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
-        # Add qk-norm
         q_by_head = q.view(*q.shape[:-1], q.shape[-1] // self.head_dim, self.head_dim)
         q_by_head = self.q_norm(q_by_head)
         q = q_by_head.view(q.shape)
@@ -185,26 +183,21 @@ class Qwen3Attention(nn.Module):
         k_by_head = self.k_norm(k_by_head)
         k = k_by_head.view(k.shape)
         q, k = self.rotary_emb(positions, q, k)
-        self._maybe_report_pap_attention_boundary(q, k, v)
-        if self._pap_true_split_enabled():
+        self._maybe_import_pap_prefill_kv_to_attention()
+        if self._pap_enabled():
             attn_output = self._compute_pap_true_split_attention(q, k, v)
             output, _ = self.o_proj(attn_output)
             return output
         attn_output = self.attn(q, k, v)
-        remote_attn_output = self._maybe_compute_pap_remote_attention(q, attn_output)
-        if remote_attn_output is not None:
-            attn_output = remote_attn_output
-        self._maybe_import_pap_prefill_kv_to_attention()
         output, _ = self.o_proj(attn_output)
         return output
 
-    def _pap_true_split_enabled(self) -> bool:
+    def _pap_enabled(self) -> bool:
         if not is_forward_context_available():
             return False
         forward_context = get_forward_context()
         additional_kwargs = forward_context.additional_kwargs or {}
-        pap_mode = additional_kwargs.get("pap_mode")
-        if pap_mode not in {"true_split", "true_split_performance"}:
+        if not additional_kwargs.get("pap_enabled"):
             return False
 
         request_id = self._select_pap_request_id(
@@ -243,6 +236,10 @@ class Qwen3Attention(nn.Module):
     def _compute_pap_true_split_attention(
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
     ) -> torch.Tensor:
+        logger.info(
+            "PAP true_split compute layer=%s",
+            getattr(self.attn, "layer_name", "?"),
+        )
         if not is_forward_context_available():
             raise RuntimeError("PAP true_split requires forward context")
 
@@ -327,62 +324,30 @@ class Qwen3Attention(nn.Module):
         positions_cpu = positions.detach().to(device="cpu", dtype=torch.long)
 
         from vllm.pap.shadow_attention import (
-            compute_stateful_remote_attention_output,
-            compute_stateful_remote_attention_outputs_batch,
-            import_prefill_kv_from_paged_cache,
             select_attention_endpoint_for_request,
             trigger_offload_exec_attention,
         )
-        from vllm.v1.attention.backends.utils import get_kv_cache_layout
-        from vllm.pap.data_plane import (
-            PAPOffloadExecDescriptor,
-            PAPTensorTransport,
-            offload_exec_transport_from_env,
-        )
+        from vllm.pap.data_plane import PAPOffloadExecDescriptor
 
         output = torch.zeros_like(query)
-        offload_exec_transport = offload_exec_transport_from_env()
-        endpoint_by_request = additional_kwargs.get(
-            "pap_attention_endpoint_by_request"
-        )
-        tcp_endpoint_by_request = additional_kwargs.get(
-            "pap_attention_tcp_endpoint_by_request"
-        )
         offload_exec_zmq_endpoint_by_request = additional_kwargs.get(
             "pap_offload_exec_zmq_endpoint_by_request"
         ) or {}
-        default_endpoint = additional_kwargs.get("pap_attention_endpoint")
+        tcp_endpoint_by_request = additional_kwargs.get(
+            "pap_attention_tcp_endpoint_by_request"
+        ) or {}
         default_tcp_endpoint = additional_kwargs.get("pap_attention_tcp_endpoint")
-        performance_mode = (
-            additional_kwargs.get("pap_mode") == "true_split_performance"
-        )
         attention_kv_installed_by_request = set(
             additional_kwargs.get("pap_attention_kv_installed_by_request") or ()
         )
-        if performance_mode:
-            from vllm.pap.data_plane import (
-                performance_mode_requires_gpu_data_plane,
-            )
-
-            performance_mode_requires_gpu_data_plane(
-                pap_mode="true_split_performance",
-                prefill_attention_transport=PAPTensorTransport.PROTOTYPE_HTTP,
-                projection_attention_transport=offload_exec_transport,
-                prefill_attention_kv_installed=all(
-                    str(request_ids[req_index]) in attention_kv_installed_by_request
-                    for req_index in range(num_reqs)
-                ),
-            )
         prefix_len_by_request = (
             additional_kwargs.get("pap_prefill_prefix_len_by_request") or {}
         )
         prefill_kv_handle_by_request = (
             additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
         )
-        block_table = getattr(attn_metadata, "block_table", None)
-        kv_cache = getattr(self.attn, "kv_cache", None)
         remote_attention_calls: list[
-            tuple[int, str | None, str | None, str | None, dict[str, Any]]
+            tuple[int, str | None, str | None, dict[str, Any]]
         ] = []
         for req_index in range(num_reqs):
             request_id = str(request_ids[req_index])
@@ -403,11 +368,6 @@ class Qwen3Attention(nn.Module):
                     f"PAP true_split position-derived seq_len {seq_len} exceeds "
                     f"scheduler seq_len {max_seq_len} for {request_id}"
                 )
-            endpoint = select_attention_endpoint_for_request(
-                request_id,
-                default_endpoint=default_endpoint,
-                endpoint_by_request=endpoint_by_request,
-            )
             tcp_endpoint = select_attention_endpoint_for_request(
                 request_id,
                 default_endpoint=default_tcp_endpoint,
@@ -418,54 +378,15 @@ class Qwen3Attention(nn.Module):
             )
             prefix_len = int(prefix_len_by_request.get(request_id) or 0)
             prefill_kv_handle = prefill_kv_handle_by_request.get(request_id)
-            import_key = (
-                request_id,
-                self.attn.layer_name,
-                str(endpoint),
-                prefix_len,
-                str(prefill_kv_handle or ""),
-            )
-            if (
-                prefix_len > 0
-                and request_id in attention_kv_installed_by_request
-            ):
-                self._pap_imported_prefill_kv.add(import_key)
-            elif prefix_len > 0 and import_key not in self._pap_imported_prefill_kv:
-                if performance_mode:
-                    if not prefill_kv_handle:
-                        raise RuntimeError(
-                            "PAP true_split performance missing local prefill KV handle"
-                        )
-                    self._pap_imported_prefill_kv.add(import_key)
-                    continue
-                if not performance_mode:
-                    if kv_cache is None:
-                        raise RuntimeError("PAP true_split missing local KV cache")
-                    if block_table is None:
-                        raise RuntimeError(
-                            "PAP true_split missing scheduler block_table"
-                        )
-                    if int(block_table.shape[0]) < num_reqs:
-                        raise RuntimeError(
-                            "PAP true_split block_table does not cover all requests"
-                        )
-                    import_prefill_kv_from_paged_cache(
-                        request_id=request_id,
-                        layer_name=self.attn.layer_name,
-                        kv_cache=kv_cache,
-                        block_table=block_table[req_index : req_index + 1],
-                        seq_len=prefix_len,
-                        block_size=block_size,
-                        num_kv_heads=self.num_kv_heads,
-                        layout=get_kv_cache_layout(),
-                        endpoint=endpoint,
-                        tcp_endpoint=tcp_endpoint,
+            if prefix_len > 0 and request_id not in attention_kv_installed_by_request:
+                if not prefill_kv_handle:
+                    raise RuntimeError(
+                        "PAP missing local prefill KV handle"
                     )
-                self._pap_imported_prefill_kv.add(import_key)
+                continue
             remote_attention_calls.append(
                 (
                     req_index,
-                    endpoint,
                     tcp_endpoint,
                     offload_exec_zmq_endpoint,
                     {
@@ -504,406 +425,239 @@ class Qwen3Attention(nn.Module):
             target.copy_(remote_output)
 
         parallelism = int(os.environ.get("PAP_REMOTE_ATTENTION_PARALLELISM", "16"))
-        if offload_exec_transport is PAPTensorTransport.NCCL_P2P:
-            transport = _pap_offload_exec_transport()
-            trace_offload_exec = os.environ.get(
-                "PAP_OFFLOAD_EXEC_TRACE", ""
-            ).lower() in ("1", "true", "yes", "on")
-            trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
-            trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
-            offload_exec_calls: list[
-                tuple[int, str | None, str | None, str, Any]
-            ] = []
-            for (
-                req_index,
-                endpoint,
-                tcp_endpoint,
-                offload_exec_zmq_endpoint,
-                call_kwargs,
-            ) in remote_attention_calls:
-                if offload_exec_zmq_endpoint is None:
-                    raise RuntimeError(
-                        "PAP OFFLOAD_EXEC NCCL path missing "
-                        "pap_offload_exec_zmq_endpoint"
-                    )
-                qkv = torch.cat(
-                    [
-                        call_kwargs["query"].reshape(1, -1),
-                        call_kwargs["key"].reshape(1, -1),
-                        call_kwargs["value"].reshape(1, -1),
-                    ],
-                    dim=-1,
+        transport = _pap_offload_exec_transport()
+        trace_offload_exec = os.environ.get(
+            "PAP_OFFLOAD_EXEC_TRACE", ""
+        ).lower() in ("1", "true", "yes", "on")
+        trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
+        trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
+        offload_exec_calls: list[
+            tuple[int, str | None, str, Any]
+        ] = []
+        for (
+            req_index,
+            tcp_endpoint,
+            offload_exec_zmq_endpoint,
+            call_kwargs,
+        ) in remote_attention_calls:
+            if offload_exec_zmq_endpoint is None:
+                raise RuntimeError(
+                    "PAP OFFLOAD_EXEC NCCL path missing "
+                    "pap_offload_exec_zmq_endpoint"
                 )
-                descriptor = PAPOffloadExecDescriptor(
-                    request_id=str(call_kwargs["request_id"]),
-                    layer_name=str(call_kwargs["layer_name"]),
-                    step=int(call_kwargs["seq_len"]),
-                    scale=float(call_kwargs["scale"]),
-                )
-                transport.send_qkv(
-                    descriptor,
-                    qkv,
-                    remote_address=offload_exec_zmq_endpoint,
-                )
-                offload_exec_calls.append(
-                    (
-                        req_index,
-                        endpoint,
-                        tcp_endpoint,
-                        offload_exec_zmq_endpoint,
-                        descriptor,
-                    )
-                )
-            trace_send_ms = (
-                (time.perf_counter() - trace_send_start) * 1000.0
-                if trace_offload_exec
-                else 0.0
+            qkv = torch.cat(
+                [
+                    call_kwargs["query"].reshape(1, -1),
+                    call_kwargs["key"].reshape(1, -1),
+                    call_kwargs["value"].reshape(1, -1),
+                ],
+                dim=-1,
             )
-
-            def trigger_offload_exec_call(
-                endpoint: str | None,
-                tcp_endpoint: str | None,
-                remote_address: str,
-                descriptor: Any,
-            ) -> None:
-                trigger_offload_exec_attention(
-                    endpoint=endpoint,
-                    tcp_endpoint=tcp_endpoint,
-                    request_id=descriptor.request_id,
-                    layer_name=descriptor.layer_name,
-                    step=descriptor.step,
-                    scale=descriptor.scale,
-                    remote_address=os.environ.get(
-                        "PAP_OFFLOAD_EXEC_REMOTE_ADDRESS",
-                        f"127.0.0.1:{os.environ.get('PAP_OFFLOAD_EXEC_ZMQ_PORT', '11300')}",
-                    ),
-                )
-
-            trace_trigger_start = time.perf_counter() if trace_offload_exec else 0.0
-            if len(offload_exec_calls) <= 1 or parallelism <= 1:
-                for (
-                    _req_index,
-                    endpoint,
+            descriptor = PAPOffloadExecDescriptor(
+                request_id=str(call_kwargs["request_id"]),
+                layer_name=str(call_kwargs["layer_name"]),
+                step=int(call_kwargs["seq_len"]),
+                scale=float(call_kwargs["scale"]),
+            )
+            transport.send_qkv(
+                descriptor,
+                qkv,
+                remote_address=offload_exec_zmq_endpoint,
+            )
+            offload_exec_calls.append(
+                (
+                    req_index,
                     tcp_endpoint,
                     offload_exec_zmq_endpoint,
                     descriptor,
-                ) in offload_exec_calls:
-                    trigger_offload_exec_call(
-                        endpoint,
-                        tcp_endpoint,
-                        offload_exec_zmq_endpoint,
-                        descriptor,
-                    )
-            else:
-                executor = _pap_remote_attention_executor(
-                    min(parallelism, len(offload_exec_calls))
                 )
-                futures = [
-                    executor.submit(
-                        trigger_offload_exec_call,
-                        endpoint,
-                        tcp_endpoint,
-                        offload_exec_zmq_endpoint,
-                        descriptor,
-                    )
-                    for (
-                        _req_index,
-                        endpoint,
-                        tcp_endpoint,
-                        offload_exec_zmq_endpoint,
-                        descriptor,
-                    ) in offload_exec_calls
-                ]
-                for future in futures:
-                    future.result()
-            trace_trigger_ms = (
-                (time.perf_counter() - trace_trigger_start) * 1000.0
-                if trace_offload_exec
-                else 0.0
+            )
+        trace_send_ms = (
+            (time.perf_counter() - trace_send_start) * 1000.0
+            if trace_offload_exec
+            else 0.0
+        )
+
+        def trigger_offload_exec_call(
+            tcp_endpoint: str | None,
+            remote_address: str,
+            descriptor: Any,
+        ) -> None:
+            trigger_offload_exec_attention(
+                tcp_endpoint=tcp_endpoint,
+                request_id=descriptor.request_id,
+                layer_name=descriptor.layer_name,
+                step=descriptor.step,
+                scale=descriptor.scale,
+                remote_address=os.environ.get(
+                    "PAP_OFFLOAD_EXEC_REMOTE_ADDRESS",
+                    f"127.0.0.1:{os.environ.get('PAP_OFFLOAD_EXEC_ZMQ_PORT', '11300')}",
+                ),
             )
 
-            trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
+        trace_trigger_start = time.perf_counter() if trace_offload_exec else 0.0
+        if len(offload_exec_calls) <= 1 or parallelism <= 1:
             for (
-                req_index,
-                _endpoint,
-                _tcp_endpoint,
+                _req_index,
+                tcp_endpoint,
                 offload_exec_zmq_endpoint,
                 descriptor,
             ) in offload_exec_calls:
-                apply_remote_output(
-                    req_index,
-                    transport.recv_output(
-                        descriptor,
-                        remote_address=offload_exec_zmq_endpoint,
-                    ),
-                )
-            if trace_offload_exec and offload_exec_calls:
-                trace_recv_ms = (time.perf_counter() - trace_recv_start) * 1000.0
-                trace_total_ms = (
-                    time.perf_counter() - trace_total_start
-                ) * 1000.0
-                logger.info(
-                    "PAP OFFLOAD_EXEC projection trace layer=%s calls=%d "
-                    "send_ms=%.3f trigger_ms=%.3f recv_ms=%.3f total_ms=%.3f",
-                    offload_exec_calls[0][4].layer_name,
-                    len(offload_exec_calls),
-                    trace_send_ms,
-                    trace_trigger_ms,
-                    trace_recv_ms,
-                    trace_total_ms,
-                )
-        elif len(remote_attention_calls) <= 1 or parallelism <= 1:
-            for (
-                req_index,
-                endpoint,
-                tcp_endpoint,
-                offload_exec_zmq_endpoint,
-                call_kwargs,
-            ) in remote_attention_calls:
-                apply_remote_output(
-                    req_index,
-                    compute_stateful_remote_attention_output(
-                        **call_kwargs,
-                        endpoint=endpoint,
-                        tcp_endpoint=tcp_endpoint,
-                    ),
+                trigger_offload_exec_call(
+                    tcp_endpoint,
+                    offload_exec_zmq_endpoint,
+                    descriptor,
                 )
         else:
-            calls_by_endpoint: dict[
-                tuple[str | None, str | None], list[tuple[int, dict[str, Any]]]
-            ] = defaultdict(list)
-            for (
-                req_index,
-                endpoint,
-                tcp_endpoint,
-                offload_exec_zmq_endpoint,
-                call_kwargs,
-            ) in remote_attention_calls:
-                calls_by_endpoint[(endpoint, tcp_endpoint)].append(
-                    (req_index, call_kwargs)
-                )
             executor = _pap_remote_attention_executor(
-                min(parallelism, len(calls_by_endpoint))
+                min(parallelism, len(offload_exec_calls))
             )
             futures = [
                 executor.submit(
-                    compute_stateful_remote_attention_outputs_batch,
-                    calls=[call_kwargs for _, call_kwargs in endpoint_calls],
-                    endpoint=endpoint,
-                    tcp_endpoint=tcp_endpoint,
+                    trigger_offload_exec_call,
+                    tcp_endpoint,
+                    offload_exec_zmq_endpoint,
+                    descriptor,
                 )
-                for (endpoint, tcp_endpoint), endpoint_calls in (
-                    calls_by_endpoint.items()
-                )
+                for (
+                    _req_index,
+                    tcp_endpoint,
+                    offload_exec_zmq_endpoint,
+                    descriptor,
+                ) in offload_exec_calls
             ]
-            for endpoint_calls, future in zip(calls_by_endpoint.values(), futures):
-                for (req_index, _), remote_output in zip(
-                    endpoint_calls, future.result()
-                ):
-                    apply_remote_output(req_index, remote_output)
-        return output.view(q.shape[0], self.num_heads * self.head_dim)
+            for future in futures:
+                future.result()
+        trace_trigger_ms = (
+            (time.perf_counter() - trace_trigger_start) * 1000.0
+            if trace_offload_exec
+            else 0.0
+        )
 
-    def _maybe_compute_pap_remote_attention(
-        self, q: torch.Tensor, fallback_output: torch.Tensor
-    ) -> torch.Tensor | None:
-        if not is_forward_context_available():
-            return None
-        try:
-            forward_context = get_forward_context()
-            additional_kwargs = forward_context.additional_kwargs or {}
-            if not additional_kwargs.get("pap_remote_attention"):
-                return None
-
-            request_id = self._select_pap_request_id(
-                additional_kwargs.get("pap_request_ids")
-            )
-            if request_id is None:
-                return None
-
-            metadata = forward_context.attn_metadata
-            attn_metadata = (
-                metadata.get(self.attn.layer_name)
-                if isinstance(metadata, dict)
-                else None
-            )
-            if attn_metadata is None:
-                return None
-            if int(getattr(attn_metadata, "max_query_len", 0)) != 1:
-                return None
-            seq_lens = getattr(attn_metadata, "seq_lens", None)
-            block_table = getattr(attn_metadata, "block_table", None)
-            kv_cache = getattr(self.attn, "kv_cache", None)
-            if seq_lens is None or block_table is None or kv_cache is None:
-                return None
-            if seq_lens.shape[0] != 1 or block_table.shape[0] != 1:
-                return None
-
-            from vllm.pap.shadow_attention import (
-                compute_remote_attention_output,
-                select_attention_endpoint_for_request,
-            )
-            from vllm.v1.attention.backends.utils import get_kv_cache_layout
-
-            query = q.view(-1, self.num_heads, self.head_dim)
-            seq_len = int(seq_lens.detach().cpu()[0].item())
-            endpoint = select_attention_endpoint_for_request(
-                request_id,
-                default_endpoint=additional_kwargs.get("pap_attention_endpoint"),
-                endpoint_by_request=additional_kwargs.get(
-                    "pap_attention_endpoint_by_request"
+        trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
+        for (
+            req_index,
+            _tcp_endpoint,
+            offload_exec_zmq_endpoint,
+            descriptor,
+        ) in offload_exec_calls:
+            apply_remote_output(
+                req_index,
+                transport.recv_output(
+                    descriptor,
+                    remote_address=offload_exec_zmq_endpoint,
                 ),
             )
-            remote_output = compute_remote_attention_output(
-                request_id=request_id,
-                layer_name=self.attn.layer_name,
-                query=query,
-                kv_cache=kv_cache,
-                block_table=block_table,
-                seq_len=seq_len,
-                num_kv_heads=self.num_kv_heads,
-                scale=float(self.scaling),
-                layout=get_kv_cache_layout(),
-                endpoint=endpoint,
+        if trace_offload_exec and offload_exec_calls:
+            trace_recv_ms = (time.perf_counter() - trace_recv_start) * 1000.0
+            trace_total_ms = (
+                time.perf_counter() - trace_total_start
+            ) * 1000.0
+            logger.info(
+                "PAP OFFLOAD_EXEC projection trace layer=%s calls=%d "
+                "send_ms=%.3f trigger_ms=%.3f recv_ms=%.3f total_ms=%.3f",
+                offload_exec_calls[0][3].layer_name,
+                len(offload_exec_calls),
+                trace_send_ms,
+                trace_trigger_ms,
+                trace_recv_ms,
+                trace_total_ms,
             )
-            return remote_output.to(
-                device=fallback_output.device, dtype=fallback_output.dtype
-            ).view_as(fallback_output)
-        except Exception:
-            logger.warning("failed to compute PAP remote attention", exc_info=True)
-            return None
+        return output.view(q.shape[0], self.num_heads * self.head_dim)
 
     def _maybe_import_pap_prefill_kv_to_attention(self) -> None:
         if not is_forward_context_available():
             return
-        try:
-            forward_context = get_forward_context()
-            additional_kwargs = forward_context.additional_kwargs or {}
-            pap_mode = additional_kwargs.get("pap_mode")
-            if pap_mode not in {"true_split", "true_split_performance"}:
-                return
+        forward_context = get_forward_context()
+        additional_kwargs = forward_context.additional_kwargs or {}
+        if not additional_kwargs.get("pap_enabled"):
+            return
 
-            request_id = self._select_pap_request_id(
-                additional_kwargs.get("pap_request_ids")
-            )
-            if request_id is None:
-                return
+        request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
+        num_reqs = int(additional_kwargs.get("pap_num_reqs") or len(request_ids))
+        if num_reqs <= 0 or len(request_ids) < num_reqs:
+            return
+        num_scheduled_tokens = tuple(
+            int(num_tokens)
+            for num_tokens in additional_kwargs.get("pap_num_scheduled_tokens") or ()
+        )
+        if len(num_scheduled_tokens) < num_reqs:
+            return
+        prefill_kv_handle_by_request = (
+            additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
+        )
+        tcp_endpoint_by_request = (
+            additional_kwargs.get("pap_attention_tcp_endpoint_by_request") or {}
+        )
+        default_tcp_endpoint = additional_kwargs.get("pap_attention_tcp_endpoint")
+        metadata = forward_context.attn_metadata
+        if isinstance(metadata, dict):
+            attn_metadata = metadata.get(self.attn.layer_name)
+        elif isinstance(metadata, list) and metadata:
+            attn_metadata = metadata[0].get(self.attn.layer_name)
+        else:
+            attn_metadata = None
+        if attn_metadata is None:
+            return
+        seq_lens = getattr(attn_metadata, "seq_lens", None)
+        if seq_lens is None or int(seq_lens.shape[0]) < num_reqs:
+            return
+        block_table = getattr(attn_metadata, "block_table", None)
+        if block_table is None or int(block_table.shape[0]) < num_reqs:
+            return
+        kv_cache = getattr(self.attn, "kv_cache", None)
+        if kv_cache is None:
+            return
+        block_size = additional_kwargs.get("pap_block_size")
+        if block_size is None:
+            block_size = getattr(getattr(self.attn, "impl", None), "block_size", None)
+        if block_size is None:
+            block_size = getattr(self.attn, "block_size", None)
+        if block_size is None:
+            return
+
+        from vllm.pap.shadow_attention import (
+            import_prefill_kv_from_paged_cache,
+            select_attention_endpoint_for_request,
+        )
+        from vllm.v1.attention.backends.utils import get_kv_cache_layout
+
+        seq_lens_cpu = seq_lens.detach().to(device="cpu", dtype=torch.long)
+        for req_index in range(num_reqs):
+            request_id = str(request_ids[req_index])
             if not request_id.startswith(("cmpl-", "chatcmpl-")):
-                return
-
-            request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
-            num_reqs = int(additional_kwargs.get("pap_num_reqs") or len(request_ids))
-            if num_reqs <= 0 or len(request_ids) < num_reqs:
-                return
-            num_scheduled_tokens = tuple(
-                int(num_tokens)
-                for num_tokens in additional_kwargs.get("pap_num_scheduled_tokens")
-                or ()
-            )
-            if len(num_scheduled_tokens) < num_reqs:
-                return
-            endpoint_by_request = additional_kwargs.get(
-                "pap_attention_endpoint_by_request"
-            )
-            tcp_endpoint_by_request = additional_kwargs.get(
-                "pap_attention_tcp_endpoint_by_request"
-            )
-            default_endpoint = additional_kwargs.get("pap_attention_endpoint")
-            default_tcp_endpoint = additional_kwargs.get("pap_attention_tcp_endpoint")
-            prefill_kv_handle_by_request = (
-                additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
-            )
-
-            from vllm.pap.shadow_attention import (
-                import_prefill_kv_from_paged_cache,
-                select_attention_endpoint_for_request,
-            )
-            from vllm.v1.attention.backends.utils import get_kv_cache_layout
-
-            endpoint = select_attention_endpoint_for_request(
+                continue
+            prefill_kv_handle = prefill_kv_handle_by_request.get(request_id)
+            if not prefill_kv_handle:
+                continue
+            prefix_len = int(seq_lens_cpu[req_index].item())
+            if prefix_len <= 1:
+                continue
+            import_key = (
                 request_id,
-                default_endpoint=default_endpoint,
-                endpoint_by_request=endpoint_by_request,
+                self.attn.layer_name,
+                prefix_len,
+                str(prefill_kv_handle),
             )
+            if import_key in self._pap_imported_prefill_kv:
+                continue
             tcp_endpoint = select_attention_endpoint_for_request(
                 request_id,
                 default_endpoint=default_tcp_endpoint,
                 endpoint_by_request=tcp_endpoint_by_request,
             )
-            metadata = forward_context.attn_metadata
-            if isinstance(metadata, dict):
-                attn_metadata = metadata.get(self.attn.layer_name)
-            elif isinstance(metadata, list) and metadata:
-                attn_metadata = metadata[0].get(self.attn.layer_name)
-            else:
-                attn_metadata = None
-            if attn_metadata is None:
-                return
-            seq_lens = getattr(attn_metadata, "seq_lens", None)
-            if seq_lens is None or int(seq_lens.shape[0]) < num_reqs:
-                return
-            block_table = getattr(attn_metadata, "block_table", None)
-            if block_table is None or int(block_table.shape[0]) < num_reqs:
-                return
-            kv_cache = getattr(self.attn, "kv_cache", None)
-            if kv_cache is None:
-                return
-            block_size = additional_kwargs.get("pap_block_size")
-            if block_size is None:
-                block_size = getattr(
-                    getattr(self.attn, "impl", None), "block_size", None
-                )
-            if block_size is None:
-                block_size = getattr(self.attn, "block_size", None)
-            if block_size is None:
-                return
-
-            seq_lens_cpu = seq_lens.detach().to(device="cpu", dtype=torch.long)
-            for req_index in range(num_reqs):
-                if num_scheduled_tokens[req_index] <= 1:
-                    continue
-                request_id = str(request_ids[req_index])
-                if not request_id.startswith(("cmpl-", "chatcmpl-")):
-                    continue
-                prefill_kv_handle = prefill_kv_handle_by_request.get(request_id)
-                if not prefill_kv_handle:
-                    continue
-                prefix_len = int(seq_lens_cpu[req_index].item())
-                if prefix_len <= 1:
-                    continue
-                endpoint = select_attention_endpoint_for_request(
-                    request_id,
-                    default_endpoint=default_endpoint,
-                    endpoint_by_request=endpoint_by_request,
-                )
-                tcp_endpoint = select_attention_endpoint_for_request(
-                    request_id,
-                    default_endpoint=default_tcp_endpoint,
-                    endpoint_by_request=tcp_endpoint_by_request,
-                )
-                import_key = (
-                    request_id,
-                    self.attn.layer_name,
-                    str(endpoint),
-                    prefix_len,
-                    str(prefill_kv_handle),
-                )
-                if import_key in self._pap_imported_prefill_kv:
-                    continue
-                import_prefill_kv_from_paged_cache(
-                    request_id=request_id,
-                    layer_name=self.attn.layer_name,
-                    kv_cache=kv_cache,
-                    block_table=block_table[req_index : req_index + 1],
-                    seq_len=prefix_len,
-                    block_size=int(block_size),
-                    num_kv_heads=self.num_kv_heads,
-                    layout=get_kv_cache_layout(),
-                    endpoint=endpoint,
-                    tcp_endpoint=tcp_endpoint,
-                )
-                self._pap_imported_prefill_kv.add(import_key)
-        except Exception:
-            logger.warning("failed to import PAP prefill KV", exc_info=True)
+            import_prefill_kv_from_paged_cache(
+                request_id=request_id,
+                layer_name=self.attn.layer_name,
+                kv_cache=kv_cache,
+                block_table=block_table[req_index : req_index + 1],
+                seq_len=prefix_len,
+                block_size=int(block_size),
+                num_kv_heads=self.num_kv_heads,
+                layout=get_kv_cache_layout(),
+                tcp_endpoint=tcp_endpoint,
+            )
+            self._pap_imported_prefill_kv.add(import_key)
 
     @staticmethod
     def _select_pap_request_id(request_ids: Any) -> str | None:
@@ -914,60 +668,6 @@ class Qwen3Attention(nn.Module):
             if request_id_str.startswith(("cmpl-", "chatcmpl-")):
                 return request_id_str
         return None
-
-    def _maybe_report_pap_attention_boundary(
-        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
-    ) -> None:
-        if not is_forward_context_available():
-            return
-        try:
-            forward_context = get_forward_context()
-            additional_kwargs = forward_context.additional_kwargs or {}
-            if additional_kwargs.get("pap_mode") in {
-                "true_split",
-                "true_split_performance",
-            }:
-                return
-            if not additional_kwargs.get("pap_shadow_attention"):
-                return
-
-            metadata = forward_context.attn_metadata
-            attn_metadata = (
-                metadata.get(self.attn.layer_name)
-                if isinstance(metadata, dict)
-                else None
-            )
-            max_seq_len = getattr(attn_metadata, "max_seq_len", None)
-            from vllm.pap.shadow_attention import (
-                maybe_report_qkv_boundary,
-                select_attention_endpoint_for_request,
-            )
-
-            request_id = self._select_pap_request_id(
-                additional_kwargs.get("pap_request_ids")
-            )
-            endpoint = select_attention_endpoint_for_request(
-                request_id,
-                default_endpoint=additional_kwargs.get("pap_attention_endpoint"),
-                endpoint_by_request=additional_kwargs.get(
-                    "pap_attention_endpoint_by_request"
-                ),
-            )
-            maybe_report_qkv_boundary(
-                layer_name=self.attn.layer_name,
-                query=q,
-                key=k,
-                value=v,
-                request_ids=additional_kwargs.get("pap_request_ids"),
-                num_scheduled_tokens=additional_kwargs.get("pap_num_scheduled_tokens"),
-                num_reqs=additional_kwargs.get("pap_num_reqs"),
-                num_actual_tokens=additional_kwargs.get("pap_num_actual_tokens"),
-                max_seq_len=max_seq_len,
-                enabled=additional_kwargs.get("pap_shadow_attention"),
-                endpoint=endpoint,
-            )
-        except Exception:
-            logger.warning("failed to report PAP attention boundary", exc_info=True)
 
 
 class Qwen3DecoderLayer(nn.Module):

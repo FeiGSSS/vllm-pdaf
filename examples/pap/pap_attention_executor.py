@@ -32,7 +32,6 @@ from vllm.pap.attention_session import (
 from vllm.pap.data_plane import (
     PAPTensorTransport,
     build_p2p_nccl_offload_exec_transport,
-    offload_exec_transport_from_env,
 )
 
 logging.basicConfig(
@@ -1550,12 +1549,8 @@ def maybe_start_offload_exec_transport(
 ) -> None:
     """Initialize the optional NCCL/P2P OFFLOAD_EXEC data plane."""
 
-    if offload_exec_transport_from_env() is not PAPTensorTransport.NCCL_P2P:
-        return
     if zmq_port is None:
-        raise RuntimeError(
-            "PAP_OFFLOAD_EXEC_TRANSPORT=nccl requires --offload-exec-zmq-port"
-        )
+        return
     local_rank = int(os.environ.get("PAP_OFFLOAD_EXEC_LOCAL_RANK", "0"))
     app.state.offload_exec_transport = build_p2p_nccl_offload_exec_transport(
         local_rank=local_rank,

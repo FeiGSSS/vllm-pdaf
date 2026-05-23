@@ -67,12 +67,6 @@ class NixlConnectorScheduler:
             + vllm_config.parallel_config.data_parallel_index
         )
         assert vllm_config.kv_transfer_config is not None
-        self.pap_true_split_performance = (
-            vllm_config.kv_transfer_config.get_from_extra_config(
-                "pap_mode", ""
-            )
-            == "true_split_performance"
-        )
         self._kv_lease_duration: int = (
             vllm_config.kv_transfer_config.get_from_extra_config(
                 "kv_lease_duration", 30
@@ -476,7 +470,9 @@ class NixlConnectorScheduler:
             and self.is_bidirectional_kv_xfer_enabled
             and not params.get("_remote_blocks_processed")
         ):
-            if self.pap_true_split_performance:
+            if not params.get("remote_block_ids"):
+                pass
+            elif params.get("pap_attention_kv_installed"):
                 self._reqs_to_finish_recv.add(request.request_id)
             elif params.get("remote_block_ids"):
                 if all(
