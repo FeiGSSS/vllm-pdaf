@@ -3,8 +3,23 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 MODEL_PATH="${PAP_MODEL_PATH:-/data/ssd1/llm-models/Qwen3-8B}"
-PA_COUNT="${PAP_PA_COUNT:-6}"
-PROJECTION_COUNT="${PAP_PROJECTION_COUNT:-2}"
+TOPOLOGY="${PAP_TOPOLOGY:-6pa2p}"
+if [[ ! "$TOPOLOGY" =~ ^([0-9]+)pa([0-9]+)p$ ]]; then
+    echo "Unsupported PAP topology: $TOPOLOGY" >&2
+    exit 1
+fi
+TOPOLOGY_TAG="$(printf '%s' "$TOPOLOGY" | tr '[:lower:]' '[:upper:]')"
+PA_COUNT="${PAP_PA_COUNT:-${BASH_REMATCH[1]}}"
+PROJECTION_COUNT="${PAP_PROJECTION_COUNT:-${BASH_REMATCH[2]}}"
+if (( PA_COUNT < 1 || PROJECTION_COUNT < 1 )); then
+    echo "PAP topology must include at least one PA and one Projection: $TOPOLOGY" >&2
+    exit 1
+fi
+TOTAL_GPU_COUNT=$((PA_COUNT + PROJECTION_COUNT))
+if (( TOTAL_GPU_COUNT > 8 )); then
+    echo "PAP topology $TOPOLOGY requires $TOTAL_GPU_COUNT GPUs; max is 8" >&2
+    exit 1
+fi
 PREFILL_PORT_BASE="${PAP_PREFILL_PORT_BASE:-8100}"
 PROJECTION_PORT_BASE="${PAP_PROJECTION_PORT_BASE:-8200}"
 ATTENTION_PORT_BASE="${PAP_ATTENTION_PORT_BASE:-8300}"
@@ -35,13 +50,17 @@ PROJECTION_GPU_MEMORY_UTILIZATION="${PAP_PROJECTION_GPU_MEMORY_UTILIZATION:-0.80
 PREFILL_MPS_PERCENT="${PAP_PREFILL_MPS_PERCENT:-70}"
 ATTENTION_MPS_PERCENT="${PAP_ATTENTION_MPS_PERCENT:-30}"
 ENABLE_MPS="${PAP_ENABLE_MPS:-1}"
-LOG_DIR="${PAP_LOG_DIR:-$ROOT_DIR/examples/pap/logs/6pa2p}"
-MPS_PIPE_BASE_DIR="${PAP_MPS_PIPE_BASE_DIR:-/tmp/pap-mps-${USER:-user}-6pa2p-$$}"
+LOG_DIR="${PAP_LOG_DIR:-$ROOT_DIR/examples/pap/logs/$TOPOLOGY}"
+MPS_PIPE_BASE_DIR="${PAP_MPS_PIPE_BASE_DIR:-/tmp/pap-mps-${USER:-user}-${TOPOLOGY}-$$}"
 MPS_LOG_BASE_DIR="${PAP_MPS_LOG_BASE_DIR:-$LOG_DIR/mps-log}"
 RESULT_PATH="${PAP_RESULT_PATH:-$LOG_DIR/result.json}"
 PROMPT="${PAP_PROMPT:-Briefly explain what PAP does.}"
-PREFILL_GPUS_CSV="${PAP_PREFILL_GPUS:-0,1,2,3,4,5}"
-PROJECTION_GPUS_CSV="${PAP_PROJECTION_GPUS:-6,7}"
+DEFAULT_PREFILL_GPUS="$(seq -s, 0 $((PA_COUNT - 1)))"
+DEFAULT_PROJECTION_GPUS="$(
+    seq -s, "$PA_COUNT" $((TOTAL_GPU_COUNT - 1))
+)"
+PREFILL_GPUS_CSV="${PAP_PREFILL_GPUS:-$DEFAULT_PREFILL_GPUS}"
+PROJECTION_GPUS_CSV="${PAP_PROJECTION_GPUS:-$DEFAULT_PROJECTION_GPUS}"
 
 mkdir -p "$LOG_DIR"
 
@@ -336,14 +355,14 @@ if [[ "${SERVICE_ONLY}" == "1" ]]; then
 fi
 
 if [[ "${SKIP_SMOKE_REQUEST}" != "1" ]]; then
-    echo "Running one PAP 6PA:2P request through proxy"
+    echo "Running one PAP $TOPOLOGY_TAG request through proxy"
     .venv/bin/python examples/pap/run_one_request.py \
         --host 127.0.0.1 \
         --port "$PROXY_PORT" \
         --model "$MODEL_PATH" \
         --prompt "$PROMPT" \
         --max-tokens "${PAP_MAX_TOKENS:-8}" \
-        --conversation-id "pap-6pa2p-one-turn" \
+        --conversation-id "pap-${TOPOLOGY}-one-turn" \
         --output "$RESULT_PATH" \
         | tee "$LOG_DIR/one_request.log"
 fi
@@ -353,4 +372,4 @@ if [[ "${PAP_KEEP_SERVERS:-0}" == "1" ]]; then
     wait
 fi
 
-echo "PAP 6PA:2P experiment finished. Logs are in $LOG_DIR"
+echo "PAP $TOPOLOGY_TAG experiment finished. Logs are in $LOG_DIR"
