@@ -1,4 +1,5 @@
 import os
+import socket
 from unittest.mock import patch
 
 import torch
@@ -6,6 +7,7 @@ import torch
 from vllm.pap.shadow_attention import (
     _attention_endpoint,
     _enabled,
+    _post_bytes_tcp,
     build_layer_event_payload,
     maybe_report_qkv_boundary,
     select_attention_endpoint_for_request,
@@ -39,6 +41,47 @@ def test_build_layer_event_payload_uses_forward_context_request_ids() -> None:
     assert payload["num_reqs"] == 1
     assert payload["num_actual_tokens"] == 1
     assert payload["max_seq_len"] == 9
+
+
+def test_post_bytes_tcp_disables_nagle(monkeypatch) -> None:
+    class FakeSocket:
+        def __init__(self) -> None:
+            self.options = []
+            self.timeout = None
+            self.sent = b""
+            self.reads = [b"\x04\x00\x00\x00\x00\x00\x00\x00", b"done"]
+
+        def setsockopt(self, level, optname, value) -> None:
+            self.options.append((level, optname, value))
+
+        def settimeout(self, timeout) -> None:
+            self.timeout = timeout
+
+        def sendall(self, payload: bytes) -> None:
+            self.sent += payload
+
+        def recv(self, _size: int) -> bytes:
+            return self.reads.pop(0)
+
+        def close(self) -> None:
+            pass
+
+    fake_socket = FakeSocket()
+    monkeypatch.setattr(
+        "vllm.pap.shadow_attention.socket.create_connection",
+        lambda *_args, **_kwargs: fake_socket,
+    )
+    monkeypatch.setattr(
+        "vllm.pap.shadow_attention._TCP_CONNECTIONS",
+        type("Local", (), {})(),
+    )
+
+    assert _post_bytes_tcp(
+        endpoint="tcp://127.0.0.1:9300",
+        payload=b"ping",
+        timeout=1.0,
+    ) == b"done"
+    assert (socket.IPPROTO_TCP, socket.TCP_NODELAY, 1) in fake_socket.options
 
 
 def test_build_layer_event_payload_skips_warmup_request_ids() -> None:

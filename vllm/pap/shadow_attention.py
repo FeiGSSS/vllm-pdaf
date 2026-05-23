@@ -213,6 +213,7 @@ def _post_bytes_tcp(
         sock = cache.get(key)
         if sock is None:
             sock = socket.create_connection((host, port), timeout=float(timeout))
+            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             cache[key] = sock
         sock.settimeout(float(timeout))
         try:

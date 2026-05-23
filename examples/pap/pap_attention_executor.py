@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import socket
 import socketserver
 import time
 from dataclasses import dataclass, field
@@ -1189,6 +1190,7 @@ def start_attention_tcp_server(
 ) -> socketserver.TCPServer:
     class Handler(socketserver.BaseRequestHandler):
         def handle(self) -> None:
+            self.request.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             while True:
                 try:
                     header = _recv_exact(self.request, 8)
