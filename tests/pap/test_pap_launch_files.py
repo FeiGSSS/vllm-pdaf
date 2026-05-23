@@ -73,8 +73,10 @@ def test_pap_6pa2p_launch_uses_multi_proxy_and_expected_counts() -> None:
     script = ROOT / "examples" / "pap" / "launch_pap_6pa2p_qwen3_8b_nixl.sh"
     text = script.read_text()
 
-    assert 'PA_COUNT="${PAP_PA_COUNT:-6}"' in text
-    assert 'PROJECTION_COUNT="${PAP_PROJECTION_COUNT:-2}"' in text
+    assert 'TOPOLOGY="${PAP_TOPOLOGY:-6pa2p}"' in text
+    assert 'PA_COUNT="${PAP_PA_COUNT:-${BASH_REMATCH[1]}}"' in text
+    assert 'PROJECTION_COUNT="${PAP_PROJECTION_COUNT:-${BASH_REMATCH[2]}}"' in text
+    assert "TOTAL_GPU_COUNT=$((PA_COUNT + PROJECTION_COUNT))" in text
     assert "multi_pap_proxy_server.py" in text
     assert "pap_attention_executor.py" in text
     assert 'ATTENTION_TCP_PORT_BASE="${PAP_ATTENTION_TCP_PORT_BASE:-9300}"' in text
