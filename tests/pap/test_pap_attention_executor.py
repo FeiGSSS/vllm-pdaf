@@ -363,6 +363,71 @@ def test_offload_exec_binary_command_triggers_transport(monkeypatch) -> None:
     assert tensors == {}
     assert lock.entered
     assert len(transport.sent) == 1
+
+
+def test_offload_exec_compact_command_triggers_transport(monkeypatch) -> None:
+    import torch
+
+    from vllm.pap.remote_attention import (
+        deserialize_compact_offload_exec_ack,
+        serialize_compact_offload_exec_command,
+    )
+
+    class FakeTransport:
+        def __init__(self):
+            self.sent = []
+
+        def recv_qkv(self, descriptor, *, remote_address):
+            assert descriptor.request_id == "req-offload"
+            assert descriptor.step == 1
+            assert remote_address == "127.0.0.1:11300"
+            return torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]])
+
+        def send_output(self, descriptor, output, *, remote_address):
+            self.sent.append((descriptor, output, remote_address))
+
+    class TrackingLock:
+        def __init__(self):
+            self.entered = False
+
+        def __enter__(self):
+            self.entered = True
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-offload",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+            q_size=2,
+            kv_size=2,
+        )
+    )
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_HEAD_DIM", "2")
+    transport = FakeTransport()
+    lock = TrackingLock()
+
+    response = compute_binary_attention_response(
+        registry,
+        serialize_compact_offload_exec_command(
+            request_id="req-offload",
+            layer_name="layer0",
+            step=1,
+            scale=1.0,
+            remote_address="127.0.0.1:11300",
+        ),
+        offload_exec_transport=transport,
+        offload_exec_lock=lock,
+    )
+
+    deserialize_compact_offload_exec_ack(response)
+    assert lock.entered
+    assert len(transport.sent) == 1
     _, output, _ = transport.sent[0]
     torch.testing.assert_close(output, torch.tensor([[2.0, 0.0]]))
 

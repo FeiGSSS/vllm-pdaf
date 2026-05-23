@@ -14,10 +14,13 @@ import torch
 
 COMPACT_ATTENTION_REQUEST_MAGIC = b"PAPATN1\0"
 COMPACT_ATTENTION_RESPONSE_MAGIC = b"PAPOUT1\0"
+COMPACT_OFFLOAD_EXEC_MAGIC = b"PAPEXE1\0"
+COMPACT_OFFLOAD_EXEC_OK_MAGIC = b"PAPOKAY\0"
 
 _COMPACT_COUNT_STRUCT = struct.Struct("<8sI")
 _COMPACT_REQUEST_HEADER_STRUCT = struct.Struct("<HHHHIIIIIqqqfI")
 _COMPACT_RESPONSE_HEADER_STRUCT = struct.Struct("<HHIIII")
+_COMPACT_OFFLOAD_EXEC_STRUCT = struct.Struct("<8sHHHqf")
 
 _DTYPE_BY_NAME: dict[str, torch.dtype] = {
     "torch.float16": torch.float16,
@@ -292,6 +295,73 @@ def deserialize_compact_attention_response(payload: bytes) -> list[torch.Tensor]
     if offset != len(payload):
         raise ValueError("compact attention response has trailing bytes")
     return outputs
+
+
+def serialize_compact_offload_exec_command(
+    *,
+    request_id: str,
+    layer_name: str,
+    step: int,
+    scale: float,
+    remote_address: str,
+) -> bytes:
+    request_id_bytes = str(request_id).encode("utf-8")
+    layer_name_bytes = str(layer_name).encode("utf-8")
+    remote_address_bytes = str(remote_address).encode("utf-8")
+    return b"".join(
+        [
+            _COMPACT_OFFLOAD_EXEC_STRUCT.pack(
+                COMPACT_OFFLOAD_EXEC_MAGIC,
+                len(request_id_bytes),
+                len(layer_name_bytes),
+                len(remote_address_bytes),
+                int(step),
+                float(scale),
+            ),
+            request_id_bytes,
+            layer_name_bytes,
+            remote_address_bytes,
+        ]
+    )
+
+
+def deserialize_compact_offload_exec_command(payload: bytes) -> dict[str, Any]:
+    if len(payload) < _COMPACT_OFFLOAD_EXEC_STRUCT.size:
+        raise ValueError("compact offload-exec command is truncated")
+    (
+        magic,
+        request_id_len,
+        layer_name_len,
+        remote_address_len,
+        step,
+        scale,
+    ) = _COMPACT_OFFLOAD_EXEC_STRUCT.unpack_from(payload, 0)
+    if magic != COMPACT_OFFLOAD_EXEC_MAGIC:
+        raise ValueError("invalid compact offload-exec command magic")
+    offset = _COMPACT_OFFLOAD_EXEC_STRUCT.size
+    request_id_end = offset + int(request_id_len)
+    layer_name_end = request_id_end + int(layer_name_len)
+    remote_address_end = layer_name_end + int(remote_address_len)
+    if len(payload) < remote_address_end:
+        raise ValueError("compact offload-exec command payload is truncated")
+    if remote_address_end != len(payload):
+        raise ValueError("compact offload-exec command has trailing bytes")
+    return {
+        "request_id": payload[offset:request_id_end].decode("utf-8"),
+        "layer_name": payload[request_id_end:layer_name_end].decode("utf-8"),
+        "remote_address": payload[layer_name_end:remote_address_end].decode("utf-8"),
+        "step": int(step),
+        "scale": float(scale),
+    }
+
+
+def serialize_compact_offload_exec_ack() -> bytes:
+    return COMPACT_OFFLOAD_EXEC_OK_MAGIC
+
+
+def deserialize_compact_offload_exec_ack(payload: bytes) -> None:
+    if payload != COMPACT_OFFLOAD_EXEC_OK_MAGIC:
+        raise ValueError("invalid compact offload-exec ack")
 
 
 def gather_paged_kv(

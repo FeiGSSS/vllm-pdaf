@@ -8,14 +8,18 @@ import torch
 from vllm.pap.remote_attention import (
     compute_attention_output,
     compute_segmented_attention_output,
+    deserialize_attention_result,
     deserialize_compact_attention_batch,
     deserialize_compact_attention_response,
-    deserialize_attention_result,
+    deserialize_compact_offload_exec_ack,
+    deserialize_compact_offload_exec_command,
     deserialize_tensor_bundle,
     gather_paged_kv,
+    serialize_attention_result,
     serialize_compact_attention_batch,
     serialize_compact_attention_response,
-    serialize_attention_result,
+    serialize_compact_offload_exec_ack,
+    serialize_compact_offload_exec_command,
     serialize_tensor_bundle,
 )
 
@@ -236,3 +240,22 @@ def test_compact_attention_batch_round_trips() -> None:
         deserialize_compact_attention_response(response)[0],
         torch.tensor([[[3.0, 5.0]]], dtype=torch.float32),
     )
+
+
+def test_compact_offload_exec_command_round_trips() -> None:
+    payload = serialize_compact_offload_exec_command(
+        request_id="req-1",
+        layer_name="model.layers.0.self_attn.attn",
+        step=9,
+        scale=0.5,
+        remote_address="127.0.0.1:11300",
+    )
+
+    assert deserialize_compact_offload_exec_command(payload) == {
+        "request_id": "req-1",
+        "layer_name": "model.layers.0.self_attn.attn",
+        "step": 9,
+        "scale": 0.5,
+        "remote_address": "127.0.0.1:11300",
+    }
+    deserialize_compact_offload_exec_ack(serialize_compact_offload_exec_ack())

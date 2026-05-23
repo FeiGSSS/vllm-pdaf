@@ -636,22 +636,22 @@ def trigger_offload_exec_attention(
     }
     if _remote_attention_transport() == "tcp" and tcp_endpoint:
         from vllm.pap.remote_attention import (
-            deserialize_tensor_bundle,
-            serialize_tensor_bundle,
+            deserialize_compact_offload_exec_ack,
+            serialize_compact_offload_exec_command,
         )
 
         response_body = _post_bytes_tcp(
             endpoint=tcp_endpoint,
-            payload=serialize_tensor_bundle(
-                {
-                    "command": "offload_exec",
-                    **payload,
-                },
-                {},
+            payload=serialize_compact_offload_exec_command(
+                request_id=request_id,
+                layer_name=layer_name,
+                step=int(step),
+                scale=float(scale),
+                remote_address=str(remote_address),
             ),
             timeout=request_timeout,
         )
-        deserialize_tensor_bundle(response_body)
+        deserialize_compact_offload_exec_ack(response_body)
         return
 
     _post_json(

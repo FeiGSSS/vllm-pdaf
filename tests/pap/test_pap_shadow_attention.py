@@ -746,8 +746,8 @@ def test_trigger_offload_exec_attention_uses_tcp_binary_when_configured(
     monkeypatch,
 ) -> None:
     from vllm.pap.remote_attention import (
-        deserialize_tensor_bundle,
-        serialize_tensor_bundle,
+        deserialize_compact_offload_exec_command,
+        serialize_compact_offload_exec_ack,
     )
     from vllm.pap.shadow_attention import trigger_offload_exec_attention
 
@@ -756,10 +756,8 @@ def test_trigger_offload_exec_attention_uses_tcp_binary_when_configured(
     def fake_post_bytes_tcp(*, endpoint, payload, timeout):
         captured["endpoint"] = endpoint
         captured["timeout"] = timeout
-        metadata, tensors = deserialize_tensor_bundle(payload)
-        captured["metadata"] = metadata
-        captured["tensors"] = tensors
-        return serialize_tensor_bundle({"ok": True}, {})
+        captured["metadata"] = deserialize_compact_offload_exec_command(payload)
+        return serialize_compact_offload_exec_ack()
 
     def fail_post_json(**_kwargs):
         raise AssertionError("HTTP JSON path should not be used")
@@ -785,9 +783,7 @@ def test_trigger_offload_exec_attention_uses_tcp_binary_when_configured(
 
     assert captured["endpoint"] == "tcp://127.0.0.1:9300"
     assert captured["timeout"] == 1.25
-    assert captured["tensors"] == {}
     assert captured["metadata"] == {
-        "command": "offload_exec",
         "request_id": "req-1",
         "layer_name": "layer0",
         "step": 9,

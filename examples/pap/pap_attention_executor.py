@@ -942,13 +942,42 @@ def compute_binary_attention_response(
 ) -> bytes:
     from vllm.pap.remote_attention import (
         COMPACT_ATTENTION_REQUEST_MAGIC,
+        COMPACT_OFFLOAD_EXEC_MAGIC,
+        deserialize_compact_offload_exec_command,
         deserialize_tensor_bundle,
+        serialize_compact_offload_exec_ack,
         serialize_tensor_bundle,
     )
     from vllm.pap.data_plane import PAPOffloadExecDescriptor
 
     if payload.startswith(COMPACT_ATTENTION_REQUEST_MAGIC):
         return compute_compact_attention_response(registry, payload)
+    if payload.startswith(COMPACT_OFFLOAD_EXEC_MAGIC):
+        if offload_exec_transport is None:
+            raise RuntimeError("PAP OFFLOAD_EXEC transport is not initialized")
+        metadata = deserialize_compact_offload_exec_command(payload)
+        descriptor = PAPOffloadExecDescriptor(
+            request_id=str(metadata["request_id"]),
+            layer_name=str(metadata["layer_name"]),
+            step=int(metadata["step"]),
+            scale=float(metadata["scale"]),
+        )
+        if offload_exec_lock is None:
+            run_offload_exec_once(
+                registry=registry,
+                transport=offload_exec_transport,
+                remote_address=str(metadata["remote_address"]),
+                descriptor=descriptor,
+            )
+        else:
+            with offload_exec_lock:
+                run_offload_exec_once(
+                    registry=registry,
+                    transport=offload_exec_transport,
+                    remote_address=str(metadata["remote_address"]),
+                    descriptor=descriptor,
+                )
+        return serialize_compact_offload_exec_ack()
 
     metadata, tensors = deserialize_tensor_bundle(payload)
     if metadata.get("command") == "import_prefill_kv":
