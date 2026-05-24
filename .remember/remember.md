@@ -74,14 +74,21 @@ metadata-only vLLM with no `--kv-transfer-config`. EngineCore now treats
   vLLM startup args had no `kv_transfer_config`; proxy logged only PAP metadata
   keys in Projection `kv_transfer_params`; Projection/Attention each logged
   `1792` OFFLOAD_EXEC traces, matching `64 * 28`.
+- Metadata-only Projection X:Y E2E with Qwen3-0.6B ran `4pa2p` and sent 8
+  sequential requests. Routing covered PA/Attention `8100/8300`,
+  `8101/8301`, `8102/8302`, `8103/8303` against Projection `8200`, `8201`,
+  then repeated. All responses returned HTTP `200`; each Projection logged
+  `1344` OFFLOAD_EXEC traces, each Attention logged `672`, matching the
+  expected `requests * 12 output tokens * 28 layers` counts.
 
 ## Next
 1. For future E2E, use:
    `bash examples/pap/launch_pap_nixl.sh --model /data/ssd1/llm-models/Qwen3-0.6B`
    or override with the 8B path.
-2. Commit the metadata-only Projection checkpoint.
-3. Start X:Y validation for metadata-only Projection, then design/implement the
-   IPC path for Prefill/Profile KV to Attention Executor.
+2. Commit the X:Y metadata-only Projection validation checkpoint.
+3. Next implementation stage: remove remaining Profile/Prefill to Attention
+   non-IPC transfer assumptions and design/implement the direct IPC path for
+   Prefill/Profile KV installation into Attention Executor.
    The current NIXL/NCCL transport is working but is not the desired final
    local PA-to-Attention KV path.
 

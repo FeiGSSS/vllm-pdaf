@@ -189,3 +189,68 @@ Result:
   warning for the PAP metadata-only request.
 - No `ERROR`, `Traceback`, `Exception`, `RuntimeError`, or `HTTPStatusError`
   entries were found in the Projection/proxy logs.
+
+## Qwen3-0.6B 4PA2P Metadata-Only Projection X:Y Routing
+
+Command shape:
+
+```bash
+PAP_TOPOLOGY=4pa2p \
+PAP_SERVICE_ONLY=1 \
+PAP_SKIP_SMOKE_REQUEST=1 \
+PAP_PROXY_PORT=9090 \
+PAP_MODEL_PATH=/data/ssd1/llm-models/Qwen3-0.6B \
+PAP_MAX_MODEL_LEN=1024 \
+PAP_MAX_NUM_SEQS=2 \
+PAP_OFFLOAD_EXEC_TRACE=1 \
+PAP_ENABLE_MPS=1 \
+bash examples/pap/launch_pap_nixl.sh
+```
+
+Runtime contract:
+
+- Four PA groups used GPUs `0,1,2,3`.
+- Two metadata-only Projection nodes used GPUs `4,5`.
+- Projection vLLM non-default args did not include `kv_transfer_config`.
+- Proxy reported Projection KV metadata keys:
+  `['pap_attention_endpoint', 'pap_attention_kv_installed',
+  'pap_attention_tcp_endpoint', 'pap_offload_exec_zmq_endpoint',
+  'pap_prefill_kv_handle', 'pap_projection_kv_unaware',
+  'pap_remote_prefix_len']`.
+- No Prefill KV transport keys were present in any Projection payload.
+
+Request set:
+
+- Sent 8 sequential `/v1/chat/completions` requests through the multi-PAP
+  proxy.
+- Each request used `max_tokens=12`, `temperature=0`.
+- Each response reported `prompt_tokens=22`, `completion_tokens=12`,
+  `total_tokens=34`.
+
+Round-robin assignment observed in `proxy.log`:
+
+| Request | Prefill | Attention | Projection | Latency |
+| --- | --- | --- | --- | --- |
+| 0 | `8100` | `8300` | `8200` | `5383 ms` |
+| 1 | `8101` | `8301` | `8201` | `5290 ms` |
+| 2 | `8102` | `8302` | `8200` | `471 ms` |
+| 3 | `8103` | `8303` | `8201` | `444 ms` |
+| 4 | `8100` | `8300` | `8200` | `299 ms` |
+| 5 | `8101` | `8301` | `8201` | `271 ms` |
+| 6 | `8102` | `8302` | `8200` | `295 ms` |
+| 7 | `8103` | `8303` | `8201` | `271 ms` |
+
+Result:
+
+- All 8 requests returned HTTP `200`.
+- Outputs were valid model text, starting with
+  `"<think>\n好的，用户让我用一句话说明metadata-only Projection"`.
+- Projection 0 logged `1344` OFFLOAD_EXEC traces.
+- Projection 1 logged `1344` OFFLOAD_EXEC traces.
+- Each Attention executor logged `672` OFFLOAD_EXEC traces.
+- Projection trace count matches `4 requests * 12 output tokens * 28 layers`.
+- Attention trace count matches `2 requests * 12 output tokens * 28 layers`.
+- Projection logs had no `Got kv_transfer_params, but no KVConnector found`
+  warning for PAP metadata-only requests.
+- No `ERROR`, `Traceback`, `Exception`, `RuntimeError`, or `HTTPStatusError`
+  entries were found in the Projection/Attention/proxy logs.
