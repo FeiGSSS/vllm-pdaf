@@ -316,6 +316,92 @@ Request result:
 - No `Traceback`, `ERROR`, `rejected`, or `Got kv_transfer_params` log entries
   were found in the PAP service logs.
 
+## Projection Local Block-State Tightening
+
+### 2026-05-24 Position-Only PAP OFFLOAD_EXEC Descriptor
+
+The next stateless Projection tightening pass removed a Projection-side
+dependency on vLLM slot/block-table metadata from the Qwen3 PAP attention path:
+
+- `Qwen3Attention._compute_pap_attention()` now derives the PAP decode
+  `seq_len` directly from scheduler positions.
+- It no longer reads `forward_context.slot_mapping`.
+- It no longer computes or sends `block_id` / `slot` from Projection-local
+  block tables.
+- The Attention side already derives the decode block/slot from OFFLOAD_EXEC
+  `step` / `seq_len`, so the active NCCL compact data path does not need
+  Projection-local block identifiers.
+- The scheduler PAP Projection admission path now sends only the newly allocated
+  local blocks to the model runner for metadata-only PAP requests instead of
+  handing off the full request block list that includes remote-prefix external
+  block placeholders.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/pap/test_pap_true_split_contract.py -q
+```
+
+Result: `19 passed`.
+
+Focused PAP suite:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `71 passed`.
+
+1PA1P Qwen3-0.6B E2E after the change:
+
+- Command shape:
+  `PAP_TOPOLOGY=1pa1p PAP_SERVICE_ONLY=1 PAP_SKIP_SMOKE_REQUEST=1
+  PAP_PROXY_PORT=9000 PAP_MAX_TOKENS=16 PAP_ATTENTION_KV_DEBUG=1
+  PAP_OFFLOAD_EXEC_TRACE=1 bash examples/pap/launch_pap_nixl.sh --model
+  /data/ssd1/llm-models/Qwen3-0.6B`
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=29`, `completion_tokens=16`, `total_tokens=45`.
+- Proxy logged Projection metadata keys only:
+  `pap_attention_endpoint`, `pap_attention_kv_installed`,
+  `pap_attention_tcp_endpoint`, `pap_offload_exec_zmq_endpoint`,
+  `pap_prefill_kv_handle`, `pap_projection_kv_unaware`,
+  `pap_remote_prefix_len`.
+- Attention logged `28` IPC descriptor imports.
+- Projection logged `448` OFFLOAD_EXEC traces, matching
+  `16 completion tokens * 28 layers`.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
+  `invalid slot`, or `slot_mapping` errors were found.
+
+4PA2P Qwen3-0.6B E2E after the change:
+
+- Command shape:
+  `PAP_TOPOLOGY=4pa2p PAP_SERVICE_ONLY=1 PAP_SKIP_SMOKE_REQUEST=1
+  PAP_PROXY_PORT=9000 PAP_MAX_TOKENS=8 PAP_ATTENTION_KV_DEBUG=1
+  PAP_OFFLOAD_EXEC_TRACE=1 bash examples/pap/launch_pap_nixl.sh --model
+  /data/ssd1/llm-models/Qwen3-0.6B`
+- Sent 8 sequential `/v1/completions` requests; all returned HTTP `200`.
+- Each response reported `prompt_tokens=19`, `completion_tokens=8`,
+  `total_tokens=27`.
+- Route coverage:
+  - `8100/8300 -> 8200`
+  - `8101/8301 -> 8201`
+  - `8102/8302 -> 8200`
+  - `8103/8303 -> 8201`
+  - repeated once.
+- Proxy logged Projection metadata keys only for all 8 requests.
+- Attention logged `224` IPC descriptor imports: `56` per Attention executor.
+- Projection logged `1792` OFFLOAD_EXEC traces: `896` per Projection executor,
+  matching `8 requests * 8 tokens * 28 layers`.
+- Attention logged `1792` OFFLOAD_EXEC traces: `448` per Attention executor,
+  matching `2 requests * 8 tokens * 28 layers`.
+- `kv_transfer_config` appeared only in Prefill logs.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
+  `invalid slot`, or `slot_mapping` errors were found.
+
 ### 4PA2P OFFLOAD_KV IPC X:Y Routing
 
 Command shape:

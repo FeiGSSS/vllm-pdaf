@@ -23,6 +23,18 @@ def test_model_runner_passes_pap_enabled_to_forward_context() -> None:
     assert "PAP enabled via per-request TCP endpoint" in text
 
 
+def test_scheduler_sends_only_local_pap_projection_blocks_to_model_runner() -> None:
+    text = (ROOT / "vllm" / "v1" / "core" / "sched" / "scheduler.py").read_text()
+
+    start = text.index("                request = request_queue.pop_request()")
+    end = text.index("                num_scheduled_tokens[request_id] = num_new_tokens")
+    block = text[start:end]
+
+    assert "pap_remote_prefix_len is not None" in block
+    assert "req_to_new_blocks[request_id] = new_blocks" in block
+    assert "req_to_new_blocks[request_id] = self.kv_cache_manager.get_blocks(" in block
+
+
 def test_engine_core_allows_pap_metadata_without_kv_connector() -> None:
     text = (ROOT / "vllm" / "v1" / "engine" / "core.py").read_text()
 
@@ -58,20 +70,20 @@ def test_qwen3_pap_gate_checks_decode_only() -> None:
     assert "pap_num_scheduled_tokens" in method
 
 
-def test_qwen3_pap_sends_scheduler_descriptor() -> None:
+def test_qwen3_pap_sends_position_only_offload_exec_descriptor() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
     start = text.index("    def _compute_pap_attention")
     end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
     method = text[start:end]
 
-    assert "slot_mapping" in method
     assert "seq_lens" in method
     assert "pap_positions" in method
-    assert "block_id = slot // block_size" in method
     assert "positions_cpu.reshape(-1)[req_index]" in method
-    assert '"block_id": block_id' in method
-    assert '"slot": slot' in method
     assert '"seq_len": seq_len' in method
+    assert "slot_mapping" not in method
+    assert "block_id = slot // block_size" not in method
+    assert '"block_id": block_id' not in method
+    assert '"slot": slot' not in method
     assert "ThreadPoolExecutor" in text
     assert "PAP_REMOTE_ATTENTION_PARALLELISM" in method
 
@@ -86,14 +98,14 @@ def test_model_runner_passes_pap_block_size_to_forward_context() -> None:
     assert "self.vllm_config.cache_config.block_size" in text
 
 
-def test_qwen3_pap_reads_block_size_from_forward_context() -> None:
+def test_qwen3_pap_attention_does_not_require_projection_block_size() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
     start = text.index("    def _compute_pap_attention")
     end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
     method = text[start:end]
 
-    assert 'additional_kwargs.get("pap_block_size")' in method
-    assert "PAP attention missing cache block_size" in method
+    assert 'additional_kwargs.get("pap_block_size")' not in method
+    assert "PAP attention missing cache block_size" not in method
 
 
 def test_qwen3_pap_imports_prefill_kv_for_offload() -> None:

@@ -809,9 +809,16 @@ class Scheduler(SchedulerInterface):
 
                 if self.lora_config and request.lora_request:
                     scheduled_loras.add(request.lora_request.lora_int_id)
-                req_to_new_blocks[request_id] = self.kv_cache_manager.get_blocks(
-                    request_id
-                )
+                if pap_remote_prefix_len is not None:
+                    # PAP Projection does not own the remote prompt prefix KV.
+                    # Keep Projection model-runner block tables scoped to the
+                    # current local token; PAP Attention uses position metadata
+                    # to address the PA/Attention-owned sequence state.
+                    req_to_new_blocks[request_id] = new_blocks
+                else:
+                    req_to_new_blocks[request_id] = self.kv_cache_manager.get_blocks(
+                        request_id
+                    )
                 num_scheduled_tokens[request_id] = num_new_tokens
                 token_budget -= num_new_tokens
                 request.status = RequestStatus.RUNNING

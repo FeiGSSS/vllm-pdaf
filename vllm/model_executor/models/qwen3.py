@@ -299,32 +299,6 @@ class Qwen3Attention(nn.Module):
         if int(seq_lens.shape[0]) < num_reqs:
             raise RuntimeError("PAP attention seq_lens do not cover all requests")
 
-        slot_mapping_container = forward_context.slot_mapping
-        if isinstance(slot_mapping_container, dict):
-            slot_mapping = slot_mapping_container.get(self.attn.layer_name)
-        elif isinstance(slot_mapping_container, list) and slot_mapping_container:
-            slot_mapping = slot_mapping_container[0].get(self.attn.layer_name)
-        else:
-            slot_mapping = getattr(attn_metadata, "slot_mapping", None)
-        if slot_mapping is None:
-            slot_mapping = getattr(attn_metadata, "slot_mapping", None)
-        if slot_mapping is None:
-            raise RuntimeError("PAP attention missing scheduler slot_mapping")
-        if int(slot_mapping.shape[0]) < num_reqs:
-            raise RuntimeError(
-                "PAP attention slot_mapping does not cover all requests"
-            )
-
-        block_size = additional_kwargs.get("pap_block_size")
-        if block_size is None:
-            block_size = getattr(getattr(self.attn, "impl", None), "block_size", None)
-        if block_size is None:
-            block_size = getattr(self.attn, "block_size", None)
-        if block_size is None or int(block_size) <= 0:
-            raise RuntimeError("PAP attention missing cache block_size")
-        block_size = int(block_size)
-
-        slot_mapping_cpu = slot_mapping.detach().to(device="cpu", dtype=torch.long)
         seq_lens_cpu = seq_lens.detach().to(device="cpu", dtype=torch.long)
         positions = additional_kwargs.get("pap_positions")
         if positions is None:
@@ -365,12 +339,6 @@ class Qwen3Attention(nn.Module):
                 raise RuntimeError(
                     f"PAP attention cannot route non-OpenAI request id {request_id}"
                 )
-            slot = int(slot_mapping_cpu[req_index].item())
-            if slot < 0:
-                raise RuntimeError(
-                    f"PAP attention invalid slot_mapping for {request_id}: {slot}"
-                )
-            block_id = slot // block_size
             seq_len = int(positions_cpu.reshape(-1)[req_index].item()) + 1
             max_seq_len = int(seq_lens_cpu[req_index].item())
             if seq_len > max_seq_len:
@@ -406,8 +374,6 @@ class Qwen3Attention(nn.Module):
                         "key": key[req_index : req_index + 1],
                         "value": value[req_index : req_index + 1],
                         "scale": float(self.scaling),
-                        "block_id": block_id,
-                        "slot": slot,
                         "seq_len": seq_len,
                     },
                 )

@@ -97,3 +97,68 @@ Result: `70 passed`.
 - Full restart PAP experiments instead of restarting individual services.
 - Clean E2E processes by PID and verify with `pgrep` before starting another
   run.
+
+## 2026-05-24 Projection Local Block-State Tightening
+
+Latest local phase after `160da122c`:
+
+- `Qwen3Attention._compute_pap_attention()` no longer reads
+  `forward_context.slot_mapping`.
+- Projection no longer derives or sends `block_id` / `slot` in the PAP
+  OFFLOAD_EXEC call metadata; it sends Q/K/V plus `seq_len` through the existing
+  descriptor path.
+- Attention already derives block/slot from `seq_len` in
+  `compute_offload_exec_output()`, so this aligns the active NCCL compact path
+  with a Projection node that does not reason about prompt-prefix block tables.
+- Scheduler waiting-request PAP branch now records `req_to_new_blocks = new_blocks`
+  for PAP metadata-only Projection requests, while non-PAP requests keep
+  `kv_cache_manager.get_blocks(request_id)`.
+
+Focused verification:
+
+```bash
+.venv/bin/python -m pytest tests/pap/test_pap_true_split_contract.py -q
+```
+
+Result: `19 passed`.
+
+Full focused PAP unit suite:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `71 passed`.
+
+E2E after the change:
+
+- 1PA1P Qwen3-0.6B:
+  - HTTP `200`.
+  - Usage `prompt_tokens=29`, `completion_tokens=16`, `total_tokens=45`.
+  - Proxy Projection payload keys were PAP metadata only.
+  - Attention IPC imports `28`.
+  - Projection OFFLOAD_EXEC traces `448` = `16 * 28`.
+  - No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
+    `invalid slot`, or `slot_mapping`.
+- 4PA2P Qwen3-0.6B:
+  - 8 sequential requests, all HTTP `200`.
+  - Route coverage `8100/8300 -> 8200`, `8101/8301 -> 8201`,
+    `8102/8302 -> 8200`, `8103/8303 -> 8201`, repeated once.
+  - Each response had `prompt_tokens=19`, `completion_tokens=8`,
+    `total_tokens=27`.
+  - Attention IPC imports `224` total, `56` per Attention.
+  - Projection OFFLOAD_EXEC traces `1792` total, `896` per Projection.
+  - Attention OFFLOAD_EXEC traces `1792` total, `448` per Attention.
+  - `kv_transfer_config` appeared only in Prefill logs.
+  - No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
+    `invalid slot`, or `slot_mapping`.
+
+Next work:
+
+- Consider the remaining deeper cut: avoid allocating external
+  remote-prefix blocks inside `KVCacheManager.allocate_slots()` for PAP
+  Projection entirely.
