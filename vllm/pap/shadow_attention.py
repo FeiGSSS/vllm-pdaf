@@ -19,6 +19,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 import torch
+from torch.multiprocessing.reductions import reduce_tensor
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,96 @@ def _block_ids_from_block_table(
     return [int(block_id) for block_id in blocks]
 
 
+def _normalize_offload_kv_transport(
+    transport: Any | None,
+) -> "PAPTensorTransport | None":
+    if transport is None:
+        return None
+    from vllm.pap.data_plane import PAPTensorTransport
+
+    return PAPTensorTransport(transport)
+
+
+def _gpu_uuid_for_tensor(tensor: torch.Tensor) -> str:
+    if tensor.device.type != "cuda":
+        return "cpu"
+    device_index = tensor.device.index
+    if device_index is None:
+        device_index = torch.cuda.current_device()
+    return str(torch.cuda.get_device_properties(device_index).uuid)
+
+
+def _make_cuda_ipc_tensor_handle(
+    tensor: torch.Tensor,
+) -> "PAPCudaIPCTensorHandle":
+    from vllm.pap.data_plane import PAPCudaIPCTensorHandle
+
+    _, ipc_args = reduce_tensor(tensor)
+    return PAPCudaIPCTensorHandle(
+        dtype=str(tensor.dtype).removeprefix("torch."),
+        shape=tuple(int(dim) for dim in tensor.shape),
+        ipc_handle={_gpu_uuid_for_tensor(tensor): tuple(ipc_args)},
+    )
+
+
+def _maybe_synchronize_cuda_ipc_tensors(*tensors: torch.Tensor) -> None:
+    if not torch.cuda.is_available():
+        return
+    synced_devices: set[int] = set()
+    for tensor in tensors:
+        if tensor.device.type != "cuda":
+            continue
+        device_index = tensor.device.index
+        if device_index is None:
+            device_index = torch.cuda.current_device()
+        if device_index in synced_devices:
+            continue
+        torch.cuda.current_stream(device_index).synchronize()
+        synced_devices.add(device_index)
+
+
+def _post_prefill_kv_ipc(
+    *,
+    request_id: str,
+    layer_name: str,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    seq_len: int,
+    block_ids: Sequence[int] | None,
+    tcp_endpoint: str,
+    timeout: float,
+) -> int:
+    from vllm.pap.data_plane import PAPOffloadKVIPCDescriptor
+    from vllm.pap.remote_attention import (
+        deserialize_tensor_bundle,
+        serialize_tensor_bundle,
+    )
+
+    _maybe_synchronize_cuda_ipc_tensors(key, value)
+    descriptor = PAPOffloadKVIPCDescriptor(
+        request_id=request_id,
+        layer_name=layer_name,
+        seq_len=int(seq_len),
+        block_ids=tuple([] if block_ids is None else [int(b) for b in block_ids]),
+        key=_make_cuda_ipc_tensor_handle(key),
+        value=_make_cuda_ipc_tensor_handle(value),
+    )
+    request_body = serialize_tensor_bundle(
+        {
+            "command": "import_prefill_kv_ipc",
+            "descriptor": descriptor.to_dict(),
+        },
+        {},
+    )
+    response_body = _post_bytes_tcp(
+        endpoint=tcp_endpoint,
+        payload=request_body,
+        timeout=timeout,
+    )
+    response_metadata, _ = deserialize_tensor_bundle(response_body)
+    return int(response_metadata["seq_len"])
+
+
 def import_prefill_kv(
     *,
     request_id: str,
@@ -164,6 +255,7 @@ def import_prefill_kv(
     block_ids: Sequence[int] | None = None,
     tcp_endpoint: str | None = None,
     timeout: float | None = None,
+    transport: Any | None = None,
 ) -> int:
     from vllm.pap.remote_attention import (
         deserialize_tensor_bundle,
@@ -178,6 +270,20 @@ def import_prefill_kv(
         if timeout is not None
         else float(os.environ.get("PAP_REMOTE_ATTENTION_TIMEOUT", "5.0"))
     )
+    from vllm.pap.data_plane import PAPTensorTransport
+
+    if _normalize_offload_kv_transport(transport) is PAPTensorTransport.CUDA_IPC:
+        return _post_prefill_kv_ipc(
+            request_id=request_id,
+            layer_name=layer_name,
+            key=key,
+            value=value,
+            seq_len=int(seq_len),
+            block_ids=block_ids,
+            tcp_endpoint=tcp_endpoint,
+            timeout=request_timeout,
+        )
+
     metadata = {
         "command": "import_prefill_kv",
         "request_id": request_id,
@@ -207,6 +313,7 @@ def import_prefill_kv_from_paged_cache(
     layout: str,
     tcp_endpoint: str | None = None,
     timeout: float | None = None,
+    transport: Any | None = None,
 ) -> int:
     from vllm.pap.remote_attention import gather_paged_kv
 
@@ -230,4 +337,5 @@ def import_prefill_kv_from_paged_cache(
         ),
         tcp_endpoint=tcp_endpoint,
         timeout=timeout,
+        transport=transport,
     )

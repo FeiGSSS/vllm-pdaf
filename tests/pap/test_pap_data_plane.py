@@ -198,3 +198,56 @@ def test_offload_kv_ipc_descriptor_roundtrip() -> None:
 
     assert restored == descriptor
     assert restored.transport is PAPTensorTransport.CUDA_IPC
+
+
+def test_import_prefill_kv_cuda_ipc_posts_descriptor_without_tensors(
+    monkeypatch,
+) -> None:
+    from vllm.pap.remote_attention import (
+        deserialize_tensor_bundle,
+        serialize_tensor_bundle,
+    )
+    from vllm.pap.shadow_attention import import_prefill_kv
+
+    posted_payloads: list[bytes] = []
+
+    def fake_reduce_tensor(tensor):
+        return object(), ("storage", 1, 2, 3, 4, 5, 0)
+
+    def fake_post_bytes_tcp(*, endpoint, payload, timeout):
+        assert endpoint == "127.0.0.1:8300"
+        posted_payloads.append(payload)
+        return serialize_tensor_bundle({"seq_len": 2}, {})
+
+    monkeypatch.setattr(
+        "vllm.pap.shadow_attention.reduce_tensor",
+        fake_reduce_tensor,
+    )
+    monkeypatch.setattr(
+        "vllm.pap.shadow_attention._post_bytes_tcp",
+        fake_post_bytes_tcp,
+    )
+
+    seq_len = import_prefill_kv(
+        request_id="cmpl-1",
+        layer_name="model.layers.0.self_attn.attn",
+        key=torch.zeros(2, 1, 2),
+        value=torch.ones(2, 1, 2),
+        seq_len=2,
+        block_ids=[4],
+        tcp_endpoint="127.0.0.1:8300",
+        transport=PAPTensorTransport.CUDA_IPC,
+    )
+
+    assert seq_len == 2
+    assert len(posted_payloads) == 1
+    metadata, tensors = deserialize_tensor_bundle(posted_payloads[0])
+    assert tensors == {}
+    assert metadata["command"] == "import_prefill_kv_ipc"
+    descriptor = metadata["descriptor"]
+    assert descriptor["request_id"] == "cmpl-1"
+    assert descriptor["layer_name"] == "model.layers.0.self_attn.attn"
+    assert descriptor["seq_len"] == 2
+    assert descriptor["block_ids"] == [4]
+    assert descriptor["key"]["shape"] == [2, 1, 2]
+    assert descriptor["value"]["shape"] == [2, 1, 2]

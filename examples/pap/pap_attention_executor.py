@@ -31,7 +31,6 @@ from vllm.pap.attention_session import (
 )
 from vllm.pap.data_plane import (
     PAPOffloadKVIPCDescriptor,
-    PAPTensorTransport,
     build_p2p_nccl_offload_exec_transport,
 )
 
