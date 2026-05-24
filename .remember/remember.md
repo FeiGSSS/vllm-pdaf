@@ -792,3 +792,64 @@ Current boundary:
   - `kv_transfer_config` appeared only in Prefill logs.
   - No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
     `invalid slot`, or `slot_mapping`.
+
+## 2026-05-24 PAP Shared KV Owner Phase 7
+
+Latest local phase after `21789daae`:
+
+- Added `PAKVOwner.reserve_next_decode_slot()` so the owner can derive and
+  validate the next decode slot from resident layer state.
+- `PAPAttentionRegistry.reserve_decode_slot()` now routes OFFLOAD_EXEC shared
+  KV decode slot selection through `PAKVOwner` when paged Prefill KV owner state
+  exists.
+- `compute_offload_exec_output()` now asks the registry for the decode
+  block/slot instead of computing it locally.
+- Existing non-resident fallback still uses the old `seq_len -> block_id/slot`
+  arithmetic.
+- If OFFLOAD_EXEC is replaying the current Prefill token, the registry returns
+  the existing resident slot without advancing owner state.
+
+Focused verification:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_attention_executor.py::test_compute_offload_exec_output_reserves_decode_slot_from_owner \
+  tests/pap/test_pap_attention_executor.py::test_compute_offload_exec_output_uses_step_block_descriptor \
+  tests/pap/test_pap_attention_executor.py::test_compute_offload_exec_output_from_packed_qkv \
+  tests/pap/test_pap_kv_owner.py -q
+```
+
+Result: `7 passed, 16 warnings`.
+
+Full focused PAP suite:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_kv_owner.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `103 passed, 16 warnings`.
+
+E2E 1PA1P Qwen3-0.6B with `max_tokens=8`:
+
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=11`, `completion_tokens=7`, `total_tokens=18`.
+- Output text: ` P P\n\n\n\n.\n\n`
+- Attention logged `28` paged Prefill KV descriptor imports.
+- Projection logged `224` OFFLOAD_EXEC traces.
+- Attention logged `224` OFFLOAD_EXEC traces plus the `28` paged imports.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `invalid slot`,
+  `slot_mapping`, `rejected`, `block ids do not cover`, `IndexError`, or
+  `500 Internal` matched in logs.
+
+Current boundary:
+
+- OFFLOAD_EXEC now enters the owner reservation path for shared-KV sessions.
+- `PAKVOwner` still computes the next block from logical seq_len and resident
+  capacity; it is not yet wired to a real vLLM physical block allocator.
+- Same-PA multi-turn reuse remains unverified.

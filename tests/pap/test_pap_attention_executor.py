@@ -140,6 +140,72 @@ def test_compute_offload_exec_output_uses_step_block_descriptor(monkeypatch) -> 
     assert session.decode_seq_lens["layer0"] == 498
 
 
+def test_compute_offload_exec_output_reserves_decode_slot_from_owner(
+    monkeypatch,
+) -> None:
+    import torch
+
+    layer_name = "model.layers.0.self_attn.attn"
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-owner-reserve",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+            q_size=2,
+            kv_size=2,
+            prefix_len=4,
+            block_size=4,
+        )
+    )
+    kv_cache = torch.zeros((2, 2, 4, 1, 2))
+    registry.import_prefill_paged_kv(
+        request_id="req-owner-reserve",
+        layer_name=layer_name,
+        kv_cache=kv_cache,
+        block_ids=[0],
+        seq_len=4,
+        block_size=4,
+        num_kv_heads=1,
+        layout="NHD",
+    )
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_HEAD_DIM", "2")
+
+    calls = []
+    original = registry._pa_kv_owner.reserve_next_decode_slot
+
+    def wrapped_reserve_next_decode_slot(*, session_id, layer_name):
+        calls.append((session_id, layer_name))
+        return original(session_id=session_id, layer_name=layer_name)
+
+    monkeypatch.setattr(
+        registry._pa_kv_owner,
+        "reserve_next_decode_slot",
+        wrapped_reserve_next_decode_slot,
+    )
+
+    output = compute_offload_exec_output(
+        registry=registry,
+        request_id="req-owner-reserve",
+        layer_name=layer_name,
+        qkv=torch.tensor([[1.0, 0.0, 5.0, 6.0, 7.0, 8.0]]),
+        scale=1.0,
+        step=5,
+    )
+
+    session_id = registry.resolve_session_request_id("req-owner-reserve")
+    state = registry._pa_kv_owner.get_layer_state(session_id, layer_name)
+    assert output.shape == (1, 2)
+    assert calls == [("req-owner-reserve", layer_name)]
+    assert torch.equal(kv_cache[0, 1, 0, :, :], torch.tensor([[5.0, 6.0]]))
+    assert torch.equal(kv_cache[1, 1, 0, :, :], torch.tensor([[7.0, 8.0]]))
+    assert state.block_ids == (0, 1)
+    assert state.materialized_slots[-1].seq_len == 5
+    assert layer_name not in registry._decode_kv[session_id]
+
+
 def test_run_offload_exec_once_receives_qkv_and_sends_output(monkeypatch) -> None:
     import torch
 

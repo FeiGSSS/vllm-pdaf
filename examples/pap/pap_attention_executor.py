@@ -12,6 +12,7 @@ control-plane contract.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import os
 import socket
@@ -29,12 +30,12 @@ from vllm.pap.attention_session import (
     AttentionDecodeDescriptor,
     AttentionSessionStore,
 )
-from vllm.pap.kv_owner import PAKVOwner
 from vllm.pap.data_plane import (
     PAPOffloadKVIPCDescriptor,
     PAPOffloadKVPagedIPCDescriptor,
     build_p2p_nccl_offload_exec_transport,
 )
+from vllm.pap.kv_owner import PAKVOwner
 
 logging.basicConfig(
     level=logging.INFO,
@@ -361,16 +362,56 @@ class PAPAttentionRegistry:
             self._prefill_kv.pop(request_id, None)
             self._resident_paged_kv.pop(request_id, None)
             self._attention_sessions.free_session(request_id)
-            try:
+            with contextlib.suppress(KeyError):
                 self._pa_kv_owner.release_lease(request_id)
-            except KeyError:
-                pass
             return existed
 
     def resolve_session_request_id(self, request_id: str) -> str | None:
         """Map vLLM-wrapped request ids back to the proxy-level PAP id."""
         with self._lock:
             return self._resolve_session_request_id_locked(request_id)
+
+    def reserve_decode_slot(
+        self,
+        *,
+        request_id: str,
+        layer_name: str,
+        seq_len: int,
+    ) -> tuple[int, int]:
+        with self._lock:
+            session_request_id = self._resolve_session_request_id_locked(request_id)
+            if session_request_id is None:
+                raise KeyError(request_id)
+            session = self._sessions[session_request_id]
+            seq_len = int(seq_len)
+            if seq_len <= 0:
+                raise ValueError("decode seq_len must be positive")
+
+            owner_layer = self._pa_kv_owner.get_layer_state(
+                session_request_id,
+                layer_name,
+            )
+            if owner_layer is not None:
+                if seq_len == owner_layer.seq_len + 1:
+                    reserved = self._pa_kv_owner.reserve_next_decode_slot(
+                        session_id=session_request_id,
+                        layer_name=layer_name,
+                    )
+                    return reserved.block_id, reserved.slot
+                if seq_len == owner_layer.seq_len and owner_layer.block_ids:
+                    block_index = (seq_len - 1) // session.block_size
+                    if block_index < len(owner_layer.block_ids):
+                        block_id = int(owner_layer.block_ids[block_index])
+                    else:
+                        block_id = int(owner_layer.block_ids[-1])
+                    slot = block_id * session.block_size + (
+                        (seq_len - 1) % session.block_size
+                    )
+                    return block_id, slot
+
+            block_id = (seq_len - 1) // session.block_size
+            slot = block_id * session.block_size + ((seq_len - 1) % session.block_size)
+            return block_id, slot
 
     def _resolve_session_request_id_locked(self, request_id: str) -> str | None:
         if request_id in self._sessions:
@@ -1107,7 +1148,9 @@ def compute_batch_binary_attention_response(
     if trace_remote_attention:
         trace_serialize_ms = (time.perf_counter() - trace_serialize_start) * 1000.0
         trace_total_ms = (time.perf_counter() - trace_total_start) * 1000.0
-        layer_name = str(metadata["items"][0]["layer_name"]) if metadata["items"] else ""
+        layer_name = (
+            str(metadata["items"][0]["layer_name"]) if metadata["items"] else ""
+        )
         logger.info(
             "PAP remote attention batch server trace layer=%s calls=%d "
             "deserialize_ms=%.3f append_ms=%.3f query_ms=%.3f compute_ms=%.3f "
@@ -1222,6 +1265,7 @@ def compute_binary_attention_response(
     offload_exec_transport: Any | None = None,
     offload_exec_lock: Any | None = None,
 ) -> bytes:
+    from vllm.pap.data_plane import PAPOffloadExecDescriptor
     from vllm.pap.remote_attention import (
         COMPACT_ATTENTION_REQUEST_MAGIC,
         COMPACT_OFFLOAD_EXEC_MAGIC,
@@ -1230,7 +1274,6 @@ def compute_binary_attention_response(
         serialize_compact_offload_exec_ack,
         serialize_tensor_bundle,
     )
-    from vllm.pap.data_plane import PAPOffloadExecDescriptor
 
     if payload.startswith(COMPACT_ATTENTION_REQUEST_MAGIC):
         return compute_compact_attention_response(registry, payload)
@@ -1424,8 +1467,11 @@ def compute_offload_exec_output(
     seq_len = int(step)
     if seq_len <= 0:
         raise ValueError("PAP OFFLOAD_EXEC step must be positive")
-    block_id = (seq_len - 1) // session.block_size
-    slot = block_id * session.block_size + ((seq_len - 1) % session.block_size)
+    block_id, slot = registry.reserve_decode_slot(
+        request_id=session_request_id,
+        layer_name=layer_name,
+        seq_len=seq_len,
+    )
     segments, _ = registry.append_decode_kv(
         request_id=session_request_id,
         layer_name=layer_name,

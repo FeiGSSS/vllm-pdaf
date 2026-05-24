@@ -130,6 +130,25 @@ class PAKVOwner:
             materialized=False,
         )
 
+    def reserve_next_decode_slot(
+        self,
+        *,
+        session_id: str,
+        layer_name: str,
+    ) -> PAKVDecodeSlot:
+        with self._lock:
+            session = self._require_session(str(session_id))
+            layer = self._require_layer(session, str(layer_name))
+            seq_len = layer.seq_len + 1
+            self._validate_seq_len(session, seq_len)
+            block_id = (seq_len - 1) // session.block_size
+        return self.reserve_decode_slot(
+            session_id=str(session_id),
+            layer_name=str(layer_name),
+            block_id=block_id,
+            seq_len=seq_len,
+        )
+
     def materialize_decode_slot(
         self,
         *,

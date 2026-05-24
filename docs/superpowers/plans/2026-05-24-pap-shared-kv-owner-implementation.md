@@ -563,3 +563,84 @@ Boundary:
   validated/materialized by the owner.
 - Next phase should move decode slot/block reservation earlier into the
   Prefill-owner path and use the owner state to drive same-PA multi-turn reuse.
+
+### Task 8: Reserve OFFLOAD_EXEC Decode Slots Through PAKVOwner
+
+**Files:**
+- Modify: `vllm/pap/kv_owner.py`
+- Modify: `examples/pap/pap_attention_executor.py`
+- Test: `tests/pap/test_pap_kv_owner.py`
+- Test: `tests/pap/test_pap_attention_executor.py`
+
+- [x] **Step 1: Write next-slot owner test**
+
+Added a `PAKVOwner.reserve_next_decode_slot()` contract that derives the next
+decode seq_len from the owner layer state, validates the target block against
+the resident backing capacity, publishes the new block id in owner metadata,
+and returns the block/slot descriptor.
+
+- [x] **Step 2: Write OFFLOAD_EXEC owner-reservation test**
+
+Added an Attention executor test proving `compute_offload_exec_output()` calls
+the owner reservation path after paged Prefill KV has been imported, writes the
+Projection-provided decode K/V into the resident paged backing tensor, records a
+materialized owner slot, and avoids an Attention-local decode KV copy.
+
+- [x] **Step 3: Implement minimal owner reservation path**
+
+`PAPAttentionRegistry.reserve_decode_slot()` now resolves the session and, when
+resident owner layer state exists, reserves the next decode slot through
+`PAKVOwner`. If OFFLOAD_EXEC is replaying the current Prefill token
+(`seq_len == owner_layer.seq_len`), it returns the existing resident block slot
+without advancing owner state. Non-resident/fallback paths keep the previous
+`seq_len -> block_id/slot` arithmetic.
+
+`compute_offload_exec_output()` now obtains block/slot descriptors from the
+registry reservation method before calling `append_decode_kv()`.
+
+- [x] **Step 4: Verify**
+
+Run:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_attention_executor.py::test_compute_offload_exec_output_reserves_decode_slot_from_owner \
+  tests/pap/test_pap_attention_executor.py::test_compute_offload_exec_output_uses_step_block_descriptor \
+  tests/pap/test_pap_attention_executor.py::test_compute_offload_exec_output_from_packed_qkv \
+  tests/pap/test_pap_kv_owner.py -q
+```
+
+Result: `7 passed, 16 warnings`.
+
+Run:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_kv_owner.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `103 passed, 16 warnings`.
+
+E2E 1PA1P Qwen3-0.6B with `max_tokens=8`:
+
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=11`, `completion_tokens=7`, `total_tokens=18`.
+- Output text: ` P P\n\n\n\n.\n\n`
+- Attention logged `28` paged Prefill KV descriptor imports.
+- Projection logged `224` OFFLOAD_EXEC traces.
+- Attention logged `224` OFFLOAD_EXEC traces plus the `28` paged imports.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `invalid slot`,
+  `slot_mapping`, `rejected`, `block ids do not cover`, `IndexError`, or
+  `500 Internal` matched in logs.
+
+Boundary:
+
+- OFFLOAD_EXEC shared-KV decode slot selection now enters `PAKVOwner`.
+- `PAKVOwner` still computes the next block from logical seq_len and resident
+  capacity; it is not yet integrated with a real vLLM physical block allocator.
+- Same-PA multi-turn reuse remains unverified.
