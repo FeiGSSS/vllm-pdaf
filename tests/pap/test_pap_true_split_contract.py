@@ -30,7 +30,7 @@ def test_scheduler_sends_only_local_pap_projection_blocks_to_model_runner() -> N
     end = text.index("                num_scheduled_tokens[request_id] = num_new_tokens")
     block = text[start:end]
 
-    assert "pap_remote_prefix_len is not None" in block
+    assert "pap_projection_state is not None" in block
     assert "req_to_new_blocks[request_id] = new_blocks" in block
     assert "req_to_new_blocks[request_id] = self.kv_cache_manager.get_blocks(" in block
 
@@ -42,7 +42,7 @@ def test_scheduler_disables_external_block_allocation_for_pap_projection() -> No
     end = text.index("                if new_blocks is None:")
     block = text[start:end]
 
-    assert "allocate_external_computed_blocks=pap_remote_prefix_len is None" in block
+    assert "pap_projection_state.allocate_external_computed_blocks" in block
 
 
 def test_scheduler_offsets_running_pap_projection_local_progress() -> None:
@@ -52,7 +52,8 @@ def test_scheduler_offsets_running_pap_projection_local_progress() -> None:
     end = text.index("        # Record the LoRAs in scheduled_running_reqs")
     block = text[start:end]
 
-    assert "_get_pap_projection_local_computed_token_offset(request)" in block
+    assert "_get_pap_projection_schedule_state(request)" in block
+    assert "pap_projection_state.local_computed_token_offset" in block
     assert "local_computed_token_offset=pap_local_computed_token_offset" in block
 
 
@@ -67,8 +68,18 @@ def test_scheduler_disables_local_slot_allocation_for_pap_projection() -> None:
     waiting_end = text.index("                if new_blocks is None:")
     waiting_block = text[waiting_start:waiting_end]
 
-    assert "allocate_local_slots=pap_remote_prefix_len is None" in running_block
-    assert "allocate_local_slots=pap_remote_prefix_len is None" in waiting_block
+    assert "allocate_pap_local_slots" in running_block
+    assert "pap_projection_state.allocate_local_slots" in waiting_block
+
+
+def test_scheduler_uses_explicit_pap_projection_schedule_state() -> None:
+    text = (ROOT / "vllm" / "v1" / "core" / "sched" / "scheduler.py").read_text()
+
+    assert "class PAPProjectionScheduleState" in text
+    assert "_get_pap_projection_schedule_state" in text
+    assert "remote_computed_tokens=remote_computed_tokens" in text
+    assert "allocate_external_computed_blocks: bool = False" in text
+    assert "allocate_local_slots: bool = False" in text
 
 
 def test_engine_core_allows_pap_metadata_without_kv_connector() -> None:
@@ -91,6 +102,23 @@ def test_qwen3_pap_path_uses_nccl_offload_exec() -> None:
     assert "transport.recv_output" in method
     assert "PAPOffloadExecDescriptor" in method
     assert "trigger_offload_exec_attention" in method
+
+
+def test_qwen3_pap_forward_returns_before_local_attention() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
+
+    start = text.index("    def forward(\n")
+    end = text.index("    def _should_use_pap_attention")
+    method = text[start:end]
+
+    pap_branch = method.index("if self._should_use_pap_attention():")
+    pap_compute = method.index("attn_output = self._compute_pap_attention", pap_branch)
+    pap_return = method.index("return output", pap_compute)
+    local_attention = method.index("attn_output = self.attn(q, k, v)")
+    prefill_import = method.index("self._maybe_import_pap_prefill_kv_to_attention()")
+
+    assert pap_branch < pap_compute < pap_return < local_attention
+    assert local_attention < prefill_import
 
 
 def test_qwen3_pap_gate_checks_decode_only() -> None:

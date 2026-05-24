@@ -128,6 +128,26 @@ def test_pap_projection_remote_prefix_len_parser():
         Scheduler._get_pap_projection_remote_prefix_len(request)
 
 
+def test_pap_projection_schedule_state_is_explicit():
+    (request,) = create_requests(num_requests=1, num_tokens=10)
+    request.kv_transfer_params = {
+        "pap_projection_kv_unaware": True,
+        "pap_remote_prefix_len": 10,
+    }
+
+    state = Scheduler._get_pap_projection_schedule_state(request)
+
+    assert state is not None
+    assert state.remote_prefix_len == 10
+    assert state.remote_computed_tokens == 9
+    assert state.local_computed_token_offset == 9
+    assert not state.allocate_external_computed_blocks
+    assert not state.allocate_local_slots
+
+    request.kv_transfer_params = None
+    assert Scheduler._get_pap_projection_schedule_state(request) is None
+
+
 def test_schedule_multimodal_requests():
     scheduler = create_scheduler(model="llava-hf/llava-1.5-7b-hf")
     mm_positions = [[PlaceholderRange(offset=i, length=100)] for i in range(10)]

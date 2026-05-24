@@ -550,6 +550,54 @@ Result: `73 passed`.
 - No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
   `invalid slot`, or `slot_mapping` errors were found.
 
+## Explicit PAP Projection Scheduler State
+
+This phase keeps Projection as a normal vLLM production server: OpenAI API
+handling, model weight loading, model runner setup, logits, and sampling are
+still vLLM-owned. The change is inside scheduler state selection.
+
+- Added `PAPProjectionScheduleState` in
+  `vllm/v1/core/sched/scheduler.py`.
+- For `pap_projection_kv_unaware=True`, the state records:
+  - `remote_prefix_len`
+  - `remote_computed_tokens = remote_prefix_len - 1`
+  - `local_computed_token_offset = remote_prefix_len - 1`
+  - `allocate_external_computed_blocks=False`
+  - `allocate_local_slots=False`
+- Waiting and running request scheduling now read this state instead of
+  scattering `pap_remote_prefix_len is None` checks through the allocation
+  calls.
+- Qwen3 PAP forward has a contract test proving the PAP branch returns after
+  `_compute_pap_attention()` and before local `self.attn(q, k, v)`, so PAP
+  requests do not enter the local attention KV update path.
+
+Focused TDD/contract verification:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/v1/core/test_scheduler.py::test_pap_projection_schedule_state_is_explicit -q
+```
+
+Result: RED first with missing `_get_pap_projection_schedule_state`, then
+`1 passed` after implementation.
+
+Regression suite:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/v1/core/test_scheduler.py::test_pap_projection_remote_prefix_len_parser \
+  tests/v1/core/test_scheduler.py::test_pap_projection_schedule_state_is_explicit -q
+```
+
+Result: `26 passed`.
+
+Boundary still open:
+
+- Projection still initializes vLLM KV cache tensors during process startup.
+  Request-level scheduling is KV-unaware and slotless, but skipping startup KV
+  tensor allocation is a separate production model-runner compatibility phase.
+
 ## Qwen3-0.6B PAP Projection Running Local Slot Offset
 
 Code checkpoint:

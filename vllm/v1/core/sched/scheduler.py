@@ -4,7 +4,7 @@ import itertools
 import time
 from collections import defaultdict, deque
 from collections.abc import Iterable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any
 
 from vllm.compilation.cuda_graph import CUDAGraphStat
@@ -59,6 +59,15 @@ from vllm.v1.structured_output import StructuredOutputManager
 from vllm.v1.utils import record_function_or_nullcontext
 
 logger = init_logger(__name__)
+
+
+@dataclass(frozen=True)
+class PAPProjectionScheduleState:
+    remote_prefix_len: int
+    remote_computed_tokens: int
+    local_computed_token_offset: int
+    allocate_external_computed_blocks: bool = False
+    allocate_local_slots: bool = False
 
 
 class Scheduler(SchedulerInterface):
@@ -440,11 +449,18 @@ class Scheduler(SchedulerInterface):
 
             # Schedule newly needed KV blocks for the request.
             with record_function_or_nullcontext("schedule: allocate_slots"):
-                pap_remote_prefix_len = (
-                    self._get_pap_projection_remote_prefix_len(request)
+                pap_projection_state = (
+                    self._get_pap_projection_schedule_state(request)
                 )
                 pap_local_computed_token_offset = (
-                    self._get_pap_projection_local_computed_token_offset(request)
+                    pap_projection_state.local_computed_token_offset
+                    if pap_projection_state is not None
+                    else 0
+                )
+                allocate_pap_local_slots = (
+                    pap_projection_state.allocate_local_slots
+                    if pap_projection_state is not None
+                    else True
                 )
                 while True:
                     new_blocks = self.kv_cache_manager.allocate_slots(
@@ -452,7 +468,7 @@ class Scheduler(SchedulerInterface):
                         num_new_tokens,
                         num_lookahead_tokens=self.num_lookahead_tokens,
                         local_computed_token_offset=pap_local_computed_token_offset,
-                        allocate_local_slots=pap_remote_prefix_len is None,
+                        allocate_local_slots=allocate_pap_local_slots,
                     )
 
                     if new_blocks is not None:
@@ -594,13 +610,13 @@ class Scheduler(SchedulerInterface):
                 num_external_computed_tokens = 0
                 load_kv_async = False
                 connector_prefix_cache_queries, connector_prefix_cache_hits = 0, 0
-                pap_remote_prefix_len = (
-                    self._get_pap_projection_remote_prefix_len(request)
+                pap_projection_state = (
+                    self._get_pap_projection_schedule_state(request)
                 )
 
                 # Get already-cached tokens.
                 if request.num_computed_tokens == 0:
-                    if pap_remote_prefix_len is not None:
+                    if pap_projection_state is not None:
                         # PAP Projection is KV-unaware: prompt progress comes
                         # from PA/Attention metadata, not local prefix cache or
                         # KVConnector loads on the Projection node.
@@ -615,8 +631,10 @@ class Scheduler(SchedulerInterface):
                         )
 
                     # Get externally-cached tokens if using a KVConnector.
-                    if pap_remote_prefix_len is not None:
-                        num_external_computed_tokens = pap_remote_prefix_len - 1
+                    if pap_projection_state is not None:
+                        num_external_computed_tokens = (
+                            pap_projection_state.remote_computed_tokens
+                        )
                     elif self.connector is not None:
                         ext_tokens, load_kv_async = (
                             self.connector.get_num_new_matched_tokens(
@@ -750,8 +768,16 @@ class Scheduler(SchedulerInterface):
                     delay_cache_blocks=load_kv_async,
                     num_encoder_tokens=num_encoder_tokens,
                     full_sequence_must_fit=self.scheduler_reserve_full_isl,
-                    allocate_external_computed_blocks=pap_remote_prefix_len is None,
-                    allocate_local_slots=pap_remote_prefix_len is None,
+                    allocate_external_computed_blocks=(
+                        pap_projection_state.allocate_external_computed_blocks
+                        if pap_projection_state is not None
+                        else True
+                    ),
+                    allocate_local_slots=(
+                        pap_projection_state.allocate_local_slots
+                        if pap_projection_state is not None
+                        else True
+                    ),
                 )
 
                 if new_blocks is None:
@@ -767,7 +793,7 @@ class Scheduler(SchedulerInterface):
                 # if a load is needed. Note that
                 # This information is used to determine if a load is
                 # needed for this request.
-                if self.connector is not None and pap_remote_prefix_len is None:
+                if self.connector is not None and pap_projection_state is None:
                     self.connector.update_state_after_alloc(
                         request,
                         self.kv_cache_manager.get_blocks(request_id),
@@ -819,7 +845,7 @@ class Scheduler(SchedulerInterface):
 
                 if self.lora_config and request.lora_request:
                     scheduled_loras.add(request.lora_request.lora_int_id)
-                if pap_remote_prefix_len is not None:
+                if pap_projection_state is not None:
                     # PAP Projection does not own the remote prompt prefix KV.
                     # Keep Projection model-runner block tables scoped to the
                     # current local token; PAP Attention uses position metadata
@@ -984,13 +1010,27 @@ class Scheduler(SchedulerInterface):
         return prefix_len
 
     @classmethod
+    def _get_pap_projection_schedule_state(
+        cls, request: Request
+    ) -> PAPProjectionScheduleState | None:
+        remote_prefix_len = cls._get_pap_projection_remote_prefix_len(request)
+        if remote_prefix_len is None:
+            return None
+        remote_computed_tokens = max(remote_prefix_len - 1, 0)
+        return PAPProjectionScheduleState(
+            remote_prefix_len=remote_prefix_len,
+            remote_computed_tokens=remote_computed_tokens,
+            local_computed_token_offset=remote_computed_tokens,
+        )
+
+    @classmethod
     def _get_pap_projection_local_computed_token_offset(
         cls, request: Request
     ) -> int:
-        remote_prefix_len = cls._get_pap_projection_remote_prefix_len(request)
-        if remote_prefix_len is None:
+        state = cls._get_pap_projection_schedule_state(request)
+        if state is None:
             return 0
-        return max(remote_prefix_len - 1, 0)
+        return state.local_computed_token_offset
 
     def _preempt_request(self, request: Request, timestamp: float) -> None:
         """Preempt a request and put it back to the waiting queue.

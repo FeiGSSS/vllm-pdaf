@@ -157,6 +157,48 @@ E2E after the change:
   - No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
     `invalid slot`, or `slot_mapping`.
 
+## 2026-05-24 Explicit PAP Projection Scheduler State
+
+Current local phase:
+
+- Projection remains a vLLM production server. We are not replacing model
+  loading, OpenAI API request handling, model runner setup, logits, or sampling.
+- Scheduler now has an explicit `PAPProjectionScheduleState` for
+  `pap_projection_kv_unaware=True` requests instead of scattering implicit
+  `pap_remote_prefix_len is None` checks.
+- The state carries `remote_prefix_len`, `remote_computed_tokens`,
+  `local_computed_token_offset`, `allocate_external_computed_blocks=False`,
+  and `allocate_local_slots=False`.
+- Waiting and running request allocation both consume that state.
+- Added a Qwen3 contract that the PAP forward branch returns after
+  `_compute_pap_attention()` and before local `self.attn(q, k, v)`, so PAP
+  requests do not enter the local attention KV update path.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/v1/core/test_scheduler.py::test_pap_projection_schedule_state_is_explicit -q
+```
+
+Result: RED first with missing `_get_pap_projection_schedule_state`, then
+`1 passed` after implementation.
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/v1/core/test_scheduler.py::test_pap_projection_remote_prefix_len_parser \
+  tests/v1/core/test_scheduler.py::test_pap_projection_schedule_state_is_explicit -q
+```
+
+Result: `26 passed`.
+
+Open boundary:
+
+- Projection still allocates vLLM KV cache tensors at process startup. That is
+  not request data movement and PAP requests are slotless, but startup KV cache
+  allocation remains the next compatibility audit.
+
 ## 2026-05-24 PAP Projection Running Local Slot Offset
 
 Latest local phase after `0fb0c8bc3`:
