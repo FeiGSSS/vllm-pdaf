@@ -23,6 +23,28 @@ def test_model_runner_passes_pap_enabled_to_forward_context() -> None:
     assert "PAP enabled via per-request TCP endpoint" in text
 
 
+def test_pap_projection_process_skips_startup_kv_tensor_allocation() -> None:
+    model_runner = (
+        ROOT / "vllm" / "v1" / "worker" / "gpu" / "model_runner.py"
+    ).read_text()
+    attn_utils = (
+        ROOT / "vllm" / "v1" / "worker" / "gpu" / "attn_utils.py"
+    ).read_text()
+    launcher = (ROOT / "examples" / "pap" / "launch_pap_nixl.sh").read_text()
+
+    assert "PAP_PROJECTION_KV_UNAWARE=1" in launcher
+    assert "_pap_projection_kv_unaware_process" in model_runner
+    assert "init_kv_cache_metadata_only" in model_runner
+    assert "init_kv_cache(" in model_runner
+    assert "PAP Projection KV-unaware process skips local-attention warmup" in (
+        (ROOT / "vllm" / "v1" / "worker" / "gpu_worker.py").read_text()
+    )
+    assert "def init_kv_cache_metadata_only" in attn_utils
+    assert "_allocate_kv_cache(" not in attn_utils[
+        attn_utils.index("def init_kv_cache_metadata_only") :
+    ].split("def build_slot_mappings_by_layer", 1)[0]
+
+
 def test_scheduler_sends_only_local_pap_projection_blocks_to_model_runner() -> None:
     text = (ROOT / "vllm" / "v1" / "core" / "sched" / "scheduler.py").read_text()
 

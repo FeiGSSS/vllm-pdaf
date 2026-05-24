@@ -361,6 +361,7 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     PAP_OFFLOAD_EXEC_ZMQ_PORT="$projection_zmq_port" \
     PAP_OFFLOAD_EXEC_LOCAL_RANK=0 \
     PAP_OFFLOAD_EXEC_TRACE="$PAP_OFFLOAD_EXEC_TRACE" \
+    PAP_PROJECTION_KV_UNAWARE=1 \
     PAP_REMOTE_ATTENTION_PARALLELISM="$PAP_REMOTE_ATTENTION_PARALLELISM" \
     .venv/bin/vllm serve "$MODEL_PATH" \
         --port "$projection_port" \

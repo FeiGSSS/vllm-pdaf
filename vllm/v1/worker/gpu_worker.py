@@ -66,6 +66,15 @@ from .utils import request_memory
 
 logger = init_logger(__name__)
 
+
+def _pap_projection_kv_unaware_process() -> bool:
+    return os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
 if TYPE_CHECKING:
     from vllm.model_executor.model_loader.tensorizer import TensorizerConfig
     from vllm.v1.worker.gpu_model_runner import GPUModelRunner
@@ -566,6 +575,16 @@ class Worker(WorkerBase):
 
     @instrument(span_name="Warmup (GPU)")
     def compile_or_warm_up_model(self) -> CompilationTimes:
+        if _pap_projection_kv_unaware_process():
+            logger.info(
+                "PAP Projection KV-unaware process skips local-attention warmup"
+            )
+            set_random_seed(self.model_config.seed)
+            return CompilationTimes(
+                language_model=self.compilation_config.compilation_time,
+                encoder=self.compilation_config.encoder_compilation_time,
+            )
+
         warmup_sizes: list[int] = []
 
         if self.vllm_config.compilation_config.mode == CompilationMode.VLLM_COMPILE:

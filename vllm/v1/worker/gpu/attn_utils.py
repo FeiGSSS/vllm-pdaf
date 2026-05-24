@@ -321,6 +321,21 @@ def init_kv_cache(
     return kv_caches
 
 
+def init_kv_cache_metadata_only(
+    runner_kv_caches: list[torch.Tensor],
+    forward_context: dict[str, Any],
+    kv_cache_config: KVCacheConfig,
+    device: torch.device,
+) -> dict[str, Any]:
+    """Bind zero-size placeholder KV caches without allocating KV storage."""
+    kv_caches: dict[str, Any] = {}
+    for kv_cache_group in kv_cache_config.kv_cache_groups:
+        for layer_name in kv_cache_group.layer_names:
+            kv_caches[layer_name] = torch.empty(0, dtype=torch.int8, device=device)
+    bind_kv_cache(kv_caches, forward_context, runner_kv_caches)
+    return kv_caches
+
+
 def build_slot_mappings_by_layer(
     slot_mappings: torch.Tensor, kv_cache_config: KVCacheConfig
 ) -> dict[str, torch.Tensor]:

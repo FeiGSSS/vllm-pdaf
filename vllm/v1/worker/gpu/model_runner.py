@@ -19,6 +19,7 @@ instead of embedding feature-specific logic directly.
 
 import functools
 import gc
+import os
 import time
 from copy import deepcopy
 from typing import Any, NamedTuple
@@ -58,6 +59,7 @@ from vllm.v1.worker.gpu.attn_utils import (
     get_kv_cache_spec,
     init_attn_backend,
     init_kv_cache,
+    init_kv_cache_metadata_only,
 )
 from vllm.v1.worker.gpu.block_table import BlockTables
 from vllm.v1.worker.gpu.buffer_utils import async_copy_to_gpu
@@ -444,16 +446,36 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             )
 
         self.kv_caches: list[torch.Tensor] = []
-        kv_caches_dict = init_kv_cache(
-            self.kv_caches,
-            self.compilation_config.static_forward_context,
-            self.kv_cache_config,
-            self.attn_backends,
-            self.device,
-            self.cache_config.cache_dtype,
-            kernel_block_sizes,
-        )
+        if self._pap_projection_kv_unaware_process():
+            logger.info(
+                "PAP Projection KV-unaware process binds metadata-only KV "
+                "placeholders without allocating KV cache tensors"
+            )
+            kv_caches_dict = init_kv_cache_metadata_only(
+                self.kv_caches,
+                self.compilation_config.static_forward_context,
+                self.kv_cache_config,
+                self.device,
+            )
+        else:
+            kv_caches_dict = init_kv_cache(
+                self.kv_caches,
+                self.compilation_config.static_forward_context,
+                self.kv_cache_config,
+                self.attn_backends,
+                self.device,
+                self.cache_config.cache_dtype,
+                kernel_block_sizes,
+            )
         self.kv_connector = get_kv_connector(self.vllm_config, kv_caches_dict)
+
+    @staticmethod
+    def _pap_projection_kv_unaware_process() -> bool:
+        return os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower() in (
+            "1",
+            "true",
+            "yes",
+        )
 
     @torch.inference_mode()
     @step_eplb_after(is_dummy=True)

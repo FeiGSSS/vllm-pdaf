@@ -550,6 +550,108 @@ Result: `73 passed`.
 - No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
   `invalid slot`, or `slot_mapping` errors were found.
 
+## Qwen3-0.6B PAP Projection Metadata-Only Startup KV
+
+This phase removes Projection startup allocation of real KV cache backing
+tensors while keeping vLLM production serving, model loading, scheduler KV
+metadata, block tables, logits, and sampling intact.
+
+Implementation:
+
+- `examples/pap/launch_pap_nixl.sh` sets
+  `PAP_PROJECTION_KV_UNAWARE=1` only for Projection vLLM processes.
+- `vllm/v1/worker/gpu/model_runner.py` detects the process role and calls
+  `init_kv_cache_metadata_only()` instead of `init_kv_cache()`.
+- `vllm/v1/worker/gpu/attn_utils.py` binds per-layer zero-size placeholder
+  tensors into the forward context without calling `_allocate_kv_cache()`.
+- `vllm/v1/worker/gpu_worker.py` skips Projection startup warmup that would
+  otherwise run dummy requests through local attention. Profiling still runs
+  with `skip_attn=True` so vLLM can produce a logical KV cache config for
+  scheduler metadata.
+- This is process-level KV-unaware startup: Projection still has logical KV
+  metadata for vLLM bookkeeping, but no real Projection KV backing pool is
+  allocated and PAP requests already skip request-level slot allocation.
+
+Focused tests:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_launch_files.py \
+  tests/v1/core/test_scheduler.py::test_pap_projection_remote_prefix_len_parser \
+  tests/v1/core/test_scheduler.py::test_pap_projection_schedule_state_is_explicit \
+  tests/v1/core/test_kv_cache_utils.py::test_pap_projection_can_disable_local_slot_allocation -q
+```
+
+Result: `40 passed`.
+
+1PA1P Qwen3-0.6B E2E:
+
+- Command shape:
+  `PAP_TOPOLOGY=1pa1p PAP_SERVICE_ONLY=1 PAP_SKIP_SMOKE_REQUEST=1
+  PAP_PROXY_PORT=9000 PAP_MAX_TOKENS=8 PAP_ATTENTION_KV_DEBUG=1
+  PAP_OFFLOAD_EXEC_TRACE=1 bash examples/pap/launch_pap_nixl.sh --model
+  /data/ssd1/llm-models/Qwen3-0.6B`
+- Projection startup log contained:
+  `PAP Projection KV-unaware process binds metadata-only KV placeholders
+  without allocating KV cache tensors`.
+- Projection startup log contained:
+  `PAP Projection KV-unaware process skips local-attention warmup`.
+- Projection GPU memory after startup was about `1.6 GiB` for the 0.6B model,
+  compared with PA GPUs around `21 GiB` under the same run.
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=11`, `completion_tokens=8`, `total_tokens=19`.
+- Output was valid text: ` PAP is a type of projection that`.
+- Projection payload keys were metadata only:
+  `pap_attention_endpoint`, `pap_attention_kv_installed`,
+  `pap_attention_tcp_endpoint`, `pap_offload_exec_zmq_endpoint`,
+  `pap_prefill_kv_handle`, `pap_projection_kv_unaware`,
+  `pap_remote_prefix_len`.
+- Projection OFFLOAD_EXEC traces: `224` = `8 completion tokens * 28 layers`.
+- Attention OFFLOAD_EXEC traces: `224`.
+- Attention IPC imports: `28`.
+- `kv_transfer_config` appeared only in Prefill logs, not Projection logs.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
+  `invalid slot`, or `slot_mapping` errors were found.
+
+4PA2P Qwen3-0.6B E2E:
+
+- Command shape:
+  `PAP_TOPOLOGY=4pa2p PAP_SERVICE_ONLY=1 PAP_SKIP_SMOKE_REQUEST=1
+  PAP_PROXY_PORT=9000 PAP_MAX_TOKENS=8 PAP_ATTENTION_KV_DEBUG=1
+  PAP_OFFLOAD_EXEC_TRACE=1 bash examples/pap/launch_pap_nixl.sh --model
+  /data/ssd1/llm-models/Qwen3-0.6B`
+- Two Projection processes both logged metadata-only KV placeholders and
+  skipped local-attention warmup.
+- Projection GPUs after startup were about `1.6 GiB` each, while PA GPUs were
+  around `21 GiB`.
+- Sent 8 sequential `/v1/completions` requests; all returned HTTP `200`.
+- Each response reported `prompt_tokens=13`, `completion_tokens=8`,
+  `total_tokens=21`.
+- Outputs were valid text, not garbled.
+- Route coverage:
+  - `8100/8300 -> 8200`
+  - `8101/8301 -> 8201`
+  - `8102/8302 -> 8200`
+  - `8103/8303 -> 8201`
+  - repeated once.
+- Proxy logged metadata-only Projection keys for all requests.
+- Projection OFFLOAD_EXEC traces: `1792` total, `896` per Projection.
+- Attention OFFLOAD_EXEC traces: `1792` total, `448` per Attention executor.
+- Attention IPC imports: `56` per Attention executor.
+- `kv_transfer_config` appeared only in the four Prefill producer logs, not in
+  Projection startup logs.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
+  `invalid slot`, or `slot_mapping` errors were found.
+
+Remaining boundary:
+
+- This phase intentionally preserves vLLM logical KV metadata because scheduler,
+  block-table, and attention-metadata construction still depend on it. The
+  Projection data plane is KV-unaware; the next audit should look for any
+  remaining non-data metadata assumptions that can be simplified without
+  breaking production serving.
+
 ## Explicit PAP Projection Scheduler State
 
 This phase keeps Projection as a normal vLLM production server: OpenAI API
