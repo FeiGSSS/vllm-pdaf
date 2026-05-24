@@ -61,6 +61,28 @@ from .utils import AutoWeightsLoader, PPMissingLayer, extract_layer_index, maybe
 logger = init_logger(__name__)
 
 
+def _pap_block_ids_from_block_table(
+    *,
+    block_table: torch.Tensor,
+    seq_len: int,
+    block_size: int,
+) -> list[int]:
+    if block_table.ndim != 2 or int(block_table.shape[0]) != 1:
+        raise ValueError("PAP KV import supports one request per block table")
+    if seq_len < 0:
+        raise ValueError("seq_len must be non-negative")
+    if block_size <= 0:
+        raise ValueError("block_size must be positive")
+    num_blocks = (int(seq_len) + int(block_size) - 1) // int(block_size)
+    return [
+        int(block_id)
+        for block_id in block_table[0, :num_blocks]
+        .detach()
+        .to(device="cpu", dtype=torch.long)
+        .tolist()
+    ]
+
+
 @lru_cache(maxsize=8)
 def _pap_remote_attention_executor(max_workers: int) -> ThreadPoolExecutor:
     return ThreadPoolExecutor(
@@ -600,7 +622,7 @@ class Qwen3Attention(nn.Module):
             return
 
         from vllm.pap.shadow_attention import (
-            import_prefill_kv_from_paged_cache,
+            import_prefill_paged_kv,
             select_attention_endpoint_for_request,
         )
         from vllm.pap.data_plane import PAPTensorTransport
@@ -611,6 +633,8 @@ class Qwen3Attention(nn.Module):
                 "PAP_OFFLOAD_KV_TRANSPORT", PAPTensorTransport.CUDA_IPC.value
             )
         )
+        if offload_kv_transport is not PAPTensorTransport.CUDA_IPC:
+            raise RuntimeError("PAP paged Prefill KV export requires cuda_ipc")
         seq_lens_cpu = seq_lens.detach().to(device="cpu", dtype=torch.long)
         for req_index in range(num_reqs):
             request_id = str(request_ids[req_index])
@@ -643,17 +667,20 @@ class Qwen3Attention(nn.Module):
                 default_endpoint=default_tcp_endpoint,
                 endpoint_by_request=tcp_endpoint_by_request,
             )
-            import_prefill_kv_from_paged_cache(
+            import_prefill_paged_kv(
                 request_id=request_id,
                 layer_name=self.attn.layer_name,
                 kv_cache=kv_cache,
-                block_table=block_table[req_index : req_index + 1],
+                block_ids=_pap_block_ids_from_block_table(
+                    block_table=block_table[req_index : req_index + 1],
+                    seq_len=prefix_len,
+                    block_size=int(block_size),
+                ),
                 seq_len=prefix_len,
                 block_size=int(block_size),
                 num_kv_heads=self.num_kv_heads,
                 layout=get_kv_cache_layout(),
                 tcp_endpoint=tcp_endpoint,
-                transport=offload_kv_transport,
             )
             self._pap_imported_prefill_kv.add(import_key)
             installed.add(request_id)

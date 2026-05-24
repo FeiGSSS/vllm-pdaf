@@ -588,6 +588,54 @@ E2E after the change:
   - `kv_transfer_config` appeared only in Prefill logs.
   - No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
     `invalid slot`, or `slot_mapping`.
+
+## 2026-05-24 PAP Shared KV Owner Phase 3
+
+Latest local phase after `0b2fc04bb`:
+
+- Qwen3 Prefill now exports prompt KV to Attention with
+  `import_prefill_paged_kv()` instead of the gathered
+  `import_prefill_kv_from_paged_cache()` path.
+- The Qwen3 export path derives block ids from the vLLM block table and passes
+  the layer `kv_cache` backing tensor into the paged CUDA IPC descriptor.
+- The Qwen3 paged path explicitly requires `PAP_OFFLOAD_KV_TRANSPORT=cuda_ipc`.
+- Added a contract test that rejects regressing Qwen3 back to the gathered
+  export helper.
+
+Focused verification:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_attention_executor.py -q
+```
+
+Result: `81 passed, 16 warnings`.
+
+```bash
+.venv/bin/python -m pytest tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `12 passed, 16 warnings`.
+
+E2E 1PA1P Qwen3-0.6B:
+
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=10`, `completion_tokens=6`, `total_tokens=16`.
+- Output text: ` Also, explain the difference between`
+- Attention logged `28` `PAP prefill paged KV imported via IPC descriptor`
+  entries.
+- No old gathered IPC import log or error pattern matched in the logs.
+
+Current boundary:
+
+- Prefill prompt KV now reaches Attention through the resident paged descriptor
+  path.
+- Decode K/V is still appended to Attention-local decode buffers.
+- Next phase is decode K/V write-back into Prefill-owned paged blocks plus
+  same-PA multi-turn reuse verification.
 - 4PA2P Qwen3-0.6B:
   - 8 sequential requests, all HTTP `200`.
   - Route coverage `8100/8300 -> 8200`, `8101/8301 -> 8201`,

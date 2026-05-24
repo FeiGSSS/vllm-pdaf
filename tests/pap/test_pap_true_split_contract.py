@@ -207,6 +207,18 @@ def test_qwen3_pap_imports_prefill_kv_for_offload() -> None:
     assert "PAPTensorTransport.CUDA_IPC" in method
 
 
+def test_qwen3_prefill_uses_paged_kv_import_for_cuda_ipc() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
+    start = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
+    end = text.index("    @staticmethod")
+    method = text[start:end]
+
+    assert "import_prefill_paged_kv" in method
+    assert "import_prefill_kv_from_paged_cache" not in method
+    assert "block_ids=_pap_block_ids_from_block_table(" in method
+    assert "kv_cache=kv_cache" in method
+
+
 def test_model_runner_passes_pap_prefill_prefix_len_to_forward_context() -> None:
     text = (
         ROOT / "vllm" / "v1" / "worker" / "gpu" / "model_runner.py"
@@ -241,7 +253,7 @@ def test_qwen3_prefill_detects_pap_prefill_kv_handle() -> None:
     assert "pap_prefill_kv_handle_by_request" in method
     assert "prefill_kv_handle" in method
     assert "pap_import_prefill_kv_to_attention_by_request" in method
-    assert "transport=offload_kv_transport" in method
+    assert "PAP paged Prefill KV export requires cuda_ipc" in method
 
 
 def test_qwen3_prefill_import_marks_attention_kv_ready() -> None:

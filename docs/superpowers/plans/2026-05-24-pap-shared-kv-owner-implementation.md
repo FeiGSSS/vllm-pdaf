@@ -36,7 +36,7 @@ Phase 2.
 - Modify: `tests/pap/test_pap_attention_executor.py`
 - Modify: `examples/pap/pap_attention_executor.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add a test near `test_attention_executor_binary_imports_prefill_kv_ipc_descriptor`:
 
@@ -122,7 +122,7 @@ def test_attention_executor_ipc_import_keeps_opened_tensor_views(
     assert stored_value.data_ptr() == value.data_ptr()
 ```
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [x] **Step 2: Run the test to verify it fails**
 
 Run:
 
@@ -135,7 +135,7 @@ Expected failure:
 - Assertion fails because `PAPAttentionRegistry.import_prefill_kv()` calls
   `detach().contiguous().to(self._storage_device)`, creating a new tensor.
 
-- [ ] **Step 3: Implement minimal no-copy support**
+- [x] **Step 3: Implement minimal no-copy support**
 
 Change `PAPAttentionRegistry.import_prefill_kv()` to accept a keyword-only
 `copy: bool = True`.
@@ -168,7 +168,7 @@ seq_len = registry.import_prefill_kv(
 Leave non-IPC `import_prefill_kv` paths unchanged so fallback tensor bundle
 imports still copy into Attention-owned storage.
 
-- [ ] **Step 4: Run focused tests**
+- [x] **Step 4: Run focused tests**
 
 Run:
 
@@ -182,7 +182,7 @@ Run:
 
 Expected: all selected tests pass.
 
-- [ ] **Step 5: Run PAP focused suite**
+- [x] **Step 5: Run PAP focused suite**
 
 Run:
 
@@ -196,7 +196,7 @@ Run:
 
 Expected: all selected tests pass.
 
-- [ ] **Step 6: Document and commit Phase 1**
+- [x] **Step 6: Document and commit Phase 1**
 
 Update:
 
@@ -223,7 +223,7 @@ Do not commit `HANDOFF.md`; it is ignored local handoff state.
 - Test: `tests/pap/test_pap_data_plane.py`
 - Test: `tests/pap/test_pap_remote_attention.py`
 
-- [ ] **Step 1: Write failing descriptor roundtrip test**
+- [x] **Step 1: Write failing descriptor roundtrip test**
 
 Add `test_offload_kv_paged_ipc_descriptor_roundtrip()` to
 `tests/pap/test_pap_data_plane.py`.
@@ -235,7 +235,7 @@ Expected behavior:
 - It carries `block_ids`, `seq_len`, `block_size`, `num_kv_heads`, and `layout`.
 - Roundtrip through `to_dict()` / `from_dict()` preserves all fields.
 
-- [ ] **Step 2: Write failing paged view test**
+- [x] **Step 2: Write failing paged view test**
 
 Add `test_paged_kv_segments_match_gathered_kv()` to
 `tests/pap/test_pap_remote_attention.py`.
@@ -248,7 +248,7 @@ Expected behavior:
   concatenation.
 - The segment view shares storage with the original paged KV cache.
 
-- [ ] **Step 3: Implement data-plane descriptor**
+- [x] **Step 3: Implement data-plane descriptor**
 
 Add `PAPOffloadKVPagedIPCDescriptor` to `vllm/pap/data_plane.py` with fields:
 
@@ -262,14 +262,14 @@ Add `PAPOffloadKVPagedIPCDescriptor` to `vllm/pap/data_plane.py` with fields:
 - `kv_cache: PAPCudaIPCTensorHandle`
 - `transport: PAPTensorTransport = PAPTensorTransport.CUDA_IPC`
 
-- [ ] **Step 4: Implement paged segment helper**
+- [x] **Step 4: Implement paged segment helper**
 
 Add `paged_kv_segments()` to `vllm/pap/remote_attention.py`.
 
 It should return `list[tuple[key_segment, value_segment]]` using the same layout
 rules as `gather_paged_kv()`, but must not concatenate segments.
 
-- [ ] **Step 5: Add shadow-attention post helper**
+- [x] **Step 5: Add shadow-attention post helper**
 
 Add a new `import_prefill_paged_kv()` helper in `vllm/pap/shadow_attention.py`
 that posts command `import_prefill_paged_kv_ipc` with the paged descriptor and
@@ -284,14 +284,14 @@ prompt KV before export.
 - Modify: `examples/pap/pap_attention_executor.py`
 - Test: `tests/pap/test_pap_attention_executor.py`
 
-- [ ] **Step 1: Write failing Attention import test**
+- [x] **Step 1: Write failing Attention import test**
 
 Add a test that monkeypatches `open_ipc_paged_kv_cache()` to return a fake
 paged KV tensor, posts `import_prefill_paged_kv_ipc`, then verifies
 `append_decode_kv()` computes from resident paged segments whose tensor storage
 points at the fake paged KV cache.
 
-- [ ] **Step 2: Implement command handler**
+- [x] **Step 2: Implement command handler**
 
 Add `open_ipc_paged_kv_cache()` and handle `import_prefill_paged_kv_ipc` in
 `compute_binary_attention_response()`.
@@ -299,7 +299,7 @@ Add `open_ipc_paged_kv_cache()` and handle `import_prefill_paged_kv_ipc` in
 Registry should store paged Prefill KV as resident segments derived from the
 opened paged KV cache rather than as copied contiguous K/V tensors.
 
-- [ ] **Step 3: Verify**
+- [x] **Step 3: Verify**
 
 Run:
 
@@ -311,3 +311,61 @@ Run:
 ```
 
 Expected: all selected tests pass.
+
+### Task 4: Wire Qwen3 Prefill Export To Paged Descriptor
+
+**Files:**
+- Modify: `vllm/model_executor/models/qwen3.py`
+- Test: `tests/pap/test_pap_true_split_contract.py`
+
+- [x] **Step 1: Write contract test**
+
+Added `test_qwen3_prefill_uses_paged_kv_import_for_cuda_ipc()` to verify
+Qwen3 Prefill export calls `import_prefill_paged_kv()`, passes `kv_cache`
+directly, derives `block_ids`, and no longer calls the gathered
+`import_prefill_kv_from_paged_cache()` path.
+
+- [x] **Step 2: Implement Qwen3 paged export**
+
+`Qwen3Attention._maybe_import_pap_prefill_kv_to_attention()` now requires
+`PAP_OFFLOAD_KV_TRANSPORT=cuda_ipc`, derives Prefill block ids from the vLLM
+block table, and sends a paged KV IPC descriptor through
+`import_prefill_paged_kv()`.
+
+- [x] **Step 3: Verify**
+
+Run:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_attention_executor.py -q
+```
+
+Result: `81 passed, 16 warnings`.
+
+Run:
+
+```bash
+.venv/bin/python -m pytest tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `12 passed, 16 warnings`.
+
+E2E 1PA1P Qwen3-0.6B:
+
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=10`, `completion_tokens=6`, `total_tokens=16`.
+- Output text: ` Also, explain the difference between`
+- Attention logged `28` `PAP prefill paged KV imported via IPC descriptor`
+  entries.
+- No old gathered IPC import log or error pattern matched in the E2E logs.
+
+Boundary:
+
+- Qwen3 Prefill now uses the resident paged descriptor path.
+- Decode K/V still lands in Attention-local decode buffers.
+- Next phase must write Projection-provided decode K/V into Prefill-owned
+  paged blocks and add same-PA multi-turn reuse verification.
