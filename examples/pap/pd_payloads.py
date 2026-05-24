@@ -6,6 +6,14 @@ from __future__ import annotations
 
 from typing import Any
 
+_PREFILL_KV_TRANSPORT_KEYS = {
+    "remote_block_ids",
+    "remote_engine_id",
+    "remote_request_id",
+    "remote_host",
+    "remote_port",
+}
+
 
 def build_prefill_payload(req_data: dict[str, Any]) -> dict[str, Any]:
     payload = req_data.copy()
@@ -60,6 +68,49 @@ def build_decode_payload(
         )
     if pap_attention_kv_installed:
         payload["kv_transfer_params"]["pap_attention_kv_installed"] = True
+    return payload
+
+
+def build_projection_kv_unaware_payload(
+    req_data: dict[str, Any],
+    kv_transfer_params: dict[str, Any],
+    *,
+    pap_attention_endpoint: str | None = None,
+    pap_attention_tcp_endpoint: str | None = None,
+    pap_offload_exec_zmq_endpoint: str | None = None,
+    pap_prefill_kv_handle: str | None = None,
+    pap_attention_kv_installed: bool = False,
+) -> dict[str, Any]:
+    """Build a PAP Projection request that carries metadata, not Prefill KV."""
+    payload = req_data.copy()
+    kv_params: dict[str, Any] = {"pap_projection_kv_unaware": True}
+
+    remote_num_tokens = kv_transfer_params.get("remote_num_tokens")
+    if remote_num_tokens is not None:
+        kv_params["pap_remote_prefix_len"] = int(remote_num_tokens)
+
+    for key, value in kv_transfer_params.items():
+        if key in _PREFILL_KV_TRANSPORT_KEYS:
+            continue
+        if key in ("remote_num_tokens", "tp_size"):
+            continue
+        if key.startswith("pap_"):
+            kv_params[key] = value
+
+    if pap_attention_endpoint:
+        kv_params["pap_attention_endpoint"] = str(pap_attention_endpoint)
+    if pap_attention_tcp_endpoint:
+        kv_params["pap_attention_tcp_endpoint"] = str(pap_attention_tcp_endpoint)
+    if pap_offload_exec_zmq_endpoint:
+        kv_params["pap_offload_exec_zmq_endpoint"] = str(
+            pap_offload_exec_zmq_endpoint
+        )
+    if pap_prefill_kv_handle:
+        kv_params["pap_prefill_kv_handle"] = str(pap_prefill_kv_handle)
+    if pap_attention_kv_installed:
+        kv_params["pap_attention_kv_installed"] = True
+
+    payload["kv_transfer_params"] = kv_params
     return payload
 
 

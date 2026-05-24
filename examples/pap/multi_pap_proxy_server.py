@@ -25,8 +25,8 @@ try:
     )
     from examples.pap.pd_payloads import (
         attach_pap_prefill_attention_params,
-        build_decode_payload,
         build_prefill_payload,
+        build_projection_kv_unaware_payload,
         enrich_prefill_kv_params,
     )
 except ModuleNotFoundError:  # pragma: no cover - direct script execution
@@ -36,8 +36,8 @@ except ModuleNotFoundError:  # pragma: no cover - direct script execution
     )
     from pd_payloads import (  # type: ignore[no-redef]
         attach_pap_prefill_attention_params,
-        build_decode_payload,
         build_prefill_payload,
+        build_projection_kv_unaware_payload,
         enrich_prefill_kv_params,
     )
 
@@ -185,15 +185,12 @@ def build_projection_payload_for_group(
     pap_prefill_kv_handle: str | None = None,
     pap_attention_kv_installed: bool = False,
 ) -> dict[str, Any]:
-    kv_params = dict(kv_transfer_params)
-    kv_params["pap_attention_endpoint"] = group.attention_base_url
-    if group.attention_tcp_endpoint is not None:
-        kv_params["pap_attention_tcp_endpoint"] = group.attention_tcp_endpoint
-    if group.attention_zmq_endpoint is not None:
-        kv_params["pap_offload_exec_zmq_endpoint"] = group.attention_zmq_endpoint
-    return build_decode_payload(
+    return build_projection_kv_unaware_payload(
         req_data,
-        kv_params,
+        kv_transfer_params,
+        pap_attention_endpoint=group.attention_base_url,
+        pap_attention_tcp_endpoint=group.attention_tcp_endpoint,
+        pap_offload_exec_zmq_endpoint=group.attention_zmq_endpoint,
         pap_prefill_kv_handle=pap_prefill_kv_handle,
         pap_attention_kv_installed=pap_attention_kv_installed,
     )
@@ -336,9 +333,10 @@ async def _handle_openai_request(api_path: str, request: Request):
         pap_attention_kv_installed=prefix_len is not None,
     )
     projection_payload.setdefault("stream", client_stream)
+    projection_kv_params = projection_payload.get("kv_transfer_params") or {}
     logger.info(
         "request_id=%s pa=%s:%d attention=%s:%d projection=%s:%d "
-        "prefill_ms=%d prefill_prefix_len=%s",
+        "prefill_ms=%d prefill_prefix_len=%s projection_kv_keys=%s",
         request_id,
         group.prefill_host,
         group.prefill_port,
@@ -348,6 +346,7 @@ async def _handle_openai_request(api_path: str, request: Request):
         projection.port,
         prefill_ms,
         prefix_len,
+        sorted(projection_kv_params.keys()),
     )
 
     if client_stream:

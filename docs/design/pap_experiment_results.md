@@ -96,3 +96,44 @@ Result:
 - All four Projections reported `External prefix cache hit rate: 100.0%`.
 - No `ERROR`, `Traceback`, `Exception`, `RuntimeError`, or `HTTPStatusError`
   entries were found in the PAP service logs.
+
+## Qwen3-0.6B 1PA1P KV-Unaware Projection Phase 1
+
+Command shape:
+
+```bash
+PAP_TOPOLOGY=1pa1p \
+PAP_SERVICE_ONLY=1 \
+PAP_SKIP_SMOKE_REQUEST=1 \
+PAP_PROXY_PORT=9090 \
+PAP_PREFILL_GPUS=4 \
+PAP_PROJECTION_GPUS=5 \
+PAP_MAX_MODEL_LEN=2048 \
+PAP_MAX_NUM_SEQS=2 \
+PAP_OFFLOAD_EXEC_TRACE=1 \
+PAP_ENABLE_MPS=1 \
+bash examples/pap/launch_pap_nixl.sh \
+  --model /data/ssd1/llm-models/Qwen3-0.6B
+```
+
+Request:
+
+- Endpoint: `POST /v1/chat/completions`.
+- OpenAI usage: `prompt_tokens=628`, `completion_tokens=96`,
+  `total_tokens=724`.
+- `max_tokens=96`, `temperature=0`.
+
+Result:
+
+- HTTP status: `200`.
+- End-to-end request latency: `7004 ms`.
+- Proxy prefill metrics: `prefill_ms=77`, `prefill_prefix_len=628`.
+- Output started with normal Chinese model text:
+  `"<think>\n好的，用户让我用三段话解释PAP架构下..."`.
+- Projection reported prompt throughput `0.0 tokens/s`, confirming it did not
+  run the 628-token prompt prefill locally.
+- Attention OFFLOAD_EXEC traces: `2688`.
+- Projection OFFLOAD_EXEC traces: `2688`.
+- Trace count matches `96 output tokens * 28 layers`.
+- No `ERROR`, `Traceback`, `Exception`, `RuntimeError`, or `HTTPStatusError`
+  entries were found in the PAP service logs.

@@ -58,7 +58,7 @@ def test_prefill_payload_can_attach_attention_import_params() -> None:
     assert payload["kv_transfer_params"]["pap_mode"] == "true_split_performance"
 
 
-def test_build_projection_payload_attaches_prefill_kv_params() -> None:
+def test_build_projection_payload_strips_prefill_kv_transport() -> None:
     payload = build_projection_payload(
         {"model": "qwen", "prompt": "hello"},
         {
@@ -66,11 +66,44 @@ def test_build_projection_payload_attaches_prefill_kv_params() -> None:
             "remote_block_ids": [[4, 5]],
             "remote_host": "127.0.0.1",
             "remote_port": 5559,
+            "remote_num_tokens": 11,
         },
     )
 
-    assert payload["kv_transfer_params"]["remote_engine_id"] == "prefill-0"
-    assert payload["kv_transfer_params"]["remote_block_ids"] == [[4, 5]]
+    assert payload["kv_transfer_params"]["pap_projection_kv_unaware"] is True
+    assert payload["kv_transfer_params"]["pap_remote_prefix_len"] == 11
+    assert "remote_engine_id" not in payload["kv_transfer_params"]
+    assert "remote_block_ids" not in payload["kv_transfer_params"]
+
+
+def test_build_projection_payload_for_pap_is_kv_unaware() -> None:
+    payload = build_projection_payload(
+        {"model": "qwen", "prompt": "hello"},
+        {
+            "remote_engine_id": "prefill-0",
+            "remote_request_id": "prefill-req",
+            "remote_block_ids": [[4, 5]],
+            "remote_host": "127.0.0.1",
+            "remote_port": 5559,
+            "remote_num_tokens": 17,
+        },
+        pap_prefill_kv_handle="req-7",
+        pap_attention_kv_installed=True,
+    )
+
+    kv_params = payload["kv_transfer_params"]
+    assert kv_params["pap_projection_kv_unaware"] is True
+    assert kv_params["pap_remote_prefix_len"] == 17
+    assert kv_params["pap_prefill_kv_handle"] == "req-7"
+    assert kv_params["pap_attention_kv_installed"] is True
+    for key in (
+        "remote_engine_id",
+        "remote_request_id",
+        "remote_block_ids",
+        "remote_host",
+        "remote_port",
+    ):
+        assert key not in kv_params
 
 
 def test_single_proxy_marks_attention_kv_installed_only_after_prefill() -> None:

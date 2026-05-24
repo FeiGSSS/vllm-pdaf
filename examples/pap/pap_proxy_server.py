@@ -27,19 +27,15 @@ try:
     from examples.pap.pd_payloads import (
         attach_pap_prefill_attention_params,
         build_prefill_payload,
+        build_projection_kv_unaware_payload,
         enrich_prefill_kv_params,
-    )
-    from examples.pap.pd_payloads import (
-        build_decode_payload as build_projection_payload,
     )
 except ModuleNotFoundError:  # pragma: no cover - direct script execution
     from pd_payloads import (  # type: ignore[no-redef]
         attach_pap_prefill_attention_params,
         build_prefill_payload,
+        build_projection_kv_unaware_payload,
         enrich_prefill_kv_params,
-    )
-    from pd_payloads import (
-        build_decode_payload as build_projection_payload,
     )
 
 logging.basicConfig(
@@ -112,6 +108,21 @@ async def register_attention_handle(
     )
     resp.raise_for_status()
     return resp.json()
+
+
+def build_projection_payload(
+    req_data: dict[str, Any],
+    kv_transfer_params: dict[str, Any],
+    *,
+    pap_prefill_kv_handle: str | None = None,
+    pap_attention_kv_installed: bool = False,
+) -> dict[str, Any]:
+    return build_projection_kv_unaware_payload(
+        req_data,
+        kv_transfer_params,
+        pap_prefill_kv_handle=pap_prefill_kv_handle,
+        pap_attention_kv_installed=pap_attention_kv_installed,
+    )
 
 
 async def _post_json(

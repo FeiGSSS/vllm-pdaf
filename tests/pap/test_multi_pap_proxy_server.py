@@ -217,7 +217,7 @@ def test_build_projection_payload_for_group_does_not_claim_kv_installed_by_defau
         group,
     )
 
-    assert payload["kv_transfer_params"]["remote_engine_id"] == "prefill-3"
+    assert payload["kv_transfer_params"]["pap_projection_kv_unaware"] is True
     assert payload["kv_transfer_params"]["pap_attention_endpoint"] == (
         "http://127.0.0.1:8303"
     )
@@ -229,6 +229,8 @@ def test_build_projection_payload_for_group_does_not_claim_kv_installed_by_defau
     )
     assert "pap_attention_kv_installed" not in payload["kv_transfer_params"]
     assert "pap_attention_endpoint" not in kv_params
+    assert "remote_engine_id" not in payload["kv_transfer_params"]
+    assert "remote_host" not in payload["kv_transfer_params"]
 
 
 def test_build_projection_payload_for_group_attaches_prefill_kv_handle() -> None:

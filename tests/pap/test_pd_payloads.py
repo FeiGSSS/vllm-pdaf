@@ -4,6 +4,7 @@
 from examples.pap.pd_payloads import (
     build_decode_payload,
     build_prefill_payload,
+    build_projection_kv_unaware_payload,
     enrich_prefill_kv_params,
 )
 
@@ -70,6 +71,37 @@ def test_build_decode_payload_can_mark_attention_kv_installed_after_prefill() ->
     )
 
     assert payload["kv_transfer_params"]["pap_attention_kv_installed"] is True
+
+
+def test_build_projection_kv_unaware_payload_strips_remote_kv_transport() -> None:
+    payload = build_projection_kv_unaware_payload(
+        {"model": "qwen", "prompt": "hello"},
+        {
+            "remote_engine_id": "prefill-0",
+            "remote_request_id": "prefill-req",
+            "remote_block_ids": [[4, 5]],
+            "remote_host": "127.0.0.1",
+            "remote_port": 5559,
+            "remote_num_tokens": 17,
+            "tp_size": 1,
+        },
+        pap_attention_endpoint="http://127.0.0.1:8300",
+        pap_attention_tcp_endpoint="tcp://127.0.0.1:9300",
+        pap_offload_exec_zmq_endpoint="127.0.0.1:10300",
+        pap_prefill_kv_handle="req-7",
+        pap_attention_kv_installed=True,
+    )
+
+    kv_params = payload["kv_transfer_params"]
+    assert kv_params == {
+        "pap_projection_kv_unaware": True,
+        "pap_remote_prefix_len": 17,
+        "pap_attention_endpoint": "http://127.0.0.1:8300",
+        "pap_attention_tcp_endpoint": "tcp://127.0.0.1:9300",
+        "pap_offload_exec_zmq_endpoint": "127.0.0.1:10300",
+        "pap_prefill_kv_handle": "req-7",
+        "pap_attention_kv_installed": True,
+    }
 
 
 def test_enrich_prefill_kv_params_fills_missing_nixl_endpoint() -> None:

@@ -106,6 +106,7 @@ def test_model_runner_passes_pap_prefill_prefix_len_to_forward_context() -> None
 
     assert "pap_prefill_prefix_len_by_req_id" in text
     assert '"pap_prefill_prefix_len_by_request"' in text
+    assert 'kv_transfer_params.get("pap_remote_prefix_len")' in text
     assert 'kv_transfer_params.get("remote_num_tokens")' in text
 
 

@@ -586,16 +586,30 @@ class Scheduler(SchedulerInterface):
                 num_external_computed_tokens = 0
                 load_kv_async = False
                 connector_prefix_cache_queries, connector_prefix_cache_hits = 0, 0
+                pap_remote_prefix_len = (
+                    self._get_pap_projection_remote_prefix_len(request)
+                )
 
                 # Get already-cached tokens.
                 if request.num_computed_tokens == 0:
-                    # Get locally-cached tokens.
-                    new_computed_blocks, num_new_local_computed_tokens = (
-                        self.kv_cache_manager.get_computed_blocks(request)
-                    )
+                    if pap_remote_prefix_len is not None:
+                        # PAP Projection is KV-unaware: prompt progress comes
+                        # from PA/Attention metadata, not local prefix cache or
+                        # KVConnector loads on the Projection node.
+                        new_computed_blocks = (
+                            self.kv_cache_manager.empty_kv_cache_blocks
+                        )
+                        num_new_local_computed_tokens = 0
+                    else:
+                        # Get locally-cached tokens.
+                        new_computed_blocks, num_new_local_computed_tokens = (
+                            self.kv_cache_manager.get_computed_blocks(request)
+                        )
 
                     # Get externally-cached tokens if using a KVConnector.
-                    if self.connector is not None:
+                    if pap_remote_prefix_len is not None:
+                        num_external_computed_tokens = pap_remote_prefix_len - 1
+                    elif self.connector is not None:
                         ext_tokens, load_kv_async = (
                             self.connector.get_num_new_matched_tokens(
                                 request, num_new_local_computed_tokens
@@ -743,7 +757,7 @@ class Scheduler(SchedulerInterface):
                 # if a load is needed. Note that
                 # This information is used to determine if a load is
                 # needed for this request.
-                if self.connector is not None:
+                if self.connector is not None and pap_remote_prefix_len is None:
                     self.connector.update_state_after_alloc(
                         request,
                         self.kv_cache_manager.get_blocks(request_id),
@@ -925,6 +939,32 @@ class Scheduler(SchedulerInterface):
         self, connector: KVConnectorBase_V1, scheduler_output: SchedulerOutput
     ) -> KVConnectorMetadata:
         return connector.build_connector_meta(scheduler_output)
+
+    @staticmethod
+    def _get_pap_projection_remote_prefix_len(request: Request) -> int | None:
+        params = request.kv_transfer_params
+        if not params or not params.get("pap_projection_kv_unaware"):
+            return None
+        value = params.get("pap_remote_prefix_len")
+        if value is None:
+            value = params.get("remote_num_tokens")
+        if value is None:
+            raise ValueError(
+                "PAP KV-unaware Projection request requires "
+                "pap_remote_prefix_len"
+            )
+        prefix_len = int(value)
+        if prefix_len <= 0:
+            raise ValueError(
+                "PAP KV-unaware Projection request requires a positive "
+                "pap_remote_prefix_len"
+            )
+        if prefix_len > request.num_prompt_tokens:
+            raise ValueError(
+                "PAP KV-unaware Projection prefix length cannot exceed "
+                "prompt length"
+            )
+        return prefix_len
 
     def _preempt_request(self, request: Request, timestamp: float) -> None:
         """Preempt a request and put it back to the waiting queue.

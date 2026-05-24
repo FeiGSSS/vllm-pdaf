@@ -699,7 +699,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         zmq_endpoint = kv_transfer_params.get("pap_offload_exec_zmq_endpoint")
         if zmq_endpoint:
             self.pap_offload_exec_zmq_endpoint_by_req_id[req_id] = str(zmq_endpoint)
-        remote_num_tokens = kv_transfer_params.get("remote_num_tokens")
+        remote_num_tokens = kv_transfer_params.get("pap_remote_prefix_len")
+        if remote_num_tokens is None:
+            remote_num_tokens = kv_transfer_params.get("remote_num_tokens")
         if remote_num_tokens is not None:
             self.pap_prefill_prefix_len_by_req_id[req_id] = int(remote_num_tokens)
         prefill_kv_handle = kv_transfer_params.get("pap_prefill_kv_handle")
