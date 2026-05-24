@@ -1,16 +1,17 @@
-from pathlib import Path
 import asyncio
-
-ROOT = Path(__file__).resolve().parents[2]
+from pathlib import Path
 
 from examples.pap.pap_proxy_server import (
     PAPServiceClient,
     attach_pap_prefill_attention_params,
     build_prefill_payload,
     build_projection_payload,
+    get_attention_resident_prefix,
     prefill_prefix_len_from_kv_params,
     register_attention_handle,
 )
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_build_prefill_payload_forces_single_token_non_streaming() -> None:
@@ -115,7 +116,8 @@ def test_single_proxy_marks_attention_kv_installed_only_after_prefill() -> None:
     assert prefill < prefix_len < installed
 
 
-def test_build_projection_payload_does_not_claim_attention_kv_installed_by_default() -> None:
+def test_build_projection_payload_does_not_claim_attention_kv_installed_by_default(
+) -> None:
     kv_params = {"remote_engine_id": "prefill-0"}
     payload = build_projection_payload(
         {"model": "qwen", "prompt": "hello"},
@@ -147,10 +149,22 @@ def test_prefill_prefix_len_from_kv_params_rejects_invalid_values() -> None:
 class FakeAsyncClient:
     def __init__(self) -> None:
         self.posts = []
+        self.gets = []
 
     async def post(self, endpoint, json, headers):
         self.posts.append((endpoint, json, headers))
         return FakeResponse({"ok": True})
+
+    async def get(self, endpoint, headers):
+        self.gets.append((endpoint, headers))
+        return FakeResponse(
+            {
+                "session_id": "req-3",
+                "seq_len": 9,
+                "ready": True,
+                "layers": {},
+            }
+        )
 
 
 class FakeResponse:
@@ -198,3 +212,34 @@ def test_register_attention_handle_posts_internal_registration() -> None:
             {},
         )
     ]
+
+
+def test_get_attention_resident_prefix_queries_internal_endpoint() -> None:
+    fake_http = FakeAsyncClient()
+    client = PAPServiceClient(
+        client=fake_http,
+        host="localhost",
+        port=8300,
+        base_url="http://localhost:8300",
+        role="attention",
+    )
+
+    coverage = asyncio.run(
+        get_attention_resident_prefix(
+            client,
+            request_id="req-3",
+        )
+    )
+
+    assert fake_http.gets == [
+        (
+            "/v1/pap/attention/sessions/req-3/resident-prefix",
+            {},
+        )
+    ]
+    assert coverage == {
+        "session_id": "req-3",
+        "seq_len": 9,
+        "ready": True,
+        "layers": {},
+    }

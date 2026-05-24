@@ -110,6 +110,18 @@ async def register_attention_handle(
     return resp.json()
 
 
+async def get_attention_resident_prefix(
+    attention: PAPServiceClient,
+    request_id: str,
+) -> dict[str, Any]:
+    resp = await attention.client.get(
+        f"/v1/pap/attention/sessions/{request_id}/resident-prefix",
+        headers={},
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+
 def build_projection_payload(
     req_data: dict[str, Any],
     kv_transfer_params: dict[str, Any],

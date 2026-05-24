@@ -733,3 +733,91 @@ Boundary:
   integration for attaching resident blocks on the next turn is not implemented
   yet.
 - The owner still does not allocate physical vLLM blocks.
+
+### Task 10: Expose Resident Prefix Coverage Control Plane
+
+**Files:**
+- Modify: `examples/pap/pap_attention_executor.py`
+- Modify: `examples/pap/pap_proxy_server.py`
+- Test: `tests/pap/test_pap_attention_executor.py`
+- Test: `tests/pap/test_pap_proxy_server.py`
+
+- [x] **Step 1: Write resident-prefix endpoint test**
+
+Added an Attention executor API test proving
+`GET /v1/pap/attention/sessions/{request_id}/resident-prefix` returns
+JSON-safe owner coverage after paged Prefill import and decode write-back.
+
+- [x] **Step 2: Write proxy helper test**
+
+Added a proxy helper test proving `get_attention_resident_prefix()` queries the
+new internal Attention endpoint and returns the response JSON. This is the
+control-plane call the proxy can use before later-turn route-back/reuse
+scheduling.
+
+- [x] **Step 3: Implement endpoint/helper**
+
+`PAPAttentionRegistry.get_resident_prefix_coverage()` is now exposed through the
+Attention FastAPI app. `pap_proxy_server.py` now provides
+`get_attention_resident_prefix()`.
+
+- [x] **Step 4: Verify**
+
+Run:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_attention_executor.py::test_attention_executor_resident_prefix_endpoint_reports_coverage \
+  tests/pap/test_pap_proxy_server.py::test_get_attention_resident_prefix_queries_internal_endpoint \
+  tests/pap/test_pap_proxy_server.py -q
+```
+
+Result: `11 passed, 16 warnings`.
+
+Run:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_kv_owner.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_proxy_server.py \
+  tests/pap/test_multi_pap_proxy_server.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `126 passed, 16 warnings`.
+
+Run:
+
+```bash
+pre-commit run ruff-check --files \
+  examples/pap/pap_attention_executor.py \
+  examples/pap/pap_proxy_server.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_proxy_server.py
+```
+
+Result: passed.
+
+E2E 1PA1P Qwen3-0.6B with `max_tokens=8`:
+
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=11`, `completion_tokens=7`, `total_tokens=18`.
+- Output text: ` P P\n\n\n\n.\n\n`
+- Projection logged `224` OFFLOAD_EXEC traces.
+- Attention logged `224` OFFLOAD_EXEC traces plus `28` paged Prefill KV
+  descriptor imports.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `invalid slot`,
+  `slot_mapping`, `rejected`, `block ids do not cover`, `IndexError`, or
+  `500 Internal` matched in logs.
+
+Boundary:
+
+- Same-PA resident coverage is now queryable over the internal Attention API and
+  from the proxy helper layer.
+- The proxy still does not maintain a conversation/session placement table or
+  use resident coverage to skip Prefill work on a later turn.
+- vLLM scheduler attach for resident blocks remains unimplemented.

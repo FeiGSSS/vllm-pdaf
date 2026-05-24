@@ -1678,6 +1678,26 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="unknown PAP request")
         return session.__dict__
 
+    @app.get("/v1/pap/attention/sessions/{request_id}/resident-prefix")
+    async def get_resident_prefix(request_id: str) -> dict[str, Any]:
+        try:
+            coverage = registry.get_resident_prefix_coverage(request_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="unknown PAP request") from exc
+        return {
+            "session_id": coverage.session_id,
+            "seq_len": coverage.seq_len,
+            "ready": coverage.ready,
+            "layers": {
+                layer_name: {
+                    "layer_name": layer.layer_name,
+                    "block_ids": list(layer.block_ids),
+                    "seq_len": layer.seq_len,
+                }
+                for layer_name, layer in coverage.layers.items()
+            },
+        }
+
     @app.post("/v1/pap/attention/offload-exec")
     async def offload_exec(request: PAPOffloadExecRequest) -> dict[str, Any]:
         from vllm.pap.data_plane import PAPOffloadExecDescriptor

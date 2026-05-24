@@ -1722,6 +1722,65 @@ def test_attention_registry_reports_resident_prefix_after_decode_writeback() -> 
     assert coverage.layers[layer_name].block_ids == (0, 1)
 
 
+def test_attention_executor_resident_prefix_endpoint_reports_coverage() -> None:
+    import torch
+    from fastapi.testclient import TestClient
+
+    from examples.pap.pap_attention_executor import create_app
+
+    layer_name = "model.layers.0.self_attn.attn"
+    app = create_app()
+    client = TestClient(app)
+    client.post(
+        "/v1/pap/attention/register",
+        json={
+            "request_id": "req-coverage-endpoint",
+            "conversation_id": "conv-coverage-endpoint",
+            "prefill_endpoint": "http://localhost:8100",
+            "kv_transfer_params": {},
+            "prefix_len": 4,
+            "block_size": 4,
+        },
+    )
+    app.state.registry.import_prefill_paged_kv(
+        request_id="req-coverage-endpoint",
+        layer_name=layer_name,
+        kv_cache=torch.zeros((2, 2, 4, 1, 2)),
+        block_ids=[0],
+        seq_len=4,
+        block_size=4,
+        num_kv_heads=1,
+        layout="NHD",
+    )
+    app.state.registry.append_decode_kv(
+        request_id="req-coverage-endpoint",
+        layer_name=layer_name,
+        key=torch.tensor([[[5.0, 6.0]]]),
+        value=torch.tensor([[[7.0, 8.0]]]),
+        block_id=1,
+        slot=4,
+        seq_len=5,
+    )
+
+    response = client.get(
+        "/v1/pap/attention/sessions/req-coverage-endpoint/resident-prefix"
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "session_id": "req-coverage-endpoint",
+        "seq_len": 5,
+        "ready": True,
+        "layers": {
+            layer_name: {
+                "layer_name": layer_name,
+                "block_ids": [0, 1],
+                "seq_len": 5,
+            },
+        },
+    }
+
+
 def test_attention_executor_compute_existing_prefill_token_does_not_append() -> None:
     import torch
     from fastapi.testclient import TestClient

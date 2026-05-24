@@ -918,3 +918,65 @@ Current boundary:
 - vLLM scheduler integration for actually attaching resident blocks on a later
   turn is not implemented yet.
 - The owner still does not allocate physical vLLM blocks.
+
+## 2026-05-24 PAP Shared KV Owner Phase 9
+
+Latest local phase after `2ccb67b8b`:
+
+- Added an internal Attention endpoint:
+  `GET /v1/pap/attention/sessions/{request_id}/resident-prefix`.
+- The endpoint returns JSON-safe owner resident coverage: session id, reusable
+  seq_len, readiness, and per-layer resident block ids.
+- Added `get_attention_resident_prefix()` in `pap_proxy_server.py` so the proxy
+  layer has a reusable control-plane call for same-PA later-turn route/reuse
+  decisions.
+- Added tests for the Attention endpoint and proxy helper.
+
+Focused verification:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_attention_executor.py::test_attention_executor_resident_prefix_endpoint_reports_coverage \
+  tests/pap/test_pap_proxy_server.py::test_get_attention_resident_prefix_queries_internal_endpoint \
+  tests/pap/test_pap_proxy_server.py -q
+```
+
+Result: `11 passed, 16 warnings`.
+
+Full focused PAP suite:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_kv_owner.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_proxy_server.py \
+  tests/pap/test_multi_pap_proxy_server.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `126 passed, 16 warnings`.
+
+`ruff-check` on changed Python files passed.
+
+E2E 1PA1P Qwen3-0.6B with `max_tokens=8`:
+
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=11`, `completion_tokens=7`, `total_tokens=18`.
+- Output text: ` P P\n\n\n\n.\n\n`
+- Projection logged `224` OFFLOAD_EXEC traces.
+- Attention logged `224` OFFLOAD_EXEC traces plus `28` paged Prefill KV
+  descriptor imports.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `invalid slot`,
+  `slot_mapping`, `rejected`, `block ids do not cover`, `IndexError`, or
+  `500 Internal` matched in logs.
+
+Current boundary:
+
+- Same-PA resident coverage is queryable over the internal Attention API and
+  proxy helper layer.
+- The proxy still does not maintain a conversation/session placement table or
+  use resident coverage to skip Prefill work on a later turn.
+- vLLM scheduler attach for resident blocks remains unimplemented.
