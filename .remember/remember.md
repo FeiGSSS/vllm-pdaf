@@ -1,101 +1,99 @@
 # Handoff
 
 ## State
-Branch `feature/pap-true-split`. Latest committed code state before this
-handoff update is `a5a0781d1` (`Record PAP experiment results`), after
-`fd7b00453` (`Implement PAP attention ready flow`) and `3e4686f85`
-(`Remove legacy PAP launcher wrapper`).
 
-The model-agnostic PAP launcher is now `examples/pap/launch_pap_nixl.sh`.
-It accepts `--model MODEL_PATH_OR_NAME`, also honors `PAP_MODEL_PATH`, and
-defaults the local experiment path to `/data/ssd1/llm-models/Qwen3-0.6B`.
-OFFLOAD_EXEC shape parameters are inferred from `config.json`, so both
-Qwen3-0.6B and Qwen3-8B can run without hard-coded head/qkv sizes.
+Branch `feature/pap-true-split`. Current latest implementation checkpoint is
+`4a9d567d5` (`Log PAP OFFLOAD_KV IPC imports`), after:
 
-PAP attention no longer uses the legacy "true split" naming in code paths.
-Projection enters PAP attention only when the batch is decode-only, has one
-token per request, uses OpenAI request ids, and every active request has
-PA-side attention KV marked ready.
+- `9f788d6ae` Plan PAP OFFLOAD_KV IPC implementation
+- `312ae6fbb` Add PAP OFFLOAD_KV IPC descriptors
+- `a418ae539` Import PAP prefill KV via IPC descriptors in Attention
+- `913db9dad` Export PAP prefill KV with CUDA IPC metadata
+- `e22316c9a` Default PAP OFFLOAD_KV to CUDA IPC
+- `f945899e4` Serialize PAP CUDA IPC handles for control messages
 
-Prefill is the explicit owner of importing prefill KV into the Attention
-executor. Projection no longer re-imports Prefill KV, which avoids overwriting
-the Attention executor's PA-side cache with Projection-side cache contents.
-Prefill imports after local attention writes the current layer's paged KV cache;
-this fixed the stale-import issue.
+Projection remains a normal vLLM production server. It has no
+`kv_transfer_config`, receives only PAP metadata in `kv_transfer_params`, and
+uses scheduler remote-prefix progress from `pap_remote_prefix_len`.
 
-Current runtime still uses the restored NCCL/P2P OFFLOAD_EXEC transport in
-`vllm/pap/data_plane.py`. IPC for Profile/Prefill KV to Attention Executor is
-the next architectural cleanup, not implemented yet.
-
-New in the working tree: phase-1 KV-unaware Projection work has started.
-`docs/design/pap_kv_unaware_projection.md` defines the target contract.
-Projection payloads now use `pap_projection_kv_unaware=True` and
-`pap_remote_prefix_len` metadata and strip Prefill KV transport fields such as
-`remote_block_ids`, `remote_engine_id`, `remote_request_id`, `remote_host`, and
-`remote_port`. Scheduler has a PAP Projection branch that treats
-`pap_remote_prefix_len - 1` tokens as remote-prefix metadata and bypasses
-KVConnector match/update for that request. This is not yet committed and still
-needs final review/commit.
-
-Newer working-tree phase: Projection no longer launches as a NIXL
-`kv_consumer` in `examples/pap/launch_pap_nixl.sh`; it is started as
-metadata-only vLLM with no `--kv-transfer-config`. EngineCore now treats
-`pap_projection_kv_unaware` requests as PAP metadata-only and skips the generic
-"Got kv_transfer_params, but no KVConnector found" warning for those requests.
+Prefill/Profile to Projection prompt KV transfer remains removed. The remaining
+prompt-KV path is Prefill/Profile to colocated Attention, now defaulted to PAP
+OFFLOAD_KV CUDA IPC descriptors instead of TCP tensor-bundle payloads.
 
 ## Verified
-- Unit/PAP tests: `.venv/bin/python -m pytest tests/pap/test_pap_launch_files.py tests/pap -q`
-  passed with `124 passed`.
-- E2E 1PA1P using `/data/ssd1/llm-models/Qwen3-0.6B` returned
-  `"<think>\nOkay,"` instead of the previous repeated `!`.
-- E2E high input/output 1PA1P run used `prompt_tokens=1185`,
-  `completion_tokens=256`, completed in `10206 ms`, and produced normal model
-  text. Attention/Projection OFFLOAD_EXEC traces were both `7168`, matching
-  `256 output tokens * 28 layers`.
-- E2E 4PA4P run sent 8 sequential requests and covered PA/P pairs
-  `8190/8290`, `8191/8291`, `8192/8292`, and `8193/8293` twice. All requests
-  returned HTTP `200`; every Attention and Projection instance logged `448`
-  OFFLOAD_EXEC traces, matching `2 requests * 8 output tokens * 28 layers`.
-- The 4PA4P responses were valid model text, not garbled output.
-- Attention executor logs showed exactly 28 `PAP prefill KV imported` entries
-  for Qwen3-0.6B.
-- Projection and Attention OFFLOAD_EXEC traces were present; Projection showed
-  external prefix cache hit rate `100.0%`.
-- E2E PAP/MPS/EngineCore processes were cleaned after verification.
-- Current phase-1 unit coverage:
-  `.venv/bin/python -m pytest tests/pap/test_pd_payloads.py tests/pap/test_pap_proxy_server.py tests/pap/test_multi_pap_proxy_server.py tests/pap/test_pap_true_split_contract.py tests/v1/core/test_scheduler.py::test_pap_projection_remote_prefix_len_parser -q`
-  passed with `43 passed`.
-- Phase-1 1PA1P E2E with Qwen3-0.6B returned HTTP `200` for a request with
-  `prompt_tokens=628`, `completion_tokens=96`, latency `7004 ms`. Projection
-  prompt throughput was `0.0 tokens/s`; Attention and Projection each logged
-  `2688` OFFLOAD_EXEC traces, matching `96 * 28`.
-- Metadata-only Projection 1PA1P E2E with Qwen3-0.6B returned HTTP `200` for
-  `prompt_tokens=344`, `completion_tokens=64`, latency `6310 ms`. Projection
-  vLLM startup args had no `kv_transfer_config`; proxy logged only PAP metadata
-  keys in Projection `kv_transfer_params`; Projection/Attention each logged
-  `1792` OFFLOAD_EXEC traces, matching `64 * 28`.
-- Metadata-only Projection X:Y E2E with Qwen3-0.6B ran `4pa2p` and sent 8
-  sequential requests. Routing covered PA/Attention `8100/8300`,
-  `8101/8301`, `8102/8302`, `8103/8303` against Projection `8200`, `8201`,
-  then repeated. All responses returned HTTP `200`; each Projection logged
-  `1344` OFFLOAD_EXEC traces, each Attention logged `672`, matching the
-  expected `requests * 12 output tokens * 28 layers` counts.
+
+Focused unit tests:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `70 passed`.
+
+1PA1P Qwen3-0.6B with `PAP_OFFLOAD_KV_TRANSPORT=cuda_ipc` default:
+
+- HTTP `200`.
+- Usage: `prompt_tokens=18`, `completion_tokens=32`, `total_tokens=50`.
+- Projection payload keys were only PAP metadata:
+  `pap_attention_endpoint`, `pap_attention_kv_installed`,
+  `pap_attention_tcp_endpoint`, `pap_offload_exec_zmq_endpoint`,
+  `pap_prefill_kv_handle`, `pap_projection_kv_unaware`,
+  `pap_remote_prefix_len`.
+- Attention logged `28` `PAP prefill KV imported via IPC descriptor` entries.
+- Projection and Attention each logged `896` OFFLOAD_EXEC traces, matching
+  `32 * 28`.
+- `kv_transfer_config` appeared only in Prefill, not Projection.
+- No `Traceback`, `ERROR`, `rejected`, or `Got kv_transfer_params`.
+
+4PA2P Qwen3-0.6B with `PAP_OFFLOAD_KV_TRANSPORT=cuda_ipc` default:
+
+- Sent 8 sequential requests; all returned HTTP `200`.
+- Route coverage:
+  - `8100/8300 -> 8200`
+  - `8101/8301 -> 8201`
+  - `8102/8302 -> 8200`
+  - `8103/8303 -> 8201`
+  - repeated once.
+- Each response used `prompt_tokens=15`, `completion_tokens=12`.
+- Projection payload keys were only PAP metadata for all 8 requests.
+- Attention logged `224` IPC import entries:
+  `4 Attention * 2 requests each * 28 layers`.
+- Projection traces: `2688` total, `1344` per Projection.
+- Attention traces: `2688` total, `672` per Attention.
+- `kv_transfer_config` appeared only in the four Prefill producer logs.
+- No `Traceback`, `ERROR`, `rejected`, or `Got kv_transfer_params`.
+
+## Important Runtime Notes
+
+- PyTorch `reduce_tensor` returns non-JSON-native CUDA IPC rebuild args. The
+  descriptor stores those args in `ipc_handle_pickled` with base64 encoding
+  inside the control metadata.
+- The first IPC version still gathers Prefill paged KV into contiguous tensors
+  and Attention copies opened IPC tensors into its existing registry storage.
+  This removes TCP tensor payloads but is not yet zero-copy shared KV ownership.
+- Projection still keeps vLLM internal scheduler/block-table state for current
+  and generated tokens. It does not receive prompt KV bytes or prompt KV
+  handles.
 
 ## Next
-1. For future E2E, use:
-   `bash examples/pap/launch_pap_nixl.sh --model /data/ssd1/llm-models/Qwen3-0.6B`
-   or override with the 8B path.
-2. Commit the X:Y metadata-only Projection validation checkpoint.
-3. Next implementation stage: remove remaining Profile/Prefill to Attention
-   non-IPC transfer assumptions and design/implement the direct IPC path for
-   Prefill/Profile KV installation into Attention Executor.
-   The current NIXL/NCCL transport is working but is not the desired final
-   local PA-to-Attention KV path.
+
+1. Decide whether to keep the first IPC copy-into-registry path as the stable
+   baseline or move directly to zero-copy/shared KV ownership.
+2. Add stronger runtime assertions/log checks for absence of TCP tensor-bundle
+   prefill import in default PAP mode.
+3. Tighten Projection local KV assumptions:
+   audit whether generated-token KV on Projection can be avoided now that
+   Attention owns attention history.
+4. Continue using `/data/ssd1/llm-models/Qwen3-0.6B` for fast experiments.
 
 ## Rules
-- Use `.venv/bin/python`/`uv`; do not use system `python3` or bare `pip`.
-- Poll service startup and logs frequently; do not wait silently on long E2E
-  runs.
+
+- Use `.venv/bin/python` / `uv`; do not use system `python3` or bare `pip`.
+- Poll startup and logs frequently; do not wait silently on long E2E runs.
 - Full restart PAP experiments instead of restarting individual services.
 - Clean E2E processes by PID and verify with `pgrep` before starting another
   run.

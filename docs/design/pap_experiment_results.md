@@ -254,3 +254,114 @@ Result:
   warning for PAP metadata-only requests.
 - No `ERROR`, `Traceback`, `Exception`, `RuntimeError`, or `HTTPStatusError`
   entries were found in the Projection/Attention/proxy logs.
+
+## Qwen3-0.6B PAP OFFLOAD_KV CUDA IPC Validation
+
+Code checkpoint:
+
+- `312ae6fbb` added PAP OFFLOAD_KV IPC descriptors.
+- `a418ae539` added Attention executor `import_prefill_kv_ipc` handling.
+- `913db9dad` added Prefill/Profile CUDA IPC descriptor export.
+- `e22316c9a` made `PAP_OFFLOAD_KV_TRANSPORT=cuda_ipc` the launcher default.
+- `f945899e4` made real PyTorch CUDA IPC handles JSON-safe with pickled
+  metadata inside the control payload.
+- `4a9d567d5` added explicit IPC import logging.
+
+Focused unit verification:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `70 passed`.
+
+### 1PA1P OFFLOAD_KV IPC
+
+Command shape:
+
+```bash
+PAP_TOPOLOGY=1pa1p \
+PAP_SERVICE_ONLY=1 \
+PAP_SKIP_SMOKE_REQUEST=1 \
+PAP_PROXY_PORT=9000 \
+PAP_MAX_TOKENS=32 \
+PAP_ATTENTION_KV_DEBUG=1 \
+PAP_OFFLOAD_EXEC_TRACE=1 \
+bash examples/pap/launch_pap_nixl.sh \
+  --model /data/ssd1/llm-models/Qwen3-0.6B
+```
+
+Request result:
+
+- Endpoint: `POST /v1/completions` through the multi-PAP proxy.
+- HTTP status: `200`.
+- Usage: `prompt_tokens=18`, `completion_tokens=32`, `total_tokens=50`.
+- Output was normal model text, not binary garbage or decode failure.
+- Proxy logged Projection metadata keys only:
+  `['pap_attention_endpoint', 'pap_attention_kv_installed',
+  'pap_attention_tcp_endpoint', 'pap_offload_exec_zmq_endpoint',
+  'pap_prefill_kv_handle', 'pap_projection_kv_unaware',
+  'pap_remote_prefix_len']`.
+- Attention logged `28` `PAP prefill KV imported via IPC descriptor` entries,
+  one per Qwen3-0.6B layer.
+- Projection logged `896` OFFLOAD_EXEC traces.
+- Attention logged `896` OFFLOAD_EXEC traces.
+- Trace count matches `32 completion tokens * 28 layers`.
+- `kv_transfer_config` appeared only in the Prefill producer log, not in the
+  Projection vLLM startup arguments.
+- No `Traceback`, `ERROR`, `rejected`, or `Got kv_transfer_params` log entries
+  were found in the PAP service logs.
+
+### 4PA2P OFFLOAD_KV IPC X:Y Routing
+
+Command shape:
+
+```bash
+PAP_TOPOLOGY=4pa2p \
+PAP_SERVICE_ONLY=1 \
+PAP_SKIP_SMOKE_REQUEST=1 \
+PAP_PROXY_PORT=9000 \
+PAP_MAX_TOKENS=12 \
+PAP_ATTENTION_KV_DEBUG=1 \
+PAP_OFFLOAD_EXEC_TRACE=1 \
+bash examples/pap/launch_pap_nixl.sh \
+  --model /data/ssd1/llm-models/Qwen3-0.6B
+```
+
+Request set:
+
+- Sent 8 sequential `/v1/completions` requests through the multi-PAP proxy.
+- Each response returned HTTP `200`.
+- Each response reported `prompt_tokens=15`, `completion_tokens=12`,
+  `total_tokens=27`.
+
+Observed route coverage:
+
+| Request | Prefill | Attention | Projection |
+| --- | --- | --- | --- |
+| 0 | `8100` | `8300` | `8200` |
+| 1 | `8101` | `8301` | `8201` |
+| 2 | `8102` | `8302` | `8200` |
+| 3 | `8103` | `8303` | `8201` |
+| 4 | `8100` | `8300` | `8200` |
+| 5 | `8101` | `8301` | `8201` |
+| 6 | `8102` | `8302` | `8200` |
+| 7 | `8103` | `8303` | `8201` |
+
+Evidence:
+
+- Proxy logged Projection metadata keys only for all 8 requests.
+- Attention logged `224` `PAP prefill KV imported via IPC descriptor` entries:
+  `56` per Attention executor, matching `2 requests * 28 layers`.
+- Projection logged `2688` OFFLOAD_EXEC traces:
+  `1344` per Projection executor, matching `4 requests * 12 tokens * 28 layers`.
+- Attention logged `2688` OFFLOAD_EXEC traces:
+  `672` per Attention executor, matching `2 requests * 12 tokens * 28 layers`.
+- `kv_transfer_config` appeared only in the four Prefill producer logs, not in
+  Projection startup logs.
+- No `Traceback`, `ERROR`, `rejected`, or `Got kv_transfer_params` log entries
+  were found in the PAP service logs.
