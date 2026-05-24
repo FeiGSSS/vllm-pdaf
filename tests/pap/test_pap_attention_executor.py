@@ -10,7 +10,11 @@ from examples.pap.pap_attention_executor import (
     maybe_start_offload_exec_transport,
     run_offload_exec_once,
 )
-from vllm.pap.data_plane import PAPOffloadExecDescriptor
+from vllm.pap.data_plane import (
+    PAPCudaIPCTensorHandle,
+    PAPOffloadExecDescriptor,
+    PAPOffloadKVIPCDescriptor,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -1068,6 +1072,82 @@ def test_attention_executor_binary_imports_prefill_kv_before_decode() -> None:
     probs = torch.softmax(scores, dim=-1)
     expected = torch.einsum("qhk,khd->qhd", probs, value)
     assert torch.allclose(tensors["output"], expected)
+
+
+def test_attention_executor_binary_imports_prefill_kv_ipc_descriptor(
+    monkeypatch,
+) -> None:
+    import torch
+    from fastapi.testclient import TestClient
+
+    from examples.pap import pap_attention_executor
+    from examples.pap.pap_attention_executor import create_app
+    from vllm.pap.remote_attention import (
+        deserialize_tensor_bundle,
+        serialize_tensor_bundle,
+    )
+
+    key = torch.tensor([[[1.0, 0.0]], [[0.0, 1.0]]])
+    value = torch.tensor([[[2.0, 0.0]], [[0.0, 4.0]]])
+
+    def fake_open_ipc_prefill_kv(descriptor):
+        assert descriptor.request_id == "req-prefix-ipc"
+        assert descriptor.seq_len == 2
+        return key, value
+
+    monkeypatch.setattr(
+        pap_attention_executor,
+        "open_ipc_prefill_kv",
+        fake_open_ipc_prefill_kv,
+    )
+
+    descriptor = PAPOffloadKVIPCDescriptor(
+        request_id="req-prefix-ipc",
+        layer_name="model.layers.0.self_attn.attn",
+        seq_len=2,
+        block_ids=(4,),
+        key=PAPCudaIPCTensorHandle(
+            dtype="float32",
+            shape=tuple(key.shape),
+            ipc_handle={"GPU-test": ("key", 1, 2, 3, 4, 5, 0)},
+        ),
+        value=PAPCudaIPCTensorHandle(
+            dtype="float32",
+            shape=tuple(value.shape),
+            ipc_handle={"GPU-test": ("value", 1, 2, 3, 4, 5, 0)},
+        ),
+    )
+    app = create_app()
+    client = TestClient(app)
+    client.post(
+        "/v1/pap/attention/register",
+        json={
+            "request_id": "req-prefix-ipc",
+            "conversation_id": "conv-prefix-ipc",
+            "prefill_endpoint": "http://localhost:8100",
+            "kv_transfer_params": {},
+            "prefix_len": 2,
+        },
+    )
+
+    imported = client.post(
+        "/v1/pap/attention/import-prefill-kv-binary",
+        content=serialize_tensor_bundle(
+            {
+                "command": "import_prefill_kv_ipc",
+                "descriptor": descriptor.to_dict(),
+            },
+            {},
+        ),
+        headers={"Content-Type": "application/octet-stream"},
+    )
+
+    assert imported.status_code == 200
+    metadata, tensors = deserialize_tensor_bundle(imported.content)
+    assert metadata["seq_len"] == 2
+    assert tensors == {}
+    session = client.get("/v1/pap/attention/sessions/req-prefix-ipc").json()
+    assert session["prefill_seq_lens"] == {"model.layers.0.self_attn.attn": 2}
 
 
 def test_attention_executor_compute_existing_prefill_token_does_not_append() -> None:

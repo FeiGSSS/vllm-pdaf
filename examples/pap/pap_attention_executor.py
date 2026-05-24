@@ -30,6 +30,7 @@ from vllm.pap.attention_session import (
     AttentionSessionStore,
 )
 from vllm.pap.data_plane import (
+    PAPOffloadKVIPCDescriptor,
     PAPTensorTransport,
     build_p2p_nccl_offload_exec_transport,
 )
@@ -733,6 +734,29 @@ def _compute_single_binary_attention_response(
     )
 
 
+def open_ipc_prefill_kv(
+    descriptor: PAPOffloadKVIPCDescriptor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Open CUDA IPC prefill KV tensors described by OFFLOAD_KV metadata."""
+    from torch.multiprocessing.reductions import rebuild_cuda_tensor
+
+    device_index = torch.accelerator.current_device_index()
+    props = torch.cuda.get_device_properties(device_index)
+    physical_gpu_id = str(props.uuid)
+
+    def rebuild(handle: dict[str, tuple[Any, ...]]) -> torch.Tensor:
+        if physical_gpu_id not in handle:
+            raise ValueError(
+                f"IPC handle not found for GPU UUID {physical_gpu_id}. "
+                f"Available UUIDs: {list(handle.keys())}"
+            )
+        args = list(handle[physical_gpu_id])
+        args[6] = device_index
+        return rebuild_cuda_tensor(*args)
+
+    return rebuild(descriptor.key.ipc_handle), rebuild(descriptor.value.ipc_handle)
+
+
 def compute_batch_binary_attention_response(
     registry: PAPAttentionRegistry,
     payload: bytes,
@@ -1011,6 +1035,25 @@ def compute_binary_attention_response(
             {
                 "request_id": str(metadata["request_id"]),
                 "layer_name": str(metadata["layer_name"]),
+                "seq_len": seq_len,
+            },
+            {},
+        )
+    if metadata.get("command") == "import_prefill_kv_ipc":
+        descriptor = PAPOffloadKVIPCDescriptor.from_dict(metadata["descriptor"])
+        key, value = open_ipc_prefill_kv(descriptor)
+        seq_len = registry.import_prefill_kv(
+            request_id=descriptor.request_id,
+            layer_name=descriptor.layer_name,
+            key=key,
+            value=value,
+            seq_len=descriptor.seq_len,
+            block_ids=list(descriptor.block_ids),
+        )
+        return serialize_tensor_bundle(
+            {
+                "request_id": descriptor.request_id,
+                "layer_name": descriptor.layer_name,
                 "seq_len": seq_len,
             },
             {},
