@@ -19,8 +19,17 @@ The target is a single PA-owned KV pool:
 - Attention reads and writes those blocks through local IPC.
 - Decode K/V produced from Projection is appended into Prefill-owned blocks, not
   into an Attention-private KV copy.
-- A later request in the same session can reuse first-turn prompt plus decode KV
-  without copying it back from an external cache.
+- A later request can reuse resident prompt plus decode KV when the external
+  scheduler routes it to a PA node that owns compatible resident KV, without
+  copying it back from an external cache.
+
+PAP request/session identity is a KV ownership handle, not a conversation
+binding contract. vLLM engines, PA nodes, and Projection nodes should not keep
+conversation-id placement state. A PA/P pairing serves one Prefill+Decode task;
+after that task completes, the pair is unbound. For a later turn, an external
+proxy or router may prefer the previous PA based on cache placement and load, or
+may choose another PA and recompute/migrate. That routing policy must not be
+implemented as conversation-id stickiness inside the compute nodes.
 
 ## Core Decision
 
@@ -214,15 +223,18 @@ Expected implementations:
 
 ### Later Turn on Same PA
 
-1. Scheduler receives a request with the same PAP session id.
-2. `PAPSharedKVConnector` asks `PAKVOwner` for resident prefix coverage.
-3. For a local hit, the connector attaches existing blocks and pins them.
-4. No external KV copy is performed.
-5. Prefill computes only the new suffix that is not already resident.
+1. An external proxy routes a later request to a PA that owns compatible
+   resident KV, based on cache metadata and load.
+2. Scheduler receives PAP KV ownership metadata for the resident prefix.
+3. `PAPSharedKVConnector` asks `PAKVOwner` for resident prefix coverage.
+4. For a local hit, the connector attaches existing blocks and pins them.
+5. No external KV copy is performed.
+6. Prefill computes only the new suffix that is not already resident.
 
 ### Later Turn on Different PA
 
-1. Scheduler discovers the session is remote.
+1. External routing chooses a PA that does not own compatible resident KV, or
+   the local scheduler discovers the requested KV owner is remote.
 2. Initial behavior: route back to the owner PA if capacity allows, otherwise
    recompute.
 3. Future behavior: use `RemoteMigrationBackend` to copy KV to the new PA and
@@ -289,7 +301,8 @@ attention.
 
 ### Phase 4: Same-PA Multi-Turn Reuse
 
-- Add session id metadata through proxy and scheduler.
+- Add KV ownership metadata through proxy and scheduler without storing
+  conversation placement state in vLLM or the PAP compute nodes.
 - Attach resident session blocks for later turns.
 - Compute only new suffix tokens.
 - Verify the second turn reuses first-turn prompt plus decode KV without copy.
@@ -323,13 +336,14 @@ E2E tests:
 - 1PA1P first turn with zero-copy Prefill KV read.
 - 1PA1P decode K/V write-back into Prefill-owned blocks.
 - Same-PA second turn reuses first-turn prompt plus decode KV.
-- X:Y routing stays correct when route-back policy is enabled.
+- X:Y routing stays correct without proxy-maintained conversation binding.
 
 ## Open Boundaries
 
 - The first implementation should not attempt cross-PA migration.
 - The first implementation should not attempt to support all transport
   protocols.
-- The first implementation may require session stickiness to the PA node that
-  owns the resident KV.
+- The first implementation may rely on an external proxy preferring the PA node
+  that owns resident KV, but the PAP compute nodes must not bind themselves to
+  conversation ids.
 - Remote migration should be designed after local no-copy correctness is proven.

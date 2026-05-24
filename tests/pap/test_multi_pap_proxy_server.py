@@ -4,14 +4,11 @@
 from pathlib import Path
 
 from examples.pap.multi_pap_proxy_server import (
-    PAPConversationPlacement,
     PAPGroup,
     ProjectionInstance,
     build_projection_payload_for_group,
-    pap_prefill_kv_handle_for_request,
     parse_pap_groups,
     parse_projection_instances,
-    select_conversation_instances,
     select_instances,
 )
 
@@ -186,60 +183,6 @@ def test_select_instances_can_stick_pa_to_projection() -> None:
     ]
 
 
-def test_select_conversation_instances_routes_back_to_existing_pa() -> None:
-    groups = [
-        PAPGroup("127.0.0.1", 8100, 5559, "127.0.0.1", 8300),
-        PAPGroup("127.0.0.1", 8101, 5560, "127.0.0.1", 8301),
-    ]
-    projections = [
-        ProjectionInstance("127.0.0.1", 8200),
-        ProjectionInstance("127.0.0.1", 8201),
-    ]
-    placements = {
-        "conv-1": PAPConversationPlacement(
-            conversation_id="conv-1",
-            request_id="req-first",
-            group=groups[0],
-            projection=projections[0],
-            prefill_kv_handle="req-first",
-            resident_seq_len=9,
-        )
-    }
-
-    group, projection, placement = select_conversation_instances(
-        request_number=1,
-        conversation_id="conv-1",
-        groups=groups,
-        projections=projections,
-        placements=placements,
-    )
-
-    assert group is groups[0]
-    assert projection is projections[0]
-    assert placement is placements["conv-1"]
-
-
-def test_prefill_kv_handle_for_existing_placement_reuses_owner_session() -> None:
-    group = PAPGroup("127.0.0.1", 8100, 5559, "127.0.0.1", 8300)
-    projection = ProjectionInstance("127.0.0.1", 8200)
-    placement = PAPConversationPlacement(
-        conversation_id="conv-1",
-        request_id="req-first",
-        group=group,
-        projection=projection,
-        prefill_kv_handle="req-first",
-        resident_seq_len=9,
-    )
-
-    assert (
-        pap_prefill_kv_handle_for_request(
-            placement=placement,
-            attention_session={"prefill_kv_handle": "req-second"},
-        )
-        == "req-first"
-    )
-
-
 def test_multi_proxy_registers_attention_before_prefill_for_local_import() -> None:
     text = (ROOT / "examples/pap/multi_pap_proxy_server.py").read_text()
 
@@ -259,24 +202,13 @@ def test_multi_proxy_marks_attention_kv_installed_only_after_prefill() -> None:
     assert prefill < prefix_len < installed
 
 
-def test_multi_proxy_tracks_conversation_placement_and_queries_coverage() -> None:
+def test_multi_proxy_does_not_store_conversation_placement() -> None:
     text = (ROOT / "examples/pap/multi_pap_proxy_server.py").read_text()
 
-    assert "app.state.conversation_placements = {}" in text
-    assert "select_conversation_instances(" in text
-    assert "get_attention_resident_prefix(" in text
-    assert "request.app.state.conversation_placements[conversation_id]" in text
-
-
-def test_multi_proxy_uses_existing_prefill_kv_handle_for_conversation() -> None:
-    text = (ROOT / "examples/pap/multi_pap_proxy_server.py").read_text()
-
-    assert "pap_prefill_kv_handle_for_request(" in text
-    assert "placement=placement" in text
-    assert (
-        'pap_prefill_kv_handle=str(attention_session.get("prefill_kv_handle"))'
-        not in text
-    )
+    assert "PAPConversationPlacement" not in text
+    assert "conversation_placements" not in text
+    assert "select_conversation_instances" not in text
+    assert "get_attention_resident_prefix" not in text
 
 
 def test_build_projection_payload_for_group_does_not_claim_kv_installed_by_default(

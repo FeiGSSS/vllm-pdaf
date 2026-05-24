@@ -1166,3 +1166,55 @@ Current boundary:
   materialized decode coverage when Prefill reimports prompt paged KV.
 - The system still performs a normal Prefill request for later turns; scheduler
   resident attach/skip remains next.
+
+## 2026-05-24 PAP Shared KV Owner Phase 13
+
+Direction correction after architecture review:
+
+- The multi PAP proxy no longer keeps `conversation_id -> placement` state.
+- Removed `PAPConversationPlacement`, `select_conversation_instances()`, and
+  `pap_prefill_kv_handle_for_request()` from the multi proxy.
+- Each PAP request now independently selects a PA group and Projection instance
+  through `select_instances()`.
+- A PA/P pairing is treated as one Prefill+Decode task. After the task, it is
+  unbound; later turns must be routed by an external cache/load-aware policy,
+  not by conversation-id stickiness inside the PAP proxy or compute nodes.
+- The request-local `pap_prefill_kv_handle` now always comes from the current
+  Attention registration, so the proxy does not bind later requests to a
+  previous owner handle.
+- Updated the shared-KV owner design doc to make this invariant explicit:
+  PAP request/session identity is a KV ownership handle, not a conversation
+  binding contract.
+
+Focused verification:
+
+```bash
+.venv/bin/python -m pytest tests/pap/test_multi_pap_proxy_server.py -q
+```
+
+Result: `11 passed, 16 warnings`.
+
+Full focused PAP suite:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_kv_owner.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_proxy_server.py \
+  tests/pap/test_multi_pap_proxy_server.py \
+  tests/pap/test_pap_launch_files.py \
+  tests/pap/test_pd_payloads.py -q
+```
+
+Result: `135 passed, 16 warnings`.
+
+`ruff-check` on changed Python files passed.
+
+Current boundary:
+
+- Attention registration still accepts a `conversation_id` field for API/test
+  compatibility, but it is no longer used by the multi proxy for placement.
+- Scheduler resident attach/skip remains the next major implementation step.

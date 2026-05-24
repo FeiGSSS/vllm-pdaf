@@ -20,7 +20,6 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 try:
     from examples.pap.pap_proxy_server import (
-        get_attention_resident_prefix,
         prefill_prefix_len_from_kv_params,
         register_attention_handle,
     )
@@ -32,7 +31,6 @@ try:
     )
 except ModuleNotFoundError:  # pragma: no cover - direct script execution
     from pap_proxy_server import (  # type: ignore[no-redef]
-        get_attention_resident_prefix,
         prefill_prefix_len_from_kv_params,
         register_attention_handle,
     )
@@ -98,16 +96,6 @@ class MultiPAPServiceClient:
     port: int
     base_url: str
     role: str
-
-
-@dataclass
-class PAPConversationPlacement:
-    conversation_id: str
-    request_id: str
-    group: PAPGroup
-    projection: ProjectionInstance
-    prefill_kv_handle: str
-    resident_seq_len: int = 0
 
 
 def _parse_host_port(value: str, *, expected_parts: int, kind: str) -> list[str]:
@@ -187,38 +175,6 @@ def select_instances(
     else:
         raise ValueError(f"unsupported PAP routing policy: {routing_policy}")
     return group, projections[projection_index]
-
-
-def select_conversation_instances(
-    request_number: int,
-    conversation_id: str,
-    groups: list[PAPGroup],
-    projections: list[ProjectionInstance],
-    placements: dict[str, PAPConversationPlacement],
-    *,
-    routing_policy: str = "round_robin",
-) -> tuple[PAPGroup, ProjectionInstance, PAPConversationPlacement | None]:
-    if conversation_id:
-        placement = placements.get(conversation_id)
-        if placement is not None:
-            return placement.group, placement.projection, placement
-    group, projection = select_instances(
-        request_number,
-        groups,
-        projections,
-        routing_policy=routing_policy,
-    )
-    return group, projection, None
-
-
-def pap_prefill_kv_handle_for_request(
-    *,
-    placement: PAPConversationPlacement | None,
-    attention_session: dict[str, Any],
-) -> str:
-    if placement is not None and placement.prefill_kv_handle:
-        return placement.prefill_kv_handle
-    return str(attention_session.get("prefill_kv_handle"))
 
 
 def build_projection_payload_for_group(
@@ -315,7 +271,6 @@ async def lifespan(app: FastAPI):
         projection: _make_client(projection.host, projection.port, "projection")
         for projection in app.state.projections
     }
-    app.state.conversation_placements = {}
     yield
     for client in [
         *app.state.prefill_clients.values(),
@@ -334,25 +289,15 @@ async def _handle_openai_request(api_path: str, request: Request):
     conversation_id = str(req_data.pop("conversation_id", ""))
     client_stream = bool(req_data.get("stream", False))
     request_number = next(request.app.state.request_counter)
-    group, projection, placement = select_conversation_instances(
+    group, projection = select_instances(
         request_number,
-        conversation_id,
         request.app.state.groups,
         request.app.state.projections,
-        request.app.state.conversation_placements,
         routing_policy=request.app.state.args.routing_policy,
     )
     prefill = request.app.state.prefill_clients[group]
     attention = request.app.state.attention_clients[group]
     projection_client = request.app.state.projection_clients[projection]
-    resident_prefix_len = 0
-    if placement is not None:
-        resident_coverage = await get_attention_resident_prefix(
-            attention,
-            placement.request_id,
-        )
-        resident_prefix_len = int(resident_coverage.get("seq_len") or 0)
-        placement.resident_seq_len = resident_prefix_len
 
     attention_session = await register_attention_handle(
         attention,
@@ -367,10 +312,7 @@ async def _handle_openai_request(api_path: str, request: Request):
         build_prefill_payload(req_data),
         pap_attention_endpoint=group.attention_base_url,
         pap_attention_tcp_endpoint=group.attention_tcp_endpoint,
-        pap_prefill_kv_handle=pap_prefill_kv_handle_for_request(
-            placement=placement,
-            attention_session=attention_session,
-        ),
+        pap_prefill_kv_handle=str(attention_session.get("prefill_kv_handle")),
         pap_mode=request.app.state.args.pap_mode,
     )
     t0 = time.time()
@@ -383,36 +325,18 @@ async def _handle_openai_request(api_path: str, request: Request):
         prefill_nixl_port=group.prefill_nixl_port,
     )
     prefix_len = prefill_prefix_len_from_kv_params(kv_params)
-    if conversation_id:
-        request.app.state.conversation_placements[conversation_id] = (
-            PAPConversationPlacement(
-                conversation_id=conversation_id,
-                request_id=request_id,
-                group=group,
-                projection=projection,
-                prefill_kv_handle=pap_prefill_kv_handle_for_request(
-                    placement=placement,
-                    attention_session=attention_session,
-                ),
-                resident_seq_len=max(resident_prefix_len, int(prefix_len or 0)),
-            )
-        )
     projection_payload = build_projection_payload_for_group(
         req_data,
         kv_params,
         group,
-        pap_prefill_kv_handle=pap_prefill_kv_handle_for_request(
-            placement=placement,
-            attention_session=attention_session,
-        ),
+        pap_prefill_kv_handle=str(attention_session.get("prefill_kv_handle")),
         pap_attention_kv_installed=prefix_len is not None,
     )
     projection_payload.setdefault("stream", client_stream)
     projection_kv_params = projection_payload.get("kv_transfer_params") or {}
     logger.info(
         "request_id=%s pa=%s:%d attention=%s:%d projection=%s:%d "
-        "prefill_ms=%d prefill_prefix_len=%s resident_prefix_len=%s "
-        "projection_kv_keys=%s",
+        "prefill_ms=%d prefill_prefix_len=%s projection_kv_keys=%s",
         request_id,
         group.prefill_host,
         group.prefill_port,
@@ -422,7 +346,6 @@ async def _handle_openai_request(api_path: str, request: Request):
         projection.port,
         prefill_ms,
         prefix_len,
-        resident_prefix_len,
         sorted(projection_kv_params.keys()),
     )
 
