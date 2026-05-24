@@ -47,6 +47,39 @@ Initial implementation should require session stickiness or recompute for
 remote sessions. Cross-PA migration is a later phase after local no-copy
 correctness is proven.
 
+## 2026-05-24 PAP Shared KV Owner Phase 1
+
+First implementation checkpoint toward shared KV:
+
+- Added an implementation plan at
+  `docs/superpowers/plans/2026-05-24-pap-shared-kv-owner-implementation.md`.
+- Added a TDD contract proving IPC-imported Prefill KV opened by Attention keeps
+  the original tensor view instead of being copied into Attention storage.
+- `PAPAttentionRegistry.import_prefill_kv()` now has `copy=True` by default.
+- The `import_prefill_kv_ipc` binary command passes `copy=False`, so opened IPC
+  tensors remain the source view in Attention.
+- Non-IPC tensor-bundle import keeps copy semantics as the debug/fallback path.
+
+Verified:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `78 passed, 16 warnings`.
+
+Boundary:
+
+- This removes the extra Attention-side copy for IPC-imported tensors.
+- It does not yet make Prefill's vLLM paged KV blocks the directly attached
+  resident source. Current Prefill export still gathers into exported tensors.
+- Next phase is `PAKVOwner`/resident block descriptors so Attention reads
+  Prefill-owned paged blocks and later writes decode K/V into those blocks.
+
 ## State
 
 Branch `feature/pap-true-split`. Current latest implementation checkpoint is

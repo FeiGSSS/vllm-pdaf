@@ -423,14 +423,19 @@ class PAPAttentionRegistry:
         value: torch.Tensor,
         seq_len: int,
         block_ids: list[int] | None = None,
+        copy: bool = True,
     ) -> int:
         with self._lock:
             session_request_id = self._resolve_session_request_id_locked(request_id)
             if session_request_id is None:
                 raise KeyError(request_id)
             session = self._sessions[session_request_id]
-            key_state = key.detach().contiguous().to(self._storage_device)
-            value_state = value.detach().contiguous().to(self._storage_device)
+            if copy:
+                key_state = key.detach().contiguous().to(self._storage_device)
+                value_state = value.detach().contiguous().to(self._storage_device)
+            else:
+                key_state = key.detach()
+                value_state = value.detach()
             seq_len = int(seq_len)
             if seq_len < 0:
                 raise ValueError("seq_len must be non-negative")
@@ -1048,6 +1053,7 @@ def compute_binary_attention_response(
             value=value,
             seq_len=descriptor.seq_len,
             block_ids=list(descriptor.block_ids),
+            copy=False,
         )
         logger.info(
             "PAP prefill KV imported via IPC descriptor request_id=%s "
