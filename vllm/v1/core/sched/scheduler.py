@@ -440,11 +440,15 @@ class Scheduler(SchedulerInterface):
 
             # Schedule newly needed KV blocks for the request.
             with record_function_or_nullcontext("schedule: allocate_slots"):
+                pap_local_computed_token_offset = (
+                    self._get_pap_projection_local_computed_token_offset(request)
+                )
                 while True:
                     new_blocks = self.kv_cache_manager.allocate_slots(
                         request,
                         num_new_tokens,
                         num_lookahead_tokens=self.num_lookahead_tokens,
+                        local_computed_token_offset=pap_local_computed_token_offset,
                     )
 
                     if new_blocks is not None:
@@ -973,6 +977,15 @@ class Scheduler(SchedulerInterface):
                 "prompt length"
             )
         return prefix_len
+
+    @classmethod
+    def _get_pap_projection_local_computed_token_offset(
+        cls, request: Request
+    ) -> int:
+        remote_prefix_len = cls._get_pap_projection_remote_prefix_len(request)
+        if remote_prefix_len is None:
+            return 0
+        return max(remote_prefix_len - 1, 0)
 
     def _preempt_request(self, request: Request, timestamp: float) -> None:
         """Preempt a request and put it back to the waiting queue.

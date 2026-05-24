@@ -245,6 +245,7 @@ class KVCacheManager:
         num_encoder_tokens: int = 0,
         full_sequence_must_fit: bool = False,
         allocate_external_computed_blocks: bool = True,
+        local_computed_token_offset: int = 0,
     ) -> KVCacheBlocks | None:
         """Add slots for a request with new tokens to append.
 
@@ -274,6 +275,9 @@ class KVCacheManager:
                 need local blocks allocated in this KV cache manager. KVConnector
                 loads require local receiver blocks; PAP Projection remote-prefix
                 progress does not own prompt KV and can disable this.
+            local_computed_token_offset: Number of leading computed tokens that
+                are tracked as remote progress but do not correspond to local
+                slot ownership in this KV cache manager.
 
         Blocks layout:
         ```
@@ -338,10 +342,16 @@ class KVCacheManager:
         else:
             new_computed_block_list = self.empty_kv_cache_blocks.blocks
 
-        # The number of computed tokens is the number of computed tokens plus
-        # the new prefix caching hits
+        # The number of computed tokens is the number of local computed tokens
+        # plus the new prefix caching hits. PAP Projection can track remote
+        # prefix progress in request.num_computed_tokens without owning local
+        # slots for that prefix.
+        local_request_computed_tokens = max(
+            request.num_computed_tokens - local_computed_token_offset,
+            0,
+        )
         num_local_computed_tokens = (
-            request.num_computed_tokens + num_new_computed_tokens
+            local_request_computed_tokens + num_new_computed_tokens
         )
         total_computed_tokens = min(
             num_local_computed_tokens + num_external_computed_tokens,

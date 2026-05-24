@@ -45,6 +45,17 @@ def test_scheduler_disables_external_block_allocation_for_pap_projection() -> No
     assert "allocate_external_computed_blocks=pap_remote_prefix_len is None" in block
 
 
+def test_scheduler_offsets_running_pap_projection_local_progress() -> None:
+    text = (ROOT / "vllm" / "v1" / "core" / "sched" / "scheduler.py").read_text()
+
+    start = text.index("        while req_index < len(self.running)")
+    end = text.index("        # Record the LoRAs in scheduled_running_reqs")
+    block = text[start:end]
+
+    assert "_get_pap_projection_local_computed_token_offset(request)" in block
+    assert "local_computed_token_offset=pap_local_computed_token_offset" in block
+
+
 def test_engine_core_allows_pap_metadata_without_kv_connector() -> None:
     text = (ROOT / "vllm" / "v1" / "engine" / "core.py").read_text()
 

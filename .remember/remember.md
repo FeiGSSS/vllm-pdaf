@@ -157,6 +157,75 @@ E2E after the change:
   - No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
     `invalid slot`, or `slot_mapping`.
 
+## 2026-05-24 PAP Projection Running Local Slot Offset
+
+Latest local phase after `0fb0c8bc3`:
+
+- `KVCacheManager.allocate_slots()` now has `local_computed_token_offset`.
+- PAP Projection running decode passes `pap_remote_prefix_len - 1` as the
+  offset.
+- Global `request.num_computed_tokens` still advances normally for vLLM token
+  positions, sampling, and request lifecycle.
+- Local block allocation now uses local progress
+  `request.num_computed_tokens - local_computed_token_offset`, so remote prompt
+  prefix progress no longer inflates Projection running-request block history.
+
+Focused regression:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/v1/core/test_kv_cache_utils.py::test_pap_projection_running_slots_use_local_progress_offset \
+  tests/pap/test_pap_true_split_contract.py::test_scheduler_offsets_running_pap_projection_local_progress -q
+```
+
+Result: `2 passed`.
+
+Focused PAP + KV suite:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_launch_files.py \
+  tests/v1/core/test_kv_cache_utils.py::test_allocate_external_tokens_can_skip_local_prefix_blocks \
+  tests/v1/core/test_kv_cache_utils.py::test_pap_projection_running_slots_use_local_progress_offset -q
+```
+
+Result: `75 passed`.
+
+E2E after the change:
+
+- 1PA1P Qwen3-0.6B:
+  - HTTP `200`.
+  - Usage `prompt_tokens=25`, `completion_tokens=16`, `total_tokens=41`.
+  - Output was valid text, not garbled.
+  - Projection payload keys were PAP metadata only.
+  - Projection OFFLOAD_EXEC traces `448` = `16 * 28`.
+  - Attention OFFLOAD_EXEC traces `448`.
+  - `kv_transfer_config` appeared only in Prefill logs.
+  - No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
+    `invalid slot`, or `slot_mapping`.
+- 4PA2P Qwen3-0.6B:
+  - 8 sequential requests, all HTTP `200`.
+  - Route coverage `8100/8300 -> 8200`, `8101/8301 -> 8201`,
+    `8102/8302 -> 8200`, `8103/8303 -> 8201`, repeated once.
+  - Each response had `prompt_tokens=22`, `completion_tokens=8`,
+    `total_tokens=30`.
+  - Outputs were valid text, not garbled.
+  - Projection OFFLOAD_EXEC traces `1792` total, `896` per Projection.
+  - Attention OFFLOAD_EXEC traces `1792` total, `448` per Attention.
+  - `kv_transfer_config` appeared only in Prefill logs.
+  - No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
+    `invalid slot`, or `slot_mapping`.
+
+Next work:
+
+- Audit whether Projection-local generated-token slots can become a bounded
+  scratch/circular state instead of growing with generated length.
+- Do not claim full stateless Projection yet: vLLM still initializes KV cache
+  tensors and maintains local token slots for request execution metadata.
+
 Next work:
 
 - Continue auditing remaining Projection-local KV structures for generated
