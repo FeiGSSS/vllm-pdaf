@@ -39,6 +39,7 @@ def attach_pap_prefill_attention_params(
     if pap_attention_tcp_endpoint:
         kv_params["pap_attention_tcp_endpoint"] = str(pap_attention_tcp_endpoint)
     kv_params["pap_prefill_kv_handle"] = str(pap_prefill_kv_handle)
+    kv_params["pap_import_prefill_kv_to_attention"] = True
     kv_params["pap_mode"] = str(pap_mode)
     updated["kv_transfer_params"] = kv_params
     return updated

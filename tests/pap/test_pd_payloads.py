@@ -47,6 +47,31 @@ def test_build_decode_payload_attaches_prefill_kv_params_without_aliasing() -> N
     assert payload["kv_transfer_params"]["remote_block_ids"] == [[4, 5]]
 
 
+def test_prefill_payload_marks_attention_kv_import_owner() -> None:
+    from examples.pap.pd_payloads import attach_pap_prefill_attention_params
+
+    payload = attach_pap_prefill_attention_params(
+        build_prefill_payload({"model": "qwen", "prompt": "hello"}),
+        pap_attention_endpoint="http://127.0.0.1:8300",
+        pap_prefill_kv_handle="req-7",
+        pap_mode="true_split_performance",
+    )
+
+    assert (
+        payload["kv_transfer_params"]["pap_import_prefill_kv_to_attention"] is True
+    )
+
+
+def test_build_decode_payload_can_mark_attention_kv_installed_after_prefill() -> None:
+    payload = build_decode_payload(
+        {"model": "qwen", "prompt": "hello"},
+        {"remote_engine_id": "prefill-0"},
+        pap_attention_kv_installed=True,
+    )
+
+    assert payload["kv_transfer_params"]["pap_attention_kv_installed"] is True
+
+
 def test_enrich_prefill_kv_params_fills_missing_nixl_endpoint() -> None:
     kv_params = enrich_prefill_kv_params(
         {"remote_engine_id": "prefill-0", "remote_host": "host-from-prefill"},

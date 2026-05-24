@@ -1,4 +1,7 @@
+from pathlib import Path
 import asyncio
+
+ROOT = Path(__file__).resolve().parents[2]
 
 from examples.pap.pap_proxy_server import (
     PAPServiceClient,
@@ -70,17 +73,25 @@ def test_build_projection_payload_attaches_prefill_kv_params() -> None:
     assert payload["kv_transfer_params"]["remote_block_ids"] == [[4, 5]]
 
 
-def test_build_projection_payload_attaches_attention_prefill_handle() -> None:
+def test_single_proxy_marks_attention_kv_installed_only_after_prefill() -> None:
+    text = (ROOT / "examples/pap/pap_proxy_server.py").read_text()
+
+    prefill = text.index("prefill_resp = await _post_json")
+    prefix_len = text.index("prefix_len = prefill_prefix_len_from_kv_params")
+    installed = text.index("pap_attention_kv_installed=prefix_len is not None")
+    assert prefill < prefix_len < installed
+
+
+def test_build_projection_payload_does_not_claim_attention_kv_installed_by_default() -> None:
     kv_params = {"remote_engine_id": "prefill-0"}
     payload = build_projection_payload(
         {"model": "qwen", "prompt": "hello"},
         kv_params,
         pap_prefill_kv_handle="req-7",
-        pap_attention_kv_installed=True,
     )
 
     assert payload["kv_transfer_params"]["pap_prefill_kv_handle"] == "req-7"
-    assert payload["kv_transfer_params"]["pap_attention_kv_installed"] is True
+    assert "pap_attention_kv_installed" not in payload["kv_transfer_params"]
     assert "pap_prefill_kv_handle" not in kv_params
 
 

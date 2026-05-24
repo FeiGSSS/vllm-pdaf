@@ -70,9 +70,12 @@ def test_pap_baseline_launchers_use_deterministic_generation_config() -> None:
 
 
 def test_pap_6pa2p_launch_uses_multi_proxy_and_expected_counts() -> None:
-    script = ROOT / "examples" / "pap" / "launch_pap_6pa2p_qwen3_8b_nixl.sh"
+    script = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
     text = script.read_text()
 
+    assert 'MODEL_PATH="${PAP_MODEL_PATH:-/data/ssd1/llm-models/Qwen3-0.6B}"' in text
+    assert "-m | --model" in text
+    assert "export PAP_MODEL_PATH" in text
     assert 'TOPOLOGY="${PAP_TOPOLOGY:-6pa2p}"' in text
     assert 'PA_COUNT="${PAP_PA_COUNT:-${BASH_REMATCH[1]}}"' in text
     assert 'PROJECTION_COUNT="${PAP_PROJECTION_COUNT:-${BASH_REMATCH[2]}}"' in text
@@ -98,9 +101,17 @@ def test_pap_6pa2p_launch_uses_multi_proxy_and_expected_counts() -> None:
     assert "exec env CUDA_VISIBLE_DEVICES=0" in text
 
 
+def test_pap_model_agnostic_launcher_delegates_to_current_pap_launcher() -> None:
+    script = ROOT / "examples" / "pap" / "launch_pap_6pa2p_qwen3_8b_nixl.sh"
+    text = script.read_text()
+
+    assert "launch_pap_nixl.sh" in text
+    assert 'exec "$SCRIPT_DIR/launch_pap_nixl.sh" "$@"' in text
+
+
 
 def test_pap_6pa2p_launch_supports_benchmark_service_mode() -> None:
-    script = ROOT / "examples" / "pap" / "launch_pap_6pa2p_qwen3_8b_nixl.sh"
+    script = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
     text = script.read_text()
 
     assert "PAP_SERVICE_ONLY" in text
@@ -111,7 +122,7 @@ def test_pap_6pa2p_launch_supports_benchmark_service_mode() -> None:
 
 
 def test_pap_6pa2p_launch_uses_performance_transport_by_default() -> None:
-    script = ROOT / "examples" / "pap" / "launch_pap_6pa2p_qwen3_8b_nixl.sh"
+    script = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
     text = script.read_text()
 
     assert 'PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT:-nccl}"' in text
@@ -119,7 +130,7 @@ def test_pap_6pa2p_launch_uses_performance_transport_by_default() -> None:
 
 
 def test_pap_6pa2p_launch_isolates_vllm_init_ports() -> None:
-    script = ROOT / "examples" / "pap" / "launch_pap_6pa2p_qwen3_8b_nixl.sh"
+    script = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
     text = script.read_text()
 
     assert 'VLLM_PORT_BASE="${PAP_VLLM_PORT_BASE:-50000}"' in text
@@ -128,7 +139,7 @@ def test_pap_6pa2p_launch_isolates_vllm_init_ports() -> None:
 
 
 def test_pap_6pa2p_launch_forwards_routing_policy_to_proxy() -> None:
-    script = ROOT / "examples" / "pap" / "launch_pap_6pa2p_qwen3_8b_nixl.sh"
+    script = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
     text = script.read_text()
 
     assert 'PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-round_robin}"' in text

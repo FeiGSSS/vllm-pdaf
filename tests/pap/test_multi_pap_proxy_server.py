@@ -193,7 +193,16 @@ def test_multi_proxy_registers_attention_before_prefill_for_local_import() -> No
     assert "attach_pap_prefill_attention_params" in text
 
 
-def test_build_projection_payload_for_group_routes_remote_attention_to_selected_pa(
+def test_multi_proxy_marks_attention_kv_installed_only_after_prefill() -> None:
+    text = (ROOT / "examples/pap/multi_pap_proxy_server.py").read_text()
+
+    prefill = text.index("prefill_resp = await _post_json")
+    prefix_len = text.index("prefix_len = prefill_prefix_len_from_kv_params")
+    installed = text.index("pap_attention_kv_installed=prefix_len is not None")
+    assert prefill < prefix_len < installed
+
+
+def test_build_projection_payload_for_group_does_not_claim_kv_installed_by_default(
 ) -> None:
     group = PAPGroup("127.0.0.1", 8103, 5562, "127.0.0.1", 8303, 9303, 10303)
     kv_params = {
@@ -206,7 +215,6 @@ def test_build_projection_payload_for_group_routes_remote_attention_to_selected_
         {"model": "qwen", "prompt": "hello"},
         kv_params,
         group,
-        pap_attention_kv_installed=True,
     )
 
     assert payload["kv_transfer_params"]["remote_engine_id"] == "prefill-3"
@@ -219,7 +227,7 @@ def test_build_projection_payload_for_group_routes_remote_attention_to_selected_
     assert payload["kv_transfer_params"]["pap_offload_exec_zmq_endpoint"] == (
         "127.0.0.1:10303"
     )
-    assert payload["kv_transfer_params"]["pap_attention_kv_installed"] is True
+    assert "pap_attention_kv_installed" not in payload["kv_transfer_params"]
     assert "pap_attention_endpoint" not in kv_params
 
 

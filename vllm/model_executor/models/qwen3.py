@@ -183,16 +183,16 @@ class Qwen3Attention(nn.Module):
         k_by_head = self.k_norm(k_by_head)
         k = k_by_head.view(k.shape)
         q, k = self.rotary_emb(positions, q, k)
-        self._maybe_import_pap_prefill_kv_to_attention()
-        if self._pap_enabled():
-            attn_output = self._compute_pap_true_split_attention(q, k, v)
+        if self._should_use_pap_attention():
+            attn_output = self._compute_pap_attention(q, k, v)
             output, _ = self.o_proj(attn_output)
             return output
         attn_output = self.attn(q, k, v)
+        self._maybe_import_pap_prefill_kv_to_attention()
         output, _ = self.o_proj(attn_output)
         return output
 
-    def _pap_enabled(self) -> bool:
+    def _should_use_pap_attention(self) -> bool:
         if not is_forward_context_available():
             return False
         forward_context = get_forward_context()
@@ -200,10 +200,8 @@ class Qwen3Attention(nn.Module):
         if not additional_kwargs.get("pap_enabled"):
             return False
 
-        request_id = self._select_pap_request_id(
-            additional_kwargs.get("pap_request_ids")
-        )
-        if request_id is None:
+        request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
+        if not self._select_pap_request_id(request_ids):
             return False
 
         metadata = forward_context.attn_metadata
@@ -218,9 +216,6 @@ class Qwen3Attention(nn.Module):
         if int(getattr(attn_metadata, "max_query_len", 0)) != 1:
             return False
 
-        if not self._pap_has_prefill_kv_imported():
-            return False
-
         num_scheduled_tokens = tuple(
             int(num_tokens)
             for num_tokens in additional_kwargs.get("pap_num_scheduled_tokens") or ()
@@ -230,27 +225,33 @@ class Qwen3Attention(nn.Module):
         )
         if num_reqs <= 0:
             return False
+        if len(request_ids) < num_reqs:
+            return False
         if len(num_scheduled_tokens) < num_reqs:
             return False
-        return not any(
-            num_tokens != 1 for num_tokens in num_scheduled_tokens[:num_reqs]
+        if any(num_tokens != 1 for num_tokens in num_scheduled_tokens[:num_reqs]):
+            return False
+        return self._pap_attention_kv_ready_for_requests(
+            request_ids[:num_reqs]
         )
 
-    def _pap_has_prefill_kv_imported(self) -> bool:
-        """Return True if prefill KV has been imported for at least one request."""
+    def _pap_attention_kv_ready_for_requests(
+        self, request_ids: Iterable[Any]
+    ) -> bool:
+        """Return True when PA-side attention KV is ready for every request."""
         if not is_forward_context_available():
             return False
         additional_kwargs = get_forward_context().additional_kwargs or {}
-        kv_handles = additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
-        if not kv_handles:
-            return False
-        return True
+        installed = set(
+            additional_kwargs.get("pap_attention_kv_installed_by_request") or ()
+        )
+        return all(str(request_id) in installed for request_id in request_ids)
 
-    def _compute_pap_true_split_attention(
+    def _compute_pap_attention(
         self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor
     ) -> torch.Tensor:
         if not is_forward_context_available():
-            raise RuntimeError("PAP true_split requires forward context")
+            raise RuntimeError("PAP attention requires forward context")
 
         forward_context = get_forward_context()
         additional_kwargs = forward_context.additional_kwargs or {}
@@ -263,10 +264,10 @@ class Qwen3Attention(nn.Module):
             attn_metadata = None
         if attn_metadata is None:
             raise RuntimeError(
-                f"PAP true_split missing metadata for {self.attn.layer_name}"
+                f"PAP attention missing metadata for {self.attn.layer_name}"
             )
         if int(getattr(attn_metadata, "max_query_len", 0)) != 1:
-            raise RuntimeError("PAP true_split currently supports decode-only batches")
+            raise RuntimeError("PAP attention currently supports decode-only batches")
 
         request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
         num_reqs = int(additional_kwargs.get("pap_num_reqs") or len(request_ids))
@@ -278,14 +279,14 @@ class Qwen3Attention(nn.Module):
             for num_tokens in additional_kwargs.get("pap_num_scheduled_tokens") or ()
         )
         if num_reqs <= 0 or len(request_ids) < num_reqs:
-            raise RuntimeError("PAP true_split missing request ids")
+            raise RuntimeError("PAP attention missing request ids")
         if num_actual_tokens < num_reqs:
-            raise RuntimeError("PAP true_split expected one actual token per request")
+            raise RuntimeError("PAP attention expected one actual token per request")
         if num_scheduled_tokens and any(
             num_tokens != 1 for num_tokens in num_scheduled_tokens[:num_reqs]
         ):
             raise RuntimeError(
-                "PAP true_split currently supports one token per request"
+                "PAP attention currently supports one token per request"
             )
 
         query = q.view(-1, self.num_heads, self.head_dim)
@@ -294,9 +295,9 @@ class Qwen3Attention(nn.Module):
 
         seq_lens = getattr(attn_metadata, "seq_lens", None)
         if seq_lens is None:
-            raise RuntimeError("PAP true_split missing scheduler seq_lens")
+            raise RuntimeError("PAP attention missing scheduler seq_lens")
         if int(seq_lens.shape[0]) < num_reqs:
-            raise RuntimeError("PAP true_split seq_lens do not cover all requests")
+            raise RuntimeError("PAP attention seq_lens do not cover all requests")
 
         slot_mapping_container = forward_context.slot_mapping
         if isinstance(slot_mapping_container, dict):
@@ -308,10 +309,10 @@ class Qwen3Attention(nn.Module):
         if slot_mapping is None:
             slot_mapping = getattr(attn_metadata, "slot_mapping", None)
         if slot_mapping is None:
-            raise RuntimeError("PAP true_split missing scheduler slot_mapping")
+            raise RuntimeError("PAP attention missing scheduler slot_mapping")
         if int(slot_mapping.shape[0]) < num_reqs:
             raise RuntimeError(
-                "PAP true_split slot_mapping does not cover all requests"
+                "PAP attention slot_mapping does not cover all requests"
             )
 
         block_size = additional_kwargs.get("pap_block_size")
@@ -320,16 +321,16 @@ class Qwen3Attention(nn.Module):
         if block_size is None:
             block_size = getattr(self.attn, "block_size", None)
         if block_size is None or int(block_size) <= 0:
-            raise RuntimeError("PAP true_split missing cache block_size")
+            raise RuntimeError("PAP attention missing cache block_size")
         block_size = int(block_size)
 
         slot_mapping_cpu = slot_mapping.detach().to(device="cpu", dtype=torch.long)
         seq_lens_cpu = seq_lens.detach().to(device="cpu", dtype=torch.long)
         positions = additional_kwargs.get("pap_positions")
         if positions is None:
-            raise RuntimeError("PAP true_split missing input positions")
+            raise RuntimeError("PAP attention missing input positions")
         if int(positions.shape[-1]) < num_reqs:
-            raise RuntimeError("PAP true_split positions do not cover all requests")
+            raise RuntimeError("PAP attention positions do not cover all requests")
         positions_cpu = positions.detach().to(device="cpu", dtype=torch.long)
 
         from vllm.pap.shadow_attention import (
@@ -362,19 +363,19 @@ class Qwen3Attention(nn.Module):
             request_id = str(request_ids[req_index])
             if not request_id.startswith(("cmpl-", "chatcmpl-")):
                 raise RuntimeError(
-                    f"PAP true_split cannot route non-OpenAI request id {request_id}"
+                    f"PAP attention cannot route non-OpenAI request id {request_id}"
                 )
             slot = int(slot_mapping_cpu[req_index].item())
             if slot < 0:
                 raise RuntimeError(
-                    f"PAP true_split invalid slot_mapping for {request_id}: {slot}"
+                    f"PAP attention invalid slot_mapping for {request_id}: {slot}"
                 )
             block_id = slot // block_size
             seq_len = int(positions_cpu.reshape(-1)[req_index].item()) + 1
             max_seq_len = int(seq_lens_cpu[req_index].item())
             if seq_len > max_seq_len:
                 raise RuntimeError(
-                    f"PAP true_split position-derived seq_len {seq_len} exceeds "
+                    f"PAP attention position-derived seq_len {seq_len} exceeds "
                     f"scheduler seq_len {max_seq_len} for {request_id}"
                 )
             tcp_endpoint = select_attention_endpoint_for_request(
@@ -598,6 +599,10 @@ class Qwen3Attention(nn.Module):
         prefill_kv_handle_by_request = (
             additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
         )
+        import_prefill_kv_to_attention_by_request = set(
+            additional_kwargs.get("pap_import_prefill_kv_to_attention_by_request")
+            or ()
+        )
         tcp_endpoint_by_request = (
             additional_kwargs.get("pap_attention_tcp_endpoint_by_request") or {}
         )
@@ -639,6 +644,8 @@ class Qwen3Attention(nn.Module):
             request_id = str(request_ids[req_index])
             if not request_id.startswith(("cmpl-", "chatcmpl-")):
                 continue
+            if request_id not in import_prefill_kv_to_attention_by_request:
+                continue
             prefill_kv_handle = prefill_kv_handle_by_request.get(request_id)
             if not prefill_kv_handle:
                 continue
@@ -651,7 +658,13 @@ class Qwen3Attention(nn.Module):
                 prefix_len,
                 str(prefill_kv_handle),
             )
+            installed = set(
+                additional_kwargs.get("pap_attention_kv_installed_by_request")
+                or ()
+            )
             if import_key in self._pap_imported_prefill_kv:
+                installed.add(request_id)
+                additional_kwargs["pap_attention_kv_installed_by_request"] = installed
                 continue
             tcp_endpoint = select_attention_endpoint_for_request(
                 request_id,
@@ -670,6 +683,8 @@ class Qwen3Attention(nn.Module):
                 tcp_endpoint=tcp_endpoint,
             )
             self._pap_imported_prefill_kv.add(import_key)
+            installed.add(request_id)
+            additional_kwargs["pap_attention_kv_installed_by_request"] = installed
 
     @staticmethod
     def _select_pap_request_id(request_ids: Any) -> str | None:

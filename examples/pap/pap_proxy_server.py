@@ -226,7 +226,7 @@ async def _handle_openai_request(api_path: str, request: Request):
         req_data,
         kv_params,
         pap_prefill_kv_handle=attention_session.get("prefill_kv_handle"),
-        pap_attention_kv_installed=True,
+        pap_attention_kv_installed=prefix_len is not None,
     )
     logger.info(
         "request_id=%s projection_kv_keys=%s attention_endpoint=%s",

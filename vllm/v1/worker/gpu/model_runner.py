@@ -245,6 +245,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self.pap_offload_exec_zmq_endpoint_by_req_id: dict[str, str] = {}
         self.pap_prefill_prefix_len_by_req_id: dict[str, int] = {}
         self.pap_prefill_kv_handle_by_req_id: dict[str, str] = {}
+        self.pap_import_prefill_kv_to_attention_by_req_id: set[str] = set()
         self.pap_attention_kv_installed_by_req_id: set[str] = set()
 
         # For transferring state from execute_model to subsequent sample_tokens call.
@@ -676,6 +677,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self.pap_offload_exec_zmq_endpoint_by_req_id.pop(req_id, None)
         self.pap_prefill_prefix_len_by_req_id.pop(req_id, None)
         self.pap_prefill_kv_handle_by_req_id.pop(req_id, None)
+        self.pap_import_prefill_kv_to_attention_by_req_id.discard(req_id)
         self.pap_attention_kv_installed_by_req_id.discard(req_id)
         if not self.req_states.remove_request(req_id):
             return False
@@ -703,6 +705,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         prefill_kv_handle = kv_transfer_params.get("pap_prefill_kv_handle")
         if prefill_kv_handle:
             self.pap_prefill_kv_handle_by_req_id[req_id] = str(prefill_kv_handle)
+        if kv_transfer_params.get("pap_import_prefill_kv_to_attention"):
+            self.pap_import_prefill_kv_to_attention_by_req_id.add(req_id)
         if kv_transfer_params.get("pap_attention_kv_installed"):
             self.pap_attention_kv_installed_by_req_id.add(req_id)
 
@@ -745,6 +749,15 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             req_id
             for req_id in input_batch.req_ids[: input_batch.num_reqs]
             if req_id in self.pap_attention_kv_installed_by_req_id
+        }
+
+    def _pap_import_prefill_kv_to_attention_for_batch(
+        self, input_batch: InputBatch
+    ) -> set[str]:
+        return {
+            req_id
+            for req_id in input_batch.req_ids[: input_batch.num_reqs]
+            if req_id in self.pap_import_prefill_kv_to_attention_by_req_id
         }
 
     def _pap_attention_tcp_endpoints_for_batch(
@@ -1308,6 +1321,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     ),
                     "pap_attention_kv_installed_by_request": (
                         self._pap_attention_kv_installed_for_batch(input_batch)
+                    ),
+                    "pap_import_prefill_kv_to_attention_by_request": (
+                        self._pap_import_prefill_kv_to_attention_for_batch(input_batch)
                     ),
                 },
             ):

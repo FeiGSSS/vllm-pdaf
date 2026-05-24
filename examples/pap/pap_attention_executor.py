@@ -460,6 +460,23 @@ class PAPAttentionRegistry:
             session.prefill_seq_lens[layer_name] = seq_len
             session.decode_seq_lens[layer_name] = seq_len
             self._prefill_condition.notify_all()
+            if os.environ.get("PAP_ATTENTION_KV_DEBUG", "").lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            ):
+                logger.info(
+                    "PAP prefill KV imported request_id=%s layer=%s seq_len=%s "
+                    "key_shape=%s value_shape=%s key_norm=%.6f value_norm=%.6f",
+                    session_request_id,
+                    layer_name,
+                    seq_len,
+                    tuple(key_state.shape),
+                    tuple(value_state.shape),
+                    float(key_state.float().norm().item()),
+                    float(value_state.float().norm().item()),
+                )
             return seq_len
 
     def _wait_for_prefill_layer_locked(

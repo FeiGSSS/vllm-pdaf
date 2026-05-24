@@ -333,7 +333,7 @@ async def _handle_openai_request(api_path: str, request: Request):
         kv_params,
         group,
         pap_prefill_kv_handle=attention_session.get("prefill_kv_handle"),
-        pap_attention_kv_installed=True,
+        pap_attention_kv_installed=prefix_len is not None,
     )
     projection_payload.setdefault("stream", client_stream)
     logger.info(
