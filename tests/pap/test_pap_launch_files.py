@@ -89,8 +89,10 @@ def test_pap_6pa2p_launch_uses_multi_proxy_and_expected_counts() -> None:
     assert '--offload-exec-zmq-port "$attention_zmq_port"' in text
     assert "attention_zmq_port" in text
     assert 'PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT:-nccl}"' in text
+    assert 'PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT:-cuda_ipc}"' in text
     assert 'PAP_REMOTE_ATTENTION_PARALLELISM="${PAP_REMOTE_ATTENTION_PARALLELISM:-16}"' in text
     assert 'PAP_OFFLOAD_EXEC_TRANSPORT="$PAP_OFFLOAD_EXEC_TRANSPORT"' in text
+    assert 'PAP_OFFLOAD_KV_TRANSPORT="$PAP_OFFLOAD_KV_TRANSPORT"' in text
     assert "PAP_OFFLOAD_EXEC_ZMQ_PORT" in text
     assert "PAP_OFFLOAD_EXEC_HOST=127.0.0.1" in text
     assert "Projection vLLM metadata-only" in text

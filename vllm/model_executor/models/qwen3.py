@@ -637,8 +637,14 @@ class Qwen3Attention(nn.Module):
             import_prefill_kv_from_paged_cache,
             select_attention_endpoint_for_request,
         )
+        from vllm.pap.data_plane import PAPTensorTransport
         from vllm.v1.attention.backends.utils import get_kv_cache_layout
 
+        offload_kv_transport = PAPTensorTransport(
+            os.environ.get(
+                "PAP_OFFLOAD_KV_TRANSPORT", PAPTensorTransport.CUDA_IPC.value
+            )
+        )
         seq_lens_cpu = seq_lens.detach().to(device="cpu", dtype=torch.long)
         for req_index in range(num_reqs):
             request_id = str(request_ids[req_index])
@@ -681,6 +687,7 @@ class Qwen3Attention(nn.Module):
                 num_kv_heads=self.num_kv_heads,
                 layout=get_kv_cache_layout(),
                 tcp_endpoint=tcp_endpoint,
+                transport=offload_kv_transport,
             )
             self._pap_imported_prefill_kv.add(import_key)
             installed.add(request_id)

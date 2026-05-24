@@ -98,14 +98,15 @@ def test_qwen3_pap_reads_block_size_from_forward_context() -> None:
 
 def test_qwen3_pap_imports_prefill_kv_for_offload() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
-    start = text.index("    def _compute_pap_attention")
-    end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
+    start = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
+    end = text.index("    @staticmethod")
     method = text[start:end]
 
-    assert 'additional_kwargs.get("pap_prefill_prefix_len_by_request")' in method
     assert 'additional_kwargs.get("pap_attention_kv_installed_by_request")' in method
-    assert "pap_prefill_kv_handle" in method
+    assert 'additional_kwargs.get("pap_prefill_kv_handle_by_request")' in method
     assert "attention_kv_installed_by_request" in method
+    assert "PAP_OFFLOAD_KV_TRANSPORT" in method
+    assert "PAPTensorTransport.CUDA_IPC" in method
 
 
 def test_model_runner_passes_pap_prefill_prefix_len_to_forward_context() -> None:
@@ -142,6 +143,7 @@ def test_qwen3_prefill_detects_pap_prefill_kv_handle() -> None:
     assert "pap_prefill_kv_handle_by_request" in method
     assert "prefill_kv_handle" in method
     assert "pap_import_prefill_kv_to_attention_by_request" in method
+    assert "transport=offload_kv_transport" in method
 
 
 def test_qwen3_prefill_import_marks_attention_kv_ready() -> None:
