@@ -250,4 +250,6 @@ def test_import_prefill_kv_cuda_ipc_posts_descriptor_without_tensors(
     assert descriptor["seq_len"] == 2
     assert descriptor["block_ids"] == [4]
     assert descriptor["key"]["shape"] == [2, 1, 2]
+    assert "ipc_handle_pickled" in descriptor["key"]
     assert descriptor["value"]["shape"] == [2, 1, 2]
+    assert "ipc_handle_pickled" in descriptor["value"]

@@ -13,7 +13,9 @@ Control metadata travels over ZMQ/TCP. Tensor payloads use GPU-direct NCCL/P2P.
 
 from __future__ import annotations
 
+import base64
 import os
+import pickle
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -99,20 +101,24 @@ class PAPCudaIPCTensorHandle:
         return {
             "dtype": self.dtype,
             "shape": list(self.shape),
-            "ipc_handle": {
-                gpu_uuid: list(ipc_args)
-                for gpu_uuid, ipc_args in self.ipc_handle.items()
-            },
+            "ipc_handle_pickled": base64.b64encode(
+                pickle.dumps(self.ipc_handle)
+            ).decode("ascii"),
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "PAPCudaIPCTensorHandle":
+        ipc_handle = data.get("ipc_handle")
+        if ipc_handle is None:
+            ipc_handle = pickle.loads(
+                base64.b64decode(str(data["ipc_handle_pickled"]).encode("ascii"))
+            )
         return cls(
             dtype=str(data["dtype"]),
             shape=tuple(int(dim) for dim in data["shape"]),
             ipc_handle={
                 str(gpu_uuid): tuple(ipc_args)
-                for gpu_uuid, ipc_args in data["ipc_handle"].items()
+                for gpu_uuid, ipc_args in ipc_handle.items()
             },
         )
 
