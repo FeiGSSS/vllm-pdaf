@@ -499,3 +499,67 @@ Boundary:
   allocation API.
 - Next phase should make decode slot/block reservation explicit in a
   `PAKVOwner`-style component and then verify same-PA multi-turn reuse.
+
+### Task 7: PAKVOwner Metadata Skeleton
+
+**Files:**
+- Add: `vllm/pap/kv_owner.py`
+- Test: `tests/pap/test_pap_kv_owner.py`
+- Modify: `examples/pap/pap_attention_executor.py`
+- Test: `tests/pap/test_pap_attention_executor.py`
+
+- [x] **Step 1: Write owner metadata tests**
+
+Added tests for `PAKVOwner` session registration, layer block registration,
+decode slot reservation, decode slot materialization, backed-block rejection,
+and lease/refcount release behavior.
+
+- [x] **Step 2: Implement metadata owner**
+
+Added `PAKVOwner`, `PAKVSessionState`, `PAKVLayerState`, and `PAKVDecodeSlot`.
+The owner is pure metadata in this phase: it tracks session leases, resident
+layer block ids, sequence length, backed block capacity, reserved decode slots,
+and materialized decode slots.
+
+- [x] **Step 3: Connect Attention registry**
+
+`PAPAttentionRegistry` now creates a PA KV owner session on registration,
+registers paged layer backing metadata on `import_prefill_paged_kv()`, and marks
+resident decode writes as materialized in `PAKVOwner`.
+
+- [x] **Step 4: Verify**
+
+Run:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_kv_owner.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `101 passed, 16 warnings`.
+
+E2E 1PA1P Qwen3-0.6B with `max_tokens=8`:
+
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=11`, `completion_tokens=7`, `total_tokens=18`.
+- Output text: ` P P\n\n\n\n.\n\n`
+- The run crosses the 16-token boundary and exercises a generated-token block.
+- Attention logged `28` paged Prefill KV descriptor imports.
+- Projection and Attention each logged `224` OFFLOAD_EXEC traces.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `invalid slot`,
+  `slot_mapping`, `rejected`, `block ids do not cover`, `IndexError`, or
+  `500 Internal` matched in logs.
+
+Boundary:
+
+- `PAKVOwner` is now present and records materialized decode slots, but it is
+  not yet the allocator that decides physical block ids for vLLM.
+- Decode block ids still arrive through the active descriptor path and are then
+  validated/materialized by the owner.
+- Next phase should move decode slot/block reservation earlier into the
+  Prefill-owner path and use the owner state to drive same-PA multi-turn reuse.

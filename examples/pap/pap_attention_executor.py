@@ -29,6 +29,7 @@ from vllm.pap.attention_session import (
     AttentionDecodeDescriptor,
     AttentionSessionStore,
 )
+from vllm.pap.kv_owner import PAKVOwner
 from vllm.pap.data_plane import (
     PAPOffloadKVIPCDescriptor,
     PAPOffloadKVPagedIPCDescriptor,
@@ -239,6 +240,7 @@ class PAPAttentionRegistry:
         ] = {}
         self._resident_paged_kv: dict[str, dict[str, PAPResidentPagedKV]] = {}
         self._attention_sessions = AttentionSessionStore()
+        self._pa_kv_owner = PAKVOwner()
 
     @staticmethod
     def _resolve_storage_device(
@@ -331,6 +333,12 @@ class PAPAttentionRegistry:
                 block_size=registration.block_size,
                 max_seq_len=registration.max_seq_len,
             )
+            self._pa_kv_owner.register_session(
+                session_id=registration.request_id,
+                block_size=registration.block_size,
+                max_seq_len=registration.max_seq_len,
+            )
+            self._pa_kv_owner.acquire_lease(registration.request_id)
         logger.info(
             "registered PAP attention session request_id=%s "
             "conversation_id=%s kv_keys=%s",
@@ -353,6 +361,10 @@ class PAPAttentionRegistry:
             self._prefill_kv.pop(request_id, None)
             self._resident_paged_kv.pop(request_id, None)
             self._attention_sessions.free_session(request_id)
+            try:
+                self._pa_kv_owner.release_lease(request_id)
+            except KeyError:
+                pass
             return existed
 
     def resolve_session_request_id(self, request_id: str) -> str | None:
@@ -555,6 +567,13 @@ class PAPAttentionRegistry:
                     layout=str(layout),
                 )
             )
+            self._pa_kv_owner.register_layer_blocks(
+                session_id=session_request_id,
+                layer_name=layer_name,
+                block_ids=[int(block_id) for block_id in block_ids],
+                seq_len=seq_len,
+                num_blocks=int(kv_cache.shape[1]),
+            )
             imported_session = self._attention_sessions.import_prefill_kv(
                 session_request_id,
                 block_ids=[int(block_id) for block_id in block_ids],
@@ -739,6 +758,12 @@ class PAPAttentionRegistry:
                     seq_len=int(seq_len),
                 )
                 if wrote_resident:
+                    self._pa_kv_owner.materialize_decode_slot(
+                        session_id=session_request_id,
+                        layer_name=layer_name,
+                        block_id=int(block_id),
+                        seq_len=int(seq_len),
+                    )
                     prefill_layer_kv[layer_name] = paged_kv_segments(
                         kv_cache=resident.kv_cache,
                         block_ids=resident.block_ids,

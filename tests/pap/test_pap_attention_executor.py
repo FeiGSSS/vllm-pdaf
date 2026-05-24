@@ -1553,6 +1553,56 @@ def test_attention_registry_publishes_new_resident_decode_block() -> None:
     assert "model.layers.0.self_attn.attn" not in registry._decode_kv[session_id]
 
 
+def test_attention_registry_records_materialized_decode_slot_in_owner() -> None:
+    import torch
+
+    from examples.pap.pap_attention_executor import (
+        PAPAttentionRegistration,
+        PAPAttentionRegistry,
+    )
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-owner-materialized",
+            conversation_id="conv-owner-materialized",
+            prefill_endpoint="http://localhost:8100",
+            prefix_len=4,
+            block_size=4,
+        )
+    )
+    registry.import_prefill_paged_kv(
+        request_id="req-owner-materialized",
+        layer_name="model.layers.0.self_attn.attn",
+        kv_cache=torch.zeros((2, 2, 4, 1, 2)),
+        block_ids=[0],
+        seq_len=4,
+        block_size=4,
+        num_kv_heads=1,
+        layout="NHD",
+    )
+
+    registry.append_decode_kv(
+        request_id="req-owner-materialized",
+        layer_name="model.layers.0.self_attn.attn",
+        key=torch.tensor([[[5.0, 6.0]]]),
+        value=torch.tensor([[[7.0, 8.0]]]),
+        block_id=1,
+        slot=4,
+        seq_len=5,
+    )
+
+    session_id = registry.resolve_session_request_id("req-owner-materialized")
+    state = registry._pa_kv_owner.get_layer_state(
+        session_id, "model.layers.0.self_attn.attn"
+    )
+    assert state.block_ids == (0, 1)
+    assert state.seq_len == 5
+    assert state.materialized_slots[-1].block_id == 1
+    assert state.materialized_slots[-1].slot == 4
+    assert state.materialized_slots[-1].seq_len == 5
+
+
 def test_attention_executor_compute_existing_prefill_token_does_not_append() -> None:
     import torch
     from fastapi.testclient import TestClient
