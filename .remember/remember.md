@@ -853,3 +853,68 @@ Current boundary:
 - `PAKVOwner` still computes the next block from logical seq_len and resident
   capacity; it is not yet wired to a real vLLM physical block allocator.
 - Same-PA multi-turn reuse remains unverified.
+
+## 2026-05-24 PAP Shared KV Owner Phase 8
+
+Latest local phase after `9f8fe013b`:
+
+- Split `PAKVOwner` reservation state from materialized resident coverage.
+- `PAKVLayerState` now tracks `reserved_slots` separately from
+  `materialized_slots`.
+- Reserving a decode slot no longer advances the resident `seq_len` exposed for
+  same-PA reuse; only `materialize_decode_slot()` advances reusable coverage
+  after Attention has written K/V into resident paged blocks.
+- Added `PAKVOwner.get_resident_prefix_coverage()` as the owner query surface
+  for same-PA later-turn prefix coverage.
+- Added `PAPAttentionRegistry.get_resident_prefix_coverage()` to expose that
+  owner query after request-id resolution.
+- Added tests proving a reserved-but-not-materialized decode slot is invisible
+  to resident coverage, and that resident coverage advances to prompt+decode
+  after decode write-back.
+
+Focused verification:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_kv_owner.py \
+  tests/pap/test_pap_attention_executor.py::test_attention_registry_reports_resident_prefix_after_decode_writeback \
+  tests/pap/test_pap_attention_executor.py::test_compute_offload_exec_output_reserves_decode_slot_from_owner -q
+```
+
+Result: `7 passed, 16 warnings`.
+
+Full focused PAP suite:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_kv_owner.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `105 passed, 16 warnings`.
+
+`ruff-check` on changed Python files passed.
+
+E2E 1PA1P Qwen3-0.6B with `max_tokens=8`:
+
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=11`, `completion_tokens=7`, `total_tokens=18`.
+- Output text: ` P P\n\n\n\n.\n\n`
+- Projection logged `224` OFFLOAD_EXEC traces.
+- Attention logged `224` OFFLOAD_EXEC traces plus `28` paged Prefill KV
+  descriptor imports.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `invalid slot`,
+  `slot_mapping`, `rejected`, `block ids do not cover`, `IndexError`, or
+  `500 Internal` matched in logs.
+
+Current boundary:
+
+- The owner now has a safe same-PA resident coverage query: reserved slots are
+  invisible until materialized.
+- vLLM scheduler integration for actually attaching resident blocks on a later
+  turn is not implemented yet.
+- The owner still does not allocate physical vLLM blocks.

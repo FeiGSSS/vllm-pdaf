@@ -18,11 +18,27 @@ class PAKVDecodeSlot:
 
 
 @dataclass(frozen=True)
+class PAKVResidentLayerCoverage:
+    layer_name: str
+    block_ids: tuple[int, ...]
+    seq_len: int
+
+
+@dataclass(frozen=True)
+class PAKVResidentPrefixCoverage:
+    session_id: str
+    seq_len: int
+    ready: bool
+    layers: dict[str, PAKVResidentLayerCoverage]
+
+
+@dataclass(frozen=True)
 class PAKVLayerState:
     layer_name: str
     block_ids: tuple[int, ...]
     seq_len: int
     num_blocks: int
+    reserved_slots: tuple[PAKVDecodeSlot, ...] = ()
     materialized_slots: tuple[PAKVDecodeSlot, ...] = ()
 
 
@@ -114,6 +130,28 @@ class PAKVOwner:
                 return None
             return session.layers.get(str(layer_name))
 
+    def get_resident_prefix_coverage(
+        self,
+        session_id: str,
+    ) -> PAKVResidentPrefixCoverage:
+        session_id = str(session_id)
+        with self._lock:
+            session = self._require_session(session_id)
+            layers = {
+                layer_name: self._layer_resident_coverage(session, layer)
+                for layer_name, layer in session.layers.items()
+            }
+            seq_len = min(
+                (layer.seq_len for layer in layers.values()),
+                default=0,
+            )
+            return PAKVResidentPrefixCoverage(
+                session_id=session_id,
+                seq_len=seq_len,
+                ready=bool(layers),
+                layers=layers,
+            )
+
     def reserve_decode_slot(
         self,
         *,
@@ -139,7 +177,7 @@ class PAKVOwner:
         with self._lock:
             session = self._require_session(str(session_id))
             layer = self._require_layer(session, str(layer_name))
-            seq_len = layer.seq_len + 1
+            seq_len = self._next_layer_seq_len(layer)
             self._validate_seq_len(session, seq_len)
             block_id = (seq_len - 1) // session.block_size
         return self.reserve_decode_slot(
@@ -197,13 +235,18 @@ class PAKVOwner:
             session = self._require_session(session_id)
             layer = self._require_layer(session, layer_name)
             self._validate_seq_len(session, seq_len)
+            current_seq_len = self._current_layer_seq_len(layer)
             if seq_len < layer.seq_len:
                 raise ValueError(
                     f"decode seq_len {seq_len} is behind layer seq_len "
                     f"{layer.seq_len}"
                 )
-            if seq_len > layer.seq_len + 1:
-                raise ValueError(f"expected seq_len {layer.seq_len + 1}, got {seq_len}")
+            if materialized:
+                expected_seq_len = layer.seq_len + 1
+            else:
+                expected_seq_len = current_seq_len + 1
+            if seq_len > expected_seq_len:
+                raise ValueError(f"expected seq_len {expected_seq_len}, got {seq_len}")
             self._validate_backed_block(block_id, layer.num_blocks)
 
             block_ids = layer.block_ids
@@ -218,19 +261,48 @@ class PAKVOwner:
                 seq_len=seq_len,
                 materialized=bool(materialized),
             )
+            reserved_slots = layer.reserved_slots
             materialized_slots = layer.materialized_slots
             if materialized:
                 materialized_slots = (*materialized_slots, decode_slot)
+            else:
+                reserved_slots = (*reserved_slots, decode_slot)
             updated_layer = replace(
                 layer,
                 block_ids=block_ids,
-                seq_len=max(layer.seq_len, seq_len),
+                seq_len=max(layer.seq_len, seq_len) if materialized else layer.seq_len,
+                reserved_slots=reserved_slots,
                 materialized_slots=materialized_slots,
             )
             layers = dict(session.layers)
             layers[layer_name] = updated_layer
             self._sessions[session_id] = replace(session, layers=layers)
             return decode_slot
+
+    @staticmethod
+    def _current_layer_seq_len(layer: PAKVLayerState) -> int:
+        current_seq_len = layer.seq_len
+        for slot in layer.reserved_slots:
+            current_seq_len = max(current_seq_len, slot.seq_len)
+        return current_seq_len
+
+    @classmethod
+    def _next_layer_seq_len(cls, layer: PAKVLayerState) -> int:
+        return cls._current_layer_seq_len(layer) + 1
+
+    @staticmethod
+    def _layer_resident_coverage(
+        session: PAKVSessionState,
+        layer: PAKVLayerState,
+    ) -> PAKVResidentLayerCoverage:
+        required_blocks = (layer.seq_len + session.block_size - 1) // (
+            session.block_size
+        )
+        return PAKVResidentLayerCoverage(
+            layer_name=layer.layer_name,
+            block_ids=layer.block_ids[:required_blocks],
+            seq_len=layer.seq_len,
+        )
 
     def _require_session(self, session_id: str) -> PAKVSessionState:
         try:

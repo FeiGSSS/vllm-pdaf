@@ -1669,6 +1669,59 @@ def test_attention_registry_records_materialized_decode_slot_in_owner() -> None:
     assert state.materialized_slots[-1].seq_len == 5
 
 
+def test_attention_registry_reports_resident_prefix_after_decode_writeback() -> None:
+    import torch
+
+    from examples.pap.pap_attention_executor import (
+        PAPAttentionRegistration,
+        PAPAttentionRegistry,
+    )
+
+    layer_name = "model.layers.0.self_attn.attn"
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-resident-coverage",
+            conversation_id="conv-resident-coverage",
+            prefill_endpoint="http://localhost:8100",
+            prefix_len=4,
+            block_size=4,
+        )
+    )
+    registry.import_prefill_paged_kv(
+        request_id="req-resident-coverage",
+        layer_name=layer_name,
+        kv_cache=torch.zeros((2, 2, 4, 1, 2)),
+        block_ids=[0],
+        seq_len=4,
+        block_size=4,
+        num_kv_heads=1,
+        layout="NHD",
+    )
+
+    block_id, slot = registry.reserve_decode_slot(
+        request_id="req-resident-coverage",
+        layer_name=layer_name,
+        seq_len=5,
+    )
+    registry.append_decode_kv(
+        request_id="req-resident-coverage",
+        layer_name=layer_name,
+        key=torch.tensor([[[5.0, 6.0]]]),
+        value=torch.tensor([[[7.0, 8.0]]]),
+        block_id=block_id,
+        slot=slot,
+        seq_len=5,
+    )
+
+    coverage = registry.get_resident_prefix_coverage("req-resident-coverage")
+
+    assert coverage.seq_len == 5
+    assert coverage.ready is True
+    assert coverage.layers[layer_name].seq_len == 5
+    assert coverage.layers[layer_name].block_ids == (0, 1)
+
+
 def test_attention_executor_compute_existing_prefill_token_does_not_append() -> None:
     import torch
     from fastapi.testclient import TestClient

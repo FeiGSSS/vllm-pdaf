@@ -35,7 +35,7 @@ from vllm.pap.data_plane import (
     PAPOffloadKVPagedIPCDescriptor,
     build_p2p_nccl_offload_exec_transport,
 )
-from vllm.pap.kv_owner import PAKVOwner
+from vllm.pap.kv_owner import PAKVOwner, PAKVResidentPrefixCoverage
 
 logging.basicConfig(
     level=logging.INFO,
@@ -370,6 +370,16 @@ class PAPAttentionRegistry:
         """Map vLLM-wrapped request ids back to the proxy-level PAP id."""
         with self._lock:
             return self._resolve_session_request_id_locked(request_id)
+
+    def get_resident_prefix_coverage(
+        self,
+        request_id: str,
+    ) -> PAKVResidentPrefixCoverage:
+        with self._lock:
+            session_request_id = self._resolve_session_request_id_locked(request_id)
+            if session_request_id is None:
+                raise KeyError(request_id)
+            return self._pa_kv_owner.get_resident_prefix_coverage(session_request_id)
 
     def reserve_decode_slot(
         self,

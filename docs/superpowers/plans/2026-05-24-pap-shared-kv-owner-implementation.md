@@ -644,3 +644,92 @@ Boundary:
 - `PAKVOwner` still computes the next block from logical seq_len and resident
   capacity; it is not yet integrated with a real vLLM physical block allocator.
 - Same-PA multi-turn reuse remains unverified.
+
+### Task 9: Separate Reserved and Materialized Resident Coverage
+
+**Files:**
+- Modify: `vllm/pap/kv_owner.py`
+- Modify: `examples/pap/pap_attention_executor.py`
+- Test: `tests/pap/test_pap_kv_owner.py`
+- Test: `tests/pap/test_pap_attention_executor.py`
+
+- [x] **Step 1: Write resident coverage owner test**
+
+Added a test proving `PAKVOwner` does not expose a merely reserved decode slot
+as reusable resident prefix coverage. `get_resident_prefix_coverage()` reports
+the prompt length after reservation and advances only after
+`materialize_decode_slot()`.
+
+- [x] **Step 2: Split owner reservation/materialization state**
+
+`PAKVLayerState` now tracks `reserved_slots` separately from
+`materialized_slots`. Reserving a decode slot no longer advances the layer's
+resident `seq_len`; materialization advances the resident sequence length after
+Attention has written K/V into the resident paged backing tensor.
+
+- [x] **Step 3: Expose resident coverage through Attention registry**
+
+`PAPAttentionRegistry.get_resident_prefix_coverage()` resolves wrapped request
+ids and returns the owner coverage. A registry test proves resident coverage for
+a same-PA session advances from prompt to prompt+decode after decode write-back
+into Prefill-owned paged blocks.
+
+- [x] **Step 4: Verify**
+
+Run:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_kv_owner.py \
+  tests/pap/test_pap_attention_executor.py::test_attention_registry_reports_resident_prefix_after_decode_writeback \
+  tests/pap/test_pap_attention_executor.py::test_compute_offload_exec_output_reserves_decode_slot_from_owner -q
+```
+
+Result: `7 passed, 16 warnings`.
+
+Run:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_kv_owner.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `105 passed, 16 warnings`.
+
+Run:
+
+```bash
+pre-commit run ruff-check --files \
+  examples/pap/pap_attention_executor.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_kv_owner.py \
+  vllm/pap/kv_owner.py
+```
+
+Result: passed.
+
+E2E 1PA1P Qwen3-0.6B with `max_tokens=8`:
+
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=11`, `completion_tokens=7`, `total_tokens=18`.
+- Output text: ` P P\n\n\n\n.\n\n`
+- Projection logged `224` OFFLOAD_EXEC traces.
+- Attention logged `224` OFFLOAD_EXEC traces plus `28` paged Prefill KV
+  descriptor imports.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `invalid slot`,
+  `slot_mapping`, `rejected`, `block ids do not cover`, `IndexError`, or
+  `500 Internal` matched in logs.
+
+Boundary:
+
+- The owner now has a safe same-PA resident coverage query for later-turn
+  reuse: reserved slots are invisible until materialized.
+- This is still an in-process metadata/query surface; vLLM scheduler
+  integration for attaching resident blocks on the next turn is not implemented
+  yet.
+- The owner still does not allocate physical vLLM blocks.
