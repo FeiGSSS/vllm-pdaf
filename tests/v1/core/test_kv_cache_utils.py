@@ -1481,6 +1481,82 @@ def test_allocate_with_lookahead():
     assert len(blocks.get_block_ids()[0]) == 2
 
 
+def test_allocate_external_tokens_can_skip_local_prefix_blocks():
+    block_size = 4
+    config = KVCacheConfig(
+        num_blocks=10,
+        kv_cache_tensors=[
+            KVCacheTensor(size=100, shared_by=["layer1"]),
+        ],
+        kv_cache_groups=[
+            KVCacheGroupSpec(["layer1"], new_kv_cache_spec(block_size=block_size)),
+        ],
+    )
+    request = make_request(
+        request_id="pap-projection",
+        prompt_token_ids=[1] * 9,
+        block_size=block_size,
+        hash_fn=sha256,
+        mm_positions=None,
+        mm_hashes=None,
+    )
+    pap_kv_cache_manager = KVCacheManager(
+        kv_cache_config=config, max_model_len=100, hash_block_size=block_size
+    )
+    initial_free_blocks = pap_kv_cache_manager.block_pool.get_num_free_blocks()
+
+    blocks = pap_kv_cache_manager.allocate_slots(
+        request,
+        num_new_tokens=1,
+        num_external_computed_tokens=8,
+        allocate_external_computed_blocks=False,
+    )
+
+    assert blocks is not None
+    assert len(blocks.get_block_ids()[0]) == 1
+    assert (
+        len(pap_kv_cache_manager.get_blocks(request.request_id).get_block_ids()[0])
+        == 1
+    )
+    assert pap_kv_cache_manager.block_pool.get_num_free_blocks() == (
+        initial_free_blocks - 1
+    )
+
+    default_request = make_request(
+        request_id="kv-connector",
+        prompt_token_ids=[1] * 9,
+        block_size=block_size,
+        hash_fn=sha256,
+        mm_positions=None,
+        mm_hashes=None,
+    )
+    default_kv_cache_manager = KVCacheManager(
+        kv_cache_config=config, max_model_len=100, hash_block_size=block_size
+    )
+    default_initial_free_blocks = (
+        default_kv_cache_manager.block_pool.get_num_free_blocks()
+    )
+
+    default_blocks = default_kv_cache_manager.allocate_slots(
+        default_request,
+        num_new_tokens=1,
+        num_external_computed_tokens=8,
+    )
+
+    assert default_blocks is not None
+    assert (
+        len(
+            default_kv_cache_manager.get_blocks(
+                default_request.request_id
+            ).get_block_ids()[0]
+        )
+        == 3
+    )
+    assert default_kv_cache_manager.block_pool.get_num_free_blocks() == (
+        default_initial_free_blocks - 3
+    )
+
+
 def test_get_kv_cache_config_one_worker():
     # pass max_model_len to pass check_enough_kv_cache_memory
     model_config = ModelConfig(max_model_len=16)

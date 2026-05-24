@@ -35,6 +35,16 @@ def test_scheduler_sends_only_local_pap_projection_blocks_to_model_runner() -> N
     assert "req_to_new_blocks[request_id] = self.kv_cache_manager.get_blocks(" in block
 
 
+def test_scheduler_disables_external_block_allocation_for_pap_projection() -> None:
+    text = (ROOT / "vllm" / "v1" / "core" / "sched" / "scheduler.py").read_text()
+
+    start = text.index("                new_blocks = self.kv_cache_manager.allocate_slots(")
+    end = text.index("                if new_blocks is None:")
+    block = text[start:end]
+
+    assert "allocate_external_computed_blocks=pap_remote_prefix_len is None" in block
+
+
 def test_engine_core_allows_pap_metadata_without_kv_connector() -> None:
     text = (ROOT / "vllm" / "v1" / "engine" / "core.py").read_text()
 

@@ -244,6 +244,7 @@ class KVCacheManager:
         delay_cache_blocks: bool = False,
         num_encoder_tokens: int = 0,
         full_sequence_must_fit: bool = False,
+        allocate_external_computed_blocks: bool = True,
     ) -> KVCacheBlocks | None:
         """Add slots for a request with new tokens to append.
 
@@ -269,6 +270,10 @@ class KVCacheManager:
                 free blocks to hold the full sequence, accounting for prefix cache hits
                 and sliding window. Used as an admission gate to prevent over-admitting
                 requests when chunked prefill would otherwise only check the first chunk
+            allocate_external_computed_blocks: Whether externally computed tokens
+                need local blocks allocated in this KV cache manager. KVConnector
+                loads require local receiver blocks; PAP Projection remote-prefix
+                progress does not own prompt KV and can disable this.
 
         Blocks layout:
         ```
@@ -359,7 +364,12 @@ class KVCacheManager:
             if num_blocks_to_allocate > self.block_pool.get_num_free_blocks():
                 return None
 
-        num_tokens_main_model = total_computed_tokens + num_new_tokens
+        local_slot_computed_tokens = (
+            total_computed_tokens
+            if allocate_external_computed_blocks
+            else num_local_computed_tokens
+        )
+        num_tokens_main_model = local_slot_computed_tokens + num_new_tokens
         num_tokens_need_slot = min(
             num_tokens_main_model + num_lookahead_tokens, self.max_model_len
         )
@@ -379,8 +389,7 @@ class KVCacheManager:
             num_tokens=num_tokens_need_slot,
             new_computed_blocks=new_computed_block_list,
             num_encoder_tokens=num_encoder_tokens,
-            total_computed_tokens=num_local_computed_tokens
-            + num_external_computed_tokens,
+            total_computed_tokens=local_slot_computed_tokens,
             num_tokens_main_model=num_tokens_main_model,
         )
 
@@ -388,9 +397,12 @@ class KVCacheManager:
             # Cannot allocate new blocks
             return None
 
+        num_external_blocks_to_allocate = (
+            num_external_computed_tokens if allocate_external_computed_blocks else 0
+        )
         if (
             new_computed_block_list is not self.empty_kv_cache_blocks.blocks
-            or num_external_computed_tokens > 0
+            or num_external_blocks_to_allocate > 0
         ):
             # Append the new computed blocks to the request blocks until now to
             # avoid the case where the new blocks cannot be allocated.
@@ -398,7 +410,7 @@ class KVCacheManager:
                 request_id=request.request_id,
                 new_computed_blocks=new_computed_block_list,
                 num_local_computed_tokens=num_local_computed_tokens,
-                num_external_computed_tokens=num_external_computed_tokens,
+                num_external_computed_tokens=num_external_blocks_to_allocate,
             )
 
         new_blocks = self.coordinator.allocate_new_blocks(
@@ -419,7 +431,7 @@ class KVCacheManager:
         # Therefore, we cap the number at `request.num_tokens`, ensuring only
         # "finalized" tokens are cached.
         num_tokens_to_cache = min(
-            total_computed_tokens + num_new_tokens,
+            local_slot_computed_tokens + num_new_tokens,
             request.num_tokens,
         )
         self.coordinator.cache_blocks(request, num_tokens_to_cache)

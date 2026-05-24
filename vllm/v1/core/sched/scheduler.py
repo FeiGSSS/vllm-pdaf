@@ -742,6 +742,7 @@ class Scheduler(SchedulerInterface):
                     delay_cache_blocks=load_kv_async,
                     num_encoder_tokens=num_encoder_tokens,
                     full_sequence_must_fit=self.scheduler_reserve_full_isl,
+                    allocate_external_computed_blocks=pap_remote_prefix_len is None,
                 )
 
                 if new_blocks is None:

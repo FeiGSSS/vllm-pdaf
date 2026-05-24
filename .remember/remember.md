@@ -159,6 +159,71 @@ E2E after the change:
 
 Next work:
 
-- Consider the remaining deeper cut: avoid allocating external
-  remote-prefix blocks inside `KVCacheManager.allocate_slots()` for PAP
-  Projection entirely.
+- Continue auditing remaining Projection-local KV structures for generated
+  tokens/current-token model-runner metadata.
+
+## 2026-05-24 PAP Projection Skips Remote Prefix Block Allocation
+
+Latest local phase after `c6817d015`:
+
+- `KVCacheManager.allocate_slots()` now has
+  `allocate_external_computed_blocks=True` by default.
+- Default KVConnector behavior is preserved: external computed tokens still
+  allocate local receiver blocks.
+- PAP metadata-only Projection passes
+  `allocate_external_computed_blocks=False` when `pap_remote_prefix_len` is
+  present.
+- Projection still uses remote prefix progress for scheduler admission, but it
+  no longer allocates local prompt-prefix block placeholders for that remote
+  prefix.
+
+Focused regression:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/v1/core/test_kv_cache_utils.py::test_allocate_external_tokens_can_skip_local_prefix_blocks -q
+```
+
+Result: `1 passed`.
+
+The test verifies PAP-style allocation only consumes `1` local block for
+`8` external prefix tokens plus `1` new token, while the default KVConnector path
+still consumes `3` blocks.
+
+Focused PAP + KV suite:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_launch_files.py \
+  tests/v1/core/test_kv_cache_utils.py::test_allocate_external_tokens_can_skip_local_prefix_blocks -q
+```
+
+Result: `73 passed`.
+
+E2E after the change:
+
+- 1PA1P Qwen3-0.6B:
+  - HTTP `200`.
+  - Usage `prompt_tokens=24`, `completion_tokens=12`, `total_tokens=36`.
+  - Output was valid text, not garbled.
+  - Projection payload keys were PAP metadata only.
+  - Projection OFFLOAD_EXEC traces `336` = `12 * 28`.
+  - Attention OFFLOAD_EXEC traces `336`, excluding startup listener lines.
+  - `kv_transfer_config` appeared only in Prefill logs.
+  - No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
+    `invalid slot`, or `slot_mapping`.
+- 4PA2P Qwen3-0.6B:
+  - 8 sequential requests, all HTTP `200`.
+  - Route coverage `8100/8300 -> 8200`, `8101/8301 -> 8201`,
+    `8102/8302 -> 8200`, `8103/8303 -> 8201`, repeated once.
+  - Each response had `prompt_tokens=22`, `completion_tokens=8`,
+    `total_tokens=30`.
+  - Outputs were valid text, not garbled.
+  - Projection OFFLOAD_EXEC traces `1792` total, `896` per Projection.
+  - Attention OFFLOAD_EXEC traces `1792` total, `448` per Attention.
+  - `kv_transfer_config` appeared only in Prefill logs.
+  - No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
+    `invalid slot`, or `slot_mapping`.

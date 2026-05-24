@@ -451,3 +451,101 @@ Evidence:
   Projection startup logs.
 - No `Traceback`, `ERROR`, `rejected`, or `Got kv_transfer_params` log entries
   were found in the PAP service logs.
+
+## Qwen3-0.6B PAP Projection Without Remote Prefix Block Allocation
+
+Code checkpoint:
+
+- `KVCacheManager.allocate_slots()` now accepts
+  `allocate_external_computed_blocks`.
+- The default is `True`, preserving KVConnector receiver semantics where
+  external computed tokens still require local receiver blocks.
+- PAP metadata-only Projection passes
+  `allocate_external_computed_blocks=False` when `pap_remote_prefix_len` is
+  present.
+- In that mode, remote prefix progress is still used for scheduling/admission,
+  but Projection allocates local blocks only for its local/current token work
+  instead of allocating prompt-prefix block placeholders.
+
+Focused KV cache regression:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/v1/core/test_kv_cache_utils.py::test_allocate_external_tokens_can_skip_local_prefix_blocks -q
+```
+
+Result: `1 passed`.
+
+The regression test covers both paths:
+
+- PAP-style allocation with `num_external_computed_tokens=8`,
+  `num_new_tokens=1`, and `allocate_external_computed_blocks=False` allocates
+  only `1` local block.
+- Default KVConnector-style allocation for the same token counts allocates
+  `3` blocks, preserving existing receiver behavior.
+
+Focused PAP + KV suite:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_launch_files.py \
+  tests/v1/core/test_kv_cache_utils.py::test_allocate_external_tokens_can_skip_local_prefix_blocks -q
+```
+
+Result: `73 passed`.
+
+1PA1P Qwen3-0.6B E2E after the change:
+
+- Command shape:
+  `PAP_TOPOLOGY=1pa1p PAP_SERVICE_ONLY=1 PAP_SKIP_SMOKE_REQUEST=1
+  PAP_PROXY_PORT=9000 PAP_MAX_TOKENS=12 PAP_ATTENTION_KV_DEBUG=1
+  PAP_OFFLOAD_EXEC_TRACE=1 bash examples/pap/launch_pap_nixl.sh --model
+  /data/ssd1/llm-models/Qwen3-0.6B`
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=24`, `completion_tokens=12`, `total_tokens=36`.
+- Output was valid text, not garbled; semantic quality was limited by the
+  0.6B model and short `max_tokens`.
+- Proxy logged Projection metadata keys only:
+  `pap_attention_endpoint`, `pap_attention_kv_installed`,
+  `pap_attention_tcp_endpoint`, `pap_offload_exec_zmq_endpoint`,
+  `pap_prefill_kv_handle`, `pap_projection_kv_unaware`,
+  `pap_remote_prefix_len`.
+- Projection logged `336` PAP OFFLOAD_EXEC projection traces, matching
+  `12 completion tokens * 28 layers`.
+- Attention logged `336` PAP OFFLOAD_EXEC attention traces, excluding the two
+  startup OFFLOAD_EXEC listener lines.
+- `kv_transfer_config` appeared only in Prefill logs, not Projection logs.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
+  `invalid slot`, or `slot_mapping` errors were found.
+
+4PA2P Qwen3-0.6B E2E after the change:
+
+- Command shape:
+  `PAP_TOPOLOGY=4pa2p PAP_SERVICE_ONLY=1 PAP_SKIP_SMOKE_REQUEST=1
+  PAP_PROXY_PORT=9000 PAP_MAX_TOKENS=8 PAP_ATTENTION_KV_DEBUG=1
+  PAP_OFFLOAD_EXEC_TRACE=1 bash examples/pap/launch_pap_nixl.sh --model
+  /data/ssd1/llm-models/Qwen3-0.6B`
+- Sent 8 sequential `/v1/completions` requests; all returned HTTP `200`.
+- Each response reported `prompt_tokens=22`, `completion_tokens=8`,
+  `total_tokens=30`.
+- Outputs were valid text, not garbled; semantic quality was limited by the
+  0.6B model and short `max_tokens`.
+- Route coverage:
+  - `8100/8300 -> 8200`
+  - `8101/8301 -> 8201`
+  - `8102/8302 -> 8200`
+  - `8103/8303 -> 8201`
+  - repeated once.
+- Proxy logged Projection metadata keys only for all 8 requests.
+- Projection logged `1792` PAP OFFLOAD_EXEC projection traces:
+  `896` per Projection, matching `8 requests * 8 tokens * 28 layers`.
+- Attention logged `1792` PAP OFFLOAD_EXEC attention traces:
+  `448` per Attention executor, matching
+  `2 requests * 8 tokens * 28 layers`.
+- `kv_transfer_config` appeared only in the four Prefill producer logs, not in
+  Projection startup logs.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
+  `invalid slot`, or `slot_mapping` errors were found.
