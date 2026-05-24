@@ -137,3 +137,55 @@ Result:
 - Trace count matches `96 output tokens * 28 layers`.
 - No `ERROR`, `Traceback`, `Exception`, `RuntimeError`, or `HTTPStatusError`
   entries were found in the PAP service logs.
+
+## Qwen3-0.6B 1PA1P Metadata-Only Projection Without KVConnector
+
+Command shape:
+
+```bash
+PAP_TOPOLOGY=1pa1p \
+PAP_SERVICE_ONLY=1 \
+PAP_SKIP_SMOKE_REQUEST=1 \
+PAP_PROXY_PORT=9090 \
+PAP_PREFILL_GPUS=4 \
+PAP_PROJECTION_GPUS=5 \
+PAP_MAX_MODEL_LEN=2048 \
+PAP_MAX_NUM_SEQS=2 \
+PAP_OFFLOAD_EXEC_TRACE=1 \
+PAP_ENABLE_MPS=1 \
+bash examples/pap/launch_pap_nixl.sh \
+  --model /data/ssd1/llm-models/Qwen3-0.6B
+```
+
+Runtime difference from the prior run:
+
+- Projection was launched as `PAP Projection vLLM metadata-only`.
+- Projection vLLM non-default args did not include `kv_transfer_config`.
+- Proxy reported Projection KV metadata keys:
+  `['pap_attention_endpoint', 'pap_attention_kv_installed',
+  'pap_attention_tcp_endpoint', 'pap_offload_exec_zmq_endpoint',
+  'pap_prefill_kv_handle', 'pap_projection_kv_unaware',
+  'pap_remote_prefix_len']`.
+- No Prefill KV transport keys were present in the Projection payload.
+
+Request:
+
+- Endpoint: `POST /v1/chat/completions`.
+- OpenAI usage: `prompt_tokens=344`, `completion_tokens=64`,
+  `total_tokens=408`.
+- `max_tokens=64`, `temperature=0`.
+
+Result:
+
+- HTTP status: `200`.
+- End-to-end request latency: `6310 ms`.
+- Proxy prefill metrics: `prefill_ms=63`, `prefill_prefix_len=344`.
+- Output started with normal Chinese model text:
+  `"<think>\n嗯，用户让我简要说明PAP架构中Projection节点..."`.
+- Projection OFFLOAD_EXEC traces: `1792`.
+- Attention OFFLOAD_EXEC traces: `1792`.
+- Trace count matches `64 output tokens * 28 layers`.
+- Projection logs had no `Got kv_transfer_params, but no KVConnector found`
+  warning for the PAP metadata-only request.
+- No `ERROR`, `Traceback`, `Exception`, `RuntimeError`, or `HTTPStatusError`
+  entries were found in the Projection/proxy logs.

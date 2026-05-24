@@ -348,10 +348,8 @@ done
 for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     gpu="${PROJECTION_GPUS[$idx]}"
     projection_port=$((PROJECTION_PORT_BASE + idx))
-    projection_nixl_port=$((PROJECTION_NIXL_PORT_BASE + idx))
     projection_zmq_port=$((PROJECTION_ZMQ_PORT_BASE + idx))
-    projection_kv_transfer_config=$(printf '{"kv_connector":"NixlConnector","kv_role":"kv_consumer","kv_connector_extra_config":{"pap_enabled":true,"pap_attention_tcp_endpoint":"tcp://127.0.0.1:%s"}}' "$ATTENTION_TCP_PORT_BASE")
-    echo "Starting PAP Projection vLLM NIXL consumer $idx on GPU $gpu"
+    echo "Starting PAP Projection vLLM metadata-only $idx on GPU $gpu"
     CUDA_VISIBLE_DEVICES="$gpu" \
     VLLM_PORT="$((VLLM_PORT_BASE + PA_COUNT * 20 + idx * 20))" \
     PAP_OFFLOAD_EXEC_TRANSPORT="$PAP_OFFLOAD_EXEC_TRANSPORT" \
@@ -360,8 +358,6 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     PAP_OFFLOAD_EXEC_LOCAL_RANK=0 \
     PAP_OFFLOAD_EXEC_TRACE="$PAP_OFFLOAD_EXEC_TRACE" \
     PAP_REMOTE_ATTENTION_PARALLELISM="$PAP_REMOTE_ATTENTION_PARALLELISM" \
-    VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
-    VLLM_NIXL_SIDE_CHANNEL_PORT="$projection_nixl_port" \
     .venv/bin/vllm serve "$MODEL_PATH" \
         --port "$projection_port" \
         --host 127.0.0.1 \
@@ -371,7 +367,6 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
         --max-model-len "$MAX_MODEL_LEN" \
         --max-num-seqs "$MAX_NUM_SEQS" \
         --gpu-memory-utilization "$PROJECTION_GPU_MEMORY_UTILIZATION" \
-        --kv-transfer-config "$projection_kv_transfer_config" \
         >"$LOG_DIR/projection_${idx}.log" 2>&1 &
     PIDS+=("$!")
 done

@@ -20,6 +20,15 @@ def test_model_runner_passes_pap_enabled_to_forward_context() -> None:
 
     assert '"pap_enabled"' in text
     assert "_pap_enabled_for_batch" in text
+    assert "PAP enabled via per-request TCP endpoint" in text
+
+
+def test_engine_core_allows_pap_metadata_without_kv_connector() -> None:
+    text = (ROOT / "vllm" / "v1" / "engine" / "core.py").read_text()
+
+    assert "_is_pap_metadata_only_request" in text
+    assert "pap_projection_kv_unaware" in text
+    assert "Got kv_transfer_params, but no KVConnector found" in text
 
 
 def test_qwen3_pap_path_uses_nccl_offload_exec() -> None:

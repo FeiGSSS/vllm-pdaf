@@ -37,6 +37,12 @@ Projection payloads now use `pap_projection_kv_unaware=True` and
 KVConnector match/update for that request. This is not yet committed and still
 needs final review/commit.
 
+Newer working-tree phase: Projection no longer launches as a NIXL
+`kv_consumer` in `examples/pap/launch_pap_nixl.sh`; it is started as
+metadata-only vLLM with no `--kv-transfer-config`. EngineCore now treats
+`pap_projection_kv_unaware` requests as PAP metadata-only and skips the generic
+"Got kv_transfer_params, but no KVConnector found" warning for those requests.
+
 ## Verified
 - Unit/PAP tests: `.venv/bin/python -m pytest tests/pap/test_pap_launch_files.py tests/pap -q`
   passed with `124 passed`.
@@ -63,15 +69,19 @@ needs final review/commit.
   `prompt_tokens=628`, `completion_tokens=96`, latency `7004 ms`. Projection
   prompt throughput was `0.0 tokens/s`; Attention and Projection each logged
   `2688` OFFLOAD_EXEC traces, matching `96 * 28`.
+- Metadata-only Projection 1PA1P E2E with Qwen3-0.6B returned HTTP `200` for
+  `prompt_tokens=344`, `completion_tokens=64`, latency `6310 ms`. Projection
+  vLLM startup args had no `kv_transfer_config`; proxy logged only PAP metadata
+  keys in Projection `kv_transfer_params`; Projection/Attention each logged
+  `1792` OFFLOAD_EXEC traces, matching `64 * 28`.
 
 ## Next
 1. For future E2E, use:
    `bash examples/pap/launch_pap_nixl.sh --model /data/ssd1/llm-models/Qwen3-0.6B`
    or override with the 8B path.
-2. Run a short E2E after the new proxy `projection_kv_keys` log line is
-   committed/restarted to explicitly capture that Projection payload contains
-   only PAP metadata keys.
-3. Start designing the IPC path for Prefill/Profile KV to Attention Executor.
+2. Commit the metadata-only Projection checkpoint.
+3. Start X:Y validation for metadata-only Projection, then design/implement the
+   IPC path for Prefill/Profile KV to Attention Executor.
    The current NIXL/NCCL transport is working but is not the desired final
    local PA-to-Attention KV path.
 

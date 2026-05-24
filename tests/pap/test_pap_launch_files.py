@@ -87,14 +87,15 @@ def test_pap_6pa2p_launch_uses_multi_proxy_and_expected_counts() -> None:
     assert 'PROJECTION_ZMQ_PORT_BASE="${PAP_PROJECTION_ZMQ_PORT_BASE:-11300}"' in text
     assert '--tcp-port "$attention_tcp_port"' in text
     assert '--offload-exec-zmq-port "$attention_zmq_port"' in text
-    assert "pap_attention_tcp_endpoint" in text
     assert "attention_zmq_port" in text
     assert 'PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT:-nccl}"' in text
     assert 'PAP_REMOTE_ATTENTION_PARALLELISM="${PAP_REMOTE_ATTENTION_PARALLELISM:-16}"' in text
     assert 'PAP_OFFLOAD_EXEC_TRANSPORT="$PAP_OFFLOAD_EXEC_TRANSPORT"' in text
     assert "PAP_OFFLOAD_EXEC_ZMQ_PORT" in text
     assert "PAP_OFFLOAD_EXEC_HOST=127.0.0.1" in text
-    assert "pap_enabled" in text
+    assert "Projection vLLM metadata-only" in text
+    assert 'kv_role":"kv_consumer"' not in text
+    assert "projection_kv_transfer_config" not in text
     assert "PAP_MPS_PIPE_BASE_DIR" in text
     assert "build_pap_groups_spec" in text
     assert "build_projections_spec" in text
@@ -117,7 +118,7 @@ def test_pap_6pa2p_launch_uses_performance_transport_by_default() -> None:
     text = script.read_text()
 
     assert 'PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT:-nccl}"' in text
-    assert '"pap_enabled":true' in text
+    assert '"kv_role":"kv_consumer"' not in text
 
 
 def test_pap_6pa2p_launch_isolates_vllm_init_ports() -> None:

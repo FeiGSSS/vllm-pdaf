@@ -354,8 +354,10 @@ class EngineCore:
                     f"Supported tasks: {supported_pooling_tasks}"
                 )
 
-        if request.kv_transfer_params is not None and (
-            not self.scheduler.get_kv_connector()
+        if (
+            request.kv_transfer_params is not None
+            and not self._is_pap_metadata_only_request(request)
+            and not self.scheduler.get_kv_connector()
         ):
             logger.warning(
                 "Got kv_transfer_params, but no KVConnector found. "
@@ -367,6 +369,11 @@ class EngineCore:
             # Immediately abort so the connector's request_finished hook runs
             # to free any pre-admission KV-transfer resources.
             self.abort_requests([request.request_id])
+
+    @staticmethod
+    def _is_pap_metadata_only_request(request: Request) -> bool:
+        params = request.kv_transfer_params
+        return bool(params and params.get("pap_projection_kv_unaware"))
 
     def abort_requests(self, request_ids: list[str]):
         """Abort requests from the scheduler."""
