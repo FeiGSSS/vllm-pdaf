@@ -1309,6 +1309,7 @@ def test_attention_executor_paged_ipc_import_keeps_resident_block_views(
     assert metadata["seq_len"] == 5
     assert tensors == {}
     registry = app.state.registry
+    session_id = registry.resolve_session_request_id("req-paged-ipc")
     segments, seq_len = registry.append_decode_kv(
         request_id="req-paged-ipc",
         layer_name="model.layers.0.self_attn.attn",
@@ -1320,15 +1321,178 @@ def test_attention_executor_paged_ipc_import_keeps_resident_block_views(
     )
 
     assert seq_len == 6
-    assert len(segments) == 3
+    assert len(segments) == 2
     assert (
         segments[0][0].untyped_storage().data_ptr()
         == kv_cache.untyped_storage().data_ptr()
     )
-    assert torch.equal(torch.cat([key for key, _ in segments[:2]], dim=0), torch.cat([
+    assert torch.equal(torch.cat([key for key, _ in segments], dim=0), torch.cat([
         kv_cache[0, 0, :4, :1, :],
-        kv_cache[0, 1, :1, :1, :],
+        kv_cache[0, 1, :2, :1, :],
     ], dim=0))
+    assert "model.layers.0.self_attn.attn" not in registry._decode_kv[session_id]
+
+
+def test_attention_registry_writes_decode_kv_into_resident_paged_block() -> None:
+    import torch
+
+    from examples.pap.pap_attention_executor import (
+        PAPAttentionRegistration,
+        PAPAttentionRegistry,
+    )
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-paged-writeback",
+            conversation_id="conv-paged-writeback",
+            prefill_endpoint="http://localhost:8100",
+            prefix_len=5,
+            block_size=4,
+        )
+    )
+
+    kv_cache = torch.zeros((2, 2, 4, 1, 2))
+    kv_cache[0, 0, :, :, :] = 1
+    kv_cache[1, 0, :, :, :] = 2
+    kv_cache[0, 1, 0, :, :] = 3
+    kv_cache[1, 1, 0, :, :] = 4
+
+    registry.import_prefill_paged_kv(
+        request_id="req-paged-writeback",
+        layer_name="model.layers.0.self_attn.attn",
+        kv_cache=kv_cache,
+        block_ids=[0, 1],
+        seq_len=5,
+        block_size=4,
+        num_kv_heads=1,
+        layout="NHD",
+    )
+
+    decode_key = torch.tensor([[[9.0, 10.0]]])
+    decode_value = torch.tensor([[[11.0, 12.0]]])
+    segments, seq_len = registry.append_decode_kv(
+        request_id="req-paged-writeback",
+        layer_name="model.layers.0.self_attn.attn",
+        key=decode_key,
+        value=decode_value,
+        block_id=1,
+        slot=5,
+        seq_len=6,
+    )
+
+    assert seq_len == 6
+    assert len(segments) == 2
+    assert torch.equal(kv_cache[0, 1, 1, :, :], decode_key[0])
+    assert torch.equal(kv_cache[1, 1, 1, :, :], decode_value[0])
+    assert torch.equal(
+        torch.cat([key for key, _ in segments], dim=0),
+        torch.cat([kv_cache[0, 0, :4, :1, :], kv_cache[0, 1, :2, :1, :]], dim=0),
+    )
+    session_id = registry.resolve_session_request_id("req-paged-writeback")
+    assert "model.layers.0.self_attn.attn" not in registry._decode_kv[session_id]
+
+
+def test_attention_registry_uses_resident_paged_block_capacity_for_writeback() -> None:
+    import torch
+
+    from examples.pap.pap_attention_executor import (
+        PAPAttentionRegistration,
+        PAPAttentionRegistry,
+    )
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-paged-capacity",
+            conversation_id="conv-paged-capacity",
+            prefill_endpoint="http://localhost:8100",
+            prefix_len=12,
+            block_size=16,
+        )
+    )
+
+    kv_cache = torch.zeros((2, 1, 16, 1, 2))
+    registry.import_prefill_paged_kv(
+        request_id="req-paged-capacity",
+        layer_name="model.layers.0.self_attn.attn",
+        kv_cache=kv_cache,
+        block_ids=[0],
+        seq_len=12,
+        block_size=16,
+        num_kv_heads=1,
+        layout="NHD",
+    )
+
+    for seq_len in range(13, 17):
+        segments, written_seq_len = registry.append_decode_kv(
+            request_id="req-paged-capacity",
+            layer_name="model.layers.0.self_attn.attn",
+            key=torch.full((1, 1, 2), float(seq_len)),
+            value=torch.full((1, 1, 2), float(seq_len + 100)),
+            block_id=0,
+            slot=seq_len - 1,
+            seq_len=seq_len,
+        )
+
+        assert written_seq_len == seq_len
+        assert len(segments) == 1
+        assert torch.equal(kv_cache[0, 0, seq_len - 1], torch.full((1, 2), seq_len))
+        assert torch.equal(
+            kv_cache[1, 0, seq_len - 1], torch.full((1, 2), seq_len + 100)
+        )
+
+    session_id = registry.resolve_session_request_id("req-paged-capacity")
+    assert "model.layers.0.self_attn.attn" not in registry._decode_kv[session_id]
+
+
+def test_attention_registry_falls_back_when_resident_paged_block_is_full() -> None:
+    import torch
+
+    from examples.pap.pap_attention_executor import (
+        PAPAttentionRegistration,
+        PAPAttentionRegistry,
+    )
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-paged-full",
+            conversation_id="conv-paged-full",
+            prefill_endpoint="http://localhost:8100",
+            prefix_len=16,
+            block_size=32,
+        )
+    )
+
+    kv_cache = torch.zeros((2, 1, 16, 1, 2))
+    registry.import_prefill_paged_kv(
+        request_id="req-paged-full",
+        layer_name="model.layers.0.self_attn.attn",
+        kv_cache=kv_cache,
+        block_ids=[0],
+        seq_len=16,
+        block_size=32,
+        num_kv_heads=1,
+        layout="NHD",
+    )
+
+    segments, seq_len = registry.append_decode_kv(
+        request_id="req-paged-full",
+        layer_name="model.layers.0.self_attn.attn",
+        key=torch.tensor([[[17.0, 17.0]]]),
+        value=torch.tensor([[[117.0, 117.0]]]),
+        block_id=0,
+        slot=16,
+        seq_len=17,
+    )
+
+    assert seq_len == 17
+    assert len(segments) == 2
+    assert segments[0][0].shape[0] == 16
+    assert torch.equal(segments[1][0], torch.tensor([[[17.0, 17.0]]]))
+    session_id = registry.resolve_session_request_id("req-paged-full")
+    assert "model.layers.0.self_attn.attn" in registry._decode_kv[session_id]
 
 
 def test_attention_executor_compute_existing_prefill_token_does_not_append() -> None:

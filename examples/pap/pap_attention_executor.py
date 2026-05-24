@@ -212,6 +212,18 @@ class PAPDecodeKVBuffer:
         return self.key[: self.length], self.value[: self.length]
 
 
+@dataclass
+class PAPResidentPagedKV:
+    """Resident paged KV backing attached from the Prefill-owned cache."""
+
+    kv_cache: torch.Tensor
+    block_ids: list[int]
+    seq_len: int
+    block_size: int
+    num_kv_heads: int
+    layout: str
+
+
 class PAPAttentionRegistry:
     """Thread-safe in-memory registry for PAP Attention control-plane state."""
 
@@ -225,6 +237,7 @@ class PAPAttentionRegistry:
         self._prefill_kv: dict[
             str, dict[str, list[tuple[torch.Tensor, torch.Tensor]]]
         ] = {}
+        self._resident_paged_kv: dict[str, dict[str, PAPResidentPagedKV]] = {}
         self._attention_sessions = AttentionSessionStore()
 
     @staticmethod
@@ -311,6 +324,7 @@ class PAPAttentionRegistry:
             self._layer_events.setdefault(registration.request_id, [])
             self._decode_kv.setdefault(registration.request_id, {})
             self._prefill_kv.setdefault(registration.request_id, {})
+            self._resident_paged_kv.setdefault(registration.request_id, {})
             self._attention_sessions.create_session(
                 registration.request_id,
                 registration.conversation_id,
@@ -337,6 +351,7 @@ class PAPAttentionRegistry:
             self._layer_events.pop(request_id, None)
             self._decode_kv.pop(request_id, None)
             self._prefill_kv.pop(request_id, None)
+            self._resident_paged_kv.pop(request_id, None)
             self._attention_sessions.free_session(request_id)
             return existed
 
@@ -453,6 +468,9 @@ class PAPAttentionRegistry:
             self._prefill_kv.setdefault(session_request_id, {})[layer_name] = (
                 [(key_state, value_state)]
             )
+            self._resident_paged_kv.setdefault(session_request_id, {}).pop(
+                layer_name, None
+            )
             imported_session = self._attention_sessions.import_prefill_kv(
                 session_request_id,
                 block_ids=list(block_ids)
@@ -527,6 +545,16 @@ class PAPAttentionRegistry:
                 layout=layout,  # type: ignore[arg-type]
             )
             self._prefill_kv.setdefault(session_request_id, {})[layer_name] = segments
+            self._resident_paged_kv.setdefault(session_request_id, {})[layer_name] = (
+                PAPResidentPagedKV(
+                    kv_cache=kv_cache.detach(),
+                    block_ids=[int(block_id) for block_id in block_ids],
+                    seq_len=seq_len,
+                    block_size=int(block_size),
+                    num_kv_heads=int(num_kv_heads),
+                    layout=str(layout),
+                )
+            )
             imported_session = self._attention_sessions.import_prefill_kv(
                 session_request_id,
                 block_ids=[int(block_id) for block_id in block_ids],
@@ -538,6 +566,76 @@ class PAPAttentionRegistry:
             session.decode_seq_lens[layer_name] = seq_len
             self._prefill_condition.notify_all()
             return seq_len
+
+    @staticmethod
+    def _resident_paged_logical_nhd(
+        resident: PAPResidentPagedKV,
+    ) -> bool:
+        if resident.layout == "NHD":
+            return True
+        if resident.layout == "HND":
+            return int(resident.kv_cache.shape[3]) == int(resident.num_kv_heads)
+        raise ValueError(f"unsupported KV cache layout: {resident.layout}")
+
+    @classmethod
+    def _resident_paged_block_capacity(
+        cls,
+        resident: PAPResidentPagedKV,
+    ) -> int:
+        if cls._resident_paged_logical_nhd(resident):
+            return int(resident.kv_cache.shape[2])
+        return int(resident.kv_cache.shape[3])
+
+    def _try_write_decode_to_resident_paged_kv(
+        self,
+        *,
+        resident: PAPResidentPagedKV,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        block_id: int,
+        slot: int,
+        seq_len: int,
+    ) -> bool:
+        if int(key.shape[0]) != 1 or int(value.shape[0]) != 1:
+            return False
+        if int(block_id) not in resident.block_ids:
+            return False
+
+        logical_nhd = self._resident_paged_logical_nhd(resident)
+        block_capacity = self._resident_paged_block_capacity(resident)
+        if int(seq_len) > len(resident.block_ids) * block_capacity:
+            return False
+        block_offset = int(slot) - int(block_id) * int(resident.block_size)
+        if block_offset >= block_capacity:
+            return False
+        if block_offset < 0:
+            return False
+
+        key_state = key.detach().to(
+            device=resident.kv_cache.device,
+            dtype=resident.kv_cache.dtype,
+        )
+        value_state = value.detach().to(
+            device=resident.kv_cache.device,
+            dtype=resident.kv_cache.dtype,
+        )
+        if logical_nhd:
+            resident.kv_cache[
+                0, int(block_id), block_offset, : resident.num_kv_heads, :
+            ].copy_(key_state[0])
+            resident.kv_cache[
+                1, int(block_id), block_offset, : resident.num_kv_heads, :
+            ].copy_(value_state[0])
+        else:
+            resident.kv_cache[
+                0, int(block_id), : resident.num_kv_heads, block_offset, :
+            ].copy_(key_state[0])
+            resident.kv_cache[
+                1, int(block_id), : resident.num_kv_heads, block_offset, :
+            ].copy_(value_state[0])
+
+        resident.seq_len = max(int(resident.seq_len), int(seq_len))
+        return True
 
     def _wait_for_prefill_layer_locked(
         self,
@@ -609,23 +707,52 @@ class PAPAttentionRegistry:
 
             layer_kv = self._decode_kv.setdefault(session_request_id, {})
             decode_buffer = layer_kv.get(layer_name)
-            key_state = key.detach().contiguous().to(self._storage_device)
-            value_state = value.detach().contiguous().to(self._storage_device)
-            if not should_append:
+            resident = self._resident_paged_kv.get(session_request_id, {}).get(
+                layer_name
+            )
+            wrote_resident = False
+            if (
+                should_append
+                and resident is not None
+                and block_id is not None
+                and seq_len is not None
+            ):
+                from vllm.pap.remote_attention import paged_kv_segments
+
+                wrote_resident = self._try_write_decode_to_resident_paged_kv(
+                    resident=resident,
+                    key=key,
+                    value=value,
+                    block_id=int(block_id),
+                    slot=int(slot),
+                    seq_len=int(seq_len),
+                )
+                if wrote_resident:
+                    prefill_layer_kv[layer_name] = paged_kv_segments(
+                        kv_cache=resident.kv_cache,
+                        block_ids=resident.block_ids,
+                        seq_len=resident.seq_len,
+                        num_kv_heads=resident.num_kv_heads,
+                        layout=resident.layout,  # type: ignore[arg-type]
+                    )
+
+            if not should_append or wrote_resident:
                 if decode_buffer is None:
                     decode_key = torch.empty(
-                        (0, *key_state.shape[1:]),
-                        dtype=key_state.dtype,
-                        device=self._storage_device,
+                        (0, *key.shape[1:]),
+                        dtype=key.dtype,
+                        device=key.device,
                     )
                     decode_value = torch.empty(
-                        (0, *value_state.shape[1:]),
-                        dtype=value_state.dtype,
-                        device=self._storage_device,
+                        (0, *value.shape[1:]),
+                        dtype=value.dtype,
+                        device=value.device,
                     )
                 else:
                     decode_key, decode_value = decode_buffer.view()
             else:
+                key_state = key.detach().contiguous().to(self._storage_device)
+                value_state = value.detach().contiguous().to(self._storage_device)
                 if decode_buffer is None:
                     decode_buffer = self._make_decode_buffer(
                         key=key_state,

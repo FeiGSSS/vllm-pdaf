@@ -636,6 +636,55 @@ Current boundary:
 - Decode K/V is still appended to Attention-local decode buffers.
 - Next phase is decode K/V write-back into Prefill-owned paged blocks plus
   same-PA multi-turn reuse verification.
+
+## 2026-05-24 PAP Shared KV Owner Phase 4
+
+Latest local phase after `0e2d4ffe3`:
+
+- Attention now records `PAPResidentPagedKV` metadata for paged Prefill imports.
+- For descriptor-backed decode steps whose target slot is covered by the
+  attached Prefill-owned paged KV blocks, `append_decode_kv()` writes the
+  Projection-provided decode K/V directly into the resident paged KV backing
+  tensor.
+- Covered resident-block decode steps return resident paged segments and do not
+  keep an Attention-local decode KV copy for that layer.
+- If the target block is not attached yet, or the attached block coverage is
+  full, the existing Attention-local decode buffer remains the fallback.
+
+Focused verification:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `96 passed, 16 warnings`.
+
+E2E 1PA1P Qwen3-0.6B:
+
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=12`, `completion_tokens=6`, `total_tokens=18`.
+- Output text: ` PAP is a type of`
+- Attention logged `28` `PAP prefill paged KV imported via IPC descriptor`
+  entries.
+- Projection and Attention each logged `168` OFFLOAD_EXEC traces.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `invalid slot`,
+  `slot_mapping`, `rejected`, `block ids do not cover`, or `IndexError` matched
+  in logs.
+
+Current boundary:
+
+- The shared write-back path is real for slots already covered by attached
+  Prefill-owned paged KV blocks.
+- Generated tokens that require new Prefill-owned blocks still fall back to
+  Attention-local decode storage.
+- Next phase is `PAKVOwner`-style decode slot/block reservation and publication
+  so all generated K/V can be written into Prefill-owned blocks, followed by
+  same-PA multi-turn reuse verification.
 - 4PA2P Qwen3-0.6B:
   - 8 sequential requests, all HTTP `200`.
   - Route coverage `8100/8300 -> 8200`, `8101/8301 -> 8201`,

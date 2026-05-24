@@ -369,3 +369,73 @@ Boundary:
 - Decode K/V still lands in Attention-local decode buffers.
 - Next phase must write Projection-provided decode K/V into Prefill-owned
   paged blocks and add same-PA multi-turn reuse verification.
+
+### Task 5: Decode K/V Write-Back To Attached Resident Blocks
+
+**Files:**
+- Modify: `examples/pap/pap_attention_executor.py`
+- Test: `tests/pap/test_pap_attention_executor.py`
+
+- [x] **Step 1: Write resident write-back tests**
+
+Added tests proving that when a layer was imported through the paged IPC
+descriptor path, `append_decode_kv()` writes the next decode K/V token into the
+attached paged KV backing tensor and returns resident segments rather than an
+extra Attention-local decode segment.
+
+Also added a regression for the runtime boundary where the attached resident
+blocks are full: the registry must fall back to the Attention-local decode
+buffer instead of writing past the resident backing tensor or crashing while
+rebuilding resident segments.
+
+- [x] **Step 2: Implement resident write-back metadata**
+
+`PAPAttentionRegistry` now records `PAPResidentPagedKV` metadata for paged
+imports. During descriptor-backed decode, it writes one-token K/V into the
+attached paged KV cache when the target slot is covered by the attached blocks.
+The resident segments are rebuilt over the same backing tensor, so no additional
+Attention-local KV copy is kept for covered slots.
+
+- [x] **Step 3: Preserve fallback behavior**
+
+If a decode token targets a block not currently attached from Prefill, or the
+attached block coverage is already full, the existing Attention-local decode
+buffer path remains the fallback. This keeps current single-request E2E
+functional while making the covered resident-block path no-copy.
+
+- [x] **Step 4: Verify**
+
+Run:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `96 passed, 16 warnings`.
+
+E2E 1PA1P Qwen3-0.6B:
+
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=12`, `completion_tokens=6`, `total_tokens=18`.
+- Output text: ` PAP is a type of`
+- Attention logged `28` `PAP prefill paged KV imported via IPC descriptor`
+  entries.
+- Projection and Attention each logged `168` OFFLOAD_EXEC traces.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `invalid slot`,
+  `slot_mapping`, `rejected`, `block ids do not cover`, or `IndexError`
+  matched in logs.
+
+Boundary:
+
+- Decode K/V write-back is implemented for slots already covered by the attached
+  Prefill-owned paged KV blocks.
+- Decode K/V that needs a new, not-yet-attached Prefill-owned block still falls
+  back to Attention-local storage.
+- Next phase must introduce `PAKVOwner`-style decode-slot/block allocation and
+  publication so Attention can write all generated K/V into Prefill-owned
+  blocks, then verify same-PA multi-turn reuse.
