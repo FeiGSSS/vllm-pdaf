@@ -439,3 +439,63 @@ Boundary:
 - Next phase must introduce `PAKVOwner`-style decode-slot/block allocation and
   publication so Attention can write all generated K/V into Prefill-owned
   blocks, then verify same-PA multi-turn reuse.
+
+### Task 6: Publish New Resident Decode Blocks In Attached Backing
+
+**Files:**
+- Modify: `examples/pap/pap_attention_executor.py`
+- Test: `tests/pap/test_pap_attention_executor.py`
+
+- [x] **Step 1: Write new-block resident write-back test**
+
+Added `test_attention_registry_publishes_new_resident_decode_block()` to prove
+that when decode crosses from the imported prompt block into a new block that
+already exists in the attached Prefill-owned paged KV backing tensor, Attention
+publishes that block into the resident set, writes K/V into it, and does not
+fall back to `_decode_kv`.
+
+- [x] **Step 2: Implement minimal publication**
+
+`PAPAttentionRegistry._try_write_decode_to_resident_paged_kv()` now accepts a
+decode `block_id` not present in `resident.block_ids` when that block is within
+the attached paged KV backing tensor. It adds the block to the resident block
+list, writes the decode K/V into the backing tensor, and rebuilds resident
+segments over prompt plus generated blocks.
+
+- [x] **Step 3: Verify**
+
+Run:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `97 passed, 16 warnings`.
+
+E2E 1PA1P Qwen3-0.6B with `max_tokens=8`:
+
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=12`, `completion_tokens=8`, `total_tokens=20`.
+- Output text: ` Pell's equation, which is a`
+- The run crosses the 16-token boundary and exercises a generated-token block.
+- Attention logged `28` `PAP prefill paged KV imported via IPC descriptor`
+  entries.
+- Projection and Attention each logged `224` OFFLOAD_EXEC traces.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `invalid slot`,
+  `slot_mapping`, `rejected`, `block ids do not cover`, `IndexError`, or
+  `500 Internal` matched in logs.
+
+Boundary:
+
+- This publishes new resident decode blocks only when the block id already maps
+  into the attached Prefill-owned paged KV backing tensor.
+- It is still not a full scheduler/worker `PAKVOwner`: block ids currently come
+  from the active decode descriptor path, not from an explicit Prefill owner
+  allocation API.
+- Next phase should make decode slot/block reservation explicit in a
+  `PAKVOwner`-style component and then verify same-PA multi-turn reuse.

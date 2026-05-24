@@ -685,6 +685,53 @@ Current boundary:
 - Next phase is `PAKVOwner`-style decode slot/block reservation and publication
   so all generated K/V can be written into Prefill-owned blocks, followed by
   same-PA multi-turn reuse verification.
+
+## 2026-05-24 PAP Shared KV Owner Phase 5
+
+Latest local phase after `a62895ef7`:
+
+- Attention now publishes a new resident decode block when the decode descriptor
+  points to a block that is not in the imported prompt block list but is present
+  in the already attached Prefill-owned paged KV backing tensor.
+- The newly published block is added to `PAPResidentPagedKV.block_ids`, decode
+  K/V is written into the backing tensor, and resident segments are rebuilt over
+  prompt plus generated blocks.
+- Added a regression test proving a cross-block decode step writes into the
+  resident paged backing and does not create an Attention-local decode KV entry.
+
+Focused verification:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `97 passed, 16 warnings`.
+
+E2E 1PA1P Qwen3-0.6B with `max_tokens=8`:
+
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=12`, `completion_tokens=8`, `total_tokens=20`.
+- Output text: ` Pell's equation, which is a`
+- This crosses the 16-token boundary and exercises a generated-token block.
+- Attention logged `28` paged Prefill KV descriptor imports.
+- Projection and Attention each logged `224` OFFLOAD_EXEC traces.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `invalid slot`,
+  `slot_mapping`, `rejected`, `block ids do not cover`, `IndexError`, or
+  `500 Internal` matched in logs.
+
+Current boundary:
+
+- New resident decode block publication works only when the block id maps into
+  the already attached Prefill-owned paged KV backing tensor.
+- Block ids still come from the active decode descriptor path, not from an
+  explicit Prefill owner allocation API.
+- Next phase is an explicit `PAKVOwner`-style decode slot/block reservation API
+  and same-PA multi-turn reuse verification.
 - 4PA2P Qwen3-0.6B:
   - 8 sequential requests, all HTTP `200`.
   - Route coverage `8100/8300 -> 8200`, `8101/8301 -> 8201`,

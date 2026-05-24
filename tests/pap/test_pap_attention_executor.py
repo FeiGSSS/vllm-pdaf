@@ -1495,6 +1495,64 @@ def test_attention_registry_falls_back_when_resident_paged_block_is_full() -> No
     assert "model.layers.0.self_attn.attn" in registry._decode_kv[session_id]
 
 
+def test_attention_registry_publishes_new_resident_decode_block() -> None:
+    import torch
+
+    from examples.pap.pap_attention_executor import (
+        PAPAttentionRegistration,
+        PAPAttentionRegistry,
+    )
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-paged-new-block",
+            conversation_id="conv-paged-new-block",
+            prefill_endpoint="http://localhost:8100",
+            prefix_len=4,
+            block_size=4,
+        )
+    )
+
+    kv_cache = torch.zeros((2, 2, 4, 1, 2))
+    kv_cache[0, 0, :, :, :] = 1
+    kv_cache[1, 0, :, :, :] = 2
+    registry.import_prefill_paged_kv(
+        request_id="req-paged-new-block",
+        layer_name="model.layers.0.self_attn.attn",
+        kv_cache=kv_cache,
+        block_ids=[0],
+        seq_len=4,
+        block_size=4,
+        num_kv_heads=1,
+        layout="NHD",
+    )
+
+    segments, seq_len = registry.append_decode_kv(
+        request_id="req-paged-new-block",
+        layer_name="model.layers.0.self_attn.attn",
+        key=torch.tensor([[[5.0, 6.0]]]),
+        value=torch.tensor([[[7.0, 8.0]]]),
+        block_id=1,
+        slot=4,
+        seq_len=5,
+    )
+
+    assert seq_len == 5
+    assert len(segments) == 2
+    assert torch.equal(kv_cache[0, 1, 0, :, :], torch.tensor([[5.0, 6.0]]))
+    assert torch.equal(kv_cache[1, 1, 0, :, :], torch.tensor([[7.0, 8.0]]))
+    assert torch.equal(
+        torch.cat([key for key, _ in segments], dim=0),
+        torch.cat([kv_cache[0, 0, :4, :1, :], kv_cache[0, 1, :1, :1, :]], dim=0),
+    )
+    session_id = registry.resolve_session_request_id("req-paged-new-block")
+    assert registry._resident_paged_kv[session_id][
+        "model.layers.0.self_attn.attn"
+    ].block_ids == [0, 1]
+    assert "model.layers.0.self_attn.attn" not in registry._decode_kv[session_id]
+
+
 def test_attention_executor_compute_existing_prefill_token_does_not_append() -> None:
     import torch
     from fastapi.testclient import TestClient

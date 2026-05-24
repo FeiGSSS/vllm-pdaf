@@ -586,6 +586,10 @@ class PAPAttentionRegistry:
             return int(resident.kv_cache.shape[2])
         return int(resident.kv_cache.shape[3])
 
+    @staticmethod
+    def _resident_paged_num_blocks(resident: PAPResidentPagedKV) -> int:
+        return int(resident.kv_cache.shape[1])
+
     def _try_write_decode_to_resident_paged_kv(
         self,
         *,
@@ -598,6 +602,13 @@ class PAPAttentionRegistry:
     ) -> bool:
         if int(key.shape[0]) != 1 or int(value.shape[0]) != 1:
             return False
+        if int(block_id) not in resident.block_ids:
+            if int(block_id) < 0 or int(block_id) >= self._resident_paged_num_blocks(
+                resident
+            ):
+                return False
+            resident.block_ids.append(int(block_id))
+
         if int(block_id) not in resident.block_ids:
             return False
 
