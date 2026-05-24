@@ -1049,6 +1049,14 @@ def compute_binary_attention_response(
             seq_len=descriptor.seq_len,
             block_ids=list(descriptor.block_ids),
         )
+        logger.info(
+            "PAP prefill KV imported via IPC descriptor request_id=%s "
+            "layer=%s seq_len=%s blocks=%s",
+            descriptor.request_id,
+            descriptor.layer_name,
+            seq_len,
+            len(descriptor.block_ids),
+        )
         return serialize_tensor_bundle(
             {
                 "request_id": descriptor.request_id,

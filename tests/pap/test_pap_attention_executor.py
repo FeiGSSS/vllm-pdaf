@@ -26,6 +26,12 @@ def test_attention_executor_declares_offload_exec_zmq_port() -> None:
     assert "OFFLOAD_EXEC NCCL/P2P data plane listening" in text
 
 
+def test_attention_executor_logs_ipc_prefill_import() -> None:
+    text = (ROOT / "examples" / "pap" / "pap_attention_executor.py").read_text()
+
+    assert "PAP prefill KV imported via IPC descriptor" in text
+
+
 def test_attention_executor_skips_offload_exec_when_zmq_port_is_none(
     monkeypatch,
 ) -> None:
