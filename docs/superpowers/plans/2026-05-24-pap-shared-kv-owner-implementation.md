@@ -907,3 +907,80 @@ Boundary:
   existing conversations.
 - It still performs a normal Prefill request for later turns; skipping already
   resident tokens and attaching resident blocks in vLLM scheduler remains next.
+
+### Task 12: Reuse Conversation Prefill KV Handle
+
+**Files:**
+- Modify: `examples/pap/multi_pap_proxy_server.py`
+- Test: `tests/pap/test_multi_pap_proxy_server.py`
+
+- [x] **Step 1: Write handle reuse test**
+
+Added a unit test for `pap_prefill_kv_handle_for_request()` proving an existing
+conversation placement reuses the original Prefill KV handle instead of the new
+request's freshly registered Attention session handle.
+
+- [x] **Step 2: Apply handle reuse in request path**
+
+The multi proxy now uses `pap_prefill_kv_handle_for_request()` when attaching
+PAP Prefill->Attention parameters, building the Projection payload, and updating
+conversation placement metadata.
+
+- [x] **Step 3: Verify**
+
+Run:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_multi_pap_proxy_server.py \
+  tests/pap/test_pap_proxy_server.py \
+  tests/pap/test_pap_attention_executor.py -q
+```
+
+Result: `65 passed, 16 warnings`.
+
+Run:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_kv_owner.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_proxy_server.py \
+  tests/pap/test_multi_pap_proxy_server.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `130 passed, 16 warnings`.
+
+Run:
+
+```bash
+pre-commit run ruff-check --files \
+  examples/pap/multi_pap_proxy_server.py \
+  tests/pap/test_multi_pap_proxy_server.py
+```
+
+Result: passed.
+
+E2E 1PA1P Qwen3-0.6B with `max_tokens=8`:
+
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=11`, `completion_tokens=7`, `total_tokens=18`.
+- Output text: ` P P\n\n\n\n.\n\n`
+- Projection logged `224` OFFLOAD_EXEC traces.
+- Attention logged `224` OFFLOAD_EXEC traces plus `28` paged Prefill KV
+  descriptor imports.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `invalid slot`,
+  `slot_mapping`, `rejected`, `block ids do not cover`, `IndexError`, or
+  `500 Internal` matched in logs.
+
+Boundary:
+
+- Existing conversation requests now keep pointing Prefill and Projection at
+  the original owner session handle.
+- The proxy still registers a new Attention request shell and still sends a
+  normal Prefill request; skipping resident prefix work and scheduler attach
+  remain next.

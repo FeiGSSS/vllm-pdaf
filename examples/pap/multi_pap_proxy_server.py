@@ -211,6 +211,16 @@ def select_conversation_instances(
     return group, projection, None
 
 
+def pap_prefill_kv_handle_for_request(
+    *,
+    placement: PAPConversationPlacement | None,
+    attention_session: dict[str, Any],
+) -> str:
+    if placement is not None and placement.prefill_kv_handle:
+        return placement.prefill_kv_handle
+    return str(attention_session.get("prefill_kv_handle"))
+
+
 def build_projection_payload_for_group(
     req_data: dict[str, Any],
     kv_transfer_params: dict[str, Any],
@@ -357,7 +367,10 @@ async def _handle_openai_request(api_path: str, request: Request):
         build_prefill_payload(req_data),
         pap_attention_endpoint=group.attention_base_url,
         pap_attention_tcp_endpoint=group.attention_tcp_endpoint,
-        pap_prefill_kv_handle=str(attention_session.get("prefill_kv_handle")),
+        pap_prefill_kv_handle=pap_prefill_kv_handle_for_request(
+            placement=placement,
+            attention_session=attention_session,
+        ),
         pap_mode=request.app.state.args.pap_mode,
     )
     t0 = time.time()
@@ -377,7 +390,10 @@ async def _handle_openai_request(api_path: str, request: Request):
                 request_id=request_id,
                 group=group,
                 projection=projection,
-                prefill_kv_handle=str(attention_session.get("prefill_kv_handle")),
+                prefill_kv_handle=pap_prefill_kv_handle_for_request(
+                    placement=placement,
+                    attention_session=attention_session,
+                ),
                 resident_seq_len=max(resident_prefix_len, int(prefix_len or 0)),
             )
         )
@@ -385,7 +401,10 @@ async def _handle_openai_request(api_path: str, request: Request):
         req_data,
         kv_params,
         group,
-        pap_prefill_kv_handle=attention_session.get("prefill_kv_handle"),
+        pap_prefill_kv_handle=pap_prefill_kv_handle_for_request(
+            placement=placement,
+            attention_session=attention_session,
+        ),
         pap_attention_kv_installed=prefix_len is not None,
     )
     projection_payload.setdefault("stream", client_stream)
