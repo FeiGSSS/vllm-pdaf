@@ -1,5 +1,52 @@
 # Handoff
 
+## 2026-05-24 PAP Shared KV Owner Design
+
+We agreed on the next architecture phase after metadata-only Projection:
+remove KV duplication between Prefill and Attention on a PA node.
+
+Terminology rule: use `Prefill`, not the older mistaken wording.
+
+Current limitation:
+
+- Prefill and Attention are colocated but do not share one KV owner.
+- Prefill exports prompt KV with CUDA IPC descriptors.
+- Attention currently opens those descriptors and copies KV into its own
+  registry storage.
+- Decode K/V arriving from Projection is appended to Attention-local buffers.
+- Therefore later turns cannot see first-turn decode KV from Prefill's point of
+  view.
+
+Target:
+
+- Prefill owns the single real vLLM paged KV pool on the PA node.
+- Attention reads Prefill-owned blocks through CUDA IPC.
+- Attention writes Projection-provided decode K/V directly into Prefill-owned
+  block slots.
+- Later turns can reuse first-turn prompt plus decode KV when scheduled on the
+  same PA.
+
+Design file:
+
+- `docs/superpowers/specs/2026-05-24-pap-shared-kv-owner-design.md`
+
+Design decisions:
+
+- Use one vLLM-facing `PAPSharedKVConnector`, not two independent connectors.
+- Internally split into:
+  - `LocalResidentBackend`: same-PA attach, CUDA IPC, no KV copy.
+  - `RemoteMigrationBackend`: future cross-PA migration via NIXL/RDMA/NCCL or
+    external-store style transport.
+- `PAKVOwner` is the source of truth for session -> blocks, seq_len,
+  leases/refcounts, placement, IPC descriptors, and decode slot materialization.
+- Do not copy LMCache semantics for the local path. LMCache-style connector
+  behavior loads external KV into newly allocated vLLM blocks; PAP local shared
+  KV must attach resident Prefill-owned blocks instead.
+
+Initial implementation should require session stickiness or recompute for
+remote sessions. Cross-PA migration is a later phase after local no-copy
+correctness is proven.
+
 ## State
 
 Branch `feature/pap-true-split`. Current latest implementation checkpoint is
@@ -16,8 +63,8 @@ Projection remains a normal vLLM production server. It has no
 `kv_transfer_config`, receives only PAP metadata in `kv_transfer_params`, and
 uses scheduler remote-prefix progress from `pap_remote_prefix_len`.
 
-Prefill/Profile to Projection prompt KV transfer remains removed. The remaining
-prompt-KV path is Prefill/Profile to colocated Attention, now defaulted to PAP
+Prefill to Projection prompt KV transfer remains removed. The remaining
+prompt-KV path is Prefill to colocated Attention, now defaulted to PAP
 OFFLOAD_KV CUDA IPC descriptors instead of TCP tensor-bundle payloads.
 
 ## Verified

@@ -261,7 +261,7 @@ Code checkpoint:
 
 - `312ae6fbb` added PAP OFFLOAD_KV IPC descriptors.
 - `a418ae539` added Attention executor `import_prefill_kv_ipc` handling.
-- `913db9dad` added Prefill/Profile CUDA IPC descriptor export.
+- `913db9dad` added Prefill CUDA IPC descriptor export.
 - `e22316c9a` made `PAP_OFFLOAD_KV_TRANSPORT=cuda_ipc` the launcher default.
 - `f945899e4` made real PyTorch CUDA IPC handles JSON-safe with pickled
   metadata inside the control payload.

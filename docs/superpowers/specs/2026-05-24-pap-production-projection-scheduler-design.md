@@ -16,7 +16,7 @@ prompt KV.
 
 ## Current Data Plane
 
-The current committed state already removed Prefill/Profile-to-Projection prompt
+The current committed state already removed Prefill-to-Projection prompt
 KV transport:
 
 - The proxy sends Projection only PAP metadata such as
@@ -35,7 +35,7 @@ KV transport:
 There is still one prompt-KV data path in the system, but it is not
 Projection-related:
 
-- Prefill/Profile imports prompt KV into the colocated Attention executor from
+- Prefill imports prompt KV into the colocated Attention executor from
   `Qwen3Attention._maybe_import_pap_prefill_kv_to_attention`.
 - That path calls `import_prefill_kv_from_paged_cache` in
   `vllm/pap/shadow_attention.py`.
@@ -83,7 +83,7 @@ metadata builders require sequence progress and slot mappings.
 
 For a request with prompt length `N` and `pap_remote_prefix_len=N`:
 
-1. Prefill/Profile computes the prompt and installs prompt KV into Attention.
+1. Prefill computes the prompt and installs prompt KV into Attention.
 2. Proxy sends Projection a metadata-only request.
 3. Projection scheduler sets effective computed progress to `N - 1`.
 4. Projection schedules exactly one token, the last prompt token at position
@@ -102,7 +102,7 @@ of "computed prefix" for PAP Projection requests.
 
 ## OFFLOAD_KV IPC Boundary
 
-Prefill/Profile to Attention should become an explicit local `OFFLOAD_KV`
+Prefill to Attention should become an explicit local `OFFLOAD_KV`
 channel.
 
 Control metadata:
@@ -135,7 +135,7 @@ settled.
 ### Recommended: vLLM Production Projection plus PAP Scheduler State
 
 Keep Projection as a vLLM server and add a first-class PAP scheduler state for
-remote prefix progress. Implement Prefill/Profile-to-Attention KV installation
+remote prefix progress. Implement Prefill-to-Attention KV installation
 as a separate `OFFLOAD_KV` IPC path.
 
 Pros:
@@ -203,7 +203,7 @@ Cons:
 
 ### Phase 2: Add OFFLOAD_KV IPC Descriptor Path
 
-- Add a PAP IPC descriptor dataclass for Prefill/Profile-to-Attention KV install.
+- Add a PAP IPC descriptor dataclass for Prefill-to-Attention KV install.
 - Add a control command to Attention executor for IPC descriptors.
 - Export gathered Prefill KV tensors with CUDA IPC handles instead of
   serializing tensor bytes.
@@ -217,7 +217,7 @@ Cons:
 - Update launcher defaults to use CUDA IPC for PAP `OFFLOAD_KV`.
 - Add E2E validation for 1PA1P and X:Y topologies with Projection still
   metadata-only.
-- Add log assertions that Prefill/Profile-to-Attention import uses IPC
+- Add log assertions that Prefill-to-Attention import uses IPC
   descriptors and not tensor bundles.
 
 ### Phase 4: Tighten Projection Local KV Assumptions
@@ -244,7 +244,7 @@ E2E tests:
 - Log checks:
   - Projection starts with no `kv_transfer_config`.
   - Projection payload has only PAP metadata.
-  - Prefill/Profile-to-Attention prompt KV install uses IPC descriptors.
+  - Prefill-to-Attention prompt KV install uses IPC descriptors.
   - No TCP tensor-bundle prompt KV import in default PAP mode.
   - Projection and Attention OFFLOAD_EXEC trace counts match
     `completion_tokens * num_layers`.
@@ -253,7 +253,7 @@ E2E tests:
 
 - The first IPC implementation should prefer correctness and debuggability over
   zero-copy lifetime complexity.
-- CUDA IPC handle lifetime must be explicit: Prefill/Profile keeps exported
+- CUDA IPC handle lifetime must be explicit: Prefill keeps exported
   buffers alive until Attention acknowledges import.
 - A conservative stream synchronization point is acceptable for the first IPC
   version. CUDA event IPC can be added after correctness is stable.
