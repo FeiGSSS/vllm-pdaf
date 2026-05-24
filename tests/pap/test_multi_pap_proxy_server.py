@@ -4,11 +4,13 @@
 from pathlib import Path
 
 from examples.pap.multi_pap_proxy_server import (
+    PAPConversationPlacement,
     PAPGroup,
     ProjectionInstance,
     build_projection_payload_for_group,
     parse_pap_groups,
     parse_projection_instances,
+    select_conversation_instances,
     select_instances,
 )
 
@@ -183,6 +185,39 @@ def test_select_instances_can_stick_pa_to_projection() -> None:
     ]
 
 
+def test_select_conversation_instances_routes_back_to_existing_pa() -> None:
+    groups = [
+        PAPGroup("127.0.0.1", 8100, 5559, "127.0.0.1", 8300),
+        PAPGroup("127.0.0.1", 8101, 5560, "127.0.0.1", 8301),
+    ]
+    projections = [
+        ProjectionInstance("127.0.0.1", 8200),
+        ProjectionInstance("127.0.0.1", 8201),
+    ]
+    placements = {
+        "conv-1": PAPConversationPlacement(
+            conversation_id="conv-1",
+            request_id="req-first",
+            group=groups[0],
+            projection=projections[0],
+            prefill_kv_handle="req-first",
+            resident_seq_len=9,
+        )
+    }
+
+    group, projection, placement = select_conversation_instances(
+        request_number=1,
+        conversation_id="conv-1",
+        groups=groups,
+        projections=projections,
+        placements=placements,
+    )
+
+    assert group is groups[0]
+    assert projection is projections[0]
+    assert placement is placements["conv-1"]
+
+
 def test_multi_proxy_registers_attention_before_prefill_for_local_import() -> None:
     text = (ROOT / "examples/pap/multi_pap_proxy_server.py").read_text()
 
@@ -200,6 +235,15 @@ def test_multi_proxy_marks_attention_kv_installed_only_after_prefill() -> None:
     prefix_len = text.index("prefix_len = prefill_prefix_len_from_kv_params")
     installed = text.index("pap_attention_kv_installed=prefix_len is not None")
     assert prefill < prefix_len < installed
+
+
+def test_multi_proxy_tracks_conversation_placement_and_queries_coverage() -> None:
+    text = (ROOT / "examples/pap/multi_pap_proxy_server.py").read_text()
+
+    assert "app.state.conversation_placements = {}" in text
+    assert "select_conversation_instances(" in text
+    assert "get_attention_resident_prefix(" in text
+    assert "request.app.state.conversation_placements[conversation_id]" in text
 
 
 def test_build_projection_payload_for_group_does_not_claim_kv_installed_by_default(

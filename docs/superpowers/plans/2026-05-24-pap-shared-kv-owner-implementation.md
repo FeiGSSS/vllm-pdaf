@@ -821,3 +821,89 @@ Boundary:
 - The proxy still does not maintain a conversation/session placement table or
   use resident coverage to skip Prefill work on a later turn.
 - vLLM scheduler attach for resident blocks remains unimplemented.
+
+### Task 11: Track Conversation Placement in Multi PAP Proxy
+
+**Files:**
+- Modify: `examples/pap/multi_pap_proxy_server.py`
+- Test: `tests/pap/test_multi_pap_proxy_server.py`
+
+- [x] **Step 1: Write placement route-back test**
+
+Added a unit test for `select_conversation_instances()` proving an existing
+conversation routes back to the original PA group and Projection instance
+instead of following round-robin selection.
+
+- [x] **Step 2: Write proxy placement/coverage contract**
+
+Added a contract test that the multi proxy initializes a conversation placement
+table, selects through `select_conversation_instances()`, queries Attention
+resident prefix coverage, and updates the placement table after a request.
+
+- [x] **Step 3: Implement minimal placement tracking**
+
+`PAPConversationPlacement` now records conversation id, current request id, PA
+group, Projection instance, Prefill KV handle, and last known resident seq_len.
+`_handle_openai_request()` now:
+
+- routes same-conversation requests back to their previous PA/Projection;
+- queries Attention resident-prefix coverage for an existing placement;
+- stores/updates the placement after Prefill returns.
+
+- [x] **Step 4: Verify**
+
+Run:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_multi_pap_proxy_server.py \
+  tests/pap/test_pap_proxy_server.py \
+  tests/pap/test_pap_attention_executor.py -q
+```
+
+Result: `63 passed, 16 warnings`.
+
+Run:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_kv_owner.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_proxy_server.py \
+  tests/pap/test_multi_pap_proxy_server.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `128 passed, 16 warnings`.
+
+Run:
+
+```bash
+pre-commit run ruff-check --files \
+  examples/pap/multi_pap_proxy_server.py \
+  tests/pap/test_multi_pap_proxy_server.py
+```
+
+Result: passed.
+
+E2E 1PA1P Qwen3-0.6B with `max_tokens=8`:
+
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=11`, `completion_tokens=7`, `total_tokens=18`.
+- Output text: ` P P\n\n\n\n.\n\n`
+- Projection logged `224` OFFLOAD_EXEC traces.
+- Attention logged `224` OFFLOAD_EXEC traces plus `28` paged Prefill KV
+  descriptor imports.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `invalid slot`,
+  `slot_mapping`, `rejected`, `block ids do not cover`, `IndexError`, or
+  `500 Internal` matched in logs.
+
+Boundary:
+
+- The proxy now has same-PA route-back state and observes resident coverage for
+  existing conversations.
+- It still performs a normal Prefill request for later turns; skipping already
+  resident tokens and attaching resident blocks in vLLM scheduler remains next.

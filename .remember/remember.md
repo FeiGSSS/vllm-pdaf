@@ -980,3 +980,66 @@ Current boundary:
 - The proxy still does not maintain a conversation/session placement table or
   use resident coverage to skip Prefill work on a later turn.
 - vLLM scheduler attach for resident blocks remains unimplemented.
+
+## 2026-05-24 PAP Shared KV Owner Phase 10
+
+Latest local phase after `66d1d0d8c`:
+
+- Added `PAPConversationPlacement` to the multi PAP proxy.
+- The multi proxy now keeps `conversation_id -> placement` state with PA group,
+  Projection instance, current request/session id, Prefill KV handle, and last
+  known resident seq_len.
+- Same-conversation requests route back to the original PA group/Projection
+  instead of following round-robin.
+- For existing placements, the proxy queries Attention
+  `resident-prefix` coverage and updates the placement's resident seq_len.
+- After Prefill returns, the proxy stores/updates placement metadata for the
+  conversation.
+
+Focused verification:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_multi_pap_proxy_server.py \
+  tests/pap/test_pap_proxy_server.py \
+  tests/pap/test_pap_attention_executor.py -q
+```
+
+Result: `63 passed, 16 warnings`.
+
+Full focused PAP suite:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_kv_owner.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_proxy_server.py \
+  tests/pap/test_multi_pap_proxy_server.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `128 passed, 16 warnings`.
+
+`ruff-check` on changed Python files passed.
+
+E2E 1PA1P Qwen3-0.6B with `max_tokens=8`:
+
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=11`, `completion_tokens=7`, `total_tokens=18`.
+- Output text: ` P P\n\n\n\n.\n\n`
+- Projection logged `224` OFFLOAD_EXEC traces.
+- Attention logged `224` OFFLOAD_EXEC traces plus `28` paged Prefill KV
+  descriptor imports.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `invalid slot`,
+  `slot_mapping`, `rejected`, `block ids do not cover`, `IndexError`, or
+  `500 Internal` matched in logs.
+
+Current boundary:
+
+- The proxy now has same-PA route-back state and observes resident coverage for
+  existing conversations.
+- It still performs a normal Prefill request for later turns; skipping already
+  resident tokens and attaching resident blocks in vLLM scheduler remains next.
