@@ -71,6 +71,103 @@ class PAPOffloadKVDescriptor:
             raise ValueError("seq_len must be non-negative")
 
 
+@dataclass(frozen=True)
+class PAPCudaIPCTensorHandle:
+    """Serializable CUDA IPC tensor metadata for one PAP OFFLOAD_KV tensor."""
+
+    dtype: str
+    shape: tuple[int, ...]
+    ipc_handle: dict[str, tuple[Any, ...]]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "dtype", str(self.dtype))
+        object.__setattr__(self, "shape", tuple(int(dim) for dim in self.shape))
+        if any(dim < 0 for dim in self.shape):
+            raise ValueError("shape dimensions must be non-negative")
+        if not self.ipc_handle:
+            raise ValueError("ipc_handle must not be empty")
+        object.__setattr__(
+            self,
+            "ipc_handle",
+            {
+                str(gpu_uuid): tuple(ipc_args)
+                for gpu_uuid, ipc_args in self.ipc_handle.items()
+            },
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "dtype": self.dtype,
+            "shape": list(self.shape),
+            "ipc_handle": {
+                gpu_uuid: list(ipc_args)
+                for gpu_uuid, ipc_args in self.ipc_handle.items()
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PAPCudaIPCTensorHandle":
+        return cls(
+            dtype=str(data["dtype"]),
+            shape=tuple(int(dim) for dim in data["shape"]),
+            ipc_handle={
+                str(gpu_uuid): tuple(ipc_args)
+                for gpu_uuid, ipc_args in data["ipc_handle"].items()
+            },
+        )
+
+
+@dataclass(frozen=True)
+class PAPOffloadKVIPCDescriptor:
+    """CUDA IPC metadata for installing Prefill KV in Attention."""
+
+    request_id: str
+    layer_name: str
+    seq_len: int
+    block_ids: tuple[int, ...]
+    key: PAPCudaIPCTensorHandle
+    value: PAPCudaIPCTensorHandle
+    transport: PAPTensorTransport = PAPTensorTransport.CUDA_IPC
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "request_id", str(self.request_id))
+        object.__setattr__(self, "layer_name", str(self.layer_name))
+        object.__setattr__(self, "seq_len", int(self.seq_len))
+        object.__setattr__(
+            self, "block_ids", tuple(int(block_id) for block_id in self.block_ids)
+        )
+        object.__setattr__(self, "transport", PAPTensorTransport(self.transport))
+        if self.seq_len < 0:
+            raise ValueError("seq_len must be non-negative")
+        if self.transport is not PAPTensorTransport.CUDA_IPC:
+            raise ValueError("PAP OFFLOAD_KV IPC descriptor requires cuda_ipc")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "request_id": self.request_id,
+            "layer_name": self.layer_name,
+            "seq_len": self.seq_len,
+            "block_ids": list(self.block_ids),
+            "transport": self.transport.value,
+            "key": self.key.to_dict(),
+            "value": self.value.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PAPOffloadKVIPCDescriptor":
+        return cls(
+            request_id=str(data["request_id"]),
+            layer_name=str(data["layer_name"]),
+            seq_len=int(data["seq_len"]),
+            block_ids=tuple(int(block_id) for block_id in data.get("block_ids", [])),
+            transport=PAPTensorTransport(
+                data.get("transport", PAPTensorTransport.CUDA_IPC)
+            ),
+            key=PAPCudaIPCTensorHandle.from_dict(data["key"]),
+            value=PAPCudaIPCTensorHandle.from_dict(data["value"]),
+        )
+
+
 class PAPOffloadExecTransport(Protocol):
     """Projection<->Attention QKV/O data-plane transport."""
 

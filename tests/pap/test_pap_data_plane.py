@@ -167,3 +167,34 @@ def test_p2p_nccl_offload_exec_transport_retries_empty_get(monkeypatch) -> None:
 
     assert received is out
     assert engine.calls == 2
+
+
+def test_offload_kv_ipc_descriptor_roundtrip() -> None:
+    from vllm.pap.data_plane import (
+        PAPCudaIPCTensorHandle,
+        PAPOffloadKVIPCDescriptor,
+    )
+
+    key_handle = PAPCudaIPCTensorHandle(
+        dtype="float16",
+        shape=(8, 2, 16),
+        ipc_handle={"GPU-abc": ("storage", 1, 2, 3, 4, 5, 0)},
+    )
+    value_handle = PAPCudaIPCTensorHandle(
+        dtype="float16",
+        shape=(8, 2, 16),
+        ipc_handle={"GPU-abc": ("storage", 1, 2, 3, 4, 5, 0)},
+    )
+    descriptor = PAPOffloadKVIPCDescriptor(
+        request_id="cmpl-1",
+        layer_name="model.layers.0.self_attn.attn",
+        seq_len=8,
+        block_ids=(3, 4),
+        key=key_handle,
+        value=value_handle,
+    )
+
+    restored = PAPOffloadKVIPCDescriptor.from_dict(descriptor.to_dict())
+
+    assert restored == descriptor
+    assert restored.transport is PAPTensorTransport.CUDA_IPC
