@@ -56,6 +56,21 @@ def test_scheduler_offsets_running_pap_projection_local_progress() -> None:
     assert "local_computed_token_offset=pap_local_computed_token_offset" in block
 
 
+def test_scheduler_disables_local_slot_allocation_for_pap_projection() -> None:
+    text = (ROOT / "vllm" / "v1" / "core" / "sched" / "scheduler.py").read_text()
+
+    running_start = text.index("        while req_index < len(self.running)")
+    running_end = text.index("        # Record the LoRAs in scheduled_running_reqs")
+    running_block = text[running_start:running_end]
+
+    waiting_start = text.index("                new_blocks = self.kv_cache_manager.allocate_slots(")
+    waiting_end = text.index("                if new_blocks is None:")
+    waiting_block = text[waiting_start:waiting_end]
+
+    assert "allocate_local_slots=pap_remote_prefix_len is None" in running_block
+    assert "allocate_local_slots=pap_remote_prefix_len is None" in waiting_block
+
+
 def test_engine_core_allows_pap_metadata_without_kv_connector() -> None:
     text = (ROOT / "vllm" / "v1" / "engine" / "core.py").read_text()
 

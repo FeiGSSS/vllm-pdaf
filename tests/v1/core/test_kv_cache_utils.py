@@ -1637,6 +1637,65 @@ def test_pap_projection_running_slots_use_local_progress_offset():
     )
 
 
+def test_pap_projection_can_disable_local_slot_allocation():
+    block_size = 4
+    config = KVCacheConfig(
+        num_blocks=10,
+        kv_cache_tensors=[
+            KVCacheTensor(size=100, shared_by=["layer1"]),
+        ],
+        kv_cache_groups=[
+            KVCacheGroupSpec(["layer1"], new_kv_cache_spec(block_size=block_size)),
+        ],
+    )
+    request = make_request(
+        request_id="pap-slotless-projection",
+        prompt_token_ids=[1] * 9,
+        block_size=block_size,
+        hash_fn=sha256,
+        mm_positions=None,
+        mm_hashes=None,
+    )
+    kv_cache_manager = KVCacheManager(
+        kv_cache_config=config, max_model_len=100, hash_block_size=block_size
+    )
+    initial_free_blocks = kv_cache_manager.block_pool.get_num_free_blocks()
+
+    blocks = kv_cache_manager.allocate_slots(
+        request,
+        num_new_tokens=1,
+        num_external_computed_tokens=8,
+        allocate_external_computed_blocks=False,
+        allocate_local_slots=False,
+    )
+
+    assert blocks is kv_cache_manager.empty_kv_cache_blocks
+    assert all(
+        not group_block_ids
+        for group_block_ids in kv_cache_manager.get_blocks(
+            request.request_id
+        ).get_block_ids()
+    )
+    assert kv_cache_manager.block_pool.get_num_free_blocks() == initial_free_blocks
+
+    request.num_computed_tokens = 9
+    running_blocks = kv_cache_manager.allocate_slots(
+        request,
+        num_new_tokens=1,
+        local_computed_token_offset=8,
+        allocate_local_slots=False,
+    )
+
+    assert running_blocks is kv_cache_manager.empty_kv_cache_blocks
+    assert all(
+        not group_block_ids
+        for group_block_ids in kv_cache_manager.get_blocks(
+            request.request_id
+        ).get_block_ids()
+    )
+    assert kv_cache_manager.block_pool.get_num_free_blocks() == initial_free_blocks
+
+
 def test_get_kv_cache_config_one_worker():
     # pass max_model_len to pass check_enough_kv_cache_memory
     model_config = ModelConfig(max_model_len=16)

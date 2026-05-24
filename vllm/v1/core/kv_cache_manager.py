@@ -246,6 +246,7 @@ class KVCacheManager:
         full_sequence_must_fit: bool = False,
         allocate_external_computed_blocks: bool = True,
         local_computed_token_offset: int = 0,
+        allocate_local_slots: bool = True,
     ) -> KVCacheBlocks | None:
         """Add slots for a request with new tokens to append.
 
@@ -278,6 +279,9 @@ class KVCacheManager:
             local_computed_token_offset: Number of leading computed tokens that
                 are tracked as remote progress but do not correspond to local
                 slot ownership in this KV cache manager.
+            allocate_local_slots: Whether this KV cache manager should allocate
+                local token slots for the request. PAP Projection can disable
+                this because PAP attention does not read local KV slots.
 
         Blocks layout:
         ```
@@ -336,6 +340,9 @@ class KVCacheManager:
                 "num_new_tokens must be greater than 0 when there are no "
                 "external computed tokens"
             )
+
+        if not allocate_local_slots:
+            return self.empty_kv_cache_blocks
 
         if new_computed_blocks is not None:
             new_computed_block_list = new_computed_blocks.blocks

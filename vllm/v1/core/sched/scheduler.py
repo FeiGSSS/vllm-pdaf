@@ -440,6 +440,9 @@ class Scheduler(SchedulerInterface):
 
             # Schedule newly needed KV blocks for the request.
             with record_function_or_nullcontext("schedule: allocate_slots"):
+                pap_remote_prefix_len = (
+                    self._get_pap_projection_remote_prefix_len(request)
+                )
                 pap_local_computed_token_offset = (
                     self._get_pap_projection_local_computed_token_offset(request)
                 )
@@ -449,6 +452,7 @@ class Scheduler(SchedulerInterface):
                         num_new_tokens,
                         num_lookahead_tokens=self.num_lookahead_tokens,
                         local_computed_token_offset=pap_local_computed_token_offset,
+                        allocate_local_slots=pap_remote_prefix_len is None,
                     )
 
                     if new_blocks is not None:
@@ -747,6 +751,7 @@ class Scheduler(SchedulerInterface):
                     num_encoder_tokens=num_encoder_tokens,
                     full_sequence_must_fit=self.scheduler_reserve_full_isl,
                     allocate_external_computed_blocks=pap_remote_prefix_len is None,
+                    allocate_local_slots=pap_remote_prefix_len is None,
                 )
 
                 if new_blocks is None:

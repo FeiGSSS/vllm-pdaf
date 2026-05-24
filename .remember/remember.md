@@ -221,10 +221,81 @@ E2E after the change:
 
 Next work:
 
-- Audit whether Projection-local generated-token slots can become a bounded
-  scratch/circular state instead of growing with generated length.
+- Audit whether any Projection-local KV data writes remain now that request
+  slot allocation can be disabled.
 - Do not claim full stateless Projection yet: vLLM still initializes KV cache
-  tensors and maintains local token slots for request execution metadata.
+  tensors as part of production model runner setup.
+
+## 2026-05-24 PAP Projection Slotless Request-Level Allocation
+
+Latest local phase after `0232ca462`:
+
+- `KVCacheManager.allocate_slots()` now has `allocate_local_slots`.
+- When `allocate_local_slots=False`, it returns `empty_kv_cache_blocks` without
+  touching the coordinator, allocating request blocks, or committing prefix-cache
+  entries.
+- PAP Projection waiting and running scheduler paths pass
+  `allocate_local_slots=False` when `pap_remote_prefix_len` is present.
+- Ordinary vLLM and KVConnector paths keep default local slot allocation.
+- This removes request-level KV block allocation for PAP Projection. The process
+  still initializes vLLM KV cache tensors at startup.
+
+Focused regression:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/v1/core/test_kv_cache_utils.py::test_pap_projection_can_disable_local_slot_allocation \
+  tests/pap/test_pap_true_split_contract.py::test_scheduler_disables_local_slot_allocation_for_pap_projection -q
+```
+
+Result: `2 passed`.
+
+Focused PAP + KV suite:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_launch_files.py \
+  tests/v1/core/test_kv_cache_utils.py::test_allocate_external_tokens_can_skip_local_prefix_blocks \
+  tests/v1/core/test_kv_cache_utils.py::test_pap_projection_running_slots_use_local_progress_offset \
+  tests/v1/core/test_kv_cache_utils.py::test_pap_projection_can_disable_local_slot_allocation -q
+```
+
+Result: `77 passed`.
+
+E2E after the change:
+
+- 1PA1P Qwen3-0.6B:
+  - HTTP `200`.
+  - Usage `prompt_tokens=21`, `completion_tokens=12`, `total_tokens=33`.
+  - Output was valid text, not garbled.
+  - Projection payload keys were PAP metadata only.
+  - Projection OFFLOAD_EXEC traces `336` = `12 * 28`.
+  - Attention OFFLOAD_EXEC traces `336`.
+  - `kv_transfer_config` appeared only in Prefill logs.
+  - No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
+    `invalid slot`, or `slot_mapping`.
+- 4PA2P Qwen3-0.6B:
+  - 8 sequential requests, all HTTP `200`.
+  - Route coverage `8100/8300 -> 8200`, `8101/8301 -> 8201`,
+    `8102/8302 -> 8200`, `8103/8303 -> 8201`, repeated once.
+  - Each response had `prompt_tokens=22`, `completion_tokens=8`,
+    `total_tokens=30`.
+  - Outputs were valid text, not garbled.
+  - Projection OFFLOAD_EXEC traces `1792` total, `896` per Projection.
+  - Attention OFFLOAD_EXEC traces `1792` total, `448` per Attention.
+  - `kv_transfer_config` appeared only in Prefill logs.
+  - No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
+    `invalid slot`, or `slot_mapping`.
+
+Next work:
+
+- Run a completion audit for remaining Projection-local KV writes and startup
+  KV tensor allocation. The request-level block manager is now slotless for PAP,
+  but full statelessness still needs proof that model layers never write local
+  KV for PAP requests.
 
 Next work:
 

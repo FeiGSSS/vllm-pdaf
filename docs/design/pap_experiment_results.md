@@ -647,3 +647,97 @@ Result: `75 passed`.
   Projection startup logs.
 - No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
   `invalid slot`, or `slot_mapping` errors were found.
+
+## Qwen3-0.6B PAP Projection Slotless Request-Level Allocation
+
+Code checkpoint:
+
+- `KVCacheManager.allocate_slots()` now accepts `allocate_local_slots`.
+- When `allocate_local_slots=False`, the manager returns
+  `empty_kv_cache_blocks` without touching the coordinator, without allocating
+  request blocks, and without committing prefix-cache entries.
+- PAP Projection waiting and running scheduler paths pass
+  `allocate_local_slots=False` when `pap_remote_prefix_len` is present.
+- Ordinary vLLM and KVConnector paths keep the default
+  `allocate_local_slots=True`.
+- This removes request-level KV block allocation for PAP Projection. The vLLM
+  Projection process still initializes KV cache tensors as part of production
+  model runner setup, but PAP Projection requests no longer reserve local KV
+  blocks.
+
+Focused regression:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/v1/core/test_kv_cache_utils.py::test_pap_projection_can_disable_local_slot_allocation \
+  tests/pap/test_pap_true_split_contract.py::test_scheduler_disables_local_slot_allocation_for_pap_projection -q
+```
+
+Result: `2 passed`.
+
+Focused PAP + KV suite:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_launch_files.py \
+  tests/v1/core/test_kv_cache_utils.py::test_allocate_external_tokens_can_skip_local_prefix_blocks \
+  tests/v1/core/test_kv_cache_utils.py::test_pap_projection_running_slots_use_local_progress_offset \
+  tests/v1/core/test_kv_cache_utils.py::test_pap_projection_can_disable_local_slot_allocation -q
+```
+
+Result: `77 passed`.
+
+1PA1P Qwen3-0.6B E2E after the change:
+
+- Command shape:
+  `PAP_TOPOLOGY=1pa1p PAP_SERVICE_ONLY=1 PAP_SKIP_SMOKE_REQUEST=1
+  PAP_PROXY_PORT=9000 PAP_MAX_TOKENS=12 PAP_ATTENTION_KV_DEBUG=1
+  PAP_OFFLOAD_EXEC_TRACE=1 bash examples/pap/launch_pap_nixl.sh --model
+  /data/ssd1/llm-models/Qwen3-0.6B`
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=21`, `completion_tokens=12`, `total_tokens=33`.
+- Output was valid text, not garbled; semantic quality was limited by the
+  0.6B model and short `max_tokens`.
+- Proxy logged Projection metadata keys only:
+  `pap_attention_endpoint`, `pap_attention_kv_installed`,
+  `pap_attention_tcp_endpoint`, `pap_offload_exec_zmq_endpoint`,
+  `pap_prefill_kv_handle`, `pap_projection_kv_unaware`,
+  `pap_remote_prefix_len`.
+- Projection logged `336` PAP OFFLOAD_EXEC projection traces, matching
+  `12 completion tokens * 28 layers`.
+- Attention logged `336` PAP OFFLOAD_EXEC attention traces.
+- `kv_transfer_config` appeared only in Prefill logs, not Projection logs.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
+  `invalid slot`, or `slot_mapping` errors were found.
+
+4PA2P Qwen3-0.6B E2E after the change:
+
+- Command shape:
+  `PAP_TOPOLOGY=4pa2p PAP_SERVICE_ONLY=1 PAP_SKIP_SMOKE_REQUEST=1
+  PAP_PROXY_PORT=9000 PAP_MAX_TOKENS=8 PAP_ATTENTION_KV_DEBUG=1
+  PAP_OFFLOAD_EXEC_TRACE=1 bash examples/pap/launch_pap_nixl.sh --model
+  /data/ssd1/llm-models/Qwen3-0.6B`
+- Sent 8 sequential `/v1/completions` requests; all returned HTTP `200`.
+- Each response reported `prompt_tokens=22`, `completion_tokens=8`,
+  `total_tokens=30`.
+- Outputs were valid text, not garbled; semantic quality was limited by the
+  0.6B model and short `max_tokens`.
+- Route coverage:
+  - `8100/8300 -> 8200`
+  - `8101/8301 -> 8201`
+  - `8102/8302 -> 8200`
+  - `8103/8303 -> 8201`
+  - repeated once.
+- Proxy logged Projection metadata keys only for all 8 requests.
+- Projection logged `1792` PAP OFFLOAD_EXEC projection traces:
+  `896` per Projection, matching `8 requests * 8 tokens * 28 layers`.
+- Attention logged `1792` PAP OFFLOAD_EXEC attention traces:
+  `448` per Attention executor, matching
+  `2 requests * 8 tokens * 28 layers`.
+- `kv_transfer_config` appeared only in the four Prefill producer logs, not in
+  Projection startup logs.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `rejected`,
+  `invalid slot`, or `slot_mapping` errors were found.
