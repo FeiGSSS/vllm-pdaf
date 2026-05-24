@@ -12,7 +12,7 @@
 
 ## File Map
 
-- `examples/pap/launch_pap_6pa2p_qwen3_8b_nixl.sh`: add service-only mode so benchmark launchers can start PAP and leave it running without the one-request smoke path.
+- `examples/pap/launch_pap_nixl.sh`: add service-only mode so benchmark launchers can start PAP and leave it running without the one-request smoke path.
 - `tests/pap/test_pap_launch_files.py`: assert service-only mode, status file, and benchmark-safe defaults exist.
 - `/home/fei/research/PD/test/baseline/pap/config.sh`: new external baseline mode config for PAP.
 - `/home/fei/research/PD/test/baseline/pap/launch_service.sh`: new external baseline mode launcher that delegates to the PAP 6PA2P service-only launcher and writes the proxy port status file.
@@ -29,7 +29,7 @@ Add to `tests/pap/test_pap_launch_files.py`:
 
 ```python
 def test_pap_6pa2p_launch_supports_benchmark_service_mode() -> None:
-    script = ROOT / "examples" / "pap" / "launch_pap_6pa2p_qwen3_8b_nixl.sh"
+    script = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
     text = script.read_text()
 
     assert "PAP_SERVICE_ONLY" in text
@@ -51,7 +51,7 @@ Expected: FAIL because the service-only variables are not implemented.
 
 - [ ] **Step 3: Implement the launcher service mode**
 
-Modify `examples/pap/launch_pap_6pa2p_qwen3_8b_nixl.sh`:
+Modify `examples/pap/launch_pap_nixl.sh`:
 
 ```bash
 SERVICE_ONLY="${PAP_SERVICE_ONLY:-0}"
@@ -120,7 +120,7 @@ def test_external_baseline_has_pap_mode_contract() -> None:
     assert "PAP_SERVICE_ONLY=1" in launcher_text
     assert "PAP_SKIP_SMOKE_REQUEST=1" in launcher_text
     assert "PAP_STATUS_FILE" in launcher_text
-    assert "launch_pap_6pa2p_qwen3_8b_nixl.sh" in launcher_text
+    assert "launch_pap_nixl.sh" in launcher_text
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -210,7 +210,7 @@ PAP_MODEL_PATH="${MODEL_PATH}" \
 PAP_MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
 PAP_MAX_NUM_SEQS="${MAX_NUM_SEQS}" \
 PAP_LOG_DIR="${RUN_LOG_DIR}" \
-bash examples/pap/launch_pap_6pa2p_qwen3_8b_nixl.sh
+bash examples/pap/launch_pap_nixl.sh
 ```
 
 - [ ] **Step 5: Run syntax and integration tests**

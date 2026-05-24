@@ -101,15 +101,6 @@ def test_pap_6pa2p_launch_uses_multi_proxy_and_expected_counts() -> None:
     assert "exec env CUDA_VISIBLE_DEVICES=0" in text
 
 
-def test_pap_model_agnostic_launcher_delegates_to_current_pap_launcher() -> None:
-    script = ROOT / "examples" / "pap" / "launch_pap_6pa2p_qwen3_8b_nixl.sh"
-    text = script.read_text()
-
-    assert "launch_pap_nixl.sh" in text
-    assert 'exec "$SCRIPT_DIR/launch_pap_nixl.sh" "$@"' in text
-
-
-
 def test_pap_6pa2p_launch_supports_benchmark_service_mode() -> None:
     script = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
     text = script.read_text()
