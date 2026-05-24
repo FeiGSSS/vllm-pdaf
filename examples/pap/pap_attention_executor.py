@@ -607,12 +607,25 @@ class PAPAttentionRegistry:
                 num_kv_heads=int(num_kv_heads),
                 layout=layout,  # type: ignore[arg-type]
             )
+            existing_resident = self._resident_paged_kv.get(
+                session_request_id, {}
+            ).get(layer_name)
+            resident_block_ids = [int(block_id) for block_id in block_ids]
+            resident_seq_len = seq_len
+            if existing_resident is not None:
+                resident_block_ids = list(existing_resident.block_ids)
+                for block_id in block_ids:
+                    block_id = int(block_id)
+                    if block_id not in resident_block_ids:
+                        resident_block_ids.append(block_id)
+                resident_seq_len = max(int(existing_resident.seq_len), seq_len)
+
             self._prefill_kv.setdefault(session_request_id, {})[layer_name] = segments
             self._resident_paged_kv.setdefault(session_request_id, {})[layer_name] = (
                 PAPResidentPagedKV(
                     kv_cache=kv_cache.detach(),
-                    block_ids=[int(block_id) for block_id in block_ids],
-                    seq_len=seq_len,
+                    block_ids=resident_block_ids,
+                    seq_len=resident_seq_len,
                     block_size=int(block_size),
                     num_kv_heads=int(num_kv_heads),
                     layout=str(layout),
@@ -625,6 +638,23 @@ class PAPAttentionRegistry:
                 seq_len=seq_len,
                 num_blocks=int(kv_cache.shape[1]),
             )
+            owner_coverage = self._pa_kv_owner.get_resident_prefix_coverage(
+                session_request_id
+            )
+            owner_layer_coverage = owner_coverage.layers.get(layer_name)
+            if owner_layer_coverage is not None:
+                resident = self._resident_paged_kv[session_request_id][layer_name]
+                resident.block_ids = [int(block_id) for block_id in (
+                    owner_layer_coverage.block_ids
+                )]
+                resident.seq_len = int(owner_layer_coverage.seq_len)
+                self._prefill_kv[session_request_id][layer_name] = paged_kv_segments(
+                    kv_cache=resident.kv_cache,
+                    block_ids=resident.block_ids,
+                    seq_len=resident.seq_len,
+                    num_kv_heads=resident.num_kv_heads,
+                    layout=resident.layout,  # type: ignore[arg-type]
+                )
             imported_session = self._attention_sessions.import_prefill_kv(
                 session_request_id,
                 block_ids=[int(block_id) for block_id in block_ids],

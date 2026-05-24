@@ -108,11 +108,26 @@ class PAKVOwner:
                 raise ValueError("num_blocks must be non-negative")
             for block_id in block_ids_tuple:
                 self._validate_backed_block(block_id, num_blocks)
+            existing_layer = session.layers.get(layer_name)
+            if existing_layer is not None:
+                block_ids_tuple = self._merge_block_ids(
+                    existing_layer.block_ids,
+                    block_ids_tuple,
+                )
+                seq_len = max(existing_layer.seq_len, seq_len)
+                num_blocks = max(existing_layer.num_blocks, num_blocks)
+                reserved_slots = existing_layer.reserved_slots
+                materialized_slots = existing_layer.materialized_slots
+            else:
+                reserved_slots = ()
+                materialized_slots = ()
             layer = PAKVLayerState(
                 layer_name=layer_name,
                 block_ids=block_ids_tuple,
                 seq_len=seq_len,
                 num_blocks=num_blocks,
+                reserved_slots=reserved_slots,
+                materialized_slots=materialized_slots,
             )
             layers = dict(session.layers)
             layers[layer_name] = layer
@@ -303,6 +318,17 @@ class PAKVOwner:
             block_ids=layer.block_ids[:required_blocks],
             seq_len=layer.seq_len,
         )
+
+    @staticmethod
+    def _merge_block_ids(
+        existing: tuple[int, ...],
+        incoming: tuple[int, ...],
+    ) -> tuple[int, ...]:
+        block_ids = list(existing)
+        for block_id in incoming:
+            if block_id not in block_ids:
+                block_ids.append(block_id)
+        return tuple(block_ids)
 
     def _require_session(self, session_id: str) -> PAKVSessionState:
         try:

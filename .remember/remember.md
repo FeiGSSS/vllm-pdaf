@@ -1103,3 +1103,66 @@ Current boundary:
 - The proxy still registers a new Attention request shell and still sends a
   normal Prefill request; skipping resident prefix work and scheduler attach
   remain next.
+
+## 2026-05-24 PAP Shared KV Owner Phase 12
+
+Latest local phase after `400eae351`:
+
+- `PAKVOwner.register_layer_blocks()` now merges repeated layer registrations
+  for an existing session/layer instead of replacing the layer state.
+- The merge preserves existing block ids, resident seq_len, backed capacity,
+  reserved slots, and materialized slots.
+- `PAPAttentionRegistry.import_prefill_paged_kv()` now preserves previously
+  published resident decode blocks on repeated paged Prefill imports and
+  rebuilds resident segments from owner coverage.
+- Added tests proving repeated same-session Prefill import does not regress
+  owner coverage, `PAPResidentPagedKV.block_ids`, or resident Prefill segments
+  from prompt+decode back to prompt-only.
+
+Focused verification:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_kv_owner.py \
+  tests/pap/test_pap_remote_attention.py -q
+```
+
+Result: `59 passed, 16 warnings`.
+
+Full focused PAP suite:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_kv_owner.py \
+  tests/pap/test_pap_attention_executor.py \
+  tests/pap/test_pap_proxy_server.py \
+  tests/pap/test_multi_pap_proxy_server.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `132 passed, 16 warnings`.
+
+`ruff-check` on changed Python files passed.
+
+E2E 1PA1P Qwen3-0.6B with `max_tokens=8`:
+
+- Request returned HTTP `200`.
+- Usage: `prompt_tokens=11`, `completion_tokens=7`, `total_tokens=18`.
+- Output text: ` P P\n\n\n\n.\n\n`
+- Projection logged `224` OFFLOAD_EXEC traces.
+- Attention logged `224` OFFLOAD_EXEC traces plus `28` paged Prefill KV
+  descriptor imports.
+- No `Traceback`, `ERROR`, `Got kv_transfer_params`, `invalid slot`,
+  `slot_mapping`, `rejected`, `block ids do not cover`, `IndexError`, or
+  `500 Internal` matched in logs.
+
+Current boundary:
+
+- Reusing the original owner session handle no longer risks losing
+  materialized decode coverage when Prefill reimports prompt paged KV.
+- The system still performs a normal Prefill request for later turns; scheduler
+  resident attach/skip remains next.

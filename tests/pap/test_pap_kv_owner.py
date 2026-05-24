@@ -140,6 +140,46 @@ def test_pa_kv_owner_resident_prefix_requires_materialized_slots() -> None:
     assert coverage.layers["model.layers.0.self_attn.attn"].block_ids == (0, 1)
 
 
+def test_pa_kv_owner_layer_reregister_preserves_materialized_coverage() -> None:
+    owner = PAKVOwner()
+    owner.register_session(
+        session_id="session-1",
+        block_size=4,
+        max_seq_len=16,
+    )
+    owner.register_layer_blocks(
+        session_id="session-1",
+        layer_name="model.layers.0.self_attn.attn",
+        block_ids=[0],
+        seq_len=4,
+        num_blocks=2,
+    )
+    owner.reserve_next_decode_slot(
+        session_id="session-1",
+        layer_name="model.layers.0.self_attn.attn",
+    )
+    owner.materialize_decode_slot(
+        session_id="session-1",
+        layer_name="model.layers.0.self_attn.attn",
+        block_id=1,
+        seq_len=5,
+    )
+
+    owner.register_layer_blocks(
+        session_id="session-1",
+        layer_name="model.layers.0.self_attn.attn",
+        block_ids=[0],
+        seq_len=4,
+        num_blocks=2,
+    )
+
+    coverage = owner.get_resident_prefix_coverage("session-1")
+
+    assert coverage.seq_len == 5
+    assert coverage.layers["model.layers.0.self_attn.attn"].seq_len == 5
+    assert coverage.layers["model.layers.0.self_attn.attn"].block_ids == (0, 1)
+
+
 def test_pa_kv_owner_lease_refcount_controls_release() -> None:
     owner = PAKVOwner()
     owner.register_session(
