@@ -200,6 +200,34 @@ def test_offload_kv_ipc_descriptor_roundtrip() -> None:
     assert restored.transport is PAPTensorTransport.CUDA_IPC
 
 
+def test_offload_kv_paged_ipc_descriptor_roundtrip() -> None:
+    from vllm.pap.data_plane import (
+        PAPCudaIPCTensorHandle,
+        PAPOffloadKVPagedIPCDescriptor,
+    )
+
+    kv_cache_handle = PAPCudaIPCTensorHandle(
+        dtype="float16",
+        shape=(2, 8, 16, 2, 64),
+        ipc_handle={"GPU-abc": ("storage", 1, 2, 3, 4, 5, 0)},
+    )
+    descriptor = PAPOffloadKVPagedIPCDescriptor(
+        request_id="cmpl-1",
+        layer_name="model.layers.0.self_attn.attn",
+        seq_len=19,
+        block_ids=(3, 4),
+        block_size=16,
+        num_kv_heads=2,
+        layout="NHD",
+        kv_cache=kv_cache_handle,
+    )
+
+    restored = PAPOffloadKVPagedIPCDescriptor.from_dict(descriptor.to_dict())
+
+    assert restored == descriptor
+    assert restored.transport is PAPTensorTransport.CUDA_IPC
+
+
 def test_import_prefill_kv_cuda_ipc_posts_descriptor_without_tensors(
     monkeypatch,
 ) -> None:
@@ -253,3 +281,61 @@ def test_import_prefill_kv_cuda_ipc_posts_descriptor_without_tensors(
     assert "ipc_handle_pickled" in descriptor["key"]
     assert descriptor["value"]["shape"] == [2, 1, 2]
     assert "ipc_handle_pickled" in descriptor["value"]
+
+
+def test_import_prefill_paged_kv_cuda_ipc_posts_descriptor_without_tensors(
+    monkeypatch,
+) -> None:
+    from vllm.pap.remote_attention import (
+        deserialize_tensor_bundle,
+        serialize_tensor_bundle,
+    )
+    from vllm.pap.shadow_attention import import_prefill_paged_kv
+
+    posted_payloads: list[bytes] = []
+
+    def fake_reduce_tensor(tensor):
+        return object(), ("storage", 1, 2, 3, 4, 5, 0)
+
+    def fake_post_bytes_tcp(*, endpoint, payload, timeout):
+        assert endpoint == "127.0.0.1:8300"
+        posted_payloads.append(payload)
+        return serialize_tensor_bundle({"seq_len": 5}, {})
+
+    monkeypatch.setattr(
+        "vllm.pap.shadow_attention.reduce_tensor",
+        fake_reduce_tensor,
+    )
+    monkeypatch.setattr(
+        "vllm.pap.shadow_attention._post_bytes_tcp",
+        fake_post_bytes_tcp,
+    )
+
+    kv_cache = torch.zeros(2, 2, 4, 1, 2)
+    seq_len = import_prefill_paged_kv(
+        request_id="cmpl-1",
+        layer_name="model.layers.0.self_attn.attn",
+        kv_cache=kv_cache,
+        block_ids=[0, 1],
+        seq_len=5,
+        block_size=4,
+        num_kv_heads=1,
+        layout="NHD",
+        tcp_endpoint="127.0.0.1:8300",
+    )
+
+    assert seq_len == 5
+    assert len(posted_payloads) == 1
+    metadata, tensors = deserialize_tensor_bundle(posted_payloads[0])
+    assert tensors == {}
+    assert metadata["command"] == "import_prefill_paged_kv_ipc"
+    descriptor = metadata["descriptor"]
+    assert descriptor["request_id"] == "cmpl-1"
+    assert descriptor["layer_name"] == "model.layers.0.self_attn.attn"
+    assert descriptor["seq_len"] == 5
+    assert descriptor["block_ids"] == [0, 1]
+    assert descriptor["block_size"] == 4
+    assert descriptor["num_kv_heads"] == 1
+    assert descriptor["layout"] == "NHD"
+    assert descriptor["kv_cache"]["shape"] == [2, 2, 4, 1, 2]
+    assert "ipc_handle_pickled" in descriptor["kv_cache"]

@@ -417,6 +417,44 @@ def gather_paged_kv(
     return torch.cat(keys, dim=0), torch.cat(values, dim=0)
 
 
+def paged_kv_segments(
+    *,
+    kv_cache: torch.Tensor,
+    block_ids: list[int],
+    seq_len: int,
+    num_kv_heads: int,
+    layout: Literal["NHD", "HND"],
+) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    if kv_cache.shape[0] != 2:
+        raise ValueError("expected KV cache first dimension to contain K and V")
+    if layout == "NHD":
+        logical_nhd = True
+    elif layout == "HND":
+        logical_nhd = int(kv_cache.shape[3]) == int(num_kv_heads)
+    else:
+        raise ValueError(f"unsupported KV cache layout: {layout}")
+    block_size = int(kv_cache.shape[2] if logical_nhd else kv_cache.shape[3])
+
+    segments: list[tuple[torch.Tensor, torch.Tensor]] = []
+    remaining = int(seq_len)
+    for block_id in [int(block_id) for block_id in block_ids]:
+        if remaining <= 0:
+            break
+        take = min(block_size, remaining)
+        if logical_nhd:
+            key = kv_cache[0, block_id, :take, :num_kv_heads, :]
+            value = kv_cache[1, block_id, :take, :num_kv_heads, :]
+        else:
+            key = kv_cache[0, block_id, :num_kv_heads, :take, :].transpose(0, 1)
+            value = kv_cache[1, block_id, :num_kv_heads, :take, :].transpose(0, 1)
+        segments.append((key, value))
+        remaining -= take
+
+    if remaining > 0:
+        raise ValueError("block ids do not cover requested sequence length")
+    return segments
+
+
 def compute_attention_output(
     *,
     query: torch.Tensor,

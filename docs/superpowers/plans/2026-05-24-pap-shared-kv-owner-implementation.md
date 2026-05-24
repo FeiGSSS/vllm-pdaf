@@ -213,3 +213,101 @@ git commit -m "Keep PAP IPC prefill KV shared in Attention"
 ```
 
 Do not commit `HANDOFF.md`; it is ignored local handoff state.
+
+### Task 2: Paged KV IPC Descriptor
+
+**Files:**
+- Modify: `vllm/pap/data_plane.py`
+- Modify: `vllm/pap/remote_attention.py`
+- Modify: `vllm/pap/shadow_attention.py`
+- Test: `tests/pap/test_pap_data_plane.py`
+- Test: `tests/pap/test_pap_remote_attention.py`
+
+- [ ] **Step 1: Write failing descriptor roundtrip test**
+
+Add `test_offload_kv_paged_ipc_descriptor_roundtrip()` to
+`tests/pap/test_pap_data_plane.py`.
+
+Expected behavior:
+
+- A paged descriptor contains one CUDA IPC handle for the full layer KV cache
+  backing tensor.
+- It carries `block_ids`, `seq_len`, `block_size`, `num_kv_heads`, and `layout`.
+- Roundtrip through `to_dict()` / `from_dict()` preserves all fields.
+
+- [ ] **Step 2: Write failing paged view test**
+
+Add `test_paged_kv_segments_match_gathered_kv()` to
+`tests/pap/test_pap_remote_attention.py`.
+
+Expected behavior:
+
+- Given a paged KV cache, block ids, seq_len, and layout, the helper returns
+  segment tensor views over the original `kv_cache`.
+- Segment contents match the existing `gather_paged_kv()` output after
+  concatenation.
+- The segment view shares storage with the original paged KV cache.
+
+- [ ] **Step 3: Implement data-plane descriptor**
+
+Add `PAPOffloadKVPagedIPCDescriptor` to `vllm/pap/data_plane.py` with fields:
+
+- `request_id: str`
+- `layer_name: str`
+- `seq_len: int`
+- `block_ids: tuple[int, ...]`
+- `block_size: int`
+- `num_kv_heads: int`
+- `layout: str`
+- `kv_cache: PAPCudaIPCTensorHandle`
+- `transport: PAPTensorTransport = PAPTensorTransport.CUDA_IPC`
+
+- [ ] **Step 4: Implement paged segment helper**
+
+Add `paged_kv_segments()` to `vllm/pap/remote_attention.py`.
+
+It should return `list[tuple[key_segment, value_segment]]` using the same layout
+rules as `gather_paged_kv()`, but must not concatenate segments.
+
+- [ ] **Step 5: Add shadow-attention post helper**
+
+Add a new `import_prefill_paged_kv()` helper in `vllm/pap/shadow_attention.py`
+that posts command `import_prefill_paged_kv_ipc` with the paged descriptor and
+no tensor payload.
+
+This helper is the first Prefill-side entry point that can avoid gathering
+prompt KV before export.
+
+### Task 3: Attention Paged Descriptor Import
+
+**Files:**
+- Modify: `examples/pap/pap_attention_executor.py`
+- Test: `tests/pap/test_pap_attention_executor.py`
+
+- [ ] **Step 1: Write failing Attention import test**
+
+Add a test that monkeypatches `open_ipc_paged_kv_cache()` to return a fake
+paged KV tensor, posts `import_prefill_paged_kv_ipc`, then verifies
+`append_decode_kv()` computes from resident paged segments whose tensor storage
+points at the fake paged KV cache.
+
+- [ ] **Step 2: Implement command handler**
+
+Add `open_ipc_paged_kv_cache()` and handle `import_prefill_paged_kv_ipc` in
+`compute_binary_attention_response()`.
+
+Registry should store paged Prefill KV as resident segments derived from the
+opened paged KV cache rather than as copied contiguous K/V tensors.
+
+- [ ] **Step 3: Verify**
+
+Run:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_attention_executor.py -q
+```
+
+Expected: all selected tests pass.

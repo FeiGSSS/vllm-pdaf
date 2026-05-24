@@ -31,6 +31,7 @@ from vllm.pap.attention_session import (
 )
 from vllm.pap.data_plane import (
     PAPOffloadKVIPCDescriptor,
+    PAPOffloadKVPagedIPCDescriptor,
     build_p2p_nccl_offload_exec_transport,
 )
 
@@ -221,7 +222,9 @@ class PAPAttentionRegistry:
         self._sessions: dict[str, PAPAttentionSession] = {}
         self._layer_events: dict[str, list[PAPAttentionLayerEvent]] = {}
         self._decode_kv: dict[str, dict[str, PAPDecodeKVBuffer]] = {}
-        self._prefill_kv: dict[str, dict[str, tuple[torch.Tensor, torch.Tensor]]] = {}
+        self._prefill_kv: dict[
+            str, dict[str, list[tuple[torch.Tensor, torch.Tensor]]]
+        ] = {}
         self._attention_sessions = AttentionSessionStore()
 
     @staticmethod
@@ -448,8 +451,7 @@ class PAPAttentionRegistry:
                     f"registered prefix_len {expected_prefix_len}"
                 )
             self._prefill_kv.setdefault(session_request_id, {})[layer_name] = (
-                key_state,
-                value_state,
+                [(key_state, value_state)]
             )
             imported_session = self._attention_sessions.import_prefill_kv(
                 session_request_id,
@@ -482,6 +484,59 @@ class PAPAttentionRegistry:
                     float(key_state.float().norm().item()),
                     float(value_state.float().norm().item()),
                 )
+            return seq_len
+
+    def import_prefill_paged_kv(
+        self,
+        *,
+        request_id: str,
+        layer_name: str,
+        kv_cache: torch.Tensor,
+        block_ids: list[int],
+        seq_len: int,
+        block_size: int,
+        num_kv_heads: int,
+        layout: str,
+    ) -> int:
+        from vllm.pap.remote_attention import paged_kv_segments
+
+        with self._lock:
+            session_request_id = self._resolve_session_request_id_locked(request_id)
+            if session_request_id is None:
+                raise KeyError(request_id)
+            session = self._sessions[session_request_id]
+            seq_len = int(seq_len)
+            if seq_len < 0:
+                raise ValueError("seq_len must be non-negative")
+            expected_prefix_len = session.prefix_len
+            if expected_prefix_len is not None and int(expected_prefix_len) != seq_len:
+                raise ValueError(
+                    f"prefill KV seq_len {seq_len} does not match "
+                    f"registered prefix_len {expected_prefix_len}"
+                )
+            if int(block_size) != int(session.block_size):
+                raise ValueError(
+                    f"prefill KV block_size {block_size} does not match "
+                    f"registered block_size {session.block_size}"
+                )
+            segments = paged_kv_segments(
+                kv_cache=kv_cache.detach(),
+                block_ids=[int(block_id) for block_id in block_ids],
+                seq_len=seq_len,
+                num_kv_heads=int(num_kv_heads),
+                layout=layout,  # type: ignore[arg-type]
+            )
+            self._prefill_kv.setdefault(session_request_id, {})[layer_name] = segments
+            imported_session = self._attention_sessions.import_prefill_kv(
+                session_request_id,
+                block_ids=[int(block_id) for block_id in block_ids],
+                seq_len=seq_len,
+            )
+            session.block_ids = tuple(imported_session.block_ids)
+            session.seq_len = imported_session.seq_len
+            session.prefill_seq_lens[layer_name] = seq_len
+            session.decode_seq_lens[layer_name] = seq_len
+            self._prefill_condition.notify_all()
             return seq_len
 
     def _wait_for_prefill_layer_locked(
@@ -592,7 +647,7 @@ class PAPAttentionRegistry:
 
             segments: list[tuple[torch.Tensor, torch.Tensor]] = []
             if layer_name in prefill_layer_kv:
-                segments.append(prefill_layer_kv[layer_name])
+                segments.extend(prefill_layer_kv[layer_name])
             if decode_key.numel() > 0:
                 segments.append((decode_key, decode_value))
 
@@ -759,6 +814,26 @@ def open_ipc_prefill_kv(
         return rebuild_cuda_tensor(*args)
 
     return rebuild(descriptor.key.ipc_handle), rebuild(descriptor.value.ipc_handle)
+
+
+def open_ipc_paged_kv_cache(
+    descriptor: PAPOffloadKVPagedIPCDescriptor,
+) -> torch.Tensor:
+    """Open CUDA IPC paged KV backing tensor described by OFFLOAD_KV metadata."""
+    from torch.multiprocessing.reductions import rebuild_cuda_tensor
+
+    device_index = torch.accelerator.current_device_index()
+    props = torch.cuda.get_device_properties(device_index)
+    physical_gpu_id = str(props.uuid)
+    handle = descriptor.kv_cache.ipc_handle
+    if physical_gpu_id not in handle:
+        raise ValueError(
+            f"IPC handle not found for GPU UUID {physical_gpu_id}. "
+            f"Available UUIDs: {list(handle.keys())}"
+        )
+    args = list(handle[physical_gpu_id])
+    args[6] = device_index
+    return rebuild_cuda_tensor(*args)
 
 
 def compute_batch_binary_attention_response(
@@ -1057,6 +1132,35 @@ def compute_binary_attention_response(
         )
         logger.info(
             "PAP prefill KV imported via IPC descriptor request_id=%s "
+            "layer=%s seq_len=%s blocks=%s",
+            descriptor.request_id,
+            descriptor.layer_name,
+            seq_len,
+            len(descriptor.block_ids),
+        )
+        return serialize_tensor_bundle(
+            {
+                "request_id": descriptor.request_id,
+                "layer_name": descriptor.layer_name,
+                "seq_len": seq_len,
+            },
+            {},
+        )
+    if metadata.get("command") == "import_prefill_paged_kv_ipc":
+        descriptor = PAPOffloadKVPagedIPCDescriptor.from_dict(metadata["descriptor"])
+        kv_cache = open_ipc_paged_kv_cache(descriptor)
+        seq_len = registry.import_prefill_paged_kv(
+            request_id=descriptor.request_id,
+            layer_name=descriptor.layer_name,
+            kv_cache=kv_cache,
+            block_ids=list(descriptor.block_ids),
+            seq_len=descriptor.seq_len,
+            block_size=descriptor.block_size,
+            num_kv_heads=descriptor.num_kv_heads,
+            layout=descriptor.layout,
+        )
+        logger.info(
+            "PAP prefill paged KV imported via IPC descriptor request_id=%s "
             "layer=%s seq_len=%s blocks=%s",
             descriptor.request_id,
             descriptor.layer_name,

@@ -14,6 +14,7 @@ from vllm.pap.data_plane import (
     PAPCudaIPCTensorHandle,
     PAPOffloadExecDescriptor,
     PAPOffloadKVIPCDescriptor,
+    PAPOffloadKVPagedIPCDescriptor,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -1228,11 +1229,106 @@ def test_attention_executor_ipc_import_keeps_opened_tensor_views(
     assert tensors == {}
     registry = app.state.registry
     session_id = registry.resolve_session_request_id("req-shared-ipc")
-    stored_key, stored_value = registry._prefill_kv[session_id][
+    [(stored_key, stored_value)] = registry._prefill_kv[session_id][
         "model.layers.0.self_attn.attn"
     ]
     assert stored_key.data_ptr() == key.data_ptr()
     assert stored_value.data_ptr() == value.data_ptr()
+
+
+def test_attention_executor_paged_ipc_import_keeps_resident_block_views(
+    monkeypatch,
+) -> None:
+    import torch
+    from fastapi.testclient import TestClient
+
+    from examples.pap import pap_attention_executor
+    from examples.pap.pap_attention_executor import create_app
+    from vllm.pap.remote_attention import (
+        deserialize_tensor_bundle,
+        serialize_tensor_bundle,
+    )
+
+    kv_cache = torch.zeros((2, 2, 4, 1, 2))
+    for block in range(2):
+        for offset in range(4):
+            kv_cache[0, block, offset] = block * 100 + offset * 10 + 1
+            kv_cache[1, block, offset] = block * 100 + offset * 10 + 2
+
+    def fake_open_ipc_paged_kv_cache(descriptor):
+        return kv_cache
+
+    monkeypatch.setattr(
+        pap_attention_executor,
+        "open_ipc_paged_kv_cache",
+        fake_open_ipc_paged_kv_cache,
+    )
+
+    descriptor = PAPOffloadKVPagedIPCDescriptor(
+        request_id="req-paged-ipc",
+        layer_name="model.layers.0.self_attn.attn",
+        seq_len=5,
+        block_ids=(0, 1),
+        block_size=4,
+        num_kv_heads=1,
+        layout="NHD",
+        kv_cache=PAPCudaIPCTensorHandle(
+            dtype="float32",
+            shape=tuple(kv_cache.shape),
+            ipc_handle={"GPU-test": ("kv", 1, 2, 3, 4, 5, 0)},
+        ),
+    )
+    app = create_app()
+    client = TestClient(app)
+    client.post(
+        "/v1/pap/attention/register",
+        json={
+            "request_id": "req-paged-ipc",
+            "conversation_id": "conv-paged-ipc",
+            "prefill_endpoint": "http://localhost:8100",
+            "kv_transfer_params": {},
+            "prefix_len": 5,
+            "block_size": 4,
+        },
+    )
+
+    imported = client.post(
+        "/v1/pap/attention/import-prefill-kv-binary",
+        content=serialize_tensor_bundle(
+            {
+                "command": "import_prefill_paged_kv_ipc",
+                "descriptor": descriptor.to_dict(),
+            },
+            {},
+        ),
+        headers={"Content-Type": "application/octet-stream"},
+    )
+
+    assert imported.status_code == 200
+    metadata, tensors = deserialize_tensor_bundle(imported.content)
+    assert metadata["seq_len"] == 5
+    assert tensors == {}
+    registry = app.state.registry
+    segments, seq_len = registry.append_decode_kv(
+        request_id="req-paged-ipc",
+        layer_name="model.layers.0.self_attn.attn",
+        key=torch.tensor([[[9.0, 9.0]]]),
+        value=torch.tensor([[[10.0, 10.0]]]),
+        block_id=1,
+        slot=5,
+        seq_len=6,
+    )
+
+    assert seq_len == 6
+    assert len(segments) == 3
+    assert (
+        segments[0][0].untyped_storage().data_ptr()
+        == kv_cache.untyped_storage().data_ptr()
+    )
+    assert torch.equal(torch.cat([key for key, _ in segments[:2]], dim=0), torch.cat([
+        kv_cache[0, 0, :4, :1, :],
+        kv_cache[0, 1, :1, :1, :],
+    ], dim=0))
 
 
 def test_attention_executor_compute_existing_prefill_token_does_not_append() -> None:

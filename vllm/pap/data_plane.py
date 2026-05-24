@@ -174,6 +174,72 @@ class PAPOffloadKVIPCDescriptor:
         )
 
 
+@dataclass(frozen=True)
+class PAPOffloadKVPagedIPCDescriptor:
+    """CUDA IPC metadata for Prefill-owned paged KV cache backing storage."""
+
+    request_id: str
+    layer_name: str
+    seq_len: int
+    block_ids: tuple[int, ...]
+    block_size: int
+    num_kv_heads: int
+    layout: str
+    kv_cache: PAPCudaIPCTensorHandle
+    transport: PAPTensorTransport = PAPTensorTransport.CUDA_IPC
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "request_id", str(self.request_id))
+        object.__setattr__(self, "layer_name", str(self.layer_name))
+        object.__setattr__(self, "seq_len", int(self.seq_len))
+        object.__setattr__(
+            self, "block_ids", tuple(int(block_id) for block_id in self.block_ids)
+        )
+        object.__setattr__(self, "block_size", int(self.block_size))
+        object.__setattr__(self, "num_kv_heads", int(self.num_kv_heads))
+        object.__setattr__(self, "layout", str(self.layout))
+        object.__setattr__(self, "transport", PAPTensorTransport(self.transport))
+        if self.seq_len < 0:
+            raise ValueError("seq_len must be non-negative")
+        if self.block_size <= 0:
+            raise ValueError("block_size must be positive")
+        if self.num_kv_heads <= 0:
+            raise ValueError("num_kv_heads must be positive")
+        if self.layout not in {"NHD", "HND"}:
+            raise ValueError(f"unsupported KV cache layout: {self.layout}")
+        if self.transport is not PAPTensorTransport.CUDA_IPC:
+            raise ValueError("PAP OFFLOAD_KV paged IPC descriptor requires cuda_ipc")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "request_id": self.request_id,
+            "layer_name": self.layer_name,
+            "seq_len": self.seq_len,
+            "block_ids": list(self.block_ids),
+            "block_size": self.block_size,
+            "num_kv_heads": self.num_kv_heads,
+            "layout": self.layout,
+            "transport": self.transport.value,
+            "kv_cache": self.kv_cache.to_dict(),
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "PAPOffloadKVPagedIPCDescriptor":
+        return cls(
+            request_id=str(data["request_id"]),
+            layer_name=str(data["layer_name"]),
+            seq_len=int(data["seq_len"]),
+            block_ids=tuple(int(block_id) for block_id in data.get("block_ids", [])),
+            block_size=int(data["block_size"]),
+            num_kv_heads=int(data["num_kv_heads"]),
+            layout=str(data["layout"]),
+            transport=PAPTensorTransport(
+                data.get("transport", PAPTensorTransport.CUDA_IPC)
+            ),
+            kv_cache=PAPCudaIPCTensorHandle.from_dict(data["kv_cache"]),
+        )
+
+
 class PAPOffloadExecTransport(Protocol):
     """Projection<->Attention QKV/O data-plane transport."""
 

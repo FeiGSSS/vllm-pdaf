@@ -80,6 +80,51 @@ Boundary:
 - Next phase is `PAKVOwner`/resident block descriptors so Attention reads
   Prefill-owned paged blocks and later writes decode K/V into those blocks.
 
+## 2026-05-24 PAP Shared KV Owner Phase 2
+
+Second implementation checkpoint toward resident Prefill-owned KV:
+
+- Added `PAPOffloadKVPagedIPCDescriptor` for whole-layer paged KV backing
+  storage.
+- Added `paged_kv_segments()` so Attention can build per-block K/V views over a
+  paged KV cache without concatenating prompt KV.
+- Added Prefill-side `import_prefill_paged_kv()` that posts
+  `import_prefill_paged_kv_ipc` with only descriptor metadata and no tensor
+  payload.
+- Added Attention-side `open_ipc_paged_kv_cache()` and binary command handling
+  for `import_prefill_paged_kv_ipc`.
+- `PAPAttentionRegistry.import_prefill_paged_kv()` stores resident paged block
+  segment views as Prefill KV for a layer; `append_decode_kv()` now expands
+  those segments before appending decode K/V.
+
+Verified:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_data_plane.py \
+  tests/pap/test_pap_remote_attention.py \
+  tests/pap/test_pap_attention_executor.py -q
+```
+
+Result: `55 passed, 16 warnings`.
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_true_split_contract.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+Result: `37 passed, 16 warnings`.
+
+Boundary:
+
+- Attention can now receive a paged KV backing descriptor and compute from
+  resident block views without a Prefill-side gather into contiguous K/V.
+- The Qwen3 Prefill export path still calls the old gathered
+  `import_prefill_kv_from_paged_cache()` by default.
+- Decode K/V is still appended to Attention-local decode buffers; write-back
+  into Prefill-owned paged blocks remains next.
+
 ## State
 
 Branch `feature/pap-true-split`. Current latest implementation checkpoint is

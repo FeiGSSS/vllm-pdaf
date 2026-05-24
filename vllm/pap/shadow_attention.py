@@ -245,6 +245,61 @@ def _post_prefill_kv_ipc(
     return int(response_metadata["seq_len"])
 
 
+def import_prefill_paged_kv(
+    *,
+    request_id: str,
+    layer_name: str,
+    kv_cache: torch.Tensor,
+    block_ids: Sequence[int],
+    seq_len: int,
+    block_size: int,
+    num_kv_heads: int,
+    layout: str,
+    tcp_endpoint: str | None = None,
+    timeout: float | None = None,
+) -> int:
+    """Install Prefill-owned paged KV backing storage in Attention."""
+
+    from vllm.pap.data_plane import PAPOffloadKVPagedIPCDescriptor
+    from vllm.pap.remote_attention import (
+        deserialize_tensor_bundle,
+        serialize_tensor_bundle,
+    )
+
+    if not tcp_endpoint:
+        raise RuntimeError("PAP paged OFFLOAD_KV requires a TCP endpoint")
+    request_timeout = (
+        float(timeout)
+        if timeout is not None
+        else float(os.environ.get("PAP_REMOTE_ATTENTION_TIMEOUT", "5.0"))
+    )
+    _maybe_synchronize_cuda_ipc_tensors(kv_cache)
+    descriptor = PAPOffloadKVPagedIPCDescriptor(
+        request_id=request_id,
+        layer_name=layer_name,
+        seq_len=int(seq_len),
+        block_ids=tuple(int(block_id) for block_id in block_ids),
+        block_size=int(block_size),
+        num_kv_heads=int(num_kv_heads),
+        layout=str(layout),
+        kv_cache=_make_cuda_ipc_tensor_handle(kv_cache),
+    )
+    request_body = serialize_tensor_bundle(
+        {
+            "command": "import_prefill_paged_kv_ipc",
+            "descriptor": descriptor.to_dict(),
+        },
+        {},
+    )
+    response_body = _post_bytes_tcp(
+        endpoint=tcp_endpoint,
+        payload=request_body,
+        timeout=request_timeout,
+    )
+    response_metadata, _ = deserialize_tensor_bundle(response_body)
+    return int(response_metadata["seq_len"])
+
+
 def import_prefill_kv(
     *,
     request_id: str,

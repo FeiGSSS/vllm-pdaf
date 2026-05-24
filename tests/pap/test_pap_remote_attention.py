@@ -15,6 +15,7 @@ from vllm.pap.remote_attention import (
     deserialize_compact_offload_exec_command,
     deserialize_tensor_bundle,
     gather_paged_kv,
+    paged_kv_segments,
     serialize_attention_result,
     serialize_compact_attention_batch,
     serialize_compact_attention_response,
@@ -133,6 +134,43 @@ def test_gather_paged_kv_supports_nhd_layout() -> None:
     assert torch.equal(key[0], torch.full((2, 2), 1.0))
     assert torch.equal(key[4], torch.full((2, 2), 101.0))
     assert torch.equal(value[4], torch.full((2, 2), 102.0))
+
+
+def test_paged_kv_segments_match_gathered_kv_and_share_storage() -> None:
+    kv_cache = torch.zeros((2, 2, 4, 2, 2))
+    for block in range(2):
+        for offset in range(4):
+            kv_cache[0, block, offset] = block * 100 + offset * 10 + 1
+            kv_cache[1, block, offset] = block * 100 + offset * 10 + 2
+
+    gathered_key, gathered_value = gather_paged_kv(
+        kv_cache=kv_cache,
+        block_table=torch.tensor([[0, 1]], dtype=torch.int32),
+        seq_len=5,
+        num_kv_heads=2,
+        layout="NHD",
+    )
+
+    segments = paged_kv_segments(
+        kv_cache=kv_cache,
+        block_ids=[0, 1],
+        seq_len=5,
+        num_kv_heads=2,
+        layout="NHD",
+    )
+
+    assert torch.equal(torch.cat([key for key, _ in segments], dim=0), gathered_key)
+    assert torch.equal(
+        torch.cat([value for _, value in segments], dim=0), gathered_value
+    )
+    assert (
+        segments[0][0].untyped_storage().data_ptr()
+        == kv_cache.untyped_storage().data_ptr()
+    )
+    assert (
+        segments[0][1].untyped_storage().data_ptr()
+        == kv_cache.untyped_storage().data_ptr()
+    )
 
 
 def test_gather_paged_kv_supports_hnd_layout() -> None:
