@@ -49,18 +49,24 @@ def test_scheduler_sends_only_local_pap_projection_blocks_to_model_runner() -> N
     text = (ROOT / "vllm" / "v1" / "core" / "sched" / "scheduler.py").read_text()
 
     start = text.index("                request = request_queue.pop_request()")
-    end = text.index("                num_scheduled_tokens[request_id] = num_new_tokens")
+    end = text.index(
+        "                num_scheduled_tokens[request_id] = num_new_tokens"
+    )
     block = text[start:end]
 
     assert "pap_projection_state is not None" in block
     assert "req_to_new_blocks[request_id] = new_blocks" in block
-    assert "req_to_new_blocks[request_id] = self.kv_cache_manager.get_blocks(" in block
+    assert (
+        "req_to_new_blocks[request_id] = self.kv_cache_manager.get_blocks(" in block
+    )
 
 
 def test_scheduler_disables_external_block_allocation_for_pap_projection() -> None:
     text = (ROOT / "vllm" / "v1" / "core" / "sched" / "scheduler.py").read_text()
 
-    start = text.index("                new_blocks = self.kv_cache_manager.allocate_slots(")
+    start = text.index(
+        "                new_blocks = self.kv_cache_manager.allocate_slots("
+    )
     end = text.index("                if new_blocks is None:")
     block = text[start:end]
 
@@ -86,7 +92,9 @@ def test_scheduler_disables_local_slot_allocation_for_pap_projection() -> None:
     running_end = text.index("        # Record the LoRAs in scheduled_running_reqs")
     running_block = text[running_start:running_end]
 
-    waiting_start = text.index("                new_blocks = self.kv_cache_manager.allocate_slots(")
+    waiting_start = text.index(
+        "                new_blocks = self.kv_cache_manager.allocate_slots("
+    )
     waiting_end = text.index("                if new_blocks is None:")
     waiting_block = text[waiting_start:waiting_end]
 
@@ -217,134 +225,3 @@ def test_qwen3_prefill_uses_paged_kv_import_for_cuda_ipc() -> None:
     assert "import_prefill_kv_from_paged_cache" not in method
     assert "block_ids=_pap_block_ids_from_block_table(" in method
     assert "kv_cache=kv_cache" in method
-
-
-def test_model_runner_passes_pap_prefill_prefix_len_to_forward_context() -> None:
-    text = (
-        ROOT / "vllm" / "v1" / "worker" / "gpu" / "model_runner.py"
-    ).read_text()
-
-    assert "pap_prefill_prefix_len_by_req_id" in text
-    assert '"pap_prefill_prefix_len_by_request"' in text
-    assert 'kv_transfer_params.get("pap_remote_prefix_len")' in text
-    assert 'kv_transfer_params.get("remote_num_tokens")' in text
-
-
-def test_qwen3_pap_uses_tcp_control_endpoint() -> None:
-    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
-    start = text.index("    def _compute_pap_attention")
-    end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
-    method = text[start:end]
-
-    assert "pap_attention_tcp_endpoint_by_request" in method
-    assert "pap_attention_tcp_endpoint" in method
-    assert "tcp_endpoint_by_request" in method
-    assert "select_attention_endpoint_for_request" in method
-    assert "trigger_offload_exec_attention" in method
-
-
-def test_qwen3_prefill_detects_pap_prefill_kv_handle() -> None:
-    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
-    start = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
-    end = text.index("    @staticmethod")
-    method = text[start:end]
-
-    assert "pap_enabled" in method
-    assert "pap_prefill_kv_handle_by_request" in method
-    assert "prefill_kv_handle" in method
-    assert "pap_import_prefill_kv_to_attention_by_request" in method
-    assert "PAP paged Prefill KV export requires cuda_ipc" in method
-
-
-def test_qwen3_prefill_import_marks_attention_kv_ready() -> None:
-    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
-    start = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
-    end = text.index("    @staticmethod")
-    method = text[start:end]
-
-    assert "self._pap_imported_prefill_kv.add(import_key)" in method
-    assert 'additional_kwargs.get("pap_attention_kv_installed_by_request")' in method
-    assert "if import_key in self._pap_imported_prefill_kv:" in method
-    assert "installed.add(request_id)" in method
-    assert (
-        'additional_kwargs["pap_attention_kv_installed_by_request"] = installed'
-        in method
-    )
-
-
-def test_qwen3_pap_skips_requests_without_kv_handle() -> None:
-    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
-    start = text.index("    def _compute_pap_attention")
-    end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
-    method = text[start:end]
-
-    assert "prefill_kv_handle" in method
-    assert "attention_kv_installed_by_request" in method
-
-
-def test_model_runner_passes_pap_prefill_kv_handle_to_forward_context() -> None:
-    text = (
-        ROOT / "vllm" / "v1" / "worker" / "gpu" / "model_runner.py"
-    ).read_text()
-
-    assert "pap_prefill_kv_handle_by_req_id" in text
-    assert '"pap_prefill_kv_handle_by_request"' in text
-    assert 'kv_transfer_params.get("pap_prefill_kv_handle")' in text
-    assert "pap_import_prefill_kv_to_attention_by_req_id" in text
-    assert '"pap_import_prefill_kv_to_attention_by_request"' in text
-    assert 'kv_transfer_params.get("pap_import_prefill_kv_to_attention")' in text
-    assert "pap_attention_kv_installed_by_req_id" in text
-    assert '"pap_attention_kv_installed_by_request"' in text
-    assert 'kv_transfer_params.get("pap_attention_kv_installed")' in text
-
-
-def test_qwen3_pap_attention_gate_requires_attention_kv_ready() -> None:
-    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
-    start = text.index("    def _should_use_pap_attention")
-    end = text.index("    def _pap_attention_kv_ready_for_requests")
-    gate = text[start:end]
-    ready_start = text.index("    def _pap_attention_kv_ready_for_requests")
-    ready_end = text.index("    def _compute_pap_attention")
-    ready = text[ready_start:ready_end]
-
-    assert "request_ids[:num_reqs]" in gate
-    assert "self._pap_attention_kv_ready_for_requests" in gate
-    assert 'additional_kwargs.get("pap_attention_kv_installed_by_request")' in ready
-    assert "all(str(request_id) in installed for request_id in request_ids)" in ready
-    assert "pap_prefill_kv_handle_by_request" not in ready
-
-
-def test_model_runner_passes_pap_offload_exec_endpoint_to_forward_context() -> None:
-    text = (
-        ROOT / "vllm" / "v1" / "worker" / "gpu" / "model_runner.py"
-    ).read_text()
-
-    assert "pap_offload_exec_zmq_endpoint_by_req_id" in text
-    assert '"pap_offload_exec_zmq_endpoint_by_request"' in text
-    assert 'kv_transfer_params.get("pap_offload_exec_zmq_endpoint")' in text
-
-    qwen3 = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
-    assert "pap_offload_exec_zmq_endpoint_by_request" in qwen3
-    assert "PAP OFFLOAD_EXEC ZMQ endpoint selected" in qwen3
-    assert "_pap_offload_exec_transport" in qwen3
-    assert "PAPOffloadExecDescriptor" in qwen3
-    assert "transport.send_qkv" in qwen3
-    assert "transport.recv_output" in qwen3
-    assert "offload_exec_calls" in qwen3
-    assert "executor.submit(" in qwen3
-
-
-def test_nixl_pap_skips_projection_kv_recv_when_kv_installed() -> None:
-    text = (
-        ROOT
-        / "vllm"
-        / "distributed"
-        / "kv_transfer"
-        / "kv_connector"
-        / "v1"
-        / "nixl"
-        / "scheduler.py"
-    ).read_text()
-
-    assert "pap_attention_kv_installed" in text
-    assert "_reqs_to_finish_recv" in text

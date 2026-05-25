@@ -2,17 +2,15 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """PAP Attention internal executor.
 
-This first PAP slice keeps the data-plane in vLLM's NIXL connector and exposes
-the Attention role as an internal state owner. The process is intentionally not
-an OpenAI-compatible vLLM server: it records which prefill KV handle belongs to
-which PAP request so the proxy and future remote-attention backend have a stable
-control-plane contract.
+This first PAP slice keeps Attention as an internal compute endpoint. The
+process is intentionally not an OpenAI-compatible vLLM server: it records which
+Prefill KV handle belongs to which PAP request so the proxy and remote-attention
+path have a stable control-plane contract.
 """
 
 from __future__ import annotations
 
 import argparse
-import contextlib
 import logging
 import os
 import socket
@@ -35,7 +33,6 @@ from vllm.pap.data_plane import (
     PAPOffloadKVPagedIPCDescriptor,
     build_p2p_nccl_offload_exec_transport,
 )
-from vllm.pap.kv_owner import PAKVOwner, PAKVResidentPrefixCoverage
 
 logging.basicConfig(
     level=logging.INFO,
@@ -45,7 +42,7 @@ logger = logging.getLogger("pap_attention")
 
 
 class PAPAttentionRegistration(BaseModel):
-    """KV ownership metadata registered after Prefill completes."""
+    """Request metadata registered after Prefill completes."""
 
     request_id: str
     conversation_id: str = ""
@@ -215,8 +212,8 @@ class PAPDecodeKVBuffer:
 
 
 @dataclass
-class PAPResidentPagedKV:
-    """Resident paged KV backing attached from the Prefill-owned cache."""
+class PAPPrefillPagedKV:
+    """Paged KV backing opened from the Prefill-owned cache via IPC."""
 
     kv_cache: torch.Tensor
     block_ids: list[int]
@@ -239,9 +236,8 @@ class PAPAttentionRegistry:
         self._prefill_kv: dict[
             str, dict[str, list[tuple[torch.Tensor, torch.Tensor]]]
         ] = {}
-        self._resident_paged_kv: dict[str, dict[str, PAPResidentPagedKV]] = {}
+        self._prefill_paged_kv: dict[str, dict[str, PAPPrefillPagedKV]] = {}
         self._attention_sessions = AttentionSessionStore()
-        self._pa_kv_owner = PAKVOwner()
 
     @staticmethod
     def _resolve_storage_device(
@@ -327,19 +323,13 @@ class PAPAttentionRegistry:
             self._layer_events.setdefault(registration.request_id, [])
             self._decode_kv.setdefault(registration.request_id, {})
             self._prefill_kv.setdefault(registration.request_id, {})
-            self._resident_paged_kv.setdefault(registration.request_id, {})
+            self._prefill_paged_kv.setdefault(registration.request_id, {})
             self._attention_sessions.create_session(
                 registration.request_id,
                 registration.conversation_id,
                 block_size=registration.block_size,
                 max_seq_len=registration.max_seq_len,
             )
-            self._pa_kv_owner.register_session(
-                session_id=registration.request_id,
-                block_size=registration.block_size,
-                max_seq_len=registration.max_seq_len,
-            )
-            self._pa_kv_owner.acquire_lease(registration.request_id)
         logger.info(
             "registered PAP attention session request_id=%s "
             "conversation_id=%s kv_keys=%s",
@@ -360,26 +350,14 @@ class PAPAttentionRegistry:
             self._layer_events.pop(request_id, None)
             self._decode_kv.pop(request_id, None)
             self._prefill_kv.pop(request_id, None)
-            self._resident_paged_kv.pop(request_id, None)
+            self._prefill_paged_kv.pop(request_id, None)
             self._attention_sessions.free_session(request_id)
-            with contextlib.suppress(KeyError):
-                self._pa_kv_owner.release_lease(request_id)
             return existed
 
     def resolve_session_request_id(self, request_id: str) -> str | None:
         """Map vLLM-wrapped request ids back to the proxy-level PAP id."""
         with self._lock:
             return self._resolve_session_request_id_locked(request_id)
-
-    def get_resident_prefix_coverage(
-        self,
-        request_id: str,
-    ) -> PAKVResidentPrefixCoverage:
-        with self._lock:
-            session_request_id = self._resolve_session_request_id_locked(request_id)
-            if session_request_id is None:
-                raise KeyError(request_id)
-            return self._pa_kv_owner.get_resident_prefix_coverage(session_request_id)
 
     def reserve_decode_slot(
         self,
@@ -396,28 +374,6 @@ class PAPAttentionRegistry:
             seq_len = int(seq_len)
             if seq_len <= 0:
                 raise ValueError("decode seq_len must be positive")
-
-            owner_layer = self._pa_kv_owner.get_layer_state(
-                session_request_id,
-                layer_name,
-            )
-            if owner_layer is not None:
-                if seq_len == owner_layer.seq_len + 1:
-                    reserved = self._pa_kv_owner.reserve_next_decode_slot(
-                        session_id=session_request_id,
-                        layer_name=layer_name,
-                    )
-                    return reserved.block_id, reserved.slot
-                if seq_len == owner_layer.seq_len and owner_layer.block_ids:
-                    block_index = (seq_len - 1) // session.block_size
-                    if block_index < len(owner_layer.block_ids):
-                        block_id = int(owner_layer.block_ids[block_index])
-                    else:
-                        block_id = int(owner_layer.block_ids[-1])
-                    slot = block_id * session.block_size + (
-                        (seq_len - 1) % session.block_size
-                    )
-                    return block_id, slot
 
             block_id = (seq_len - 1) // session.block_size
             slot = block_id * session.block_size + ((seq_len - 1) % session.block_size)
@@ -531,7 +487,7 @@ class PAPAttentionRegistry:
             self._prefill_kv.setdefault(session_request_id, {})[layer_name] = (
                 [(key_state, value_state)]
             )
-            self._resident_paged_kv.setdefault(session_request_id, {}).pop(
+            self._prefill_paged_kv.setdefault(session_request_id, {}).pop(
                 layer_name, None
             )
             imported_session = self._attention_sessions.import_prefill_kv(
@@ -607,54 +563,30 @@ class PAPAttentionRegistry:
                 num_kv_heads=int(num_kv_heads),
                 layout=layout,  # type: ignore[arg-type]
             )
-            existing_resident = self._resident_paged_kv.get(
+            existing_prefill = self._prefill_paged_kv.get(
                 session_request_id, {}
             ).get(layer_name)
-            resident_block_ids = [int(block_id) for block_id in block_ids]
-            resident_seq_len = seq_len
-            if existing_resident is not None:
-                resident_block_ids = list(existing_resident.block_ids)
+            prefill_block_ids = [int(block_id) for block_id in block_ids]
+            prefill_seq_len = seq_len
+            if existing_prefill is not None:
+                prefill_block_ids = list(existing_prefill.block_ids)
                 for block_id in block_ids:
                     block_id = int(block_id)
-                    if block_id not in resident_block_ids:
-                        resident_block_ids.append(block_id)
-                resident_seq_len = max(int(existing_resident.seq_len), seq_len)
+                    if block_id not in prefill_block_ids:
+                        prefill_block_ids.append(block_id)
+                prefill_seq_len = max(int(existing_prefill.seq_len), seq_len)
 
             self._prefill_kv.setdefault(session_request_id, {})[layer_name] = segments
-            self._resident_paged_kv.setdefault(session_request_id, {})[layer_name] = (
-                PAPResidentPagedKV(
+            self._prefill_paged_kv.setdefault(session_request_id, {})[layer_name] = (
+                PAPPrefillPagedKV(
                     kv_cache=kv_cache.detach(),
-                    block_ids=resident_block_ids,
-                    seq_len=resident_seq_len,
+                    block_ids=prefill_block_ids,
+                    seq_len=prefill_seq_len,
                     block_size=int(block_size),
                     num_kv_heads=int(num_kv_heads),
                     layout=str(layout),
                 )
             )
-            self._pa_kv_owner.register_layer_blocks(
-                session_id=session_request_id,
-                layer_name=layer_name,
-                block_ids=[int(block_id) for block_id in block_ids],
-                seq_len=seq_len,
-                num_blocks=int(kv_cache.shape[1]),
-            )
-            owner_coverage = self._pa_kv_owner.get_resident_prefix_coverage(
-                session_request_id
-            )
-            owner_layer_coverage = owner_coverage.layers.get(layer_name)
-            if owner_layer_coverage is not None:
-                resident = self._resident_paged_kv[session_request_id][layer_name]
-                resident.block_ids = [int(block_id) for block_id in (
-                    owner_layer_coverage.block_ids
-                )]
-                resident.seq_len = int(owner_layer_coverage.seq_len)
-                self._prefill_kv[session_request_id][layer_name] = paged_kv_segments(
-                    kv_cache=resident.kv_cache,
-                    block_ids=resident.block_ids,
-                    seq_len=resident.seq_len,
-                    num_kv_heads=resident.num_kv_heads,
-                    layout=resident.layout,  # type: ignore[arg-type]
-                )
             imported_session = self._attention_sessions.import_prefill_kv(
                 session_request_id,
                 block_ids=[int(block_id) for block_id in block_ids],
@@ -666,87 +598,6 @@ class PAPAttentionRegistry:
             session.decode_seq_lens[layer_name] = seq_len
             self._prefill_condition.notify_all()
             return seq_len
-
-    @staticmethod
-    def _resident_paged_logical_nhd(
-        resident: PAPResidentPagedKV,
-    ) -> bool:
-        if resident.layout == "NHD":
-            return True
-        if resident.layout == "HND":
-            return int(resident.kv_cache.shape[3]) == int(resident.num_kv_heads)
-        raise ValueError(f"unsupported KV cache layout: {resident.layout}")
-
-    @classmethod
-    def _resident_paged_block_capacity(
-        cls,
-        resident: PAPResidentPagedKV,
-    ) -> int:
-        if cls._resident_paged_logical_nhd(resident):
-            return int(resident.kv_cache.shape[2])
-        return int(resident.kv_cache.shape[3])
-
-    @staticmethod
-    def _resident_paged_num_blocks(resident: PAPResidentPagedKV) -> int:
-        return int(resident.kv_cache.shape[1])
-
-    def _try_write_decode_to_resident_paged_kv(
-        self,
-        *,
-        resident: PAPResidentPagedKV,
-        key: torch.Tensor,
-        value: torch.Tensor,
-        block_id: int,
-        slot: int,
-        seq_len: int,
-    ) -> bool:
-        if int(key.shape[0]) != 1 or int(value.shape[0]) != 1:
-            return False
-        if int(block_id) not in resident.block_ids:
-            if int(block_id) < 0 or int(block_id) >= self._resident_paged_num_blocks(
-                resident
-            ):
-                return False
-            resident.block_ids.append(int(block_id))
-
-        if int(block_id) not in resident.block_ids:
-            return False
-
-        logical_nhd = self._resident_paged_logical_nhd(resident)
-        block_capacity = self._resident_paged_block_capacity(resident)
-        if int(seq_len) > len(resident.block_ids) * block_capacity:
-            return False
-        block_offset = int(slot) - int(block_id) * int(resident.block_size)
-        if block_offset >= block_capacity:
-            return False
-        if block_offset < 0:
-            return False
-
-        key_state = key.detach().to(
-            device=resident.kv_cache.device,
-            dtype=resident.kv_cache.dtype,
-        )
-        value_state = value.detach().to(
-            device=resident.kv_cache.device,
-            dtype=resident.kv_cache.dtype,
-        )
-        if logical_nhd:
-            resident.kv_cache[
-                0, int(block_id), block_offset, : resident.num_kv_heads, :
-            ].copy_(key_state[0])
-            resident.kv_cache[
-                1, int(block_id), block_offset, : resident.num_kv_heads, :
-            ].copy_(value_state[0])
-        else:
-            resident.kv_cache[
-                0, int(block_id), : resident.num_kv_heads, block_offset, :
-            ].copy_(key_state[0])
-            resident.kv_cache[
-                1, int(block_id), : resident.num_kv_heads, block_offset, :
-            ].copy_(value_state[0])
-
-        resident.seq_len = max(int(resident.seq_len), int(seq_len))
-        return True
 
     def _wait_for_prefill_layer_locked(
         self,
@@ -818,42 +669,7 @@ class PAPAttentionRegistry:
 
             layer_kv = self._decode_kv.setdefault(session_request_id, {})
             decode_buffer = layer_kv.get(layer_name)
-            resident = self._resident_paged_kv.get(session_request_id, {}).get(
-                layer_name
-            )
-            wrote_resident = False
-            if (
-                should_append
-                and resident is not None
-                and block_id is not None
-                and seq_len is not None
-            ):
-                from vllm.pap.remote_attention import paged_kv_segments
-
-                wrote_resident = self._try_write_decode_to_resident_paged_kv(
-                    resident=resident,
-                    key=key,
-                    value=value,
-                    block_id=int(block_id),
-                    slot=int(slot),
-                    seq_len=int(seq_len),
-                )
-                if wrote_resident:
-                    self._pa_kv_owner.materialize_decode_slot(
-                        session_id=session_request_id,
-                        layer_name=layer_name,
-                        block_id=int(block_id),
-                        seq_len=int(seq_len),
-                    )
-                    prefill_layer_kv[layer_name] = paged_kv_segments(
-                        kv_cache=resident.kv_cache,
-                        block_ids=resident.block_ids,
-                        seq_len=resident.seq_len,
-                        num_kv_heads=resident.num_kv_heads,
-                        layout=resident.layout,  # type: ignore[arg-type]
-                    )
-
-            if not should_append or wrote_resident:
+            if not should_append:
                 if decode_buffer is None:
                     decode_key = torch.empty(
                         (0, *key.shape[1:]),
@@ -1707,26 +1523,6 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
         if session is None:
             raise HTTPException(status_code=404, detail="unknown PAP request")
         return session.__dict__
-
-    @app.get("/v1/pap/attention/sessions/{request_id}/resident-prefix")
-    async def get_resident_prefix(request_id: str) -> dict[str, Any]:
-        try:
-            coverage = registry.get_resident_prefix_coverage(request_id)
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="unknown PAP request") from exc
-        return {
-            "session_id": coverage.session_id,
-            "seq_len": coverage.seq_len,
-            "ready": coverage.ready,
-            "layers": {
-                layer_name: {
-                    "layer_name": layer.layer_name,
-                    "block_ids": list(layer.block_ids),
-                    "seq_len": layer.seq_len,
-                }
-                for layer_name, layer in coverage.layers.items()
-            },
-        }
 
     @app.post("/v1/pap/attention/offload-exec")
     async def offload_exec(request: PAPOffloadExecRequest) -> dict[str, Any]:

@@ -418,7 +418,7 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Comma-separated projection_host:projection_port entries",
     )
-    parser.add_argument("--pap-mode", default=os.environ.get("PAP_MODE", "true_split"))
+    parser.add_argument("--pap-mode", default=os.environ.get("PAP_MODE", "pap"))
     parser.add_argument(
         "--routing-policy",
         default=os.environ.get("PAP_ROUTING_POLICY", "round_robin"),

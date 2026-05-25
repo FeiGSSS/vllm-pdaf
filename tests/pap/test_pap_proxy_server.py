@@ -6,7 +6,6 @@ from examples.pap.pap_proxy_server import (
     attach_pap_prefill_attention_params,
     build_prefill_payload,
     build_projection_payload,
-    get_attention_resident_prefix,
     prefill_prefix_len_from_kv_params,
     register_attention_handle,
 )
@@ -46,7 +45,7 @@ def test_prefill_payload_can_attach_attention_import_params() -> None:
         pap_attention_endpoint="http://127.0.0.1:8300",
         pap_attention_tcp_endpoint="tcp://127.0.0.1:9300",
         pap_prefill_kv_handle="req-7",
-        pap_mode="true_split_performance",
+        pap_mode="pap",
     )
 
     assert payload["kv_transfer_params"]["pap_attention_endpoint"] == (
@@ -56,7 +55,7 @@ def test_prefill_payload_can_attach_attention_import_params() -> None:
         "tcp://127.0.0.1:9300"
     )
     assert payload["kv_transfer_params"]["pap_prefill_kv_handle"] == "req-7"
-    assert payload["kv_transfer_params"]["pap_mode"] == "true_split_performance"
+    assert payload["kv_transfer_params"]["pap_mode"] == "pap"
 
 
 def test_build_projection_payload_strips_prefill_kv_transport() -> None:
@@ -212,34 +211,3 @@ def test_register_attention_handle_posts_internal_registration() -> None:
             {},
         )
     ]
-
-
-def test_get_attention_resident_prefix_queries_internal_endpoint() -> None:
-    fake_http = FakeAsyncClient()
-    client = PAPServiceClient(
-        client=fake_http,
-        host="localhost",
-        port=8300,
-        base_url="http://localhost:8300",
-        role="attention",
-    )
-
-    coverage = asyncio.run(
-        get_attention_resident_prefix(
-            client,
-            request_id="req-3",
-        )
-    )
-
-    assert fake_http.gets == [
-        (
-            "/v1/pap/attention/sessions/req-3/resident-prefix",
-            {},
-        )
-    ]
-    assert coverage == {
-        "session_id": "req-3",
-        "seq_len": 9,
-        "ready": True,
-        "layers": {},
-    }

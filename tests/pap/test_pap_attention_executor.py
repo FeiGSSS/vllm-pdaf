@@ -140,7 +140,7 @@ def test_compute_offload_exec_output_uses_step_block_descriptor(monkeypatch) -> 
     assert session.decode_seq_lens["layer0"] == 498
 
 
-def test_compute_offload_exec_output_reserves_decode_slot_from_owner(
+def test_compute_offload_exec_output_keeps_decode_kv_attention_local(
     monkeypatch,
 ) -> None:
     import torch
@@ -149,7 +149,7 @@ def test_compute_offload_exec_output_reserves_decode_slot_from_owner(
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
         PAPAttentionRegistration(
-            request_id="req-owner-reserve",
+            request_id="req-local-decode",
             conversation_id="conv",
             prefill_endpoint="http://localhost:8100",
             q_size=2,
@@ -160,7 +160,7 @@ def test_compute_offload_exec_output_reserves_decode_slot_from_owner(
     )
     kv_cache = torch.zeros((2, 2, 4, 1, 2))
     registry.import_prefill_paged_kv(
-        request_id="req-owner-reserve",
+        request_id="req-local-decode",
         layer_name=layer_name,
         kv_cache=kv_cache,
         block_ids=[0],
@@ -173,37 +173,22 @@ def test_compute_offload_exec_output_reserves_decode_slot_from_owner(
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_HEAD_DIM", "2")
 
-    calls = []
-    original = registry._pa_kv_owner.reserve_next_decode_slot
-
-    def wrapped_reserve_next_decode_slot(*, session_id, layer_name):
-        calls.append((session_id, layer_name))
-        return original(session_id=session_id, layer_name=layer_name)
-
-    monkeypatch.setattr(
-        registry._pa_kv_owner,
-        "reserve_next_decode_slot",
-        wrapped_reserve_next_decode_slot,
-    )
-
     output = compute_offload_exec_output(
         registry=registry,
-        request_id="req-owner-reserve",
+        request_id="req-local-decode",
         layer_name=layer_name,
         qkv=torch.tensor([[1.0, 0.0, 5.0, 6.0, 7.0, 8.0]]),
         scale=1.0,
         step=5,
     )
 
-    session_id = registry.resolve_session_request_id("req-owner-reserve")
-    state = registry._pa_kv_owner.get_layer_state(session_id, layer_name)
+    session_id = registry.resolve_session_request_id("req-local-decode")
     assert output.shape == (1, 2)
-    assert calls == [("req-owner-reserve", layer_name)]
-    assert torch.equal(kv_cache[0, 1, 0, :, :], torch.tensor([[5.0, 6.0]]))
-    assert torch.equal(kv_cache[1, 1, 0, :, :], torch.tensor([[7.0, 8.0]]))
-    assert state.block_ids == (0, 1)
-    assert state.materialized_slots[-1].seq_len == 5
-    assert layer_name not in registry._decode_kv[session_id]
+    assert torch.equal(kv_cache[0, 1, 0, :, :], torch.zeros((1, 2)))
+    assert torch.equal(kv_cache[1, 1, 0, :, :], torch.zeros((1, 2)))
+    decode_key, decode_value = registry._decode_kv[session_id][layer_name].view()
+    assert torch.equal(decode_key, torch.tensor([[[5.0, 6.0]]]))
+    assert torch.equal(decode_value, torch.tensor([[[7.0, 8.0]]]))
 
 
 def test_run_offload_exec_once_receives_qkv_and_sends_output(monkeypatch) -> None:
@@ -1249,7 +1234,7 @@ def test_attention_executor_ipc_import_keeps_opened_tensor_views(
     )
 
     descriptor = PAPOffloadKVIPCDescriptor(
-        request_id="req-shared-ipc",
+        request_id="req-prefill-ipc",
         layer_name="model.layers.0.self_attn.attn",
         seq_len=2,
         block_ids=(4,),
@@ -1269,8 +1254,8 @@ def test_attention_executor_ipc_import_keeps_opened_tensor_views(
     client.post(
         "/v1/pap/attention/register",
         json={
-            "request_id": "req-shared-ipc",
-            "conversation_id": "conv-shared-ipc",
+            "request_id": "req-prefill-ipc",
+            "conversation_id": "conv-prefill-ipc",
             "prefill_endpoint": "http://localhost:8100",
             "kv_transfer_params": {},
             "prefix_len": 2,
@@ -1294,7 +1279,7 @@ def test_attention_executor_ipc_import_keeps_opened_tensor_views(
     assert metadata["seq_len"] == 2
     assert tensors == {}
     registry = app.state.registry
-    session_id = registry.resolve_session_request_id("req-shared-ipc")
+    session_id = registry.resolve_session_request_id("req-prefill-ipc")
     [(stored_key, stored_value)] = registry._prefill_kv[session_id][
         "model.layers.0.self_attn.attn"
     ]
@@ -1302,7 +1287,7 @@ def test_attention_executor_ipc_import_keeps_opened_tensor_views(
     assert stored_value.data_ptr() == value.data_ptr()
 
 
-def test_attention_executor_paged_ipc_import_keeps_resident_block_views(
+def test_attention_executor_paged_ipc_import_keeps_prefill_block_views(
     monkeypatch,
 ) -> None:
     import torch
@@ -1387,19 +1372,26 @@ def test_attention_executor_paged_ipc_import_keeps_resident_block_views(
     )
 
     assert seq_len == 6
-    assert len(segments) == 2
+    assert len(segments) == 3
     assert (
         segments[0][0].untyped_storage().data_ptr()
         == kv_cache.untyped_storage().data_ptr()
     )
-    assert torch.equal(torch.cat([key for key, _ in segments], dim=0), torch.cat([
-        kv_cache[0, 0, :4, :1, :],
-        kv_cache[0, 1, :2, :1, :],
-    ], dim=0))
-    assert "model.layers.0.self_attn.attn" not in registry._decode_kv[session_id]
+    assert torch.equal(
+        torch.cat([key.detach().cpu() for key, _ in segments], dim=0),
+        torch.cat(
+            [
+                kv_cache[0, 0, :4, :1, :],
+                kv_cache[0, 1, :1, :1, :],
+                torch.tensor([[[9.0, 9.0]]]),
+            ],
+            dim=0,
+        ),
+    )
+    assert "model.layers.0.self_attn.attn" in registry._decode_kv[session_id]
 
 
-def test_attention_registry_writes_decode_kv_into_resident_paged_block() -> None:
+def test_attention_registry_keeps_decode_kv_out_of_prefill_paged_block() -> None:
     import torch
 
     from examples.pap.pap_attention_executor import (
@@ -1410,8 +1402,8 @@ def test_attention_registry_writes_decode_kv_into_resident_paged_block() -> None
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
         PAPAttentionRegistration(
-            request_id="req-paged-writeback",
-            conversation_id="conv-paged-writeback",
+            request_id="req-paged-local-decode",
+            conversation_id="conv-paged-local-decode",
             prefill_endpoint="http://localhost:8100",
             prefix_len=5,
             block_size=4,
@@ -1425,7 +1417,7 @@ def test_attention_registry_writes_decode_kv_into_resident_paged_block() -> None
     kv_cache[1, 1, 0, :, :] = 4
 
     registry.import_prefill_paged_kv(
-        request_id="req-paged-writeback",
+        request_id="req-paged-local-decode",
         layer_name="model.layers.0.self_attn.attn",
         kv_cache=kv_cache,
         block_ids=[0, 1],
@@ -1438,7 +1430,7 @@ def test_attention_registry_writes_decode_kv_into_resident_paged_block() -> None
     decode_key = torch.tensor([[[9.0, 10.0]]])
     decode_value = torch.tensor([[[11.0, 12.0]]])
     segments, seq_len = registry.append_decode_kv(
-        request_id="req-paged-writeback",
+        request_id="req-paged-local-decode",
         layer_name="model.layers.0.self_attn.attn",
         key=decode_key,
         value=decode_value,
@@ -1448,18 +1440,25 @@ def test_attention_registry_writes_decode_kv_into_resident_paged_block() -> None
     )
 
     assert seq_len == 6
-    assert len(segments) == 2
-    assert torch.equal(kv_cache[0, 1, 1, :, :], decode_key[0])
-    assert torch.equal(kv_cache[1, 1, 1, :, :], decode_value[0])
+    assert len(segments) == 3
+    assert torch.equal(kv_cache[0, 1, 1, :, :], torch.zeros((1, 2)))
+    assert torch.equal(kv_cache[1, 1, 1, :, :], torch.zeros((1, 2)))
     assert torch.equal(
         torch.cat([key for key, _ in segments], dim=0),
-        torch.cat([kv_cache[0, 0, :4, :1, :], kv_cache[0, 1, :2, :1, :]], dim=0),
+        torch.cat(
+            [kv_cache[0, 0, :4, :1, :], kv_cache[0, 1, :1, :1, :], decode_key],
+            dim=0,
+        ),
     )
-    session_id = registry.resolve_session_request_id("req-paged-writeback")
-    assert "model.layers.0.self_attn.attn" not in registry._decode_kv[session_id]
+    session_id = registry.resolve_session_request_id("req-paged-local-decode")
+    decode_key_buffer, decode_value_buffer = registry._decode_kv[session_id][
+        "model.layers.0.self_attn.attn"
+    ].view()
+    assert torch.equal(decode_key_buffer, decode_key)
+    assert torch.equal(decode_value_buffer, decode_value)
 
 
-def test_attention_registry_uses_resident_paged_block_capacity_for_writeback() -> None:
+def test_attention_registry_keeps_in_block_decode_tokens_attention_local() -> None:
     import torch
 
     from examples.pap.pap_attention_executor import (
@@ -1502,17 +1501,21 @@ def test_attention_registry_uses_resident_paged_block_capacity_for_writeback() -
         )
 
         assert written_seq_len == seq_len
-        assert len(segments) == 1
-        assert torch.equal(kv_cache[0, 0, seq_len - 1], torch.full((1, 2), seq_len))
-        assert torch.equal(
-            kv_cache[1, 0, seq_len - 1], torch.full((1, 2), seq_len + 100)
-        )
+        assert len(segments) == 2
+        assert torch.equal(kv_cache[0, 0, seq_len - 1], torch.zeros((1, 2)))
+        assert torch.equal(kv_cache[1, 0, seq_len - 1], torch.zeros((1, 2)))
 
     session_id = registry.resolve_session_request_id("req-paged-capacity")
-    assert "model.layers.0.self_attn.attn" not in registry._decode_kv[session_id]
+    decode_key_buffer, decode_value_buffer = registry._decode_kv[session_id][
+        "model.layers.0.self_attn.attn"
+    ].view()
+    assert decode_key_buffer.shape[0] == 4
+    assert torch.equal(decode_key_buffer[:, 0, 0], torch.arange(13, 17).float())
+    assert torch.equal(decode_value_buffer[:, 0, 0], torch.arange(113, 117).float())
 
 
-def test_attention_registry_falls_back_when_resident_paged_block_is_full() -> None:
+def test_attention_registry_uses_local_decode_when_prefill_block_full(
+) -> None:
     import torch
 
     from examples.pap.pap_attention_executor import (
@@ -1561,7 +1564,7 @@ def test_attention_registry_falls_back_when_resident_paged_block_is_full() -> No
     assert "model.layers.0.self_attn.attn" in registry._decode_kv[session_id]
 
 
-def test_attention_registry_publishes_new_resident_decode_block() -> None:
+def test_attention_registry_keeps_new_decode_block_attention_local() -> None:
     import torch
 
     from examples.pap.pap_attention_executor import (
@@ -1606,70 +1609,27 @@ def test_attention_registry_publishes_new_resident_decode_block() -> None:
 
     assert seq_len == 5
     assert len(segments) == 2
-    assert torch.equal(kv_cache[0, 1, 0, :, :], torch.tensor([[5.0, 6.0]]))
-    assert torch.equal(kv_cache[1, 1, 0, :, :], torch.tensor([[7.0, 8.0]]))
+    assert torch.equal(kv_cache[0, 1, 0, :, :], torch.zeros((1, 2)))
+    assert torch.equal(kv_cache[1, 1, 0, :, :], torch.zeros((1, 2)))
     assert torch.equal(
         torch.cat([key for key, _ in segments], dim=0),
-        torch.cat([kv_cache[0, 0, :4, :1, :], kv_cache[0, 1, :1, :1, :]], dim=0),
+        torch.cat(
+            [kv_cache[0, 0, :4, :1, :], torch.tensor([[[5.0, 6.0]]])],
+            dim=0,
+        ),
     )
     session_id = registry.resolve_session_request_id("req-paged-new-block")
-    assert registry._resident_paged_kv[session_id][
+    assert registry._prefill_paged_kv[session_id][
         "model.layers.0.self_attn.attn"
-    ].block_ids == [0, 1]
-    assert "model.layers.0.self_attn.attn" not in registry._decode_kv[session_id]
+    ].block_ids == [0]
+    decode_key, decode_value = registry._decode_kv[session_id][
+        "model.layers.0.self_attn.attn"
+    ].view()
+    assert torch.equal(decode_key, torch.tensor([[[5.0, 6.0]]]))
+    assert torch.equal(decode_value, torch.tensor([[[7.0, 8.0]]]))
 
 
-def test_attention_registry_records_materialized_decode_slot_in_owner() -> None:
-    import torch
-
-    from examples.pap.pap_attention_executor import (
-        PAPAttentionRegistration,
-        PAPAttentionRegistry,
-    )
-
-    registry = PAPAttentionRegistry(storage_device="cpu")
-    registry.register_prefill_kv(
-        PAPAttentionRegistration(
-            request_id="req-owner-materialized",
-            conversation_id="conv-owner-materialized",
-            prefill_endpoint="http://localhost:8100",
-            prefix_len=4,
-            block_size=4,
-        )
-    )
-    registry.import_prefill_paged_kv(
-        request_id="req-owner-materialized",
-        layer_name="model.layers.0.self_attn.attn",
-        kv_cache=torch.zeros((2, 2, 4, 1, 2)),
-        block_ids=[0],
-        seq_len=4,
-        block_size=4,
-        num_kv_heads=1,
-        layout="NHD",
-    )
-
-    registry.append_decode_kv(
-        request_id="req-owner-materialized",
-        layer_name="model.layers.0.self_attn.attn",
-        key=torch.tensor([[[5.0, 6.0]]]),
-        value=torch.tensor([[[7.0, 8.0]]]),
-        block_id=1,
-        slot=4,
-        seq_len=5,
-    )
-
-    session_id = registry.resolve_session_request_id("req-owner-materialized")
-    state = registry._pa_kv_owner.get_layer_state(
-        session_id, "model.layers.0.self_attn.attn"
-    )
-    assert state.block_ids == (0, 1)
-    assert state.seq_len == 5
-    assert state.materialized_slots[-1].block_id == 1
-    assert state.materialized_slots[-1].slot == 4
-    assert state.materialized_slots[-1].seq_len == 5
-
-
-def test_attention_registry_reports_resident_prefix_after_decode_writeback() -> None:
+def test_attention_registry_reimport_preserves_local_decode_kv() -> None:
     import torch
 
     from examples.pap.pap_attention_executor import (
@@ -1681,61 +1641,8 @@ def test_attention_registry_reports_resident_prefix_after_decode_writeback() -> 
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
         PAPAttentionRegistration(
-            request_id="req-resident-coverage",
-            conversation_id="conv-resident-coverage",
-            prefill_endpoint="http://localhost:8100",
-            prefix_len=4,
-            block_size=4,
-        )
-    )
-    registry.import_prefill_paged_kv(
-        request_id="req-resident-coverage",
-        layer_name=layer_name,
-        kv_cache=torch.zeros((2, 2, 4, 1, 2)),
-        block_ids=[0],
-        seq_len=4,
-        block_size=4,
-        num_kv_heads=1,
-        layout="NHD",
-    )
-
-    block_id, slot = registry.reserve_decode_slot(
-        request_id="req-resident-coverage",
-        layer_name=layer_name,
-        seq_len=5,
-    )
-    registry.append_decode_kv(
-        request_id="req-resident-coverage",
-        layer_name=layer_name,
-        key=torch.tensor([[[5.0, 6.0]]]),
-        value=torch.tensor([[[7.0, 8.0]]]),
-        block_id=block_id,
-        slot=slot,
-        seq_len=5,
-    )
-
-    coverage = registry.get_resident_prefix_coverage("req-resident-coverage")
-
-    assert coverage.seq_len == 5
-    assert coverage.ready is True
-    assert coverage.layers[layer_name].seq_len == 5
-    assert coverage.layers[layer_name].block_ids == (0, 1)
-
-
-def test_attention_registry_reimport_keeps_owner_resident_prefix() -> None:
-    import torch
-
-    from examples.pap.pap_attention_executor import (
-        PAPAttentionRegistration,
-        PAPAttentionRegistry,
-    )
-
-    layer_name = "model.layers.0.self_attn.attn"
-    registry = PAPAttentionRegistry(storage_device="cpu")
-    registry.register_prefill_kv(
-        PAPAttentionRegistration(
-            request_id="req-resident-reimport",
-            conversation_id="conv-resident-reimport",
+            request_id="req-prefill-reimport",
+            conversation_id="conv-prefill-reimport",
             prefill_endpoint="http://localhost:8100",
             prefix_len=None,
             block_size=4,
@@ -1743,7 +1650,7 @@ def test_attention_registry_reimport_keeps_owner_resident_prefix() -> None:
     )
     kv_cache = torch.zeros((2, 2, 4, 1, 2))
     registry.import_prefill_paged_kv(
-        request_id="req-resident-reimport",
+        request_id="req-prefill-reimport",
         layer_name=layer_name,
         kv_cache=kv_cache,
         block_ids=[0],
@@ -1753,7 +1660,7 @@ def test_attention_registry_reimport_keeps_owner_resident_prefix() -> None:
         layout="NHD",
     )
     registry.append_decode_kv(
-        request_id="req-resident-reimport",
+        request_id="req-prefill-reimport",
         layer_name=layer_name,
         key=torch.tensor([[[5.0, 6.0]]]),
         value=torch.tensor([[[7.0, 8.0]]]),
@@ -1763,7 +1670,7 @@ def test_attention_registry_reimport_keeps_owner_resident_prefix() -> None:
     )
 
     registry.import_prefill_paged_kv(
-        request_id="req-resident-reimport",
+        request_id="req-prefill-reimport",
         layer_name=layer_name,
         kv_cache=kv_cache,
         block_ids=[0],
@@ -1773,78 +1680,19 @@ def test_attention_registry_reimport_keeps_owner_resident_prefix() -> None:
         layout="NHD",
     )
 
-    coverage = registry.get_resident_prefix_coverage("req-resident-reimport")
-    session_id = registry.resolve_session_request_id("req-resident-reimport")
+    session_id = registry.resolve_session_request_id("req-prefill-reimport")
 
-    assert coverage.seq_len == 5
-    assert coverage.layers[layer_name].block_ids == (0, 1)
-    assert registry._resident_paged_kv[session_id][layer_name].block_ids == [0, 1]
+    assert registry._prefill_paged_kv[session_id][layer_name].block_ids == [0]
     assert (
         sum(
             int(segment_key.shape[0])
             for segment_key, _ in registry._prefill_kv[session_id][layer_name]
         )
-        == 5
+        == 4
     )
-
-
-def test_attention_executor_resident_prefix_endpoint_reports_coverage() -> None:
-    import torch
-    from fastapi.testclient import TestClient
-
-    from examples.pap.pap_attention_executor import create_app
-
-    layer_name = "model.layers.0.self_attn.attn"
-    app = create_app()
-    client = TestClient(app)
-    client.post(
-        "/v1/pap/attention/register",
-        json={
-            "request_id": "req-coverage-endpoint",
-            "conversation_id": "conv-coverage-endpoint",
-            "prefill_endpoint": "http://localhost:8100",
-            "kv_transfer_params": {},
-            "prefix_len": 4,
-            "block_size": 4,
-        },
-    )
-    app.state.registry.import_prefill_paged_kv(
-        request_id="req-coverage-endpoint",
-        layer_name=layer_name,
-        kv_cache=torch.zeros((2, 2, 4, 1, 2)),
-        block_ids=[0],
-        seq_len=4,
-        block_size=4,
-        num_kv_heads=1,
-        layout="NHD",
-    )
-    app.state.registry.append_decode_kv(
-        request_id="req-coverage-endpoint",
-        layer_name=layer_name,
-        key=torch.tensor([[[5.0, 6.0]]]),
-        value=torch.tensor([[[7.0, 8.0]]]),
-        block_id=1,
-        slot=4,
-        seq_len=5,
-    )
-
-    response = client.get(
-        "/v1/pap/attention/sessions/req-coverage-endpoint/resident-prefix"
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "session_id": "req-coverage-endpoint",
-        "seq_len": 5,
-        "ready": True,
-        "layers": {
-            layer_name: {
-                "layer_name": layer_name,
-                "block_ids": [0, 1],
-                "seq_len": 5,
-            },
-        },
-    }
+    decode_key, decode_value = registry._decode_kv[session_id][layer_name].view()
+    assert torch.equal(decode_key, torch.tensor([[[5.0, 6.0]]]))
+    assert torch.equal(decode_value, torch.tensor([[[7.0, 8.0]]]))
 
 
 def test_attention_executor_compute_existing_prefill_token_does_not_append() -> None:

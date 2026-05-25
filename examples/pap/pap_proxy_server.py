@@ -3,9 +3,9 @@
 """PAP proxy for the first Qwen3-8B NIXL experiment.
 
 Externally this is an OpenAI-compatible proxy. Internally it exposes PAP roles:
-Prefill is a vLLM NIXL producer, Projection is a vLLM NIXL consumer that owns
-decode/lm_head/sampling for this first slice, and Attention is an internal
-executor that records the prefill KV handle.
+Prefill computes prompt KV, Projection runs the decode model path without
+prompt KV bytes, and Attention is an internal executor that reads Prefill KV and
+computes attention.
 """
 
 from __future__ import annotations
@@ -104,18 +104,6 @@ async def register_attention_handle(
     resp = await attention.client.post(
         "/v1/pap/attention/register",
         json=payload,
-        headers={},
-    )
-    resp.raise_for_status()
-    return resp.json()
-
-
-async def get_attention_resident_prefix(
-    attention: PAPServiceClient,
-    request_id: str,
-) -> dict[str, Any]:
-    resp = await attention.client.get(
-        f"/v1/pap/attention/sessions/{request_id}/resident-prefix",
         headers={},
     )
     resp.raise_for_status()
@@ -309,7 +297,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--attention-port", type=int, default=8300)
     parser.add_argument("--projection-host", default="127.0.0.1")
     parser.add_argument("--projection-port", type=int, default=8200)
-    parser.add_argument("--pap-mode", default=os.environ.get("PAP_MODE", "true_split"))
+    parser.add_argument("--pap-mode", default=os.environ.get("PAP_MODE", "pap"))
     return parser.parse_args()
 
 

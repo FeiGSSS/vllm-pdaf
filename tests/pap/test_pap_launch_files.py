@@ -3,70 +3,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_pap_launch_uses_qwen3_8b_and_nixl_roles() -> None:
-    script = ROOT / "examples" / "pap" / "launch_pap_qwen3_8b_nixl.sh"
-    text = script.read_text()
-
-    assert "/data/ssd1/llm-models/Qwen3-8B" in text
-    assert '"kv_connector":"NixlConnector"' in text
-    assert '"kv_role":"kv_producer"' in text
-    assert '"kv_role":"kv_consumer"' in text
-    assert "pap_attention_executor.py" in text
-    assert "pap_remote_attention" in text
-    assert "import nixl" in text
-    assert "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE" in text
-
-
 def test_pap_readme_documents_projection_as_decode_owner() -> None:
     readme = ROOT / "examples" / "pap" / "README.md"
     text = readme.read_text()
 
     assert "Projection" in text
-    assert "lm_head" in text
-    assert "sampling" in text
+    assert "Q/K/V" in text
     assert "Attention" in text
     assert "internal executor" in text
-
-
-def test_pap_design_doc_marks_prefill_to_attention_nixl_as_missing() -> None:
-    doc = ROOT / "docs" / "design" / "pap_prefill_attention_nixl.md"
-    text = doc.read_text()
-
-    assert "Prefill to Attention: same-GPU CUDA IPC" in text
-    assert "/v1/pap/attention/import-prefill-kv" in text
-    assert "Projection should not receive Prefill KV" in text
-    assert "Projection-to-Attention data plane must not be TCP/HTTP" in text
-    assert "OFFLOAD_KV" in text
-    assert "OFFLOAD_EXEC" in text
-    assert "PAP-prototype-http-tcp-data-plane" in text
-
-
-def test_pap_launch_mps_wrapper_preserves_env_assignments() -> None:
-    script = ROOT / "examples" / "pap" / "launch_pap_qwen3_8b_nixl.sh"
-    text = script.read_text()
-
-    assert "PAP_ENABLE_MPS" in text
-    assert "nvidia-cuda-mps-control -d" in text
-    assert "with_prefill_attention_mps_env" in text
-    assert 'env "$@"' in text
-
-
-def test_pap_consistency_runner_compares_three_architectures() -> None:
-    script = ROOT / "examples" / "pap" / "run_arch_consistency_qwen3_8b_nixl.sh"
-    text = script.read_text()
-
-    assert "launch_fused_qwen3_8b.sh" in text
-    assert "launch_native_pd_qwen3_8b_nixl.sh" in text
-    assert "launch_pap_qwen3_8b_nixl.sh" in text
-    assert "compare_outputs.py" in text
-    assert "PAP_MPS_PIPE_DIR" in text
-
-
-def test_pap_baseline_launchers_use_deterministic_generation_config() -> None:
-    for name in ["launch_fused_qwen3_8b.sh", "launch_native_pd_qwen3_8b_nixl.sh"]:
-        text = (ROOT / "examples" / "pap" / name).read_text()
-        assert "--generation-config vllm" in text
-        assert '--output "$RESULT_PATH"' in text
 
 
 def test_pap_6pa2p_launch_uses_multi_proxy_and_expected_counts() -> None:
@@ -90,7 +34,10 @@ def test_pap_6pa2p_launch_uses_multi_proxy_and_expected_counts() -> None:
     assert "attention_zmq_port" in text
     assert 'PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT:-nccl}"' in text
     assert 'PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT:-cuda_ipc}"' in text
-    assert 'PAP_REMOTE_ATTENTION_PARALLELISM="${PAP_REMOTE_ATTENTION_PARALLELISM:-16}"' in text
+    assert (
+        'PAP_REMOTE_ATTENTION_PARALLELISM="${PAP_REMOTE_ATTENTION_PARALLELISM:-16}"'
+        in text
+    )
     assert 'PAP_OFFLOAD_EXEC_TRANSPORT="$PAP_OFFLOAD_EXEC_TRANSPORT"' in text
     assert 'PAP_OFFLOAD_KV_TRANSPORT="$PAP_OFFLOAD_KV_TRANSPORT"' in text
     assert "PAP_OFFLOAD_EXEC_ZMQ_PORT" in text

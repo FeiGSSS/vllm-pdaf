@@ -48,14 +48,14 @@ def test_build_decode_payload_attaches_prefill_kv_params_without_aliasing() -> N
     assert payload["kv_transfer_params"]["remote_block_ids"] == [[4, 5]]
 
 
-def test_prefill_payload_marks_attention_kv_import_owner() -> None:
+def test_prefill_payload_marks_attention_kv_import() -> None:
     from examples.pap.pd_payloads import attach_pap_prefill_attention_params
 
     payload = attach_pap_prefill_attention_params(
         build_prefill_payload({"model": "qwen", "prompt": "hello"}),
         pap_attention_endpoint="http://127.0.0.1:8300",
         pap_prefill_kv_handle="req-7",
-        pap_mode="true_split_performance",
+        pap_mode="pap",
     )
 
     assert (

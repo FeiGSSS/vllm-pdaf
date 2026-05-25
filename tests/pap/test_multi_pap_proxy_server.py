@@ -208,7 +208,6 @@ def test_multi_proxy_does_not_store_conversation_placement() -> None:
     assert "PAPConversationPlacement" not in text
     assert "conversation_placements" not in text
     assert "select_conversation_instances" not in text
-    assert "get_attention_resident_prefix" not in text
 
 
 def test_build_projection_payload_for_group_does_not_claim_kv_installed_by_default(

@@ -252,3 +252,4 @@ csrc/cpu/cpu_attn_dispatch_generated.h
 # PAP experiment runtime artifacts
 examples/pap/logs/
 HANDOFF.md
+.remember/
