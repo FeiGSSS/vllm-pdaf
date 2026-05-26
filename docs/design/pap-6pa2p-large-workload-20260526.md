@@ -382,3 +382,54 @@ QKV, while the Projection ubatch is resumed about `3.4 ms` later. In the current
 scheduling/resume latency: the Projection worker is executing other ubatches
 before returning to the current ubatch. Remote Attention is only the critical
 path for a small tail of cases.
+
+## High-QPS Short-Sequence Follow-up
+
+To test whether larger scheduler batches make 3-way more favorable, a short
+sequence/high-QPS workload was run:
+
+- Model: Qwen3-8B.
+- Workload: input `128`, output `32`, qps `256`, `num_prompts=1024`.
+- Topologies: `6P2D`, `6PA2P` serial, `6PA2P` 3-way.
+- PAP runs kept `PAP_OFFLOAD_EXEC_TRACE=1`, so compare PAP serial vs 3-way
+  directly; use the 6P2D number as an external baseline, not a trace-equivalent
+  PAP comparison.
+
+Benchmark results:
+
+| Architecture | Run root | Success | Mean TPOT | Median TPOT | P99 TPOT | Req/s | Output tok/s | Mean TTFT |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `6P2D` | `/home/fei/research/PD/test/baseline/disaggregated/results/runs/20260526_225458` | 1024/1024 | 31.42 ms | 31.48 ms | 34.29 ms | 88.87 | 2843.83 | 4120 ms |
+| `6PA2P` serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_225649` | 1024/1024 | 266.26 ms | 256.37 ms | 356.67 ms | 13.67 | 437.30 | 31694 ms |
+| `6PA2P` 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_225912` | 1024/1024 | 278.57 ms | 303.89 ms | 363.39 ms | 11.84 | 378.84 | 34065 ms |
+
+PAP trace medians:
+
+| Metric | Serial | 3-way | Interpretation |
+| --- | ---: | ---: | --- |
+| Projection total | 5.628 ms | 6.491 ms | 3-way is slower per ubatch. |
+| Projection send | 0.914 ms | 0.480 ms | 3-way sends smaller ubatches. |
+| Projection yield | 0.001 ms | 5.114 ms | 3-way adds DBO suspend/resume window. |
+| Projection recv | 4.645 ms | 0.827 ms | Serial waits for Attention in recv; 3-way overlaps most of it. |
+| Projection calls | 64 | 21 | 3-way cuts the macro batch into smaller Projection GEMMs. |
+| Projection fanout batches | 3 | 2 | High-QPS routing does not always fan out to all 3 Attention endpoints. |
+| Attention total | 6.685 ms | 3.281 ms | 3-way Attention tasks are smaller. |
+| Attention compute | 2.420 ms | 1.214 ms | Smaller attention batch reduces compute per message. |
+| Attention calls | 23 | 11 | Attention batch size roughly halves. |
+| Attention path after Projection send | 3.563 ms | 2.467 ms | 3-way does make the remote path shorter. |
+| Projection resume after Attention ready | 0.000 ms | 2.359 ms | 3-way still waits on P-side resume after A is ready. |
+| Attention ready after Projection resume | 3.558 ms | 0.000 ms | Serial is A-critical; 3-way is P-resume-critical. |
+
+This high-QPS experiment does not support the hypothesis that qps `256` and
+`1024` prompts are enough to make the current 3-way implementation faster. The
+larger macro batch helps serial PAP reach Projection `calls=64`, but 3-way
+splits that into median `calls=21`. That smaller ubatch reduces remote Attention
+latency, but it also lowers Projection arithmetic intensity and introduces a
+median `2.36 ms` P-side resume lag after Attention is already ready. The net
+effect is worse TPOT and lower output throughput than serial PAP.
+
+The batch-size hypothesis is still directionally useful, but the current
+implementation needs either larger per-ubatch Projection batches, lower
+Projection resume latency, or fewer pipeline ways. Under this workload, 2-way is
+a more plausible next sweep than 3-way because it may preserve more Projection
+batch density while still hiding part of the serial Attention wait.
