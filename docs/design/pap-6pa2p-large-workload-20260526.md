@@ -433,3 +433,56 @@ implementation needs either larger per-ubatch Projection batches, lower
 Projection resume latency, or fewer pipeline ways. Under this workload, 2-way is
 a more plausible next sweep than 3-way because it may preserve more Projection
 batch density while still hiding part of the serial Attention wait.
+
+## High-QPS 2-Way Follow-up
+
+The same short-sequence/high-QPS workload was rerun with
+`PAP_RUNNER_MICROBATCH_COUNT=2`.
+
+- Run root: `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_230453`
+- Result: `1024` completed, `0` failed.
+- Mean TPOT: `264.07 ms`; median TPOT: `276.45 ms`; p99 TPOT: `308.31 ms`.
+- Request throughput: `13.34 req/s`; output throughput: `426.90 tok/s`.
+- Mean TTFT: `31048 ms`.
+
+Updated benchmark comparison:
+
+| Architecture | Mean TPOT | Median TPOT | P99 TPOT | Req/s | Output tok/s |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `6P2D` | 31.42 ms | 31.48 ms | 34.29 ms | 88.87 | 2843.83 |
+| `6PA2P` serial | 266.26 ms | 256.37 ms | 356.67 ms | 13.67 | 437.30 |
+| `6PA2P` 2-way | 264.07 ms | 276.45 ms | 308.31 ms | 13.34 | 426.90 |
+| `6PA2P` 3-way | 278.57 ms | 303.89 ms | 363.39 ms | 11.84 | 378.84 |
+
+Updated PAP trace medians:
+
+| Metric | Serial | 2-way | 3-way |
+| --- | ---: | ---: | ---: |
+| Projection total | 5.628 ms | 5.766 ms | 6.491 ms |
+| Projection send | 0.914 ms | 0.776 ms | 0.480 ms |
+| Projection yield | 0.001 ms | 3.591 ms | 5.114 ms |
+| Projection recv | 4.645 ms | 1.205 ms | 0.827 ms |
+| Projection calls | 64 | 32 | 21 |
+| Projection fanout batches | 3 | 2 | 2 |
+| Attention total | 6.685 ms | 4.105 ms | 3.281 ms |
+| Attention compute | 2.420 ms | 1.406 ms | 1.214 ms |
+| Attention calls | 23 | 13 | 11 |
+| Attention path after Projection send | 3.563 ms | 2.868 ms | 2.467 ms |
+| Projection resume after Attention ready | 0.000 ms | 0.677 ms | 2.359 ms |
+| Attention ready after Projection resume | 3.558 ms | 0.000 ms | 0.000 ms |
+
+2-way is the best PAP variant by mean TPOT in this noisy high-QPS run, but only
+by a small margin over serial. It behaves like the expected compromise:
+
+- It keeps a larger Projection batch than 3-way (`calls=32` vs `21`), so the
+  Projection arithmetic-density loss is smaller.
+- It hides most of the serial Attention wait: Projection `recv_ms` drops from
+  `4.645 ms` to `1.205 ms`.
+- It still introduces P-side resume lag after Attention is ready
+  (`0.677 ms` median), though much less than 3-way (`2.359 ms`).
+
+The result supports using 2-way as the next tuning baseline. 3-way over-splits
+the batch for this workload, while serial leaves the path A-critical. 2-way
+mostly removes the A-critical wait without paying as much P-side resume delay,
+but the current implementation still needs lower resume overhead or larger
+per-ubatch Projection batches to show a robust win.
