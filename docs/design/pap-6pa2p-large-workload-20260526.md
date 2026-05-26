@@ -542,3 +542,120 @@ worker's batch, reduces Projection arithmetic density by about `3x`, and turns
 the path from A-critical serial waiting into P-side resume/queueing. The single
 Projection node amplifies the P-side scheduling bottleneck rather than creating
 a useful 3-way pipeline.
+
+## 7PA1P `MAX_NUM_SEQS` Sweep
+
+The previous `7PA1P` run was capped by `MAX_NUM_SEQS=64`, so qps `256` only
+created backlog and did not increase the Projection scheduler batch. A follow-up
+sweep varied `MAX_NUM_SEQS` while keeping the workload and topology fixed.
+
+- Topology: `7PA1P`.
+- Model: `/data/ssd1/llm-models/Qwen3-8B`.
+- Workload: `num_prompts=1000`, input `1024`, output `64`, qps `256`.
+- Common env: `PAP_OFFLOAD_EXEC_TRANSPORT=nixl_mailbox`,
+  `PAP_OFFLOAD_EXEC_TRACE=1`, `PAP_PREFILL_MPS_PERCENT=30`,
+  `PAP_ATTENTION_MPS_PERCENT=70`.
+- Serial uses `PAP_RUNNER_MICROBATCH_COUNT=1`; 3-way uses
+  `PAP_RUNNER_MICROBATCH_COUNT=3`.
+- HTTP proxy variables were unset for all runs.
+
+Benchmark results:
+
+| `MAX_NUM_SEQS` | Mode | Run root | Req/s | Output tok/s | Median TTFT | Median TPOT | P99 TPOT |
+| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 64 | Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_232342` | 3.36 | 215.30 | n/a | 289.25 ms | 395.10 ms |
+| 64 | 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_233059` | 1.15 | 73.77 | n/a | 727.94 ms | 1713.41 ms |
+| 128 | Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_001212` | 3.13 | 200.10 | 111877.30 ms | 574.38 ms | 917.36 ms |
+| 128 | 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_001818` | 3.37 | 215.46 | 123530.27 ms | 551.19 ms | 617.47 ms |
+| 256 | Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_002400` | 4.81 | 307.88 | 73575.54 ms | 761.26 ms | 851.01 ms |
+| 256 | 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_002815` | 4.57 | 292.41 | 76429.69 ms | 773.76 ms | 896.45 ms |
+| 384 | Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_004506` | 3.07 | 196.76 | 137660.88 ms | 1894.36 ms | 2041.96 ms |
+| 384 | 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_005116` | 5.36 | 342.82 | 73164.88 ms | 930.69 ms | 1061.18 ms |
+| 512 | Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_003239` | 3.68 | 235.47 | 41837.59 ms | 1931.48 ms | 2220.93 ms |
+| 512 | 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_003758` | 5.84 | 374.02 | 38050.99 ms | 1102.47 ms | 1209.63 ms |
+| 1000 | Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_235637` | 4.82 | 308.39 | 39617.02 ms | 2341.94 ms | 2442.61 ms |
+| 1000 | 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_000103` | 5.19 | 332.42 | 38973.36 ms | 2102.74 ms | 2237.16 ms |
+
+Trace medians with outliers included:
+
+| `MAX_NUM_SEQS` | Mode | Proj calls | Attn calls | Proj total | Proj send | Proj yield | Proj recv | Attn total | Attn recv QKV | Attn compute | P resume after A ready |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 64 | Serial | 64 | 9 | 5.526 ms | 2.338 ms | 0.001 ms | 3.220 ms | 7.268 ms | 5.805 ms | 1.424 ms | 0.000 ms |
+| 64 | 3-way | 21 | 3 | 17.511 ms | 2.081 ms | 12.827 ms | 2.596 ms | 6.420 ms | 5.866 ms | 0.531 ms | 11.309 ms |
+| 128 | Serial | 128 | 18 | 11.106 ms | 5.389 ms | 0.001 ms | 5.665 ms | 15.113 ms | 12.110 ms | 2.906 ms | 0.000 ms |
+| 128 | 3-way | 42 | 6 | 13.330 ms | 1.120 ms | 9.894 ms | 2.285 ms | 4.895 ms | 3.801 ms | 1.040 ms | 8.200 ms |
+| 256 | Serial | 244 | 36 | 15.217 ms | 5.750 ms | 0.001 ms | 9.276 ms | 19.543 ms | 13.378 ms | 5.706 ms | 0.000 ms |
+| 256 | 3-way | 84 | 12 | 18.685 ms | 1.897 ms | 13.666 ms | 3.045 ms | 6.642 ms | 4.588 ms | 2.024 ms | 10.713 ms |
+| 384 | Serial | 370 | 53 | 26.302 ms | 11.962 ms | 0.001 ms | 13.969 ms | 37.053 ms | 28.401 ms | 8.170 ms | 0.000 ms |
+| 384 | 3-way | 123 | 17 | 21.835 ms | 2.512 ms | 15.856 ms | 3.155 ms | 7.448 ms | 4.608 ms | 2.864 ms | 11.638 ms |
+| 512 | Serial | 488 | 69 | 32.824 ms | 15.163 ms | 0.001 ms | 17.047 ms | 45.186 ms | 33.771 ms | 10.992 ms | 0.000 ms |
+| 512 | 3-way | 158 | 23 | 25.322 ms | 3.438 ms | 18.340 ms | 3.375 ms | 8.757 ms | 4.958 ms | 3.699 ms | 13.213 ms |
+| 1000 | Serial | 587 | 85 | 38.645 ms | 16.074 ms | 0.001 ms | 22.471 ms | 52.562 ms | 35.825 ms | 14.755 ms | 0.000 ms |
+| 1000 | 3-way | 197 | 28 | 39.195 ms | 4.778 ms | 28.351 ms | 5.665 ms | 13.933 ms | 8.779 ms | 4.784 ms | 22.034 ms |
+
+Findings:
+
+- `MAX_NUM_SEQS=64` is too small for 3-way. The macro batch is only `64`, so
+  3-way reduces Projection calls to median `21` and each Attention endpoint sees
+  median `3` calls. The P-side resume lag dominates.
+- Increasing `MAX_NUM_SEQS` does make 3-way useful relative to serial once the
+  serial remote Attention path becomes large. The relative win is clearest at
+  `384` and `512`.
+- The best observed 3-way throughput for this workload is `MAX_NUM_SEQS=512`:
+  `5.84 req/s`, `374.02` output tok/s, median TPOT `1102.47 ms`. This is the
+  throughput-oriented sweet spot among the tested values.
+- The best observed latency among 3-way runs is `MAX_NUM_SEQS=128`: median TPOT
+  `551.19 ms`, but throughput is only `3.37 req/s`. This is the latency-oriented
+  operating point, not the throughput sweet spot.
+- `MAX_NUM_SEQS=1000` is too large. It preserves the relative 3-way advantage,
+  but both serial and 3-way become remote-attention burst dominated. Median TPOT
+  is above `2 s`.
+- `MAX_NUM_SEQS=256` is a bad middle point in this run: 3-way is slightly worse
+  than serial by throughput and TPOT.
+
+The current 8B recommendation is therefore:
+
+- Use `MAX_NUM_SEQS=512` if the objective is maximum saturated throughput.
+- Use `MAX_NUM_SEQS=128` if the objective is lower TPOT while still keeping a
+  small 3-way win over serial.
+- Avoid treating qps as the batch-size knob. It only creates backlog; the actual
+  Projection batch is bounded by `MAX_NUM_SEQS` and then split by the 3-way
+  microbatcher.
+
+## Qwen3-30B-A3B-FP8 Follow-up Status
+
+The FP8 30B candidate is available locally at:
+
+`/data/ssd1/llm-models/Qwen3-30B-A3B-FP8`
+
+Its `config.json` reports:
+
+- Architecture: `Qwen3MoeForCausalLM`.
+- Model type: `qwen3_moe`.
+- Layers: `48`.
+- Hidden size: `2048`.
+- Attention heads: `32`; KV heads: `4`.
+- Quantization: fine-grained FP8, `quant_method=fp8`, `fmt=e4m3`,
+  `weight_block_size=[128, 128]`.
+
+Current code limitation: PAP remote attention hooks are implemented in
+`vllm/model_executor/models/qwen3.py` for dense `Qwen3Attention`, but
+`vllm/model_executor/models/qwen3_moe.py` has an independent
+`Qwen3MoeAttention` implementation that does not call the PAP offload path. A
+direct 30B PAP run would therefore not be a valid projection-attention overlap
+experiment until `Qwen3MoeAttention` is wired to reuse the dense Qwen3 PAP
+attention path or equivalent logic.
+
+Proposed minimal implementation path:
+
+1. Make `Qwen3MoeAttention` inherit the dense `Qwen3Attention` PAP helper
+   methods.
+2. Add `_pap_imported_prefill_kv` initialization to the MoE attention module.
+3. Delegate the MoE attention `forward()` to the dense `Qwen3Attention.forward`
+   implementation, since Qwen3-MoE uses the same q/k/v projection, q/k norm,
+   rotary embedding, attention, and output projection structure.
+4. Add a PAP contract test that verifies Qwen3-MoE attention reuses the dense
+   PAP path.
+5. Run a small 30B PAP smoke test first, then compare serial vs 3-way at the
+   8B-derived candidate points (`MAX_NUM_SEQS=128` for latency and `512` for
+   throughput) if the model fits memory.
