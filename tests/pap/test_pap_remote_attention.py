@@ -6,12 +6,15 @@ import math
 import torch
 
 from vllm.pap.remote_attention import (
+    combine_segmented_attention_partial_states,
     compute_attention_output,
     compute_segmented_attention_output,
+    compute_segmented_attention_partial_state,
     deserialize_attention_result,
     deserialize_compact_attention_batch,
     deserialize_compact_attention_response,
     deserialize_compact_offload_exec_ack,
+    deserialize_compact_offload_exec_batch_command,
     deserialize_compact_offload_exec_command,
     deserialize_tensor_bundle,
     gather_paged_kv,
@@ -20,6 +23,7 @@ from vllm.pap.remote_attention import (
     serialize_compact_attention_batch,
     serialize_compact_attention_response,
     serialize_compact_offload_exec_ack,
+    serialize_compact_offload_exec_batch_command,
     serialize_compact_offload_exec_command,
     serialize_tensor_bundle,
 )
@@ -88,6 +92,45 @@ def test_compute_segmented_attention_output_matches_full_kv() -> None:
     )
 
     assert torch.allclose(segmented, full)
+
+
+def test_segmented_attention_partial_states_combine_to_full_attention() -> None:
+    query = torch.tensor([[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [2.0, 0.0]]])
+    key = torch.tensor(
+        [
+            [[1.0, 0.0], [0.0, 1.0]],
+            [[0.0, 1.0], [1.0, 0.0]],
+            [[1.0, 1.0], [1.0, 1.0]],
+        ]
+    )
+    value = torch.tensor(
+        [
+            [[1.0, 10.0], [2.0, 20.0]],
+            [[3.0, 30.0], [4.0, 40.0]],
+            [[5.0, 50.0], [6.0, 60.0]],
+        ]
+    )
+
+    prev_state = compute_segmented_attention_partial_state(
+        query=query,
+        segments=[(key[:2], value[:2])],
+        scale=1 / math.sqrt(2),
+    )
+    current_state = compute_segmented_attention_partial_state(
+        query=query,
+        segments=[(key[2:], value[2:])],
+        scale=1 / math.sqrt(2),
+    )
+
+    combined = combine_segmented_attention_partial_states([prev_state, current_state])
+    full = compute_attention_output(
+        query=query,
+        key=key,
+        value=value,
+        scale=1 / math.sqrt(2),
+    )
+
+    assert torch.allclose(combined, full)
 
 
 def test_compute_segmented_attention_output_honors_segmented_flag(
@@ -297,3 +340,23 @@ def test_compact_offload_exec_command_round_trips() -> None:
         "remote_address": "127.0.0.1:11300",
     }
     deserialize_compact_offload_exec_ack(serialize_compact_offload_exec_ack())
+
+
+def test_compact_offload_exec_batch_command_round_trips() -> None:
+    payload = serialize_compact_offload_exec_batch_command(
+        layer_name="model.layers.0.self_attn.attn",
+        remote_address="127.0.0.1:11300",
+        items=[
+            {"request_id": "req-1", "step": 9, "scale": 0.5},
+            {"request_id": "req-2", "step": 11, "scale": 0.25},
+        ],
+    )
+
+    assert deserialize_compact_offload_exec_batch_command(payload) == {
+        "layer_name": "model.layers.0.self_attn.attn",
+        "remote_address": "127.0.0.1:11300",
+        "items": [
+            {"request_id": "req-1", "step": 9, "scale": 0.5},
+            {"request_id": "req-2", "step": 11, "scale": 0.25},
+        ],
+    }

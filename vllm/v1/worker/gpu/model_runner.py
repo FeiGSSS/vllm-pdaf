@@ -244,6 +244,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # KV Connector if configured.
         self.kv_connector: KVConnector = NO_OP_KV_CONNECTOR
         self.pap_attention_tcp_endpoint_by_req_id: dict[str, str] = {}
+        self.pap_attention_endpoint_by_req_id: dict[str, str] = {}
         self.pap_offload_exec_zmq_endpoint_by_req_id: dict[str, str] = {}
         self.pap_prefill_prefix_len_by_req_id: dict[str, int] = {}
         self.pap_prefill_kv_handle_by_req_id: dict[str, str] = {}
@@ -696,6 +697,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
     def _remove_request(self, req_id: str) -> bool:
         self.pap_attention_tcp_endpoint_by_req_id.pop(req_id, None)
+        self.pap_attention_endpoint_by_req_id.pop(req_id, None)
         self.pap_offload_exec_zmq_endpoint_by_req_id.pop(req_id, None)
         self.pap_prefill_prefix_len_by_req_id.pop(req_id, None)
         self.pap_prefill_kv_handle_by_req_id.pop(req_id, None)
@@ -718,6 +720,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         tcp_endpoint = kv_transfer_params.get("pap_attention_tcp_endpoint")
         if tcp_endpoint:
             self.pap_attention_tcp_endpoint_by_req_id[req_id] = str(tcp_endpoint)
+        attention_endpoint = kv_transfer_params.get("pap_attention_endpoint")
+        if attention_endpoint:
+            self.pap_attention_endpoint_by_req_id[req_id] = str(attention_endpoint)
         zmq_endpoint = kv_transfer_params.get("pap_offload_exec_zmq_endpoint")
         if zmq_endpoint:
             self.pap_offload_exec_zmq_endpoint_by_req_id[req_id] = str(zmq_endpoint)
@@ -791,6 +796,18 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             req_id: endpoint
             for req_id in input_batch.req_ids[: input_batch.num_reqs]
             if (endpoint := self.pap_attention_tcp_endpoint_by_req_id.get(req_id))
+            is not None
+        }
+
+    def _pap_attention_endpoints_for_batch(
+        self, input_batch: InputBatch
+    ) -> dict[str, str]:
+        return {
+            req_id: endpoint
+            for req_id in input_batch.req_ids[: input_batch.num_reqs]
+            if (
+                endpoint := self.pap_attention_endpoint_by_req_id.get(req_id)
+            )
             is not None
         }
 
@@ -1333,6 +1350,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     "pap_block_size": self.vllm_config.cache_config.block_size,
                     "pap_attention_tcp_endpoint_by_request": (
                         self._pap_attention_tcp_endpoints_for_batch(input_batch)
+                    ),
+                    "pap_attention_endpoint_by_request": (
+                        self._pap_attention_endpoints_for_batch(input_batch)
                     ),
                     "pap_offload_exec_zmq_endpoint_by_request": (
                         self._pap_offload_exec_zmq_endpoints_for_batch(input_batch)

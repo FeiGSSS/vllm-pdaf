@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 from threading import Thread
 
@@ -6,12 +7,16 @@ from examples.pap.pap_attention_executor import (
     PAPAttentionRegistry,
     compute_binary_attention_response,
     compute_offload_exec_output,
+    run_offload_exec_query_first_partial_batch_once,
     create_app,
     maybe_start_offload_exec_transport,
+    run_offload_exec_batch_once,
+    run_offload_exec_mailbox_loop,
     run_offload_exec_once,
 )
 from vllm.pap.data_plane import (
     PAPCudaIPCTensorHandle,
+    PAPOffloadExecBatchDescriptor,
     PAPOffloadExecDescriptor,
     PAPOffloadKVIPCDescriptor,
     PAPOffloadKVPagedIPCDescriptor,
@@ -238,6 +243,462 @@ def test_run_offload_exec_once_receives_qkv_and_sends_output(monkeypatch) -> Non
     _, output, remote_address = transport.sent[0]
     assert remote_address == "127.0.0.1:11300"
     torch.testing.assert_close(output, torch.tensor([[2.0, 0.0]]))
+
+
+def test_run_offload_exec_query_first_partial_batch_matches_packed_qkv(
+    monkeypatch,
+) -> None:
+    import torch
+
+    class FakeMessage:
+        def __init__(self, tensor) -> None:
+            self.tensor = tensor
+            self.released = False
+
+        def release(self) -> None:
+            self.released = True
+
+    class FakeTransport:
+        def __init__(self, kv_batch) -> None:
+            self.kv_message = FakeMessage(kv_batch)
+            self.sent = []
+
+        def recv_kv_batch_message(self, descriptor):
+            return self.kv_message
+
+        def send_output_batch(self, descriptor, output, *, remote_address):
+            self.sent.append((descriptor, output, remote_address))
+
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_HEAD_DIM", "2")
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-a",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+            prefix_len=2,
+            q_size=2,
+            kv_size=2,
+        )
+    )
+    prefill_key = torch.tensor([[[1.0, 0.0]], [[0.0, 1.0]]])
+    prefill_value = torch.tensor([[[2.0, 0.0]], [[0.0, 4.0]]])
+    registry.import_prefill_kv(
+        request_id="req-a",
+        layer_name="layer0",
+        key=prefill_key,
+        value=prefill_value,
+        seq_len=2,
+    )
+    query = torch.tensor([[1.0, 1.0]])
+    kv = torch.tensor([[1.0, 1.0, 6.0, 8.0]])
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                request_id="req-a",
+                layer_name="layer0",
+                step=3,
+                scale=1.0,
+            ),
+        ),
+    )
+    query_message = FakeMessage(query)
+    transport = FakeTransport(kv)
+
+    run_offload_exec_query_first_partial_batch_once(
+        registry=registry,
+        transport=transport,
+        descriptor=descriptor,
+        query_message=query_message,
+    )
+
+    qkv = torch.cat([query, kv], dim=-1)
+    expected_registry = PAPAttentionRegistry(storage_device="cpu")
+    expected_registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-a",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+            prefix_len=2,
+            q_size=2,
+            kv_size=2,
+        )
+    )
+    expected_registry.import_prefill_kv(
+        request_id="req-a",
+        layer_name="layer0",
+        key=prefill_key,
+        value=prefill_value,
+        seq_len=2,
+    )
+    expected = compute_offload_exec_output(
+        registry=expected_registry,
+        request_id="req-a",
+        layer_name="layer0",
+        qkv=qkv,
+        scale=1.0,
+        step=3,
+    )
+
+    assert len(transport.sent) == 1
+    _, output, _ = transport.sent[0]
+    torch.testing.assert_close(output, expected)
+    assert query_message.released
+    assert transport.kv_message.released
+
+
+def test_run_offload_exec_query_first_partial_batch_computes_before_recv_kv(
+    monkeypatch,
+) -> None:
+    import torch
+
+    class FakeMessage:
+        def __init__(self, tensor) -> None:
+            self.tensor = tensor
+            self.released = False
+
+        def release(self) -> None:
+            self.released = True
+
+    class FakeTransport:
+        def __init__(self) -> None:
+            self.events = []
+            self.kv_message = FakeMessage(torch.tensor([[3.0, 4.0, 5.0, 6.0]]))
+            self.sent = []
+
+        def recv_kv_batch_message(self, descriptor):
+            self.events.append("recv_kv")
+            return self.kv_message
+
+        def send_output_batch(self, descriptor, output, *, remote_address):
+            self.sent.append((descriptor, output, remote_address))
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                request_id="req-a",
+                layer_name="layer0",
+                step=1,
+                scale=1.0,
+            ),
+        ),
+    )
+    query_message = FakeMessage(torch.tensor([[1.0, 2.0]]))
+    transport = FakeTransport()
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    def fake_query_partial(**kwargs):
+        transport.events.append("partial")
+        return "partial-state"
+
+    def fake_output_from_kv(**kwargs):
+        transport.events.append("combine")
+        assert kwargs["partial_state"] == "partial-state"
+        return torch.tensor([[2.0, 0.0]])
+
+    monkeypatch.setattr(
+        executor_module,
+        "compute_offload_exec_query_partial",
+        fake_query_partial,
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "compute_offload_exec_output_from_kv_and_partial",
+        fake_output_from_kv,
+    )
+
+    run_offload_exec_query_first_partial_batch_once(
+        registry=registry,
+        transport=transport,
+        descriptor=descriptor,
+        query_message=query_message,
+    )
+
+    assert transport.events == ["partial", "recv_kv", "combine"]
+    assert query_message.released
+    assert transport.kv_message.released
+    assert len(transport.sent) == 1
+    _, output, remote_address = transport.sent[0]
+    assert remote_address == ""
+    torch.testing.assert_close(output, torch.tensor([[2.0, 0.0]]))
+
+
+def test_run_offload_exec_batch_once_receives_qkv_batch_and_sends_output_batch(
+    monkeypatch,
+) -> None:
+    import torch
+
+    class FakeTransport:
+        def __init__(self):
+            self.sent = []
+
+        def recv_qkv_batch(self, descriptor, *, remote_address):
+            assert remote_address == "127.0.0.1:11300"
+            assert [item.request_id for item in descriptor.items] == [
+                "req-a",
+                "req-b",
+            ]
+            return torch.tensor(
+                [
+                    [1.0, 0.0, 1.0, 0.0, 2.0, 0.0],
+                    [0.0, 1.0, 0.0, 1.0, 0.0, 3.0],
+                ]
+            )
+
+        def send_output_batch(self, descriptor, output, *, remote_address):
+            self.sent.append((descriptor, output, remote_address))
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    for request_id in ("req-a", "req-b"):
+        registry.register_prefill_kv(
+            PAPAttentionRegistration(
+                request_id=request_id,
+                conversation_id="conv",
+                prefill_endpoint="http://localhost:8100",
+                q_size=2,
+                kv_size=2,
+            )
+        )
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_HEAD_DIM", "2")
+    transport = FakeTransport()
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                request_id="req-a",
+                layer_name="layer0",
+                step=1,
+                scale=1.0,
+            ),
+            PAPOffloadExecDescriptor(
+                request_id="req-b",
+                layer_name="layer0",
+                step=1,
+                scale=1.0,
+            ),
+        ),
+    )
+
+    run_offload_exec_batch_once(
+        registry=registry,
+        transport=transport,
+        remote_address="127.0.0.1:11300",
+        descriptor=descriptor,
+    )
+
+    assert len(transport.sent) == 1
+    _, output, remote_address = transport.sent[0]
+    assert remote_address == "127.0.0.1:11300"
+    torch.testing.assert_close(
+        output,
+        torch.tensor(
+            [
+                [2.0, 0.0],
+                [0.0, 3.0],
+            ]
+        ),
+    )
+
+
+def test_run_offload_exec_batch_once_single_item_avoids_output_cat(
+    monkeypatch,
+) -> None:
+    import torch
+
+    class FakeTransport:
+        def __init__(self):
+            self.sent = []
+
+        def recv_qkv_batch(self, descriptor, *, remote_address):
+            return torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]])
+
+        def send_output_batch(self, descriptor, output, *, remote_address):
+            self.sent.append((descriptor, output, remote_address))
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-a",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+            q_size=2,
+            kv_size=2,
+        )
+    )
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_HEAD_DIM", "2")
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                request_id="req-a",
+                layer_name="layer0",
+                step=1,
+                scale=1.0,
+            ),
+        ),
+    )
+    transport = FakeTransport()
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    def fake_compute_offload_exec_output(**kwargs):
+        return torch.tensor([[2.0, 0.0]])
+
+    def fail_cat(*args, **kwargs):
+        raise AssertionError("single-item OFFLOAD_EXEC batch should not cat output")
+
+    monkeypatch.setattr(
+        executor_module,
+        "compute_offload_exec_output",
+        fake_compute_offload_exec_output,
+    )
+    monkeypatch.setattr(torch, "cat", fail_cat)
+
+    run_offload_exec_batch_once(
+        registry=registry,
+        transport=transport,
+        remote_address="127.0.0.1:11300",
+        descriptor=descriptor,
+    )
+
+    assert len(transport.sent) == 1
+    _, output, remote_address = transport.sent[0]
+    assert remote_address == "127.0.0.1:11300"
+    torch.testing.assert_close(output, torch.tensor([[2.0, 0.0]]))
+
+
+def test_run_offload_exec_mailbox_loop_releases_qkv_message(monkeypatch) -> None:
+    import torch
+
+    events = []
+
+    class FakeMessage:
+        def __init__(self):
+            self.tensor = torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]])
+
+        def release(self):
+            events.append("release")
+
+    class FakeTransport:
+        def __init__(self, descriptor):
+            self.descriptor = descriptor
+            self.message = FakeMessage()
+            self.recv_calls = 0
+
+        def recv_next_qkv_batch_message(self):
+            self.recv_calls += 1
+            if self.recv_calls > 1:
+                raise KeyboardInterrupt
+            return self.descriptor, self.message
+
+        def recv_next_qkv_batch(self):
+            raise AssertionError("mailbox loop should preserve message lifetime")
+
+        def send_output_batch(self, descriptor, output, *, remote_address):
+            events.append("send")
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-a",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+            q_size=2,
+            kv_size=2,
+        )
+    )
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_HEAD_DIM", "2")
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                request_id="req-a",
+                layer_name="layer0",
+                step=1,
+                scale=1.0,
+            ),
+        ),
+    )
+    transport = FakeTransport(descriptor)
+
+    try:
+        run_offload_exec_mailbox_loop(registry=registry, transport=transport)
+    except KeyboardInterrupt:
+        pass
+
+    assert events == ["release", "send"]
+
+
+
+def test_run_offload_exec_mailbox_loop_emits_trace(monkeypatch, caplog) -> None:
+    import torch
+
+    class FakeTransport:
+        def __init__(self, descriptor):
+            self.descriptor = descriptor
+            self.sent = []
+            self.recv_calls = 0
+
+        def recv_next_qkv_batch(self):
+            self.recv_calls += 1
+            if self.recv_calls > 1:
+                raise KeyboardInterrupt
+            return self.descriptor, torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]])
+
+        def send_output_batch(self, descriptor, output, *, remote_address):
+            self.sent.append((descriptor, output, remote_address))
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-a",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+            q_size=2,
+            kv_size=2,
+        )
+    )
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_TRACE", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_HEAD_DIM", "2")
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                request_id="req-a",
+                layer_name="layer0",
+                step=1,
+                scale=1.0,
+            ),
+        ),
+    )
+    transport = FakeTransport(descriptor)
+
+    with caplog.at_level(logging.INFO, logger="pap_attention"):
+        try:
+            run_offload_exec_mailbox_loop(registry=registry, transport=transport)
+        except KeyboardInterrupt:
+            pass
+
+    assert len(transport.sent) == 1
+    assert "PAP OFFLOAD_EXEC attention mailbox batch trace layer=layer0 calls=1" in caplog.text
+    assert "recv_qkv_ms=" in caplog.text
+    assert "compute_ms=" in caplog.text
+    assert "send_output_ms=" in caplog.text
+    assert "total_ms=" in caplog.text
 
 
 def test_run_offload_exec_once_resolves_wrapped_request_id(monkeypatch) -> None:

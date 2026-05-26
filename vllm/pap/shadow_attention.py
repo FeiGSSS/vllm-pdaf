@@ -13,6 +13,8 @@ import logging
 import os
 import socket
 import time
+import base64
+import json
 from collections.abc import Sequence
 from threading import local
 from typing import Any
@@ -136,6 +138,99 @@ def trigger_offload_exec_attention(
         timeout=request_timeout,
     )
     deserialize_compact_offload_exec_ack(response_body)
+
+
+def trigger_offload_exec_attention_batch(
+    *,
+    tcp_endpoint: str | None = None,
+    layer_name: str,
+    items: Sequence[dict[str, Any]],
+    remote_address: str,
+    timeout: float | None = None,
+) -> None:
+    """Trigger Attention to receive one batched QKV tensor and send batched O."""
+
+    if not tcp_endpoint:
+        raise RuntimeError(
+            "PAP OFFLOAD_EXEC batch trigger requires a TCP control endpoint"
+        )
+
+    from vllm.pap.remote_attention import (
+        deserialize_compact_offload_exec_ack,
+        serialize_compact_offload_exec_batch_command,
+    )
+
+    request_timeout = (
+        float(timeout)
+        if timeout is not None
+        else float(os.environ.get("PAP_REMOTE_ATTENTION_TIMEOUT", "5.0"))
+    )
+
+    response_body = _post_bytes_tcp(
+        endpoint=tcp_endpoint,
+        payload=serialize_compact_offload_exec_batch_command(
+            layer_name=layer_name,
+            remote_address=str(remote_address),
+            items=list(items),
+        ),
+        timeout=request_timeout,
+    )
+    deserialize_compact_offload_exec_ack(response_body)
+
+
+def bind_offload_exec_mailbox(
+    *,
+    attention_endpoint: str,
+    local_agent_metadata: bytes,
+    timeout: float | None = None,
+) -> bytes:
+    """Bind Projection's NIXL mailbox endpoint to one Attention endpoint."""
+
+    request_timeout = (
+        float(timeout)
+        if timeout is not None
+        else float(os.environ.get("PAP_REMOTE_ATTENTION_TIMEOUT", "5.0"))
+    )
+    parsed = urlsplit(attention_endpoint)
+    if parsed.scheme not in {"http", "https"} or parsed.hostname is None:
+        raise ValueError(f"unsupported PAP attention endpoint: {attention_endpoint}")
+    port = "" if parsed.port is None else f":{parsed.port}"
+    path = "/v1/pap/attention/offload-exec-mailbox/bind"
+    body = json.dumps(
+        {
+            "agent_metadata_b64": base64.b64encode(local_agent_metadata).decode(
+                "ascii"
+            )
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    request = (
+        f"POST {path} HTTP/1.1\r\n"
+        f"Host: {parsed.hostname}{port}\r\n"
+        "Content-Type: application/json\r\n"
+        f"Content-Length: {len(body)}\r\n"
+        "Connection: close\r\n\r\n"
+    ).encode("ascii") + body
+    with socket.create_connection(
+        (parsed.hostname, int(parsed.port or 80)),
+        timeout=request_timeout,
+    ) as sock:
+        sock.settimeout(request_timeout)
+        sock.sendall(request)
+        response = b""
+        while True:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            response += chunk
+    header, _, payload = response.partition(b"\r\n\r\n")
+    status_line = header.splitlines()[0].decode("ascii", errors="replace")
+    if " 200 " not in status_line:
+        raise RuntimeError(
+            f"PAP mailbox bind failed: {status_line} {payload[:256]!r}"
+        )
+    data = json.loads(payload.decode("utf-8"))
+    return base64.b64decode(str(data["agent_metadata_b64"]).encode("ascii"))
 
 
 def _block_ids_from_block_table(

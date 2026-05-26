@@ -128,10 +128,21 @@ def test_qwen3_pap_path_uses_nccl_offload_exec() -> None:
     method = text[start:end]
 
     assert "self.attn(" not in method
-    assert "transport.send_qkv" in method
-    assert "transport.recv_output" in method
+    assert "transport.send_qkv_batch" in method
+    assert "transport.recv_output_batch" in method
+    assert "recv_output_batch_message" in method
+    assert "output_message.release()" in method
+    assert "PAPOffloadExecBatchDescriptor" in method
     assert "PAPOffloadExecDescriptor" in method
-    assert "trigger_offload_exec_attention" in method
+    assert "trigger_offload_exec_attention_batch" in method
+    assert "_pap_offload_exec_local_address()" in method
+    assert "local_offload_exec_zmq_endpoint" in method
+
+
+def test_nixl_mailbox_zero_copy_recv_is_default_enabled() -> None:
+    text = (ROOT / "vllm" / "pap" / "nixl_mailbox.py").read_text()
+
+    assert '"PAP_NIXL_MAILBOX_ZERO_COPY_RECV", True' in text
 
 
 def test_qwen3_pap_forward_returns_before_local_attention() -> None:
@@ -142,13 +153,153 @@ def test_qwen3_pap_forward_returns_before_local_attention() -> None:
     method = text[start:end]
 
     pap_branch = method.index("if self._should_use_pap_attention():")
-    pap_compute = method.index("attn_output = self._compute_pap_attention", pap_branch)
+    pap_compute = method.index("attn_output, pap_release_messages = self._compute_pap_attention", pap_branch)
     pap_return = method.index("return output", pap_compute)
     local_attention = method.index("attn_output = self.attn(q, k, v)")
     prefill_import = method.index("self._maybe_import_pap_prefill_kv_to_attention()")
 
     assert pap_branch < pap_compute < pap_return < local_attention
     assert local_attention < prefill_import
+
+
+def test_qwen3_pap_q_first_projection_compute_is_opt_in() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
+    forward_start = text.index("    def forward(\n")
+    forward_end = text.index("    def _should_use_pap_attention")
+    forward_method = text[forward_start:forward_end]
+
+    assert "PAP_Q_FIRST_PROJECTION" in text
+    assert "_compute_pap_attention_q_first_projection" in text
+    assert "_pap_qkv_projection_split_supported" in text
+    assert "_pap_q_first_projection_transport_supported" in text
+    assert forward_method.index("if self._should_use_pap_attention():") < forward_method.index(
+        "_compute_pap_attention_q_first_projection"
+    )
+    assert forward_method.index("_compute_pap_attention_q_first_projection") < forward_method.index(
+        "qkv, _ = self.qkv_proj(hidden_states)"
+    )
+
+
+def test_qwen3_pap_q_first_projection_sends_query_before_kv_projection() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
+    start = text.index("    def _compute_pap_attention_q_first_projection")
+    end = text.index("    def _send_pap_query_batch", start)
+    method = text[start:end]
+
+    assert "_pap_qkv_projection_slice" in method
+    assert "_send_pap_query_batch" in method
+    assert "query_already_sent=True" in method
+    assert method.index("_pap_q_first_projection_transport_supported") < method.index(
+        "_pap_qkv_projection_slice"
+    )
+    assert method.index("_send_pap_query_batch") < method.index("kv = _pap_qkv_projection_slice")
+    assert method.index("kv = _pap_qkv_projection_slice") < method.index(
+        "query_already_sent=True"
+    )
+
+
+def test_qwen3_pap_q_first_projection_validates_all_groups_before_query_send() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
+    start = text.index("    def _send_pap_query_batch")
+    end = text.index("    def _compute_pap_attention", start)
+    method = text[start:end]
+
+    validation = "if any(\n            not attention_endpoint"
+    assert validation in method
+    assert method.index(validation) < method.index("send_query_batch(")
+
+
+def test_qwen3_pap_q_first_kv_later_is_opt_in() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
+    start = text.index("    def _compute_pap_attention")
+    end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
+    method = text[start:end]
+
+    assert "PAP_Q_FIRST_KV_LATER" in method
+    assert "q_first_kv_later_enabled" in method
+    assert "send_query_batch = getattr(" in method
+    assert "send_kv_batch = getattr(" in method
+    assert "send_query_batch(" in method
+    assert "send_kv_batch(" in method
+    assert "supports_query_first_kv_later" in method
+    q_first_gate = method[
+        method.index("q_first_kv_later_enabled") : method.index("elif segmented_qkv_enabled")
+    ]
+    assert "q_first_kv_later_enabled" in q_first_gate
+    assert "send_query_batch(" in q_first_gate
+    assert "send_kv_batch(" in q_first_gate
+
+
+def test_qwen3_pap_mailbox_segmented_qkv_is_opt_in() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
+    start = text.index("    def _compute_pap_attention")
+    end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
+    method = text[start:end]
+
+    assert "PAP_SEGMENTED_QKV" in method
+    assert "segmented_qkv_enabled" in method
+    assert "send_qkv_batch_segments = getattr(" in method
+    assert "send_qkv_batch_segments(" in method
+    assert "payload_shape=(len(group_items), qkv_width)" in method
+    assert method.index("send_qkv_batch_segments = getattr(") < method.index(
+        "if segmented_qkv_enabled and callable(send_qkv_batch_segments):"
+    )
+    segment_gate = method[method.index("if segmented_qkv_enabled and callable(send_qkv_batch_segments):") : method.index("transport.send_qkv_batch(")]
+    assert "segmented_qkv_enabled" in segment_gate
+
+
+def test_qwen3_pap_single_group_avoids_qkv_batch_cat() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
+    start = text.index("    def _compute_pap_attention")
+    end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
+    method = text[start:end]
+
+    assert "if len(group_items) == 1:" in method
+    assert "qkv_segments = group_items[0][2]" in method
+    assert "qkv_segments = tuple(" in method
+    assert "transport.send_qkv_batch(" in method
+    assert "qkv_batch," in method
+
+
+def test_qwen3_pap_direct_mailbox_output_is_opt_in() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
+    start = text.index("    def _compute_pap_attention")
+    end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
+    method = text[start:end]
+
+    assert "PAP_DIRECT_MAILBOX_OUTPUT" in method
+    assert "direct_mailbox_output_enabled" in method
+    assert "can_use_direct_output = (" in method
+    assert "direct_mailbox_output_enabled" in method[
+        method.index("can_use_direct_output = (") : method.index("if can_use_direct_output:")
+    ]
+
+
+def test_qwen3_pap_defers_direct_mailbox_output_release_until_after_o_proj() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
+
+    forward_start = text.index("    def forward(\n")
+    forward_end = text.index("    def _should_use_pap_attention")
+    forward_method = text[forward_start:forward_end]
+
+    assert "attn_output, pap_release_messages = self._compute_pap_attention" in forward_method
+    assert "try:" in forward_method
+    assert "output, _ = self.o_proj(attn_output)" in forward_method
+    assert "finally:" in forward_method
+    assert "for message in pap_release_messages:" in forward_method
+    assert "message.release()" in forward_method
+    assert forward_method.index("output, _ = self.o_proj(attn_output)") < forward_method.index(
+        "message.release()"
+    )
+
+    compute_start = text.index("    def _compute_pap_attention")
+    compute_end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
+    compute_method = text[compute_start:compute_end]
+
+    assert "pap_release_messages: list[Any] = []" in compute_method
+    assert "direct_output = output_batch.view" in compute_method
+    assert "pap_release_messages.append(output_message)" in compute_method
+    assert "return direct_output, pap_release_messages" in compute_method
 
 
 def test_qwen3_pap_gate_checks_decode_only() -> None:
@@ -192,6 +343,18 @@ def test_model_runner_passes_pap_block_size_to_forward_context() -> None:
     assert "self.vllm_config.cache_config.block_size" in text
 
 
+def test_qwen3_pap_projection_trace_uses_batch_descriptor() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
+    start = text.index("    def _compute_pap_attention")
+    end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
+    method = text[start:end]
+
+    assert "offload_exec_batches[0][3].layer_name" in method
+    assert "sum(len(batch[3].items) for batch in offload_exec_batches)" in method
+    assert "offload_exec_batches[0][2].layer_name" not in method
+    assert "sum(len(batch[2].items) for batch in offload_exec_batches)" not in method
+
+
 def test_qwen3_pap_attention_does_not_require_projection_block_size() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
     start = text.index("    def _compute_pap_attention")
@@ -200,6 +363,20 @@ def test_qwen3_pap_attention_does_not_require_projection_block_size() -> None:
 
     assert 'additional_kwargs.get("pap_block_size")' not in method
     assert "PAP attention missing cache block_size" not in method
+
+
+def test_qwen3_pap_uses_empty_output_when_all_requests_offloaded() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
+    start = text.index("    def _compute_pap_attention")
+    end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
+    method = text[start:end]
+
+    assert "all_requests_offloaded = len(remote_attention_calls) == num_reqs" in method
+    assert "torch.empty_like(query)" in method
+    assert "torch.zeros_like(query)" in method
+    assert method.index("remote_attention_calls: list") < method.index(
+        "all_requests_offloaded = len(remote_attention_calls) == num_reqs"
+    )
 
 
 def test_qwen3_pap_imports_prefill_kv_for_offload() -> None:

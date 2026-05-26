@@ -11,6 +11,7 @@ path have a stable control-plane contract.
 from __future__ import annotations
 
 import argparse
+import base64
 import logging
 import os
 import socket
@@ -31,6 +32,7 @@ from vllm.pap.attention_session import (
 from vllm.pap.data_plane import (
     PAPOffloadKVIPCDescriptor,
     PAPOffloadKVPagedIPCDescriptor,
+    build_nixl_mailbox_offload_exec_transport,
     build_p2p_nccl_offload_exec_transport,
 )
 
@@ -99,6 +101,12 @@ class PAPOffloadExecRequest(BaseModel):
     step: int
     scale: float
     remote_address: str
+
+
+class PAPOffloadExecMailboxBindRequest(BaseModel):
+    """Projection NIXL mailbox metadata used for one-time OFFLOAD_EXEC bind."""
+
+    agent_metadata_b64: str
 
 
 class PAPAttentionLayerEventRequest(BaseModel):
@@ -625,6 +633,38 @@ class PAPAttentionRegistry:
                 )
             self._prefill_condition.wait(timeout=remaining)
 
+    def attention_segments_before_decode(
+        self,
+        *,
+        request_id: str,
+        layer_name: str,
+        seq_len: int | None = None,
+    ) -> list[tuple[torch.Tensor, torch.Tensor]]:
+        with self._lock:
+            session_request_id = self._resolve_session_request_id_locked(request_id)
+            if session_request_id is None:
+                raise KeyError(request_id)
+            session = self._sessions[session_request_id]
+            decode_seq_len = int(seq_len) if seq_len is not None else None
+            self._wait_for_prefill_layer_locked(
+                session_request_id=session_request_id,
+                session=session,
+                layer_name=layer_name,
+                decode_seq_len=decode_seq_len,
+            )
+            segments: list[tuple[torch.Tensor, torch.Tensor]] = []
+            prefill_layer_kv = self._prefill_kv.setdefault(session_request_id, {})
+            if layer_name in prefill_layer_kv:
+                segments.extend(prefill_layer_kv[layer_name])
+            decode_buffer = self._decode_kv.setdefault(session_request_id, {}).get(
+                layer_name
+            )
+            if decode_buffer is not None:
+                decode_key, decode_value = decode_buffer.view()
+                if decode_key.numel() > 0:
+                    segments.append((decode_key, decode_value))
+            return segments
+
     def append_decode_kv(
         self,
         *,
@@ -1121,10 +1161,15 @@ def compute_binary_attention_response(
     offload_exec_transport: Any | None = None,
     offload_exec_lock: Any | None = None,
 ) -> bytes:
-    from vllm.pap.data_plane import PAPOffloadExecDescriptor
+    from vllm.pap.data_plane import (
+        PAPOffloadExecBatchDescriptor,
+        PAPOffloadExecDescriptor,
+    )
     from vllm.pap.remote_attention import (
         COMPACT_ATTENTION_REQUEST_MAGIC,
+        COMPACT_OFFLOAD_EXEC_BATCH_MAGIC,
         COMPACT_OFFLOAD_EXEC_MAGIC,
+        deserialize_compact_offload_exec_batch_command,
         deserialize_compact_offload_exec_command,
         deserialize_tensor_bundle,
         serialize_compact_offload_exec_ack,
@@ -1153,6 +1198,38 @@ def compute_binary_attention_response(
         else:
             with offload_exec_lock:
                 run_offload_exec_once(
+                    registry=registry,
+                    transport=offload_exec_transport,
+                    remote_address=str(metadata["remote_address"]),
+                    descriptor=descriptor,
+            )
+        return serialize_compact_offload_exec_ack()
+    if payload.startswith(COMPACT_OFFLOAD_EXEC_BATCH_MAGIC):
+        if offload_exec_transport is None:
+            raise RuntimeError("PAP OFFLOAD_EXEC transport is not initialized")
+        metadata = deserialize_compact_offload_exec_batch_command(payload)
+        descriptor = PAPOffloadExecBatchDescriptor(
+            layer_name=str(metadata["layer_name"]),
+            items=tuple(
+                PAPOffloadExecDescriptor(
+                    request_id=str(item["request_id"]),
+                    layer_name=str(metadata["layer_name"]),
+                    step=int(item["step"]),
+                    scale=float(item["scale"]),
+                )
+                for item in metadata["items"]
+            ),
+        )
+        if offload_exec_lock is None:
+            run_offload_exec_batch_once(
+                registry=registry,
+                transport=offload_exec_transport,
+                remote_address=str(metadata["remote_address"]),
+                descriptor=descriptor,
+            )
+        else:
+            with offload_exec_lock:
+                run_offload_exec_batch_once(
                     registry=registry,
                     transport=offload_exec_transport,
                     remote_address=str(metadata["remote_address"]),
@@ -1273,6 +1350,160 @@ def compute_binary_attention_response(
     if "items" in metadata:
         return compute_batch_binary_attention_response(registry, payload)
     return _compute_single_binary_attention_response(registry, payload)
+
+
+def _offload_exec_attention_shapes(
+    *,
+    session: PAPAttentionSession,
+) -> tuple[int, int, int, int, int]:
+    q_size = session.q_size or int(os.environ.get("PAP_OFFLOAD_EXEC_Q_SIZE", "0"))
+    kv_size = session.kv_size or int(os.environ.get("PAP_OFFLOAD_EXEC_KV_SIZE", "0"))
+    num_heads = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_HEADS", "0"))
+    num_kv_heads = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "0"))
+    head_dim = int(os.environ.get("PAP_OFFLOAD_EXEC_HEAD_DIM", "0"))
+    if q_size <= 0 or kv_size <= 0:
+        raise RuntimeError(
+            "PAP OFFLOAD_EXEC requires q_size and kv_size in attention "
+            "registration or PAP_OFFLOAD_EXEC_Q_SIZE/PAP_OFFLOAD_EXEC_KV_SIZE"
+        )
+    if num_heads <= 0 or num_kv_heads <= 0 or head_dim <= 0:
+        raise RuntimeError(
+            "PAP OFFLOAD_EXEC requires PAP_OFFLOAD_EXEC_NUM_HEADS, "
+            "PAP_OFFLOAD_EXEC_NUM_KV_HEADS, and PAP_OFFLOAD_EXEC_HEAD_DIM"
+        )
+    return q_size, kv_size, num_heads, num_kv_heads, head_dim
+
+
+def _offload_exec_session(
+    *,
+    registry: PAPAttentionRegistry,
+    request_id: str,
+) -> tuple[str, PAPAttentionSession]:
+    session_request_id = registry.resolve_session_request_id(request_id)
+    if session_request_id is None:
+        raise KeyError(request_id)
+    session = registry.get_session(session_request_id)
+    if session is None:
+        raise KeyError(request_id)
+    return session_request_id, session
+
+
+def compute_offload_exec_query_partial(
+    *,
+    registry: PAPAttentionRegistry,
+    request_id: str,
+    layer_name: str,
+    query_flat: torch.Tensor,
+    scale: float,
+    step: int,
+) -> Any | None:
+    from vllm.pap.remote_attention import compute_segmented_attention_partial_state
+
+    session_request_id, session = _offload_exec_session(
+        registry=registry,
+        request_id=request_id,
+    )
+    q_size, _kv_size, num_heads, _num_kv_heads, head_dim = (
+        _offload_exec_attention_shapes(session=session)
+    )
+    if int(query_flat.shape[-1]) != q_size:
+        raise ValueError(
+            f"query width {query_flat.shape[-1]} does not match q_size={q_size}"
+        )
+    if query_flat.shape[0] != 1:
+        raise RuntimeError("PAP OFFLOAD_EXEC currently supports one token per call")
+    query = query_flat.view(1, num_heads, head_dim)
+    segments = registry.attention_segments_before_decode(
+        request_id=session_request_id,
+        layer_name=layer_name,
+        seq_len=int(step),
+    )
+    non_empty_segments = [(key, value) for key, value in segments if key.numel() > 0]
+    if not non_empty_segments:
+        return None
+    if torch.cuda.is_available():
+        query = query.to(registry.storage_device, non_blocking=True)
+    return compute_segmented_attention_partial_state(
+        query=query,
+        segments=non_empty_segments,
+        scale=float(scale),
+    )
+
+
+def compute_offload_exec_output_from_kv_and_partial(
+    *,
+    registry: PAPAttentionRegistry,
+    request_id: str,
+    layer_name: str,
+    query_flat: torch.Tensor,
+    kv_flat: torch.Tensor,
+    scale: float,
+    step: int,
+    partial_state: Any | None,
+) -> torch.Tensor:
+    from vllm.pap.remote_attention import (
+        combine_segmented_attention_partial_states,
+        compute_segmented_attention_output,
+        compute_segmented_attention_partial_state,
+    )
+
+    session_request_id, session = _offload_exec_session(
+        registry=registry,
+        request_id=request_id,
+    )
+    q_size, kv_size, num_heads, num_kv_heads, head_dim = (
+        _offload_exec_attention_shapes(session=session)
+    )
+    if int(query_flat.shape[-1]) != q_size:
+        raise ValueError(
+            f"query width {query_flat.shape[-1]} does not match q_size={q_size}"
+        )
+    if int(kv_flat.shape[-1]) != kv_size + kv_size:
+        raise ValueError(
+            f"packed kv width {kv_flat.shape[-1]} does not match kv_size={kv_size}"
+        )
+    if query_flat.shape[0] != 1 or kv_flat.shape[0] != 1:
+        raise RuntimeError("PAP OFFLOAD_EXEC currently supports one token per call")
+
+    query = query_flat.view(1, num_heads, head_dim)
+    key_flat, value_flat = kv_flat.split([kv_size, kv_size], dim=-1)
+    key = key_flat.view(1, num_kv_heads, head_dim)
+    value = value_flat.view(1, num_kv_heads, head_dim)
+    seq_len = int(step)
+    if seq_len <= 0:
+        raise ValueError("PAP OFFLOAD_EXEC step must be positive")
+    block_id, slot = registry.reserve_decode_slot(
+        request_id=session_request_id,
+        layer_name=layer_name,
+        seq_len=seq_len,
+    )
+    registry.append_decode_kv(
+        request_id=session_request_id,
+        layer_name=layer_name,
+        key=key,
+        value=value,
+        block_id=block_id,
+        slot=slot,
+        seq_len=seq_len,
+    )
+    if torch.cuda.is_available():
+        query = query.to(registry.storage_device, non_blocking=True)
+    if partial_state is None:
+        output = compute_segmented_attention_output(
+            query=query,
+            segments=[(key, value)],
+            scale=float(scale),
+        )
+    else:
+        current_state = compute_segmented_attention_partial_state(
+            query=query,
+            segments=[(key, value)],
+            scale=float(scale),
+        )
+        output = combine_segmented_attention_partial_states(
+            [partial_state, current_state]
+        )
+    return output.reshape(1, -1)
 
 
 def compute_offload_exec_output(
@@ -1434,6 +1665,244 @@ def run_offload_exec_once(
     )
 
 
+def run_offload_exec_query_first_partial_batch_once(
+    *,
+    registry: PAPAttentionRegistry,
+    transport: Any,
+    descriptor: Any,
+    query_message: Any,
+) -> None:
+    """Compute previous-token partial attention before waiting for KV."""
+
+    query_batch = query_message.tensor
+    if int(query_batch.shape[0]) != len(descriptor.items):
+        raise RuntimeError(
+            "PAP OFFLOAD_EXEC query batch row count does not match descriptor"
+        )
+    partial_states: list[Any | None] = []
+    try:
+        for index, item in enumerate(descriptor.items):
+            partial_states.append(
+                compute_offload_exec_query_partial(
+                    registry=registry,
+                    request_id=item.request_id,
+                    layer_name=item.layer_name,
+                    query_flat=query_batch[index : index + 1],
+                    scale=item.scale,
+                    step=item.step,
+                )
+            )
+        kv_message = transport.recv_kv_batch_message(descriptor)
+        try:
+            kv_batch = kv_message.tensor
+            if int(kv_batch.shape[0]) != len(descriptor.items):
+                raise RuntimeError(
+                    "PAP OFFLOAD_EXEC KV batch row count does not match descriptor"
+                )
+            outputs: list[torch.Tensor] = []
+            for index, item in enumerate(descriptor.items):
+                outputs.append(
+                    compute_offload_exec_output_from_kv_and_partial(
+                        registry=registry,
+                        request_id=item.request_id,
+                        layer_name=item.layer_name,
+                        query_flat=query_batch[index : index + 1],
+                        kv_flat=kv_batch[index : index + 1],
+                        scale=item.scale,
+                        step=item.step,
+                        partial_state=partial_states[index],
+                    ).reshape(1, -1)
+                )
+            output_batch = _combine_offload_exec_outputs(outputs)
+        finally:
+            kv_message.release()
+    finally:
+        query_message.release()
+    transport.send_output_batch(
+        descriptor,
+        output_batch,
+        remote_address="",
+    )
+
+
+def _combine_offload_exec_outputs(outputs: list[torch.Tensor]) -> torch.Tensor:
+    if len(outputs) == 1:
+        return outputs[0]
+    return torch.cat(outputs, dim=0)
+
+
+def run_offload_exec_batch_once(
+    *,
+    registry: PAPAttentionRegistry,
+    transport: Any,
+    remote_address: str,
+    descriptor: Any,
+) -> None:
+    """Receive one batched QKV tensor and send one batched attention output."""
+
+    trace_offload_exec = os.environ.get("PAP_OFFLOAD_EXEC_TRACE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
+    trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
+    qkv_batch = transport.recv_qkv_batch(
+        descriptor,
+        remote_address=remote_address,
+    )
+    trace_recv_ms = (
+        (time.perf_counter() - trace_recv_start) * 1000.0
+        if trace_offload_exec
+        else 0.0
+    )
+    if int(qkv_batch.shape[0]) != len(descriptor.items):
+        raise RuntimeError(
+            "PAP OFFLOAD_EXEC batch QKV row count does not match descriptor"
+        )
+    trace_compute_start = time.perf_counter() if trace_offload_exec else 0.0
+    outputs: list[torch.Tensor] = []
+    for index, item in enumerate(descriptor.items):
+        outputs.append(
+            compute_offload_exec_output(
+                registry=registry,
+                request_id=item.request_id,
+                layer_name=item.layer_name,
+                qkv=qkv_batch[index : index + 1],
+                scale=item.scale,
+                step=item.step,
+            ).reshape(1, -1)
+        )
+    output_batch = _combine_offload_exec_outputs(outputs)
+    trace_compute_ms = (
+        (time.perf_counter() - trace_compute_start) * 1000.0
+        if trace_offload_exec
+        else 0.0
+    )
+    trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
+    transport.send_output_batch(
+        descriptor,
+        output_batch,
+        remote_address=remote_address,
+    )
+    if trace_offload_exec:
+        trace_send_ms = (time.perf_counter() - trace_send_start) * 1000.0
+        trace_total_ms = (time.perf_counter() - trace_total_start) * 1000.0
+        logger.info(
+            "PAP OFFLOAD_EXEC attention batch trace layer=%s calls=%d "
+            "recv_qkv_ms=%.3f compute_ms=%.3f send_output_ms=%.3f "
+            "total_ms=%.3f qkv_shape=%s output_shape=%s",
+            descriptor.layer_name,
+            len(descriptor.items),
+            trace_recv_ms,
+            trace_compute_ms,
+            trace_send_ms,
+            trace_total_ms,
+            tuple(qkv_batch.shape),
+            tuple(output_batch.shape),
+        )
+
+
+def run_offload_exec_mailbox_loop(
+    *,
+    registry: PAPAttentionRegistry,
+    transport: Any,
+) -> None:
+    """Consume mailbox QKV messages and publish mailbox attention outputs."""
+
+    trace_offload_exec = os.environ.get("PAP_OFFLOAD_EXEC_TRACE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    while True:
+        trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
+        trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
+        qkv_message = None
+        q_first_partial_enabled = os.environ.get(
+            "PAP_ATTENTION_Q_FIRST_PARTIAL", ""
+        ).lower() in ("1", "true", "yes", "on")
+        recv_attention_message_fn = getattr(
+            transport, "recv_next_attention_batch_message", None
+        )
+        if q_first_partial_enabled and callable(recv_attention_message_fn):
+            descriptor, qkv_message = recv_attention_message_fn()
+            if qkv_message.kind == "attention_query_batch":
+                run_offload_exec_query_first_partial_batch_once(
+                    registry=registry,
+                    transport=transport,
+                    descriptor=descriptor,
+                    query_message=qkv_message,
+                )
+                continue
+            qkv_batch = qkv_message.tensor
+        else:
+            recv_message_fn = getattr(transport, "recv_next_qkv_batch_message", None)
+            if callable(recv_message_fn):
+                descriptor, qkv_message = recv_message_fn()
+                qkv_batch = qkv_message.tensor
+            else:
+                descriptor, qkv_batch = transport.recv_next_qkv_batch()
+        trace_recv_ms = (
+            (time.perf_counter() - trace_recv_start) * 1000.0
+            if trace_offload_exec
+            else 0.0
+        )
+        try:
+            if int(qkv_batch.shape[0]) != len(descriptor.items):
+                raise RuntimeError(
+                    "PAP OFFLOAD_EXEC mailbox batch QKV row count does not "
+                    "match descriptor"
+                )
+            trace_compute_start = time.perf_counter() if trace_offload_exec else 0.0
+            outputs: list[torch.Tensor] = []
+            for index, item in enumerate(descriptor.items):
+                outputs.append(
+                    compute_offload_exec_output(
+                        registry=registry,
+                        request_id=item.request_id,
+                        layer_name=item.layer_name,
+                        qkv=qkv_batch[index : index + 1],
+                        scale=item.scale,
+                        step=item.step,
+                    ).reshape(1, -1)
+                )
+            output_batch = _combine_offload_exec_outputs(outputs)
+        finally:
+            if qkv_message is not None:
+                qkv_message.release()
+        trace_compute_ms = (
+            (time.perf_counter() - trace_compute_start) * 1000.0
+            if trace_offload_exec
+            else 0.0
+        )
+        trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
+        transport.send_output_batch(
+            descriptor,
+            output_batch,
+            remote_address="",
+        )
+        if trace_offload_exec:
+            trace_send_ms = (time.perf_counter() - trace_send_start) * 1000.0
+            trace_total_ms = (time.perf_counter() - trace_total_start) * 1000.0
+            logger.info(
+                "PAP OFFLOAD_EXEC attention mailbox batch trace layer=%s "
+                "calls=%d recv_qkv_ms=%.3f compute_ms=%.3f "
+                "send_output_ms=%.3f total_ms=%.3f qkv_shape=%s "
+                "output_shape=%s",
+                descriptor.layer_name,
+                len(descriptor.items),
+                trace_recv_ms,
+                trace_compute_ms,
+                trace_send_ms,
+                trace_total_ms,
+                tuple(qkv_batch.shape),
+                tuple(output_batch.shape),
+            )
+
+
 def _recv_exact(sock: Any, size: int) -> bytes:
     chunks: list[bytes] = []
     remaining = size
@@ -1502,6 +1971,7 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
     app.state.registry = registry
     app.state.offload_exec_transport = None
     app.state.offload_exec_lock = Lock()
+    app.state.offload_exec_mailbox_loop_started = False
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
@@ -1555,6 +2025,40 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
             "layer_name": request.layer_name,
             "step": int(request.step),
             "remote_address": request.remote_address,
+        }
+
+    @app.post("/v1/pap/attention/offload-exec-mailbox/bind")
+    async def bind_offload_exec_mailbox(
+        request: PAPOffloadExecMailboxBindRequest,
+    ) -> dict[str, Any]:
+        transport = app.state.offload_exec_transport
+        if transport is None or not hasattr(transport, "local_agent_metadata"):
+            raise HTTPException(
+                status_code=409,
+                detail="PAP OFFLOAD_EXEC mailbox transport is not initialized",
+            )
+        peer_metadata = base64.b64decode(
+            request.agent_metadata_b64.encode("ascii")
+        )
+        with app.state.offload_exec_lock:
+            if not getattr(transport, "_pap_mailbox_bound", False):
+                transport.bind_peer(peer_metadata)
+                setattr(transport, "_pap_mailbox_bound", True)
+            if not app.state.offload_exec_mailbox_loop_started:
+                Thread(
+                    target=run_offload_exec_mailbox_loop,
+                    kwargs={
+                        "registry": registry,
+                        "transport": transport,
+                    },
+                    daemon=True,
+                    name="pap-offload-exec-mailbox-loop",
+                ).start()
+                app.state.offload_exec_mailbox_loop_started = True
+        return {
+            "agent_metadata_b64": base64.b64encode(
+                transport.local_agent_metadata
+            ).decode("ascii")
         }
 
     @app.post("/v1/pap/attention/import-prefill-kv")
@@ -1789,11 +2293,22 @@ def maybe_start_offload_exec_transport(
     host: str,
     zmq_port: int | None,
 ) -> None:
-    """Initialize the optional NCCL/P2P OFFLOAD_EXEC data plane."""
+    """Initialize the optional OFFLOAD_EXEC data plane."""
 
     if zmq_port is None:
         return
     local_rank = int(os.environ.get("PAP_OFFLOAD_EXEC_LOCAL_RANK", "0"))
+    transport = os.environ.get("PAP_OFFLOAD_EXEC_TRANSPORT", "nccl").lower()
+    if transport in {"nixl", "nixl_mailbox"}:
+        app.state.offload_exec_transport = build_nixl_mailbox_offload_exec_transport(
+            actor_id=os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "attention"),
+            local_rank=local_rank,
+        )
+        logger.info(
+            "PAP Attention OFFLOAD_EXEC NIXL mailbox initialized local_rank=%d",
+            local_rank,
+        )
+        return
     app.state.offload_exec_transport = build_p2p_nccl_offload_exec_transport(
         local_rank=local_rank,
         kv_port=int(zmq_port),

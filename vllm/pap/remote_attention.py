@@ -8,6 +8,7 @@ import base64
 import json
 import os
 import struct
+from dataclasses import dataclass
 from typing import Any, Literal
 
 import torch
@@ -15,6 +16,7 @@ import torch
 COMPACT_ATTENTION_REQUEST_MAGIC = b"PAPATN1\0"
 COMPACT_ATTENTION_RESPONSE_MAGIC = b"PAPOUT1\0"
 COMPACT_OFFLOAD_EXEC_MAGIC = b"PAPEXE1\0"
+COMPACT_OFFLOAD_EXEC_BATCH_MAGIC = b"PAPEXB1\0"
 COMPACT_OFFLOAD_EXEC_OK_MAGIC = b"PAPOKAY\0"
 
 _COMPACT_COUNT_STRUCT = struct.Struct("<8sI")
@@ -355,6 +357,56 @@ def deserialize_compact_offload_exec_command(payload: bytes) -> dict[str, Any]:
     }
 
 
+def serialize_compact_offload_exec_batch_command(
+    *,
+    layer_name: str,
+    remote_address: str,
+    items: list[dict[str, Any]],
+) -> bytes:
+    body = json.dumps(
+        {
+            "layer_name": str(layer_name),
+            "remote_address": str(remote_address),
+            "items": [
+                {
+                    "request_id": str(item["request_id"]),
+                    "step": int(item["step"]),
+                    "scale": float(item["scale"]),
+                }
+                for item in items
+            ],
+        },
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return COMPACT_OFFLOAD_EXEC_BATCH_MAGIC + body
+
+
+def deserialize_compact_offload_exec_batch_command(
+    payload: bytes,
+) -> dict[str, Any]:
+    if not payload.startswith(COMPACT_OFFLOAD_EXEC_BATCH_MAGIC):
+        raise ValueError("invalid compact offload-exec batch command magic")
+    body = payload[len(COMPACT_OFFLOAD_EXEC_BATCH_MAGIC) :]
+    if not body:
+        raise ValueError("compact offload-exec batch command payload is empty")
+    metadata = json.loads(body.decode("utf-8"))
+    items = [
+        {
+            "request_id": str(item["request_id"]),
+            "step": int(item["step"]),
+            "scale": float(item["scale"]),
+        }
+        for item in metadata.get("items", [])
+    ]
+    if not items:
+        raise ValueError("compact offload-exec batch command has no items")
+    return {
+        "layer_name": str(metadata["layer_name"]),
+        "remote_address": str(metadata["remote_address"]),
+        "items": items,
+    }
+
+
 def serialize_compact_offload_exec_ack() -> bytes:
     return COMPACT_OFFLOAD_EXEC_OK_MAGIC
 
@@ -453,6 +505,87 @@ def paged_kv_segments(
     if remaining > 0:
         raise ValueError("block ids do not cover requested sequence length")
     return segments
+
+
+
+@dataclass(frozen=True)
+class SegmentedAttentionPartialState:
+    """Numerically stable partial softmax attention state."""
+
+    max_score: torch.Tensor
+    exp_sum: torch.Tensor
+    weighted_value_sum: torch.Tensor
+
+
+def compute_segmented_attention_partial_state(
+    *,
+    query: torch.Tensor,
+    segments: list[tuple[torch.Tensor, torch.Tensor]],
+    scale: float,
+) -> SegmentedAttentionPartialState:
+    if query.ndim != 3:
+        raise ValueError("expected query tensor with shape [tokens, heads, dim]")
+    if query.shape[0] != 1:
+        raise ValueError("PAP prototype supports decode attention with one query token")
+    non_empty_segments = [
+        (key, value) for key, value in segments if key.numel() > 0
+    ]
+    if not non_empty_segments:
+        raise ValueError("partial attention requires at least one KV token")
+
+    score_segments: list[torch.Tensor] = []
+    value_segments: list[torch.Tensor] = []
+    compute_dtype = query.dtype if query.is_cuda else torch.float32
+    q = query.to(compute_dtype)
+    for key, value in non_empty_segments:
+        if key.ndim != 3 or value.ndim != 3:
+            raise ValueError(
+                "expected key/value tensors with shape [tokens, heads, dim]"
+            )
+        if key.shape[1] == 0 or value.shape[1] == 0:
+            raise ValueError("key/value tensors must have at least one KV head")
+        if query.shape[1] % key.shape[1] != 0:
+            raise ValueError("query heads must be divisible by KV heads")
+        repeat = query.shape[1] // key.shape[1]
+        k = key.to(compute_dtype).repeat_interleave(repeat, dim=1)
+        v = value.to(compute_dtype).repeat_interleave(repeat, dim=1)
+        score_segments.append(torch.einsum("qhd,khd->qhk", q, k) * float(scale))
+        value_segments.append(v)
+
+    scores = torch.cat(score_segments, dim=-1)
+    max_score = torch.max(scores, dim=-1, keepdim=True).values
+    exp_scores = torch.exp(scores - max_score)
+    exp_sum = exp_scores.sum(dim=-1, keepdim=True)
+    weighted_value_sum = torch.zeros_like(q)
+    offset = 0
+    for value in value_segments:
+        length = int(value.shape[0])
+        weighted_value_sum += torch.einsum(
+            "qhk,khd->qhd",
+            exp_scores[..., offset : offset + length],
+            value,
+        )
+        offset += length
+    return SegmentedAttentionPartialState(
+        max_score=max_score,
+        exp_sum=exp_sum,
+        weighted_value_sum=weighted_value_sum,
+    )
+
+
+def combine_segmented_attention_partial_states(
+    states: list[SegmentedAttentionPartialState],
+) -> torch.Tensor:
+    if not states:
+        raise ValueError("at least one partial attention state is required")
+    global_max = torch.stack([state.max_score for state in states], dim=0).max(dim=0).values
+    numerator = torch.zeros_like(states[0].weighted_value_sum)
+    denominator = torch.zeros_like(states[0].exp_sum)
+    for state in states:
+        weight = torch.exp(state.max_score - global_max)
+        numerator += state.weighted_value_sum * weight
+        denominator += state.exp_sum * weight
+    return numerator / denominator
 
 
 def compute_attention_output(
