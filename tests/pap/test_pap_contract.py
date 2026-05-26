@@ -167,6 +167,18 @@ def test_qwen3_pap_path_uses_nccl_offload_exec() -> None:
     assert "local_offload_exec_zmq_endpoint" in method
 
 
+def test_qwen3_pap_mailbox_transport_is_per_attention_endpoint() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
+    start = text.index("    def _compute_pap_attention(\n")
+    end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
+    method = text[start:end]
+
+    assert "def _pap_offload_exec_transport_for_attention_endpoint" in text
+    assert "def _pap_nixl_mailbox_offload_exec_transport" in text
+    assert "_pap_offload_exec_transport_for_attention_endpoint" in method
+    assert "_pap_bind_offload_exec_mailbox_peer" in method
+
+
 def test_nixl_mailbox_zero_copy_recv_is_default_enabled() -> None:
     text = (ROOT / "vllm" / "pap" / "nixl_mailbox.py").read_text()
 

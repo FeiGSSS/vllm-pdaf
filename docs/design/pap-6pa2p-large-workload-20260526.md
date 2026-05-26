@@ -121,3 +121,62 @@ failure mode rather than treating the runs as slow-but-valid measurements.
   desired comparison point.
 - Rebuild the PAP matrix from a smaller known-good PAP workload, then scale one
   dimension at a time: `num_prompts`, qps, output length, and topology.
+
+## Follow-up Root Cause and Fix
+
+A follow-up investigation on the qps32 PAP failure found that the run was not
+slow; the Attention mailbox worker crashed early. The failing log was:
+
+```text
+Exception in thread pap-offload-exec-mailbox-loop:
+KeyError: 'cmpl-bench-df77fec6-2-0-a0acf7f7'
+```
+
+The root cause was Projection-side mailbox binding. A Projection process can
+batch requests that belong to different PA groups, but the NIXL mailbox
+transport was cached as one process-global singleton and bound only to the first
+Attention endpoint. Later QKV batches for other PA groups were delivered to the
+wrong Attention worker, which had no matching PAP session for those request ids.
+The mailbox loop then exited, Projection streams stopped completing, and GPU util
+fell to 0%.
+
+The fix is to keep NCCL transport behavior unchanged, but cache NIXL mailbox
+transports by Attention endpoint. Each Projection process now creates a separate
+mailbox actor per Attention endpoint and binds each actor to its own peer. The
+same fix is used by the normal PAP attention path, runner microbatch path, and
+Q-first path.
+
+## Valid qps32 Results After Fix
+
+All runs below used Qwen3-8B, `num_prompts=600`, input length `1024`, output
+length `64`, offered qps `32`, and the proxy variables were explicitly cleared.
+
+| Architecture | Run directory | Completed | Failed | Duration | Req/s | Output tok/s | Mean TTFT | Mean TPOT | P99 TPOT | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `6P2D` | `/home/fei/research/PD/test/baseline/disaggregated/results/runs/20260526_153852` | 600 | 0 | 20.90 s | 28.71 | 1837.20 | 451.00 ms | 37.93 ms | 40.58 ms | Fresh current-code baseline. |
+| `6PA2P` serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_153548` | 600 | 0 | 98.71 s | 6.08 | 389.00 | 32812.35 ms | 269.74 ms | 340.89 ms | `PAP_RUNNER_MICROBATCH_COUNT=0`. |
+| `6PA2P` 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_153245` | 600 | 0 | 93.81 s | 6.40 | 409.36 | 30644.56 ms | 262.13 ms | 322.07 ms | `PAP_RUNNER_MICROBATCH_COUNT=3`. |
+
+The 3-way runner pipeline is now a valid result and is modestly better than PAP
+serial on this workload: request throughput improves from `6.08` to `6.40` req/s
+(+5.2%), output throughput improves from `389.00` to `409.36` tok/s (+5.2%), and
+mean TPOT drops from `269.74` to `262.13` ms (-2.8%). Native `6P2D` is still much
+faster than both PAP variants for this parameter set, so this workload validates
+PAP liveness and shows a small 3-way benefit, but it does not yet demonstrate a
+large PAP-over-serial advantage.
+
+Verification commands:
+
+```bash
+.venv/bin/python -m pytest tests/pap/test_pap_contract.py -q
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_attention_executor.py::test_run_offload_exec_mailbox_loop_releases_qkv_message \
+  tests/pap/test_pap_data_plane.py::test_nixl_mailbox_transport_sends_query_then_kv_batch_messages -q
+.venv/bin/python -m py_compile vllm/model_executor/models/qwen3.py
+git diff --check -- \
+  vllm/model_executor/models/qwen3.py \
+  tests/pap/test_pap_contract.py \
+  docs/design/pap-6pa2p-large-workload-20260526.md
+```
+
+`ruff` was not run because the active `.venv` does not provide the `ruff` module.
