@@ -328,3 +328,57 @@ will not by itself remove the Projection `yield_ms` term. The larger system
 question after fused Attention is whether faster Attention reduces the
 `1.37 ms` QKV wait and the Projection `yield_ms`, or whether Projection-side
 ubatch scheduling remains the pacing source.
+
+## Projection Yield Critical Path Follow-up
+
+The previous wait/read trace showed that Projection usually does not block in
+`recv()` after returning from `dbo_yield()`, but that was still indirect
+evidence. A follow-up trace added stable per-batch trace keys plus monotonic
+timestamps on both sides:
+
+- Projection logs each output batch key, QKV send-done time, yield-start time,
+  yield-end/resume time, and recv-done time.
+- Attention logs the same batch key plus QKV recv-done, compute-done, and output
+  send-done time.
+- The parser correlates Projection ubatches with the max Attention output
+  send-done time across the fanout batches.
+
+Diagnostic run:
+
+- `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_180736`
+- Qwen3-8B, `6PA2P`, input `1024`, output `64`, qps `32`,
+  `num_prompts=60`, `PAP_RUNNER_MICROBATCH_COUNT=3`.
+- Result: `60` completed, `0` failed, mean TPOT `245.45 ms`.
+- This run is for critical-path attribution. The added timestamp logging makes
+  absolute TPOT less comparable with non-trace runs.
+
+Median correlated timing:
+
+| Trace point | Median | Meaning |
+| --- | ---: | --- |
+| Projection `total_ms` | 5.764 ms | One Projection-side ubatch offload span. |
+| Projection `send_ms` | 0.417 ms | Projection sends QKV fanout. |
+| Projection `yield_ms` | 4.560 ms | Current ubatch is suspended in DBO. |
+| Projection `recv_ms` | 0.760 ms | Projection resumes and consumes Attention outputs. |
+| Attention path after Projection send | 1.139 ms | Max Attention output send-done minus Projection QKV send-done. |
+| Projection resume after Attention ready | 3.381 ms | Projection resume time minus max Attention output send-done. |
+| Attention ready after Projection resume | 0.000 ms | Cases where Attention was still not ready when Projection resumed. |
+| Projection resume to recv done | 0.760 ms | Same interval as Projection `recv_ms`. |
+
+Classification across the diagnostic run:
+
+- Correlated Projection entries: `15048`.
+- P-critical entries: `14900` (`99.0%`), where Attention output was ready before
+  Projection resumed.
+- A-critical entries: `148` (`1.0%`), where Attention output became ready after
+  Projection resumed.
+- Entries with Attention more than `1 ms` late after Projection resume: `91`
+  (`0.6%`).
+
+Therefore the median `yield_ms` is not caused by the remote Attention path. The
+remote Attention path is usually complete around `1.1 ms` after Projection sends
+QKV, while the Projection ubatch is resumed about `3.4 ms` later. In the current
+3-way implementation, the dominant part of `yield_ms` is Projection-side DBO
+scheduling/resume latency: the Projection worker is executing other ubatches
+before returning to the current ubatch. Remote Attention is only the critical
+path for a small tail of cases.

@@ -34,6 +34,7 @@ from vllm.pap.data_plane import (
     PAPOffloadKVPagedIPCDescriptor,
     build_nixl_mailbox_offload_exec_transport,
     build_p2p_nccl_offload_exec_transport,
+    pap_offload_exec_trace_id,
 )
 
 logging.basicConfig(
@@ -1594,6 +1595,9 @@ def run_offload_exec_once(
         "on",
     )
     trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
+    trace_recv_done_ns = 0
+    trace_compute_done_ns = 0
+    trace_send_done_ns = 0
     trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
     logger.debug(
         "PAP OFFLOAD_EXEC recv_qkv request_id=%s layer=%s step=%s remote=%s",
@@ -1608,6 +1612,8 @@ def run_offload_exec_once(
         if trace_offload_exec
         else 0.0
     )
+    if trace_offload_exec:
+        trace_recv_done_ns = time.perf_counter_ns()
     trace_compute_start = time.perf_counter() if trace_offload_exec else 0.0
     logger.debug(
         "PAP OFFLOAD_EXEC compute request_id=%s layer=%s step=%s qkv_shape=%s",
@@ -1629,6 +1635,8 @@ def run_offload_exec_once(
         if trace_offload_exec
         else 0.0
     )
+    if trace_offload_exec:
+        trace_compute_done_ns = time.perf_counter_ns()
     trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
     logger.debug(
         "PAP OFFLOAD_EXEC send_output request_id=%s layer=%s step=%s "
@@ -1787,12 +1795,14 @@ def run_offload_exec_batch_once(
         remote_address=remote_address,
     )
     if trace_offload_exec:
+        trace_send_done_ns = time.perf_counter_ns()
         trace_send_ms = (time.perf_counter() - trace_send_start) * 1000.0
         trace_total_ms = (time.perf_counter() - trace_total_start) * 1000.0
         logger.info(
             "PAP OFFLOAD_EXEC attention batch trace layer=%s calls=%d "
             "recv_qkv_ms=%.3f compute_ms=%.3f send_output_ms=%.3f "
-            "total_ms=%.3f qkv_shape=%s output_shape=%s",
+            "total_ms=%.3f qkv_shape=%s output_shape=%s batch_key=%s "
+            "recv_done_ns=%d compute_done_ns=%d send_done_ns=%d",
             descriptor.layer_name,
             len(descriptor.items),
             trace_recv_ms,
@@ -1801,6 +1811,10 @@ def run_offload_exec_batch_once(
             trace_total_ms,
             tuple(qkv_batch.shape),
             tuple(output_batch.shape),
+            pap_offload_exec_trace_id(descriptor.output_tensor_id),
+            trace_recv_done_ns,
+            trace_compute_done_ns,
+            trace_send_done_ns,
         )
 
 
@@ -1819,6 +1833,9 @@ def run_offload_exec_mailbox_loop(
     )
     while True:
         trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
+        trace_recv_done_ns = 0
+        trace_compute_done_ns = 0
+        trace_send_done_ns = 0
         trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
         qkv_message = None
         q_first_partial_enabled = os.environ.get(
@@ -1850,6 +1867,8 @@ def run_offload_exec_mailbox_loop(
             if trace_offload_exec
             else 0.0
         )
+        if trace_offload_exec:
+            trace_recv_done_ns = time.perf_counter_ns()
         try:
             if int(qkv_batch.shape[0]) != len(descriptor.items):
                 raise RuntimeError(
@@ -1878,6 +1897,8 @@ def run_offload_exec_mailbox_loop(
             if trace_offload_exec
             else 0.0
         )
+        if trace_offload_exec:
+            trace_compute_done_ns = time.perf_counter_ns()
         trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
         transport.send_output_batch(
             descriptor,
@@ -1885,13 +1906,15 @@ def run_offload_exec_mailbox_loop(
             remote_address="",
         )
         if trace_offload_exec:
+            trace_send_done_ns = time.perf_counter_ns()
             trace_send_ms = (time.perf_counter() - trace_send_start) * 1000.0
             trace_total_ms = (time.perf_counter() - trace_total_start) * 1000.0
             logger.info(
                 "PAP OFFLOAD_EXEC attention mailbox batch trace layer=%s "
                 "calls=%d recv_qkv_ms=%.3f compute_ms=%.3f "
                 "send_output_ms=%.3f total_ms=%.3f qkv_shape=%s "
-                "output_shape=%s",
+                "output_shape=%s batch_key=%s recv_done_ns=%d "
+                "compute_done_ns=%d send_done_ns=%d",
                 descriptor.layer_name,
                 len(descriptor.items),
                 trace_recv_ms,
@@ -1900,6 +1923,10 @@ def run_offload_exec_mailbox_loop(
                 trace_total_ms,
                 tuple(qkv_batch.shape),
                 tuple(output_batch.shape),
+                pap_offload_exec_trace_id(descriptor.output_tensor_id),
+                trace_recv_done_ns,
+                trace_compute_done_ns,
+                trace_send_done_ns,
             )
 
 

@@ -42,6 +42,13 @@ _ATTENTION_TRACE_RE = re.compile(
     r"attention mailbox batch trace .* calls=(\d+) recv_qkv_ms=([0-9.]+) "
     r"compute_ms=([0-9.]+) send_output_ms=([0-9.]+) total_ms=([0-9.]+)"
 )
+_PROJECTION_CORRELATION_RE = re.compile(
+    r"batch_keys=(\S+) send_done_ns=(\d+) yield_start_ns=(\d+) "
+    r"yield_end_ns=(\d+) recv_done_ns=(\d+)"
+)
+_ATTENTION_CORRELATION_RE = re.compile(
+    r"batch_key=(\S+) recv_done_ns=(\d+) compute_done_ns=(\d+) send_done_ns=(\d+)"
+)
 _MAILBOX_SEND_RE = re.compile(
     r"PAP NIXL mailbox send trace actor=(\S+) .* kind=(\S+) nbytes=(\d+) "
     r"queue_ms=([0-9.]+) publish_ms=([0-9.]+) pack_ms=([0-9.]+) "
@@ -130,6 +137,8 @@ def summarize_pap_trace_logs(
     mailbox_send_by_kind: dict[str, dict[str, list[float]]] = {}
     mailbox_read_by_kind: dict[str, dict[str, list[float]]] = {}
     mailbox_wait_by_kind: dict[str, dict[str, list[float]]] = {}
+    projection_correlation_entries: list[tuple[list[str], int, int, int]] = []
+    attention_send_done_ns_by_key: dict[str, int] = {}
 
     for log_path in sorted(path.glob("*.log")):
         for line in log_path.read_text(errors="ignore").splitlines():
@@ -161,9 +170,31 @@ def summarize_pap_trace_logs(
                         max(0.0, total_ms - send_ms - trigger_ms - yield_ms - recv_ms)
                     )
                     projection["total_ms"].append(total_ms)
+                    if correlation := _PROJECTION_CORRELATION_RE.search(line):
+                        (
+                            batch_keys,
+                            send_done_ns,
+                            _yield_start_ns,
+                            yield_end_ns,
+                            recv_done_ns,
+                        ) = correlation.groups()
+                        projection_correlation_entries.append(
+                            (
+                                batch_keys.split("|"),
+                                int(send_done_ns),
+                                int(yield_end_ns),
+                                int(recv_done_ns),
+                            )
+                        )
                 continue
             if match := _ATTENTION_TRACE_RE.search(line):
-                calls, recv_ms, compute_ms, send_ms, total_ms = match.groups()
+                (
+                    calls,
+                    recv_ms,
+                    compute_ms,
+                    send_ms,
+                    total_ms,
+                ) = match.groups()
                 calls = int(calls)
                 recv_ms, compute_ms, send_ms, total_ms = map(
                     float, (recv_ms, compute_ms, send_ms, total_ms)
@@ -174,6 +205,14 @@ def summarize_pap_trace_logs(
                     attention["compute_ms"].append(compute_ms)
                     attention["send_output_ms"].append(send_ms)
                     attention["total_ms"].append(total_ms)
+                    if correlation := _ATTENTION_CORRELATION_RE.search(line):
+                        (
+                            batch_key,
+                            _recv_done_ns,
+                            _compute_done_ns,
+                            send_done_ns,
+                        ) = correlation.groups()
+                        attention_send_done_ns_by_key[batch_key] = int(send_done_ns)
                 continue
             if match := _MAILBOX_SEND_RE.search(line):
                 (
@@ -246,9 +285,47 @@ def summarize_pap_trace_logs(
                     float(wait_ms),
                 )
 
+    projection_attention_correlation: dict[str, list[float]] = {
+        "matched_batches": [],
+        "attention_path_after_projection_send_ms": [],
+        "projection_resume_after_attention_ready_ms": [],
+        "attention_ready_after_projection_resume_ms": [],
+        "projection_resume_to_recv_done_ms": [],
+    }
+    for batch_keys, send_done_ns, yield_end_ns, recv_done_ns in (
+        projection_correlation_entries
+    ):
+        attention_done_times = [
+            attention_send_done_ns_by_key[key]
+            for key in batch_keys
+            if key in attention_send_done_ns_by_key
+        ]
+        if len(attention_done_times) != len(batch_keys):
+            continue
+        max_attention_done_ns = max(attention_done_times)
+        projection_attention_correlation["matched_batches"].append(
+            float(len(attention_done_times))
+        )
+        projection_attention_correlation[
+            "attention_path_after_projection_send_ms"
+        ].append((max_attention_done_ns - send_done_ns) / 1_000_000.0)
+        projection_attention_correlation[
+            "projection_resume_after_attention_ready_ms"
+        ].append(max(0.0, (yield_end_ns - max_attention_done_ns) / 1_000_000.0))
+        projection_attention_correlation[
+            "attention_ready_after_projection_resume_ms"
+        ].append(max(0.0, (max_attention_done_ns - yield_end_ns) / 1_000_000.0))
+        projection_attention_correlation["projection_resume_to_recv_done_ms"].append(
+            (recv_done_ns - yield_end_ns) / 1_000_000.0
+        )
+
     return {
         "projection_trace": {field: _stat(values) for field, values in projection.items()},
         "attention_trace": {field: _stat(values) for field, values in attention.items()},
+        "projection_attention_correlation": {
+            field: _stat(values)
+            for field, values in projection_attention_correlation.items()
+        },
         "mailbox_send": {
             actor: {field: _stat(values) for field, values in fields.items()}
             for actor, fields in mailbox_send.items()

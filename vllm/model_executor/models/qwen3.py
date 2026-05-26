@@ -1106,6 +1106,7 @@ class Qwen3Attention(nn.Module):
         from vllm.pap.data_plane import (
             PAPOffloadExecBatchDescriptor,
             PAPOffloadExecDescriptor,
+            pap_offload_exec_trace_id,
         )
         from vllm.pap.shadow_attention import (
             select_attention_endpoint_for_request,
@@ -1241,6 +1242,10 @@ class Qwen3Attention(nn.Module):
             "on",
         )
         trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
+        trace_send_done_ns = 0
+        trace_yield_start_ns = 0
+        trace_yield_end_ns = 0
+        trace_recv_done_ns = 0
         trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
         offload_exec_groups: dict[
             tuple[str | None, str | None, str],
@@ -1389,6 +1394,8 @@ class Qwen3Attention(nn.Module):
             if trace_offload_exec
             else 0.0
         )
+        if trace_offload_exec:
+            trace_send_done_ns = time.perf_counter_ns()
         local_offload_exec_zmq_endpoint = _pap_offload_exec_local_address()
 
         def trigger_offload_exec_batch_call(
@@ -1459,6 +1466,8 @@ class Qwen3Attention(nn.Module):
         )
 
         trace_yield_start = time.perf_counter() if trace_offload_exec else 0.0
+        if trace_offload_exec:
+            trace_yield_start_ns = time.perf_counter_ns()
         trace_yield_ms = 0.0
         if offload_exec_batches:
             from vllm.v1.worker.ubatching import dbo_enabled, dbo_yield
@@ -1466,6 +1475,7 @@ class Qwen3Attention(nn.Module):
             if dbo_enabled():
                 dbo_yield()
         if trace_offload_exec:
+            trace_yield_end_ns = time.perf_counter_ns()
             trace_yield_ms = (time.perf_counter() - trace_yield_start) * 1000.0
 
         trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
@@ -1524,12 +1534,19 @@ class Qwen3Attention(nn.Module):
                 if output_message is not None:
                     output_message.release()
         if trace_offload_exec and offload_exec_batches:
+            trace_recv_done_ns = time.perf_counter_ns()
             trace_recv_ms = (time.perf_counter() - trace_recv_start) * 1000.0
             trace_total_ms = (time.perf_counter() - trace_total_start) * 1000.0
+            batch_keys = "|".join(
+                pap_offload_exec_trace_id(batch[3].output_tensor_id)
+                for batch in offload_exec_batches
+            )
             logger.info(
                 "PAP OFFLOAD_EXEC projection trace layer=%s batches=%d calls=%d "
                 "send_ms=%.3f trigger_ms=%.3f yield_ms=%.3f "
-                "recv_ms=%.3f total_ms=%.3f",
+                "recv_ms=%.3f total_ms=%.3f batch_keys=%s "
+                "send_done_ns=%d yield_start_ns=%d yield_end_ns=%d "
+                "recv_done_ns=%d",
                 offload_exec_batches[0][3].layer_name,
                 len(offload_exec_batches),
                 sum(len(batch[3].items) for batch in offload_exec_batches),
@@ -1538,6 +1555,11 @@ class Qwen3Attention(nn.Module):
                 trace_yield_ms,
                 trace_recv_ms,
                 trace_total_ms,
+                batch_keys,
+                trace_send_done_ns,
+                trace_yield_start_ns,
+                trace_yield_end_ns,
+                trace_recv_done_ns,
             )
         final_output = get_copy_output_buffer()
         return final_output.view(q.shape[0], self.num_heads * self.head_dim), []

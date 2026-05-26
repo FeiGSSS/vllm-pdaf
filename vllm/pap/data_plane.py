@@ -14,6 +14,7 @@ Control metadata travels over ZMQ/TCP. Tensor payloads use GPU-direct NCCL/P2P.
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 import pickle
 import time
@@ -33,6 +34,12 @@ class PAPDataPlaneRole(str, Enum):
 class PAPDataPlaneChannel(str, Enum):
     OFFLOAD_KV = "offload_kv"
     OFFLOAD_EXEC = "offload_exec"
+
+
+def pap_offload_exec_trace_id(value: str) -> str:
+    """Short stable id for correlating Projection and Attention trace lines."""
+
+    return hashlib.sha1(value.encode("utf-8")).hexdigest()[:16]
 
 
 class PAPTensorTransport(str, Enum):
