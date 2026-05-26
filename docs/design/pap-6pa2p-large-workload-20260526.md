@@ -575,6 +575,8 @@ Benchmark results:
 | 512 | 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_003758` | 5.84 | 374.02 | 38050.99 ms | 1102.47 ms | 1209.63 ms |
 | 1000 | Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_235637` | 4.82 | 308.39 | 39617.02 ms | 2341.94 ms | 2442.61 ms |
 | 1000 | 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_000103` | 5.19 | 332.42 | 38973.36 ms | 2102.74 ms | 2237.16 ms |
+| 1000 rerun | Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_010958` | 4.76 | 304.34 | 38790.36 ms | 2321.70 ms | 2481.92 ms |
+| 1000 rerun | 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_011432` | 5.35 | 342.47 | 39039.62 ms | 1967.84 ms | 2090.64 ms |
 
 Trace medians with outliers included:
 
@@ -592,6 +594,8 @@ Trace medians with outliers included:
 | 512 | 3-way | 158 | 23 | 25.322 ms | 3.438 ms | 18.340 ms | 3.375 ms | 8.757 ms | 4.958 ms | 3.699 ms | 13.213 ms |
 | 1000 | Serial | 587 | 85 | 38.645 ms | 16.074 ms | 0.001 ms | 22.471 ms | 52.562 ms | 35.825 ms | 14.755 ms | 0.000 ms |
 | 1000 | 3-way | 197 | 28 | 39.195 ms | 4.778 ms | 28.351 ms | 5.665 ms | 13.933 ms | 8.779 ms | 4.784 ms | 22.034 ms |
+| 1000 rerun | Serial | 534.5 | 77 | 33.234 ms | 13.080 ms | 0.001 ms | 19.889 ms | 41.807 ms | 28.242 ms | 13.327 ms | 0.000 ms |
+| 1000 rerun | 3-way | 191 | 28 | 37.453 ms | 4.512 ms | 27.222 ms | 5.511 ms | 13.417 ms | 8.118 ms | 4.919 ms | n/a |
 
 Findings:
 
@@ -609,7 +613,10 @@ Findings:
   operating point, not the throughput sweet spot.
 - `MAX_NUM_SEQS=1000` is too large. It preserves the relative 3-way advantage,
   but both serial and 3-way become remote-attention burst dominated. Median TPOT
-  is above `2 s`.
+  is near or above `2 s`. The rerun reproduced the relative direction:
+  3-way improved throughput from `4.76` to `5.35` req/s and reduced median TPOT
+  from `2321.70 ms` to `1967.84 ms`, but it remained slower than the
+  `MAX_NUM_SEQS=512` throughput point.
 - `MAX_NUM_SEQS=256` is a bad middle point in this run: 3-way is slightly worse
   than serial by throughput and TPOT.
 
@@ -638,24 +645,35 @@ Its `config.json` reports:
 - Quantization: fine-grained FP8, `quant_method=fp8`, `fmt=e4m3`,
   `weight_block_size=[128, 128]`.
 
-Current code limitation: PAP remote attention hooks are implemented in
-`vllm/model_executor/models/qwen3.py` for dense `Qwen3Attention`, but
-`vllm/model_executor/models/qwen3_moe.py` has an independent
-`Qwen3MoeAttention` implementation that does not call the PAP offload path. A
-direct 30B PAP run would therefore not be a valid projection-attention overlap
-experiment until `Qwen3MoeAttention` is wired to reuse the dense Qwen3 PAP
-attention path or equivalent logic.
+Implementation update:
 
-Proposed minimal implementation path:
+1. `Qwen3MoeAttention` now reuses the dense `Qwen3Attention` PAP attention path.
+   This is valid because Qwen3-MoE has the same attention-side q/k/v projection,
+   q/k norm, RoPE, attention, and output projection structure; the MoE-specific
+   difference is in the MLP.
+2. FP8 30B uses the newer `vllm/v1/worker/gpu_model_runner.py` path, while the
+   earlier 8B PAP experiments used `vllm/v1/worker/gpu/model_runner.py`.
+   Per-request PAP endpoint forwarding was added to the newer runner as well.
+3. FlashInfer top-k/top-p sampler JIT failed locally with the CUDA/CUB toolchain,
+   so 30B smoke tests use `VLLM_USE_FLASHINFER_SAMPLER=0`.
 
-1. Make `Qwen3MoeAttention` inherit the dense `Qwen3Attention` PAP helper
-   methods.
-2. Add `_pap_imported_prefill_kv` initialization to the MoE attention module.
-3. Delegate the MoE attention `forward()` to the dense `Qwen3Attention.forward`
-   implementation, since Qwen3-MoE uses the same q/k/v projection, q/k norm,
-   rotary embedding, attention, and output projection structure.
-4. Add a PAP contract test that verifies Qwen3-MoE attention reuses the dense
-   PAP path.
-5. Run a small 30B PAP smoke test first, then compare serial vs 3-way at the
-   8B-derived candidate points (`MAX_NUM_SEQS=128` for latency and `512` for
-   throughput) if the model fits memory.
+Validated 30B PAP smoke:
+
+- Run root:
+  `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_013700`.
+- Topology: `1PA1P`.
+- Workload: input `128`, output `4`, qps `1`, `num_prompts=1`.
+- Env: `VLLM_USE_FLASHINFER_SAMPLER=0`, `PAP_OFFLOAD_EXEC_TRACE=1`,
+  `PAP_OFFLOAD_EXEC_TRANSPORT=nixl_mailbox`, HTTP proxy variables unset.
+- Result: `1/1` successful request, median TTFT `1463.27 ms`, median TPOT
+  `46.34 ms`.
+- Trace: `192` projection batches and `192` attention batches, matching
+  `48` layers times `4` generated tokens, so the 30B MoE path is now exercising
+  remote PAP attention rather than silently falling back to local attention.
+- Trace medians: projection total `0.803 ms`, projection send `0.032 ms`,
+  projection recv `0.766 ms`; attention total `1.433 ms`, attention recv QKV
+  `1.301 ms`, attention compute `0.113 ms`.
+
+The next 30B experiment should compare serial vs 3-way at the 8B-derived
+candidate points (`MAX_NUM_SEQS=128` for latency and `512` for throughput) once
+the desired 30B topology is selected.

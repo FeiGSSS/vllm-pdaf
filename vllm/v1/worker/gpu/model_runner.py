@@ -733,7 +733,23 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self, req_id: str, kv_transfer_params: dict[str, Any] | None
     ) -> None:
         if not kv_transfer_params:
+            if os.environ.get("PAP_DEBUG_DECISION", "").lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            ):
+                logger.info("PAP add endpoint skipped req_id=%s: empty kv params",
+                            req_id)
             return
+        if os.environ.get("PAP_DEBUG_DECISION", "").lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            logger.info("PAP add endpoint req_id=%s kv_keys=%s", req_id,
+                        sorted(kv_transfer_params.keys()))
         tcp_endpoint = kv_transfer_params.get("pap_attention_tcp_endpoint")
         if tcp_endpoint:
             self.pap_attention_tcp_endpoint_by_req_id[req_id] = str(tcp_endpoint)
@@ -1062,6 +1078,18 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # Decode first, then prefill.
         # batch_idx -> req_id
         req_ids = sorted(num_tokens_per_req, key=num_tokens_per_req.get)  # type: ignore[arg-type]
+        if os.environ.get("PAP_DEBUG_DECISION", "").lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            logger.info(
+                "PAP prepare_inputs req_ids=%s endpoint_keys=%s num_tokens=%s",
+                tuple(req_ids[:4]),
+                tuple(list(self.pap_attention_tcp_endpoint_by_req_id.keys())[:4]),
+                {key: num_tokens_per_req[key] for key in req_ids[:4]},
+            )
         numtoks_iter = map(num_tokens_per_req.get, req_ids)
         num_scheduled_tokens = np.fromiter(numtoks_iter, dtype=np.int32, count=num_reqs)
 
@@ -1481,6 +1509,28 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             )
 
             pap_additional_kwargs = self._pap_forward_context_kwargs(input_batch)
+            if os.environ.get("PAP_DEBUG_DECISION", "").lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            ):
+                logger.info(
+                    "PAP forward context enabled=%s req_ids=%s tcp_keys=%s "
+                    "installed=%s",
+                    pap_additional_kwargs["pap_enabled"],
+                    pap_additional_kwargs["pap_request_ids"][:4],
+                    tuple(
+                        pap_additional_kwargs[
+                            "pap_attention_tcp_endpoint_by_request"
+                        ].keys()
+                    ),
+                    tuple(
+                        pap_additional_kwargs[
+                            "pap_attention_kv_installed_by_request"
+                        ].keys()
+                    ),
+                )
             if ubatch_slices is not None:
                 pap_additional_kwargs["ubatch_additional_kwargs"] = [
                     self._pap_forward_context_kwargs_for_ubatch(

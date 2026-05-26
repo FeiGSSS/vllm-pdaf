@@ -358,16 +358,23 @@ class Qwen3Attention(nn.Module):
         return output
 
     def _should_use_pap_attention(self) -> bool:
-        if not is_forward_context_available():
+        def reject(reason: str) -> bool:
+            if _pap_env_enabled("PAP_DEBUG_DECISION"):
+                logger.info("PAP attention disabled for %s: %s",
+                            getattr(self.attn, "layer_name", "<unknown>"),
+                            reason)
             return False
+
+        if not is_forward_context_available():
+            return reject("missing forward context")
         forward_context = get_forward_context()
         additional_kwargs = forward_context.additional_kwargs or {}
         if not additional_kwargs.get("pap_enabled"):
-            return False
+            return reject("pap_enabled is false")
 
         request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
         if not self._select_pap_request_id(request_ids):
-            return False
+            return reject(f"no selected request id request_ids={request_ids[:4]}")
 
         metadata = forward_context.attn_metadata
         if isinstance(metadata, dict):
@@ -377,9 +384,20 @@ class Qwen3Attention(nn.Module):
         else:
             attn_metadata = None
         if attn_metadata is None:
-            return False
+            metadata_keys: list[str] = []
+            if isinstance(metadata, dict):
+                metadata_keys = list(metadata.keys())[:4]
+            elif (
+                isinstance(metadata, list)
+                and metadata
+                and isinstance(metadata[0], dict)
+            ):
+                metadata_keys = list(metadata[0].keys())[:4]
+            return reject(f"missing attn metadata metadata_keys={metadata_keys}")
         if int(getattr(attn_metadata, "max_query_len", 0)) != 1:
-            return False
+            return reject(
+                f"max_query_len={getattr(attn_metadata, 'max_query_len', None)}"
+            )
 
         num_scheduled_tokens = tuple(
             int(num_tokens)
@@ -389,14 +407,29 @@ class Qwen3Attention(nn.Module):
             additional_kwargs.get("pap_num_reqs") or len(num_scheduled_tokens)
         )
         if num_reqs <= 0:
-            return False
+            return reject(f"num_reqs={num_reqs}")
         if len(request_ids) < num_reqs:
-            return False
+            return reject(
+                f"request_ids too short len={len(request_ids)} num_reqs={num_reqs}"
+            )
         if len(num_scheduled_tokens) < num_reqs:
-            return False
+            return reject(
+                "num_scheduled_tokens too short "
+                f"len={len(num_scheduled_tokens)} num_reqs={num_reqs}"
+            )
         if any(num_tokens != 1 for num_tokens in num_scheduled_tokens[:num_reqs]):
-            return False
-        return self._pap_attention_kv_ready_for_requests(request_ids[:num_reqs])
+            return reject(
+                f"non-decode num_scheduled_tokens={num_scheduled_tokens[:num_reqs]}"
+            )
+        if not self._pap_attention_kv_ready_for_requests(request_ids[:num_reqs]):
+            installed = set(
+                additional_kwargs.get("pap_attention_kv_installed_by_request") or ()
+            )
+            return reject(
+                "attention KV not ready "
+                f"request_ids={request_ids[:num_reqs]} installed={tuple(installed)[:4]}"
+            )
+        return True
 
     def _pap_attention_kv_ready_for_requests(self, request_ids: Iterable[Any]) -> bool:
         """Return True when PA-side attention KV is ready for every request."""

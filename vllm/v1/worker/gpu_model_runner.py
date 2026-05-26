@@ -4,6 +4,7 @@
 import functools
 import gc
 import itertools
+import os
 import threading
 import time
 from collections import defaultdict
@@ -824,6 +825,13 @@ class GPUModelRunner(
         self._draft_token_ids: list[list[int]] | torch.Tensor | None = None
         self._draft_probs: torch.Tensor | None = None
         self._draft_prob_req_ids: list[str] | None = None
+        self.pap_attention_tcp_endpoint_by_req_id: dict[str, str] = {}
+        self.pap_attention_endpoint_by_req_id: dict[str, str] = {}
+        self.pap_offload_exec_zmq_endpoint_by_req_id: dict[str, str] = {}
+        self.pap_prefill_prefix_len_by_req_id: dict[str, int] = {}
+        self.pap_prefill_kv_handle_by_req_id: dict[str, str] = {}
+        self.pap_import_prefill_kv_to_attention_by_req_id: set[str] = set()
+        self.pap_attention_kv_installed_by_req_id: set[str] = set()
         # N-gram GPU path: async D2H buffer/event for per-request valid draft counts.
         self._num_valid_draft_tokens: torch.Tensor | None = None
         self._num_valid_draft_tokens_cpu: torch.Tensor | None = None
@@ -1105,6 +1113,147 @@ class GPUModelRunner(
             self.async_output_copy_stream = stream
         return stream
 
+    def _remove_pap_request(self, req_id: str) -> None:
+        self.pap_attention_tcp_endpoint_by_req_id.pop(req_id, None)
+        self.pap_attention_endpoint_by_req_id.pop(req_id, None)
+        self.pap_offload_exec_zmq_endpoint_by_req_id.pop(req_id, None)
+        self.pap_prefill_prefix_len_by_req_id.pop(req_id, None)
+        self.pap_prefill_kv_handle_by_req_id.pop(req_id, None)
+        self.pap_import_prefill_kv_to_attention_by_req_id.discard(req_id)
+        self.pap_attention_kv_installed_by_req_id.discard(req_id)
+
+    def _add_pap_attention_endpoint(
+        self, req_id: str, kv_transfer_params: dict[str, Any] | None
+    ) -> None:
+        if not kv_transfer_params:
+            if os.environ.get("PAP_DEBUG_DECISION", "").lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            ):
+                logger.info("PAP add endpoint skipped req_id=%s: empty kv params",
+                            req_id)
+            return
+        if os.environ.get("PAP_DEBUG_DECISION", "").lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            logger.info("PAP add endpoint req_id=%s kv_keys=%s", req_id,
+                        sorted(kv_transfer_params.keys()))
+        tcp_endpoint = kv_transfer_params.get("pap_attention_tcp_endpoint")
+        if tcp_endpoint:
+            self.pap_attention_tcp_endpoint_by_req_id[req_id] = str(tcp_endpoint)
+        attention_endpoint = kv_transfer_params.get("pap_attention_endpoint")
+        if attention_endpoint:
+            self.pap_attention_endpoint_by_req_id[req_id] = str(attention_endpoint)
+        zmq_endpoint = kv_transfer_params.get("pap_offload_exec_zmq_endpoint")
+        if zmq_endpoint:
+            self.pap_offload_exec_zmq_endpoint_by_req_id[req_id] = str(zmq_endpoint)
+        remote_num_tokens = kv_transfer_params.get("pap_remote_prefix_len")
+        if remote_num_tokens is None:
+            remote_num_tokens = kv_transfer_params.get("remote_num_tokens")
+        if remote_num_tokens is not None:
+            self.pap_prefill_prefix_len_by_req_id[req_id] = int(remote_num_tokens)
+        prefill_kv_handle = kv_transfer_params.get("pap_prefill_kv_handle")
+        if prefill_kv_handle:
+            self.pap_prefill_kv_handle_by_req_id[req_id] = str(prefill_kv_handle)
+        if kv_transfer_params.get("pap_import_prefill_kv_to_attention"):
+            self.pap_import_prefill_kv_to_attention_by_req_id.add(req_id)
+        if kv_transfer_params.get("pap_attention_kv_installed"):
+            self.pap_attention_kv_installed_by_req_id.add(req_id)
+
+    @staticmethod
+    def _pap_filter_mapping_for_request_ids(
+        mapping: dict[str, Any], request_ids: Iterable[str]
+    ) -> dict[str, Any]:
+        request_id_set = set(request_ids)
+        return {key: value for key, value in mapping.items() if key in request_id_set}
+
+    def _pap_enabled_for_request_ids(self, request_ids: Sequence[str]) -> bool:
+        ktc = self.vllm_config.kv_transfer_config
+        extra = ktc.kv_connector_extra_config if ktc is not None else {}
+        pap_enabled = extra.get("pap_enabled", False) if extra else False
+        if pap_enabled:
+            return True
+        for req_id in request_ids:
+            if req_id in self.pap_attention_tcp_endpoint_by_req_id:
+                logger.info(
+                    "PAP enabled via per-request TCP endpoint req_id=%s", req_id
+                )
+                return True
+        return False
+
+    def _pap_forward_context_kwargs(
+        self,
+        request_ids: Sequence[str],
+        num_scheduled_tokens: Sequence[int],
+        num_actual_tokens: int,
+        positions: torch.Tensor,
+    ) -> dict[str, Any]:
+        request_ids_tuple = tuple(str(req_id) for req_id in request_ids)
+        return {
+            "pap_request_ids": request_ids_tuple,
+            "pap_num_scheduled_tokens": tuple(
+                int(num_tokens) for num_tokens in num_scheduled_tokens
+            ),
+            "pap_num_reqs": len(request_ids_tuple),
+            "pap_num_actual_tokens": num_actual_tokens,
+            "pap_positions": positions,
+            "pap_enabled": self._pap_enabled_for_request_ids(request_ids_tuple),
+            "pap_attention_tcp_endpoint": (
+                self.vllm_config.kv_transfer_config.get_from_extra_config(
+                    "pap_attention_tcp_endpoint", None
+                )
+                if self.vllm_config.kv_transfer_config is not None
+                else None
+            ),
+            "pap_block_size": self.vllm_config.cache_config.block_size,
+            "pap_attention_tcp_endpoint_by_request": (
+                self._pap_filter_mapping_for_request_ids(
+                    self.pap_attention_tcp_endpoint_by_req_id, request_ids_tuple
+                )
+            ),
+            "pap_attention_endpoint_by_request": (
+                self._pap_filter_mapping_for_request_ids(
+                    self.pap_attention_endpoint_by_req_id, request_ids_tuple
+                )
+            ),
+            "pap_offload_exec_zmq_endpoint_by_request": (
+                self._pap_filter_mapping_for_request_ids(
+                    self.pap_offload_exec_zmq_endpoint_by_req_id,
+                    request_ids_tuple,
+                )
+            ),
+            "pap_prefill_prefix_len_by_request": (
+                self._pap_filter_mapping_for_request_ids(
+                    self.pap_prefill_prefix_len_by_req_id, request_ids_tuple
+                )
+            ),
+            "pap_prefill_kv_handle_by_request": (
+                self._pap_filter_mapping_for_request_ids(
+                    self.pap_prefill_kv_handle_by_req_id, request_ids_tuple
+                )
+            ),
+            "pap_attention_kv_installed_by_request": (
+                tuple(
+                    req_id
+                    for req_id in request_ids_tuple
+                    if req_id in self.pap_attention_kv_installed_by_req_id
+                )
+            ),
+            "pap_import_prefill_kv_to_attention_by_request": (
+                tuple(
+                    req_id
+                    for req_id in request_ids_tuple
+                    if req_id
+                    in self.pap_import_prefill_kv_to_attention_by_req_id
+                )
+            ),
+        }
+
     def _update_states(self, scheduler_output: "SchedulerOutput") -> Callable | None:
         """Update the cached states and the persistent batch with the scheduler
         output.
@@ -1117,6 +1266,7 @@ class GPUModelRunner(
         """
         # Remove finished requests from the cached states.
         for req_id in scheduler_output.finished_req_ids:
+            self._remove_pap_request(req_id)
             self.requests.pop(req_id, None)
             self.num_prompt_logprobs.pop(req_id, None)
         self.late_interaction_runner.on_requests_finished(
@@ -1177,9 +1327,13 @@ class GPUModelRunner(
             req_id = new_req_data.req_id
             if req_id in self.requests:
                 # For streaming case only.
+                self._add_pap_attention_endpoint(
+                    req_id, new_req_data.kv_transfer_params
+                )
                 req_state = self._update_streaming_request(req_id, new_req_data)
                 reqs_to_add.append(req_state)
                 continue
+            self._add_pap_attention_endpoint(req_id, new_req_data.kv_transfer_params)
 
             sampling_params = new_req_data.sampling_params
             pooling_params = new_req_data.pooling_params
@@ -4158,6 +4312,34 @@ class GPUModelRunner(
             ) = self._preprocess(
                 scheduler_output, num_tokens_padded, intermediate_tensors
             )
+            pap_additional_kwargs = self._pap_forward_context_kwargs(
+                req_ids,
+                num_scheduled_tokens_np,
+                num_tokens_unpadded,
+                positions,
+            )
+            if os.environ.get("PAP_DEBUG_DECISION", "").lower() in (
+                "1",
+                "true",
+                "yes",
+                "on",
+            ):
+                logger.info(
+                    "PAP forward context enabled=%s req_ids=%s tcp_keys=%s "
+                    "installed=%s",
+                    pap_additional_kwargs["pap_enabled"],
+                    pap_additional_kwargs["pap_request_ids"][:4],
+                    tuple(
+                        pap_additional_kwargs[
+                            "pap_attention_tcp_endpoint_by_request"
+                        ].keys()
+                    ),
+                    tuple(
+                        pap_additional_kwargs[
+                            "pap_attention_kv_installed_by_request"
+                        ]
+                    ),
+                )
 
         # Set cudagraph mode to none if calc_kv_scales is true.
         # KV scales calculation involves dynamic operations that are incompatible
@@ -4190,6 +4372,7 @@ class GPUModelRunner(
                 ubatch_slices=ubatch_slices_padded,
                 slot_mapping=slot_mappings,
                 skip_compiled=has_encoder_input,
+                additional_kwargs=pap_additional_kwargs,
             ),
             record_function_or_nullcontext("gpu_model_runner: forward"),
             self.maybe_get_kv_connector_output(

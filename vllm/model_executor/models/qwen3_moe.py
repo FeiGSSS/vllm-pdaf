@@ -42,7 +42,6 @@ from vllm.distributed import (
 )
 from vllm.logger import init_logger
 from vllm.model_executor.layers.activation import SiluAndMul
-from vllm.model_executor.layers.attention import Attention
 from vllm.model_executor.layers.fused_moe import (
     FusedMoE,
     fused_moe_make_expert_params_mapping,
@@ -50,13 +49,11 @@ from vllm.model_executor.layers.fused_moe import (
 from vllm.model_executor.layers.layernorm import RMSNorm
 from vllm.model_executor.layers.linear import (
     MergedColumnParallelLinear,
-    QKVParallelLinear,
     ReplicatedLinear,
     RowParallelLinear,
 )
 from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization import QuantizationConfig
-from vllm.model_executor.layers.rotary_embedding import get_rope
 from vllm.model_executor.layers.vocab_parallel_embedding import (
     ParallelLMHead,
     VocabParallelEmbedding,
@@ -76,6 +73,7 @@ from .interfaces import (
     SupportsLoRA,
     SupportsPP,
 )
+from .qwen3 import Qwen3Attention
 from .utils import (
     AutoWeightsLoader,
     PPMissingLayer,
@@ -258,7 +256,7 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         return final_hidden_states.squeeze(0) if is_input_1d else final_hidden_states
 
 
-class Qwen3MoeAttention(nn.Module):
+class Qwen3MoeAttention(Qwen3Attention):
     def __init__(
         self,
         hidden_size: int,
@@ -274,91 +272,20 @@ class Qwen3MoeAttention(nn.Module):
         prefix: str = "",
         dual_chunk_attention_config: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__()
-        self.hidden_size = hidden_size
-        tp_size = get_tensor_model_parallel_world_size()
-        self.total_num_heads = num_heads
-        assert self.total_num_heads % tp_size == 0
-        self.num_heads = self.total_num_heads // tp_size
-        self.total_num_kv_heads = num_kv_heads
-        if self.total_num_kv_heads >= tp_size:
-            # Number of KV heads is greater than TP size, so we partition
-            # the KV heads across multiple tensor parallel GPUs.
-            assert self.total_num_kv_heads % tp_size == 0
-        else:
-            # Number of KV heads is less than TP size, so we replicate
-            # the KV heads across multiple tensor parallel GPUs.
-            assert tp_size % self.total_num_kv_heads == 0
-        self.num_kv_heads = max(1, self.total_num_kv_heads // tp_size)
-        self.head_dim = head_dim or (hidden_size // self.total_num_heads)
-        self.q_size = self.num_heads * self.head_dim
-        self.kv_size = self.num_kv_heads * self.head_dim
-        self.scaling = self.head_dim**-0.5
-        self.max_position_embeddings = max_position_embeddings
-        self.dual_chunk_attention_config = dual_chunk_attention_config
-
-        self.qkv_proj = QKVParallelLinear(
-            hidden_size,
-            self.head_dim,
-            self.total_num_heads,
-            self.total_num_kv_heads,
-            bias=qkv_bias,
-            quant_config=quant_config,
-            prefix=f"{prefix}.qkv_proj",
-        )
-
-        self.o_proj = RowParallelLinear(
-            self.total_num_heads * self.head_dim,
-            hidden_size,
-            bias=False,
-            quant_config=quant_config,
-            prefix=f"{prefix}.o_proj",
-        )
-
-        self.rotary_emb = get_rope(
-            self.head_dim,
-            max_position=max_position_embeddings,
+        super().__init__(
+            hidden_size=hidden_size,
+            num_heads=num_heads,
+            num_kv_heads=num_kv_heads,
             rope_parameters=rope_parameters,
-            dual_chunk_attention_config=dual_chunk_attention_config,
-        )
-        self.attn = Attention(
-            self.num_heads,
-            self.head_dim,
-            self.scaling,
-            num_kv_heads=self.num_kv_heads,
+            max_position=max_position_embeddings,
+            head_dim=head_dim,
+            rms_norm_eps=rms_norm_eps,
+            qkv_bias=qkv_bias,
             cache_config=cache_config,
             quant_config=quant_config,
-            prefix=f"{prefix}.attn",
-            **{
-                "layer_idx": extract_layer_index(prefix),
-                "dual_chunk_attention_config": dual_chunk_attention_config,
-            }
-            if dual_chunk_attention_config
-            else {},
+            prefix=prefix,
+            dual_chunk_attention_config=dual_chunk_attention_config,
         )
-
-        self.q_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
-        self.k_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
-
-    def forward(
-        self,
-        positions: torch.Tensor,
-        hidden_states: torch.Tensor,
-    ) -> torch.Tensor:
-        qkv, _ = self.qkv_proj(hidden_states)
-        q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
-        # Add qk-norm
-        q_by_head = q.view(*q.shape[:-1], q.shape[-1] // self.head_dim, self.head_dim)
-        q_by_head = self.q_norm(q_by_head)
-        q = q_by_head.view(q.shape)
-
-        k_by_head = k.view(*k.shape[:-1], k.shape[-1] // self.head_dim, self.head_dim)
-        k_by_head = self.k_norm(k_by_head)
-        k = k_by_head.view(k.shape)
-        q, k = self.rotary_emb(positions, q, k)
-        attn_output = self.attn(q, k, v)
-        output, _ = self.o_proj(attn_output)
-        return output
 
 
 class Qwen3MoeDecoderLayer(nn.Module):

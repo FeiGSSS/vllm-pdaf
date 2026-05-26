@@ -15,12 +15,36 @@ def test_qwen3_pap_enabled_checks_pap_enabled_flag() -> None:
     assert "attn_metadata" in method
 
 
+def test_qwen3_moe_attention_reuses_dense_pap_attention_path() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3_moe.py").read_text()
+
+    class_start = text.index("class Qwen3MoeAttention")
+    class_end = text.index("\n\nclass Qwen3MoeDecoderLayer", class_start)
+    cls = text[class_start:class_end]
+
+    assert "from .qwen3 import Qwen3Attention" in text
+    assert "class Qwen3MoeAttention(Qwen3Attention):" in cls
+    assert "super().__init__(" in cls
+    assert "max_position=max_position_embeddings" in cls
+    assert "def forward(" not in cls
+
+
 def test_model_runner_passes_pap_enabled_to_forward_context() -> None:
     text = (ROOT / "vllm" / "v1" / "worker" / "gpu" / "model_runner.py").read_text()
 
     assert '"pap_enabled"' in text
     assert "_pap_enabled_for_batch" in text
     assert "PAP enabled via per-request TCP endpoint" in text
+
+
+def test_gpu_model_runner_passes_pap_request_context() -> None:
+    text = (ROOT / "vllm" / "v1" / "worker" / "gpu_model_runner.py").read_text()
+
+    assert "_add_pap_attention_endpoint" in text
+    assert "new_req_data.kv_transfer_params" in text
+    assert "_pap_forward_context_kwargs" in text
+    assert "additional_kwargs=pap_additional_kwargs" in text
+    assert '"pap_attention_tcp_endpoint_by_request"' in text
 
 
 def test_v2_model_runner_supports_pap_runner_microbatch_contexts() -> None:
