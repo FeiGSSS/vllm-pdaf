@@ -180,3 +180,68 @@ git diff --check -- \
 ```
 
 `ruff` was not run because the active `.venv` does not provide the `ruff` module.
+
+## 6PA2P Trace Critical Path Follow-up
+
+After the valid qps32 runs, a follow-up checked the apparent `0%` GPU utilization
+state. At the time of that check there were no active `vllm`, `run_benchmark`,
+`launch_service`, or benchmark processes, and GPU memory was already released.
+The latest 600-prompt 3-way run had completed normally at `15:34:11`, so the
+`0%` utilization snapshot represented post-run idle state, not an in-flight
+benchmark.
+
+A running trace benchmark was then sampled with `nvidia-smi`. During the active
+decode phase, GPUs 0-5, which host the PA Prefill/Attention groups, were at
+`91-95%` utilization, while the Projection GPUs 6-7 were at `33-34%`.
+
+The trace run used the same Qwen3-8B, input length `1024`, output length `64`,
+qps `32`, 6PA2P topology, and 3-way runner microbatch configuration as the
+600-prompt run, but reduced `num_prompts` to `120` to avoid making trace logging
+itself dominate the experiment. Proxy variables were explicitly cleared.
+
+Trace run:
+
+- Run directory:
+  `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_155419`
+- Result: `120` completed, `0` failed.
+- Mean TPOT: `261.06 ms`; median TPOT: `262.46 ms`; p99 TPOT: `272.00 ms`.
+- Reference 600-prompt 3-way run mean TPOT: `262.13 ms`.
+- Parser:
+  `.venv/bin/python tools/pap_trace_summary.py /home/fei/research/PD/test/baseline/pap/results/runs/20260526_155419/service_logs`
+
+Median trace summary, excluding the parser default `>10 ms` warmup/outlier rows:
+
+| Trace point | Median | P99 | Interpretation |
+| --- | ---: | ---: | --- |
+| Projection offload `total_ms` | 5.584 ms | 7.533 ms | Main per-layer Projection-side offload boundary. |
+| Projection `send_ms` | 0.502 ms | 0.932 ms | Model-thread QKV mailbox publish/enqueue path. |
+| Projection `recv_ms` | 0.554 ms | 1.366 ms | Model-thread wait/read for Attention output after returning from the DBO yield point. |
+| Projection `trigger_ms` | 0.001 ms | 0.002 ms | Effectively absent on the direct mailbox path. |
+| Attention mailbox `total_ms` | 2.256 ms | 4.933 ms | Attention worker receives QKV, computes attention, and publishes output. |
+| Attention `recv_qkv_ms` | 1.460 ms | 3.430 ms | Wait/read for Projection QKV and scheduling skew. |
+| Attention `compute_ms` | 0.807 ms | 1.678 ms | Actual remote attention compute for the mailbox batch. |
+| Attention `send_output_ms` | 0.008 ms | 0.017 ms | Attention model-thread output enqueue is negligible. |
+| Attention NIXL read `total_ms` | 0.196 ms | 0.358 ms | Raw QKV mailbox transfer is much smaller than the layer boundary. |
+| Attention sender `total_ms` | 0.555 ms | 1.074 ms | Sender-thread publish plus ACK wait; not the whole TPOT gap. |
+
+The median Projection offload block alone accounts for about
+`5.584 ms * 36 = 201 ms` per token. This aligns with the measured
+`261 ms` TPOT: most of the decode time is spent walking 36 sequential layer
+boundaries where Projection publishes QKV, yields, waits for Attention output,
+and resumes the layer. The remaining roughly `60 ms` comes from non-offloaded
+Projection-side work and scheduler/runtime overhead.
+
+The important detail is that Projection `total_ms` is much larger than
+`send_ms + recv_ms`. In the current code, the trace timer starts before grouping
+and publishing QKV, then Projection can call `dbo_yield()` after sending and
+before `recv_output_batch_message()`. That gap is useful for overlap, but it is
+still part of the token layer-by-layer critical path. The trace therefore says
+the bottleneck is not bare NIXL copy latency. The critical path is the repeated
+Projection/Attention handoff plus per-slice compute and scheduling skew across
+all 36 transformer layers.
+
+This explains why the 3-way runner pipeline only modestly improves over serial
+PAP on this workload. It overlaps some work across runner microbatches, but it
+does not remove the per-layer synchronous dependency: layer `N+1` on Projection
+cannot proceed until layer `N` remote Attention output has returned for that
+microbatch.
