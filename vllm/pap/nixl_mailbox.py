@@ -705,13 +705,32 @@ class PAPNixlMailboxEndpoint:
         deadline = (
             None if timeout is None else time.monotonic() + float(timeout)
         )
+        trace_enabled = self._trace_enabled
+        recv_start = time.perf_counter() if trace_enabled else 0.0
+
+        def trace_recv_wait(message: PAPMailboxMessage) -> None:
+            if not trace_enabled:
+                return
+            logger.info(
+                "PAP NIXL mailbox recv wait trace actor=%s msg_id=%s "
+                "kind=%s requested_msg_id=%s wait_ms=%.3f",
+                self.actor_id,
+                message.msg_id,
+                message.kind,
+                "" if msg_id is None else str(msg_id),
+                (time.perf_counter() - recv_start) * 1000.0,
+            )
+
         while True:
             with self._cv:
                 if msg_id is None and self._incoming:
                     _, message = self._incoming.popitem(last=False)
+                    trace_recv_wait(message)
                     return message
                 if msg_id is not None and msg_id in self._incoming:
-                    return self._incoming.pop(msg_id)
+                    message = self._incoming.pop(msg_id)
+                    trace_recv_wait(message)
+                    return message
                 remaining = None if deadline is None else deadline - time.monotonic()
                 if remaining is not None and remaining <= 0:
                     raise TimeoutError(

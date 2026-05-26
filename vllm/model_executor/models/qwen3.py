@@ -1458,11 +1458,15 @@ class Qwen3Attention(nn.Module):
             else 0.0
         )
 
+        trace_yield_start = time.perf_counter() if trace_offload_exec else 0.0
+        trace_yield_ms = 0.0
         if offload_exec_batches:
             from vllm.v1.worker.ubatching import dbo_enabled, dbo_yield
 
             if dbo_enabled():
                 dbo_yield()
+        if trace_offload_exec:
+            trace_yield_ms = (time.perf_counter() - trace_yield_start) * 1000.0
 
         trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
         for (
@@ -1523,12 +1527,15 @@ class Qwen3Attention(nn.Module):
             trace_recv_ms = (time.perf_counter() - trace_recv_start) * 1000.0
             trace_total_ms = (time.perf_counter() - trace_total_start) * 1000.0
             logger.info(
-                "PAP OFFLOAD_EXEC projection trace layer=%s calls=%d "
-                "send_ms=%.3f trigger_ms=%.3f recv_ms=%.3f total_ms=%.3f",
+                "PAP OFFLOAD_EXEC projection trace layer=%s batches=%d calls=%d "
+                "send_ms=%.3f trigger_ms=%.3f yield_ms=%.3f "
+                "recv_ms=%.3f total_ms=%.3f",
                 offload_exec_batches[0][3].layer_name,
+                len(offload_exec_batches),
                 sum(len(batch[3].items) for batch in offload_exec_batches),
                 trace_send_ms,
                 trace_trigger_ms,
+                trace_yield_ms,
                 trace_recv_ms,
                 trace_total_ms,
             )

@@ -245,3 +245,86 @@ PAP on this workload. It overlaps some work across runner microbatches, but it
 does not remove the per-layer synchronous dependency: layer `N+1` on Projection
 cannot proceed until layer `N` remote Attention output has returned for that
 microbatch.
+
+## 3-Way Wait/Read Trace Follow-up
+
+A follow-up trace added two missing fields:
+
+- Projection offload trace now records `yield_ms`, the time spent inside
+  `dbo_yield()` after Projection publishes QKV and before it starts receiving
+  Attention outputs.
+- NIXL mailbox trace now records `recv wait trace`, the time from an endpoint
+  calling `recv()` until the requested message is available in the local mailbox
+  incoming queue. This includes any time waiting for the notification and, when
+  the receiver thread has not already materialized the message, the NIXL read.
+
+Run:
+
+- `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_172715`
+- Qwen3-8B, `6PA2P`, input `1024`, output `64`, qps `32`,
+  `num_prompts=120`, `PAP_RUNNER_MICROBATCH_COUNT=3`.
+- Result: `120` completed, `0` failed, mean TPOT `271.29 ms`.
+- The extra per-message wait logging adds visible overhead compared with the
+  prior `261.06 ms` trace run, so use this run for path decomposition rather
+  than absolute TPOT.
+
+Median path decomposition with the parser's default `>10 ms` outlier cutoff:
+
+| Trace point | Median | Meaning |
+| --- | ---: | --- |
+| Projection `total_ms` | 6.091 ms | One layer's Projection-side offload span. |
+| Projection `send_ms` | 0.508 ms | Group by Attention endpoint and enqueue QKV batches. |
+| Projection `yield_ms` | 4.829 ms | Cooperative 3-way ubatch switch after sending QKV. |
+| Projection `recv_ms` | 0.724 ms | Receive all Attention output batches for this ubatch/layer. |
+| Projection residual `gap_ms` | 0.005 ms | Previously hidden time is now explained by `yield_ms`. |
+| Projection `batches` | 3 | Typical P0/P1 ubatch fans out to three Attention endpoints. |
+| Projection `calls` | 15 | Typical ubatch has about 15 requests total. |
+| Attention `calls` | 5 | Each Attention endpoint sees about one third of that ubatch. |
+| Attention `recv_qkv_ms` | 1.600 ms | Wait/read next QKV batch. |
+| Attention QKV mailbox wait | 1.565 ms | `recv()` wait until QKV message is locally available. |
+| Attention QKV NIXL read | 0.192 ms | Actual READ/materialize path for QKV. |
+| Attention QKV pure wait estimate | 1.373 ms | `recv wait - read`: Attention is mostly idle waiting for Projection. |
+| Attention `compute_ms` | 0.817 ms | Current per-item loop over the `calls` requests. |
+| Attention output send enqueue | 0.009 ms | Model-thread output enqueue is negligible. |
+| Projection output mailbox wait | 0.002 ms | Projection usually finds output already materialized after yield. |
+| Projection output NIXL read | 0.238 ms | Output READ/materialize path, mostly done by the receiver thread. |
+
+This resolves the earlier ambiguity: the old `Projection gap_ms ~= 4.5 ms` was
+almost entirely the 3-way `dbo_yield()` interval. During that interval the
+current ubatch is sleeping while the Projection worker runs other ubatches and
+the Attention workers process previously sent QKV batches.
+
+The “who waits for whom” result is asymmetric:
+
+- Attention waits for Projection. The median Attention QKV `recv()` wait is
+  `1.565 ms`, while the actual QKV READ is only `0.192 ms`; the remaining
+  roughly `1.37 ms` is waiting for the next QKV message to arrive.
+- Projection usually does not wait for Attention at `recv()` time. The median
+  Projection output `recv()` wait is `0.002 ms`; the output is usually already
+  in the incoming queue because the receiver thread read it during
+  `dbo_yield()`.
+- Projection still pays the output materialization/read cost indirectly:
+  Projection output READ median is `0.238 ms`, but this is not showing up as
+  `recv()` blocking because it overlaps with the yield interval.
+
+Attention compute scaling by `calls`:
+
+| Attention calls | Median compute | Compute per call |
+| ---: | ---: | ---: |
+| 1 | 0.179 ms | 0.179 ms |
+| 3 | 0.458 ms | 0.153 ms |
+| 5 | 0.747 ms | 0.149 ms |
+| 7 | 1.021 ms | 0.146 ms |
+
+The current mailbox message is batched, but Attention compute still loops over
+items one request at a time. A fused batch attention kernel would mainly target
+this `0.7-1.0 ms` per Attention message compute component. For the median
+`calls=5` case, reducing compute from about `0.75-0.82 ms` to `0.3-0.4 ms` would
+save roughly `0.4-0.5 ms` on the Attention stage. Across 36 layers, that is a
+plausible `15-20 ms/token` TPOT opportunity before secondary queueing effects.
+
+The fused kernel is therefore a reasonable next implementation target, but it
+will not by itself remove the Projection `yield_ms` term. The larger system
+question after fused Attention is whether faster Attention reduces the
+`1.37 ms` QKV wait and the Projection `yield_ms`, or whether Projection-side
+ubatch scheduling remains the pacing source.
