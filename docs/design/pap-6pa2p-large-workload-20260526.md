@@ -486,3 +486,59 @@ the batch for this workload, while serial leaves the path A-critical. 2-way
 mostly removes the A-critical wait without paying as much P-side resume delay,
 but the current implementation still needs lower resume overhead or larger
 per-ubatch Projection batches to show a robust win.
+
+## 7PA1P Single-Projection Follow-up
+
+To test whether a single Projection node can build larger batches and make
+3-way useful, the following workload was run:
+
+- Topology: `7PA1P` (`7` PA nodes, `1` Projection node).
+- Model: Qwen3-8B.
+- Workload: input `1024`, output `64`, qps `256`, `num_prompts=1000`.
+- Compared PAP serial (`PAP_RUNNER_MICROBATCH_COUNT=1`) with PAP 3-way
+  (`PAP_RUNNER_MICROBATCH_COUNT=3`).
+- Both runs used `PAP_OFFLOAD_EXEC_TRACE=1`.
+
+Benchmark results:
+
+| Mode | Run root | Success | Mean TPOT | Median TPOT | P99 TPOT | Req/s | Output tok/s | Mean TTFT |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_232342` | 1000/1000 | 282.77 ms | 289.25 ms | 395.10 ms | 3.36 | 215.30 | 139003 ms |
+| 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_233059` | 1000/1000 | 832.84 ms | 727.94 ms | 1713.41 ms | 1.15 | 73.77 | 343134 ms |
+
+Trace medians with outliers included:
+
+| Metric | Serial | 3-way |
+| --- | ---: | ---: |
+| Projection total | 5.526 ms | 17.511 ms |
+| Projection send | 2.338 ms | 2.081 ms |
+| Projection yield | 0.001 ms | 12.827 ms |
+| Projection recv | 3.220 ms | 2.596 ms |
+| Projection calls | 64 | 21 |
+| Projection fanout batches | 7 | 7 |
+| Attention total | 7.268 ms | 6.420 ms |
+| Attention recv QKV | 5.805 ms | 5.866 ms |
+| Attention compute | 1.424 ms | 0.531 ms |
+| Attention calls | 9 | 3 |
+| Attention path after Projection send | 1.971 ms | 1.486 ms |
+| Projection resume after Attention ready | 0.000 ms | 11.309 ms |
+| Attention ready after Projection resume | 1.964 ms | 0.000 ms |
+
+This is the clearest negative result for 3-way so far. With one Projection
+node, serial does build the intended large Projection batch: median Projection
+`calls=64`, faning out to all 7 Attention endpoints. 3-way splits that same work
+into median `calls=21`, while each Attention endpoint only sees median
+`calls=3`.
+
+Using the Qwen3-8B projection arithmetic-density estimate, this means the
+Projection linear arithmetic intensity falls from roughly `64 flop/byte` in
+serial to roughly `21 flop/byte` in 3-way. The remote Attention path becomes
+slightly shorter (`1.97 ms` to `1.49 ms`), but the current Projection ubatch then
+waits a median `11.3 ms` after Attention is already ready before it resumes.
+
+Therefore, under `7PA1P`, `qps=256`, input `1024`, output `64`, the current
+3-way implementation is not beneficial. It over-splits the only Projection
+worker's batch, reduces Projection arithmetic density by about `3x`, and turns
+the path from A-critical serial waiting into P-side resume/queueing. The single
+Projection node amplifies the P-side scheduling bottleneck rather than creating
+a useful 3-way pipeline.
