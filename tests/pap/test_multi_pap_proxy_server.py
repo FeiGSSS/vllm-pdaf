@@ -191,6 +191,7 @@ def test_multi_proxy_registers_attention_before_prefill_for_local_import() -> No
     assert register < prefill
     assert "prefill_prefix_len_from_kv_params(kv_params)" in text
     assert "attach_pap_prefill_attention_params" in text
+    assert "pap_offload_exec_zmq_endpoint=group.attention_zmq_endpoint" in text
 
 
 def test_multi_proxy_marks_attention_kv_installed_only_after_prefill() -> None:

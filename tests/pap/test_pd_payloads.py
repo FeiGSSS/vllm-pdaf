@@ -54,12 +54,17 @@ def test_prefill_payload_marks_attention_kv_import() -> None:
     payload = attach_pap_prefill_attention_params(
         build_prefill_payload({"model": "qwen", "prompt": "hello"}),
         pap_attention_endpoint="http://127.0.0.1:8300",
+        pap_offload_exec_zmq_endpoint="127.0.0.1:10300",
         pap_prefill_kv_handle="req-7",
         pap_mode="pap",
     )
 
     assert (
         payload["kv_transfer_params"]["pap_import_prefill_kv_to_attention"] is True
+    )
+    assert (
+        payload["kv_transfer_params"]["pap_offload_exec_zmq_endpoint"]
+        == "127.0.0.1:10300"
     )
 
 

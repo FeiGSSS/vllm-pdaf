@@ -39,6 +39,7 @@ def attach_pap_prefill_attention_params(
     pap_prefill_kv_handle: str,
     pap_mode: str,
     pap_attention_tcp_endpoint: str | None = None,
+    pap_offload_exec_zmq_endpoint: str | None = None,
 ) -> dict[str, Any]:
     """Attach PAP Prefill->Attention control-plane hints."""
     updated = payload.copy()
@@ -46,6 +47,10 @@ def attach_pap_prefill_attention_params(
     kv_params["pap_attention_endpoint"] = str(pap_attention_endpoint)
     if pap_attention_tcp_endpoint:
         kv_params["pap_attention_tcp_endpoint"] = str(pap_attention_tcp_endpoint)
+    if pap_offload_exec_zmq_endpoint:
+        kv_params["pap_offload_exec_zmq_endpoint"] = str(
+            pap_offload_exec_zmq_endpoint
+        )
     kv_params["pap_prefill_kv_handle"] = str(pap_prefill_kv_handle)
     kv_params["pap_import_prefill_kv_to_attention"] = True
     kv_params["pap_mode"] = str(pap_mode)

@@ -674,6 +674,83 @@ Validated 30B PAP smoke:
   projection recv `0.766 ms`; attention total `1.433 ms`, attention recv QKV
   `1.301 ms`, attention compute `0.113 ms`.
 
-The next 30B experiment should compare serial vs 3-way at the 8B-derived
-candidate points (`MAX_NUM_SEQS=128` for latency and `512` for throughput) once
-the desired 30B topology is selected.
+## Qwen3-30B-A3B-FP8 `7PA1P` MAX_NUM_SEQS=512 Comparison
+
+The first 30B full comparison used the 8B throughput-oriented candidate point:
+
+- Topology: `7PA1P`.
+- Model: `/data/ssd1/llm-models/Qwen3-30B-A3B-FP8`.
+- Workload: `num_prompts=1000`, input `1024`, output `64`, qps `256`.
+- Common env: `MAX_MODEL_LEN=2048`, `MAX_NUM_SEQS=512`,
+  `VLLM_USE_FLASHINFER_SAMPLER=0`, `PAP_OFFLOAD_EXEC_TRANSPORT=nixl_mailbox`,
+  `PAP_OFFLOAD_EXEC_TRACE=1`, `PAP_PREFILL_MPS_PERCENT=30`,
+  `PAP_ATTENTION_MPS_PERCENT=70`, `PAP_PROJECTION_GPU_MEMORY_UTILIZATION=0.95`.
+- HTTP proxy variables were unset for every run.
+
+An initial serial run with `PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.95` failed:
+
+- Run root:
+  `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_014142`.
+- Failure: Attention executor OOM in `remote_attention.py` while concatenating
+  KV segments; the PA GPU had only about `20 MiB` free.
+- Adjustment: reduce PA prefill memory utilization to `0.85` for 30B `7PA1P`.
+
+Benchmark results with `PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.85`:
+
+| Mode | Run root | Success | Req/s | Output tok/s | Median TTFT | Median TPOT | P99 TPOT | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_015214` | 1000/1000 | 4.26 | 272.50 | 18792.38 ms | 1722.74 ms | 1750.25 ms | `PAP_RUNNER_MICROBATCH_COUNT=1`. |
+| 3-way, before endpoint fix | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_015716` | 937/1000 | 3.26 | 208.65 | 19578.44 ms | 2245.91 ms | 2319.54 ms | Invalid as a speed point: Prefill EngineCore died with missing `pap_offload_exec_zmq_endpoint`. |
+| 3-way, after endpoint fix | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_020831` | 1000/1000 | 2.07 | 132.72 | 30167.35 ms | 4205.92 ms | 4253.43 ms | Stable but slower than serial. |
+
+Root cause of the invalid 3-way run:
+
+- The multi-PAP proxy passed `pap_offload_exec_zmq_endpoint` to Projection
+  payloads, but not to Prefill payloads.
+- Under 30B 3-way, Prefill can enter the PAP offload-exec decode path and needs
+  the same Attention ZMQ endpoint metadata.
+- The fix adds optional `pap_offload_exec_zmq_endpoint` support to
+  `attach_pap_prefill_attention_params()` and passes
+  `group.attention_zmq_endpoint` from the multi-PAP proxy.
+
+Trace medians for the valid serial and fixed 3-way runs:
+
+| Metric | Serial | Fixed 3-way |
+| --- | ---: | ---: |
+| Projection calls | 488 | 488 |
+| Projection fanout batches | 7 | 7 |
+| Projection total | 26.312 ms | 42.398 ms |
+| Projection send | 10.493 ms | 19.170 ms |
+| Projection yield | 0.001 ms | 0.001 ms |
+| Projection recv | 15.805 ms | 23.074 ms |
+| Attention total | 34.069 ms | 62.983 ms |
+| Attention recv QKV | 22.826 ms | 51.141 ms |
+| Attention compute | 11.153 ms | 11.049 ms |
+| Attention path after Projection send | 13.149 ms | 13.215 ms |
+| Projection resume after Attention ready | 0.000 ms | 0.000 ms |
+
+Interpretation:
+
+- The fixed 30B 3-way run is now correct and complete, but it is not faster at
+  `MAX_NUM_SEQS=512`.
+- Unlike the 8B sweep, the fixed 30B 3-way trace did not split Projection calls
+  down to roughly one third; median Projection calls stayed at `488`, matching
+  serial. This means the measured run did not realize the intended runner
+  microbatch overlap shape.
+- The critical difference is waiting/skew, not raw Attention compute. Attention
+  compute is nearly identical (`11.15 ms` serial vs `11.05 ms` 3-way), while
+  Attention `recv_qkv_ms` more than doubles (`22.83 ms` to `51.14 ms`) and
+  Projection send/recv both increase.
+- Therefore, for 30B FP8 at this high-QPS `7PA1P`, `MAX_NUM_SEQS=512` point,
+  serial PAP is currently the valid faster configuration. 3-way needs further
+  instrumentation or scheduling fixes before using 30B to claim overlap benefit.
+
+Verification for the endpoint fix:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pd_payloads.py \
+  tests/pap/test_multi_pap_proxy_server.py -q
+```
+
+Result: `17 passed`.

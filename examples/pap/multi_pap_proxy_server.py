@@ -312,6 +312,7 @@ async def _handle_openai_request(api_path: str, request: Request):
         build_prefill_payload(req_data),
         pap_attention_endpoint=group.attention_base_url,
         pap_attention_tcp_endpoint=group.attention_tcp_endpoint,
+        pap_offload_exec_zmq_endpoint=group.attention_zmq_endpoint,
         pap_prefill_kv_handle=str(attention_session.get("prefill_kv_handle")),
         pap_mode=request.app.state.args.pap_mode,
     )
