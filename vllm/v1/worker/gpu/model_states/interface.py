@@ -14,6 +14,7 @@ from vllm.v1.kv_cache_interface import KVCacheConfig
 from vllm.v1.worker.gpu.input_batch import InputBatch
 from vllm.v1.worker.gpu.mm.encoder_cache import EncoderCache
 from vllm.v1.worker.gpu.states import RequestState
+from vllm.v1.worker.ubatch_utils import UBatchSlices
 from vllm.v1.worker.utils import AttentionGroup
 
 
@@ -92,5 +93,6 @@ class ModelState(ABC):
         attn_groups: list[list[AttentionGroup]],
         kv_cache_config: KVCacheConfig,
         for_capture: bool = False,
-    ) -> dict[str, Any]:
+        ubatch_slices: UBatchSlices | None = None,
+    ) -> dict[str, Any] | list[dict[str, Any]]:
         raise NotImplementedError

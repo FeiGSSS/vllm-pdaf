@@ -22,6 +22,7 @@ from vllm.v1.kv_cache_interface import (
     UniformTypeKVCacheSpecs,
 )
 from vllm.v1.worker.gpu.model_states.interface import ModelSpecificAttnMetadata
+from vllm.v1.worker.ubatch_utils import UBatchSlices, split_attn_metadata
 from vllm.v1.worker.utils import (
     AttentionGroup,
     bind_kv_cache,
@@ -337,14 +338,27 @@ def init_kv_cache_metadata_only(
 
 
 def build_slot_mappings_by_layer(
-    slot_mappings: torch.Tensor, kv_cache_config: KVCacheConfig
-) -> dict[str, torch.Tensor]:
+    slot_mappings: torch.Tensor,
+    kv_cache_config: KVCacheConfig,
+    ubatch_slices: UBatchSlices | None = None,
+) -> dict[str, torch.Tensor] | list[dict[str, torch.Tensor]]:
     slot_mappings_by_layer: dict[str, torch.Tensor] = {}
     kv_cache_groups = kv_cache_config.kv_cache_groups
     for slot_mapping, kv_cache_group in zip(slot_mappings, kv_cache_groups):
         for layer_name in kv_cache_group.layer_names:
             slot_mappings_by_layer[layer_name] = slot_mapping
-    return slot_mappings_by_layer
+    if ubatch_slices is None:
+        return slot_mappings_by_layer
+
+    ubatch_slot_mappings: list[dict[str, torch.Tensor]] = []
+    for ubatch in ubatch_slices:
+        ubatch_slot_mappings.append(
+            {
+                layer_name: slot_mapping[ubatch.token_slice]
+                for layer_name, slot_mapping in slot_mappings_by_layer.items()
+            }
+        )
+    return ubatch_slot_mappings
 
 
 def build_attn_metadata(
@@ -363,15 +377,18 @@ def build_attn_metadata(
     dcp_local_seq_lens: torch.Tensor | None = None,
     positions: torch.Tensor | None = None,
     model_specific_attn_metadata: ModelSpecificAttnMetadata | None = None,
+    ubatch_slices: UBatchSlices | None = None,
     for_cudagraph_capture: bool = False,
-) -> dict[str, Any]:
+) -> dict[str, Any] | list[dict[str, Any]]:
     seq_lens = seq_lens[:num_reqs]
     if dcp_local_seq_lens is not None:
         dcp_local_seq_lens = dcp_local_seq_lens[:num_reqs]
     if seq_lens_cpu_upper_bound is not None:
         seq_lens_cpu_upper_bound = seq_lens_cpu_upper_bound[:num_reqs]
 
-    attn_metadata: dict[str, Any] = {}
+    attn_metadata: dict[str, Any] | list[dict[str, Any]] = {}
+    if ubatch_slices is not None:
+        attn_metadata = [dict() for _ in ubatch_slices]
     num_kv_cache_groups = len(kv_cache_config.kv_cache_groups)
     for i in range(num_kv_cache_groups):
         block_table = block_tables[i]
@@ -400,6 +417,40 @@ def build_attn_metadata(
         )
 
         for attn_group in attn_groups[i]:
+            if ubatch_slices is not None:
+                assert isinstance(attn_metadata, list)
+                for ubid, ubatch_attn_metadata in enumerate(
+                    split_attn_metadata(ubatch_slices, common_attn_metadata)
+                ):
+                    metadata_builder_id = (
+                        ubid if len(attn_group.metadata_builders) > ubid else 0
+                    )
+                    attn_metadata_builder = attn_group.get_metadata_builder(
+                        metadata_builder_id
+                    )
+                    if for_cudagraph_capture:
+                        metadata = attn_metadata_builder.build_for_cudagraph_capture(
+                            ubatch_attn_metadata
+                        )
+                    else:
+                        attn_metadata_extra_kwargs = (
+                            model_specific_attn_metadata.get_extra_attn_kwargs(
+                                attn_metadata_builder,
+                                ubatch_attn_metadata.num_reqs,
+                            )
+                            if model_specific_attn_metadata is not None
+                            else {}
+                        )
+                        metadata = attn_metadata_builder.build(
+                            common_prefix_len=0,
+                            common_attn_metadata=ubatch_attn_metadata,
+                            **attn_metadata_extra_kwargs,
+                        )
+                    for layer_name in attn_group.layer_names:
+                        attn_metadata[ubid][layer_name] = metadata
+                continue
+
+            assert isinstance(attn_metadata, dict)
             attn_metadata_builder = attn_group.get_metadata_builder(0)
             if for_cudagraph_capture:
                 metadata = attn_metadata_builder.build_for_cudagraph_capture(

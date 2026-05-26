@@ -17,6 +17,7 @@ from vllm.v1.worker.gpu.mm.encoder_runner import EncoderRunner
 from vllm.v1.worker.gpu.mm.rope import get_rope_state
 from vllm.v1.worker.gpu.model_states.interface import ModelState
 from vllm.v1.worker.gpu.states import RequestState
+from vllm.v1.worker.ubatch_utils import UBatchSlices
 from vllm.v1.worker.utils import AttentionGroup
 
 
@@ -162,7 +163,8 @@ class DefaultModelState(ModelState):
         attn_groups: list[list[AttentionGroup]],
         kv_cache_config: KVCacheConfig,
         for_capture: bool = False,
-    ) -> dict[str, Any]:
+        ubatch_slices: UBatchSlices | None = None,
+    ) -> dict[str, Any] | list[dict[str, Any]]:
         if cudagraph_mode == CUDAGraphMode.FULL:
             # Use padded sizes - padding is handled by model_runner.prepare_attn.
             num_reqs = input_batch.num_reqs_after_padding
@@ -194,6 +196,7 @@ class DefaultModelState(ModelState):
             seq_lens_cpu_upper_bound=seq_lens_cpu_upper_bound,
             dcp_local_seq_lens=input_batch.dcp_local_seq_lens,
             positions=input_batch.positions,
+            ubatch_slices=ubatch_slices,
             for_cudagraph_capture=for_capture,
         )
         return attn_metadata

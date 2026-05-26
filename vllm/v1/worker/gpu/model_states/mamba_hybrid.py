@@ -17,6 +17,7 @@ from vllm.v1.worker.gpu.input_batch import InputBatch
 from vllm.v1.worker.gpu.mm.encoder_cache import EncoderCache
 from vllm.v1.worker.gpu.model_states.default import DefaultModelState
 from vllm.v1.worker.gpu.model_states.interface import ModelSpecificAttnMetadata
+from vllm.v1.worker.ubatch_utils import UBatchSlices
 from vllm.v1.worker.utils import AttentionGroup
 
 
@@ -77,7 +78,8 @@ class MambaHybridModelState(DefaultModelState):
         attn_groups: list[list[AttentionGroup]],
         kv_cache_config: KVCacheConfig,
         for_capture: bool = False,
-    ) -> dict[str, Any]:
+        ubatch_slices: UBatchSlices | None = None,
+    ) -> dict[str, Any] | list[dict[str, Any]]:
         if cudagraph_mode == CUDAGraphMode.FULL:
             num_reqs = input_batch.num_reqs_after_padding
             num_tokens = input_batch.num_tokens_after_padding
@@ -135,6 +137,7 @@ class MambaHybridModelState(DefaultModelState):
             kv_cache_config=kv_cache_config,
             dcp_local_seq_lens=input_batch.dcp_local_seq_lens,
             model_specific_attn_metadata=mamba_attn_metadata,
+            ubatch_slices=ubatch_slices,
             for_cudagraph_capture=for_capture,
         )
 

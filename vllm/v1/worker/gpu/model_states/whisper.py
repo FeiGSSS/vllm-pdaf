@@ -19,6 +19,7 @@ from vllm.v1.worker.gpu.model_states.interface import (
     ModelState,
 )
 from vllm.v1.worker.gpu.states import RequestState
+from vllm.v1.worker.ubatch_utils import UBatchSlices
 from vllm.v1.worker.utils import AttentionGroup
 
 
@@ -127,7 +128,8 @@ class WhisperModelState(ModelState):
         attn_groups: list[list[AttentionGroup]],
         kv_cache_config: KVCacheConfig,
         for_capture: bool = False,
-    ) -> dict[str, Any]:
+        ubatch_slices: UBatchSlices | None = None,
+    ) -> dict[str, Any] | list[dict[str, Any]]:
         if cudagraph_mode == CUDAGraphMode.FULL:
             num_reqs = input_batch.num_reqs_after_padding
             num_tokens = input_batch.num_tokens_after_padding
@@ -160,6 +162,7 @@ class WhisperModelState(ModelState):
             seq_lens_cpu_upper_bound=seq_lens_cpu_upper_bound,
             dcp_local_seq_lens=input_batch.dcp_local_seq_lens,
             model_specific_attn_metadata=whisper_attn_metadata,
+            ubatch_slices=ubatch_slices,
             for_cudagraph_capture=for_capture,
         )
         return attn_metadata

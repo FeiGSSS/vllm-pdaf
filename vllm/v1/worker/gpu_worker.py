@@ -318,7 +318,17 @@ class Worker(WorkerBase):
             raise RuntimeError(f"Not support device type: {self.device_config.device}")
 
         # Initialize workspace manager
-        num_ubatches = 2 if self.vllm_config.parallel_config.enable_dbo else 1
+        try:
+            pap_runner_microbatch_count = int(
+                os.environ.get("PAP_RUNNER_MICROBATCH_COUNT", "0")
+            )
+        except ValueError:
+            pap_runner_microbatch_count = 0
+        num_ubatches = (
+            self.vllm_config.parallel_config.num_ubatches
+            if self.vllm_config.parallel_config.use_ubatching
+            else max(1, pap_runner_microbatch_count)
+        )
         init_workspace_manager(self.device, num_ubatches)
 
         # Construct the model runner

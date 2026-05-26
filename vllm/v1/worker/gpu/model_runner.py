@@ -104,7 +104,13 @@ from vllm.v1.worker.gpu.spec_decode.rejection_sampler import RejectionSampler
 from vllm.v1.worker.gpu.spec_decode.utils import DraftTokensHandler
 from vllm.v1.worker.gpu.states import RequestState
 from vllm.v1.worker.gpu.structured_outputs import StructuredOutputsWorker
+from vllm.v1.worker.gpu_ubatch_wrapper import UBatchWrapper
 from vllm.v1.worker.lora_model_runner_mixin import LoRAModelRunnerMixin
+from vllm.v1.worker.ubatch_utils import (
+    UBatchSlice,
+    UBatchSlices,
+    maybe_create_ubatch_slices,
+)
 
 logger = init_logger(__name__)
 
@@ -254,6 +260,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # For transferring state from execute_model to subsequent sample_tokens call.
         self.execute_model_state: ExecuteModelState | None = None
 
+        self.ubatch_wrapper: UBatchWrapper | None = None
+
         # Expert parallelism load balancer.
         self.eplb = EPLBController(self.parallel_config, self.device)
 
@@ -316,6 +324,15 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self.model_state = init_model_state(
             self.vllm_config, self.model, self.encoder_cache, self.device
         )
+        pap_runner_microbatch_count = self._pap_runner_microbatch_count()
+        if self.parallel_config.use_ubatching or pap_runner_microbatch_count > 1:
+            self.ubatch_wrapper = UBatchWrapper(
+                self.model,
+                self.vllm_config,
+                CUDAGraphMode.NONE,
+                self.device,
+                num_ubatches=pap_runner_microbatch_count or None,
+            )
         if self.is_pooling_model and self.is_last_pp_rank:
             self.pooling_runner = PoolingRunner(self.model)
         eplb_models_added |= self.eplb.maybe_register_model(
@@ -745,9 +762,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         return {
             req_id: endpoint
             for req_id in input_batch.req_ids[: input_batch.num_reqs]
-            if (
-                endpoint := self.pap_offload_exec_zmq_endpoint_by_req_id.get(req_id)
-            )
+            if (endpoint := self.pap_offload_exec_zmq_endpoint_by_req_id.get(req_id))
             is not None
         }
 
@@ -767,8 +782,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         return {
             req_id: handle
             for req_id in input_batch.req_ids[: input_batch.num_reqs]
-            if (handle := self.pap_prefill_kv_handle_by_req_id.get(req_id))
-            is not None
+            if (handle := self.pap_prefill_kv_handle_by_req_id.get(req_id)) is not None
         }
 
     def _pap_attention_kv_installed_for_batch(
@@ -805,9 +819,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         return {
             req_id: endpoint
             for req_id in input_batch.req_ids[: input_batch.num_reqs]
-            if (
-                endpoint := self.pap_attention_endpoint_by_req_id.get(req_id)
-            )
+            if (endpoint := self.pap_attention_endpoint_by_req_id.get(req_id))
             is not None
         }
 
@@ -820,9 +832,143 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         num_reqs = getattr(input_batch, "num_reqs", 0)
         for req_id in input_batch.req_ids[:num_reqs]:
             if req_id in self.pap_attention_tcp_endpoint_by_req_id:
-                logger.info("PAP enabled via per-request TCP endpoint req_id=%s", req_id)
+                logger.info(
+                    "PAP enabled via per-request TCP endpoint req_id=%s", req_id
+                )
                 return True
         return False
+
+    @staticmethod
+    def _pap_filter_mapping_for_request_ids(
+        mapping: dict[str, Any], request_ids: tuple[str, ...]
+    ) -> dict[str, Any]:
+        request_id_set = set(request_ids)
+        return {key: value for key, value in mapping.items() if key in request_id_set}
+
+    def _pap_forward_context_kwargs(self, input_batch: InputBatch) -> dict[str, Any]:
+        return {
+            "pap_request_ids": tuple(input_batch.req_ids),
+            "pap_num_scheduled_tokens": tuple(
+                int(num_tokens)
+                for num_tokens in input_batch.num_scheduled_tokens[
+                    : input_batch.num_reqs
+                ]
+            ),
+            "pap_num_reqs": input_batch.num_reqs,
+            "pap_num_actual_tokens": input_batch.num_tokens,
+            "pap_positions": input_batch.positions,
+            "pap_enabled": self._pap_enabled_for_batch(input_batch),
+            "pap_attention_tcp_endpoint": (
+                self.vllm_config.kv_transfer_config.get_from_extra_config(
+                    "pap_attention_tcp_endpoint", None
+                )
+                if self.vllm_config.kv_transfer_config is not None
+                else None
+            ),
+            "pap_block_size": self.vllm_config.cache_config.block_size,
+            "pap_attention_tcp_endpoint_by_request": (
+                self._pap_attention_tcp_endpoints_for_batch(input_batch)
+            ),
+            "pap_attention_endpoint_by_request": (
+                self._pap_attention_endpoints_for_batch(input_batch)
+            ),
+            "pap_offload_exec_zmq_endpoint_by_request": (
+                self._pap_offload_exec_zmq_endpoints_for_batch(input_batch)
+            ),
+            "pap_prefill_prefix_len_by_request": (
+                self._pap_prefill_prefix_lens_for_batch(input_batch)
+            ),
+            "pap_prefill_kv_handle_by_request": (
+                self._pap_prefill_kv_handles_for_batch(input_batch)
+            ),
+            "pap_attention_kv_installed_by_request": (
+                self._pap_attention_kv_installed_for_batch(input_batch)
+            ),
+            "pap_import_prefill_kv_to_attention_by_request": (
+                self._pap_import_prefill_kv_to_attention_for_batch(input_batch)
+            ),
+        }
+
+    def _pap_forward_context_kwargs_for_ubatch(
+        self,
+        input_batch: InputBatch,
+        ubatch_slice: UBatchSlice,
+        full_kwargs: dict[str, Any],
+    ) -> dict[str, Any]:
+        request_slice = slice(
+            ubatch_slice.request_slice.start,
+            min(ubatch_slice.request_slice.stop, input_batch.num_reqs),
+        )
+        request_ids = tuple(
+            str(req_id) for req_id in input_batch.req_ids[request_slice]
+        )
+        token_slice = ubatch_slice.token_slice
+        kwargs = dict(full_kwargs)
+        kwargs["pap_request_ids"] = request_ids
+        kwargs["pap_num_scheduled_tokens"] = tuple(
+            int(num_tokens)
+            for num_tokens in input_batch.num_scheduled_tokens[request_slice]
+        )
+        kwargs["pap_num_reqs"] = len(request_ids)
+        kwargs["pap_num_actual_tokens"] = token_slice.stop - token_slice.start
+        kwargs["pap_positions"] = input_batch.positions[token_slice]
+        for key in (
+            "pap_attention_tcp_endpoint_by_request",
+            "pap_attention_endpoint_by_request",
+            "pap_offload_exec_zmq_endpoint_by_request",
+            "pap_prefill_prefix_len_by_request",
+            "pap_prefill_kv_handle_by_request",
+        ):
+            kwargs[key] = self._pap_filter_mapping_for_request_ids(
+                kwargs.get(key, {}), request_ids
+            )
+        for key in (
+            "pap_attention_kv_installed_by_request",
+            "pap_import_prefill_kv_to_attention_by_request",
+        ):
+            kwargs[key] = set(kwargs.get(key, set())).intersection(request_ids)
+        return kwargs
+
+    @staticmethod
+    def _pap_runner_microbatch_count() -> int:
+        try:
+            configured = int(os.environ.get("PAP_RUNNER_MICROBATCH_COUNT", "0"))
+        except ValueError:
+            return 0
+        return max(configured, 0)
+
+    @staticmethod
+    def _pap_runner_microbatch_threshold(uniform_decode: bool) -> int:
+        env_name = (
+            "PAP_RUNNER_MICROBATCH_DECODE_THRESHOLD"
+            if uniform_decode
+            else "PAP_RUNNER_MICROBATCH_PREFILL_THRESHOLD"
+        )
+        default = "12" if uniform_decode else "512"
+        try:
+            return int(os.environ.get(env_name, default))
+        except ValueError:
+            return int(default)
+
+    def _pap_should_use_runner_microbatch(
+        self,
+        input_batch: InputBatch,
+        batch_desc: BatchExecutionDescriptor,
+        uniform_decode: bool,
+    ) -> bool:
+        if not self._pap_projection_kv_unaware_process():
+            return False
+        microbatch_count = self._pap_runner_microbatch_count()
+        if microbatch_count <= 1:
+            return False
+        if self.ubatch_wrapper is None:
+            return False
+        if batch_desc.cg_mode == CUDAGraphMode.FULL:
+            return False
+        if input_batch.num_reqs < microbatch_count:
+            return False
+        threshold = self._pap_runner_microbatch_threshold(uniform_decode)
+        return input_batch.num_tokens >= threshold
 
     def finish_requests(self, scheduler_output: SchedulerOutput) -> None:
         finished_req_ids = scheduler_output.finished_req_ids
@@ -847,9 +993,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             # chunk. Remove old state so it can be cleanly re-added below
             # with the updated prompt_token_ids and mm_features.
             self._remove_request(req_id)
-            self._add_pap_attention_endpoint(
-                req_id, new_req_data.kv_transfer_params
-            )
+            self._add_pap_attention_endpoint(req_id, new_req_data.kv_transfer_params)
 
             prompt_len = len(new_req_data.prompt_token_ids)
             self.req_states.add_request(
@@ -1250,12 +1394,28 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     )
                 )
 
+        ubatch_slices: UBatchSlices | None = None
+        if not dummy_run:
+            uniform_decode_batch = max_query_len == self.decode_query_len and (
+                num_toks == max_query_len * num_reqs
+            )
+            if self._pap_should_use_runner_microbatch(
+                input_batch, batch_desc, uniform_decode_batch
+            ):
+                ubatch_slices, _ = maybe_create_ubatch_slices(
+                    True,
+                    input_batch.num_scheduled_tokens[: input_batch.num_reqs],
+                    input_batch.num_tokens_after_padding,
+                    input_batch.num_reqs_after_padding,
+                    self._pap_runner_microbatch_count(),
+                )
+
         attn_metadata = None
         slot_mappings_by_layer = None
         if not (dummy_run and skip_attn_for_dummy_run):
             assert slot_mappings is not None
             slot_mappings_by_layer = build_slot_mappings_by_layer(
-                slot_mappings, self.kv_cache_config
+                slot_mappings, self.kv_cache_config, ubatch_slices=ubatch_slices
             )
             assert block_tables is not None
             attn_metadata = self.model_state.prepare_attn(
@@ -1265,6 +1425,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 slot_mappings,
                 self.attn_groups,
                 self.kv_cache_config,
+                ubatch_slices=ubatch_slices,
             )
 
         inputs_embeds = None
@@ -1319,6 +1480,15 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 has_lora=self.lora_config is not None,
             )
 
+            pap_additional_kwargs = self._pap_forward_context_kwargs(input_batch)
+            if ubatch_slices is not None:
+                pap_additional_kwargs["ubatch_additional_kwargs"] = [
+                    self._pap_forward_context_kwargs_for_ubatch(
+                        input_batch, ubatch_slice, pap_additional_kwargs
+                    )
+                    for ubatch_slice in ubatch_slices
+                ]
+
             with set_forward_context(
                 attn_metadata,
                 self.vllm_config,
@@ -1326,53 +1496,17 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 cudagraph_runtime_mode=batch_desc.cg_mode,
                 num_tokens_across_dp=num_tokens_across_dp,
                 batch_descriptor=batch_descriptor,
+                ubatch_slices=ubatch_slices,
                 slot_mapping=slot_mappings_by_layer,
                 skip_compiled=skip_compiled,
-                additional_kwargs={
-                    "pap_request_ids": tuple(input_batch.req_ids),
-                    "pap_num_scheduled_tokens": tuple(
-                        int(num_tokens)
-                        for num_tokens in input_batch.num_scheduled_tokens[
-                            : input_batch.num_reqs
-                        ]
-                    ),
-                    "pap_num_reqs": input_batch.num_reqs,
-                    "pap_num_actual_tokens": input_batch.num_tokens,
-                    "pap_positions": input_batch.positions,
-                    "pap_enabled": self._pap_enabled_for_batch(input_batch),
-                    "pap_attention_tcp_endpoint": (
-                        self.vllm_config.kv_transfer_config.get_from_extra_config(
-                            "pap_attention_tcp_endpoint", None
-                        )
-                        if self.vllm_config.kv_transfer_config is not None
-                        else None
-                    ),
-                    "pap_block_size": self.vllm_config.cache_config.block_size,
-                    "pap_attention_tcp_endpoint_by_request": (
-                        self._pap_attention_tcp_endpoints_for_batch(input_batch)
-                    ),
-                    "pap_attention_endpoint_by_request": (
-                        self._pap_attention_endpoints_for_batch(input_batch)
-                    ),
-                    "pap_offload_exec_zmq_endpoint_by_request": (
-                        self._pap_offload_exec_zmq_endpoints_for_batch(input_batch)
-                    ),
-                    "pap_prefill_prefix_len_by_request": (
-                        self._pap_prefill_prefix_lens_for_batch(input_batch)
-                    ),
-                    "pap_prefill_kv_handle_by_request": (
-                        self._pap_prefill_kv_handles_for_batch(input_batch)
-                    ),
-                    "pap_attention_kv_installed_by_request": (
-                        self._pap_attention_kv_installed_for_batch(input_batch)
-                    ),
-                    "pap_import_prefill_kv_to_attention_by_request": (
-                        self._pap_import_prefill_kv_to_attention_for_batch(input_batch)
-                    ),
-                },
+                additional_kwargs=pap_additional_kwargs,
             ):
                 self.kv_connector.pre_forward(scheduler_output)
-                model_output = self.model(**model_inputs)
+                model_executor = self.model
+                if ubatch_slices is not None:
+                    model_executor = self.ubatch_wrapper
+                assert model_executor is not None
+                model_output = model_executor(**model_inputs)
 
         if self.is_last_pp_rank:
             if self.use_aux_hidden_state_outputs:

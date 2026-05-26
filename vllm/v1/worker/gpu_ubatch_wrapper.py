@@ -117,15 +117,17 @@ class UBatchWrapper:
         vllm_config: VllmConfig,
         runtime_mode: CUDAGraphMode,
         device: torch.cuda.device,
+        num_ubatches: int | None = None,
     ):
         self.runnable = runnable
         self.vllm_config = vllm_config
         self.compilation_config = vllm_config.compilation_config
         self.comm_stream = torch.cuda.Stream(device=device)
-        # Ubatch threads plus the main thread
-        self.ready_barrier = threading.Barrier(
-            self.vllm_config.parallel_config.num_ubatches + 1
+        self.num_ubatches = (
+            num_ubatches or self.vllm_config.parallel_config.num_ubatches
         )
+        # Ubatch threads plus the main thread
+        self.ready_barrier = threading.Barrier(self.num_ubatches + 1)
 
         self.cudagraphs: dict[int, CUDAGraphMetaData] = {}
 
@@ -349,6 +351,8 @@ class UBatchWrapper:
         # slot_mapping can be None, an empty dict (from create_forward_context
         # converting None to {}), or a list of dicts (one per ubatch)
         has_slot_mapping = slot_mapping and isinstance(slot_mapping, list)
+        additional_kwargs = get_forward_context().additional_kwargs
+        ubatch_additional_kwargs = additional_kwargs.get("ubatch_additional_kwargs", [])
         for i, ubatch_slice in enumerate(ubatch_slices):
             forward_contexts.append(
                 create_forward_context(
@@ -358,6 +362,9 @@ class UBatchWrapper:
                     batch_descriptor=batch_descriptor,
                     cudagraph_runtime_mode=cudagraph_runtime_mode,
                     slot_mapping=slot_mapping[i] if has_slot_mapping else None,
+                    additional_kwargs=ubatch_additional_kwargs[i]
+                    if ubatch_additional_kwargs
+                    else additional_kwargs,
                 )
             )
 
@@ -458,27 +465,30 @@ class UBatchWrapper:
         num_tokens = sum(ubatch_slice.num_tokens for ubatch_slice in ubatch_slices)
         input_ids = kwargs["input_ids"]
         positions = kwargs["positions"]
-        intermediate_tensors = kwargs["intermediate_tensors"]
+        intermediate_tensors = kwargs.get("intermediate_tensors")
         inputs_embeds = kwargs["inputs_embeds"]
         compute_stream = torch.cuda.current_stream()
 
         dp_metadata = forward_context.dp_metadata
 
-        # We shouldn't be here unless we are running with multiple DP ranks
-        assert dp_metadata is not None
-        ubatch_dp_metadata = []
-        for ubatch_slice in ubatch_slices:
-            dp_size = self.vllm_config.parallel_config.data_parallel_size
-            ubatch_num_tokens_across_dp = torch.tensor(
-                [ubatch_slice.num_tokens] * dp_size, device="cpu", dtype=torch.int32
-            )
-            ubatch_dp_metadata.append(
-                DPMetadata.make(
-                    self.vllm_config.parallel_config,
-                    ubatch_slice.num_tokens,
-                    ubatch_num_tokens_across_dp,
+        if dp_metadata is None:
+            ubatch_dp_metadata = [None] * len(ubatch_slices)
+        else:
+            ubatch_dp_metadata = []
+            for ubatch_slice in ubatch_slices:
+                dp_size = self.vllm_config.parallel_config.data_parallel_size
+                ubatch_num_tokens_across_dp = torch.tensor(
+                    [ubatch_slice.num_tokens] * dp_size,
+                    device="cpu",
+                    dtype=torch.int32,
                 )
-            )
+                ubatch_dp_metadata.append(
+                    DPMetadata.make(
+                        self.vllm_config.parallel_config,
+                        ubatch_slice.num_tokens,
+                        ubatch_num_tokens_across_dp,
+                    )
+                )
 
         if (
             num_tokens not in self.cudagraphs

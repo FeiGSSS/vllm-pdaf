@@ -87,6 +87,24 @@ def test_pap_6pa2p_launch_forwards_routing_policy_to_proxy() -> None:
     assert '--routing-policy "$PAP_ROUTING_POLICY"' in text
 
 
+def test_pap_launch_exposes_runner_microbatch_for_projection() -> None:
+    script = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
+    text = script.read_text()
+    baseline = Path(
+        "/home/fei/research/PD/test/baseline/pap/launch_service.sh"
+    ).read_text()
+
+    assert "PAP_RUNNER_MICROBATCH_COUNT" in text
+    assert (
+        'PAP_RUNNER_MICROBATCH_DECODE_THRESHOLD="${PAP_RUNNER_MICROBATCH_DECODE_THRESHOLD:-12}"'
+        in text
+    )
+    assert "projection_microbatch_args" in text
+    assert "--ubatch-size" not in text
+    assert "--dbo-decode-token-threshold" not in text
+    assert "PAP_RUNNER_MICROBATCH_COUNT=" in baseline
+
+
 def test_pap_baseline_config_exposes_pap_enabled() -> None:
     config = Path("/home/fei/research/PD/test/baseline/pap/config.sh")
     text = config.read_text()
