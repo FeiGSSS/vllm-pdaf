@@ -1061,3 +1061,38 @@ This turns the current 30B setting from "manually choose count=2" into a safer
 opt-in mode: enable `PAP_OFFLOAD_EXEC_LAYER_WAVEFRONT=1`, leave the count unset
 or set it to `auto`, and the MoE path avoids both the tiny-batch regression and
 the fixed-3-way B48 regression.
+
+## Qwen3-30B Target-Like `7PA1P` Validation
+
+The next check moved from short `1PA1P` smoke tests toward the intended
+single-Projection shape:
+
+- Topology: `7PA1P`.
+- Model: `/data/ssd1/llm-models/Qwen3-30B-A3B-FP8`.
+- Input/output: `1024/64`.
+- Offered qps: `256`.
+- Prompts: `128`.
+- `MAX_NUM_SEQS=128`, `MAX_NUM_BATCHED_TOKENS=8192`.
+- Proxy variables explicitly unset.
+- Trace disabled to avoid trace overhead.
+
+| Mode | Run root | Success | Duration | Req/s | Output tok/s | Median TTFT | Median TPOT | P99 TPOT |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| serial PAP | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_103239` | 128/128 | 99.22 s | 1.29 | 82.56 | 8479.52 ms | 1433.06 ms | 1475.17 ms |
+| layer-wavefront auto | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_103540` | 128/128 | 51.43 s | 2.49 | 159.28 | 7382.91 ms | 692.15 ms | 726.67 ms |
+
+Interpretation:
+
+- This target-like run confirms the important distinction: 30B MoE is not
+  fundamentally incompatible with PAP ubatch. It is incompatible with the old
+  whole-model DBO `UBatchWrapper` path, because the FP8 fused MoE execution path
+  rejects `dbo_enabled()` during the normal full forward.
+- The MoE-specific layer-wavefront path avoids that context and keeps ubatching
+  at the PAP remote-Attention boundary. In the `7PA1P` run, auto 2-way improves
+  median TPOT by `51.7%` (`1433.06 -> 692.15 ms`) and output throughput by
+  `92.9%` (`82.56 -> 159.28 tok/s`) versus serial PAP.
+- This does not yet prove the best global setting. The run used `128` prompts,
+  not the final `1000`-request target. It also used one Projection node, so the
+  Projection-side layer wavefront is still the central bottleneck. But it does
+  show that the 30B path can benefit materially once the macro batch is large
+  enough and the MoE-specific wavefront path is used.
