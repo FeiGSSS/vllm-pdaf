@@ -466,6 +466,25 @@ def test_qwen3_moe_model_has_opt_in_pap_layer_wavefront() -> None:
     assert "UBatchWrapper" not in model_cls
 
 
+def test_qwen3_moe_layer_wavefront_has_auto_microbatch_policy() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3_moe.py").read_text()
+    start = text.index("def _pap_moe_layer_wavefront_microbatch_count")
+    end = text.index("\n\nclass Qwen3MoeAttention", start)
+    helper = text[start:end]
+    model_start = text.index("class Qwen3MoeModel")
+    model_end = text.index("\n\nclass Qwen3MoeForCausalLM", model_start)
+    model_cls = text[model_start:model_end]
+
+    assert 'os.environ.get("PAP_OFFLOAD_EXEC_MICROBATCH_COUNT")' in helper
+    assert 'raw is None or raw.lower() == "auto"' in helper
+    assert "PAP_OFFLOAD_EXEC_MICROBATCH_AUTO_MIN_BATCH" in helper
+    assert "return 1" in helper
+    assert "return min(2, int(num_reqs))" in helper
+    assert "_pap_offload_exec_microbatch_count(num_reqs)" in helper
+    assert "_pap_moe_layer_wavefront_microbatch_count(num_reqs)" in model_cls
+    assert "_pap_offload_exec_microbatch_count(num_reqs)" not in model_cls
+
+
 def test_qwen3_pap_q_first_projection_sends_query_before_kv_projection() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
     start = text.index("    def _compute_pap_attention_q_first_projection")

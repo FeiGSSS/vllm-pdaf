@@ -23,6 +23,7 @@
 # limitations under the License.
 """Inference-only Qwen3MoE model compatible with HuggingFace weights."""
 
+import os
 import typing
 from collections.abc import Callable, Iterable
 from itertools import islice
@@ -261,6 +262,21 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
 
         # return to 1d if input is 1d
         return final_hidden_states.squeeze(0) if is_input_1d else final_hidden_states
+
+
+def _pap_moe_layer_wavefront_microbatch_count(num_reqs: int) -> int:
+    raw = os.environ.get("PAP_OFFLOAD_EXEC_MICROBATCH_COUNT")
+    if raw is None or raw.lower() == "auto":
+        try:
+            min_batch = int(
+                os.environ.get("PAP_OFFLOAD_EXEC_MICROBATCH_AUTO_MIN_BATCH", "16")
+            )
+        except ValueError:
+            min_batch = 16
+        if int(num_reqs) < max(2, min_batch):
+            return 1
+        return min(2, int(num_reqs))
+    return _pap_offload_exec_microbatch_count(num_reqs)
 
 
 class Qwen3MoeAttention(Qwen3Attention):
@@ -520,7 +536,7 @@ class Qwen3MoeModel(nn.Module, EagleModelMixin):
             return False
         if any(num_tokens != 1 for num_tokens in num_scheduled_tokens[:num_reqs]):
             return False
-        microbatch_count = _pap_offload_exec_microbatch_count(num_reqs)
+        microbatch_count = _pap_moe_layer_wavefront_microbatch_count(num_reqs)
         if microbatch_count <= 1:
             return False
         transport = _pap_offload_exec_transport()
@@ -535,7 +551,7 @@ class Qwen3MoeModel(nn.Module, EagleModelMixin):
         if not self._pap_should_use_layer_wavefront(positions, hidden_states):
             return None
         num_reqs = int(hidden_states.shape[0])
-        microbatch_count = _pap_offload_exec_microbatch_count(num_reqs)
+        microbatch_count = _pap_moe_layer_wavefront_microbatch_count(num_reqs)
         microbatches = _pap_contiguous_microbatches(num_reqs, microbatch_count)
         if len(microbatches) <= 1:
             return None

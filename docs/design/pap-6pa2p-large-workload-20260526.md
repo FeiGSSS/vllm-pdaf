@@ -1036,3 +1036,28 @@ Current 30B recommendation:
 - The next code change should add an `auto` or model-specific policy for
   `PAP_OFFLOAD_EXEC_MICROBATCH_COUNT` on `qwen3_moe`, so users do not have to
   know that this 30B path currently prefers 2-way.
+
+## Qwen3-30B Auto Wavefront Policy
+
+The follow-up code change adds a MoE-specific automatic policy for
+`PAP_OFFLOAD_EXEC_LAYER_WAVEFRONT=1`:
+
+- If `PAP_OFFLOAD_EXEC_MICROBATCH_COUNT` is explicitly set to an integer, the
+  explicit value is respected.
+- If `PAP_OFFLOAD_EXEC_MICROBATCH_COUNT` is unset or set to `auto`,
+  `qwen3_moe` uses 2-way layer-wavefront once the decode macro batch reaches
+  `PAP_OFFLOAD_EXEC_MICROBATCH_AUTO_MIN_BATCH`, default `16`.
+- Below that threshold it returns to the serial PAP path. This avoids the B6
+  regression where tiny ubatches lose to mailbox overhead.
+
+Runtime validation, with `PAP_OFFLOAD_EXEC_MICROBATCH_COUNT` unset:
+
+| Macro batch | Run root | Success | Median TPOT | Attention calls median | Interpretation |
+| ---: | --- | ---: | ---: | ---: | --- |
+| 6 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_102919` | 6/6 | 65.46 ms | 6 | Auto policy correctly keeps the serial path. |
+| 24 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_102801` | 24/24 | 106.14 ms | 12 | Auto policy selects 2-way and matches the manual 2-way result. |
+
+This turns the current 30B setting from "manually choose count=2" into a safer
+opt-in mode: enable `PAP_OFFLOAD_EXEC_LAYER_WAVEFRONT=1`, leave the count unset
+or set it to `auto`, and the MoE path avoids both the tiny-batch regression and
+the fixed-3-way B48 regression.
