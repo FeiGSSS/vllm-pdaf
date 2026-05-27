@@ -1279,3 +1279,57 @@ Conclusion for this iteration:
   Projection/Attention exchange path and making the multi-Projection mailbox
   path stable. A fused batch attention kernel remains the next concrete
   development target.
+
+## Qwen3-30B-A3B-FP8 `6PA2P` Concurrency Sweep
+
+The topology sweep above kept PAP instance concurrency fixed at
+`MAX_NUM_SEQS=2000`. A follow-up sweep varied `MAX_NUM_SEQS` only for the best
+valid PAP topology, `6PA2P`, to test whether the Projection-side arithmetic
+intensity improves enough to change the PAP optimum.
+
+- Date: 2026-05-27.
+- Model: `/data/ssd1/llm-models/Qwen3-30B-A3B-FP8`.
+- Workload: `sonnet`, input/output `1024/64`, qps `256`, prompts `2000`.
+- Topology: `6PA2P`.
+- Common env: `MAX_MODEL_LEN=2048`, `MAX_NUM_BATCHED_TOKENS=8192`,
+  `PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.85`,
+  `PAP_PROJECTION_GPU_MEMORY_UTILIZATION=0.95`,
+  `PAP_PREFILL_MPS_PERCENT=30`, `PAP_ATTENTION_MPS_PERCENT=70`,
+  `PAP_OFFLOAD_EXEC_TRANSPORT=nixl_mailbox`,
+  `PAP_OFFLOAD_EXEC_LAYER_WAVEFRONT=1`,
+  `PAP_OFFLOAD_EXEC_MICROBATCH_COUNT=auto`,
+  `PAP_OFFLOAD_EXEC_MICROBATCH_AUTO_MIN_BATCH=16`,
+  `PAP_RUNNER_MICROBATCH_COUNT=0`.
+- Shell HTTP proxy variables were explicitly unset for every measured run.
+- `VLLM_USE_FLASHINFER_SAMPLER=0` was required. Without it, the first
+  `MAX_NUM_SEQS=512` launch attempted FlashInfer sampler JIT compilation and
+  failed with `BlockAdjacentDifference<...> has no member "FlagHeads"`.
+
+Results:
+
+| `MAX_NUM_SEQS` | Run root | Success | Duration | Req/s | Output tok/s | Median TTFT | Median TPOT | P99 TPOT | Max Projection `Running` |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 384 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_133154` | 2000/2000 | 256.71 s | 7.79 | 498.63 | 98109.87 ms | 1330.89 ms | 1581.83 ms | `384`, `384` |
+| 448 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_133717` | 2000/2000 | 258.34 s | 7.74 | 495.48 | 88615.88 ms | 1581.14 ms | 1778.16 ms | `448`, `448` |
+| 512 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_132011` | 2000/2000 | 257.12 s | 7.78 | 497.82 | 64411.10 ms | 1702.64 ms | 2008.52 ms | `512`, `512` |
+| 1024 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_132539` | 2000/2000 | 259.45 s | 7.71 | 493.36 | 69171.97 ms | 2251.40 ms | 2608.24 ms | `787`, `787` |
+| 2000 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_122512` | 2000/2000 | 255.67 s | 7.82 | 500.65 | 95245.34 ms | 1201.16 ms | 1578.17 ms | `423`, `445` |
+
+Findings:
+
+- The added concurrency points did not beat the existing `MAX_NUM_SEQS=2000`
+  result. The best observed PAP point remains `6PA2P`, `MAX_NUM_SEQS=2000`,
+  at `500.65` output tok/s and median TPOT `1201.16 ms`.
+- Increasing the actual Projection running batch is not monotonic. The
+  `MAX_NUM_SEQS=1024` run reached `787` running requests per Projection
+  instance, but throughput dropped to `493.36` output tok/s and median TPOT
+  rose to `2251.40 ms`.
+- The good operating region appears to be roughly a few hundred active
+  requests per Projection instance for this model and workload. However,
+  simply capping `MAX_NUM_SEQS` to `384-512` did not improve throughput, likely
+  because the run still pays the same Projection/Attention exchange overhead
+  and shows periodic wave stalls.
+- This narrows the current PAP bottleneck: scheduler concurrency alone is not
+  the missing knob for 30B `6PA2P`. The next optimization should target the
+  remote attention exchange path, especially fused batch attention and mailbox
+  batching/stability, before running a broader topology sweep again.
