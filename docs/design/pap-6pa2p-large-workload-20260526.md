@@ -1165,3 +1165,117 @@ Interpretation:
 - PAP auto closes most of the throughput gap to PD while keeping the PAP
   attention/projection split: output throughput reaches `86.2%` of NIXL PD
   (`254.80 / 295.51`) and is `97.6%` better than PAP serial.
+
+## Qwen3-30B Fixed-Workload PD/PAP Topology Sweep
+
+This sweep fixes the workload first, then chooses the best valid point inside
+each architecture. It is therefore an architecture-level comparison, not a
+single arbitrary topology comparison.
+
+- Date: 2026-05-27.
+- Code version before recording: `4ea358fc5`.
+- Model: `/data/ssd1/llm-models/Qwen3-30B-A3B-FP8`.
+- Workload: `sonnet`, input/output `1024/64`, qps `256`, prompts `2000`.
+- GPU budget: 8 L20 GPUs.
+- Proxy variables were explicitly unset for every run.
+- Selection rule: require `0` failed requests, then maximize output token
+  throughput. TTFT/TPOT are secondary diagnostics.
+
+Common PD-NIXL settings:
+
+```text
+MAX_MODEL_LEN=2048
+MAX_NUM_BATCHED_TOKENS=8192
+MAX_NUM_SEQS=2000
+PREFILL_MAX_NUM_BATCHED_TOKENS=8192
+PREFILL_MAX_NUM_SEQS=2000
+DECODE_MAX_NUM_BATCHED_TOKENS=8192
+DECODE_MAX_NUM_SEQS=64
+PREFILL_GPU_MEM_UTIL=0.85
+DECODE_GPU_MEM_UTIL=0.7
+```
+
+Common PAP settings:
+
+```text
+MAX_MODEL_LEN=2048
+MAX_NUM_BATCHED_TOKENS=8192
+MAX_NUM_SEQS=2000
+PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.85
+PAP_PROJECTION_GPU_MEMORY_UTILIZATION=0.95
+PAP_PREFILL_MPS_PERCENT=30
+PAP_ATTENTION_MPS_PERCENT=70
+PAP_OFFLOAD_EXEC_TRANSPORT=nixl_mailbox
+PAP_OFFLOAD_EXEC_LAYER_WAVEFRONT=1
+PAP_OFFLOAD_EXEC_MICROBATCH_COUNT=auto
+PAP_OFFLOAD_EXEC_MICROBATCH_AUTO_MIN_BATCH=16
+PAP_RUNNER_MICROBATCH_COUNT=0
+```
+
+Valid PD-NIXL results:
+
+| Topology | Run root | Success | Duration | Req/s | Output tok/s | Median TTFT | Median TPOT | P99 TPOT |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `7P1D` | `/home/fei/research/PD/test/baseline/nixl_disaggregated/results/runs/20260527_115332` | 2000/2000 | 432.56 s | 4.62 | 295.91 | 213496.94 ms | 26.94 ms | 45.83 ms |
+| `6P2D` | `/home/fei/research/PD/test/baseline/nixl_disaggregated/results/runs/20260527_120157` | 2000/2000 | 212.36 s | 9.42 | 602.74 | 102235.65 ms | 27.22 ms | 43.19 ms |
+| `5P3D` | `/home/fei/research/PD/test/baseline/nixl_disaggregated/results/runs/20260527_120643` | 2000/2000 | 140.74 s | 14.21 | 909.50 | 65392.79 ms | 26.33 ms | 39.03 ms |
+| `4P4D` | `/home/fei/research/PD/test/baseline/nixl_disaggregated/results/runs/20260527_121015` | 2000/2000 | 131.47 s | 15.21 | 973.63 | 58240.30 ms | 26.20 ms | 41.93 ms |
+
+Valid PAP results:
+
+| Topology | Run root | Success | Duration | Req/s | Output tok/s | Median TTFT | Median TPOT | P99 TPOT |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `7PA1P` | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_121356` | 2000/2000 | 592.40 s | 3.38 | 216.07 | 92943.27 ms | 7592.25 ms | 7834.18 ms |
+| `6PA2P` | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_122512` | 2000/2000 | 255.67 s | 7.82 | 500.65 | 95245.34 ms | 1201.16 ms | 1578.17 ms |
+| `4PA4P` | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_124150` | 2000/2000 | 390.99 s | 5.12 | 327.38 | 152197.49 ms | 1419.97 ms | 2240.68 ms |
+
+Invalid PAP result:
+
+| Topology | Run root | Result |
+| --- | --- | --- |
+| `5PA3P` | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_123036` | Invalid/stalled. The benchmark stayed at `0/2000`; projection logs reported `TimeoutError: timed out waiting for PAP NIXL mailbox ACK ... #qkv_batch` and `TimeoutError: timed out waiting for PAP NIXL receive slot ... #attn_out_batch`. The run was terminated and no result JSON was produced. |
+
+Projection-side batch evidence from the service logs:
+
+| Topology | Max observed Projection `Running` requests | Notes |
+| --- | --- | --- |
+| `7PA1P` | `2000` on the single Projection | Confirms that `MAX_NUM_SEQS=2000` allowed the Projection node to accept the full macro batch, but one Projection node remained the throughput bottleneck. |
+| `6PA2P` | `423`, `445` on the two Projection logs | Requests were distributed across two Projection nodes; this was the best valid PAP point. |
+| `5PA3P` | no steady `Running` sample before failure | Failed in mailbox ACK/receive-slot handling. |
+| `4PA4P` | `198`, `210`, `207`, `187` across four Projection logs | More Projection nodes did not help because only four PA nodes remained and the run became slower. |
+
+Best valid points:
+
+| Architecture | Best topology | Output tok/s | Req/s | Median TTFT | Median TPOT | P99 TPOT |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| PD-NIXL | `4P4D` | 973.63 | 15.21 | 58240.30 ms | 26.20 ms | 41.93 ms |
+| PAP layer-wavefront auto | `6PA2P` | 500.65 | 7.82 | 95245.34 ms | 1201.16 ms | 1578.17 ms |
+
+Interpretation:
+
+- Under this fixed workload, PD-NIXL is the clear winner. The best PAP point
+  reaches only `51.4%` of the best PD output throughput (`500.65 / 973.63`).
+- PD improves as decode nodes increase from `1` to `4`, while median TPOT stays
+  around `26-27 ms`. At `1024/64`, qps `256`, prompts `2000`, decode-side
+  capacity dominates the PD sweep more than prefill-side capacity.
+- PAP improves strongly from one to two Projection nodes (`216.07 -> 500.65
+  tok/s`), confirming that one Projection node is a bottleneck. However, adding
+  more Projection nodes is not monotonic: `5PA3P` hit mailbox ACK timeouts and
+  `4PA4P` was slower than `6PA2P`.
+- The current PAP implementation still has a large Projection/remote-Attention
+  loop cost at this scale. Even at the best PAP point, median TPOT is
+  `1201.16 ms`, far above PD's `26.20 ms`.
+- The Projection logs also emit `PAP runner microbatch is disabled for
+  qwen3_moe because the FP8 fused MoE path does not support DBO contexts`.
+  This is the normal whole-model runner microbatch warning for this model; the
+  tested PAP path is the NIXL-mailbox layer-wavefront offload path.
+
+Conclusion for this iteration:
+
+- For the current Qwen3-30B, `1024/64`, qps `256`, prompts `2000` point, the
+  architecture-level best comparison is `PD-NIXL 4P4D` versus `PAP 6PA2P`.
+- PAP's best valid topology is not competitive with PD-NIXL yet. The next
+  useful PAP work is not another topology sweep; it is improving the
+  Projection/Attention exchange path and making the multi-Projection mailbox
+  path stable. A fused batch attention kernel remains the next concrete
+  development target.
