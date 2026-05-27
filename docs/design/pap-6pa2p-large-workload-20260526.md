@@ -754,3 +754,69 @@ Verification for the endpoint fix:
 ```
 
 Result: `17 passed`.
+
+## Qwen3-30B-A3B-FP8 Runner 3-Way Root Cause
+
+A follow-up focused on why the 30B `3-way` result above was much worse than
+serial. The key finding is that the measured 30B run did not actually realize
+the intended runner-level 3-way microbatch shape.
+
+Root causes found in the new runner path:
+
+1. The FP8 30B model uses `vllm/v1/worker/gpu_model_runner.py`, but the earlier
+   PAP runner microbatch implementation existed only in
+   `vllm/v1/worker/gpu/model_runner.py`. The new runner did not read
+   `PAP_RUNNER_MICROBATCH_COUNT`, did not wrap the model in `UBatchWrapper` for
+   PAP, and did not slice PAP endpoint/request metadata per ubatch.
+2. After adding new-runner PAP microbatching, the first runtime failure was an
+   Attention metadata builder assertion. The new runner had created only one
+   metadata builder when normal vLLM DBO was disabled, but PAP runner ubatching
+   can use ubatch ids `0..N-1` even when `parallel_config.use_ubatching` is
+   false.
+3. The next runtime failure was a PAP request/position mismatch. In eager mode
+   the model was given padded ubatch slices, while the Attention metadata path
+   used unpadded slices. PAP context slicing now follows the same slices passed
+   to the model for this path.
+4. The final blocker is architectural for this 30B model: Qwen3-30B-A3B-FP8 is
+   `qwen3_moe`, and its FP8 fused MoE kernel asserts `not dbo_enabled()`.
+   Whole-model `UBatchWrapper` enables the DBO context around the entire forward
+   pass, so forcing runner-level PAP microbatching reaches the MoE kernel and
+   crashes.
+
+Because of item 4, the current code disables PAP runner microbatching for
+`qwen3_moe` and logs a warning instead of silently producing a misleading
+`3-way` configuration. This preserves the new-runner PAP microbatch support for
+non-MoE models, while avoiding a known-invalid 30B MoE execution path.
+
+Validation smoke after the guard:
+
+- Run root:
+  `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_085321`.
+- Model: `/data/ssd1/llm-models/Qwen3-30B-A3B-FP8`.
+- Topology: `1PA1P`.
+- Workload: input `128`, output `4`, qps `64`, `num_prompts=6`,
+  `MAX_NUM_SEQS=6`.
+- Env included `PAP_RUNNER_MICROBATCH_COUNT=3`,
+  `PAP_RUNNER_MICROBATCH_DECODE_THRESHOLD=3`,
+  `PAP_OFFLOAD_EXEC_TRACE=1`, `PAP_OFFLOAD_EXEC_TRANSPORT=nixl_mailbox`,
+  `VLLM_USE_FLASHINFER_SAMPLER=0`, and proxy variables were unset.
+- Result: `6/6` successful requests, median TTFT `1640.94 ms`, median TPOT
+  `71.40 ms`, p99 TPOT `71.46 ms`.
+- Trace confirmed the guard: Projection and Attention `calls` median stayed at
+  `6`, not three ubatches of `2`. Projection `yield_ms` median was `0.001 ms`.
+
+Updated conclusion for the 30B question:
+
+- The bad 30B `3-way` result should not be read as "3-way overlap works but is
+  slower." It was a configuration/implementation mismatch: the new runner did
+  not implement PAP runner microbatching, and the direct whole-model port is not
+  compatible with Qwen3-MoE FP8 DBO.
+- The 8B dense-model result remains the valid evidence for the current
+  runner-level 2-way/3-way design. The 8B sweet spot from this sweep is
+  `MAX_NUM_SEQS=512` for saturated throughput, with 3-way improving request
+  throughput from `4.76` to `5.84` req/s versus serial. For lower latency while
+  keeping a small 3-way win, `MAX_NUM_SEQS=128` was the better point.
+- A real 30B solution should not be the current whole-model `UBatchWrapper`.
+  It needs a MoE-compatible PAP-specific pipeline that only overlaps the
+  Projection/remote-Attention boundary, or the next planned fused/batched remote
+  Attention kernel path.

@@ -76,6 +76,26 @@ def test_v2_model_runner_supports_pap_runner_microbatch_contexts() -> None:
     assert "else 0" in attn_utils
 
 
+def test_new_gpu_model_runner_supports_pap_runner_microbatch_contexts() -> None:
+    text = (ROOT / "vllm" / "v1" / "worker" / "gpu_model_runner.py").read_text()
+
+    assert "PAP_RUNNER_MICROBATCH_COUNT" in text
+    assert "PAP_RUNNER_MICROBATCH_DECODE_THRESHOLD" in text
+    assert "_pap_should_use_runner_microbatch" in text
+    assert "_pap_forward_context_kwargs_for_ubatch" in text
+    assert "pap_runner_microbatch_count > 1" in text
+    assert "num_ubatches=pap_runner_microbatch_count or None" in text
+    assert "pap_runner_microbatching" in text
+    assert "_pap_runner_microbatch_supported_by_model" in text
+    assert 'model_type == "qwen3_moe"' in text
+    assert "if pap_runner_microbatching" in text
+    assert "else self.parallel_config.num_ubatches" in text
+    assert "max(1, pap_runner_microbatch_count)" in text
+    assert "ubatch_slices_for_model = (" in text
+    assert "ubatch_slices if pap_runner_microbatching else ubatch_slices_padded" in text
+    assert '"ubatch_additional_kwargs"' in text
+
+
 def test_pap_projection_process_skips_startup_kv_tensor_allocation() -> None:
     model_runner = (
         ROOT / "vllm" / "v1" / "worker" / "gpu" / "model_runner.py"
