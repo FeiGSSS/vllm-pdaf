@@ -402,6 +402,31 @@ def test_qwen3_decoder_layer_microbatch_mlp_overlap_is_opt_in() -> None:
     ) < forward_method.index("hidden_states = self.self_attn(")
 
 
+def test_qwen3_moe_decoder_layer_microbatch_mlp_overlap_is_opt_in() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3_moe.py").read_text()
+    start = text.index("    def _pap_microbatch_forward_after_input_norm")
+    end = text.index("    def forward(", start)
+    helper = text[start:end]
+    forward_start = text.index(
+        "    def forward(", text.index("class Qwen3MoeDecoderLayer")
+    )
+    forward_end = text.index("\n\n@support_torch_compile", forward_start)
+    forward_method = text[forward_start:forward_end]
+
+    assert "_run_pap_attention_microbatch_pipeline" in helper
+    assert "PAP_OFFLOAD_EXEC_MICROBATCH_OVERLAP_MLP" in forward_method
+    assert "def consume_projected_chunk" in helper
+    assert "self.post_attention_layernorm(" in helper
+    assert "projected_chunk, residual_chunk" in helper
+    assert "self.mlp(chunk_hidden_states)" in helper
+    assert helper.index("def consume_projected_chunk") < helper.index(
+        "_run_pap_attention_microbatch_pipeline"
+    )
+    assert forward_method.index(
+        "_pap_microbatch_forward_after_input_norm"
+    ) < forward_method.index("hidden_states = self.self_attn(")
+
+
 def test_qwen3_pap_q_first_projection_sends_query_before_kv_projection() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
     start = text.index("    def _compute_pap_attention_q_first_projection")

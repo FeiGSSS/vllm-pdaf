@@ -73,7 +73,7 @@ from .interfaces import (
     SupportsLoRA,
     SupportsPP,
 )
-from .qwen3 import Qwen3Attention
+from .qwen3 import Qwen3Attention, _pap_env_enabled
 from .utils import (
     AutoWeightsLoader,
     PPMissingLayer,
@@ -340,6 +340,40 @@ class Qwen3MoeDecoderLayer(nn.Module):
             config.hidden_size, eps=config.rms_norm_eps
         )
 
+    def _pap_microbatch_forward_after_input_norm(
+        self,
+        positions: torch.Tensor,
+        hidden_states: torch.Tensor,
+        residual: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor] | None:
+        output_hidden_states = torch.empty_like(hidden_states)
+        output_residual = torch.empty_like(residual)
+
+        def consume_projected_chunk(
+            req_indices: list[int],
+            projected_chunk: torch.Tensor,
+        ) -> None:
+            index_tensor = torch.tensor(
+                req_indices,
+                device=hidden_states.device,
+                dtype=torch.long,
+            )
+            residual_chunk = residual.index_select(0, index_tensor)
+            chunk_hidden_states, chunk_residual = self.post_attention_layernorm(
+                projected_chunk, residual_chunk
+            )
+            chunk_hidden_states = self.mlp(chunk_hidden_states)
+            output_hidden_states.index_copy_(0, index_tensor, chunk_hidden_states)
+            output_residual.index_copy_(0, index_tensor, chunk_residual)
+
+        if not self.self_attn._run_pap_attention_microbatch_pipeline(
+            positions,
+            hidden_states,
+            consume_projected_chunk,
+        ):
+            return None
+        return output_hidden_states, output_residual
+
     def forward(
         self,
         positions: torch.Tensor,
@@ -352,6 +386,15 @@ class Qwen3MoeDecoderLayer(nn.Module):
             hidden_states = self.input_layernorm(hidden_states)
         else:
             hidden_states, residual = self.input_layernorm(hidden_states, residual)
+        if _pap_env_enabled("PAP_OFFLOAD_EXEC_MICROBATCH_OVERLAP_MLP"):
+            microbatch_result = self._pap_microbatch_forward_after_input_norm(
+                positions,
+                hidden_states,
+                residual,
+            )
+            if microbatch_result is not None:
+                return microbatch_result
+
         hidden_states = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,

@@ -820,3 +820,48 @@ Updated conclusion for the 30B question:
   It needs a MoE-compatible PAP-specific pipeline that only overlaps the
   Projection/remote-Attention boundary, or the next planned fused/batched remote
   Attention kernel path.
+
+## Qwen3-30B MoE Attention-Boundary UBatch Follow-up
+
+The next implementation step added a MoE-compatible ubatch hook to
+`Qwen3MoeDecoderLayer`. It intentionally does not use whole-model
+`UBatchWrapper` or DBO. Instead, when
+`PAP_OFFLOAD_EXEC_MICROBATCH_OVERLAP_MLP=1` is set, the layer:
+
+1. runs input layernorm for the full decode batch;
+2. asks `Qwen3MoeAttention` to use the existing PAP attention-boundary
+   microbatch pipeline;
+3. for each returned attention/output-projection chunk, runs that chunk through
+   post-attention layernorm and the local MoE MLP synchronously;
+4. scatters chunk results back into the full batch output.
+
+This avoids the FP8 fused MoE `assert not dbo_enabled()` failure because the MoE
+MLP is not executed inside a DBO `UBatchContext`.
+
+Validation and first small-workload measurements:
+
+| Mode | Run root | Workload | Success | Median TPOT | Trace shape | Notes |
+| --- | --- | --- | ---: | ---: | --- | --- |
+| non-ubatch guard smoke | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_085321` | `1PA1P`, input `128`, output `4`, qps `64`, prompts `6` | 6/6 | 71.40 ms | Projection/Attention calls median `6` | Runner microbatch disabled for `qwen3_moe`; baseline safety smoke. |
+| attention ubatch + MoE chunk overlap | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_094726` | same | 6/6 | 110.63 ms | Attention calls median `2` | Runs without DBO/MoE assert, but chunk size `2` makes MoE MLP inefficient. |
+| attention ubatch only | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_094911` | same | 6/6 | 97.78 ms | Attention calls median `2` | Faster than chunked-MoE overlap, still slower than no ubatch at this small batch. |
+| non-ubatch B24 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_095042` | `1PA1P`, input `128`, output `4`, qps `64`, prompts `24` | 24/24 | 141.41 ms | Projection/Attention calls median `24` | Larger macro batch baseline. |
+| attention ubatch B24 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_095143` | same | 24/24 | 154.53 ms | Attention ubatch enabled | Still slower than non-ubatch in this 1PA1P short-output smoke. |
+
+Current interpretation:
+
+- 30B MoE can now execute PAP attention-boundary ubatch without entering DBO.
+  This is the correct compatibility direction for Qwen3-MoE FP8.
+- The current implementation is not yet the efficient final design. It still
+  has a layer barrier: all ubatches finish layer `i` before any ubatch advances
+  to layer `i+1`. That limits overlap to send/recv scheduling and optional
+  current-layer MLP work, rather than a full wavefront across layers.
+- `PAP_OFFLOAD_EXEC_MICROBATCH_OVERLAP_MLP=1` should not be used with tiny
+  chunks. It splits the MoE MLP and loses arithmetic density. For now, the safer
+  30B setting is attention-only ubatch with `PAP_OFFLOAD_EXEC_MICROBATCH_COUNT`
+  and `PAP_OFFLOAD_EXEC_MICROBATCH_FULL_QKV=1`; even that needs a larger
+  topology/workload sweep before it can be called faster than serial.
+- The next efficiency step is a true per-layer wavefront pipeline for PAP decode:
+  once ubatch `u0` receives layer `i` remote attention output, it should be able
+  to run local projection/MLP and advance to layer `i+1` while `u1/u2` are still
+  in layer `i` remote attention.
