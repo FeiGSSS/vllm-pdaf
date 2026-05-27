@@ -921,3 +921,76 @@ Updated diagnosis:
   enough to beat the serial path.
 - The next implementation should target cross-layer progress, not just
   streaming order within one layer.
+
+## Qwen3-30B MoE Layer-Wavefront UBatch Prototype
+
+The next prototype added an opt-in Qwen3-MoE PAP layer-wavefront path guarded by
+`PAP_OFFLOAD_EXEC_LAYER_WAVEFRONT=1`. This path is separate from vLLM
+runner-level DBO microbatching:
+
+- It does not use `UBatchWrapper`.
+- It keeps whole-model DBO disabled for `qwen3_moe`, because the FP8 fused MoE
+  path still asserts when `dbo_enabled()` is true.
+- It splits only decode batches, and only when every scheduled request has one
+  decode token.
+- It starts remote Attention for all ubatches on the first layer, then advances
+  an ubatch to its next layer as soon as that ubatch's current-layer remote
+  Attention result returns. This removes the earlier all-ubatches layer barrier.
+- It currently requires direct `nixl_mailbox` transport, because the prototype
+  calls the mailbox send/recv primitives directly rather than the TCP-triggered
+  offload path.
+
+Validation commands:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_contract.py \
+  tests/pap/test_pd_payloads.py \
+  tests/pap/test_multi_pap_proxy_server.py \
+  tests/pap/test_pap_trace_summary.py -q
+pre-commit run ruff-check --files \
+  vllm/model_executor/models/qwen3.py \
+  vllm/model_executor/models/qwen3_moe.py \
+  tests/pap/test_pap_contract.py
+.venv/bin/python -m py_compile \
+  vllm/model_executor/models/qwen3.py \
+  vllm/model_executor/models/qwen3_moe.py
+git diff --check
+```
+
+All four checks passed locally.
+
+Small 30B smoke comparison, proxy variables unset:
+
+| Mode | Run root | Workload | Success | Median TPOT | Mean TPOT | Trace shape |
+| --- | --- | --- | ---: | ---: | ---: | --- |
+| serial PAP | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_101151` | `1PA1P`, Qwen3-30B-A3B-FP8, input `128`, output `4`, qps `64`, prompts `6` | 6/6 | 68.11 ms | 74.23 ms | Attention `calls` median `6`; mailbox task size mostly `nbytes=61440`. |
+| layer-wavefront ubatch | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_101013` | same | 6/6 | 96.18 ms | 104.14 ms | Attention `calls` median `2`; each full decode batch is split into three `B=2` ubatches. |
+
+Trace interpretation:
+
+- The wavefront prototype is functionally valid for this small 30B run: it runs
+  without the MoE/DBO assert and the logs show three `B=2` mailbox batches per
+  full `B=6` decode step.
+- It is not faster on this small batch. The number of mailbox send/read events
+  rises from `240` in serial PAP to `624` in wavefront. Per-message overhead
+  dominates the saved waiting time.
+- Serial PAP sends one larger layer task (`calls` median `6`, QKV task
+  `nbytes=61440`), while wavefront sends three smaller layer tasks (`calls`
+  median `2`, QKV task `nbytes=20480`). The smaller tasks reduce raw Attention
+  compute, but they also triple publish/ACK/read scheduling costs.
+- This result explains why "MoE does not support ubatch" was the wrong shorthand.
+  MoE does not support the current whole-model DBO ubatch path because FP8 fused
+  MoE assumes a normal forward context and rejects DBO. A PAP-specific ubatch can
+  run if it stays outside that DBO context, but it still has to preserve per-layer
+  Attention -> MoE dependency and avoid destroying MoE arithmetic density.
+
+Current conclusion:
+
+- The compatibility blocker is resolved only for an opt-in prototype path; this
+  is not yet the efficient 30B solution.
+- The remaining efficiency problem is granularity. At tiny `B=2` ubatches, the
+  mailbox/runtime overhead is larger than the overlap benefit. The next useful
+  experiment should use a larger macro batch where each of three ubatches is
+  large enough for Projection and MoE arithmetic density, or should reduce the
+  per-ubatch mailbox cost with a fused/batched remote Attention kernel.

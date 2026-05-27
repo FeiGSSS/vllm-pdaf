@@ -360,9 +360,11 @@ class Qwen3Attention(nn.Module):
     def _should_use_pap_attention(self) -> bool:
         def reject(reason: str) -> bool:
             if _pap_env_enabled("PAP_DEBUG_DECISION"):
-                logger.info("PAP attention disabled for %s: %s",
-                            getattr(self.attn, "layer_name", "<unknown>"),
-                            reason)
+                logger.info(
+                    "PAP attention disabled for %s: %s",
+                    getattr(self.attn, "layer_name", "<unknown>"),
+                    reason,
+                )
             return False
 
         if not is_forward_context_available():
@@ -670,6 +672,63 @@ class Qwen3Attention(nn.Module):
                 trace_recv_done_ns,
             )
         return True
+
+    def _start_pap_attention_wavefront_batch(
+        self,
+        positions: torch.Tensor,
+        hidden_states: torch.Tensor,
+        *,
+        request_indices: list[int],
+        transport: Any,
+    ) -> tuple[torch.Tensor, list[tuple[str, Any, list[int], Any]]] | None:
+        if not self._should_use_pap_attention():
+            return None
+        if _pap_env_enabled("PAP_Q_FIRST_KV_LATER"):
+            return None
+        if _pap_env_enabled("PAP_SEGMENTED_QKV"):
+            return None
+        if int(hidden_states.shape[0]) != len(request_indices):
+            return None
+        positions_flat = positions.reshape(-1)
+        if int(positions_flat.shape[0]) < len(request_indices):
+            return None
+
+        qkv, _ = self.qkv_proj(hidden_states)
+        q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+        q_by_head = q.view(*q.shape[:-1], q.shape[-1] // self.head_dim, self.head_dim)
+        q_by_head = self.q_norm(q_by_head)
+        q = q_by_head.view(q.shape)
+        k_by_head = k.view(*k.shape[:-1], k.shape[-1] // self.head_dim, self.head_dim)
+        k_by_head = self.k_norm(k_by_head)
+        k = k_by_head.view(k.shape)
+        q, k = self.rotary_emb(positions_flat[: len(request_indices)], q, k)
+        sent = self._send_pap_attention_batch(
+            q,
+            k,
+            v,
+            request_indices=request_indices,
+            transport=transport,
+        )
+        return q, sent
+
+    def _finish_pap_attention_wavefront_batch(
+        self,
+        pending: tuple[torch.Tensor, list[tuple[str, Any, list[int], Any]]],
+        *,
+        transport: Any,
+    ) -> torch.Tensor:
+        query, sent_batches = pending
+        chunk_output, chunk_release_messages = self._recv_pap_attention_batch(
+            query,
+            sent_batches,
+            transport=transport,
+        )
+        try:
+            output, _ = self.o_proj(chunk_output)
+        finally:
+            for message in chunk_release_messages:
+                message.release()
+        return output
 
     def _send_pap_attention_batch(
         self,
