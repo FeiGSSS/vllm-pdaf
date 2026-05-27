@@ -1193,6 +1193,7 @@ class GPUModelRunner(
         num_scheduled_tokens: Sequence[int],
         num_actual_tokens: int,
         positions: torch.Tensor,
+        finished_request_ids: Iterable[str] = (),
     ) -> dict[str, Any]:
         request_ids_tuple = tuple(str(req_id) for req_id in request_ids)
         return {
@@ -1252,6 +1253,9 @@ class GPUModelRunner(
                     if req_id
                     in self.pap_import_prefill_kv_to_attention_by_req_id
                 )
+            ),
+            "pap_finished_request_ids": tuple(
+                str(req_id) for req_id in finished_request_ids
             ),
         }
 
@@ -4438,11 +4442,16 @@ class GPUModelRunner(
             ) = self._preprocess(
                 scheduler_output, num_tokens_padded, intermediate_tensors
             )
+            pap_finished_req_ids = scheduler_output.finished_req_ids
+            preempted_req_ids = scheduler_output.preempted_req_ids
+            if preempted_req_ids:
+                pap_finished_req_ids = pap_finished_req_ids.union(preempted_req_ids)
             pap_additional_kwargs = self._pap_forward_context_kwargs(
                 req_ids,
                 num_scheduled_tokens_np,
                 num_tokens_unpadded,
                 positions,
+                pap_finished_req_ids,
             )
             if pap_runner_microbatching and ubatch_slices_for_model is not None:
                 pap_additional_kwargs["ubatch_additional_kwargs"] = [

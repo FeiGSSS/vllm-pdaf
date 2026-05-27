@@ -75,43 +75,41 @@ class AttentionSessionStore:
     def append_decode_token(
         self, request_id: str, *, block_id: int, seq_len: int
     ) -> AttentionSession:
-        session = self._require_session(request_id)
-        slot = block_id * session.block_size + ((seq_len - 1) % session.block_size)
-        return self.append_decode_descriptor(
-            AttentionDecodeDescriptor(
-                request_id=request_id,
-                block_id=block_id,
-                slot=slot,
-                seq_len=seq_len,
+        with self._lock:
+            session = self._require_session(request_id)
+            slot = block_id * session.block_size + (
+                (seq_len - 1) % session.block_size
             )
-        )
+            updated, appended = self._record_decode_descriptor_unlocked(
+                AttentionDecodeDescriptor(
+                    request_id=request_id,
+                    block_id=block_id,
+                    slot=slot,
+                    seq_len=seq_len,
+                )
+            )
+            if not appended:
+                raise ValueError(
+                    f"expected seq_len {updated.seq_len + 1}, got {seq_len}"
+                )
+            return updated
 
     def append_decode_descriptor(
         self, descriptor: AttentionDecodeDescriptor
     ) -> AttentionSession:
-        updated, appended = self.record_decode_descriptor(descriptor)
-        if not appended:
-            raise ValueError(
-                f"expected seq_len {updated.seq_len + 1}, got {descriptor.seq_len}"
-            )
-        return updated
+        with self._lock:
+            updated, appended = self._record_decode_descriptor_unlocked(descriptor)
+            if not appended:
+                raise ValueError(
+                    f"expected seq_len {updated.seq_len + 1}, got {descriptor.seq_len}"
+                )
+            return updated
 
     def record_decode_descriptor(
         self, descriptor: AttentionDecodeDescriptor
     ) -> tuple[AttentionSession, bool]:
         with self._lock:
-            session = self._require_session(descriptor.request_id)
-            appended = self._validate_decode_descriptor(session, descriptor)
-            if not appended:
-                return session, False
-            block_ids = session.block_ids
-            if not block_ids or block_ids[-1] != descriptor.block_id:
-                block_ids = (*block_ids, descriptor.block_id)
-            updated = replace(
-                session, block_ids=block_ids, seq_len=descriptor.seq_len
-            )
-            self._sessions[descriptor.request_id] = updated
-            return updated, True
+            return self._record_decode_descriptor_unlocked(descriptor)
 
     def free_session(self, request_id: str) -> AttentionSession | None:
         with self._lock:
@@ -122,6 +120,20 @@ class AttentionSessionStore:
             return self._sessions[request_id]
         except KeyError as exc:
             raise KeyError(f"unknown attention session: {request_id}") from exc
+
+    def _record_decode_descriptor_unlocked(
+        self, descriptor: AttentionDecodeDescriptor
+    ) -> tuple[AttentionSession, bool]:
+        session = self._require_session(descriptor.request_id)
+        appended = self._validate_decode_descriptor(session, descriptor)
+        if not appended:
+            return session, False
+        block_ids = session.block_ids
+        if not block_ids or block_ids[-1] != descriptor.block_id:
+            block_ids = (*block_ids, descriptor.block_id)
+        updated = replace(session, block_ids=block_ids, seq_len=descriptor.seq_len)
+        self._sessions[descriptor.request_id] = updated
+        return updated, True
 
     @staticmethod
     def _validate_seq_len(session: AttentionSession, seq_len: int) -> None:

@@ -25,7 +25,6 @@ from torch.multiprocessing.reductions import reduce_tensor
 
 logger = logging.getLogger(__name__)
 
-_OPENAI_REQUEST_ID_PREFIXES = ("cmpl-", "chatcmpl-")
 _TCP_CONNECTIONS = local()
 
 

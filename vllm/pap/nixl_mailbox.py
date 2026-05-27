@@ -206,6 +206,20 @@ class PAPMailboxMessage:
         object.__setattr__(self, "_released", True)
         callback()
 
+    def __del__(self) -> None:
+        if self.release_callback is None or self._released:
+            return
+        try:
+            logger.warning(
+                "PAP mailbox message %s (%s) was garbage-collected without "
+                "release(); releasing its receive slot",
+                self.msg_id,
+                self.kind,
+            )
+            self.release()
+        except Exception:
+            pass
+
 
 class PAPMailboxBackend(Protocol):
     """Delivery backend used by mailbox actors."""

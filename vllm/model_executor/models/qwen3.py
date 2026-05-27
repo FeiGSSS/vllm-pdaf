@@ -24,10 +24,12 @@
 """Inference-only Qwen3 model compatible with HuggingFace weights."""
 
 import hashlib
+import json
 import os
 import time
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import nullcontext
 from functools import lru_cache
 from typing import Any
 
@@ -55,6 +57,7 @@ from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.rotary_embedding import get_rope
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
+from vllm.pap.mode import is_pap_request_id, pap_request_ids_are_routable
 from vllm.sequence import IntermediateTensors
 from vllm.transformers_utils.config import set_default_rope_theta
 from vllm.v1.attention.backend import AttentionType
@@ -72,6 +75,179 @@ _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 
 def _pap_env_enabled(name: str) -> bool:
     return os.environ.get(name, "").lower() in _TRUE_ENV_VALUES
+
+
+def _qwen3_layer_profile_enabled() -> bool:
+    return os.environ.get("VLLM_QWEN3_LAYER_PROFILE", "").lower() in _TRUE_ENV_VALUES
+
+
+def _qwen3_profile_attn_metadata(layer_name: str) -> Any | None:
+    if not is_forward_context_available():
+        return None
+    metadata = get_forward_context().attn_metadata
+    if isinstance(metadata, dict):
+        return metadata.get(layer_name)
+    if isinstance(metadata, list) and metadata:
+        return metadata[0].get(layer_name)
+    return None
+
+
+def _qwen3_profile_decode_key(
+    layer_name: str,
+    hidden_states: torch.Tensor,
+) -> tuple[int, int, int] | None:
+    metadata = _qwen3_profile_attn_metadata(layer_name)
+    configured_batch_size = int(
+        os.environ.get("VLLM_QWEN3_LAYER_PROFILE_CONFIGURED_BATCH_SIZE", "0") or 0
+    )
+    configured_prompt_len = int(
+        os.environ.get("VLLM_QWEN3_LAYER_PROFILE_PROMPT_LEN", "0") or 0
+    )
+    if metadata is None:
+        total_tokens = int(hidden_states.shape[0])
+        if configured_batch_size > 0 and total_tokens == configured_batch_size:
+            return configured_batch_size, configured_prompt_len, total_tokens
+        return None
+    if int(getattr(metadata, "max_query_len", 0)) != 1:
+        return None
+    num_reqs = int(getattr(metadata, "num_reqs", 0))
+    is_prefilling = getattr(metadata, "is_prefilling", None)
+    if is_prefilling is not None and num_reqs > 0:
+        if bool(torch.any(is_prefilling[:num_reqs]).item()):
+            return None
+    batch_size = int(getattr(metadata, "num_actual_tokens", hidden_states.shape[0]))
+    context_len = int(getattr(metadata, "max_seq_len", 0))
+    total_tokens = int(hidden_states.shape[0])
+    return batch_size, context_len, total_tokens
+
+
+class _Qwen3LayerProfileScope:
+    def __init__(
+        self,
+        *,
+        layer_name: str,
+        layer_index: int,
+        stage: str,
+        batch_size: int,
+        context_len: int,
+        total_tokens: int,
+    ) -> None:
+        self.layer_name = layer_name
+        self.layer_index = layer_index
+        self.stage = stage
+        self.batch_size = batch_size
+        self.context_len = context_len
+        self.total_tokens = total_tokens
+        self.start: torch.cuda.Event | None = None
+        self.end: torch.cuda.Event | None = None
+
+    def __enter__(self) -> None:
+        self.start = torch.cuda.Event(enable_timing=True)
+        self.end = torch.cuda.Event(enable_timing=True)
+        self.start.record()
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        if exc_type is not None or self.start is None or self.end is None:
+            return
+        self.end.record()
+        self.end.synchronize()
+        _qwen3_profile_write_sample(
+            layer_name=self.layer_name,
+            layer_index=self.layer_index,
+            stage=self.stage,
+            batch_size=self.batch_size,
+            context_len=self.context_len,
+            total_tokens=self.total_tokens,
+            elapsed_ms=float(self.start.elapsed_time(self.end)),
+        )
+
+
+def _qwen3_profile_scope(
+    *,
+    layer_name: str,
+    layer_index: int,
+    stage: str,
+    hidden_states: torch.Tensor,
+) -> _Qwen3LayerProfileScope | None:
+    if not _qwen3_layer_profile_enabled():
+        return None
+    if not hidden_states.is_cuda:
+        return None
+    decode_key = _qwen3_profile_decode_key(layer_name, hidden_states)
+    if decode_key is None:
+        return None
+    batch_size, context_len, total_tokens = decode_key
+    return _Qwen3LayerProfileScope(
+        layer_name=layer_name,
+        layer_index=layer_index,
+        stage=stage,
+        batch_size=batch_size,
+        context_len=context_len,
+        total_tokens=total_tokens,
+    )
+
+
+def _qwen3_profile_context(
+    *,
+    layer_name: str,
+    layer_index: int,
+    stage: str,
+    hidden_states: torch.Tensor,
+) -> Any:
+    scope = _qwen3_profile_scope(
+        layer_name=layer_name,
+        layer_index=layer_index,
+        stage=stage,
+        hidden_states=hidden_states,
+    )
+    return scope if scope is not None else nullcontext()
+
+
+def _qwen3_profile_write_sample(
+    *,
+    layer_name: str,
+    layer_index: int,
+    stage: str,
+    batch_size: int,
+    context_len: int,
+    total_tokens: int,
+    elapsed_ms: float,
+) -> None:
+    output_dir = os.environ.get("VLLM_QWEN3_LAYER_PROFILE_DIR")
+    if not output_dir:
+        return
+    try:
+        rank = get_tensor_model_parallel_rank()
+        tp_size = get_tensor_model_parallel_world_size()
+    except Exception:
+        rank = int(os.environ.get("RANK", "0"))
+        tp_size = int(os.environ.get("WORLD_SIZE", "1"))
+    os.makedirs(output_dir, exist_ok=True)
+    path = os.path.join(output_dir, f"samples_pid{os.getpid()}_rank{rank}.jsonl")
+    sample = {
+        "run_id": os.environ.get("VLLM_QWEN3_LAYER_PROFILE_RUN_ID", ""),
+        "model": os.environ.get("VLLM_QWEN3_LAYER_PROFILE_MODEL", ""),
+        "pid": os.getpid(),
+        "rank": rank,
+        "tp_size": tp_size,
+        "layer_name": layer_name,
+        "layer_index": layer_index,
+        "stage": stage,
+        "batch_size": batch_size,
+        "context_len": context_len,
+        "configured_prompt_len": int(
+            os.environ.get("VLLM_QWEN3_LAYER_PROFILE_PROMPT_LEN", "0") or 0
+        ),
+        "configured_batch_size": int(
+            os.environ.get(
+                "VLLM_QWEN3_LAYER_PROFILE_CONFIGURED_BATCH_SIZE", "0"
+            ) or 0
+        ),
+        "total_tokens": total_tokens,
+        "elapsed_ms": elapsed_ms,
+    }
+    with open(path, "a", encoding="utf-8") as output:
+        output.write(json.dumps(sample, sort_keys=True) + "\n")
 
 
 def _pap_offload_exec_microbatch_count(num_reqs: int) -> int:
@@ -141,6 +317,18 @@ def _pap_block_ids_from_block_table(
         .to(device="cpu", dtype=torch.long)
         .tolist()
     ]
+
+
+def _pap_prune_imported_prefill_kv(
+    imported_prefill_kv: set[tuple[str, str, int, str]],
+    finished_request_ids: Iterable[Any],
+) -> None:
+    finished = {str(request_id) for request_id in finished_request_ids}
+    if not finished or not imported_prefill_kv:
+        return
+    imported_prefill_kv.difference_update(
+        import_key for import_key in tuple(imported_prefill_kv) if import_key[0] in finished
+    )
 
 
 @lru_cache(maxsize=8)
@@ -285,6 +473,7 @@ class Qwen3Attention(nn.Module):
     ) -> None:
         super().__init__()
         self.hidden_size = hidden_size
+        self.layer_index = extract_layer_index(prefix)
         tp_size = get_tensor_model_parallel_world_size()
         self.total_num_heads = num_heads
         assert self.total_num_heads % tp_size == 0
@@ -379,15 +568,32 @@ class Qwen3Attention(nn.Module):
                         message.release()
                 return output
 
-        qkv, _ = self.qkv_proj(hidden_states)
+        layer_name = self.attn.layer_name
+        with _qwen3_profile_context(
+            layer_name=layer_name,
+            layer_index=self.layer_index,
+            stage="qkv_proj",
+            hidden_states=hidden_states,
+        ):
+            qkv, _ = self.qkv_proj(hidden_states)
         q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
-        q_by_head = q.view(*q.shape[:-1], q.shape[-1] // self.head_dim, self.head_dim)
-        q_by_head = self.q_norm(q_by_head)
-        q = q_by_head.view(q.shape)
-        k_by_head = k.view(*k.shape[:-1], k.shape[-1] // self.head_dim, self.head_dim)
-        k_by_head = self.k_norm(k_by_head)
-        k = k_by_head.view(k.shape)
-        q, k = self.rotary_emb(positions, q, k)
+        with _qwen3_profile_context(
+            layer_name=layer_name,
+            layer_index=self.layer_index,
+            stage="qk_norm_rope",
+            hidden_states=hidden_states,
+        ):
+            q_by_head = q.view(
+                *q.shape[:-1], q.shape[-1] // self.head_dim, self.head_dim
+            )
+            q_by_head = self.q_norm(q_by_head)
+            q = q_by_head.view(q.shape)
+            k_by_head = k.view(
+                *k.shape[:-1], k.shape[-1] // self.head_dim, self.head_dim
+            )
+            k_by_head = self.k_norm(k_by_head)
+            k = k_by_head.view(k.shape)
+            q, k = self.rotary_emb(positions, q, k)
         if self._should_use_pap_attention():
             attn_output, pap_release_messages = self._compute_pap_attention(q, k, v)
             try:
@@ -396,9 +602,21 @@ class Qwen3Attention(nn.Module):
                 for message in pap_release_messages:
                     message.release()
             return output
-        attn_output = self.attn(q, k, v)
+        with _qwen3_profile_context(
+            layer_name=layer_name,
+            layer_index=self.layer_index,
+            stage="attention",
+            hidden_states=hidden_states,
+        ):
+            attn_output = self.attn(q, k, v)
         self._maybe_import_pap_prefill_kv_to_attention()
-        output, _ = self.o_proj(attn_output)
+        with _qwen3_profile_context(
+            layer_name=layer_name,
+            layer_index=self.layer_index,
+            stage="o_proj",
+            hidden_states=hidden_states,
+        ):
+            output, _ = self.o_proj(attn_output)
         return output
 
     def _should_use_pap_attention(self) -> bool:
@@ -419,8 +637,6 @@ class Qwen3Attention(nn.Module):
             return reject("pap_enabled is false")
 
         request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
-        if not self._select_pap_request_id(request_ids):
-            return reject(f"no selected request id request_ids={request_ids[:4]}")
 
         metadata = forward_context.attn_metadata
         if isinstance(metadata, dict):
@@ -462,6 +678,11 @@ class Qwen3Attention(nn.Module):
             return reject(
                 "num_scheduled_tokens too short "
                 f"len={len(num_scheduled_tokens)} num_reqs={num_reqs}"
+            )
+        if not pap_request_ids_are_routable(request_ids, num_reqs):
+            return reject(
+                "non-PAP request id in scheduled batch "
+                f"request_ids={request_ids[:num_reqs][:4]}"
             )
         if any(num_tokens != 1 for num_tokens in num_scheduled_tokens[:num_reqs]):
             return reject(
@@ -851,7 +1072,7 @@ class Qwen3Attention(nn.Module):
         ] = {}
         for local_index, req_index in enumerate(request_indices):
             request_id = str(request_ids[req_index])
-            if not request_id.startswith(("cmpl-", "chatcmpl-")):
+            if not is_pap_request_id(request_id):
                 raise RuntimeError(
                     f"PAP attention cannot route non-OpenAI request id {request_id}"
                 )
@@ -861,9 +1082,9 @@ class Qwen3Attention(nn.Module):
                 )
             seq_len = int(positions_cpu[req_index].item()) + 1
             max_seq_len = int(seq_lens_cpu[req_index].item())
-            if seq_len > max_seq_len:
+            if seq_len != max_seq_len:
                 raise RuntimeError(
-                    f"PAP attention position-derived seq_len {seq_len} exceeds "
+                    f"PAP attention position-derived seq_len {seq_len} differs from "
                     f"scheduler seq_len {max_seq_len} for {request_id}"
                 )
             tcp_endpoint = select_attention_endpoint_for_request(
@@ -1143,11 +1364,11 @@ class Qwen3Attention(nn.Module):
         ] = {}
         for req_index in range(num_reqs):
             request_id = str(request_ids[req_index])
-            if not request_id.startswith(("cmpl-", "chatcmpl-")):
+            if not is_pap_request_id(request_id):
                 return False
             seq_len = int(positions_cpu.reshape(-1)[req_index].item()) + 1
             max_seq_len = int(seq_lens_cpu[req_index].item())
-            if seq_len > max_seq_len:
+            if seq_len != max_seq_len:
                 return False
             tcp_endpoint = select_attention_endpoint_for_request(
                 request_id,
@@ -1333,15 +1554,15 @@ class Qwen3Attention(nn.Module):
         ] = []
         for req_index in range(num_reqs):
             request_id = str(request_ids[req_index])
-            if not request_id.startswith(("cmpl-", "chatcmpl-")):
+            if not is_pap_request_id(request_id):
                 raise RuntimeError(
                     f"PAP attention cannot route non-OpenAI request id {request_id}"
                 )
             seq_len = int(positions_cpu.reshape(-1)[req_index].item()) + 1
             max_seq_len = int(seq_lens_cpu[req_index].item())
-            if seq_len > max_seq_len:
+            if seq_len != max_seq_len:
                 raise RuntimeError(
-                    f"PAP attention position-derived seq_len {seq_len} exceeds "
+                    f"PAP attention position-derived seq_len {seq_len} differs from "
                     f"scheduler seq_len {max_seq_len} for {request_id}"
                 )
             tcp_endpoint = select_attention_endpoint_for_request(
@@ -1768,6 +1989,10 @@ class Qwen3Attention(nn.Module):
         additional_kwargs = forward_context.additional_kwargs or {}
         if not additional_kwargs.get("pap_enabled"):
             return
+        _pap_prune_imported_prefill_kv(
+            self._pap_imported_prefill_kv,
+            additional_kwargs.get("pap_finished_request_ids") or (),
+        )
 
         request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
         num_reqs = int(additional_kwargs.get("pap_num_reqs") or len(request_ids))
@@ -1835,7 +2060,7 @@ class Qwen3Attention(nn.Module):
         seq_lens_cpu = seq_lens.detach().to(device="cpu", dtype=torch.long)
         for req_index in range(num_reqs):
             request_id = str(request_ids[req_index])
-            if not request_id.startswith(("cmpl-", "chatcmpl-")):
+            if not is_pap_request_id(request_id):
                 continue
             if request_id not in import_prefill_kv_to_attention_by_request:
                 continue
@@ -1876,16 +2101,6 @@ class Qwen3Attention(nn.Module):
             )
             self._pap_imported_prefill_kv.add(import_key)
 
-    @staticmethod
-    def _select_pap_request_id(request_ids: Any) -> str | None:
-        if not request_ids:
-            return None
-        for request_id in request_ids:
-            request_id_str = str(request_id)
-            if request_id_str.startswith(("cmpl-", "chatcmpl-")):
-                return request_id_str
-        return None
-
 
 class Qwen3DecoderLayer(nn.Module):
     def __init__(
@@ -1897,6 +2112,7 @@ class Qwen3DecoderLayer(nn.Module):
     ) -> None:
         super().__init__()
         self.hidden_size = config.hidden_size
+        self.layer_index = extract_layer_index(prefix)
         set_default_rope_theta(config, default_theta=1000000)
         dual_chunk_attention_config = getattr(
             config, "dual_chunk_attention_config", None
@@ -1978,12 +2194,20 @@ class Qwen3DecoderLayer(nn.Module):
         hidden_states: torch.Tensor,
         residual: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
+        layer_name = self.self_attn.attn.layer_name
+
         # Self Attention
-        if residual is None:
-            residual = hidden_states
-            hidden_states = self.input_layernorm(hidden_states)
-        else:
-            hidden_states, residual = self.input_layernorm(hidden_states, residual)
+        with _qwen3_profile_context(
+            layer_name=layer_name,
+            layer_index=self.layer_index,
+            stage="input_layernorm",
+            hidden_states=hidden_states,
+        ):
+            if residual is None:
+                residual = hidden_states
+                hidden_states = self.input_layernorm(hidden_states)
+            else:
+                hidden_states, residual = self.input_layernorm(hidden_states, residual)
         if _pap_env_enabled("PAP_OFFLOAD_EXEC_MICROBATCH_OVERLAP_MLP"):
             microbatch_result = self._pap_microbatch_forward_after_input_norm(
                 positions,
@@ -1999,8 +2223,22 @@ class Qwen3DecoderLayer(nn.Module):
         )
 
         # Fully Connected
-        hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
-        hidden_states = self.mlp(hidden_states)
+        with _qwen3_profile_context(
+            layer_name=layer_name,
+            layer_index=self.layer_index,
+            stage="post_attention_layernorm",
+            hidden_states=hidden_states,
+        ):
+            hidden_states, residual = self.post_attention_layernorm(
+                hidden_states, residual
+            )
+        with _qwen3_profile_context(
+            layer_name=layer_name,
+            layer_index=self.layer_index,
+            stage="mlp",
+            hidden_states=hidden_states,
+        ):
+            hidden_states = self.mlp(hidden_states)
         return hidden_states, residual
 
 

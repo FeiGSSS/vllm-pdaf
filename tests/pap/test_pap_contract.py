@@ -11,7 +11,7 @@ def test_qwen3_pap_enabled_checks_pap_enabled_flag() -> None:
     method = text[start:end]
 
     assert 'additional_kwargs.get("pap_enabled")' in method
-    assert "_select_pap_request_id" in method
+    assert "pap_request_ids_are_routable(request_ids, num_reqs)" in method
     assert "attn_metadata" in method
 
 
@@ -35,6 +35,8 @@ def test_model_runner_passes_pap_enabled_to_forward_context() -> None:
     assert '"pap_enabled"' in text
     assert "_pap_enabled_for_batch" in text
     assert "PAP enabled via per-request TCP endpoint" in text
+    assert '"pap_finished_request_ids"' in text
+    assert "scheduler_output.finished_req_ids" in text
 
 
 def test_gpu_model_runner_passes_pap_request_context() -> None:
@@ -45,6 +47,8 @@ def test_gpu_model_runner_passes_pap_request_context() -> None:
     assert "_pap_forward_context_kwargs" in text
     assert "additional_kwargs=pap_additional_kwargs" in text
     assert '"pap_attention_tcp_endpoint_by_request"' in text
+    assert '"pap_finished_request_ids"' in text
+    assert "scheduler_output.finished_req_ids" in text
 
 
 def test_v2_model_runner_supports_pap_runner_microbatch_contexts() -> None:
@@ -650,6 +654,8 @@ def test_qwen3_pap_sends_position_only_offload_exec_descriptor() -> None:
     assert "seq_lens" in method
     assert "pap_positions" in method
     assert "positions_cpu.reshape(-1)[req_index]" in method
+    assert "seq_len != max_seq_len" in method
+    assert "differs from" in method
     assert '"seq_len": seq_len' in method
     assert "slot_mapping" not in method
     assert "block_id = slot // block_size" not in method
@@ -706,18 +712,20 @@ def test_qwen3_pap_uses_empty_output_when_all_requests_offloaded() -> None:
 def test_qwen3_pap_imports_prefill_kv_for_offload() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
     start = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
-    end = text.index("    @staticmethod")
+    end = text.index("\n\nclass Qwen3DecoderLayer")
     method = text[start:end]
 
     assert 'additional_kwargs.get("pap_prefill_kv_handle_by_request")' in method
     assert "PAP_OFFLOAD_KV_TRANSPORT" in method
     assert "PAPTensorTransport.CUDA_IPC" in method
+    assert "_pap_prune_imported_prefill_kv(" in method
+    assert 'additional_kwargs.get("pap_finished_request_ids")' in method
 
 
 def test_qwen3_prefill_uses_paged_kv_import_for_cuda_ipc() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
     start = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
-    end = text.index("    @staticmethod")
+    end = text.index("\n\nclass Qwen3DecoderLayer")
     method = text[start:end]
 
     assert "import_prefill_paged_kv" in method
@@ -729,7 +737,7 @@ def test_qwen3_prefill_uses_paged_kv_import_for_cuda_ipc() -> None:
 def test_qwen3_prefill_import_does_not_mark_request_ready_for_all_layers() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
     start = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
-    end = text.index("    @staticmethod")
+    end = text.index("\n\nclass Qwen3DecoderLayer")
     method = text[start:end]
 
     assert 'additional_kwargs["pap_attention_kv_installed_by_request"]' not in method

@@ -362,6 +362,16 @@ class PAPOffloadExecTransport(Protocol):
         ...
 
 
+def _clone_and_release_mailbox_message(message: Any) -> torch.Tensor:
+    tensor = message.tensor
+    if getattr(message, "release_callback", None) is not None:
+        tensor = tensor.clone()
+        if tensor.is_cuda:
+            torch.cuda.current_stream(tensor.device).synchronize()
+    message.release()
+    return tensor
+
+
 class PAPP2PNCCLOffloadExecTransport:
     """Adapter around vLLM's P2pNcclEngine for PAP OFFLOAD_EXEC tensors."""
 
@@ -455,8 +465,11 @@ class PAPP2PNCCLOffloadExecTransport:
         deadline = time.monotonic() + float(
             os.environ.get("PAP_OFFLOAD_EXEC_RECV_TIMEOUT", "30")
         )
+        # P2pNcclEngine.recv_tensor is blocking on the normal GET path, so this
+        # sleep is only a fallback for None-return retry paths. Keep it below
+        # the per-layer PAP budget in case a future recv path becomes nonblocking.
         poll_seconds = float(
-            os.environ.get("PAP_OFFLOAD_EXEC_RECV_POLL_SECONDS", "0.01")
+            os.environ.get("PAP_OFFLOAD_EXEC_RECV_POLL_SECONDS", "0.0001")
         )
         while True:
             tensor = self.engine.recv_tensor(tensor_id, remote_address)
@@ -566,7 +579,9 @@ class PAPNixlMailboxOffloadExecTransport:
         *,
         remote_address: str,
     ) -> torch.Tensor:
-        return self.endpoint.recv(descriptor.qkv_tensor_id).tensor
+        return _clone_and_release_mailbox_message(
+            self.endpoint.recv(descriptor.qkv_tensor_id)
+        )
 
     def send_output(
         self,
@@ -588,7 +603,9 @@ class PAPNixlMailboxOffloadExecTransport:
         *,
         remote_address: str,
     ) -> torch.Tensor:
-        return self.endpoint.recv(descriptor.output_tensor_id).tensor
+        return _clone_and_release_mailbox_message(
+            self.endpoint.recv(descriptor.output_tensor_id)
+        )
 
     def send_qkv_batch(
         self,
@@ -659,10 +676,12 @@ class PAPNixlMailboxOffloadExecTransport:
         *,
         remote_address: str,
     ) -> torch.Tensor:
-        return self.recv_qkv_batch_message(
-            descriptor,
-            remote_address=remote_address,
-        ).tensor
+        return _clone_and_release_mailbox_message(
+            self.recv_qkv_batch_message(
+                descriptor,
+                remote_address=remote_address,
+            )
+        )
 
     def recv_qkv_batch_message(
         self,
@@ -676,7 +695,7 @@ class PAPNixlMailboxOffloadExecTransport:
         self,
     ) -> tuple[PAPOffloadExecBatchDescriptor, torch.Tensor]:
         descriptor, message = self.recv_next_qkv_batch_message()
-        return descriptor, message.tensor
+        return descriptor, _clone_and_release_mailbox_message(message)
 
     def recv_next_qkv_batch_message(
         self,
@@ -771,10 +790,12 @@ class PAPNixlMailboxOffloadExecTransport:
         *,
         remote_address: str,
     ) -> torch.Tensor:
-        return self.recv_output_batch_message(
-            descriptor,
-            remote_address=remote_address,
-        ).tensor
+        return _clone_and_release_mailbox_message(
+            self.recv_output_batch_message(
+                descriptor,
+                remote_address=remote_address,
+            )
+        )
 
     def recv_output_batch_message(
         self,

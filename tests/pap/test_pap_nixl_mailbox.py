@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 from collections import OrderedDict
 from threading import Condition, RLock
 
@@ -861,6 +862,22 @@ def test_nixl_mailbox_zero_copy_uses_free_recv_slot_and_releases_it() -> None:
 
     assert endpoint._recv_slot_leases == {0: "msg-old"}
 
+
+def test_mailbox_message_del_releases_unreleased_receive_slot() -> None:
+    released = []
+
+    message = PAPMailboxMessage(
+        msg_id="msg-leaked",
+        kind="attention_result_batch",
+        metadata={},
+        tensor=torch.tensor([1.0]),
+        release_callback=lambda: released.append(True),
+    )
+
+    del message
+    gc.collect()
+
+    assert released == [True]
 
 
 def test_nixl_mailbox_failed_zero_copy_read_releases_recv_slot() -> None:

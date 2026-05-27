@@ -21,6 +21,7 @@ import functools
 import gc
 import os
 import time
+from collections.abc import Iterable
 from copy import deepcopy
 from typing import Any, NamedTuple
 
@@ -861,7 +862,11 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         request_id_set = set(request_ids)
         return {key: value for key, value in mapping.items() if key in request_id_set}
 
-    def _pap_forward_context_kwargs(self, input_batch: InputBatch) -> dict[str, Any]:
+    def _pap_forward_context_kwargs(
+        self,
+        input_batch: InputBatch,
+        finished_request_ids: Iterable[str] = (),
+    ) -> dict[str, Any]:
         return {
             "pap_request_ids": tuple(input_batch.req_ids),
             "pap_num_scheduled_tokens": tuple(
@@ -902,6 +907,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             ),
             "pap_import_prefill_kv_to_attention_by_request": (
                 self._pap_import_prefill_kv_to_attention_for_batch(input_batch)
+            ),
+            "pap_finished_request_ids": tuple(
+                str(req_id) for req_id in finished_request_ids
             ),
         }
 
@@ -1508,7 +1516,14 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 has_lora=self.lora_config is not None,
             )
 
-            pap_additional_kwargs = self._pap_forward_context_kwargs(input_batch)
+            pap_finished_req_ids = scheduler_output.finished_req_ids
+            preempted_req_ids = scheduler_output.preempted_req_ids
+            if preempted_req_ids:
+                pap_finished_req_ids = pap_finished_req_ids.union(preempted_req_ids)
+            pap_additional_kwargs = self._pap_forward_context_kwargs(
+                input_batch,
+                pap_finished_req_ids,
+            )
             if os.environ.get("PAP_DEBUG_DECISION", "").lower() in (
                 "1",
                 "true",

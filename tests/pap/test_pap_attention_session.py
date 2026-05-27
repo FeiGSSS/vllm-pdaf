@@ -27,6 +27,24 @@ def test_attention_session_lifecycle_tracks_prefill_and_decode_blocks() -> None:
     assert store.get_session("req-1") is None
 
 
+def test_append_decode_token_does_not_reenter_public_record_method(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = AttentionSessionStore()
+    store.create_session("req-1", "conv-1", block_size=16, max_seq_len=64)
+    store.import_prefill_kv("req-1", block_ids=[2], seq_len=24)
+
+    def fail_if_called(_descriptor: AttentionDecodeDescriptor) -> None:
+        raise AssertionError("append_decode_token must not reenter public record")
+
+    monkeypatch.setattr(store, "record_decode_descriptor", fail_if_called)
+
+    updated = store.append_decode_token("req-1", block_id=2, seq_len=25)
+
+    assert updated.block_ids == (2,)
+    assert updated.seq_len == 25
+
+
 def test_attention_session_rejects_duplicate_request_id() -> None:
     store = AttentionSessionStore()
     store.create_session("req-1", "conv-1", block_size=16, max_seq_len=64)
@@ -127,4 +145,3 @@ def test_attention_session_rejects_descriptor_with_wrong_slot() -> None:
                 seq_len=25,
             )
         )
-
