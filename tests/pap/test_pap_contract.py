@@ -709,9 +709,7 @@ def test_qwen3_pap_imports_prefill_kv_for_offload() -> None:
     end = text.index("    @staticmethod")
     method = text[start:end]
 
-    assert 'additional_kwargs.get("pap_attention_kv_installed_by_request")' in method
     assert 'additional_kwargs.get("pap_prefill_kv_handle_by_request")' in method
-    assert "attention_kv_installed_by_request" in method
     assert "PAP_OFFLOAD_KV_TRANSPORT" in method
     assert "PAPTensorTransport.CUDA_IPC" in method
 
@@ -726,3 +724,13 @@ def test_qwen3_prefill_uses_paged_kv_import_for_cuda_ipc() -> None:
     assert "import_prefill_kv_from_paged_cache" not in method
     assert "block_ids=_pap_block_ids_from_block_table(" in method
     assert "kv_cache=kv_cache" in method
+
+
+def test_qwen3_prefill_import_does_not_mark_request_ready_for_all_layers() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
+    start = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
+    end = text.index("    @staticmethod")
+    method = text[start:end]
+
+    assert 'additional_kwargs["pap_attention_kv_installed_by_request"]' not in method
+    assert "installed.add(request_id)" not in method

@@ -1851,12 +1851,7 @@ class Qwen3Attention(nn.Module):
                 prefix_len,
                 str(prefill_kv_handle),
             )
-            installed = set(
-                additional_kwargs.get("pap_attention_kv_installed_by_request") or ()
-            )
             if import_key in self._pap_imported_prefill_kv:
-                installed.add(request_id)
-                additional_kwargs["pap_attention_kv_installed_by_request"] = installed
                 continue
             tcp_endpoint = select_attention_endpoint_for_request(
                 request_id,
@@ -1880,8 +1875,6 @@ class Qwen3Attention(nn.Module):
                 tcp_endpoint=tcp_endpoint,
             )
             self._pap_imported_prefill_kv.add(import_key)
-            installed.add(request_id)
-            additional_kwargs["pap_attention_kv_installed_by_request"] = installed
 
     @staticmethod
     def _select_pap_request_id(request_ids: Any) -> str | None:
