@@ -1126,3 +1126,42 @@ Interpretation:
 - This is the strongest current evidence that the 30B MoE path can efficiently
   support PAP ubatch when the implementation avoids whole-model DBO and when the
   scheduler is allowed to form a large enough Projection macro batch.
+
+## Qwen3-30B PD Baseline Follow-up
+
+The corresponding PD baseline uses the same model and workload:
+
+- Model: `/data/ssd1/llm-models/Qwen3-30B-A3B-FP8`.
+- Workload: `sonnet`, input/output `1024/64`, qps `256`, prompts `1000`.
+- Topology: `7P1D`.
+- Proxy variables explicitly unset.
+
+Native XPYD/P2P-NCCL PD attempts were not valid at this point:
+
+| Mode | Run root | Key settings | Result |
+| --- | --- | --- | --- |
+| XPYD PD | `/home/fei/research/PD/test/baseline/disaggregated/results/runs/20260527_105903` | `DECODE_MAX_NUM_SEQS=1000`, `DECODE_GPU_MEM_UTIL=0.95` | Invalid: decode OOM after 1 success, 999 failures. |
+| XPYD PD | `/home/fei/research/PD/test/baseline/disaggregated/results/runs/20260527_110059` | `DECODE_MAX_NUM_SEQS=128`, `DECODE_GPU_MEM_UTIL=0.95` | Invalid: decode OOM and peer out-of-threshold. |
+| XPYD PD | `/home/fei/research/PD/test/baseline/disaggregated/results/runs/20260527_110411` | `DECODE_MAX_NUM_SEQS=64`, `DECODE_GPU_MEM_UTIL=0.7` | Invalid: benchmark stalled at `820/1000`; decode log had repeated `kv_cache does not match, block_ids:65, num_block:64`. |
+| XPYD PD | `/home/fei/research/PD/test/baseline/disaggregated/results/runs/20260527_111043` | `PREFILL_MAX_NUM_SEQS=1`, `DECODE_MAX_NUM_SEQS=64`, `DECODE_GPU_MEM_UTIL=0.7` | Invalid: benchmark stalled at `959/1000`; decode log had repeated `kv_cache does not match, block_ids:64, num_block:63`. |
+
+The valid PD baseline therefore uses the NIXL disaggregated path:
+
+| Architecture | Run root | Success | Duration | Req/s | Output tok/s | Median TTFT | Median TPOT | P99 TPOT | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| NIXL PD `7P1D` | `/home/fei/research/PD/test/baseline/nixl_disaggregated/results/runs/20260527_111630` | 1000/1000 | 216.58 s | 4.62 | 295.51 | 106797.63 ms | 25.05 ms | 42.43 ms | `PREFILL_MAX_NUM_SEQS=1000`, `DECODE_MAX_NUM_SEQS=64`, `DECODE_GPU_MEM_UTIL=0.7`. |
+| PAP serial `7PA1P` | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_104616` | 1000/1000 | 496.36 s | 2.01 | 128.94 | 26530.44 ms | 7271.79 ms | 7388.45 ms | Single Projection, no layer-wavefront. |
+| PAP layer-wavefront auto `7PA1P` | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_104103` | 1000/1000 | 251.18 s | 3.98 | 254.80 | 19516.49 ms | 3236.58 ms | 3295.83 ms | MoE-specific layer-wavefront auto policy. |
+
+Interpretation:
+
+- The native XPYD baseline is not usable for this 30B, 1000-request point because
+  it either OOMs on the single decode GPU or leaves tail requests stuck behind a
+  P2P-NCCL KV block-count mismatch.
+- NIXL PD completes the target workload and is the valid PD baseline for this
+  comparison. It has higher output throughput than PAP auto (`295.51` vs
+  `254.80 tok/s`), but much higher TTFT because all requests pass through
+  prefill before decode service completion.
+- PAP auto closes most of the throughput gap to PD while keeping the PAP
+  attention/projection split: output throughput reaches `86.2%` of NIXL PD
+  (`254.80 / 295.51`) and is `97.6%` better than PAP serial.
