@@ -56,6 +56,38 @@ def test_parse_pap_groups_accepts_attention_tcp_port() -> None:
     assert groups[0].attention_zmq_endpoint == "127.0.0.1:10300"
 
 
+def test_parse_pap_groups_accepts_ranked_attention_ports() -> None:
+    groups = parse_pap_groups(
+        "127.0.0.1:8100:5559:127.0.0.1:8300|8301:9300|9301:10300|10301"
+    )
+
+    assert groups == [
+        PAPGroup(
+            prefill_host="127.0.0.1",
+            prefill_port=8100,
+            prefill_nixl_port=5559,
+            attention_host="127.0.0.1",
+            attention_port=(8300, 8301),
+            attention_tcp_port=(9300, 9301),
+            attention_zmq_port=(10300, 10301),
+        )
+    ]
+    assert groups[0].attention_base_url == (
+        "http://127.0.0.1:8300,http://127.0.0.1:8301"
+    )
+    assert groups[0].attention_tcp_endpoint == (
+        "tcp://127.0.0.1:9300,tcp://127.0.0.1:9301"
+    )
+    assert groups[0].attention_zmq_endpoint == ("127.0.0.1:10300,127.0.0.1:10301")
+
+
+def test_multi_proxy_logs_ranked_attention_port_as_string() -> None:
+    text = (ROOT / "examples" / "pap" / "multi_pap_proxy_server.py").read_text()
+
+    assert "attention=%s:%s projection=%s:%d" in text
+    assert "attention=%s:%d projection=%s:%d" not in text
+
+
 def test_parse_projection_instances_from_compact_spec() -> None:
     projections = parse_projection_instances("127.0.0.1:8200,127.0.0.1:8201")
 
@@ -186,12 +218,13 @@ def test_select_instances_can_stick_pa_to_projection() -> None:
 def test_multi_proxy_registers_attention_before_prefill_for_local_import() -> None:
     text = (ROOT / "examples/pap/multi_pap_proxy_server.py").read_text()
 
-    register = text.index("attention_session = await register_attention_handle")
+    register = text.index("attention_sessions = await register_attention_handles")
     prefill = text.index("prefill_resp = await _post_json")
     assert register < prefill
     assert "prefill_prefix_len_from_kv_params(kv_params)" in text
     assert "attach_pap_prefill_attention_params" in text
     assert "pap_offload_exec_zmq_endpoint=group.attention_zmq_endpoint" in text
+    assert "register_attention_handles" in text
 
 
 def test_multi_proxy_marks_attention_kv_installed_only_after_prefill() -> None:
@@ -211,8 +244,7 @@ def test_multi_proxy_does_not_store_conversation_placement() -> None:
     assert "select_conversation_instances" not in text
 
 
-def test_build_projection_payload_for_group_does_not_claim_kv_installed_by_default(
-) -> None:
+def test_build_projection_payload_for_group_keeps_kv_uninstalled() -> None:
     group = PAPGroup("127.0.0.1", 8103, 5562, "127.0.0.1", 8303, 9303, 10303)
     kv_params = {
         "remote_engine_id": "prefill-3",

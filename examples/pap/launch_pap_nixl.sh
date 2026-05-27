@@ -47,11 +47,19 @@ fi
 TOPOLOGY_TAG="$(printf '%s' "$TOPOLOGY" | tr '[:lower:]' '[:upper:]')"
 PA_COUNT="${PAP_PA_COUNT:-${BASH_REMATCH[1]}}"
 PROJECTION_COUNT="${PAP_PROJECTION_COUNT:-${BASH_REMATCH[2]}}"
+PAP_TP_SIZE="${PAP_TP_SIZE:-1}"
+PAP_DISABLE_CUSTOM_ALL_REDUCE="${PAP_DISABLE_CUSTOM_ALL_REDUCE:-auto}"
 if (( PA_COUNT < 1 || PROJECTION_COUNT < 1 )); then
     echo "PAP topology must include at least one PA and one Projection: $TOPOLOGY" >&2
     exit 1
 fi
-TOTAL_GPU_COUNT=$((PA_COUNT + PROJECTION_COUNT))
+if (( PAP_TP_SIZE < 1 )); then
+    echo "PAP_TP_SIZE must be positive: $PAP_TP_SIZE" >&2
+    exit 1
+fi
+PREFILL_GPU_COUNT=$((PA_COUNT * PAP_TP_SIZE))
+PROJECTION_GPU_COUNT=$((PROJECTION_COUNT * PAP_TP_SIZE))
+TOTAL_GPU_COUNT=$(((PA_COUNT + PROJECTION_COUNT) * PAP_TP_SIZE))
 if (( TOTAL_GPU_COUNT > 8 )); then
     echo "PAP topology $TOPOLOGY requires $TOTAL_GPU_COUNT GPUs; max is 8" >&2
     exit 1
@@ -95,9 +103,9 @@ MPS_PIPE_BASE_DIR="${PAP_MPS_PIPE_BASE_DIR:-/tmp/pap-mps-${USER:-user}-${TOPOLOG
 MPS_LOG_BASE_DIR="${PAP_MPS_LOG_BASE_DIR:-$LOG_DIR/mps-log}"
 RESULT_PATH="${PAP_RESULT_PATH:-$LOG_DIR/result.json}"
 PROMPT="${PAP_PROMPT:-Briefly explain what PAP does.}"
-DEFAULT_PREFILL_GPUS="$(seq -s, 0 $((PA_COUNT - 1)))"
+DEFAULT_PREFILL_GPUS="$(seq -s, 0 $((PREFILL_GPU_COUNT - 1)))"
 DEFAULT_PROJECTION_GPUS="$(
-    seq -s, "$PA_COUNT" $((TOTAL_GPU_COUNT - 1))
+    seq -s, "$PREFILL_GPU_COUNT" $((TOTAL_GPU_COUNT - 1))
 )"
 PREFILL_GPUS_CSV="${PAP_PREFILL_GPUS:-$DEFAULT_PREFILL_GPUS}"
 PROJECTION_GPUS_CSV="${PAP_PROJECTION_GPUS:-$DEFAULT_PROJECTION_GPUS}"
@@ -105,6 +113,23 @@ PROJECTION_GPUS_CSV="${PAP_PROJECTION_GPUS:-$DEFAULT_PROJECTION_GPUS}"
 mkdir -p "$LOG_DIR"
 
 projection_microbatch_args=()
+vllm_tp_args=()
+case "$PAP_DISABLE_CUSTOM_ALL_REDUCE" in
+    auto)
+        if (( PAP_TP_SIZE > 1 )); then
+            vllm_tp_args+=("--disable-custom-all-reduce")
+        fi
+        ;;
+    1 | true | True | TRUE | yes | Yes | YES)
+        vllm_tp_args+=("--disable-custom-all-reduce")
+        ;;
+    0 | false | False | FALSE | no | No | NO)
+        ;;
+    *)
+        echo "PAP_DISABLE_CUSTOM_ALL_REDUCE must be auto, 0, or 1: $PAP_DISABLE_CUSTOM_ALL_REDUCE" >&2
+        exit 1
+        ;;
+esac
 
 PIDS=()
 MPS_PIPE_DIRS=()
@@ -122,6 +147,41 @@ split_csv() {
 join_by_comma() {
     local IFS=','
     echo "$*"
+}
+
+join_by_pipe() {
+    local IFS='|'
+    echo "$*"
+}
+
+gpu_group_csv() {
+    local -n gpus=$1
+    local group_idx=$2
+    local start=$((group_idx * PAP_TP_SIZE))
+    local selected=()
+    local rank
+    for (( rank=0; rank<PAP_TP_SIZE; rank++ )); do
+        selected+=("${gpus[$((start + rank))]}")
+    done
+    join_by_comma "${selected[@]}"
+}
+
+gpu_group_rank() {
+    local -n gpus=$1
+    local group_idx=$2
+    local rank=$3
+    echo "${gpus[$((group_idx * PAP_TP_SIZE + rank))]}"
+}
+
+build_rank_ports() {
+    local base=$1
+    local group_idx=$2
+    local ports=()
+    local rank
+    for (( rank=0; rank<PAP_TP_SIZE; rank++ )); do
+        ports+=("$((base + group_idx * PAP_TP_SIZE + rank))")
+    done
+    join_by_pipe "${ports[@]}"
 }
 
 cleanup() {
@@ -221,9 +281,12 @@ build_pap_groups_spec() {
     for (( idx=0; idx<PA_COUNT; idx++ )); do
         local prefill_port=$((PREFILL_PORT_BASE + idx))
         local prefill_nixl_port=$((PREFILL_NIXL_PORT_BASE + idx))
-        local attention_port=$((ATTENTION_PORT_BASE + idx))
-        local attention_tcp_port=$((ATTENTION_TCP_PORT_BASE + idx))
-        local attention_zmq_port=$((ATTENTION_ZMQ_PORT_BASE + idx))
+        local attention_port
+        local attention_tcp_port
+        local attention_zmq_port
+        attention_port="$(build_rank_ports "$ATTENTION_PORT_BASE" "$idx")"
+        attention_tcp_port="$(build_rank_ports "$ATTENTION_TCP_PORT_BASE" "$idx")"
+        attention_zmq_port="$(build_rank_ports "$ATTENTION_ZMQ_PORT_BASE" "$idx")"
         local item="127.0.0.1:${prefill_port}:${prefill_nixl_port}:127.0.0.1:${attention_port}:${attention_tcp_port}:${attention_zmq_port}"
         if [[ -z "$spec" ]]; then
             spec="$item"
@@ -273,16 +336,28 @@ head_dim = int(config.get("head_dim") or config["hidden_size"] // num_heads)
 print(num_heads, num_kv_heads, head_dim)
 PY
 )
-PAP_OFFLOAD_EXEC_NUM_HEADS="${PAP_OFFLOAD_EXEC_NUM_HEADS:-$MODEL_NUM_HEADS}"
-PAP_OFFLOAD_EXEC_NUM_KV_HEADS="${PAP_OFFLOAD_EXEC_NUM_KV_HEADS:-$MODEL_NUM_KV_HEADS}"
+if (( MODEL_NUM_HEADS % PAP_TP_SIZE != 0 )); then
+    echo "Model num_attention_heads=$MODEL_NUM_HEADS is not divisible by PAP_TP_SIZE=$PAP_TP_SIZE" >&2
+    exit 1
+fi
+if (( MODEL_NUM_KV_HEADS >= PAP_TP_SIZE && MODEL_NUM_KV_HEADS % PAP_TP_SIZE != 0 )); then
+    echo "Model num_key_value_heads=$MODEL_NUM_KV_HEADS is not divisible by PAP_TP_SIZE=$PAP_TP_SIZE" >&2
+    exit 1
+fi
+PAP_OFFLOAD_EXEC_NUM_HEADS="${PAP_OFFLOAD_EXEC_NUM_HEADS:-$((MODEL_NUM_HEADS / PAP_TP_SIZE))}"
+PAP_OFFLOAD_EXEC_NUM_KV_HEADS="${PAP_OFFLOAD_EXEC_NUM_KV_HEADS:-$((MODEL_NUM_KV_HEADS >= PAP_TP_SIZE ? MODEL_NUM_KV_HEADS / PAP_TP_SIZE : 1))}"
 PAP_OFFLOAD_EXEC_HEAD_DIM="${PAP_OFFLOAD_EXEC_HEAD_DIM:-$MODEL_HEAD_DIM}"
 PAP_OFFLOAD_EXEC_Q_SIZE="${PAP_OFFLOAD_EXEC_Q_SIZE:-$((PAP_OFFLOAD_EXEC_NUM_HEADS * PAP_OFFLOAD_EXEC_HEAD_DIM))}"
 PAP_OFFLOAD_EXEC_KV_SIZE="${PAP_OFFLOAD_EXEC_KV_SIZE:-$((PAP_OFFLOAD_EXEC_NUM_KV_HEADS * PAP_OFFLOAD_EXEC_HEAD_DIM))}"
 
 split_csv "$PREFILL_GPUS_CSV" PREFILL_GPUS
 split_csv "$PROJECTION_GPUS_CSV" PROJECTION_GPUS
-require_count "PAP_PREFILL_GPUS" "${#PREFILL_GPUS[@]}" "$PA_COUNT"
-require_count "PAP_PROJECTION_GPUS" "${#PROJECTION_GPUS[@]}" "$PROJECTION_COUNT"
+require_count "PAP_PREFILL_GPUS" "${#PREFILL_GPUS[@]}" "$PREFILL_GPU_COUNT"
+require_count "PAP_PROJECTION_GPUS" "${#PROJECTION_GPUS[@]}" "$PROJECTION_GPU_COUNT"
+if (( PAP_TP_SIZE > 1 )) && [[ "$ENABLE_MPS" == "1" ]]; then
+    echo "PAP_ENABLE_MPS=1 is not supported with PAP_TP_SIZE > 1; set PAP_ENABLE_MPS=0" >&2
+    exit 1
+fi
 
 cd "$ROOT_DIR"
 
@@ -293,78 +368,128 @@ export UCX_TLS="${UCX_TLS:-cuda_ipc,cuda_copy,tcp}"
 export UCX_NET_DEVICES="${UCX_NET_DEVICES:-all}"
 export PYTHONHASHSEED="${PYTHONHASHSEED:-123}"
 
+if [[ "$ENABLE_MPS" == "1" ]]; then
+    for (( idx=0; idx<PA_COUNT; idx++ )); do
+        start_mps_for_pa "$idx" "${PREFILL_GPUS[$idx]}"
+    done
+fi
+
 for (( idx=0; idx<PA_COUNT; idx++ )); do
-    start_mps_for_pa "$idx" "${PREFILL_GPUS[$idx]}"
+    for (( rank=0; rank<PAP_TP_SIZE; rank++ )); do
+        gpu="$(gpu_group_rank PREFILL_GPUS "$idx" "$rank")"
+        attention_port=$((ATTENTION_PORT_BASE + idx * PAP_TP_SIZE + rank))
+        attention_tcp_port=$((ATTENTION_TCP_PORT_BASE + idx * PAP_TP_SIZE + rank))
+        attention_zmq_port=$((ATTENTION_ZMQ_PORT_BASE + idx * PAP_TP_SIZE + rank))
+        echo "Starting PAP Attention internal executor $idx rank $rank on GPU $gpu"
+        if [[ "$ENABLE_MPS" == "1" ]]; then
+            with_pa_mps_env "$idx" \
+                CUDA_MPS_ACTIVE_THREAD_PERCENTAGE="$ATTENTION_MPS_PERCENT" \
+                PAP_NIXL_MAILBOX_ACTOR_ID="attention-${idx}-${rank}" \
+                PAP_OFFLOAD_EXEC_TRANSPORT="$PAP_OFFLOAD_EXEC_TRANSPORT" \
+                PAP_OFFLOAD_KV_TRANSPORT="$PAP_OFFLOAD_KV_TRANSPORT" \
+                PAP_OFFLOAD_EXEC_LOCAL_RANK=0 \
+                PAP_OFFLOAD_EXEC_Q_SIZE="$PAP_OFFLOAD_EXEC_Q_SIZE" \
+                PAP_OFFLOAD_EXEC_KV_SIZE="$PAP_OFFLOAD_EXEC_KV_SIZE" \
+                PAP_OFFLOAD_EXEC_NUM_HEADS="$PAP_OFFLOAD_EXEC_NUM_HEADS" \
+                PAP_OFFLOAD_EXEC_NUM_KV_HEADS="$PAP_OFFLOAD_EXEC_NUM_KV_HEADS" \
+                PAP_OFFLOAD_EXEC_HEAD_DIM="$PAP_OFFLOAD_EXEC_HEAD_DIM" \
+                PAP_OFFLOAD_EXEC_TRACE="$PAP_OFFLOAD_EXEC_TRACE" \
+                PAP_ATTENTION_KV_DEBUG="$PAP_ATTENTION_KV_DEBUG" \
+                .venv/bin/python examples/pap/pap_attention_executor.py \
+                --host 127.0.0.1 \
+                --port "$attention_port" \
+                --tcp-port "$attention_tcp_port" \
+                --offload-exec-zmq-port "$attention_zmq_port" \
+                >"$LOG_DIR/attention_${idx}_${rank}.log" 2>&1 &
+        else
+            CUDA_VISIBLE_DEVICES="$gpu" \
+            PAP_NIXL_MAILBOX_ACTOR_ID="attention-${idx}-${rank}" \
+            PAP_OFFLOAD_EXEC_TRANSPORT="$PAP_OFFLOAD_EXEC_TRANSPORT" \
+            PAP_OFFLOAD_KV_TRANSPORT="$PAP_OFFLOAD_KV_TRANSPORT" \
+            PAP_OFFLOAD_EXEC_LOCAL_RANK=0 \
+            PAP_OFFLOAD_EXEC_Q_SIZE="$PAP_OFFLOAD_EXEC_Q_SIZE" \
+            PAP_OFFLOAD_EXEC_KV_SIZE="$PAP_OFFLOAD_EXEC_KV_SIZE" \
+            PAP_OFFLOAD_EXEC_NUM_HEADS="$PAP_OFFLOAD_EXEC_NUM_HEADS" \
+            PAP_OFFLOAD_EXEC_NUM_KV_HEADS="$PAP_OFFLOAD_EXEC_NUM_KV_HEADS" \
+            PAP_OFFLOAD_EXEC_HEAD_DIM="$PAP_OFFLOAD_EXEC_HEAD_DIM" \
+            PAP_OFFLOAD_EXEC_TRACE="$PAP_OFFLOAD_EXEC_TRACE" \
+            PAP_ATTENTION_KV_DEBUG="$PAP_ATTENTION_KV_DEBUG" \
+            .venv/bin/python examples/pap/pap_attention_executor.py \
+            --host 127.0.0.1 \
+            --port "$attention_port" \
+            --tcp-port "$attention_tcp_port" \
+            --offload-exec-zmq-port "$attention_zmq_port" \
+            >"$LOG_DIR/attention_${idx}_${rank}.log" 2>&1 &
+        fi
+        PIDS+=("$!")
+    done
 done
 
 for (( idx=0; idx<PA_COUNT; idx++ )); do
-    gpu="${PREFILL_GPUS[$idx]}"
-    attention_port=$((ATTENTION_PORT_BASE + idx))
-    attention_tcp_port=$((ATTENTION_TCP_PORT_BASE + idx))
-    attention_zmq_port=$((ATTENTION_ZMQ_PORT_BASE + idx))
-    echo "Starting PAP Attention internal executor $idx on GPU $gpu"
-    with_pa_mps_env "$idx" \
-        CUDA_MPS_ACTIVE_THREAD_PERCENTAGE="$ATTENTION_MPS_PERCENT" \
-        PAP_OFFLOAD_EXEC_TRANSPORT="$PAP_OFFLOAD_EXEC_TRANSPORT" \
-        PAP_OFFLOAD_KV_TRANSPORT="$PAP_OFFLOAD_KV_TRANSPORT" \
-        PAP_OFFLOAD_EXEC_LOCAL_RANK=0 \
-        PAP_OFFLOAD_EXEC_Q_SIZE="$PAP_OFFLOAD_EXEC_Q_SIZE" \
-        PAP_OFFLOAD_EXEC_KV_SIZE="$PAP_OFFLOAD_EXEC_KV_SIZE" \
-        PAP_OFFLOAD_EXEC_NUM_HEADS="$PAP_OFFLOAD_EXEC_NUM_HEADS" \
-        PAP_OFFLOAD_EXEC_NUM_KV_HEADS="$PAP_OFFLOAD_EXEC_NUM_KV_HEADS" \
-        PAP_OFFLOAD_EXEC_HEAD_DIM="$PAP_OFFLOAD_EXEC_HEAD_DIM" \
-        PAP_OFFLOAD_EXEC_TRACE="$PAP_OFFLOAD_EXEC_TRACE" \
-        PAP_ATTENTION_KV_DEBUG="$PAP_ATTENTION_KV_DEBUG" \
-        .venv/bin/python examples/pap/pap_attention_executor.py \
-        --host 127.0.0.1 \
-        --port "$attention_port" \
-        --tcp-port "$attention_tcp_port" \
-        --offload-exec-zmq-port "$attention_zmq_port" \
-        >"$LOG_DIR/attention_${idx}.log" 2>&1 &
-    PIDS+=("$!")
+    for (( rank=0; rank<PAP_TP_SIZE; rank++ )); do
+        wait_for_http "http://127.0.0.1:$((ATTENTION_PORT_BASE + idx * PAP_TP_SIZE + rank))/health" "PAP Attention $idx rank $rank"
+    done
 done
 
 for (( idx=0; idx<PA_COUNT; idx++ )); do
-    wait_for_http "http://127.0.0.1:$((ATTENTION_PORT_BASE + idx))/health" "PAP Attention $idx"
-done
-
-for (( idx=0; idx<PA_COUNT; idx++ )); do
-    gpu="${PREFILL_GPUS[$idx]}"
+    gpu_csv="$(gpu_group_csv PREFILL_GPUS "$idx")"
     prefill_port=$((PREFILL_PORT_BASE + idx))
     prefill_nixl_port=$((PREFILL_NIXL_PORT_BASE + idx))
-    echo "Starting PAP Prefill vLLM NIXL producer $idx on GPU $gpu"
-    with_pa_mps_env "$idx" \
-        CUDA_MPS_ACTIVE_THREAD_PERCENTAGE="$PREFILL_MPS_PERCENT" \
+    echo "Starting PAP Prefill vLLM NIXL producer $idx on GPU(s) $gpu_csv"
+    if [[ "$ENABLE_MPS" == "1" ]]; then
+        with_pa_mps_env "$idx" \
+            CUDA_MPS_ACTIVE_THREAD_PERCENTAGE="$PREFILL_MPS_PERCENT" \
+            VLLM_PORT="$((VLLM_PORT_BASE + idx * 20))" \
+            PAP_OFFLOAD_KV_TRANSPORT="$PAP_OFFLOAD_KV_TRANSPORT" \
+            VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
+            VLLM_NIXL_SIDE_CHANNEL_PORT="$prefill_nixl_port" \
+            .venv/bin/vllm serve "$MODEL_PATH" \
+            --port "$prefill_port" \
+            --host 127.0.0.1 \
+            --enforce-eager \
+            --generation-config vllm \
+            --enable-request-id-headers \
+            --max-model-len "$MAX_MODEL_LEN" \
+            --max-num-seqs "$MAX_NUM_SEQS" \
+            --tensor-parallel-size "$PAP_TP_SIZE" \
+            --gpu-memory-utilization "$PREFILL_GPU_MEMORY_UTILIZATION" \
+            "${vllm_tp_args[@]}" \
+            --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer"}' \
+            >"$LOG_DIR/prefill_${idx}.log" 2>&1 &
+    else
+        CUDA_VISIBLE_DEVICES="$gpu_csv" \
         VLLM_PORT="$((VLLM_PORT_BASE + idx * 20))" \
         PAP_OFFLOAD_KV_TRANSPORT="$PAP_OFFLOAD_KV_TRANSPORT" \
         VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
         VLLM_NIXL_SIDE_CHANNEL_PORT="$prefill_nixl_port" \
         .venv/bin/vllm serve "$MODEL_PATH" \
-        --port "$prefill_port" \
-        --host 127.0.0.1 \
-        --enforce-eager \
-        --generation-config vllm \
-        --enable-request-id-headers \
-        --max-model-len "$MAX_MODEL_LEN" \
-        --max-num-seqs "$MAX_NUM_SEQS" \
-        --gpu-memory-utilization "$PREFILL_GPU_MEMORY_UTILIZATION" \
-        --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer"}' \
-        >"$LOG_DIR/prefill_${idx}.log" 2>&1 &
+            --port "$prefill_port" \
+            --host 127.0.0.1 \
+            --enforce-eager \
+            --generation-config vllm \
+            --enable-request-id-headers \
+            --max-model-len "$MAX_MODEL_LEN" \
+            --max-num-seqs "$MAX_NUM_SEQS" \
+            --tensor-parallel-size "$PAP_TP_SIZE" \
+            --gpu-memory-utilization "$PREFILL_GPU_MEMORY_UTILIZATION" \
+            "${vllm_tp_args[@]}" \
+            --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer"}' \
+            >"$LOG_DIR/prefill_${idx}.log" 2>&1 &
+    fi
     PIDS+=("$!")
 done
 
 for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
-    gpu="${PROJECTION_GPUS[$idx]}"
+    gpu_csv="$(gpu_group_csv PROJECTION_GPUS "$idx")"
     projection_port=$((PROJECTION_PORT_BASE + idx))
     projection_zmq_port=$((PROJECTION_ZMQ_PORT_BASE + idx))
-    echo "Starting PAP Projection vLLM metadata-only $idx on GPU $gpu"
-    CUDA_VISIBLE_DEVICES="$gpu" \
+    echo "Starting PAP Projection vLLM metadata-only $idx on GPU(s) $gpu_csv"
+    CUDA_VISIBLE_DEVICES="$gpu_csv" \
     VLLM_PORT="$((VLLM_PORT_BASE + PA_COUNT * 20 + idx * 20))" \
     PAP_OFFLOAD_EXEC_TRANSPORT="$PAP_OFFLOAD_EXEC_TRANSPORT" \
     PAP_OFFLOAD_KV_TRANSPORT="$PAP_OFFLOAD_KV_TRANSPORT" \
     PAP_OFFLOAD_EXEC_HOST=127.0.0.1 \
     PAP_OFFLOAD_EXEC_ZMQ_PORT="$projection_zmq_port" \
-    PAP_OFFLOAD_EXEC_LOCAL_RANK=0 \
     PAP_OFFLOAD_EXEC_TRACE="$PAP_OFFLOAD_EXEC_TRACE" \
     PAP_PROJECTION_KV_UNAWARE=1 \
     PAP_REMOTE_ATTENTION_PARALLELISM="$PAP_REMOTE_ATTENTION_PARALLELISM" \
@@ -377,7 +502,9 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
         --enable-request-id-headers \
         --max-model-len "$MAX_MODEL_LEN" \
         --max-num-seqs "$MAX_NUM_SEQS" \
+        --tensor-parallel-size "$PAP_TP_SIZE" \
         --gpu-memory-utilization "$PROJECTION_GPU_MEMORY_UTILIZATION" \
+        "${vllm_tp_args[@]}" \
         "${projection_microbatch_args[@]}" \
         >"$LOG_DIR/projection_${idx}.log" 2>&1 &
     PIDS+=("$!")

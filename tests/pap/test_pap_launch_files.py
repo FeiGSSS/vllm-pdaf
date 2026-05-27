@@ -23,7 +23,7 @@ def test_pap_6pa2p_launch_uses_multi_proxy_and_expected_counts() -> None:
     assert 'TOPOLOGY="${PAP_TOPOLOGY:-6pa2p}"' in text
     assert 'PA_COUNT="${PAP_PA_COUNT:-${BASH_REMATCH[1]}}"' in text
     assert 'PROJECTION_COUNT="${PAP_PROJECTION_COUNT:-${BASH_REMATCH[2]}}"' in text
-    assert "TOTAL_GPU_COUNT=$((PA_COUNT + PROJECTION_COUNT))" in text
+    assert "TOTAL_GPU_COUNT=$(((PA_COUNT + PROJECTION_COUNT) * PAP_TP_SIZE))" in text
     assert "multi_pap_proxy_server.py" in text
     assert "pap_attention_executor.py" in text
     assert 'ATTENTION_TCP_PORT_BASE="${PAP_ATTENTION_TCP_PORT_BASE:-9300}"' in text
@@ -49,6 +49,24 @@ def test_pap_6pa2p_launch_uses_multi_proxy_and_expected_counts() -> None:
     assert "build_pap_groups_spec" in text
     assert "build_projections_spec" in text
     assert "exec env CUDA_VISIBLE_DEVICES=0" in text
+
+
+def test_pap_launch_supports_tp_sized_logical_instances() -> None:
+    script = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
+    text = script.read_text()
+
+    assert 'PAP_TP_SIZE="${PAP_TP_SIZE:-1}"' in text
+    assert "TOTAL_GPU_COUNT=$(((PA_COUNT + PROJECTION_COUNT) * PAP_TP_SIZE))" in text
+    assert "PREFILL_GPU_COUNT=$((PA_COUNT * PAP_TP_SIZE))" in text
+    assert "PROJECTION_GPU_COUNT=$((PROJECTION_COUNT * PAP_TP_SIZE))" in text
+    assert '--tensor-parallel-size "$PAP_TP_SIZE"' in text
+    assert (
+        'PAP_DISABLE_CUSTOM_ALL_REDUCE="${PAP_DISABLE_CUSTOM_ALL_REDUCE:-auto}"' in text
+    )
+    assert 'vllm_tp_args+=("--disable-custom-all-reduce")' in text
+    assert '"${vllm_tp_args[@]}"' in text
+    assert "PAP_ENABLE_MPS=1 is not supported with PAP_TP_SIZE > 1" in text
+    assert "build_rank_ports" in text
 
 
 def test_pap_6pa2p_launch_supports_benchmark_service_mode() -> None:

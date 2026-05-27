@@ -38,7 +38,11 @@ from transformers import Qwen3Config
 
 from vllm.compilation.decorators import support_torch_compile
 from vllm.config import CacheConfig, VllmConfig
-from vllm.distributed import get_pp_group, get_tensor_model_parallel_world_size
+from vllm.distributed import (
+    get_pp_group,
+    get_tensor_model_parallel_rank,
+    get_tensor_model_parallel_world_size,
+)
 from vllm.forward_context import get_forward_context, is_forward_context_available
 from vllm.logger import init_logger
 from vllm.model_executor.layers.attention.encoder_only_attention import (
@@ -151,6 +155,44 @@ def _pap_offload_exec_transport_kind() -> str:
     return os.environ.get("PAP_OFFLOAD_EXEC_TRANSPORT", "nccl").lower()
 
 
+def _pap_tensor_parallel_rank() -> int:
+    raw_rank = os.environ.get("PAP_OFFLOAD_EXEC_LOCAL_RANK")
+    if raw_rank is not None:
+        return int(raw_rank)
+    return int(get_tensor_model_parallel_rank())
+
+
+def _pap_endpoint_for_tp_rank(value: Any, *, tp_rank: int | None = None) -> Any:
+    """Select this TP rank's endpoint from a ranked endpoint list.
+
+    PAP control-plane payloads keep backward-compatible scalar endpoint values for
+    TP=1. TP>1 uses comma-separated strings, or a sequence in unit tests, where
+    entry N belongs to tensor-parallel rank N.
+    """
+
+    if value is None:
+        return None
+    rank = _pap_tensor_parallel_rank() if tp_rank is None else int(tp_rank)
+    if isinstance(value, str):
+        parts = [part.strip() for part in value.split(",") if part.strip()]
+        if len(parts) <= 1:
+            return value
+        if rank >= len(parts):
+            raise RuntimeError(
+                f"PAP endpoint list has {len(parts)} ranks, but TP rank is {rank}"
+            )
+        return parts[rank]
+    if isinstance(value, (list, tuple)):
+        if len(value) <= 1:
+            return value[0] if value else None
+        if rank >= len(value):
+            raise RuntimeError(
+                f"PAP endpoint list has {len(value)} ranks, but TP rank is {rank}"
+            )
+        return value[rank]
+    return value
+
+
 @lru_cache(maxsize=1)
 def _pap_offload_exec_transport():
     from vllm.pap.data_plane import (
@@ -159,7 +201,7 @@ def _pap_offload_exec_transport():
     )
 
     transport = _pap_offload_exec_transport_kind()
-    local_rank = int(os.environ.get("PAP_OFFLOAD_EXEC_LOCAL_RANK", "0"))
+    local_rank = _pap_tensor_parallel_rank()
     if transport in {"nixl", "nixl_mailbox"}:
         return build_nixl_mailbox_offload_exec_transport(
             actor_id=os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "projection"),
@@ -177,7 +219,7 @@ def _pap_offload_exec_transport():
 def _pap_nixl_mailbox_offload_exec_transport(attention_endpoint: str):
     from vllm.pap.data_plane import build_nixl_mailbox_offload_exec_transport
 
-    local_rank = int(os.environ.get("PAP_OFFLOAD_EXEC_LOCAL_RANK", "0"))
+    local_rank = _pap_tensor_parallel_rank()
     actor_base = os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "projection")
     endpoint_hash = hashlib.sha1(attention_endpoint.encode("utf-8")).hexdigest()[:12]
     return build_nixl_mailbox_offload_exec_transport(
@@ -218,7 +260,9 @@ def _pap_bind_offload_exec_mailbox_peer(
 
 def _pap_offload_exec_local_address() -> str:
     host = os.environ.get("PAP_OFFLOAD_EXEC_HOST") or "127.0.0.1"
-    port = int(os.environ.get("PAP_OFFLOAD_EXEC_ZMQ_PORT", "11300"))
+    port = int(
+        _pap_endpoint_for_tp_rank(os.environ.get("PAP_OFFLOAD_EXEC_ZMQ_PORT", "11300"))
+    )
     return os.environ.get("PAP_OFFLOAD_EXEC_LOCAL_ADDRESS", f"{host}:{port}")
 
 
@@ -827,13 +871,15 @@ class Qwen3Attention(nn.Module):
                 default_endpoint=default_tcp_endpoint,
                 endpoint_by_request=tcp_endpoint_by_request,
             )
+            tcp_endpoint = _pap_endpoint_for_tp_rank(tcp_endpoint)
             attention_endpoint = select_attention_endpoint_for_request(
                 request_id,
                 default_endpoint=default_attention_endpoint,
                 endpoint_by_request=attention_endpoint_by_request,
             )
-            offload_exec_zmq_endpoint = offload_exec_zmq_endpoint_by_request.get(
-                request_id
+            attention_endpoint = _pap_endpoint_for_tp_rank(attention_endpoint)
+            offload_exec_zmq_endpoint = _pap_endpoint_for_tp_rank(
+                offload_exec_zmq_endpoint_by_request.get(request_id)
             )
             if offload_exec_zmq_endpoint is None:
                 raise RuntimeError(
@@ -1108,13 +1154,15 @@ class Qwen3Attention(nn.Module):
                 default_endpoint=default_tcp_endpoint,
                 endpoint_by_request=tcp_endpoint_by_request,
             )
+            tcp_endpoint = _pap_endpoint_for_tp_rank(tcp_endpoint)
             attention_endpoint = select_attention_endpoint_for_request(
                 request_id,
                 default_endpoint=default_attention_endpoint,
                 endpoint_by_request=attention_endpoint_by_request,
             )
-            offload_exec_zmq_endpoint = offload_exec_zmq_endpoint_by_request.get(
-                request_id
+            attention_endpoint = _pap_endpoint_for_tp_rank(attention_endpoint)
+            offload_exec_zmq_endpoint = _pap_endpoint_for_tp_rank(
+                offload_exec_zmq_endpoint_by_request.get(request_id)
             )
             if offload_exec_zmq_endpoint is None:
                 return False
@@ -1301,13 +1349,15 @@ class Qwen3Attention(nn.Module):
                 default_endpoint=default_tcp_endpoint,
                 endpoint_by_request=tcp_endpoint_by_request,
             )
+            tcp_endpoint = _pap_endpoint_for_tp_rank(tcp_endpoint)
             attention_endpoint = select_attention_endpoint_for_request(
                 request_id,
                 default_endpoint=default_attention_endpoint,
                 endpoint_by_request=attention_endpoint_by_request,
             )
-            offload_exec_zmq_endpoint = offload_exec_zmq_endpoint_by_request.get(
-                request_id
+            attention_endpoint = _pap_endpoint_for_tp_rank(attention_endpoint)
+            offload_exec_zmq_endpoint = _pap_endpoint_for_tp_rank(
+                offload_exec_zmq_endpoint_by_request.get(request_id)
             )
             prefix_len = int(prefix_len_by_request.get(request_id) or 0)
             prefill_kv_handle = prefill_kv_handle_by_request.get(request_id)
@@ -1813,6 +1863,7 @@ class Qwen3Attention(nn.Module):
                 default_endpoint=default_tcp_endpoint,
                 endpoint_by_request=tcp_endpoint_by_request,
             )
+            tcp_endpoint = _pap_endpoint_for_tp_rank(tcp_endpoint)
             import_prefill_paged_kv(
                 request_id=request_id,
                 layer_name=self.attn.layer_name,

@@ -48,15 +48,38 @@ logging.basicConfig(
 logger = logging.getLogger("multi_pap_proxy")
 
 
+PortSpec = int | tuple[int, ...]
+
+
+def _parse_port_spec(value: str) -> PortSpec:
+    if "|" not in value:
+        return int(value)
+    ports = tuple(int(part) for part in value.split("|") if part)
+    if not ports:
+        raise argparse.ArgumentTypeError(f"invalid empty ranked port spec {value!r}")
+    return ports
+
+
+def _format_ranked_endpoints(
+    host: str,
+    ports: PortSpec,
+    *,
+    scheme: str,
+) -> str:
+    if isinstance(ports, int):
+        return f"{scheme}{host}:{ports}"
+    return ",".join(f"{scheme}{host}:{port}" for port in ports)
+
+
 @dataclass(frozen=True)
 class PAPGroup:
     prefill_host: str
     prefill_port: int
     prefill_nixl_port: int
     attention_host: str
-    attention_port: int
-    attention_tcp_port: int | None = None
-    attention_zmq_port: int | None = None
+    attention_port: PortSpec
+    attention_tcp_port: PortSpec | None = None
+    attention_zmq_port: PortSpec | None = None
 
     @property
     def prefill_base_url(self) -> str:
@@ -64,19 +87,35 @@ class PAPGroup:
 
     @property
     def attention_base_url(self) -> str:
-        return f"http://{self.attention_host}:{self.attention_port}"
+        return _format_ranked_endpoints(
+            self.attention_host,
+            self.attention_port,
+            scheme="http://",
+        )
+
+    @property
+    def attention_base_urls(self) -> tuple[str, ...]:
+        return tuple(self.attention_base_url.split(","))
 
     @property
     def attention_tcp_endpoint(self) -> str | None:
         if self.attention_tcp_port is None:
             return None
-        return f"tcp://{self.attention_host}:{self.attention_tcp_port}"
+        return _format_ranked_endpoints(
+            self.attention_host,
+            self.attention_tcp_port,
+            scheme="tcp://",
+        )
 
     @property
     def attention_zmq_endpoint(self) -> str | None:
         if self.attention_zmq_port is None:
             return None
-        return f"{self.attention_host}:{self.attention_zmq_port}"
+        return _format_ranked_endpoints(
+            self.attention_host,
+            self.attention_zmq_port,
+            scheme="",
+        )
 
 
 @dataclass(frozen=True)
@@ -126,9 +165,13 @@ def parse_pap_groups(spec: str) -> list[PAPGroup]:
                 prefill_port=int(parts[1]),
                 prefill_nixl_port=int(parts[2]),
                 attention_host=parts[3],
-                attention_port=int(parts[4]),
-                attention_tcp_port=None if len(parts) == 5 else int(parts[5]),
-                attention_zmq_port=None if len(parts) < 7 else int(parts[6]),
+                attention_port=_parse_port_spec(parts[4]),
+                attention_tcp_port=None
+                if len(parts) == 5
+                else _parse_port_spec(parts[5]),
+                attention_zmq_port=None
+                if len(parts) < 7
+                else _parse_port_spec(parts[6]),
             )
         )
     if not groups:
@@ -161,9 +204,7 @@ def select_instances(
     if routing_policy == "round_robin":
         projection_index = request_number % len(projections)
     elif routing_policy == "projection_affinity":
-        groups_per_projection = (len(groups) + len(projections) - 1) // len(
-            projections
-        )
+        groups_per_projection = (len(groups) + len(projections) - 1) // len(projections)
         projection_index = min(
             group_index // groups_per_projection,
             len(projections) - 1,
@@ -236,6 +277,30 @@ async def _post_json(
     return resp.json()
 
 
+async def register_attention_handles(
+    attention_clients: list[MultiPAPServiceClient],
+    *,
+    request_id: str,
+    conversation_id: str,
+    prefill_endpoint: str,
+    kv_transfer_params: dict[str, Any],
+    prefix_len: int | None,
+) -> list[dict[str, Any]]:
+    sessions = []
+    for attention in attention_clients:
+        sessions.append(
+            await register_attention_handle(
+                attention,
+                request_id=request_id,
+                conversation_id=conversation_id,
+                prefill_endpoint=prefill_endpoint,
+                kv_transfer_params=kv_transfer_params,
+                prefix_len=prefix_len,
+            )
+        )
+    return sessions
+
+
 async def _stream_projection(
     client: MultiPAPServiceClient,
     endpoint: str,
@@ -263,18 +328,26 @@ async def lifespan(app: FastAPI):
         group: _make_client(group.prefill_host, group.prefill_port, "prefill")
         for group in app.state.groups
     }
-    app.state.attention_clients = {
-        group: _make_client(group.attention_host, group.attention_port, "attention")
-        for group in app.state.groups
-    }
+    app.state.attention_clients = {}
+    for group in app.state.groups:
+        if isinstance(group.attention_port, int):
+            ports = (group.attention_port,)
+        else:
+            ports = group.attention_port
+        app.state.attention_clients[group] = [
+            _make_client(group.attention_host, port, "attention") for port in ports
+        ]
     app.state.projection_clients = {
         projection: _make_client(projection.host, projection.port, "projection")
         for projection in app.state.projections
     }
     yield
+    attention_clients = [
+        client for clients in app.state.attention_clients.values() for client in clients
+    ]
     for client in [
         *app.state.prefill_clients.values(),
-        *app.state.attention_clients.values(),
+        *attention_clients,
         *app.state.projection_clients.values(),
     ]:
         await client.client.aclose()
@@ -296,17 +369,18 @@ async def _handle_openai_request(api_path: str, request: Request):
         routing_policy=request.app.state.args.routing_policy,
     )
     prefill = request.app.state.prefill_clients[group]
-    attention = request.app.state.attention_clients[group]
+    attention_clients = request.app.state.attention_clients[group]
     projection_client = request.app.state.projection_clients[projection]
 
-    attention_session = await register_attention_handle(
-        attention,
+    attention_sessions = await register_attention_handles(
+        attention_clients,
         request_id=request_id,
         conversation_id=conversation_id,
         prefill_endpoint=group.prefill_base_url,
         kv_transfer_params={},
         prefix_len=None,
     )
+    attention_session = attention_sessions[0]
 
     prefill_payload = attach_pap_prefill_attention_params(
         build_prefill_payload(req_data),
@@ -336,7 +410,7 @@ async def _handle_openai_request(api_path: str, request: Request):
     projection_payload.setdefault("stream", client_stream)
     projection_kv_params = projection_payload.get("kv_transfer_params") or {}
     logger.info(
-        "request_id=%s pa=%s:%d attention=%s:%d projection=%s:%d "
+        "request_id=%s pa=%s:%d attention=%s:%s projection=%s:%d "
         "prefill_ms=%d prefill_prefix_len=%s projection_kv_keys=%s",
         request_id,
         group.prefill_host,

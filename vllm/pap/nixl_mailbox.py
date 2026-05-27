@@ -16,20 +16,20 @@ notifications.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import os
 import time
 import uuid
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass, field
-import json
-import msgspec
 from queue import Empty, Queue
 from threading import Condition, Event, RLock, Thread
-from typing import Any, Callable, Protocol
+from typing import Any, Protocol
 
+import msgspec
 import torch
-
 
 logger = logging.getLogger(__name__)
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
@@ -89,9 +89,7 @@ def _encode_nixl_mailbox_notification(
 
 def _decode_nixl_mailbox_notification(payload: bytes) -> dict[str, Any]:
     if payload.startswith(_NIXL_MAILBOX_MSGPACK_PREFIX):
-        data = msgspec.msgpack.decode(
-            payload[len(_NIXL_MAILBOX_MSGPACK_PREFIX) :]
-        )
+        data = msgspec.msgpack.decode(payload[len(_NIXL_MAILBOX_MSGPACK_PREFIX) :])
     else:
         data = json.loads(payload.decode("utf-8"))
     if not isinstance(data, dict):
@@ -212,11 +210,9 @@ class PAPMailboxMessage:
 class PAPMailboxBackend(Protocol):
     """Delivery backend used by mailbox actors."""
 
-    def register_actor(self, actor: "PAPMailboxActor") -> None:
-        ...
+    def register_actor(self, actor: PAPMailboxActor) -> None: ...
 
-    def deliver(self, sender: "PAPMailboxActor", message: PAPMailboxMessage) -> None:
-        ...
+    def deliver(self, sender: PAPMailboxActor, message: PAPMailboxMessage) -> None: ...
 
 
 class PAPMailboxActor:
@@ -245,12 +241,12 @@ class PAPMailboxActor:
             return len(self._task_pool)
 
     @property
-    def peer(self) -> "PAPMailboxActor":
+    def peer(self) -> PAPMailboxActor:
         if self._peer is None:
             raise RuntimeError(f"PAP mailbox actor {self.actor_id} has no peer")
         return self._peer
 
-    def bind_peer(self, peer: "PAPMailboxActor") -> None:
+    def bind_peer(self, peer: PAPMailboxActor) -> None:
         if peer.actor_id == self.actor_id:
             raise ValueError("PAP mailbox actor cannot bind to itself")
         with self._lock:
@@ -286,9 +282,7 @@ class PAPMailboxActor:
     ) -> PAPMailboxMessage:
         """Pop a task by id, or the oldest task when id is omitted."""
 
-        deadline = (
-            None if timeout is None else time.monotonic() + float(timeout)
-        )
+        deadline = None if timeout is None else time.monotonic() + float(timeout)
         with self._cv:
             while True:
                 if msg_id is None and self._task_pool:
@@ -596,8 +590,7 @@ class PAPNixlMailboxEndpoint:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise TimeoutError(
-                        f"timed out waiting for PAP NIXL send slot "
-                        f"for message {msg_id}"
+                        f"timed out waiting for PAP NIXL send slot for message {msg_id}"
                     )
                 cv.wait(timeout=min(remaining, 0.001))
 
@@ -650,9 +643,7 @@ class PAPNixlMailboxEndpoint:
             self._peer_agent_name,
             notif_msg=_encode_nixl_mailbox_notification(
                 ack,
-                use_msgpack=getattr(
-                    self, "_msgpack_notifications_enabled", False
-                ),
+                use_msgpack=getattr(self, "_msgpack_notifications_enabled", False),
             ),
         )
 
@@ -669,7 +660,7 @@ class PAPNixlMailboxEndpoint:
         self._send_queue.put(message)
 
     def _send_inline(self, message: PAPMailboxMessage) -> None:
-        trace_enabled = self._trace_enabled
+        trace_enabled = getattr(self, "_trace_enabled", False)
         send_start = time.perf_counter() if trace_enabled else 0.0
         with self._lock:
             if message.msg_id in self._output_pool:
@@ -702,10 +693,8 @@ class PAPNixlMailboxEndpoint:
             )
 
     def recv(self, msg_id: str | None = None, *, timeout: float | None = None):
-        deadline = (
-            None if timeout is None else time.monotonic() + float(timeout)
-        )
-        trace_enabled = self._trace_enabled
+        deadline = None if timeout is None else time.monotonic() + float(timeout)
+        trace_enabled = getattr(self, "_trace_enabled", False)
         recv_start = time.perf_counter() if trace_enabled else 0.0
 
         def trace_recv_wait(message: PAPMailboxMessage) -> None:
@@ -734,8 +723,7 @@ class PAPNixlMailboxEndpoint:
                 remaining = None if deadline is None else deadline - time.monotonic()
                 if remaining is not None and remaining <= 0:
                     raise TimeoutError(
-                        f"timed out waiting for PAP NIXL mailbox message "
-                        f"{msg_id}"
+                        f"timed out waiting for PAP NIXL mailbox message {msg_id}"
                     )
                 if not self._inline_poll_enabled:
                     self._cv.wait(timeout=remaining)
@@ -850,9 +838,7 @@ class PAPNixlMailboxEndpoint:
                     write_offset += segment_nbytes
                 self._synchronize_device_stream()
             copy_ms = (
-                (time.perf_counter() - copy_start) * 1000.0
-                if trace_enabled
-                else 0.0
+                (time.perf_counter() - copy_start) * 1000.0 if trace_enabled else 0.0
             )
             payload = {
                 "type": "message",
@@ -876,15 +862,11 @@ class PAPNixlMailboxEndpoint:
                 self._peer_agent_name,
                 notif_msg=_encode_nixl_mailbox_notification(
                     payload,
-                    use_msgpack=getattr(
-                        self, "_msgpack_notifications_enabled", False
-                    ),
+                    use_msgpack=getattr(self, "_msgpack_notifications_enabled", False),
                 ),
             )
             notify_ms = (
-                (time.perf_counter() - notify_start) * 1000.0
-                if trace_enabled
-                else 0.0
+                (time.perf_counter() - notify_start) * 1000.0 if trace_enabled else 0.0
             )
         except Exception:
             self._restore_pending_acks(piggybacked_acks)
@@ -929,9 +911,7 @@ class PAPNixlMailboxEndpoint:
 
     def _inline_wait_timeout(self, remaining: float | None) -> float | None:
         wait_timeout = (
-            self._poll_sleep_seconds
-            if self._poll_sleep_seconds > 0
-            else 0.00001
+            self._poll_sleep_seconds if self._poll_sleep_seconds > 0 else 0.00001
         )
         if remaining is None:
             return wait_timeout
@@ -1023,8 +1003,7 @@ class PAPNixlMailboxEndpoint:
             raise RuntimeError("PAP NIXL mailbox receive slot count must be positive")
         preferred = int(data.get("slot_id", 0)) % recv_slot_count
         return [
-            (preferred + offset) % recv_slot_count
-            for offset in range(recv_slot_count)
+            (preferred + offset) % recv_slot_count for offset in range(recv_slot_count)
         ]
 
     def _recv_slot_location(self, recv_slot_id: int) -> tuple[int, int]:
@@ -1056,9 +1035,7 @@ class PAPNixlMailboxEndpoint:
                 for recv_slot_id in candidates:
                     if recv_slot_id not in leases:
                         leases[recv_slot_id] = msg_id
-                        recv_offset, local_addr = self._recv_slot_location(
-                            recv_slot_id
-                        )
+                        recv_offset, local_addr = self._recv_slot_location(recv_slot_id)
                         return recv_slot_id, recv_offset, local_addr, True
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -1152,9 +1129,7 @@ class PAPNixlMailboxEndpoint:
             [0],
         )
         prepare_ms = (
-            (time.perf_counter() - prepare_start) * 1000.0
-            if trace_enabled
-            else 0.0
+            (time.perf_counter() - prepare_start) * 1000.0 if trace_enabled else 0.0
         )
         transfer_start = time.perf_counter() if trace_enabled else 0.0
         transfer_polls = 0
@@ -1198,9 +1173,7 @@ class PAPNixlMailboxEndpoint:
                 )
                 self._synchronize_device_stream()
         materialize_ms = (
-            (time.perf_counter() - materialize_start) * 1000.0
-            if trace_enabled
-            else 0.0
+            (time.perf_counter() - materialize_start) * 1000.0 if trace_enabled else 0.0
         )
         if trace_enabled:
             logger.info(
@@ -1219,10 +1192,8 @@ class PAPNixlMailboxEndpoint:
             )
         release_callback = None
         if release_recv_slot:
-            release_callback = (
-                lambda recv_slot_id=recv_slot_id, msg_id=msg_id: (
-                    self._release_recv_slot(recv_slot_id, msg_id)
-                )
+            release_callback = lambda recv_slot_id=recv_slot_id, msg_id=msg_id: (
+                self._release_recv_slot(recv_slot_id, msg_id)
             )
         return PAPMailboxMessage(
             msg_id=msg_id,
