@@ -994,3 +994,45 @@ Current conclusion:
   experiment should use a larger macro batch where each of three ubatches is
   large enough for Projection and MoE arithmetic density, or should reduce the
   per-ubatch mailbox cost with a fused/batched remote Attention kernel.
+
+## Qwen3-30B Layer-Wavefront Batch-Size Sweep
+
+Follow-up runs used the same `1PA1P`, Qwen3-30B-A3B-FP8, input `128`, output
+`4`, direct `nixl_mailbox` transport, and proxy-cleared shell. The goal was to
+check whether the layer-wavefront path becomes useful once each ubatch is large
+enough to amortize mailbox overhead.
+
+| Macro batch | Mode | Run root | Success | Median TPOT | Mean TPOT | Notes |
+| ---: | --- | --- | ---: | ---: | ---: | --- |
+| 6 | serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_101151` | 6/6 | 68.11 ms | 74.23 ms | Baseline small batch. |
+| 6 | 3-way wavefront | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_101013` | 6/6 | 96.18 ms | 104.14 ms | Splits into `B=2`; slower. |
+| 24 | serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_101723` | 24/24 | 143.41 ms | 150.73 ms | Attention `calls` median `24`. |
+| 24 | 3-way wavefront | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_101829` | 24/24 | 113.31 ms | 121.87 ms | `B=8` ubatches; faster than serial. |
+| 24 | 2-way wavefront | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_102317` | 24/24 | 105.53 ms | 110.88 ms | `B=12` ubatches; best B24 point. |
+| 48 | serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_101957` | 48/48 | 234.36 ms | 253.13 ms | Attention `calls` median `48`. |
+| 48 | 3-way wavefront | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_102054` | 48/48 | 241.92 ms | 255.13 ms | `B=16` ubatches, but Projection send queue/ACK dominates. |
+| 48 | 2-way wavefront | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_102217` | 48/48 | 186.33 ms | 193.62 ms | `B=24` ubatches; best B48 point. |
+
+Interpretation:
+
+- The wavefront design is useful once ubatches are not too small. B24 2-way
+  improves median TPOT by `26.4%` versus serial (`143.41 -> 105.53 ms`).
+- B48 confirms the need for dynamic ubatch count. Fixed 3-way regresses
+  slightly versus serial (`234.36 -> 241.92 ms`), while 2-way improves median
+  TPOT by `20.5%` (`234.36 -> 186.33 ms`).
+- For B24, 3-way already hides most Projection wait, but 2-way wins because it
+  sends fewer mailbox tasks and keeps each ubatch larger.
+- For B48, 3-way's Projection-side `attention_task_batch` send cost becomes the
+  problem: median send total is `3.031 ms`, with queue median `1.1225 ms` and
+  ACK median `1.7245 ms`. The 2-way B48 run reduces median Projection task send
+  total to `1.968 ms`.
+
+Current 30B recommendation:
+
+- Use the MoE-specific layer-wavefront path, not whole-model DBO.
+- Prefer `PAP_OFFLOAD_EXEC_MICROBATCH_COUNT=2` for the current 30B
+  `nixl_mailbox` implementation. Fixed 3-way is only a narrow win at B24 and
+  loses at B48.
+- The next code change should add an `auto` or model-specific policy for
+  `PAP_OFFLOAD_EXEC_MICROBATCH_COUNT` on `qwen3_moe`, so users do not have to
+  know that this 30B path currently prefers 2-way.
