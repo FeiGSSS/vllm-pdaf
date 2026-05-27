@@ -310,6 +310,20 @@ def test_qwen3_pap_microbatch_pipeline_streaming_schedule_is_opt_in() -> None:
     )
 
 
+def test_qwen3_pap_microbatch_pipeline_emits_projection_trace() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
+    start = text.index("    def _run_pap_attention_microbatch_pipeline")
+    end = text.index("    def _send_pap_attention_batch", start)
+    method = text[start:end]
+
+    assert "trace_offload_exec" in method
+    assert "trace_send_ms" in method
+    assert "trace_recv_ms" in method
+    assert "trace_sent_batches" in method
+    assert "pap_offload_exec_trace_id" in method
+    assert "PAP OFFLOAD_EXEC projection trace layer=%s batches=%d calls=%d" in method
+
+
 def test_qwen3_pap_microbatch_pipeline_full_batch_qkv_is_opt_in() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
     start = text.index("    def _run_pap_attention_microbatch_pipeline")

@@ -865,3 +865,59 @@ Current interpretation:
   once ubatch `u0` receives layer `i` remote attention output, it should be able
   to run local projection/MLP and advance to layer `i+1` while `u1/u2` are still
   in layer `i` remote attention.
+
+## Qwen3-30B Attention-UBatch Trace Instrumentation
+
+The attention-boundary microbatch path originally lacked Projection-side trace
+rows, so `tools/pap_trace_summary.py` could only see Attention/mailbox events.
+The microbatch path now emits the same
+`PAP OFFLOAD_EXEC projection trace ...` log line as the serial offload path,
+aggregated per layer across all microbatches. This records:
+
+- `batches`: number of microbatch sends for the layer.
+- `calls`: total requests represented by those microbatches.
+- `send_ms`: cumulative local QKV preparation/send time across microbatches.
+- `recv_ms`: cumulative wait/read time for all microbatch attention outputs.
+- `total_ms`: full local layer attention-boundary microbatch interval.
+- `batch_keys`: all remote Attention batch ids, so the parser can correlate
+  Projection and Attention timings.
+
+Validation run:
+
+- Run root:
+  `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_095913`.
+- Workload: `1PA1P`, Qwen3-30B-A3B-FP8, input `128`, output `4`, qps `64`,
+  prompts `6`.
+- Env: `PAP_OFFLOAD_EXEC_MICROBATCH_COUNT=3`,
+  `PAP_OFFLOAD_EXEC_MICROBATCH_FULL_QKV=1`,
+  `PAP_OFFLOAD_EXEC_MICROBATCH_STREAMING=0`,
+  `PAP_OFFLOAD_EXEC_MICROBATCH_OVERLAP_MLP=0`, proxy variables unset.
+- Result: `6/6` successful requests, median TPOT `93.13 ms`.
+- Trace summary: Projection `batches=3`, `calls=6`, `send_ms=0.354 ms`,
+  `recv_ms=1.445 ms`, `total_ms=2.517 ms`; Attention `calls=2`,
+  `compute_ms=0.259 ms`, `total_ms=0.630 ms`.
+- Correlation is now meaningful: median Attention path after Projection send is
+  `1.536 ms`, and Projection resume-to-recv-done is `1.879 ms`.
+
+Additional B24 schedule check:
+
+- Non-streaming ubatch run:
+  `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_095724`.
+- Result: `24/24` successful requests, median TPOT `155.58 ms`.
+- Projection trace: `batches=3`, `calls=24`, `send_ms=0.638 ms`,
+  `recv_ms=2.939 ms`, `total_ms=4.329 ms`.
+- This is effectively tied with the prior streaming ubatch B24 run
+  (`154.53 ms`) and slower than non-ubatch B24 (`141.41 ms`). The schedule knob
+  is therefore not the main issue.
+
+Updated diagnosis:
+
+- The current attention-boundary ubatch implementation correctly avoids DBO and
+  gives useful trace visibility, but it mostly serializes the three remote
+  attention microbatches within the same layer boundary.
+- Splitting one `calls=24` remote Attention into three `calls=8` tasks reduces
+  per-task Attention compute, but adds three mailbox send/recv/ACK paths and
+  still waits at the layer boundary. With no cross-layer wavefront, this is not
+  enough to beat the serial path.
+- The next implementation should target cross-layer progress, not just
+  streaming order within one layer.

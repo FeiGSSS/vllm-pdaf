@@ -500,6 +500,19 @@ class Qwen3Attention(nn.Module):
         if len(microbatches) <= 1:
             return False
 
+        trace_offload_exec = os.environ.get("PAP_OFFLOAD_EXEC_TRACE", "").lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
+        trace_send_ms = 0.0
+        trace_recv_ms = 0.0
+        trace_send_done_ns = 0
+        trace_recv_done_ns = 0
+        trace_sent_batches: list[tuple[str, Any, list[int], Any]] = []
+
         full_batch_qkv_enabled = _pap_env_enabled(
             "PAP_OFFLOAD_EXEC_MICROBATCH_FULL_QKV"
         )
@@ -536,9 +549,10 @@ class Qwen3Attention(nn.Module):
         send_cursor = 0
 
         def send_next_microbatch() -> None:
-            nonlocal send_cursor
+            nonlocal send_cursor, trace_send_done_ns, trace_send_ms
             if send_cursor >= len(microbatches):
                 return
+            trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
             microbatch_id = send_cursor
             req_indices = microbatches[microbatch_id]
             send_cursor += 1
@@ -574,15 +588,24 @@ class Qwen3Attention(nn.Module):
                 request_indices=req_indices,
                 transport=transport,
             )
+            if trace_offload_exec:
+                trace_send_ms += (time.perf_counter() - trace_send_start) * 1000.0
+                trace_send_done_ns = time.perf_counter_ns()
+                trace_sent_batches.extend(sent)
             pending_batches.append((microbatch_id, req_indices, q, sent))
 
         def consume_pending_microbatch(pending: Any) -> None:
+            nonlocal trace_recv_done_ns, trace_recv_ms
             _microbatch_id, req_indices, query, sent_batches = pending
+            trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
             chunk_output, chunk_release_messages = self._recv_pap_attention_batch(
                 query,
                 sent_batches,
                 transport=transport,
             )
+            if trace_offload_exec:
+                trace_recv_ms += (time.perf_counter() - trace_recv_start) * 1000.0
+                trace_recv_done_ns = time.perf_counter_ns()
             try:
                 output, _ = self.o_proj(chunk_output)
             finally:
@@ -597,11 +620,15 @@ class Qwen3Attention(nn.Module):
             while pending_batches:
                 pending = pending_batches.pop(0)
                 _microbatch_id, req_indices, query, sent_batches = pending
+                trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
                 chunk_output, chunk_release_messages = self._recv_pap_attention_batch(
                     query,
                     sent_batches,
                     transport=transport,
                 )
+                if trace_offload_exec:
+                    trace_recv_ms += (time.perf_counter() - trace_recv_start) * 1000.0
+                    trace_recv_done_ns = time.perf_counter_ns()
                 send_next_microbatch()
                 try:
                     output, _ = self.o_proj(chunk_output)
@@ -614,6 +641,34 @@ class Qwen3Attention(nn.Module):
                 send_next_microbatch()
             for pending in pending_batches:
                 consume_pending_microbatch(pending)
+        if trace_offload_exec and trace_sent_batches:
+            from vllm.pap.data_plane import pap_offload_exec_trace_id
+
+            trace_total_ms = (time.perf_counter() - trace_total_start) * 1000.0
+            batch_keys = "|".join(
+                pap_offload_exec_trace_id(batch[1].output_tensor_id)
+                for batch in trace_sent_batches
+            )
+            logger.info(
+                "PAP OFFLOAD_EXEC projection trace layer=%s batches=%d calls=%d "
+                "send_ms=%.3f trigger_ms=%.3f yield_ms=%.3f "
+                "recv_ms=%.3f total_ms=%.3f batch_keys=%s "
+                "send_done_ns=%d yield_start_ns=%d yield_end_ns=%d "
+                "recv_done_ns=%d",
+                trace_sent_batches[0][1].layer_name,
+                len(trace_sent_batches),
+                sum(len(batch[1].items) for batch in trace_sent_batches),
+                trace_send_ms,
+                0.0,
+                0.0,
+                trace_recv_ms,
+                trace_total_ms,
+                batch_keys,
+                trace_send_done_ns,
+                trace_send_done_ns,
+                trace_send_done_ns,
+                trace_recv_done_ns,
+            )
         return True
 
     def _send_pap_attention_batch(
