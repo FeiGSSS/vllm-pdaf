@@ -1096,3 +1096,33 @@ Interpretation:
   Projection-side layer wavefront is still the central bottleneck. But it does
   show that the 30B path can benefit materially once the macro batch is large
   enough and the MoE-specific wavefront path is used.
+
+## Qwen3-30B `7PA1P` 1000-Request Validation
+
+The final target-scale check used the same `7PA1P`, Qwen3-30B-A3B-FP8,
+input/output `1024/64`, and qps `256` setting, but increased both prompt count
+and scheduler capacity:
+
+- Prompts: `1000`.
+- `MAX_NUM_SEQS=1000`.
+- `MAX_NUM_BATCHED_TOKENS=8192`.
+- Proxy variables explicitly unset.
+- Trace disabled.
+
+| Mode | Run root | Success | Duration | Req/s | Output tok/s | Median TTFT | Median TPOT | P99 TPOT |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| serial PAP | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_104616` | 1000/1000 | 496.36 s | 2.01 | 128.94 | 26530.44 ms | 7271.79 ms | 7388.45 ms |
+| layer-wavefront auto | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_104103` | 1000/1000 | 251.18 s | 3.98 | 254.80 | 19516.49 ms | 3236.58 ms | 3295.83 ms |
+
+Interpretation:
+
+- With `MAX_NUM_SEQS=1000`, Projection does schedule the full macro batch. The
+  Projection service log reached `Running: 1000 reqs`; the earlier low parallelism
+  behavior was a scheduler cap issue, not a fundamental qps limitation.
+- At the 1000-request target point, MoE layer-wavefront auto is materially faster
+  than serial PAP: median TPOT improves by `55.5%` (`7271.79 -> 3236.58 ms`),
+  p99 TPOT improves by `55.4%`, and output throughput improves by `97.6%`
+  (`128.94 -> 254.80 tok/s`).
+- This is the strongest current evidence that the 30B MoE path can efficiently
+  support PAP ubatch when the implementation avoids whole-model DBO and when the
+  scheduler is allowed to form a large enough Projection macro batch.
