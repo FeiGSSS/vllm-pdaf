@@ -1309,6 +1309,7 @@ Results:
 
 | `MAX_NUM_SEQS` | Run root | Success | Duration | Req/s | Output tok/s | Median TTFT | Median TPOT | P99 TPOT | Max Projection `Running` |
 | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 320 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_134611` | 2000/2000 | 260.36 s | 7.68 | 491.62 | 96339.19 ms | 1153.02 ms | 1352.96 ms | `320`, `320` |
 | 384 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_133154` | 2000/2000 | 256.71 s | 7.79 | 498.63 | 98109.87 ms | 1330.89 ms | 1581.83 ms | `384`, `384` |
 | 448 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_133717` | 2000/2000 | 258.34 s | 7.74 | 495.48 | 88615.88 ms | 1581.14 ms | 1778.16 ms | `448`, `448` |
 | 512 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_132011` | 2000/2000 | 257.12 s | 7.78 | 497.82 | 64411.10 ms | 1702.64 ms | 2008.52 ms | `512`, `512` |
@@ -1318,17 +1319,21 @@ Results:
 Findings:
 
 - The added concurrency points did not beat the existing `MAX_NUM_SEQS=2000`
-  result. The best observed PAP point remains `6PA2P`, `MAX_NUM_SEQS=2000`,
-  at `500.65` output tok/s and median TPOT `1201.16 ms`.
+  result by throughput. The best throughput point remains `6PA2P`,
+  `MAX_NUM_SEQS=2000`, at `500.65` output tok/s and median TPOT
+  `1201.16 ms`.
+- The best latency point in this sweep is `MAX_NUM_SEQS=320`: median TPOT
+  `1153.02 ms` and p99 TPOT `1352.96 ms`, but it gives up throughput
+  (`491.62` output tok/s versus `500.65`).
 - Increasing the actual Projection running batch is not monotonic. The
   `MAX_NUM_SEQS=1024` run reached `787` running requests per Projection
   instance, but throughput dropped to `493.36` output tok/s and median TPOT
   rose to `2251.40 ms`.
-- The good operating region appears to be roughly a few hundred active
-  requests per Projection instance for this model and workload. However,
-  simply capping `MAX_NUM_SEQS` to `384-512` did not improve throughput, likely
-  because the run still pays the same Projection/Attention exchange overhead
-  and shows periodic wave stalls.
+- The good operating region appears to be roughly `300-450` active requests
+  per Projection instance for this model and workload. However, simply capping
+  `MAX_NUM_SEQS` in that range does not improve throughput, likely because the
+  run still pays the same Projection/Attention exchange overhead and shows
+  periodic wave stalls.
 - This narrows the current PAP bottleneck: scheduler concurrency alone is not
   the missing knob for 30B `6PA2P`. The next optimization should target the
   remote attention exchange path, especially fused batch attention and mailbox
