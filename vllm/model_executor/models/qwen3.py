@@ -398,7 +398,11 @@ def _pap_offload_exec_transport():
 
     return build_p2p_nccl_offload_exec_transport(
         local_rank=local_rank,
-        kv_port=int(os.environ.get("PAP_OFFLOAD_EXEC_ZMQ_PORT", "11300")),
+        kv_port=int(
+            _pap_endpoint_for_tp_rank(
+                os.environ.get("PAP_OFFLOAD_EXEC_ZMQ_PORT", "11300")
+            )
+        ),
         hostname=os.environ.get("PAP_OFFLOAD_EXEC_HOST", ""),
     )
 

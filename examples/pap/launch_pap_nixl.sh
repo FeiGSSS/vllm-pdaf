@@ -184,6 +184,17 @@ build_rank_ports() {
     join_by_pipe "${ports[@]}"
 }
 
+build_rank_ports_csv() {
+    local base=$1
+    local group_idx=$2
+    local ports=()
+    local rank
+    for (( rank=0; rank<PAP_TP_SIZE; rank++ )); do
+        ports+=("$((base + group_idx * PAP_TP_SIZE + rank))")
+    done
+    join_by_comma "${ports[@]}"
+}
+
 cleanup() {
     local code=$?
     set +e
@@ -482,7 +493,7 @@ done
 for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     gpu_csv="$(gpu_group_csv PROJECTION_GPUS "$idx")"
     projection_port=$((PROJECTION_PORT_BASE + idx))
-    projection_zmq_port=$((PROJECTION_ZMQ_PORT_BASE + idx))
+    projection_zmq_port="$(build_rank_ports_csv "$PROJECTION_ZMQ_PORT_BASE" "$idx")"
     echo "Starting PAP Projection vLLM metadata-only $idx on GPU(s) $gpu_csv"
     CUDA_VISIBLE_DEVICES="$gpu_csv" \
     VLLM_PORT="$((VLLM_PORT_BASE + PA_COUNT * 20 + idx * 20))" \
