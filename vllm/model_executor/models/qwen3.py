@@ -26,6 +26,7 @@
 import hashlib
 import json
 import os
+import threading
 import time
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
@@ -381,6 +382,53 @@ def _pap_endpoint_for_tp_rank(value: Any, *, tp_rank: int | None = None) -> Any:
     return value
 
 
+def _pap_offload_exec_base_zmq_port() -> int:
+    return int(
+        _pap_endpoint_for_tp_rank(os.environ.get("PAP_OFFLOAD_EXEC_ZMQ_PORT", "11300"))
+    )
+
+
+def _pap_endpoint_port(value: str | None) -> int | None:
+    if not value:
+        return None
+    endpoint = str(value).strip()
+    if not endpoint:
+        return None
+    if "://" in endpoint:
+        endpoint = endpoint.rsplit(":", 1)[-1]
+    else:
+        endpoint = endpoint.rsplit(":", 1)[-1]
+    try:
+        return int(endpoint)
+    except ValueError:
+        return None
+
+
+def _pap_offload_exec_peer_port_offset(peer_endpoint: str | None) -> int:
+    peer_port = _pap_endpoint_port(peer_endpoint)
+    if peer_port is None:
+        return 0
+    rank = _pap_tensor_parallel_rank()
+    for env_name in ("PAP_ATTENTION_ZMQ_PORT_BASE", "PAP_ATTENTION_PORT_BASE"):
+        base_raw = os.environ.get(env_name)
+        if not base_raw:
+            continue
+        try:
+            ranked_base = int(base_raw) + rank
+        except ValueError:
+            continue
+        offset = peer_port - ranked_base
+        if offset >= 0:
+            return offset
+    return 0
+
+
+def _pap_offload_exec_peer_zmq_port(peer_endpoint: str | None) -> int:
+    return _pap_offload_exec_base_zmq_port() + _pap_offload_exec_peer_port_offset(
+        peer_endpoint
+    )
+
+
 @lru_cache(maxsize=1)
 def _pap_offload_exec_transport():
     from vllm.pap.data_plane import (
@@ -398,13 +446,30 @@ def _pap_offload_exec_transport():
 
     return build_p2p_nccl_offload_exec_transport(
         local_rank=local_rank,
-        kv_port=int(
-            _pap_endpoint_for_tp_rank(
-                os.environ.get("PAP_OFFLOAD_EXEC_ZMQ_PORT", "11300")
-            )
-        ),
+        kv_port=_pap_offload_exec_base_zmq_port(),
         hostname=os.environ.get("PAP_OFFLOAD_EXEC_HOST", ""),
     )
+
+
+_pap_p2p_offload_exec_transport_lock = threading.Lock()
+_pap_p2p_offload_exec_transport_cache: dict[str, Any] = {}
+
+
+def _pap_p2p_offload_exec_transport_for_peer(peer_endpoint: str):
+    with _pap_p2p_offload_exec_transport_lock:
+        cached = _pap_p2p_offload_exec_transport_cache.get(peer_endpoint)
+        if cached is not None:
+            return cached
+
+        from vllm.pap.data_plane import build_p2p_nccl_offload_exec_transport
+
+        transport = build_p2p_nccl_offload_exec_transport(
+            local_rank=_pap_tensor_parallel_rank(),
+            kv_port=_pap_offload_exec_peer_zmq_port(peer_endpoint),
+            hostname=os.environ.get("PAP_OFFLOAD_EXEC_HOST", ""),
+        )
+        _pap_p2p_offload_exec_transport_cache[peer_endpoint] = transport
+        return transport
 
 
 @lru_cache(maxsize=32)
@@ -420,11 +485,15 @@ def _pap_nixl_mailbox_offload_exec_transport(attention_endpoint: str):
     )
 
 
-def _pap_offload_exec_transport_for_attention_endpoint(attention_endpoint: str | None):
+def _pap_offload_exec_transport_for_attention_endpoint(
+    attention_endpoint: str | None,
+    offload_exec_zmq_endpoint: str | None = None,
+):
     transport = _pap_offload_exec_transport_kind()
     if transport in {"nixl", "nixl_mailbox"}:
         return _pap_nixl_mailbox_offload_exec_transport(str(attention_endpoint or ""))
-    return _pap_offload_exec_transport()
+    peer_endpoint = str(offload_exec_zmq_endpoint or attention_endpoint or "")
+    return _pap_p2p_offload_exec_transport_for_peer(peer_endpoint)
 
 
 def _pap_bind_offload_exec_mailbox_peer(
@@ -450,12 +519,13 @@ def _pap_bind_offload_exec_mailbox_peer(
     transport._pap_mailbox_bound_attention_endpoint = attention_endpoint
 
 
-def _pap_offload_exec_local_address() -> str:
+def _pap_offload_exec_local_address(peer_endpoint: str | None = None) -> str:
     host = os.environ.get("PAP_OFFLOAD_EXEC_HOST") or "127.0.0.1"
-    port = int(
-        _pap_endpoint_for_tp_rank(os.environ.get("PAP_OFFLOAD_EXEC_ZMQ_PORT", "11300"))
-    )
-    return os.environ.get("PAP_OFFLOAD_EXEC_LOCAL_ADDRESS", f"{host}:{port}")
+    if not peer_endpoint:
+        port = _pap_offload_exec_base_zmq_port()
+        return os.environ.get("PAP_OFFLOAD_EXEC_LOCAL_ADDRESS", f"{host}:{port}")
+    port = _pap_offload_exec_peer_zmq_port(peer_endpoint)
+    return f"{host}:{port}"
 
 
 class Qwen3Attention(nn.Module):
@@ -1149,7 +1219,8 @@ class Qwen3Attention(nn.Module):
             offload_exec_zmq_endpoint,
         ), group_items in offload_exec_groups.items():
             group_transport = _pap_offload_exec_transport_for_attention_endpoint(
-                attention_endpoint
+                attention_endpoint,
+                offload_exec_zmq_endpoint,
             )
             _pap_bind_offload_exec_mailbox_peer(group_transport, attention_endpoint)
             batch_descriptor = PAPOffloadExecBatchDescriptor(
@@ -1432,7 +1503,8 @@ class Qwen3Attention(nn.Module):
             offload_exec_zmq_endpoint,
         ), group_items in offload_exec_groups.items():
             transport = _pap_offload_exec_transport_for_attention_endpoint(
-                attention_endpoint
+                attention_endpoint,
+                offload_exec_zmq_endpoint,
             )
             send_query_batch = getattr(transport, "send_query_batch", None)
             if (
@@ -1656,7 +1728,6 @@ class Qwen3Attention(nn.Module):
             "yes",
             "on",
         )
-        transport = _pap_offload_exec_transport()
         trace_offload_exec = os.environ.get("PAP_OFFLOAD_EXEC_TRACE", "").lower() in (
             "1",
             "true",
@@ -1714,6 +1785,7 @@ class Qwen3Attention(nn.Module):
                 PAPOffloadExecBatchDescriptor,
                 list[int],
                 Any,
+                str,
             ]
         ] = []
         for (
@@ -1722,7 +1794,8 @@ class Qwen3Attention(nn.Module):
             offload_exec_zmq_endpoint,
         ), group_items in offload_exec_groups.items():
             transport = _pap_offload_exec_transport_for_attention_endpoint(
-                attention_endpoint
+                attention_endpoint,
+                offload_exec_zmq_endpoint,
             )
             batch_descriptor = PAPOffloadExecBatchDescriptor(
                 layer_name=self.attn.layer_name,
@@ -1809,6 +1882,7 @@ class Qwen3Attention(nn.Module):
                     batch_descriptor,
                     [item[0] for item in group_items],
                     transport,
+                    _pap_offload_exec_local_address(offload_exec_zmq_endpoint),
                 )
             )
         trace_send_ms = (
@@ -1818,7 +1892,6 @@ class Qwen3Attention(nn.Module):
         )
         if trace_offload_exec:
             trace_send_done_ns = time.perf_counter_ns()
-        local_offload_exec_zmq_endpoint = _pap_offload_exec_local_address()
 
         def trigger_offload_exec_batch_call(
             tcp_endpoint: str | None,
@@ -1849,10 +1922,11 @@ class Qwen3Attention(nn.Module):
             for (
                 tcp_endpoint,
                 _attention_endpoint,
-                offload_exec_zmq_endpoint,
+                _offload_exec_zmq_endpoint,
                 descriptor,
                 _req_indices,
                 _transport,
+                local_offload_exec_zmq_endpoint,
             ) in offload_exec_batches:
                 trigger_offload_exec_batch_call(
                     tcp_endpoint,
@@ -1873,10 +1947,11 @@ class Qwen3Attention(nn.Module):
                 for (
                     tcp_endpoint,
                     _attention_endpoint,
-                    offload_exec_zmq_endpoint,
+                    _offload_exec_zmq_endpoint,
                     descriptor,
                     _req_indices,
                     _transport,
+                    local_offload_exec_zmq_endpoint,
                 ) in offload_exec_batches
             ]
             for future in futures:
@@ -1908,6 +1983,7 @@ class Qwen3Attention(nn.Module):
             batch_descriptor,
             req_indices,
             transport,
+            _local_offload_exec_zmq_endpoint,
         ) in offload_exec_batches:
             recv_output_batch_message = getattr(
                 transport, "recv_output_batch_message", None

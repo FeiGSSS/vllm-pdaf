@@ -1755,6 +1755,9 @@ def run_offload_exec_batch_once(
         "on",
     )
     trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
+    trace_recv_done_ns = 0
+    trace_compute_done_ns = 0
+    trace_send_done_ns = 0
     trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
     qkv_batch = transport.recv_qkv_batch(
         descriptor,
@@ -1765,6 +1768,8 @@ def run_offload_exec_batch_once(
         if trace_offload_exec
         else 0.0
     )
+    if trace_offload_exec:
+        trace_recv_done_ns = time.perf_counter_ns()
     if int(qkv_batch.shape[0]) != len(descriptor.items):
         raise RuntimeError(
             "PAP OFFLOAD_EXEC batch QKV row count does not match descriptor"
@@ -1788,6 +1793,8 @@ def run_offload_exec_batch_once(
         if trace_offload_exec
         else 0.0
     )
+    if trace_offload_exec:
+        trace_compute_done_ns = time.perf_counter_ns()
     trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
     transport.send_output_batch(
         descriptor,

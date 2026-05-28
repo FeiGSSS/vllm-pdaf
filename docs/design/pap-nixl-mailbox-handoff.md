@@ -1,6 +1,6 @@
 # PAP NIXL Mailbox Handoff
 
-Updated: 2026-05-26
+Updated: 2026-05-28
 
 ## Purpose
 
@@ -27,6 +27,10 @@ Ready to hand off as an experimental PAP/NIXL checkpoint:
 - Trace tooling is included for future protocol work:
   `tools/pap_trace_summary.py` summarizes Projection, Attention, mailbox, and
   NIXL timing from service logs.
+- Qwen3-32B `3PA1P`, TP=2 is functionally stable through
+  `PAP_OFFLOAD_EXEC_TRANSPORT=nixl_mailbox` on the ctx128/bs512/o64 burst
+  workload after reserving PA-side memory for the colocated attention
+  executors.
 - Latest evidence says the remaining TPOT gap is not dominated by raw NIXL READ
   or notification publish latency. The largest measured cost is the per-layer
   Projection/Attention alternation, so the next owner should focus on a
@@ -116,6 +120,11 @@ Current message kinds:
   A/Bs were slower on the warm benchmark.
 - `PAP_NIXL_MAILBOX_TRACE=1` enables mailbox-internal publish/read timing. If
   unset, mailbox tracing follows `PAP_OFFLOAD_EXEC_TRACE`.
+- For Qwen3-32B TP=2 `3PA1P` on 48 GiB GPUs, use
+  `PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.78` or lower. `0.90` leaves almost no
+  headroom for the attention executor colocated on each PA GPU and caused an
+  attention OOM even though the benchmark client reported HTTP-level
+  completions.
 - `PAP_Q_FIRST_PROJECTION=1` is an experimental Qwen3-only path that slices the
   unquantized fused QKV projection, sends Q after Q-Proj/RoPE, then computes and
   sends K/V. It remains opt-in because the first controlled run regressed TPOT.
@@ -173,6 +182,38 @@ git diff --check
 Both completed successfully in the latest run.
 
 ## Benchmark Snapshot
+
+### Qwen3-32B TP2 3PA1P stability point
+
+Model: `/data/ssd1/llm-models/Qwen3-32B`
+Workload: ctx128/o64/512 prompts, `request-rate=inf`, `max-concurrency=512`
+Topology: `3PA1P`, TP=2 for every PA and Projection instance, 8 GPUs total
+Transport: `PAP_OFFLOAD_EXEC_TRANSPORT=nixl_mailbox`
+
+| Run | PA GPU mem util | Successful | Failed | Output tokens | Duration | Req/s | Out tok/s | Mean TTFT | Mean TPOT |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Invalid OOM run | 0.90 | 512 | 0 | 1731 | 321.28 s | 1.59 | 5.39 | 14462.07 ms | 3045.39 ms |
+| Valid run | 0.78 | 512 | 0 | 32768 | 157.29 s | 3.26 | 208.32 | 14282.20 ms | 2224.55 ms |
+
+The `0.90` run is invalid because attention executor logs show
+`torch.OutOfMemoryError` on PA GPUs. The valid run left about 5 GiB free on PA
+GPUs during decode and generated the full requested 512 * 64 output tokens.
+
+Trace summary from the valid run:
+
+- Projection macro batch `calls`: median 170, mean 155.30, p99 172.
+- Projection ubatches per trace: median 3, mean 2.94, p99 3.
+- Attention batch `calls`: median 57, mean 52.77, p99 65.
+- Attention median timing: recv QKV 2.454 ms, compute 6.057 ms, send output
+  0.019 ms, total 8.534 ms.
+- Projection median remote-attention trace: send 2.016 ms, yield 17.602 ms,
+  recv 1.849 ms, total 21.640 ms.
+
+This confirms that NIXL mailbox is usable as the 3PA1P TP2 correctness baseline,
+but it is still far from the PD 3P1D TP2 baseline for the same load
+(32.62 s, 15.70 req/s, 1004.51 output tok/s, mean TPOT 210.53 ms).
+
+### Qwen3-0.6B 1PA1P microbenchmarks
 
 Model: `/data/ssd1/llm-models/Qwen3-0.6B`
 Workload: `i512/o8/q1/prompts2`
