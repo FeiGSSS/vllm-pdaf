@@ -1,18 +1,21 @@
 import logging
+from contextlib import suppress
 from pathlib import Path
 from threading import Thread
+
+import pytest
 
 from examples.pap.pap_attention_executor import (
     PAPAttentionRegistration,
     PAPAttentionRegistry,
     compute_binary_attention_response,
     compute_offload_exec_output,
-    run_offload_exec_query_first_partial_batch_once,
     create_app,
     maybe_start_offload_exec_transport,
     run_offload_exec_batch_once,
     run_offload_exec_mailbox_loop,
     run_offload_exec_once,
+    run_offload_exec_query_first_partial_batch_once,
 )
 from vllm.pap.data_plane import (
     PAPCudaIPCTensorHandle,
@@ -29,7 +32,7 @@ def test_attention_executor_declares_offload_exec_zmq_port() -> None:
     text = (ROOT / "examples" / "pap" / "pap_attention_executor.py").read_text()
 
     assert "--offload-exec-zmq-port" in text
-    assert "OFFLOAD_EXEC NCCL/P2P data plane listening" in text
+    assert "OFFLOAD_EXEC NIXL mailbox initialized" in text
 
 
 def test_attention_executor_logs_ipc_prefill_import() -> None:
@@ -56,7 +59,8 @@ def test_attention_executor_starts_offload_exec_transport(monkeypatch) -> None:
 
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_LOCAL_RANK", "2")
     monkeypatch.setattr(
-        "examples.pap.pap_attention_executor.build_p2p_nccl_offload_exec_transport",
+        "examples.pap.pap_attention_executor."
+        "build_nixl_mailbox_offload_exec_transport",
         fake_build_transport,
     )
 
@@ -64,10 +68,22 @@ def test_attention_executor_starts_offload_exec_transport(monkeypatch) -> None:
 
     assert app.state.offload_exec_transport is fake_transport
     assert fake_build_transport.kwargs == {
+        "actor_id": "attention",
         "local_rank": 2,
-        "kv_port": 10300,
-        "hostname": "127.0.0.1",
     }
+
+
+def test_attention_executor_rejects_nccl_offload_exec_transport(monkeypatch) -> None:
+    app = create_app()
+
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_TRANSPORT", "nccl")
+
+    with pytest.raises(RuntimeError, match="use nixl_mailbox"):
+        maybe_start_offload_exec_transport(
+            app=app,
+            host="127.0.0.1",
+            zmq_port=10300,
+        )
 
 
 def test_compute_offload_exec_output_from_packed_qkv(monkeypatch) -> None:
@@ -633,13 +649,10 @@ def test_run_offload_exec_mailbox_loop_releases_qkv_message(monkeypatch) -> None
     )
     transport = FakeTransport(descriptor)
 
-    try:
+    with suppress(KeyboardInterrupt):
         run_offload_exec_mailbox_loop(registry=registry, transport=transport)
-    except KeyboardInterrupt:
-        pass
 
     assert events == ["release", "send"]
-
 
 
 def test_run_offload_exec_mailbox_loop_emits_trace(monkeypatch, caplog) -> None:
@@ -655,7 +668,9 @@ def test_run_offload_exec_mailbox_loop_emits_trace(monkeypatch, caplog) -> None:
             self.recv_calls += 1
             if self.recv_calls > 1:
                 raise KeyboardInterrupt
-            return self.descriptor, torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]])
+            return self.descriptor, torch.tensor(
+                [[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]]
+            )
 
         def send_output_batch(self, descriptor, output, *, remote_address):
             self.sent.append((descriptor, output, remote_address))
@@ -687,14 +702,17 @@ def test_run_offload_exec_mailbox_loop_emits_trace(monkeypatch, caplog) -> None:
     )
     transport = FakeTransport(descriptor)
 
-    with caplog.at_level(logging.INFO, logger="pap_attention"):
-        try:
-            run_offload_exec_mailbox_loop(registry=registry, transport=transport)
-        except KeyboardInterrupt:
-            pass
+    with (
+        caplog.at_level(logging.INFO, logger="pap_attention"),
+        suppress(KeyboardInterrupt),
+    ):
+        run_offload_exec_mailbox_loop(registry=registry, transport=transport)
 
     assert len(transport.sent) == 1
-    assert "PAP OFFLOAD_EXEC attention mailbox batch trace layer=layer0 calls=1" in caplog.text
+    assert (
+        "PAP OFFLOAD_EXEC attention mailbox batch trace layer=layer0 calls=1"
+        in caplog.text
+    )
     assert "recv_qkv_ms=" in caplog.text
     assert "compute_ms=" in caplog.text
     assert "send_output_ms=" in caplog.text

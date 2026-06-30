@@ -4,24 +4,26 @@
 
 TCP control messages (compact binary format) for triggering the remote
 Attention executor and importing prefill KV. Tensor data for OFFLOAD_EXEC
-travels over NCCL; prefill KV import uses TCP binary bundles.
+uses the PAP data plane; prefill KV import uses TCP binary bundles.
 """
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 import os
 import socket
-import time
-import base64
-import json
 from collections.abc import Sequence
 from threading import local
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 import torch
 from torch.multiprocessing.reductions import reduce_tensor
+
+if TYPE_CHECKING:
+    from vllm.pap.data_plane import PAPCudaIPCTensorHandle, PAPTensorTransport
 
 logger = logging.getLogger(__name__)
 
@@ -107,7 +109,7 @@ def trigger_offload_exec_attention(
     remote_address: str,
     timeout: float | None = None,
 ) -> None:
-    """Trigger Attention to receive QKV and send O over OFFLOAD_EXEC NCCL."""
+    """Trigger Attention to receive QKV and send O over OFFLOAD_EXEC."""
 
     if not tcp_endpoint:
         raise RuntimeError(
@@ -251,7 +253,7 @@ def _block_ids_from_block_table(
 
 def _normalize_offload_kv_transport(
     transport: Any | None,
-) -> "PAPTensorTransport | None":
+) -> PAPTensorTransport | None:
     if transport is None:
         return None
     from vllm.pap.data_plane import PAPTensorTransport
@@ -270,7 +272,7 @@ def _gpu_uuid_for_tensor(tensor: torch.Tensor) -> str:
 
 def _make_cuda_ipc_tensor_handle(
     tensor: torch.Tensor,
-) -> "PAPCudaIPCTensorHandle":
+) -> PAPCudaIPCTensorHandle:
     from vllm.pap.data_plane import PAPCudaIPCTensorHandle
 
     _, ipc_args = reduce_tensor(tensor)

@@ -426,8 +426,14 @@ def gather_paged_kv(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     if block_table.ndim != 2 or block_table.shape[0] != 1:
         raise ValueError("PAP prototype supports one decode request per call")
-    if kv_cache.shape[0] != 2:
-        raise ValueError("expected KV cache first dimension to contain K and V")
+    if kv_cache.ndim != 5:
+        raise ValueError("expected 5D paged KV cache tensor")
+    if int(kv_cache.shape[0]) == 2:
+        kv_dim = 0
+    elif int(kv_cache.shape[1]) == 2:
+        kv_dim = 1
+    else:
+        raise ValueError("expected KV cache dimension to contain K and V")
 
     blocks = block_table[0].to(device="cpu", dtype=torch.long).tolist()
     if layout == "NHD":
@@ -448,13 +454,21 @@ def gather_paged_kv(
         if remaining <= 0:
             break
         take = min(block_size, remaining)
-        if logical_nhd:
+        if kv_dim == 0 and logical_nhd:
             keys.append(kv_cache[0, block_id, :take, :num_kv_heads, :])
             values.append(kv_cache[1, block_id, :take, :num_kv_heads, :])
-        else:
+        elif kv_dim == 0:
             keys.append(kv_cache[0, block_id, :num_kv_heads, :take, :].transpose(0, 1))
             values.append(
                 kv_cache[1, block_id, :num_kv_heads, :take, :].transpose(0, 1)
+            )
+        elif logical_nhd:
+            keys.append(kv_cache[block_id, 0, :take, :num_kv_heads, :])
+            values.append(kv_cache[block_id, 1, :take, :num_kv_heads, :])
+        else:
+            keys.append(kv_cache[block_id, 0, :num_kv_heads, :take, :].transpose(0, 1))
+            values.append(
+                kv_cache[block_id, 1, :num_kv_heads, :take, :].transpose(0, 1)
             )
         remaining -= take
 
@@ -477,8 +491,14 @@ def paged_kv_segments(
     num_kv_heads: int,
     layout: Literal["NHD", "HND"],
 ) -> list[tuple[torch.Tensor, torch.Tensor]]:
-    if kv_cache.shape[0] != 2:
-        raise ValueError("expected KV cache first dimension to contain K and V")
+    if kv_cache.ndim != 5:
+        raise ValueError("expected 5D paged KV cache tensor")
+    if int(kv_cache.shape[0]) == 2:
+        kv_dim = 0
+    elif int(kv_cache.shape[1]) == 2:
+        kv_dim = 1
+    else:
+        raise ValueError("expected KV cache dimension to contain K and V")
     if layout == "NHD":
         logical_nhd = True
     elif layout == "HND":
@@ -493,12 +513,18 @@ def paged_kv_segments(
         if remaining <= 0:
             break
         take = min(block_size, remaining)
-        if logical_nhd:
+        if kv_dim == 0 and logical_nhd:
             key = kv_cache[0, block_id, :take, :num_kv_heads, :]
             value = kv_cache[1, block_id, :take, :num_kv_heads, :]
-        else:
+        elif kv_dim == 0:
             key = kv_cache[0, block_id, :num_kv_heads, :take, :].transpose(0, 1)
             value = kv_cache[1, block_id, :num_kv_heads, :take, :].transpose(0, 1)
+        elif logical_nhd:
+            key = kv_cache[block_id, 0, :take, :num_kv_heads, :]
+            value = kv_cache[block_id, 1, :take, :num_kv_heads, :]
+        else:
+            key = kv_cache[block_id, 0, :num_kv_heads, :take, :].transpose(0, 1)
+            value = kv_cache[block_id, 1, :num_kv_heads, :take, :].transpose(0, 1)
         segments.append((key, value))
         remaining -= take
 
@@ -578,7 +604,10 @@ def combine_segmented_attention_partial_states(
 ) -> torch.Tensor:
     if not states:
         raise ValueError("at least one partial attention state is required")
-    global_max = torch.stack([state.max_score for state in states], dim=0).max(dim=0).values
+    global_max = torch.stack(
+        [state.max_score for state in states],
+        dim=0,
+    ).max(dim=0).values
     numerator = torch.zeros_like(states[0].weighted_value_sum)
     denominator = torch.zeros_like(states[0].exp_sum)
     for state in states:

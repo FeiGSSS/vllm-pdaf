@@ -33,7 +33,6 @@ from vllm.pap.data_plane import (
     PAPOffloadKVIPCDescriptor,
     PAPOffloadKVPagedIPCDescriptor,
     build_nixl_mailbox_offload_exec_transport,
-    build_p2p_nccl_offload_exec_transport,
     pap_offload_exec_trace_id,
 )
 
@@ -95,7 +94,7 @@ class PAPAttentionImportPrefillKVRequest(BaseModel):
 
 
 class PAPOffloadExecRequest(BaseModel):
-    """Control-plane trigger for one OFFLOAD_EXEC NCCL/P2P tensor exchange."""
+    """Control-plane trigger for one OFFLOAD_EXEC tensor exchange."""
 
     request_id: str
     layer_name: str
@@ -1595,9 +1594,6 @@ def run_offload_exec_once(
         "on",
     )
     trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
-    trace_recv_done_ns = 0
-    trace_compute_done_ns = 0
-    trace_send_done_ns = 0
     trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
     logger.debug(
         "PAP OFFLOAD_EXEC recv_qkv request_id=%s layer=%s step=%s remote=%s",
@@ -1612,8 +1608,6 @@ def run_offload_exec_once(
         if trace_offload_exec
         else 0.0
     )
-    if trace_offload_exec:
-        trace_recv_done_ns = time.perf_counter_ns()
     trace_compute_start = time.perf_counter() if trace_offload_exec else 0.0
     logger.debug(
         "PAP OFFLOAD_EXEC compute request_id=%s layer=%s step=%s qkv_shape=%s",
@@ -1635,8 +1629,6 @@ def run_offload_exec_once(
         if trace_offload_exec
         else 0.0
     )
-    if trace_offload_exec:
-        trace_compute_done_ns = time.perf_counter_ns()
     trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
     logger.debug(
         "PAP OFFLOAD_EXEC send_output request_id=%s layer=%s step=%s "
@@ -2077,7 +2069,7 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
         with app.state.offload_exec_lock:
             if not getattr(transport, "_pap_mailbox_bound", False):
                 transport.bind_peer(peer_metadata)
-                setattr(transport, "_pap_mailbox_bound", True)
+                transport._pap_mailbox_bound = True
             if not app.state.offload_exec_mailbox_loop_started:
                 Thread(
                     target=run_offload_exec_mailbox_loop,
@@ -2314,7 +2306,7 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=None,
         help=(
-            "Reserved PAP OFFLOAD_EXEC ZMQ control port for the NCCL/P2P "
+            "Reserved PAP OFFLOAD_EXEC ZMQ control port for the "
             "Projection<->Attention data plane."
         ),
     )
@@ -2332,7 +2324,7 @@ def maybe_start_offload_exec_transport(
     if zmq_port is None:
         return
     local_rank = int(os.environ.get("PAP_OFFLOAD_EXEC_LOCAL_RANK", "0"))
-    transport = os.environ.get("PAP_OFFLOAD_EXEC_TRANSPORT", "nccl").lower()
+    transport = os.environ.get("PAP_OFFLOAD_EXEC_TRANSPORT", "nixl_mailbox").lower()
     if transport in {"nixl", "nixl_mailbox"}:
         app.state.offload_exec_transport = build_nixl_mailbox_offload_exec_transport(
             actor_id=os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "attention"),
@@ -2343,17 +2335,9 @@ def maybe_start_offload_exec_transport(
             local_rank,
         )
         return
-    app.state.offload_exec_transport = build_p2p_nccl_offload_exec_transport(
-        local_rank=local_rank,
-        kv_port=int(zmq_port),
-        hostname=host,
-    )
-    logger.info(
-        "PAP Attention OFFLOAD_EXEC NCCL/P2P data plane listening at %s:%d "
-        "local_rank=%d",
-        host,
-        zmq_port,
-        local_rank,
+    raise RuntimeError(
+        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; "
+        "use nixl_mailbox"
     )
 
 
@@ -2373,7 +2357,7 @@ if __name__ == "__main__":
         )
     if args.offload_exec_zmq_port is not None:
         logger.info(
-            "PAP Attention OFFLOAD_EXEC NCCL/P2P ZMQ endpoint reserved at %s:%d",
+            "PAP Attention OFFLOAD_EXEC ZMQ endpoint reserved at %s:%d",
             args.host,
             args.offload_exec_zmq_port,
         )

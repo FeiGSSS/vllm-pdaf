@@ -179,6 +179,37 @@ def test_gather_paged_kv_supports_nhd_layout() -> None:
     assert torch.equal(value[4], torch.full((2, 2), 102.0))
 
 
+def test_gather_paged_kv_supports_block_first_nhd_layout() -> None:
+    kv_cache = torch.zeros((3, 2, 4, 2, 2))
+    for block in range(3):
+        for offset in range(4):
+            kv_cache[block, 0, offset] = block * 100 + offset * 10 + 1
+            kv_cache[block, 1, offset] = block * 100 + offset * 10 + 2
+
+    key, value = gather_paged_kv(
+        kv_cache=kv_cache,
+        block_table=torch.tensor([[0, 2]], dtype=torch.int32),
+        seq_len=5,
+        num_kv_heads=2,
+        layout="NHD",
+    )
+    segments = paged_kv_segments(
+        kv_cache=kv_cache,
+        block_ids=[0, 2],
+        seq_len=5,
+        num_kv_heads=2,
+        layout="NHD",
+    )
+
+    assert key.shape == (5, 2, 2)
+    assert value.shape == (5, 2, 2)
+    assert torch.equal(key[0], torch.full((2, 2), 1.0))
+    assert torch.equal(key[4], torch.full((2, 2), 201.0))
+    assert torch.equal(value[4], torch.full((2, 2), 202.0))
+    assert torch.equal(torch.cat([key for key, _ in segments], dim=0), key)
+    assert torch.equal(torch.cat([value for _, value in segments], dim=0), value)
+
+
 def test_paged_kv_segments_match_gathered_kv_and_share_storage() -> None:
     kv_cache = torch.zeros((2, 2, 4, 2, 2))
     for block in range(2):

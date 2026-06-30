@@ -422,7 +422,7 @@ def _pap_remote_attention_executor(max_workers: int) -> ThreadPoolExecutor:
 
 
 def _pap_offload_exec_transport_kind() -> str:
-    return os.environ.get("PAP_OFFLOAD_EXEC_TRANSPORT", "nccl").lower()
+    return os.environ.get("PAP_OFFLOAD_EXEC_TRANSPORT", "nixl_mailbox").lower()
 
 
 def _pap_tensor_parallel_rank() -> int:
@@ -512,10 +512,7 @@ def _pap_offload_exec_peer_zmq_port(peer_endpoint: str | None) -> int:
 
 @lru_cache(maxsize=1)
 def _pap_offload_exec_transport():
-    from vllm.pap.data_plane import (
-        build_nixl_mailbox_offload_exec_transport,
-        build_p2p_nccl_offload_exec_transport,
-    )
+    from vllm.pap.data_plane import build_nixl_mailbox_offload_exec_transport
 
     transport = _pap_offload_exec_transport_kind()
     local_rank = _pap_tensor_parallel_rank()
@@ -525,32 +522,10 @@ def _pap_offload_exec_transport():
             local_rank=local_rank,
         )
 
-    return build_p2p_nccl_offload_exec_transport(
-        local_rank=local_rank,
-        kv_port=_pap_offload_exec_base_zmq_port(),
-        hostname=os.environ.get("PAP_OFFLOAD_EXEC_HOST", ""),
+    raise RuntimeError(
+        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; "
+        "use nixl_mailbox"
     )
-
-
-_pap_p2p_offload_exec_transport_lock = threading.Lock()
-_pap_p2p_offload_exec_transport_cache: dict[str, Any] = {}
-
-
-def _pap_p2p_offload_exec_transport_for_peer(peer_endpoint: str):
-    with _pap_p2p_offload_exec_transport_lock:
-        cached = _pap_p2p_offload_exec_transport_cache.get(peer_endpoint)
-        if cached is not None:
-            return cached
-
-        from vllm.pap.data_plane import build_p2p_nccl_offload_exec_transport
-
-        transport = build_p2p_nccl_offload_exec_transport(
-            local_rank=_pap_tensor_parallel_rank(),
-            kv_port=_pap_offload_exec_peer_zmq_port(peer_endpoint),
-            hostname=os.environ.get("PAP_OFFLOAD_EXEC_HOST", ""),
-        )
-        _pap_p2p_offload_exec_transport_cache[peer_endpoint] = transport
-        return transport
 
 
 @lru_cache(maxsize=32)
@@ -559,7 +534,9 @@ def _pap_nixl_mailbox_offload_exec_transport(attention_endpoint: str):
 
     local_rank = _pap_tensor_parallel_rank()
     actor_base = os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "projection")
-    endpoint_hash = hashlib.sha1(attention_endpoint.encode("utf-8")).hexdigest()[:12]
+    endpoint_hash = hashlib.sha1(
+        attention_endpoint.encode("utf-8")
+    ).hexdigest()[:12]
     return build_nixl_mailbox_offload_exec_transport(
         actor_id=f"{actor_base}-{endpoint_hash}",
         local_rank=local_rank,
@@ -572,9 +549,13 @@ def _pap_offload_exec_transport_for_attention_endpoint(
 ):
     transport = _pap_offload_exec_transport_kind()
     if transport in {"nixl", "nixl_mailbox"}:
-        return _pap_nixl_mailbox_offload_exec_transport(str(attention_endpoint or ""))
-    peer_endpoint = str(offload_exec_zmq_endpoint or attention_endpoint or "")
-    return _pap_p2p_offload_exec_transport_for_peer(peer_endpoint)
+        return _pap_nixl_mailbox_offload_exec_transport(
+            str(attention_endpoint or "")
+        )
+    raise RuntimeError(
+        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; "
+        "use nixl_mailbox"
+    )
 
 
 def _pap_bind_offload_exec_mailbox_peer(
@@ -1911,7 +1892,7 @@ class Qwen3Attention(nn.Module):
         ) in remote_attention_calls:
             if offload_exec_zmq_endpoint is None:
                 raise RuntimeError(
-                    "PAP OFFLOAD_EXEC NCCL path missing pap_offload_exec_zmq_endpoint"
+                    "PAP OFFLOAD_EXEC path missing pap_offload_exec_zmq_endpoint"
                 )
             qkv_segments = (
                 call_kwargs["query"].reshape(1, -1),
