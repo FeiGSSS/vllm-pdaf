@@ -79,7 +79,6 @@ from .qwen3 import (
     Qwen3Attention,
     _pap_contiguous_microbatches,
     _pap_env_enabled,
-    _pap_offload_exec_microbatch_count,
     _pap_offload_exec_transport,
 )
 from .utils import (
@@ -265,18 +264,13 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
 
 
 def _pap_moe_layer_wavefront_microbatch_count(num_reqs: int) -> int:
-    raw = os.environ.get("PAP_OFFLOAD_EXEC_MICROBATCH_COUNT")
-    if raw is None or raw.lower() == "auto":
-        try:
-            min_batch = int(
-                os.environ.get("PAP_OFFLOAD_EXEC_MICROBATCH_AUTO_MIN_BATCH", "16")
-            )
-        except ValueError:
-            min_batch = 16
-        if int(num_reqs) < max(2, min_batch):
-            return 1
-        return min(2, int(num_reqs))
-    return _pap_offload_exec_microbatch_count(num_reqs)
+    try:
+        configured = int(os.environ.get("PAP_RUNNER_MICROBATCH_COUNT", "0"))
+    except ValueError:
+        return 1
+    if configured <= 1 or int(num_reqs) <= 1:
+        return 1
+    return min(configured, int(num_reqs))
 
 
 class Qwen3MoeAttention(Qwen3Attention):
@@ -406,40 +400,6 @@ class Qwen3MoeDecoderLayer(nn.Module):
         hidden_states = self.mlp(hidden_states)
         return hidden_states, residual
 
-    def _pap_microbatch_forward_after_input_norm(
-        self,
-        positions: torch.Tensor,
-        hidden_states: torch.Tensor,
-        residual: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor] | None:
-        output_hidden_states = torch.empty_like(hidden_states)
-        output_residual = torch.empty_like(residual)
-
-        def consume_projected_chunk(
-            req_indices: list[int],
-            projected_chunk: torch.Tensor,
-        ) -> None:
-            index_tensor = torch.tensor(
-                req_indices,
-                device=hidden_states.device,
-                dtype=torch.long,
-            )
-            residual_chunk = residual.index_select(0, index_tensor)
-            chunk_hidden_states, chunk_residual = self.post_attention_layernorm(
-                projected_chunk, residual_chunk
-            )
-            chunk_hidden_states = self.mlp(chunk_hidden_states)
-            output_hidden_states.index_copy_(0, index_tensor, chunk_hidden_states)
-            output_residual.index_copy_(0, index_tensor, chunk_residual)
-
-        if not self.self_attn._run_pap_attention_microbatch_pipeline(
-            positions,
-            hidden_states,
-            consume_projected_chunk,
-        ):
-            return None
-        return output_hidden_states, output_residual
-
     def forward(
         self,
         positions: torch.Tensor,
@@ -452,14 +412,6 @@ class Qwen3MoeDecoderLayer(nn.Module):
             hidden_states = self.input_layernorm(hidden_states)
         else:
             hidden_states, residual = self.input_layernorm(hidden_states, residual)
-        if _pap_env_enabled("PAP_OFFLOAD_EXEC_MICROBATCH_OVERLAP_MLP"):
-            microbatch_result = self._pap_microbatch_forward_after_input_norm(
-                positions,
-                hidden_states,
-                residual,
-            )
-            if microbatch_result is not None:
-                return microbatch_result
 
         hidden_states = self.self_attn(
             positions=positions,

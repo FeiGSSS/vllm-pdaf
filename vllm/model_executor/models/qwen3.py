@@ -29,7 +29,7 @@ import json
 import os
 import threading
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from functools import lru_cache
@@ -328,17 +328,6 @@ def _qwen3_profile_write_sample(
     }
     with open(path, "a", encoding="utf-8") as output:
         output.write(json.dumps(sample, sort_keys=True) + "\n")
-
-
-def _pap_offload_exec_microbatch_count(num_reqs: int) -> int:
-    raw = os.environ.get("PAP_OFFLOAD_EXEC_MICROBATCH_COUNT", "0")
-    try:
-        configured = int(raw)
-    except ValueError:
-        configured = 0
-    if configured <= 1 or num_reqs <= 1:
-        return 1
-    return min(configured, int(num_reqs))
 
 
 def _pap_contiguous_microbatches(num_reqs: int, count: int) -> list[list[int]]:
@@ -684,13 +673,6 @@ class Qwen3Attention(nn.Module):
         hidden_states: torch.Tensor,
     ) -> torch.Tensor:
         if self._should_use_pap_attention():
-            microbatch_result = self._pap_attention_microbatch_pipeline(
-                positions,
-                hidden_states,
-            )
-            if microbatch_result is not None:
-                return microbatch_result
-
             q_first_result = self._compute_pap_attention_q_first_projection(
                 positions,
                 hidden_states,
@@ -913,236 +895,6 @@ class Qwen3Attention(nn.Module):
             additional_kwargs.get("pap_attention_kv_installed_by_request") or ()
         )
         return all(str(request_id) in installed for request_id in request_ids)
-
-    def _pap_attention_microbatch_pipeline(
-        self,
-        positions: torch.Tensor,
-        hidden_states: torch.Tensor,
-    ) -> torch.Tensor | None:
-        projected_output = torch.empty_like(hidden_states)
-
-        def consume_projected_chunk(
-            req_indices: list[int],
-            output: torch.Tensor,
-        ) -> None:
-            index_tensor = torch.tensor(
-                req_indices,
-                device=projected_output.device,
-                dtype=torch.long,
-            )
-            projected_output.index_copy_(0, index_tensor, output)
-
-        if not self._run_pap_attention_microbatch_pipeline(
-            positions,
-            hidden_states,
-            consume_projected_chunk,
-        ):
-            return None
-        return projected_output
-
-    def _run_pap_attention_microbatch_pipeline(
-        self,
-        positions: torch.Tensor,
-        hidden_states: torch.Tensor,
-        consume_projected_chunk: Callable[[list[int], torch.Tensor], None],
-    ) -> bool:
-        if not self._should_use_pap_attention():
-            return False
-        if not is_forward_context_available():
-            return False
-        additional_kwargs = get_forward_context().additional_kwargs or {}
-        request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
-        num_reqs = int(additional_kwargs.get("pap_num_reqs") or len(request_ids))
-        microbatch_count = _pap_offload_exec_microbatch_count(num_reqs)
-        if microbatch_count <= 1:
-            return False
-        if _pap_env_enabled("PAP_Q_FIRST_KV_LATER"):
-            return False
-        if _pap_env_enabled("PAP_SEGMENTED_QKV"):
-            return False
-        if int(hidden_states.shape[0]) != num_reqs:
-            return False
-        if int(positions.reshape(-1).shape[0]) < num_reqs:
-            return False
-
-        transport = _pap_offload_exec_transport()
-        if getattr(transport, "requires_tcp_trigger", True):
-            return False
-
-        microbatches = _pap_contiguous_microbatches(num_reqs, microbatch_count)
-        if len(microbatches) <= 1:
-            return False
-
-        trace_offload_exec = os.environ.get("PAP_OFFLOAD_EXEC_TRACE", "").lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        )
-        trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
-        trace_send_ms = 0.0
-        trace_recv_ms = 0.0
-        trace_send_done_ns = 0
-        trace_recv_done_ns = 0
-        trace_sent_batches: list[tuple[str, Any, list[int], Any]] = []
-
-        full_batch_qkv_enabled = _pap_env_enabled(
-            "PAP_OFFLOAD_EXEC_MICROBATCH_FULL_QKV"
-        )
-        positions_flat = positions.reshape(-1)
-        q_all: torch.Tensor | None = None
-        k_all: torch.Tensor | None = None
-        v_all: torch.Tensor | None = None
-        if full_batch_qkv_enabled:
-            qkv, _ = self.qkv_proj(hidden_states)
-            q_all, k_all, v_all = qkv.split(
-                [self.q_size, self.kv_size, self.kv_size], dim=-1
-            )
-            q_by_head = q_all.view(
-                *q_all.shape[:-1], q_all.shape[-1] // self.head_dim, self.head_dim
-            )
-            q_by_head = self.q_norm(q_by_head)
-            q_all = q_by_head.view(q_all.shape)
-            k_by_head = k_all.view(
-                *k_all.shape[:-1], k_all.shape[-1] // self.head_dim, self.head_dim
-            )
-            k_by_head = self.k_norm(k_by_head)
-            k_all = k_by_head.view(k_all.shape)
-            positions_all = positions_flat[:num_reqs]
-            q_all, k_all = self.rotary_emb(positions_all, q_all, k_all)
-
-        pending_batches: list[
-            tuple[
-                int,
-                list[int],
-                torch.Tensor,
-                list[tuple[str, Any, list[int], Any]],
-            ]
-        ] = []
-        send_cursor = 0
-
-        def send_next_microbatch() -> None:
-            nonlocal send_cursor, trace_send_done_ns, trace_send_ms
-            if send_cursor >= len(microbatches):
-                return
-            trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
-            microbatch_id = send_cursor
-            req_indices = microbatches[microbatch_id]
-            send_cursor += 1
-            start = req_indices[0]
-            end = req_indices[-1] + 1
-            if full_batch_qkv_enabled:
-                assert q_all is not None
-                assert k_all is not None
-                assert v_all is not None
-                q = q_all[start:end]
-                k = k_all[start:end]
-                v = v_all[start:end]
-            else:
-                hidden_chunk = hidden_states[start:end]
-                positions_chunk = positions_flat[start:end]
-                qkv, _ = self.qkv_proj(hidden_chunk)
-                q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
-                q_by_head = q.view(
-                    *q.shape[:-1], q.shape[-1] // self.head_dim, self.head_dim
-                )
-                q_by_head = self.q_norm(q_by_head)
-                q = q_by_head.view(q.shape)
-                k_by_head = k.view(
-                    *k.shape[:-1], k.shape[-1] // self.head_dim, self.head_dim
-                )
-                k_by_head = self.k_norm(k_by_head)
-                k = k_by_head.view(k.shape)
-                q, k = self.rotary_emb(positions_chunk, q, k)
-            sent = self._send_pap_attention_batch(
-                q,
-                k,
-                v,
-                request_indices=req_indices,
-                transport=transport,
-            )
-            if trace_offload_exec:
-                trace_send_ms += (time.perf_counter() - trace_send_start) * 1000.0
-                trace_send_done_ns = time.perf_counter_ns()
-                trace_sent_batches.extend(sent)
-            pending_batches.append((microbatch_id, req_indices, q, sent))
-
-        def consume_pending_microbatch(pending: Any) -> None:
-            nonlocal trace_recv_done_ns, trace_recv_ms
-            _microbatch_id, req_indices, query, sent_batches = pending
-            trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
-            chunk_output, chunk_release_messages = self._recv_pap_attention_batch(
-                query,
-                sent_batches,
-                transport=transport,
-            )
-            if trace_offload_exec:
-                trace_recv_ms += (time.perf_counter() - trace_recv_start) * 1000.0
-                trace_recv_done_ns = time.perf_counter_ns()
-            try:
-                output, _ = self.o_proj(chunk_output)
-            finally:
-                for message in chunk_release_messages:
-                    message.release()
-            consume_projected_chunk(req_indices, output)
-
-        if _pap_env_enabled("PAP_OFFLOAD_EXEC_MICROBATCH_STREAMING"):
-            while send_cursor < min(2, len(microbatches)):
-                send_next_microbatch()
-
-            while pending_batches:
-                pending = pending_batches.pop(0)
-                _microbatch_id, req_indices, query, sent_batches = pending
-                trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
-                chunk_output, chunk_release_messages = self._recv_pap_attention_batch(
-                    query,
-                    sent_batches,
-                    transport=transport,
-                )
-                if trace_offload_exec:
-                    trace_recv_ms += (time.perf_counter() - trace_recv_start) * 1000.0
-                    trace_recv_done_ns = time.perf_counter_ns()
-                send_next_microbatch()
-                try:
-                    output, _ = self.o_proj(chunk_output)
-                finally:
-                    for message in chunk_release_messages:
-                        message.release()
-                consume_projected_chunk(req_indices, output)
-        else:
-            while send_cursor < len(microbatches):
-                send_next_microbatch()
-            for pending in pending_batches:
-                consume_pending_microbatch(pending)
-        if trace_offload_exec and trace_sent_batches:
-            from vllm.pap.data_plane import pap_offload_exec_trace_id
-
-            trace_total_ms = (time.perf_counter() - trace_total_start) * 1000.0
-            batch_keys = "|".join(
-                pap_offload_exec_trace_id(batch[1].output_tensor_id)
-                for batch in trace_sent_batches
-            )
-            logger.info(
-                "PAP OFFLOAD_EXEC projection trace layer=%s batches=%d calls=%d "
-                "send_ms=%.3f trigger_ms=%.3f yield_ms=%.3f "
-                "recv_ms=%.3f total_ms=%.3f batch_keys=%s "
-                "send_done_ns=%d yield_start_ns=%d yield_end_ns=%d "
-                "recv_done_ns=%d",
-                trace_sent_batches[0][1].layer_name,
-                len(trace_sent_batches),
-                sum(len(batch[1].items) for batch in trace_sent_batches),
-                trace_send_ms,
-                0.0,
-                0.0,
-                trace_recv_ms,
-                trace_total_ms,
-                batch_keys,
-                trace_send_done_ns,
-                trace_send_done_ns,
-                trace_send_done_ns,
-                trace_recv_done_ns,
-            )
-        return True
 
     def _start_pap_attention_wavefront_batch(
         self,
@@ -2414,40 +2166,6 @@ class Qwen3DecoderLayer(nn.Module):
             config.hidden_size, eps=config.rms_norm_eps
         )
 
-    def _pap_microbatch_forward_after_input_norm(
-        self,
-        positions: torch.Tensor,
-        hidden_states: torch.Tensor,
-        residual: torch.Tensor,
-    ) -> tuple[torch.Tensor, torch.Tensor] | None:
-        output_hidden_states = torch.empty_like(hidden_states)
-        output_residual = torch.empty_like(residual)
-
-        def consume_projected_chunk(
-            req_indices: list[int],
-            projected_chunk: torch.Tensor,
-        ) -> None:
-            index_tensor = torch.tensor(
-                req_indices,
-                device=hidden_states.device,
-                dtype=torch.long,
-            )
-            residual_chunk = residual.index_select(0, index_tensor)
-            chunk_hidden_states, chunk_residual = self.post_attention_layernorm(
-                projected_chunk, residual_chunk
-            )
-            chunk_hidden_states = self.mlp(chunk_hidden_states)
-            output_hidden_states.index_copy_(0, index_tensor, chunk_hidden_states)
-            output_residual.index_copy_(0, index_tensor, chunk_residual)
-
-        if not self.self_attn._run_pap_attention_microbatch_pipeline(
-            positions,
-            hidden_states,
-            consume_projected_chunk,
-        ):
-            return None
-        return output_hidden_states, output_residual
-
     def forward(
         self,
         positions: torch.Tensor,
@@ -2481,14 +2199,6 @@ class Qwen3DecoderLayer(nn.Module):
             if trace_projection_layer
             else 0.0
         )
-        if _pap_env_enabled("PAP_OFFLOAD_EXEC_MICROBATCH_OVERLAP_MLP"):
-            microbatch_result = self._pap_microbatch_forward_after_input_norm(
-                positions,
-                hidden_states,
-                residual,
-            )
-            if microbatch_result is not None:
-                return microbatch_result
 
         trace_self_attn_start = time.perf_counter() if trace_projection_layer else 0.0
         hidden_states = self.self_attn(

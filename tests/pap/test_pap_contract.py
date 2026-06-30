@@ -274,116 +274,39 @@ def test_qwen3_pap_q_first_projection_compute_is_opt_in() -> None:
     ) < forward_method.index("qkv, _ = self.qkv_proj(hidden_states)")
 
 
-def test_qwen3_pap_microbatch_pipeline_is_opt_in() -> None:
+def test_qwen3_dense_pap_uses_runner_dbo_path_only() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
     forward_start = text.index("    def forward(\n")
     forward_end = text.index("    def _should_use_pap_attention")
     forward_method = text[forward_start:forward_end]
-    runner_start = text.index("    def _run_pap_attention_microbatch_pipeline")
-    runner_end = text.index("    def _send_pap_attention_batch", runner_start)
-    runner_method = text[runner_start:runner_end]
 
-    assert "PAP_OFFLOAD_EXEC_MICROBATCH_COUNT" in text
-    assert "self._should_use_pap_attention()" in runner_method
-    assert "_pap_attention_microbatch_pipeline" in text
-    assert "_pap_offload_exec_microbatch_count" in text
+    assert "PAP_OFFLOAD_EXEC_MICROBATCH" not in text
+    assert "_pap_attention_microbatch_pipeline" not in text
+    assert "_run_pap_attention_microbatch_pipeline" not in text
+    assert "_pap_offload_exec_microbatch_count" not in text
     assert forward_method.index(
         "if self._should_use_pap_attention():"
-    ) < forward_method.index("_pap_attention_microbatch_pipeline")
-    assert forward_method.index(
-        "_pap_attention_microbatch_pipeline"
     ) < forward_method.index("_compute_pap_attention_q_first_projection")
+    assert forward_method.index(
+        "_compute_pap_attention_q_first_projection"
+    ) < forward_method.index("qkv, _ = self.qkv_proj(hidden_states)")
+    pap_compute = forward_method.index(
+        "attn_output, pap_release_messages = self._compute_pap_attention"
+    )
+    assert pap_compute < forward_method.index("return output", pap_compute)
 
 
-def test_qwen3_pap_microbatch_pipeline_streaming_schedule_is_opt_in() -> None:
+def test_qwen3_pap_attention_yields_through_dbo() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
-    start = text.index("    def _run_pap_attention_microbatch_pipeline")
-    end = text.index("    def _send_pap_attention_batch", start)
+    start = text.index("    def _compute_pap_attention")
+    end = text.index("    def _maybe_import_pap_prefill_kv_to_attention", start)
     method = text[start:end]
 
-    assert "PAP_OFFLOAD_EXEC_MICROBATCH_STREAMING" in method
-    assert "def send_next_microbatch()" in method
-    assert 'if _pap_env_enabled("PAP_OFFLOAD_EXEC_MICROBATCH_STREAMING"):' in method
-    streaming_branch = method[
-        method.index('if _pap_env_enabled("PAP_OFFLOAD_EXEC_MICROBATCH_STREAMING"):') :
-    ]
-    assert "while send_cursor < min(2, len(microbatches)):" in streaming_branch
-    assert "while pending_batches:" in streaming_branch
-    stream_loop = streaming_branch[streaming_branch.index("while pending_batches:") :]
-    assert stream_loop.index("_recv_pap_attention_batch(") < stream_loop.index(
-        "send_next_microbatch()"
-    )
-    assert stream_loop.index("send_next_microbatch()") < stream_loop.index(
-        "output, _ = self.o_proj(chunk_output)"
-    )
-
-
-def test_qwen3_pap_microbatch_pipeline_emits_projection_trace() -> None:
-    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
-    start = text.index("    def _run_pap_attention_microbatch_pipeline")
-    end = text.index("    def _send_pap_attention_batch", start)
-    method = text[start:end]
-
-    assert "trace_offload_exec" in method
-    assert "trace_send_ms" in method
-    assert "trace_recv_ms" in method
-    assert "trace_sent_batches" in method
-    assert "pap_offload_exec_trace_id" in method
-    assert "PAP OFFLOAD_EXEC projection trace layer=%s batches=%d calls=%d" in method
-
-
-def test_qwen3_pap_microbatch_pipeline_full_batch_qkv_is_opt_in() -> None:
-    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
-    start = text.index("    def _run_pap_attention_microbatch_pipeline")
-    end = text.index("    def _send_pap_attention_batch", start)
-    method = text[start:end]
-    assert "PAP_OFFLOAD_EXEC_MICROBATCH_FULL_QKV" in method
-    assert "full_batch_qkv_enabled = _pap_env_enabled" in method
-    assert "qkv, _ = self.qkv_proj(hidden_states)" in method
-    assert "qkv, _ = self.qkv_proj(hidden_chunk)" in method
-    assert method.index("full_batch_qkv_enabled = _pap_env_enabled") < method.index(
-        "qkv, _ = self.qkv_proj(hidden_states)"
-    )
-    send_helper = method[method.index("def send_next_microbatch()") :]
-    assert "if full_batch_qkv_enabled:" in send_helper
-    assert "q = q_all[start:end]" in send_helper
-    assert "qkv, _ = self.qkv_proj(hidden_chunk)" in send_helper
-
-
-def test_qwen3_pap_microbatch_pipeline_uses_flat_projection_input() -> None:
-    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
-    start = text.index("    def _pap_attention_microbatch_pipeline")
-    end = text.index("    def _send_pap_attention_batch", start)
-    method = text[start:end]
-
-    assert "projected_output = torch.empty_like(hidden_states)" in method
-    assert "projected_output.index_copy_" in method
-    assert "return projected_output" in method
-    assert "(num_reqs, self.num_heads, self.head_dim)" not in method
-
-
-def test_qwen3_pap_microbatch_pipeline_projects_each_received_chunk() -> None:
-    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
-    forward_start = text.index("    def forward(\n")
-    forward_end = text.index("    def _should_use_pap_attention")
-    forward_method = text[forward_start:forward_end]
-    start = text.index("    def _run_pap_attention_microbatch_pipeline")
-    end = text.index("    def _send_pap_attention_batch", start)
-    method = text[start:end]
-
-    assert "output, _ = self.o_proj(chunk_output)" in method
-    assert method.index("_recv_pap_attention_batch(") < method.index(
-        "output, _ = self.o_proj(chunk_output)"
-    )
-    assert method.index("output, _ = self.o_proj(chunk_output)") < method.index(
-        "consume_projected_chunk(req_indices, output)"
-    )
-    microbatch_branch = forward_method[
-        forward_method.index(
-            "_pap_attention_microbatch_pipeline"
-        ) : forward_method.index("_compute_pap_attention_q_first_projection")
-    ]
-    assert "output, _ = self.o_proj(attn_output)" not in microbatch_branch
+    assert "from vllm.v1.worker.ubatching import dbo_enabled, dbo_yield" in method
+    assert "if dbo_enabled():" in method
+    assert "dbo_yield()" in method
+    assert method.index("send_qkv_batch") < method.index("dbo_yield()")
+    assert method.index("dbo_yield()") < method.index("recv_output_batch")
 
 
 def test_qwen3_pap_microbatch_recv_supports_direct_mailbox_output() -> None:
@@ -399,54 +322,31 @@ def test_qwen3_pap_microbatch_recv_supports_direct_mailbox_output() -> None:
     assert "return direct_output, pap_release_messages" in method
 
 
-def test_qwen3_decoder_layer_microbatch_mlp_overlap_is_opt_in() -> None:
+def test_qwen3_decoder_layer_has_no_attention_boundary_microbatch_overlap() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
-    start = text.index("    def _pap_microbatch_forward_after_input_norm")
-    end = text.index("    def forward(", start)
-    helper = text[start:end]
     forward_start = text.index(
         "    def forward(", text.index("class Qwen3DecoderLayer")
     )
     forward_end = text.index("\n\nALL_DECODER_LAYER_TYPES", forward_start)
     forward_method = text[forward_start:forward_end]
 
-    assert "_run_pap_attention_microbatch_pipeline" in helper
-    assert "PAP_OFFLOAD_EXEC_MICROBATCH_OVERLAP_MLP" in forward_method
-    assert "def consume_projected_chunk" in helper
-    assert "self.post_attention_layernorm(" in helper
-    assert "projected_chunk, residual_chunk" in helper
-    assert "self.mlp(chunk_hidden_states)" in helper
-    assert helper.index("def consume_projected_chunk") < helper.index(
-        "_run_pap_attention_microbatch_pipeline"
-    )
-    assert forward_method.index(
-        "_pap_microbatch_forward_after_input_norm"
-    ) < forward_method.index("hidden_states = self.self_attn(")
+    assert "_pap_microbatch_forward_after_input_norm" not in text
+    assert "PAP_OFFLOAD_EXEC_MICROBATCH_OVERLAP_MLP" not in text
+    assert "hidden_states = self.self_attn(" in forward_method
 
 
-def test_qwen3_moe_decoder_layer_microbatch_mlp_overlap_is_opt_in() -> None:
+def test_qwen3_moe_has_no_attention_boundary_microbatch_overlap() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3_moe.py").read_text()
-    start = text.index("    def _pap_microbatch_forward_after_input_norm")
-    end = text.index("    def forward(", start)
-    helper = text[start:end]
     forward_start = text.index(
         "    def forward(", text.index("class Qwen3MoeDecoderLayer")
     )
     forward_end = text.index("\n\n@support_torch_compile", forward_start)
     forward_method = text[forward_start:forward_end]
 
-    assert "_run_pap_attention_microbatch_pipeline" in helper
-    assert "PAP_OFFLOAD_EXEC_MICROBATCH_OVERLAP_MLP" in forward_method
-    assert "def consume_projected_chunk" in helper
-    assert "self.post_attention_layernorm(" in helper
-    assert "projected_chunk, residual_chunk" in helper
-    assert "self.mlp(chunk_hidden_states)" in helper
-    assert helper.index("def consume_projected_chunk") < helper.index(
-        "_run_pap_attention_microbatch_pipeline"
-    )
-    assert forward_method.index(
-        "_pap_microbatch_forward_after_input_norm"
-    ) < forward_method.index("hidden_states = self.self_attn(")
+    assert "PAP_OFFLOAD_EXEC_MICROBATCH" not in text
+    assert "_run_pap_attention_microbatch_pipeline" not in text
+    assert "_pap_microbatch_forward_after_input_norm" not in text
+    assert "hidden_states = self.self_attn(" in forward_method
 
 
 def test_qwen3_moe_model_has_opt_in_pap_layer_wavefront() -> None:
@@ -474,7 +374,7 @@ def test_qwen3_moe_model_has_opt_in_pap_layer_wavefront() -> None:
     assert "UBatchWrapper" not in model_cls
 
 
-def test_qwen3_moe_layer_wavefront_has_auto_microbatch_policy() -> None:
+def test_qwen3_moe_layer_wavefront_uses_unified_runner_microbatch_count() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3_moe.py").read_text()
     start = text.index("def _pap_moe_layer_wavefront_microbatch_count")
     end = text.index("\n\nclass Qwen3MoeAttention", start)
@@ -483,12 +383,10 @@ def test_qwen3_moe_layer_wavefront_has_auto_microbatch_policy() -> None:
     model_end = text.index("\n\nclass Qwen3MoeForCausalLM", model_start)
     model_cls = text[model_start:model_end]
 
-    assert 'os.environ.get("PAP_OFFLOAD_EXEC_MICROBATCH_COUNT")' in helper
-    assert 'raw is None or raw.lower() == "auto"' in helper
-    assert "PAP_OFFLOAD_EXEC_MICROBATCH_AUTO_MIN_BATCH" in helper
+    assert 'os.environ.get("PAP_RUNNER_MICROBATCH_COUNT", "0")' in helper
+    assert "PAP_OFFLOAD_EXEC_MICROBATCH" not in helper
     assert "return 1" in helper
-    assert "return min(2, int(num_reqs))" in helper
-    assert "_pap_offload_exec_microbatch_count(num_reqs)" in helper
+    assert "return min(configured, int(num_reqs))" in helper
     assert "_pap_moe_layer_wavefront_microbatch_count(num_reqs)" in model_cls
     assert "_pap_offload_exec_microbatch_count(num_reqs)" not in model_cls
 
