@@ -23,7 +23,6 @@
 # limitations under the License.
 """Inference-only Qwen3MoE model compatible with HuggingFace weights."""
 
-import os
 import typing
 from collections.abc import Callable, Iterable
 from itertools import islice
@@ -75,12 +74,7 @@ from .interfaces import (
     SupportsLoRA,
     SupportsPP,
 )
-from .qwen3 import (
-    Qwen3Attention,
-    _pap_contiguous_microbatches,
-    _pap_env_enabled,
-    _pap_offload_exec_transport,
-)
+from .qwen3 import Qwen3Attention
 from .utils import (
     AutoWeightsLoader,
     PPMissingLayer,
@@ -263,16 +257,6 @@ class Qwen3MoeSparseMoeBlock(nn.Module):
         return final_hidden_states.squeeze(0) if is_input_1d else final_hidden_states
 
 
-def _pap_moe_layer_wavefront_microbatch_count(num_reqs: int) -> int:
-    try:
-        configured = int(os.environ.get("PAP_RUNNER_MICROBATCH_COUNT", "0"))
-    except ValueError:
-        return 1
-    if configured <= 1 or int(num_reqs) <= 1:
-        return 1
-    return min(configured, int(num_reqs))
-
-
 class Qwen3MoeAttention(Qwen3Attention):
     def __init__(
         self,
@@ -303,6 +287,16 @@ class Qwen3MoeAttention(Qwen3Attention):
             prefix=prefix,
             dual_chunk_attention_config=dual_chunk_attention_config,
         )
+
+    def _should_use_pap_attention(self) -> bool:
+        if is_forward_context_available():
+            additional_kwargs = get_forward_context().additional_kwargs or {}
+            if additional_kwargs.get("pap_enabled"):
+                raise RuntimeError(
+                    "PAP is disabled for qwen3_moe because the current MoE "
+                    "path does not support PAP offload execution safely"
+                )
+        return False
 
 
 class Qwen3MoeDecoderLayer(nn.Module):
@@ -356,49 +350,6 @@ class Qwen3MoeDecoderLayer(nn.Module):
         self.post_attention_layernorm = RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
-
-    def _pap_start_attention_after_input_norm(
-        self,
-        positions: torch.Tensor,
-        hidden_states: torch.Tensor,
-        residual: torch.Tensor | None,
-        request_indices: list[int],
-        transport: Any,
-    ) -> (
-        tuple[
-            torch.Tensor,
-            tuple[torch.Tensor, list[tuple[str, Any, list[int], Any]]],
-        ]
-        | None
-    ):
-        if residual is None:
-            residual = hidden_states
-            hidden_states = self.input_layernorm(hidden_states)
-        else:
-            hidden_states, residual = self.input_layernorm(hidden_states, residual)
-        pending = self.self_attn._start_pap_attention_wavefront_batch(
-            positions,
-            hidden_states,
-            request_indices=request_indices,
-            transport=transport,
-        )
-        if pending is None:
-            return None
-        return residual, pending
-
-    def _pap_finish_attention_after_input_norm(
-        self,
-        residual: torch.Tensor,
-        pending: tuple[torch.Tensor, list[tuple[str, Any, list[int], Any]]],
-        transport: Any,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        attn_output = self.self_attn._finish_pap_attention_wavefront_batch(
-            pending,
-            transport=transport,
-        )
-        hidden_states, residual = self.post_attention_layernorm(attn_output, residual)
-        hidden_states = self.mlp(hidden_states)
-        return hidden_states, residual
 
     def forward(
         self,
@@ -460,142 +411,6 @@ class Qwen3MoeModel(nn.Module, EagleModelMixin):
             ["hidden_states", "residual"], config.hidden_size
         )
 
-    def _pap_should_use_layer_wavefront(
-        self,
-        positions: torch.Tensor,
-        hidden_states: torch.Tensor,
-    ) -> bool:
-        if not _pap_env_enabled("PAP_OFFLOAD_EXEC_LAYER_WAVEFRONT"):
-            return False
-        if not is_forward_context_available():
-            return False
-        if self.aux_hidden_state_layers:
-            return False
-        additional_kwargs = get_forward_context().additional_kwargs or {}
-        if not additional_kwargs.get("pap_enabled"):
-            return False
-        request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
-        num_reqs = int(additional_kwargs.get("pap_num_reqs") or len(request_ids))
-        if num_reqs <= 1 or int(hidden_states.shape[0]) != num_reqs:
-            return False
-        if int(positions.reshape(-1).shape[0]) < num_reqs:
-            return False
-        num_scheduled_tokens = tuple(
-            int(num_tokens)
-            for num_tokens in additional_kwargs.get("pap_num_scheduled_tokens") or ()
-        )
-        if len(num_scheduled_tokens) < num_reqs:
-            return False
-        if any(num_tokens != 1 for num_tokens in num_scheduled_tokens[:num_reqs]):
-            return False
-        microbatch_count = _pap_moe_layer_wavefront_microbatch_count(num_reqs)
-        if microbatch_count <= 1:
-            return False
-        transport = _pap_offload_exec_transport()
-        return not getattr(transport, "requires_tcp_trigger", True)
-
-    def _pap_layer_wavefront_forward(
-        self,
-        positions: torch.Tensor,
-        hidden_states: torch.Tensor,
-        residual: torch.Tensor | None,
-    ) -> tuple[torch.Tensor, torch.Tensor | None] | None:
-        if not self._pap_should_use_layer_wavefront(positions, hidden_states):
-            return None
-        num_reqs = int(hidden_states.shape[0])
-        microbatch_count = _pap_moe_layer_wavefront_microbatch_count(num_reqs)
-        microbatches = _pap_contiguous_microbatches(num_reqs, microbatch_count)
-        if len(microbatches) <= 1:
-            return None
-
-        positions_flat = positions.reshape(-1)
-        transport = _pap_offload_exec_transport()
-        ubatch_states: list[tuple[torch.Tensor, torch.Tensor | None]] = []
-        ubatch_positions: list[torch.Tensor] = []
-        for req_indices in microbatches:
-            start = req_indices[0]
-            end = req_indices[-1] + 1
-            ubatch_states.append(
-                (
-                    hidden_states[start:end],
-                    residual[start:end] if residual is not None else None,
-                )
-            )
-            ubatch_positions.append(positions_flat[start:end])
-
-        layers = list(
-            enumerate(
-                islice(self.layers, self.start_layer, self.end_layer),
-                start=self.start_layer,
-            )
-        )
-        if not layers:
-            return None
-
-        pending: list[
-            tuple[
-                torch.Tensor,
-                tuple[torch.Tensor, list[tuple[str, Any, list[int], Any]]],
-            ]
-            | None
-        ] = [None] * len(microbatches)
-        layer_offsets = [0] * len(microbatches)
-        ready_ubatches = list(range(len(microbatches)))
-
-        for ubatch_id in ready_ubatches:
-            _layer_idx, layer = layers[0]
-            chunk_hidden, chunk_residual = ubatch_states[ubatch_id]
-            pending[ubatch_id] = layer._pap_start_attention_after_input_norm(
-                ubatch_positions[ubatch_id],
-                chunk_hidden,
-                chunk_residual,
-                microbatches[ubatch_id],
-                transport,
-            )
-            if pending[ubatch_id] is None:
-                return None
-
-        completed_ubatches = 0
-        while completed_ubatches < len(microbatches):
-            for ubatch_id in ready_ubatches:
-                if pending[ubatch_id] is None:
-                    continue
-                layer_idx, layer = layers[layer_offsets[ubatch_id]]
-                chunk_residual, chunk_pending = pending[ubatch_id]
-                chunk_hidden, chunk_residual = (
-                    layer._pap_finish_attention_after_input_norm(
-                        chunk_residual,
-                        chunk_pending,
-                        transport,
-                    )
-                )
-                ubatch_states[ubatch_id] = (chunk_hidden, chunk_residual)
-                layer_offsets[ubatch_id] = layer_idx - self.start_layer + 1
-                if layer_offsets[ubatch_id] >= len(layers):
-                    pending[ubatch_id] = None
-                    completed_ubatches += 1
-                    continue
-
-                _next_layer_idx, next_layer = layers[layer_offsets[ubatch_id]]
-                pending[ubatch_id] = next_layer._pap_start_attention_after_input_norm(
-                    ubatch_positions[ubatch_id],
-                    chunk_hidden,
-                    chunk_residual,
-                    microbatches[ubatch_id],
-                    transport,
-                )
-                if pending[ubatch_id] is None:
-                    return None
-
-        hidden_states = torch.cat([state[0] for state in ubatch_states], dim=0)
-        residuals = [state[1] for state in ubatch_states]
-        residual = (
-            torch.cat([r for r in residuals if r is not None], dim=0)
-            if all(r is not None for r in residuals)
-            else None
-        )
-        return hidden_states, residual
-
     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.embed_tokens(input_ids)
 
@@ -616,20 +431,6 @@ class Qwen3MoeModel(nn.Module, EagleModelMixin):
             assert intermediate_tensors is not None
             hidden_states = intermediate_tensors["hidden_states"]
             residual = intermediate_tensors["residual"]
-
-        wavefront_result = self._pap_layer_wavefront_forward(
-            positions,
-            hidden_states,
-            residual,
-        )
-        if wavefront_result is not None:
-            hidden_states, residual = wavefront_result
-            if not get_pp_group().is_last_rank:
-                return IntermediateTensors(
-                    {"hidden_states": hidden_states, "residual": residual}
-                )
-            hidden_states, _ = self.norm(hidden_states, residual)
-            return hidden_states
 
         aux_hidden_states = self._maybe_add_hidden_state(
             [], self.start_layer, hidden_states, residual

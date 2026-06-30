@@ -15,7 +15,7 @@ def test_qwen3_pap_enabled_checks_pap_enabled_flag() -> None:
     assert "attn_metadata" in method
 
 
-def test_qwen3_moe_attention_reuses_dense_pap_attention_path() -> None:
+def test_qwen3_moe_attention_rejects_pap_attention_path() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3_moe.py").read_text()
 
     class_start = text.index("class Qwen3MoeAttention")
@@ -26,7 +26,9 @@ def test_qwen3_moe_attention_reuses_dense_pap_attention_path() -> None:
     assert "class Qwen3MoeAttention(Qwen3Attention):" in cls
     assert "super().__init__(" in cls
     assert "max_position=max_position_embeddings" in cls
-    assert "def forward(" not in cls
+    assert "def _should_use_pap_attention(" in cls
+    assert "PAP is disabled for qwen3_moe" in cls
+    assert "raise RuntimeError" in cls
 
 
 def test_model_runner_passes_pap_enabled_to_forward_context() -> None:
@@ -349,45 +351,31 @@ def test_qwen3_moe_has_no_attention_boundary_microbatch_overlap() -> None:
     assert "hidden_states = self.self_attn(" in forward_method
 
 
-def test_qwen3_moe_model_has_opt_in_pap_layer_wavefront() -> None:
+def test_qwen3_moe_model_has_no_pap_layer_wavefront() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3_moe.py").read_text()
     model_start = text.index("class Qwen3MoeModel")
     model_end = text.index("\n\nclass Qwen3MoeForCausalLM", model_start)
     model_cls = text[model_start:model_end]
 
-    assert "PAP_OFFLOAD_EXEC_LAYER_WAVEFRONT" in model_cls
-    assert "def _pap_layer_wavefront_forward(" in model_cls
-    assert "def _pap_should_use_layer_wavefront(" in model_cls
-    assert "_pap_start_attention_after_input_norm" in text
-    assert "_pap_finish_attention_after_input_norm" in text
-    assert "_start_pap_attention_wavefront_batch" in text
-    assert "_finish_pap_attention_wavefront_batch" in text
-    assert "layers = list(" in model_cls
-    assert "enumerate(" in model_cls
-    assert "for ubatch_id in ready_ubatches:" in model_cls
-    assert "while completed_ubatches < len(microbatches):" in model_cls
-    assert "pending[ubatch_id] = layer._pap_start_attention_after_input_norm" in (
-        model_cls
-    )
-    assert "layer._pap_finish_attention_after_input_norm" in model_cls
+    assert "PAP_OFFLOAD_EXEC_LAYER_WAVEFRONT" not in text
+    assert "_pap_layer_wavefront_forward" not in text
+    assert "_pap_should_use_layer_wavefront" not in text
+    assert "_pap_start_attention_after_input_norm" not in text
+    assert "_pap_finish_attention_after_input_norm" not in text
+    assert "_start_pap_attention_wavefront_batch" not in text
+    assert "_finish_pap_attention_wavefront_batch" not in text
     assert "override_forward_context" not in model_cls
     assert "UBatchWrapper" not in model_cls
 
 
-def test_qwen3_moe_layer_wavefront_uses_unified_runner_microbatch_count() -> None:
+def test_qwen3_moe_has_no_pap_layer_wavefront_microbatch_count() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3_moe.py").read_text()
-    start = text.index("def _pap_moe_layer_wavefront_microbatch_count")
-    end = text.index("\n\nclass Qwen3MoeAttention", start)
-    helper = text[start:end]
     model_start = text.index("class Qwen3MoeModel")
     model_end = text.index("\n\nclass Qwen3MoeForCausalLM", model_start)
     model_cls = text[model_start:model_end]
 
-    assert 'os.environ.get("PAP_RUNNER_MICROBATCH_COUNT", "0")' in helper
-    assert "PAP_OFFLOAD_EXEC_MICROBATCH" not in helper
-    assert "return 1" in helper
-    assert "return min(configured, int(num_reqs))" in helper
-    assert "_pap_moe_layer_wavefront_microbatch_count(num_reqs)" in model_cls
+    assert "_pap_moe_layer_wavefront_microbatch_count" not in text
+    assert "PAP_RUNNER_MICROBATCH_COUNT" not in model_cls
     assert "_pap_offload_exec_microbatch_count(num_reqs)" not in model_cls
 
 
