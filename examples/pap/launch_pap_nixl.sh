@@ -90,6 +90,7 @@ PROJECTION_NIXL_PORT_BASE="${PAP_PROJECTION_NIXL_PORT_BASE:-6000}"
 VLLM_PORT_BASE="${PAP_VLLM_PORT_BASE:-50000}"
 MAX_MODEL_LEN="${PAP_MAX_MODEL_LEN:-1024}"
 MAX_NUM_SEQS="${PAP_MAX_NUM_SEQS:-2}"
+MAX_NUM_BATCHED_TOKENS="${PAP_MAX_NUM_BATCHED_TOKENS:-}"
 PAP_RUNNER_MICROBATCH_COUNT="${PAP_RUNNER_MICROBATCH_COUNT:-0}"
 PAP_RUNNER_MICROBATCH_DECODE_THRESHOLD="${PAP_RUNNER_MICROBATCH_DECODE_THRESHOLD:-12}"
 PAP_RUNNER_MICROBATCH_PREFILL_THRESHOLD="${PAP_RUNNER_MICROBATCH_PREFILL_THRESHOLD:-512}"
@@ -113,7 +114,11 @@ PROJECTION_GPUS_CSV="${PAP_PROJECTION_GPUS:-$DEFAULT_PROJECTION_GPUS}"
 mkdir -p "$LOG_DIR"
 
 projection_microbatch_args=()
+vllm_scheduler_args=()
 vllm_tp_args=()
+if [[ -n "$MAX_NUM_BATCHED_TOKENS" ]]; then
+    vllm_scheduler_args+=("--max-num-batched-tokens" "$MAX_NUM_BATCHED_TOKENS")
+fi
 case "$PAP_DISABLE_CUSTOM_ALL_REDUCE" in
     auto)
         if (( PAP_TP_SIZE > 1 )); then
@@ -462,6 +467,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
             --enable-request-id-headers \
             --max-model-len "$MAX_MODEL_LEN" \
             --max-num-seqs "$MAX_NUM_SEQS" \
+            "${vllm_scheduler_args[@]}" \
             --tensor-parallel-size "$PAP_TP_SIZE" \
             --gpu-memory-utilization "$PREFILL_GPU_MEMORY_UTILIZATION" \
             "${vllm_tp_args[@]}" \
@@ -481,6 +487,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
             --enable-request-id-headers \
             --max-model-len "$MAX_MODEL_LEN" \
             --max-num-seqs "$MAX_NUM_SEQS" \
+            "${vllm_scheduler_args[@]}" \
             --tensor-parallel-size "$PAP_TP_SIZE" \
             --gpu-memory-utilization "$PREFILL_GPU_MEMORY_UTILIZATION" \
             "${vllm_tp_args[@]}" \
@@ -516,6 +523,7 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
         --enable-request-id-headers \
         --max-model-len "$MAX_MODEL_LEN" \
         --max-num-seqs "$MAX_NUM_SEQS" \
+        "${vllm_scheduler_args[@]}" \
         --tensor-parallel-size "$PAP_TP_SIZE" \
         --gpu-memory-utilization "$PROJECTION_GPU_MEMORY_UTILIZATION" \
         "${vllm_tp_args[@]}" \

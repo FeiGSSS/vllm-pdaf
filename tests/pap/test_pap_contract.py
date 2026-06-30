@@ -211,7 +211,7 @@ def test_qwen3_pap_path_uses_nccl_offload_exec() -> None:
     assert "PAPOffloadExecBatchDescriptor" in method
     assert "PAPOffloadExecDescriptor" in method
     assert "trigger_offload_exec_attention_batch" in method
-    assert "_pap_offload_exec_local_address()" in method
+    assert "_pap_offload_exec_local_address(" in method
     assert "local_offload_exec_zmq_endpoint" in method
 
 
@@ -613,10 +613,10 @@ def test_qwen3_pap_defers_direct_mailbox_output_release_until_after_o_proj() -> 
     assert "finally:" in forward_method
     assert "for message in pap_release_messages:" in forward_method
     assert "message.release()" in forward_method
+    assert "projection_timeline: dict[str, Any] | None" in forward_method
+    assert "PAP OFFLOAD_EXEC projection timeline" in forward_method
     direct_pap_branch = forward_method[
-        forward_method.index(
-            "attn_output, pap_release_messages = self._compute_pap_attention(q, k, v)"
-        ) :
+        forward_method.index("attn_output, pap_release_messages =") :
     ]
     assert direct_pap_branch.index(
         "output, _ = self.o_proj(attn_output)"
@@ -627,6 +627,9 @@ def test_qwen3_pap_defers_direct_mailbox_output_release_until_after_o_proj() -> 
     compute_method = text[compute_start:compute_end]
 
     assert "pap_release_messages: list[Any] = []" in compute_method
+    assert "projection_timeline: dict[str, Any] | None = None" in compute_method
+    assert "record_projection_trace()" in compute_method
+    assert '"ubatch_id": ubatch_id' in compute_method
     assert "direct_output = output_batch.view" in compute_method
     assert "pap_release_messages.append(output_message)" in compute_method
     assert "return direct_output, pap_release_messages" in compute_method

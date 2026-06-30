@@ -23,6 +23,7 @@
 # limitations under the License.
 """Inference-only Qwen3 model compatible with HuggingFace weights."""
 
+import atexit
 import hashlib
 import json
 import os
@@ -78,8 +79,23 @@ def _pap_env_enabled(name: str) -> bool:
     return os.environ.get(name, "").lower() in _TRUE_ENV_VALUES
 
 
+def _pap_current_ubatch_id() -> int:
+    try:
+        from vllm.v1.worker.ubatching import dbo_current_ubatch_id
+
+        return int(dbo_current_ubatch_id())
+    except Exception:
+        return 0
+
+
 def _qwen3_layer_profile_enabled() -> bool:
     return os.environ.get("VLLM_QWEN3_LAYER_PROFILE", "").lower() in _TRUE_ENV_VALUES
+
+
+def _qwen3_layer_profile_async_enabled() -> bool:
+    return (
+        os.environ.get("VLLM_QWEN3_LAYER_PROFILE_ASYNC", "").lower() in _TRUE_ENV_VALUES
+    )
 
 
 def _qwen3_profile_attn_metadata(layer_name: str) -> Any | None:
@@ -113,9 +129,12 @@ def _qwen3_profile_decode_key(
         return None
     num_reqs = int(getattr(metadata, "num_reqs", 0))
     is_prefilling = getattr(metadata, "is_prefilling", None)
-    if is_prefilling is not None and num_reqs > 0:
-        if bool(torch.any(is_prefilling[:num_reqs]).item()):
-            return None
+    if (
+        is_prefilling is not None
+        and num_reqs > 0
+        and bool(torch.any(is_prefilling[:num_reqs]).item())
+    ):
+        return None
     batch_size = int(getattr(metadata, "num_actual_tokens", hidden_states.shape[0]))
     context_len = int(getattr(metadata, "max_seq_len", 0))
     total_tokens = int(hidden_states.shape[0])
@@ -143,6 +162,8 @@ class _Qwen3LayerProfileScope:
         self.end: torch.cuda.Event | None = None
 
     def __enter__(self) -> None:
+        if not _qwen3_layer_profile_async_enabled():
+            _qwen3_profile_drain_pending()
         self.start = torch.cuda.Event(enable_timing=True)
         self.end = torch.cuda.Event(enable_timing=True)
         self.start.record()
@@ -151,7 +172,15 @@ class _Qwen3LayerProfileScope:
         if exc_type is not None or self.start is None or self.end is None:
             return
         self.end.record()
-        self.end.synchronize()
+        if _qwen3_layer_profile_async_enabled():
+            _qwen3_profile_enqueue_pending(self)
+        else:
+            self.end.synchronize()
+            self.write_sample()
+
+    def write_sample(self) -> None:
+        if self.start is None or self.end is None:
+            return
         _qwen3_profile_write_sample(
             layer_name=self.layer_name,
             layer_index=self.layer_index,
@@ -161,6 +190,51 @@ class _Qwen3LayerProfileScope:
             total_tokens=self.total_tokens,
             elapsed_ms=float(self.start.elapsed_time(self.end)),
         )
+
+
+_QWEN3_PROFILE_PENDING_LOCK = threading.Lock()
+_QWEN3_PROFILE_PENDING: list[_Qwen3LayerProfileScope] = []
+
+
+def _qwen3_profile_enqueue_pending(scope: _Qwen3LayerProfileScope) -> None:
+    flush_threshold = int(
+        os.environ.get("VLLM_QWEN3_LAYER_PROFILE_ASYNC_FLUSH_THRESHOLD", "4096") or 4096
+    )
+    should_flush = False
+    with _QWEN3_PROFILE_PENDING_LOCK:
+        _QWEN3_PROFILE_PENDING.append(scope)
+        should_flush = len(_QWEN3_PROFILE_PENDING) >= flush_threshold
+    if should_flush:
+        _qwen3_profile_drain_pending(block=True)
+
+
+def _qwen3_profile_drain_pending(*, block: bool = False) -> None:
+    if not _QWEN3_PROFILE_PENDING:
+        return
+    ready: list[_Qwen3LayerProfileScope] = []
+    with _QWEN3_PROFILE_PENDING_LOCK:
+        pending = list(_QWEN3_PROFILE_PENDING)
+        _QWEN3_PROFILE_PENDING.clear()
+        for scope in pending:
+            end = scope.end
+            if end is None:
+                continue
+            try:
+                if block:
+                    end.synchronize()
+                    ready.append(scope)
+                elif end.query():
+                    ready.append(scope)
+                else:
+                    _QWEN3_PROFILE_PENDING.append(scope)
+            except Exception:
+                # CUDA may already be shutting down at process exit.
+                continue
+    for scope in ready:
+        scope.write_sample()
+
+
+atexit.register(lambda: _qwen3_profile_drain_pending(block=True))
 
 
 def _qwen3_profile_scope(
@@ -231,6 +305,7 @@ def _qwen3_profile_write_sample(
         "pid": os.getpid(),
         "rank": rank,
         "tp_size": tp_size,
+        "ubatch_id": _pap_current_ubatch_id(),
         "layer_name": layer_name,
         "layer_index": layer_index,
         "stage": stage,
@@ -240,9 +315,7 @@ def _qwen3_profile_write_sample(
             os.environ.get("VLLM_QWEN3_LAYER_PROFILE_PROMPT_LEN", "0") or 0
         ),
         "configured_batch_size": int(
-            os.environ.get(
-                "VLLM_QWEN3_LAYER_PROFILE_CONFIGURED_BATCH_SIZE", "0"
-            ) or 0
+            os.environ.get("VLLM_QWEN3_LAYER_PROFILE_CONFIGURED_BATCH_SIZE", "0") or 0
         ),
         "total_tokens": total_tokens,
         "elapsed_ms": elapsed_ms,
@@ -328,7 +401,9 @@ def _pap_prune_imported_prefill_kv(
     if not finished or not imported_prefill_kv:
         return
     imported_prefill_kv.difference_update(
-        import_key for import_key in tuple(imported_prefill_kv) if import_key[0] in finished
+        import_key
+        for import_key in tuple(imported_prefill_kv)
+        if import_key[0] in finished
     )
 
 
@@ -643,6 +718,10 @@ class Qwen3Attention(nn.Module):
                 return output
 
         layer_name = self.attn.layer_name
+        pap_attention_enabled = self._should_use_pap_attention()
+        trace_offload_exec = _pap_env_enabled("PAP_OFFLOAD_EXEC_TRACE")
+        trace_pre_attn_start = time.perf_counter() if trace_offload_exec else 0.0
+        trace_pre_attn_start_ns = time.perf_counter_ns() if trace_offload_exec else 0
         with _qwen3_profile_context(
             layer_name=layer_name,
             layer_index=self.layer_index,
@@ -668,13 +747,79 @@ class Qwen3Attention(nn.Module):
             k_by_head = self.k_norm(k_by_head)
             k = k_by_head.view(k.shape)
             q, k = self.rotary_emb(positions, q, k)
-        if self._should_use_pap_attention():
-            attn_output, pap_release_messages = self._compute_pap_attention(q, k, v)
+        trace_pre_attn_done_ns = time.perf_counter_ns() if trace_offload_exec else 0
+        trace_pre_attn_compute_ms = (
+            (time.perf_counter() - trace_pre_attn_start) * 1000.0
+            if trace_offload_exec
+            else 0.0
+        )
+        if pap_attention_enabled:
+            projection_timeline: dict[str, Any] | None = (
+                {} if trace_offload_exec else None
+            )
+            attn_output, pap_release_messages = self._compute_pap_attention(
+                q,
+                k,
+                v,
+                pre_attn_compute_ms=trace_pre_attn_compute_ms,
+                pre_attn_start_ns=trace_pre_attn_start_ns,
+                pre_attn_done_ns=trace_pre_attn_done_ns,
+                projection_timeline=projection_timeline,
+            )
+            trace_o_proj_start = time.perf_counter() if trace_offload_exec else 0.0
             try:
-                output, _ = self.o_proj(attn_output)
+                with _qwen3_profile_context(
+                    layer_name=layer_name,
+                    layer_index=self.layer_index,
+                    stage="o_proj",
+                    hidden_states=hidden_states,
+                ):
+                    output, _ = self.o_proj(attn_output)
             finally:
                 for message in pap_release_messages:
                     message.release()
+            if trace_offload_exec and projection_timeline:
+                trace_o_proj_done_ns = time.perf_counter_ns()
+                trace_o_proj_ms = (time.perf_counter() - trace_o_proj_start) * 1000.0
+                trace_self_attn_total_ms = (
+                    (trace_o_proj_done_ns - trace_pre_attn_start_ns) / 1_000_000.0
+                    if trace_pre_attn_start_ns
+                    else (
+                        trace_pre_attn_compute_ms
+                        + float(projection_timeline.get("remote_total_ms", 0.0))
+                        + trace_o_proj_ms
+                    )
+                )
+                logger.info(
+                    "PAP OFFLOAD_EXEC projection timeline layer=%s ubatch_id=%d "
+                    "batches=%d calls=%d pre_attn_compute_ms=%.3f "
+                    "send_ms=%.3f trigger_ms=%.3f yield_ms=%.3f "
+                    "recv_ms=%.3f o_proj_ms=%.3f remote_total_ms=%.3f "
+                    "self_attn_total_ms=%.3f batch_keys=%s "
+                    "pre_attn_start_ns=%d pre_attn_done_ns=%d "
+                    "send_done_ns=%d yield_start_ns=%d yield_end_ns=%d "
+                    "recv_done_ns=%d o_proj_done_ns=%d",
+                    layer_name,
+                    int(projection_timeline.get("ubatch_id", 0)),
+                    int(projection_timeline.get("batches", 0)),
+                    int(projection_timeline.get("calls", 0)),
+                    trace_pre_attn_compute_ms,
+                    float(projection_timeline.get("send_ms", 0.0)),
+                    float(projection_timeline.get("trigger_ms", 0.0)),
+                    float(projection_timeline.get("yield_ms", 0.0)),
+                    float(projection_timeline.get("recv_ms", 0.0)),
+                    trace_o_proj_ms,
+                    float(projection_timeline.get("remote_total_ms", 0.0)),
+                    trace_self_attn_total_ms,
+                    str(projection_timeline.get("batch_keys", "")),
+                    trace_pre_attn_start_ns,
+                    trace_pre_attn_done_ns,
+                    int(projection_timeline.get("send_done_ns", 0)),
+                    int(projection_timeline.get("yield_start_ns", 0)),
+                    int(projection_timeline.get("yield_end_ns", 0)),
+                    int(projection_timeline.get("recv_done_ns", 0)),
+                    trace_o_proj_done_ns,
+                )
             return output
         with _qwen3_profile_context(
             layer_name=layer_name,
@@ -1539,6 +1684,10 @@ class Qwen3Attention(nn.Module):
         v: torch.Tensor,
         *,
         query_already_sent: bool = False,
+        pre_attn_compute_ms: float = 0.0,
+        pre_attn_start_ns: int = 0,
+        pre_attn_done_ns: int = 0,
+        projection_timeline: dict[str, Any] | None = None,
     ) -> tuple[torch.Tensor, list[Any]]:
         if not is_forward_context_available():
             raise RuntimeError("PAP attention requires forward context")
@@ -1739,6 +1888,9 @@ class Qwen3Attention(nn.Module):
         trace_yield_start_ns = 0
         trace_yield_end_ns = 0
         trace_recv_done_ns = 0
+        trace_recv_ms = 0.0
+        trace_total_ms = 0.0
+        trace_batch_keys = ""
         trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
         offload_exec_groups: dict[
             tuple[str | None, str | None, str],
@@ -1976,6 +2128,61 @@ class Qwen3Attention(nn.Module):
             trace_yield_ms = (time.perf_counter() - trace_yield_start) * 1000.0
 
         trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
+
+        def record_projection_trace() -> None:
+            nonlocal trace_batch_keys
+            if not trace_offload_exec or not offload_exec_batches:
+                return
+            trace_batch_keys = "|".join(
+                pap_offload_exec_trace_id(batch[3].output_tensor_id)
+                for batch in offload_exec_batches
+            )
+            ubatch_id = _pap_current_ubatch_id()
+            calls = sum(len(batch[3].items) for batch in offload_exec_batches)
+            if projection_timeline is not None:
+                projection_timeline.update(
+                    {
+                        "layer": offload_exec_batches[0][3].layer_name,
+                        "ubatch_id": ubatch_id,
+                        "batches": len(offload_exec_batches),
+                        "calls": calls,
+                        "pre_attn_compute_ms": pre_attn_compute_ms,
+                        "send_ms": trace_send_ms,
+                        "trigger_ms": trace_trigger_ms,
+                        "yield_ms": trace_yield_ms,
+                        "recv_ms": trace_recv_ms,
+                        "remote_total_ms": trace_total_ms,
+                        "batch_keys": trace_batch_keys,
+                        "pre_attn_start_ns": pre_attn_start_ns,
+                        "pre_attn_done_ns": pre_attn_done_ns,
+                        "send_done_ns": trace_send_done_ns,
+                        "yield_start_ns": trace_yield_start_ns,
+                        "yield_end_ns": trace_yield_end_ns,
+                        "recv_done_ns": trace_recv_done_ns,
+                    }
+                )
+            logger.info(
+                "PAP OFFLOAD_EXEC projection trace layer=%s ubatch_id=%d "
+                "batches=%d calls=%d send_ms=%.3f trigger_ms=%.3f "
+                "yield_ms=%.3f recv_ms=%.3f total_ms=%.3f batch_keys=%s "
+                "send_done_ns=%d yield_start_ns=%d yield_end_ns=%d "
+                "recv_done_ns=%d",
+                offload_exec_batches[0][3].layer_name,
+                ubatch_id,
+                len(offload_exec_batches),
+                calls,
+                trace_send_ms,
+                trace_trigger_ms,
+                trace_yield_ms,
+                trace_recv_ms,
+                trace_total_ms,
+                trace_batch_keys,
+                trace_send_done_ns,
+                trace_yield_start_ns,
+                trace_yield_end_ns,
+                trace_recv_done_ns,
+            )
+
         for (
             _tcp_endpoint,
             _attention_endpoint,
@@ -2022,6 +2229,15 @@ class Qwen3Attention(nn.Module):
                     if output_message is not None:
                         pap_release_messages.append(output_message)
                         output_message = None
+                    if trace_offload_exec:
+                        trace_recv_done_ns = time.perf_counter_ns()
+                        trace_recv_ms = (
+                            time.perf_counter() - trace_recv_start
+                        ) * 1000.0
+                        trace_total_ms = (
+                            time.perf_counter() - trace_total_start
+                        ) * 1000.0
+                        record_projection_trace()
                     return direct_output, pap_release_messages
                 for descriptor_index, req_index in enumerate(req_indices):
                     apply_remote_output(
@@ -2035,30 +2251,7 @@ class Qwen3Attention(nn.Module):
             trace_recv_done_ns = time.perf_counter_ns()
             trace_recv_ms = (time.perf_counter() - trace_recv_start) * 1000.0
             trace_total_ms = (time.perf_counter() - trace_total_start) * 1000.0
-            batch_keys = "|".join(
-                pap_offload_exec_trace_id(batch[3].output_tensor_id)
-                for batch in offload_exec_batches
-            )
-            logger.info(
-                "PAP OFFLOAD_EXEC projection trace layer=%s batches=%d calls=%d "
-                "send_ms=%.3f trigger_ms=%.3f yield_ms=%.3f "
-                "recv_ms=%.3f total_ms=%.3f batch_keys=%s "
-                "send_done_ns=%d yield_start_ns=%d yield_end_ns=%d "
-                "recv_done_ns=%d",
-                offload_exec_batches[0][3].layer_name,
-                len(offload_exec_batches),
-                sum(len(batch[3].items) for batch in offload_exec_batches),
-                trace_send_ms,
-                trace_trigger_ms,
-                trace_yield_ms,
-                trace_recv_ms,
-                trace_total_ms,
-                batch_keys,
-                trace_send_done_ns,
-                trace_yield_start_ns,
-                trace_yield_end_ns,
-                trace_recv_done_ns,
-            )
+            record_projection_trace()
         final_output = get_copy_output_buffer()
         return final_output.view(q.shape[0], self.num_heads * self.head_dim), []
 
@@ -2275,8 +2468,13 @@ class Qwen3DecoderLayer(nn.Module):
         residual: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         layer_name = self.self_attn.attn.layer_name
+        trace_projection_layer = _pap_env_enabled(
+            "PAP_OFFLOAD_EXEC_TRACE"
+        ) and _pap_env_enabled("PAP_PROJECTION_KV_UNAWARE")
+        trace_layer_start_ns = time.perf_counter_ns() if trace_projection_layer else 0
 
         # Self Attention
+        trace_input_norm_start = time.perf_counter() if trace_projection_layer else 0.0
         with _qwen3_profile_context(
             layer_name=layer_name,
             layer_index=self.layer_index,
@@ -2288,6 +2486,14 @@ class Qwen3DecoderLayer(nn.Module):
                 hidden_states = self.input_layernorm(hidden_states)
             else:
                 hidden_states, residual = self.input_layernorm(hidden_states, residual)
+        trace_input_norm_done_ns = (
+            time.perf_counter_ns() if trace_projection_layer else 0
+        )
+        trace_input_norm_ms = (
+            (time.perf_counter() - trace_input_norm_start) * 1000.0
+            if trace_projection_layer
+            else 0.0
+        )
         if _pap_env_enabled("PAP_OFFLOAD_EXEC_MICROBATCH_OVERLAP_MLP"):
             microbatch_result = self._pap_microbatch_forward_after_input_norm(
                 positions,
@@ -2297,12 +2503,22 @@ class Qwen3DecoderLayer(nn.Module):
             if microbatch_result is not None:
                 return microbatch_result
 
+        trace_self_attn_start = time.perf_counter() if trace_projection_layer else 0.0
         hidden_states = self.self_attn(
             positions=positions,
             hidden_states=hidden_states,
         )
+        trace_self_attn_done_ns = (
+            time.perf_counter_ns() if trace_projection_layer else 0
+        )
+        trace_self_attn_ms = (
+            (time.perf_counter() - trace_self_attn_start) * 1000.0
+            if trace_projection_layer
+            else 0.0
+        )
 
         # Fully Connected
+        trace_post_norm_start = time.perf_counter() if trace_projection_layer else 0.0
         with _qwen3_profile_context(
             layer_name=layer_name,
             layer_index=self.layer_index,
@@ -2312,6 +2528,15 @@ class Qwen3DecoderLayer(nn.Module):
             hidden_states, residual = self.post_attention_layernorm(
                 hidden_states, residual
             )
+        trace_post_norm_done_ns = (
+            time.perf_counter_ns() if trace_projection_layer else 0
+        )
+        trace_post_norm_ms = (
+            (time.perf_counter() - trace_post_norm_start) * 1000.0
+            if trace_projection_layer
+            else 0.0
+        )
+        trace_mlp_start = time.perf_counter() if trace_projection_layer else 0.0
         with _qwen3_profile_context(
             layer_name=layer_name,
             layer_index=self.layer_index,
@@ -2319,6 +2544,32 @@ class Qwen3DecoderLayer(nn.Module):
             hidden_states=hidden_states,
         ):
             hidden_states = self.mlp(hidden_states)
+        if trace_projection_layer:
+            trace_mlp_done_ns = time.perf_counter_ns()
+            trace_mlp_ms = (time.perf_counter() - trace_mlp_start) * 1000.0
+            trace_layer_total_ms = (
+                trace_mlp_done_ns - trace_layer_start_ns
+            ) / 1_000_000.0
+            logger.info(
+                "PAP OFFLOAD_EXEC projection layer timeline layer=%s "
+                "ubatch_id=%d input_norm_ms=%.3f self_attn_ms=%.3f "
+                "post_attention_layernorm_ms=%.3f mlp_ms=%.3f "
+                "layer_total_ms=%.3f layer_start_ns=%d "
+                "input_norm_done_ns=%d self_attn_done_ns=%d "
+                "post_norm_done_ns=%d mlp_done_ns=%d",
+                layer_name,
+                _pap_current_ubatch_id(),
+                trace_input_norm_ms,
+                trace_self_attn_ms,
+                trace_post_norm_ms,
+                trace_mlp_ms,
+                trace_layer_total_ms,
+                trace_layer_start_ns,
+                trace_input_norm_done_ns,
+                trace_self_attn_done_ns,
+                trace_post_norm_done_ns,
+                trace_mlp_done_ns,
+            )
         return hidden_states, residual
 
 

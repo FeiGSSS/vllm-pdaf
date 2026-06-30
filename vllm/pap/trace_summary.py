@@ -8,9 +8,9 @@ import argparse
 import json
 import re
 import statistics
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
 
 
 @dataclass(frozen=True)
@@ -37,6 +37,18 @@ _PROJECTION_TRACE_RE = re.compile(
     r"projection trace .*?(?:batches=(\d+) )?calls=(\d+) "
     r"send_ms=([0-9.]+) trigger_ms=([0-9.]+) "
     r"(?:yield_ms=([0-9.]+) )?recv_ms=([0-9.]+) total_ms=([0-9.]+)"
+)
+_PROJECTION_TIMELINE_RE = re.compile(
+    r"projection timeline .*?ubatch_id=(\d+) batches=(\d+) calls=(\d+) "
+    r"pre_attn_compute_ms=([0-9.]+) send_ms=([0-9.]+) "
+    r"trigger_ms=([0-9.]+) yield_ms=([0-9.]+) recv_ms=([0-9.]+) "
+    r"o_proj_ms=([0-9.]+) remote_total_ms=([0-9.]+) "
+    r"self_attn_total_ms=([0-9.]+)"
+)
+_PROJECTION_LAYER_TIMELINE_RE = re.compile(
+    r"projection layer timeline .*?ubatch_id=(\d+) input_norm_ms=([0-9.]+) "
+    r"self_attn_ms=([0-9.]+) post_attention_layernorm_ms=([0-9.]+) "
+    r"mlp_ms=([0-9.]+) layer_total_ms=([0-9.]+)"
 )
 _ATTENTION_TRACE_RE = re.compile(
     r"attention mailbox batch trace .* calls=(\d+) recv_qkv_ms=([0-9.]+) "
@@ -125,6 +137,27 @@ def summarize_pap_trace_logs(
         "gap_ms": [],
         "total_ms": [],
     }
+    projection_timeline: dict[str, list[float]] = {
+        "ubatch_id": [],
+        "batches": [],
+        "calls": [],
+        "pre_attn_compute_ms": [],
+        "send_ms": [],
+        "trigger_ms": [],
+        "yield_ms": [],
+        "recv_ms": [],
+        "o_proj_ms": [],
+        "remote_total_ms": [],
+        "self_attn_total_ms": [],
+    }
+    projection_layer_timeline: dict[str, list[float]] = {
+        "ubatch_id": [],
+        "input_norm_ms": [],
+        "self_attn_ms": [],
+        "post_attention_layernorm_ms": [],
+        "mlp_ms": [],
+        "layer_total_ms": [],
+    }
     attention: dict[str, list[float]] = {
         "calls": [],
         "recv_qkv_ms": [],
@@ -142,6 +175,58 @@ def summarize_pap_trace_logs(
 
     for log_path in sorted(path.glob("*.log")):
         for line in log_path.read_text(errors="ignore").splitlines():
+            if match := _PROJECTION_TIMELINE_RE.search(line):
+                (
+                    ubatch_id,
+                    batches,
+                    calls,
+                    pre_attn_compute_ms,
+                    send_ms,
+                    trigger_ms,
+                    yield_ms,
+                    recv_ms,
+                    o_proj_ms,
+                    remote_total_ms,
+                    self_attn_total_ms,
+                ) = match.groups()
+                self_attn_total = float(self_attn_total_ms)
+                if max_total_ms is None or self_attn_total <= max_total_ms:
+                    for field, value in (
+                        ("ubatch_id", ubatch_id),
+                        ("batches", batches),
+                        ("calls", calls),
+                        ("pre_attn_compute_ms", pre_attn_compute_ms),
+                        ("send_ms", send_ms),
+                        ("trigger_ms", trigger_ms),
+                        ("yield_ms", yield_ms),
+                        ("recv_ms", recv_ms),
+                        ("o_proj_ms", o_proj_ms),
+                        ("remote_total_ms", remote_total_ms),
+                        ("self_attn_total_ms", self_attn_total_ms),
+                    ):
+                        projection_timeline[field].append(float(value))
+                continue
+            if match := _PROJECTION_LAYER_TIMELINE_RE.search(line):
+                (
+                    ubatch_id,
+                    input_norm_ms,
+                    self_attn_ms,
+                    post_attention_layernorm_ms,
+                    mlp_ms,
+                    layer_total_ms,
+                ) = match.groups()
+                layer_total = float(layer_total_ms)
+                if max_total_ms is None or layer_total <= max_total_ms:
+                    for field, value in (
+                        ("ubatch_id", ubatch_id),
+                        ("input_norm_ms", input_norm_ms),
+                        ("self_attn_ms", self_attn_ms),
+                        ("post_attention_layernorm_ms", post_attention_layernorm_ms),
+                        ("mlp_ms", mlp_ms),
+                        ("layer_total_ms", layer_total_ms),
+                    ):
+                        projection_layer_timeline[field].append(float(value))
+                continue
             if match := _PROJECTION_TRACE_RE.search(line):
                 (
                     batches,
@@ -292,9 +377,12 @@ def summarize_pap_trace_logs(
         "attention_ready_after_projection_resume_ms": [],
         "projection_resume_to_recv_done_ms": [],
     }
-    for batch_keys, send_done_ns, yield_end_ns, recv_done_ns in (
-        projection_correlation_entries
-    ):
+    for (
+        batch_keys,
+        send_done_ns,
+        yield_end_ns,
+        recv_done_ns,
+    ) in projection_correlation_entries:
         attention_done_times = [
             attention_send_done_ns_by_key[key]
             for key in batch_keys
@@ -320,8 +408,18 @@ def summarize_pap_trace_logs(
         )
 
     return {
-        "projection_trace": {field: _stat(values) for field, values in projection.items()},
-        "attention_trace": {field: _stat(values) for field, values in attention.items()},
+        "projection_trace": {
+            field: _stat(values) for field, values in projection.items()
+        },
+        "projection_timeline": {
+            field: _stat(values) for field, values in projection_timeline.items()
+        },
+        "projection_layer_timeline": {
+            field: _stat(values) for field, values in projection_layer_timeline.items()
+        },
+        "attention_trace": {
+            field: _stat(values) for field, values in attention.items()
+        },
         "projection_attention_correlation": {
             field: _stat(values)
             for field, values in projection_attention_correlation.items()
