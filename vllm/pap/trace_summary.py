@@ -54,6 +54,23 @@ _ATTENTION_TRACE_RE = re.compile(
     r"attention mailbox batch trace .* calls=(\d+) recv_qkv_ms=([0-9.]+) "
     r"compute_ms=([0-9.]+) send_output_ms=([0-9.]+) total_ms=([0-9.]+)"
 )
+_ATTENTION_COMPUTE_DETAIL_RE = re.compile(
+    r"append_kv_ms=([0-9.]+) pack_ms=([0-9.]+) "
+    r"sdpa_ms=([0-9.]+) reshape_ms=([0-9.]+)"
+    r"(?: paged_metadata_ms=([0-9.]+))?"
+    r"(?: paged_flash_ms=([0-9.]+))?"
+    r"(?: fallback_ms=[0-9.]+)?"
+    r"(?: shape_lookup_ms=([0-9.]+))?"
+    r"(?: qkv_split_ms=([0-9.]+))?"
+    r"(?: query_move_ms=([0-9.]+))?"
+    r"(?: query_cat_ms=([0-9.]+))?"
+    r"(?: append_lock_wait_ms=([0-9.]+))?"
+    r"(?: append_prepare_ms=([0-9.]+))?"
+    r"(?: append_record_ms=([0-9.]+))?"
+    r"(?: append_tensor_ms=([0-9.]+))?"
+    r"(?: append_copy_ms=([0-9.]+))?"
+    r"(?: append_state_ms=([0-9.]+))?"
+)
 _PROJECTION_CORRELATION_RE = re.compile(
     r"batch_keys=(\S+) send_done_ns=(\d+) yield_start_ns=(\d+) "
     r"yield_end_ns=(\d+) recv_done_ns=(\d+)"
@@ -164,6 +181,22 @@ def summarize_pap_trace_logs(
         "compute_ms": [],
         "send_output_ms": [],
         "total_ms": [],
+        "append_kv_ms": [],
+        "pack_ms": [],
+        "sdpa_ms": [],
+        "reshape_ms": [],
+        "paged_metadata_ms": [],
+        "paged_flash_ms": [],
+        "shape_lookup_ms": [],
+        "qkv_split_ms": [],
+        "query_move_ms": [],
+        "query_cat_ms": [],
+        "append_lock_wait_ms": [],
+        "append_prepare_ms": [],
+        "append_record_ms": [],
+        "append_tensor_ms": [],
+        "append_copy_ms": [],
+        "append_state_ms": [],
     }
     mailbox_send: dict[str, dict[str, list[float]]] = {}
     mailbox_read: dict[str, dict[str, list[float]]] = {}
@@ -290,6 +323,71 @@ def summarize_pap_trace_logs(
                     attention["compute_ms"].append(compute_ms)
                     attention["send_output_ms"].append(send_ms)
                     attention["total_ms"].append(total_ms)
+                    if detail := _ATTENTION_COMPUTE_DETAIL_RE.search(line):
+                        (
+                            append_kv_ms,
+                            pack_ms,
+                            sdpa_ms,
+                            reshape_ms,
+                            paged_metadata_ms,
+                            paged_flash_ms,
+                            shape_lookup_ms,
+                            qkv_split_ms,
+                            query_move_ms,
+                            query_cat_ms,
+                            append_lock_wait_ms,
+                            append_prepare_ms,
+                            append_record_ms,
+                            append_tensor_ms,
+                            append_copy_ms,
+                            append_state_ms,
+                        ) = detail.groups()
+                    else:
+                        append_kv_ms = pack_ms = sdpa_ms = reshape_ms = 0.0
+                        paged_metadata_ms = 0.0
+                        paged_flash_ms = 0.0
+                        shape_lookup_ms = 0.0
+                        qkv_split_ms = 0.0
+                        query_move_ms = 0.0
+                        query_cat_ms = 0.0
+                        append_lock_wait_ms = 0.0
+                        append_prepare_ms = 0.0
+                        append_record_ms = 0.0
+                        append_tensor_ms = 0.0
+                        append_copy_ms = 0.0
+                        append_state_ms = 0.0
+                    attention["append_kv_ms"].append(float(append_kv_ms))
+                    attention["pack_ms"].append(float(pack_ms))
+                    attention["sdpa_ms"].append(float(sdpa_ms))
+                    attention["reshape_ms"].append(float(reshape_ms))
+                    attention["paged_metadata_ms"].append(
+                        float(paged_metadata_ms or 0.0)
+                    )
+                    attention["paged_flash_ms"].append(float(paged_flash_ms or 0.0))
+                    attention["shape_lookup_ms"].append(
+                        float(shape_lookup_ms or 0.0)
+                    )
+                    attention["qkv_split_ms"].append(float(qkv_split_ms or 0.0))
+                    attention["query_move_ms"].append(float(query_move_ms or 0.0))
+                    attention["query_cat_ms"].append(float(query_cat_ms or 0.0))
+                    attention["append_lock_wait_ms"].append(
+                        float(append_lock_wait_ms or 0.0)
+                    )
+                    attention["append_prepare_ms"].append(
+                        float(append_prepare_ms or 0.0)
+                    )
+                    attention["append_record_ms"].append(
+                        float(append_record_ms or 0.0)
+                    )
+                    attention["append_tensor_ms"].append(
+                        float(append_tensor_ms or 0.0)
+                    )
+                    attention["append_copy_ms"].append(
+                        float(append_copy_ms or 0.0)
+                    )
+                    attention["append_state_ms"].append(
+                        float(append_state_ms or 0.0)
+                    )
                     if correlation := _ATTENTION_CORRELATION_RE.search(line):
                         (
                             batch_key,

@@ -44,6 +44,13 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
         "PAP OFFLOAD_EXEC attention mailbox batch trace "
         "layer=model.layers.1.self_attn.attn calls=1 recv_qkv_ms=0.820 "
         "compute_ms=0.140 send_output_ms=0.010 total_ms=0.970 "
+        "append_kv_ms=0.050 pack_ms=0.030 sdpa_ms=0.040 reshape_ms=0.020 "
+        "paged_metadata_ms=0.060 paged_flash_ms=0.070 "
+        "shape_lookup_ms=0.011 qkv_split_ms=0.012 query_move_ms=0.013 "
+        "query_cat_ms=0.014 append_lock_wait_ms=0.015 "
+        "append_prepare_ms=0.016 append_record_ms=0.017 "
+        "append_tensor_ms=0.018 append_copy_ms=0.019 "
+        "append_state_ms=0.021 "
         "qkv_shape=(1, 4096) output_shape=(1, 2048) batch_key=abc "
         "recv_done_ns=1003900000 compute_done_ns=1004100000 "
         "send_done_ns=1004200000\n"
@@ -72,6 +79,22 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
     assert summary["projection_layer_timeline"]["mlp_ms"].median == 0.600
     assert summary["projection_layer_timeline"]["layer_total_ms"].median == 2.600
     assert summary["attention_trace"]["compute_ms"].median == 0.140
+    assert summary["attention_trace"]["append_kv_ms"].median == 0.050
+    assert summary["attention_trace"]["pack_ms"].median == 0.030
+    assert summary["attention_trace"]["sdpa_ms"].median == 0.040
+    assert summary["attention_trace"]["reshape_ms"].median == 0.020
+    assert summary["attention_trace"]["paged_metadata_ms"].median == 0.060
+    assert summary["attention_trace"]["paged_flash_ms"].median == 0.070
+    assert summary["attention_trace"]["shape_lookup_ms"].median == 0.011
+    assert summary["attention_trace"]["qkv_split_ms"].median == 0.012
+    assert summary["attention_trace"]["query_move_ms"].median == 0.013
+    assert summary["attention_trace"]["query_cat_ms"].median == 0.014
+    assert summary["attention_trace"]["append_lock_wait_ms"].median == 0.015
+    assert summary["attention_trace"]["append_prepare_ms"].median == 0.016
+    assert summary["attention_trace"]["append_record_ms"].median == 0.017
+    assert summary["attention_trace"]["append_tensor_ms"].median == 0.018
+    assert summary["attention_trace"]["append_copy_ms"].median == 0.019
+    assert summary["attention_trace"]["append_state_ms"].median == 0.021
     assert summary["attention_trace"]["calls"].median == 1
     assert (
         summary["projection_attention_correlation"][
