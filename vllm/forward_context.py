@@ -147,6 +147,11 @@ class ForwardContext:
 
     ubatch_slices: UBatchSlices | None = None
 
+    # Boolean mask over the token axis: True for padding rows that are not real
+    # tokens. Consumers can use it to skip work for padded tokens. None when
+    # the producer does not set it.
+    is_padding: torch.Tensor | None = None
+
     # If True, bypass the compiled model call, e.g. by using .forward() directly
     skip_compiled: bool = False
 
@@ -211,6 +216,7 @@ def create_forward_context(
     slot_mapping: dict[str, torch.Tensor] | list[dict[str, torch.Tensor]] | None = None,
     additional_kwargs: dict[str, Any] | None = None,
     skip_compiled: bool = False,
+    is_padding: torch.Tensor | None = None,
 ):
     if vllm_config.compilation_config.fast_moe_cold_start:
         all_moe_layers = vllm_config.compilation_config.static_all_moe_layers
@@ -228,6 +234,7 @@ def create_forward_context(
         ubatch_slices=ubatch_slices,
         skip_compiled=skip_compiled,
         additional_kwargs=additional_kwargs or {},
+        is_padding=is_padding,
     )
 
 
@@ -258,6 +265,7 @@ def set_forward_context(
     slot_mapping: dict[str, torch.Tensor] | list[dict[str, torch.Tensor]] | None = None,
     skip_compiled: bool = False,
     additional_kwargs: dict[str, Any] | None = None,
+    is_padding: torch.Tensor | None = None,
 ):
     """A context manager that stores the current forward context,
     can be attention metadata, etc.
@@ -320,6 +328,7 @@ def set_forward_context(
         slot_mapping,
         merged_additional_kwargs,
         skip_compiled,
+        is_padding=is_padding,
     )
 
     try:

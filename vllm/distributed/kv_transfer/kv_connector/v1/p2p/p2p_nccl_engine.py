@@ -14,6 +14,9 @@ from typing import Any
 import msgpack
 import torch
 import zmq
+from vllm.distributed.kv_transfer.kv_connector.v1.p2p.tensor_memory_pool import (  # noqa: E501
+    TensorMemoryPool,
+)
 
 from vllm.config.kv_transfer import KVTransferConfig
 from vllm.distributed.device_communicators.pynccl_wrapper import (
@@ -22,9 +25,6 @@ from vllm.distributed.device_communicators.pynccl_wrapper import (
     cudaStream_t,
     ncclComm_t,
     ncclDataTypeEnum,
-)
-from vllm.distributed.kv_transfer.kv_connector.v1.p2p.tensor_memory_pool import (  # noqa: E501
-    TensorMemoryPool,
 )
 from vllm.utils.network_utils import get_ip
 from vllm.utils.torch_utils import current_stream
@@ -408,8 +408,7 @@ class P2pNcclEngine:
                 tensor_id = data["tensor_id"]
                 try:
                     logger.debug(
-                        "PAP P2P PUT recv begin %s👈%s tensor_id=%s "
-                        "shape=%s dtype=%s",
+                        "PAP P2P PUT recv begin %s👈%s tensor_id=%s shape=%s dtype=%s",
                         self.zmq_address,
                         remote_address.decode(),
                         tensor_id,

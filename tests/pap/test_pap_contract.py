@@ -63,15 +63,19 @@ def test_v2_model_runner_supports_pap_runner_microbatch_contexts() -> None:
     assert "_pap_forward_context_kwargs" in text
     assert "_pap_forward_context_kwargs_for_ubatch" in text
     assert '"ubatch_additional_kwargs"' in text
+    pap_context_anchor = text.index("additional_kwargs=pap_additional_kwargs")
     set_forward_context_block = text[
-        text.index("with set_forward_context(") : text.index(
-            "model_output = model_executor(**model_inputs)"
+        text.rindex("with set_forward_context(", 0, pap_context_anchor) : text.index(
+            "if self.is_last_pp_rank:", pap_context_anchor
         )
     ]
 
-    assert "model_executor = self.model" in text
-    assert "model_executor = self.ubatch_wrapper" in text
+    assert "model_output = self.ubatch_wrapper(**model_inputs)" in text
+    assert "self.cudagraph_manager.run_pw_graph" in text
+    assert "model_output = self.model(**model_inputs)" in text
     assert "ubatch_slices=ubatch_slices" in set_forward_context_block
+    assert "additional_kwargs=pap_additional_kwargs" in set_forward_context_block
+    assert "is_padding=input_batch.is_padding" in set_forward_context_block
     assert 'intermediate_tensors = kwargs.get("intermediate_tensors")' in wrapper
     assert "additional_kwargs=ubatch_additional_kwargs[i]" in wrapper
     assert "ubatch_dp_metadata = [None] * len(ubatch_slices)" in wrapper
