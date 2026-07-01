@@ -749,6 +749,33 @@ Conclusion for this iteration:
   single-digit microseconds and is no longer the dominant mailbox-read
   substage on this test bed.
 
+Mailbox slot alignment follow-up, 2026-07-01:
+
+- `PAP_RUNNER_MICROBATCH_COUNT=3` means the 128-request test bed has three
+  runner ubatches in flight. The test-bed mailbox defaults were changed from
+  two send/receive slots to three send/receive slots so slot capacity matches
+  the runner pipeline shape.
+- The mailbox slot size calculation now rounds each slot down to a 16-byte
+  boundary. Without this, `PAP_NIXL_MAILBOX_SLOT_COUNT=3` can create an odd byte
+  offset inside the 16 MiB mailbox buffer, and viewing that byte slice as BF16
+  fails with `storage_offset() must be divisible by 2`.
+- Controlled slot-count runs on the same code:
+
+| Config | Run root | Success | Median TPOT | Projection `yield_ms` | Projection remote total | Attention path after send | Projection resume after ready |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| default 2 slots, prior active code | `/home/fei/research/PD/test/baseline/pap/results/runs/20260701_123739` | 128/128 | 258.35 ms | 2.525 ms | 2.874 ms | 0.994 ms | 1.480 ms |
+| explicit 3 slots | `/home/fei/research/PD/test/baseline/pap/results/runs/20260701_125809` | 128/128 | 238.77 ms | 2.346 ms | 2.795 ms | 1.236 ms | 1.091 ms |
+| explicit 4 slots | `/home/fei/research/PD/test/baseline/pap/results/runs/20260701_125939` | 128/128 | 293.54 ms | 2.833 ms | 3.287 ms | 1.403 ms | 0.861 ms |
+| default 3 slots, rerun A | `/home/fei/research/PD/test/baseline/pap/results/runs/20260701_130423` | 128/128 | 300.95 ms | 2.664 ms | 3.133 ms | 1.520 ms | 1.084 ms |
+| default 3 slots, rerun B | `/home/fei/research/PD/test/baseline/pap/results/runs/20260701_130642` | 128/128 | 259.27 ms | 2.572 ms | 2.980 ms | 1.225 ms | 1.398 ms |
+
+- Interpretation: three slots is the correct configuration for the 3-way
+  runner pipeline and can reduce the per-layer remote path in a clean run, but
+  the end-to-end TPOT remains noisy. This is a correctness and pipeline-shape
+  alignment change, not a standalone proof of a stable TPOT win.
+- Four slots is not a good default for this test bed. It increased QKV wait and
+  projection remote total in the measured run.
+
 Negative follow-up:
 
 - Directly copying prefill/decode KV segments into the final padded batch,

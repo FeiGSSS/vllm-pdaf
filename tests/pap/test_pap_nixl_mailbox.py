@@ -3,10 +3,11 @@ from __future__ import annotations
 import gc
 import json
 from collections import OrderedDict
+from contextlib import suppress
 from threading import Condition, RLock
 
-import torch
 import pytest
+import torch
 
 import vllm.pap.nixl_mailbox as nixl_mailbox
 from vllm.pap.nixl_mailbox import (
@@ -92,6 +93,16 @@ def test_nixl_mailbox_local_metadata_includes_slot_layout() -> None:
     assert metadata.device_id == 3
     assert metadata.slot_count == 4
     assert metadata.slot_bytes == 16
+
+
+def test_nixl_mailbox_slot_bytes_are_aligned_for_odd_slot_counts() -> None:
+    slot_bytes = nixl_mailbox._aligned_slot_bytes(
+        total_bytes=16 * 1024 * 1024,
+        slot_count=3,
+    )
+
+    assert slot_bytes % 16 == 0
+    assert slot_bytes * 3 <= 16 * 1024 * 1024
 
 
 def test_nixl_mailbox_bind_peer_accepts_slot_metadata() -> None:
@@ -327,9 +338,11 @@ def test_nixl_mailbox_publish_direct_payload_uses_prefilled_slot() -> None:
     endpoint._msgpack_notifications_enabled = True
 
     qkv = torch.tensor([[1.0, 2.0, 3.0, 4.0]], dtype=torch.float32)
-    slot_tensor = endpoint._send_buffer[: qkv.numel() * qkv.element_size()].view(
-        qkv.dtype
-    ).reshape(qkv.shape)
+    slot_tensor = (
+        endpoint._send_buffer[: qkv.numel() * qkv.element_size()]
+        .view(qkv.dtype)
+        .reshape(qkv.shape)
+    )
     slot_tensor.copy_(qkv)
     message = PAPMailboxMessage(
         msg_id="msg-direct",
@@ -397,7 +410,6 @@ def test_nixl_mailbox_publish_uses_msgpack_notification_when_enabled() -> None:
     )
     assert payload["msg_id"] == "msg-compact-publish"
     assert payload["slot_id"] == 0
-
 
 
 def test_nixl_mailbox_ack_releases_send_slot_and_output() -> None:
@@ -616,7 +628,6 @@ def test_nixl_mailbox_msgpack_ack_releases_send_slot_and_output() -> None:
     assert endpoint._send_slot_leases == {}
 
 
-
 def test_nixl_mailbox_sender_loop_does_not_wait_ack_for_slot_protocol() -> None:
     class FakeQueue:
         def __init__(self, message):
@@ -654,13 +665,10 @@ def test_nixl_mailbox_sender_loop_does_not_wait_ack_for_slot_protocol() -> None:
 
     endpoint._wait_ack = wait_ack
 
-    try:
+    with suppress(KeyboardInterrupt):
         endpoint._sender_loop()
-    except KeyboardInterrupt:
-        pass
 
     assert endpoint._send_queue.task_done_calls == 1
-
 
 
 def test_nixl_mailbox_sender_loop_does_not_wait_ack_when_piggybacking() -> None:
@@ -701,10 +709,8 @@ def test_nixl_mailbox_sender_loop_does_not_wait_ack_when_piggybacking() -> None:
 
     endpoint._wait_ack = wait_ack
 
-    try:
+    with suppress(KeyboardInterrupt):
         endpoint._sender_loop()
-    except KeyboardInterrupt:
-        pass
 
     assert endpoint._send_queue.task_done_calls == 1
 
@@ -750,7 +756,9 @@ def test_nixl_mailbox_read_resolves_slot_address_from_peer_metadata() -> None:
     endpoint._peer_slot_bytes = 16
     endpoint._wrapper = FakeWrapper()
     endpoint._lock = RLock()
-    endpoint._recv_buffer = torch.tensor([1.0, 2.0], dtype=torch.float32).view(torch.uint8)
+    endpoint._recv_buffer = torch.tensor([1.0, 2.0], dtype=torch.float32).view(
+        torch.uint8
+    )
     endpoint._xfer_poll_sleep_seconds = 0.0
     endpoint._trace_enabled = False
     endpoint._zero_copy_recv_enabled = True
@@ -999,7 +1007,6 @@ def test_nixl_mailbox_failed_zero_copy_read_releases_recv_slot() -> None:
     assert endpoint._recv_slot_leases == {}
 
 
-
 def test_nixl_mailbox_read_reuses_cached_xfer_dlist_handles() -> None:
     class FakeWrapper:
         def __init__(self):
@@ -1044,7 +1051,9 @@ def test_nixl_mailbox_read_reuses_cached_xfer_dlist_handles() -> None:
     endpoint._peer_slot_bytes = 64
     endpoint._wrapper = FakeWrapper()
     endpoint._lock = RLock()
-    endpoint._recv_buffer = torch.tensor([1.0, 2.0], dtype=torch.float32).view(torch.uint8)
+    endpoint._recv_buffer = torch.tensor([1.0, 2.0], dtype=torch.float32).view(
+        torch.uint8
+    )
     endpoint._xfer_poll_sleep_seconds = 0.0
     endpoint._trace_enabled = False
     endpoint._zero_copy_recv_enabled = True
@@ -1373,9 +1382,7 @@ def test_nixl_mailbox_materialized_recv_release_can_piggyback() -> None:
     message.release()
 
     assert endpoint._wrapper.notifications == []
-    assert endpoint._pending_recv_releases == OrderedDict(
-        [("msg-materialized", 0)]
-    )
+    assert endpoint._pending_recv_releases == OrderedDict([("msg-materialized", 0)])
 
 
 def test_nixl_mailbox_publish_piggybacks_recv_releases() -> None:
@@ -1485,7 +1492,7 @@ def test_nixl_mailbox_poll_interval_defaults_to_low_latency() -> None:
 
     source = inspect.getsource(PAPNixlMailboxEndpoint.__init__)
 
-    assert "\"PAP_NIXL_MAILBOX_POLL_SECONDS\", 0.00001" in source
+    assert '"PAP_NIXL_MAILBOX_POLL_SECONDS", 0.00001' in source
 
 
 def test_nixl_mailbox_msgpack_notifications_default_enabled() -> None:
@@ -1494,8 +1501,7 @@ def test_nixl_mailbox_msgpack_notifications_default_enabled() -> None:
     source = inspect.getsource(PAPNixlMailboxEndpoint.__init__)
 
     assert "PAP_NIXL_MAILBOX_MSGPACK_NOTIF" in source
-    assert "\"PAP_NIXL_MAILBOX_MSGPACK_NOTIF\", True" in source
-
+    assert '"PAP_NIXL_MAILBOX_MSGPACK_NOTIF", True' in source
 
 
 def test_nixl_mailbox_xfer_poll_interval_defaults_to_busy_poll(

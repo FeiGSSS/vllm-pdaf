@@ -148,3 +148,14 @@ def test_pap_128_testbed_enables_native_kv_append() -> None:
         'PAP_ATTENTION_LOCAL_PAGED_NATIVE_CACHE_APPEND="${PAP_ATTENTION_LOCAL_PAGED_NATIVE_CACHE_APPEND:-1}"'
         in text
     )
+
+
+def test_pap_128_testbed_aligns_mailbox_slots_with_3way_pipeline() -> None:
+    script = ROOT / "benchmarks" / "disagg_benchmarks" / "run_pap_128_testbed.sh"
+    text = script.read_text()
+
+    assert 'PAP_NIXL_MAILBOX_SLOT_COUNT="${PAP_NIXL_MAILBOX_SLOT_COUNT:-3}"' in text
+    assert (
+        'PAP_NIXL_MAILBOX_RECV_SLOT_COUNT="${PAP_NIXL_MAILBOX_RECV_SLOT_COUNT:-3}"'
+        in text
+    )

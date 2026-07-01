@@ -34,6 +34,7 @@ import torch
 
 logger = logging.getLogger(__name__)
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
+_SLOT_BYTE_ALIGNMENT = 16
 
 
 def _nixl_mailbox_env_float(name: str, default: float) -> float:
@@ -62,11 +63,12 @@ def _nixl_mailbox_env_int(name: str, default: int) -> int:
 def _nixl_mailbox_env_set(name: str, default: str) -> set[str]:
     value = os.environ.get(name)
     raw = default if value in (None, "") else value
-    return {
-        item.strip()
-        for item in raw.split(",")
-        if item.strip()
-    }
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
+def _aligned_slot_bytes(*, total_bytes: int, slot_count: int) -> int:
+    raw_slot_bytes = int(total_bytes) // int(slot_count)
+    return raw_slot_bytes - (raw_slot_bytes % _SLOT_BYTE_ALIGNMENT)
 
 
 def _nixl_mailbox_agent_config(config_cls: type | None) -> Any | None:
@@ -431,7 +433,10 @@ class PAPNixlMailboxEndpoint:
         self._slot_count = _nixl_mailbox_env_int("PAP_NIXL_MAILBOX_SLOT_COUNT", 1)
         if self._slot_count <= 0:
             raise ValueError("PAP_NIXL_MAILBOX_SLOT_COUNT must be positive")
-        self._slot_bytes = self.buffer_bytes // self._slot_count
+        self._slot_bytes = _aligned_slot_bytes(
+            total_bytes=self.buffer_bytes,
+            slot_count=self._slot_count,
+        )
         if self._slot_bytes <= 0:
             raise ValueError("PAP_NIXL_MAILBOX_SLOT_COUNT is too large")
         self._recv_slot_count = _nixl_mailbox_env_int(
@@ -439,7 +444,10 @@ class PAPNixlMailboxEndpoint:
         )
         if self._recv_slot_count <= 0:
             raise ValueError("PAP_NIXL_MAILBOX_RECV_SLOT_COUNT must be positive")
-        self._recv_slot_bytes = self.buffer_bytes // self._recv_slot_count
+        self._recv_slot_bytes = _aligned_slot_bytes(
+            total_bytes=self.buffer_bytes,
+            slot_count=self._recv_slot_count,
+        )
         if self._recv_slot_bytes <= 0:
             raise ValueError("PAP_NIXL_MAILBOX_RECV_SLOT_COUNT is too large")
         self._next_send_slot = 0
@@ -743,13 +751,10 @@ class PAPNixlMailboxEndpoint:
                     if slot_id not in leases:
                         leases[slot_id] = str(msg_id)
                         by_msg[str(msg_id)] = slot_id
-                        self._next_peer_recv_slot = (
-                            slot_id + 1
-                        ) % peer_recv_slot_count
+                        self._next_peer_recv_slot = (slot_id + 1) % peer_recv_slot_count
                         return (
                             slot_id,
-                            int(peer_recv_buffer_addr)
-                            + slot_id * peer_recv_slot_bytes,
+                            int(peer_recv_buffer_addr) + slot_id * peer_recv_slot_bytes,
                         )
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -882,9 +887,11 @@ class PAPNixlMailboxEndpoint:
         else:
             slot_id = None
             slot_offset = 0
-        tensor = self._send_buffer[slot_offset : slot_offset + nbytes].view(
-            dtype
-        ).reshape(shape)
+        tensor = (
+            self._send_buffer[slot_offset : slot_offset + nbytes]
+            .view(dtype)
+            .reshape(shape)
+        )
         return PAPMailboxDirectSendPayload(tensor=tensor, slot_id=slot_id)
 
     def send(self, message: PAPMailboxMessage) -> None:
@@ -1158,9 +1165,7 @@ class PAPNixlMailboxEndpoint:
             elif direct_payload:
                 payload["addr"] = int(tensor.data_ptr())
                 payload["device_id"] = (
-                    int(tensor.device.index or 0)
-                    if tensor.device.type == "cuda"
-                    else 0
+                    int(tensor.device.index or 0) if tensor.device.type == "cuda" else 0
                 )
                 payload["direct_payload"] = True
             elif slot_protocol_enabled:
@@ -1190,9 +1195,9 @@ class PAPNixlMailboxEndpoint:
             self._restore_pending_recv_releases(piggybacked_recv_releases)
             if pushed_recv_slot_id is not None:
                 self._release_peer_recv_slot_for_msg(message.msg_id)
-            if direct_payload and direct_payload_slot_id is not None:
-                self._release_send_slot_for_msg(message.msg_id)
-            elif use_send_slot_leases:
+            if (
+                direct_payload and direct_payload_slot_id is not None
+            ) or use_send_slot_leases:
                 self._release_send_slot_for_msg(message.msg_id)
             raise
         return {
@@ -1392,8 +1397,7 @@ class PAPNixlMailboxEndpoint:
         recv_slot_count = int(getattr(self, "_recv_slot_count", 1))
         if recv_slot_id < 0 or recv_slot_id >= recv_slot_count:
             raise RuntimeError(
-                f"PAP NIXL mailbox invalid materialized receive slot id: "
-                f"{recv_slot_id}"
+                f"PAP NIXL mailbox invalid materialized receive slot id: {recv_slot_id}"
             )
         recv_slot_bytes = int(getattr(self, "_recv_slot_bytes", self.buffer_bytes))
         if nbytes > recv_slot_bytes:
@@ -1616,9 +1620,7 @@ class PAPNixlMailboxEndpoint:
                 self._reserve_materialized_recv_location(data, nbytes)
             )
             prepare_ms = (
-                (time.perf_counter() - prepare_start) * 1000.0
-                if trace_enabled
-                else 0.0
+                (time.perf_counter() - prepare_start) * 1000.0 if trace_enabled else 0.0
             )
         else:
             remote_addr, remote_device_id = self._remote_payload_location(data, nbytes)
@@ -1654,9 +1656,7 @@ class PAPNixlMailboxEndpoint:
                     self._release_recv_slot(recv_slot_id, msg_id)
                 raise
             prepare_ms = (
-                (time.perf_counter() - prepare_start) * 1000.0
-                if trace_enabled
-                else 0.0
+                (time.perf_counter() - prepare_start) * 1000.0 if trace_enabled else 0.0
             )
             transfer_start = time.perf_counter() if trace_enabled else 0.0
             try:
