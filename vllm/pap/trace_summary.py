@@ -39,14 +39,14 @@ _PROJECTION_TRACE_RE = re.compile(
     r"(?:yield_ms=([0-9.]+) )?recv_ms=([0-9.]+) total_ms=([0-9.]+)"
 )
 _PROJECTION_TIMELINE_RE = re.compile(
-    r"projection timeline .*?ubatch_id=(\d+) batches=(\d+) calls=(\d+) "
+    r"projection timeline .*?batches=(\d+) calls=(\d+) "
     r"pre_attn_compute_ms=([0-9.]+) send_ms=([0-9.]+) "
     r"trigger_ms=([0-9.]+) yield_ms=([0-9.]+) recv_ms=([0-9.]+) "
     r"o_proj_ms=([0-9.]+) remote_total_ms=([0-9.]+) "
     r"self_attn_total_ms=([0-9.]+)"
 )
 _PROJECTION_LAYER_TIMELINE_RE = re.compile(
-    r"projection layer timeline .*?ubatch_id=(\d+) input_norm_ms=([0-9.]+) "
+    r"projection layer timeline .*?input_norm_ms=([0-9.]+) "
     r"self_attn_ms=([0-9.]+) post_attention_layernorm_ms=([0-9.]+) "
     r"mlp_ms=([0-9.]+) layer_total_ms=([0-9.]+)"
 )
@@ -156,7 +156,6 @@ def summarize_pap_trace_logs(
         "total_ms": [],
     }
     projection_timeline: dict[str, list[float]] = {
-        "ubatch_id": [],
         "batches": [],
         "calls": [],
         "pre_attn_compute_ms": [],
@@ -169,7 +168,6 @@ def summarize_pap_trace_logs(
         "self_attn_total_ms": [],
     }
     projection_layer_timeline: dict[str, list[float]] = {
-        "ubatch_id": [],
         "input_norm_ms": [],
         "self_attn_ms": [],
         "post_attention_layernorm_ms": [],
@@ -211,7 +209,6 @@ def summarize_pap_trace_logs(
         for line in log_path.read_text(errors="ignore").splitlines():
             if match := _PROJECTION_TIMELINE_RE.search(line):
                 (
-                    ubatch_id,
                     batches,
                     calls,
                     pre_attn_compute_ms,
@@ -226,7 +223,6 @@ def summarize_pap_trace_logs(
                 self_attn_total = float(self_attn_total_ms)
                 if max_total_ms is None or self_attn_total <= max_total_ms:
                     for field, value in (
-                        ("ubatch_id", ubatch_id),
                         ("batches", batches),
                         ("calls", calls),
                         ("pre_attn_compute_ms", pre_attn_compute_ms),
@@ -242,7 +238,6 @@ def summarize_pap_trace_logs(
                 continue
             if match := _PROJECTION_LAYER_TIMELINE_RE.search(line):
                 (
-                    ubatch_id,
                     input_norm_ms,
                     self_attn_ms,
                     post_attention_layernorm_ms,
@@ -252,7 +247,6 @@ def summarize_pap_trace_logs(
                 layer_total = float(layer_total_ms)
                 if max_total_ms is None or layer_total <= max_total_ms:
                     for field, value in (
-                        ("ubatch_id", ubatch_id),
                         ("input_norm_ms", input_norm_ms),
                         ("self_attn_ms", self_attn_ms),
                         ("post_attention_layernorm_ms", post_attention_layernorm_ms),

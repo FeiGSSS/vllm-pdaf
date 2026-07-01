@@ -115,22 +115,14 @@ def test_pap_6pa2p_launch_forwards_routing_policy_to_proxy() -> None:
     assert '--routing-policy "$PAP_ROUTING_POLICY"' in text
 
 
-def test_pap_launch_exposes_runner_microbatch_for_projection() -> None:
+def test_pap_launch_does_not_expose_pap_runner_microbatch() -> None:
     script = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
     text = script.read_text()
-    baseline = Path(
-        "/home/fei/research/PD/test/baseline/pap/launch_service.sh"
-    ).read_text()
 
-    assert "PAP_RUNNER_MICROBATCH_COUNT" in text
-    assert (
-        'PAP_RUNNER_MICROBATCH_DECODE_THRESHOLD="${PAP_RUNNER_MICROBATCH_DECODE_THRESHOLD:-12}"'
-        in text
-    )
-    assert "projection_microbatch_args" in text
+    assert "PAP_RUNNER_MICROBATCH" not in text
+    assert "projection_microbatch_args" not in text
     assert "--ubatch-size" not in text
     assert "--dbo-decode-token-threshold" not in text
-    assert "PAP_RUNNER_MICROBATCH_COUNT=" in baseline
 
 
 def test_pap_baseline_config_exposes_pap_enabled() -> None:
@@ -150,10 +142,11 @@ def test_pap_128_testbed_enables_native_kv_append() -> None:
     )
 
 
-def test_pap_128_testbed_aligns_mailbox_slots_with_3way_pipeline() -> None:
+def test_pap_128_testbed_does_not_enable_pap_runner_microbatch() -> None:
     script = ROOT / "benchmarks" / "disagg_benchmarks" / "run_pap_128_testbed.sh"
     text = script.read_text()
 
+    assert "PAP_RUNNER_MICROBATCH" not in text
     assert 'PAP_NIXL_MAILBOX_SLOT_COUNT="${PAP_NIXL_MAILBOX_SLOT_COUNT:-3}"' in text
     assert (
         'PAP_NIXL_MAILBOX_RECV_SLOT_COUNT="${PAP_NIXL_MAILBOX_RECV_SLOT_COUNT:-3}"'

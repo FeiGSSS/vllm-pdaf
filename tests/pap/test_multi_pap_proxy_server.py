@@ -236,13 +236,11 @@ def test_multi_proxy_marks_attention_kv_installed_only_after_prefill() -> None:
     assert prefill < prefix_len < installed
 
 
-def test_multi_proxy_decode_barrier_runs_before_projection_request() -> None:
+def test_multi_proxy_has_no_decode_barrier() -> None:
     text = (ROOT / "examples/pap/multi_pap_proxy_server.py").read_text()
 
-    installed = text.index("pap_attention_kv_installed=prefix_len is not None")
-    barrier = text.index("decode_barrier.wait")
-    projection = text.index("projection_resp = await _post_json")
-    assert installed < barrier < projection
+    assert "decode_barrier" not in text
+    assert "DecodeBarrier" not in text
 
 
 def test_multi_proxy_does_not_store_conversation_placement() -> None:

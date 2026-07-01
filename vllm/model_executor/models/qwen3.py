@@ -85,15 +85,6 @@ def _pap_env_enabled(name: str) -> bool:
     return os.environ.get(name, "").lower() in _TRUE_ENV_VALUES
 
 
-def _pap_current_ubatch_id() -> int:
-    try:
-        from vllm.v1.worker.ubatching import dbo_current_ubatch_id
-
-        return int(dbo_current_ubatch_id())
-    except Exception:
-        return 0
-
-
 def _qwen3_layer_profile_enabled() -> bool:
     return os.environ.get("VLLM_QWEN3_LAYER_PROFILE", "").lower() in _TRUE_ENV_VALUES
 
@@ -311,7 +302,6 @@ def _qwen3_profile_write_sample(
         "pid": os.getpid(),
         "rank": rank,
         "tp_size": tp_size,
-        "ubatch_id": _pap_current_ubatch_id(),
         "layer_name": layer_name,
         "layer_index": layer_index,
         "stage": stage,
@@ -328,20 +318,6 @@ def _qwen3_profile_write_sample(
     }
     with open(path, "a", encoding="utf-8") as output:
         output.write(json.dumps(sample, sort_keys=True) + "\n")
-
-
-def _pap_contiguous_microbatches(num_reqs: int, count: int) -> list[list[int]]:
-    count = max(1, min(int(count), int(num_reqs)))
-    base, extra = divmod(int(num_reqs), count)
-    batches: list[list[int]] = []
-    start = 0
-    for index in range(count):
-        size = base + (1 if index < extra else 0)
-        end = start + size
-        if start < end:
-            batches.append(list(range(start, end)))
-        start = end
-    return batches
 
 
 def _pap_qkv_projection_split_supported(qkv_proj: Any) -> bool:
@@ -923,8 +899,8 @@ class Qwen3Attention(nn.Module):
                     )
                 )
                 logger.info(
-                    "PAP OFFLOAD_EXEC projection timeline layer=%s ubatch_id=%d "
-                    "batches=%d calls=%d pre_attn_compute_ms=%.3f "
+                    "PAP OFFLOAD_EXEC projection timeline layer=%s batches=%d "
+                    "calls=%d pre_attn_compute_ms=%.3f "
                     "send_ms=%.3f trigger_ms=%.3f yield_ms=%.3f "
                     "recv_ms=%.3f o_proj_ms=%.3f remote_total_ms=%.3f "
                     "self_attn_total_ms=%.3f batch_keys=%s "
@@ -932,7 +908,6 @@ class Qwen3Attention(nn.Module):
                     "send_done_ns=%d yield_start_ns=%d yield_end_ns=%d "
                     "recv_done_ns=%d o_proj_done_ns=%d",
                     layer_name,
-                    int(projection_timeline.get("ubatch_id", 0)),
                     int(projection_timeline.get("batches", 0)),
                     int(projection_timeline.get("calls", 0)),
                     trace_pre_attn_compute_ms,
@@ -1139,7 +1114,7 @@ class Qwen3Attention(nn.Module):
                 f"PAP attention missing metadata for {self.attn.layer_name}"
             )
         if int(getattr(attn_metadata, "max_query_len", 0)) != 1:
-            raise RuntimeError("PAP microbatch attention supports decode-only batches")
+            raise RuntimeError("PAP remote attention supports decode-only batches")
 
         request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
         num_scheduled_tokens = tuple(
@@ -1199,7 +1174,7 @@ class Qwen3Attention(nn.Module):
                 )
             if num_scheduled_tokens and int(num_scheduled_tokens[req_index]) != 1:
                 raise RuntimeError(
-                    "PAP microbatch attention expects one token per request"
+                    "PAP remote attention expects one token per request"
                 )
             seq_len = int(positions_cpu[req_index].item()) + 1
             max_seq_len = int(seq_lens_cpu[req_index].item())
@@ -1961,16 +1936,11 @@ class Qwen3Attention(nn.Module):
         if trace_offload_exec:
             trace_yield_start_ns = time.perf_counter_ns()
         trace_yield_ms = 0.0
-        if offload_exec_batches:
-            from vllm.v1.worker.ubatching import dbo_enabled, dbo_yield
-
-            if dbo_enabled():
-                dbo_yield()
+        wait_offload_exec_sends()
         if trace_offload_exec:
             trace_yield_end_ns = time.perf_counter_ns()
             trace_yield_ms = (time.perf_counter() - trace_yield_start) * 1000.0
 
-        wait_offload_exec_sends()
         trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
 
         def record_projection_trace() -> None:
@@ -1981,13 +1951,11 @@ class Qwen3Attention(nn.Module):
                 pap_offload_exec_trace_id(batch[2].output_tensor_id)
                 for batch in offload_exec_batches
             )
-            ubatch_id = _pap_current_ubatch_id()
             calls = sum(batch[2].item_count for batch in offload_exec_batches)
             if projection_timeline is not None:
                 projection_timeline.update(
                     {
                         "layer": offload_exec_batches[0][2].layer_name,
-                        "ubatch_id": ubatch_id,
                         "batches": len(offload_exec_batches),
                         "calls": calls,
                         "pre_attn_compute_ms": pre_attn_compute_ms,
@@ -2006,13 +1974,12 @@ class Qwen3Attention(nn.Module):
                     }
                 )
             logger.info(
-                "PAP OFFLOAD_EXEC projection trace layer=%s ubatch_id=%d "
-                "batches=%d calls=%d send_ms=%.3f trigger_ms=%.3f "
+                "PAP OFFLOAD_EXEC projection trace layer=%s batches=%d "
+                "calls=%d send_ms=%.3f trigger_ms=%.3f "
                 "yield_ms=%.3f recv_ms=%.3f total_ms=%.3f batch_keys=%s "
                 "send_done_ns=%d yield_start_ns=%d yield_end_ns=%d "
                 "recv_done_ns=%d",
                 offload_exec_batches[0][2].layer_name,
-                ubatch_id,
                 len(offload_exec_batches),
                 calls,
                 trace_send_ms,
@@ -2352,13 +2319,12 @@ class Qwen3DecoderLayer(nn.Module):
             ) / 1_000_000.0
             logger.info(
                 "PAP OFFLOAD_EXEC projection layer timeline layer=%s "
-                "ubatch_id=%d input_norm_ms=%.3f self_attn_ms=%.3f "
+                "input_norm_ms=%.3f self_attn_ms=%.3f "
                 "post_attention_layernorm_ms=%.3f mlp_ms=%.3f "
                 "layer_total_ms=%.3f layer_start_ns=%d "
                 "input_norm_done_ns=%d self_attn_done_ns=%d "
                 "post_norm_done_ns=%d mlp_done_ns=%d",
                 layer_name,
-                _pap_current_ubatch_id(),
                 trace_input_norm_ms,
                 trace_self_attn_ms,
                 trace_post_norm_ms,

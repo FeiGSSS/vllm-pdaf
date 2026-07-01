@@ -116,11 +116,6 @@ from vllm.v1.worker.gpu.states import RequestState
 from vllm.v1.worker.gpu.structured_outputs import StructuredOutputsWorker
 from vllm.v1.worker.gpu_ubatch_wrapper import UBatchWrapper
 from vllm.v1.worker.lora_model_runner_mixin import LoRAModelRunnerMixin
-from vllm.v1.worker.ubatch_utils import (
-    UBatchSlice,
-    UBatchSlices,
-    maybe_create_ubatch_slices,
-)
 from vllm.v1.worker.utils import KVBlockZeroer
 
 logger = init_logger(__name__)
@@ -366,14 +361,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 device=self.device,
             )
 
-        pap_runner_microbatch_count = self._pap_runner_microbatch_count()
-        if self.parallel_config.use_ubatching or pap_runner_microbatch_count > 1:
+        if self.parallel_config.use_ubatching:
             self.ubatch_wrapper = UBatchWrapper(
                 self.model,
                 self.vllm_config,
                 CUDAGraphMode.NONE,
                 self.device,
-                num_ubatches=pap_runner_microbatch_count or None,
             )
 
         if self.is_pooling_model and self.is_last_pp_rank:
@@ -1035,93 +1028,6 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             ),
         }
 
-    def _pap_forward_context_kwargs_for_ubatch(
-        self,
-        input_batch: InputBatch,
-        ubatch_slice: UBatchSlice,
-        full_kwargs: dict[str, Any],
-    ) -> dict[str, Any]:
-        request_slice = slice(
-            ubatch_slice.request_slice.start,
-            min(ubatch_slice.request_slice.stop, input_batch.num_reqs),
-        )
-        request_ids = tuple(
-            str(req_id) for req_id in input_batch.req_ids[request_slice]
-        )
-        token_slice = ubatch_slice.token_slice
-        kwargs = dict(full_kwargs)
-        kwargs["pap_request_ids"] = request_ids
-        kwargs["pap_num_scheduled_tokens"] = tuple(
-            int(num_tokens)
-            for num_tokens in input_batch.num_scheduled_tokens[request_slice]
-        )
-        kwargs["pap_num_reqs"] = len(request_ids)
-        kwargs["pap_num_actual_tokens"] = token_slice.stop - token_slice.start
-        kwargs["pap_positions"] = input_batch.positions[token_slice]
-        kwargs["pap_offload_exec_route_groups"] = (
-            self._pap_filter_route_groups_for_request_slice(
-                full_kwargs.get("pap_offload_exec_route_groups", ()),
-                request_slice,
-            )
-        )
-        for key in (
-            "pap_attention_tcp_endpoint_by_request",
-            "pap_attention_endpoint_by_request",
-            "pap_offload_exec_zmq_endpoint_by_request",
-            "pap_prefill_prefix_len_by_request",
-            "pap_prefill_kv_handle_by_request",
-        ):
-            kwargs[key] = self._pap_filter_mapping_for_request_ids(
-                kwargs.get(key, {}), request_ids
-            )
-        for key in (
-            "pap_attention_kv_installed_by_request",
-            "pap_import_prefill_kv_to_attention_by_request",
-        ):
-            kwargs[key] = set(kwargs.get(key, set())).intersection(request_ids)
-        return kwargs
-
-    @staticmethod
-    def _pap_runner_microbatch_count() -> int:
-        try:
-            configured = int(os.environ.get("PAP_RUNNER_MICROBATCH_COUNT", "0"))
-        except ValueError:
-            return 0
-        return max(configured, 0)
-
-    @staticmethod
-    def _pap_runner_microbatch_threshold(uniform_decode: bool) -> int:
-        env_name = (
-            "PAP_RUNNER_MICROBATCH_DECODE_THRESHOLD"
-            if uniform_decode
-            else "PAP_RUNNER_MICROBATCH_PREFILL_THRESHOLD"
-        )
-        default = "12" if uniform_decode else "512"
-        try:
-            return int(os.environ.get(env_name, default))
-        except ValueError:
-            return int(default)
-
-    def _pap_should_use_runner_microbatch(
-        self,
-        input_batch: InputBatch,
-        batch_desc: BatchExecutionDescriptor,
-        uniform_decode: bool,
-    ) -> bool:
-        if not self._pap_projection_kv_unaware_process():
-            return False
-        microbatch_count = self._pap_runner_microbatch_count()
-        if microbatch_count <= 1:
-            return False
-        if self.ubatch_wrapper is None:
-            return False
-        if batch_desc.cg_mode == CUDAGraphMode.FULL:
-            return False
-        if input_batch.num_reqs < microbatch_count:
-            return False
-        threshold = self._pap_runner_microbatch_threshold(uniform_decode)
-        return input_batch.num_tokens >= threshold
-
     def finish_requests(self, scheduler_output: SchedulerOutput) -> None:
         finished_req_ids = scheduler_output.finished_req_ids
         preempted_req_ids = scheduler_output.preempted_req_ids
@@ -1602,21 +1508,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 block_tables = None
                 slot_mappings = None
 
-        ubatch_slices: UBatchSlices | None = None
-        if not dummy_run:
-            uniform_decode_batch = max_query_len == self.decode_query_len and (
-                num_toks == max_query_len * num_reqs
-            )
-            if self._pap_should_use_runner_microbatch(
-                input_batch, batch_desc, uniform_decode_batch
-            ):
-                ubatch_slices, _ = maybe_create_ubatch_slices(
-                    True,
-                    input_batch.num_scheduled_tokens[: input_batch.num_reqs],
-                    input_batch.num_tokens_after_padding,
-                    input_batch.num_reqs_after_padding,
-                    self._pap_runner_microbatch_count(),
-                )
+        ubatch_slices = None
 
         attn_metadata = None
         slot_mappings_by_layer = None
@@ -1739,14 +1631,6 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                         ].keys()
                     ),
                 )
-            if ubatch_slices is not None:
-                pap_additional_kwargs["ubatch_additional_kwargs"] = [
-                    self._pap_forward_context_kwargs_for_ubatch(
-                        input_batch, ubatch_slice, pap_additional_kwargs
-                    )
-                    for ubatch_slice in ubatch_slices
-                ]
-
             with set_forward_context(
                 attn_metadata,
                 self.vllm_config,

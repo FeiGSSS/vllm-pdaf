@@ -57,57 +57,36 @@ def test_gpu_model_runner_passes_pap_request_context() -> None:
     assert "scheduler_output.finished_req_ids" in text
 
 
-def test_v2_model_runner_supports_pap_runner_microbatch_contexts() -> None:
+def test_v2_model_runner_has_no_pap_runner_microbatch_contexts() -> None:
     text = (ROOT / "vllm" / "v1" / "worker" / "gpu" / "model_runner.py").read_text()
-    wrapper = (ROOT / "vllm" / "v1" / "worker" / "gpu_ubatch_wrapper.py").read_text()
-    attn_utils = (ROOT / "vllm" / "v1" / "worker" / "gpu" / "attn_utils.py").read_text()
 
-    assert "UBatchWrapper" in text
-    assert "maybe_create_ubatch_slices" in text
-    assert "PAP_RUNNER_MICROBATCH_COUNT" in text
-    assert 'default = "12" if uniform_decode else "512"' in text
+    assert "PAP_RUNNER_MICROBATCH" not in text
+    assert "pap_runner_microbatch" not in text
+    assert "_pap_forward_context_kwargs_for_ubatch" not in text
+    assert '"ubatch_additional_kwargs"' not in text
+    assert "num_ubatches=pap_runner_microbatch_count" not in text
     assert "_pap_forward_context_kwargs" in text
-    assert "_pap_forward_context_kwargs_for_ubatch" in text
-    assert '"ubatch_additional_kwargs"' in text
-    pap_context_anchor = text.index("additional_kwargs=pap_additional_kwargs")
-    set_forward_context_block = text[
-        text.rindex("with set_forward_context(", 0, pap_context_anchor) : text.index(
-            "if self.is_last_pp_rank:", pap_context_anchor
-        )
-    ]
-
-    assert "model_output = self.ubatch_wrapper(**model_inputs)" in text
-    assert "self.cudagraph_manager.run_pw_graph" in text
-    assert "model_output = self.model(**model_inputs)" in text
-    assert "ubatch_slices=ubatch_slices" in set_forward_context_block
-    assert "additional_kwargs=pap_additional_kwargs" in set_forward_context_block
-    assert "is_padding=input_batch.is_padding" in set_forward_context_block
-    assert 'intermediate_tensors = kwargs.get("intermediate_tensors")' in wrapper
-    assert "additional_kwargs=ubatch_additional_kwargs[i]" in wrapper
-    assert "ubatch_dp_metadata = [None] * len(ubatch_slices)" in wrapper
-    assert "len(attn_group.metadata_builders) > ubid" in attn_utils
-    assert "metadata_builder_id = (" in attn_utils
-    assert "else 0" in attn_utils
 
 
-def test_new_gpu_model_runner_supports_pap_runner_microbatch_contexts() -> None:
+def test_new_gpu_model_runner_has_no_pap_runner_microbatch_contexts() -> None:
     text = (ROOT / "vllm" / "v1" / "worker" / "gpu_model_runner.py").read_text()
 
-    assert "PAP_RUNNER_MICROBATCH_COUNT" in text
-    assert "PAP_RUNNER_MICROBATCH_DECODE_THRESHOLD" in text
-    assert "_pap_should_use_runner_microbatch" in text
-    assert "_pap_forward_context_kwargs_for_ubatch" in text
-    assert "pap_runner_microbatch_count > 1" in text
-    assert "num_ubatches=pap_runner_microbatch_count or None" in text
-    assert "pap_runner_microbatching" in text
-    assert "_pap_runner_microbatch_supported_by_model" in text
-    assert 'model_type == "qwen3_moe"' in text
-    assert "if pap_runner_microbatching" in text
-    assert "else self.parallel_config.num_ubatches" in text
-    assert "max(1, pap_runner_microbatch_count)" in text
-    assert "ubatch_slices_for_model = (" in text
-    assert "ubatch_slices if pap_runner_microbatching else ubatch_slices_padded" in text
-    assert '"ubatch_additional_kwargs"' in text
+    assert "PAP_RUNNER_MICROBATCH" not in text
+    assert "pap_runner_microbatch" not in text
+    assert "_pap_forward_context_kwargs_for_ubatch" not in text
+    assert '"ubatch_additional_kwargs"' not in text
+    assert "num_ubatches=pap_runner_microbatch_count" not in text
+
+
+def test_ubatch_wrapper_has_no_pap_specific_extensions() -> None:
+    text = (ROOT / "vllm" / "v1" / "worker" / "gpu_ubatch_wrapper.py").read_text()
+
+    assert '"ubatch_additional_kwargs"' not in text
+    assert "additional_kwargs=ubatch_additional_kwargs" not in text
+    assert "num_ubatches: int | None = None" not in text
+    assert "self.num_ubatches" not in text
+    assert "ubatch_dp_metadata = [None]" not in text
+    assert "assert dp_metadata is not None" in text
 
 
 def test_pap_projection_process_skips_startup_kv_tensor_allocation() -> None:
@@ -303,20 +282,17 @@ def test_qwen3_dense_pap_uses_runner_dbo_path_only() -> None:
     assert pap_compute < forward_method.index("return output", pap_compute)
 
 
-def test_qwen3_pap_attention_yields_through_dbo() -> None:
+def test_qwen3_pap_attention_does_not_yield_through_dbo() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
     start = text.index("    def _compute_pap_attention")
     end = text.index("    def _maybe_import_pap_prefill_kv_to_attention", start)
     method = text[start:end]
 
-    assert "from vllm.v1.worker.ubatching import dbo_enabled, dbo_yield" in method
-    assert "if dbo_enabled():" in method
-    assert "dbo_yield()" in method
-    assert method.index("send_qkv_batch") < method.index("dbo_yield()")
-    assert method.index("dbo_yield()") < method.index("recv_output_batch")
+    assert "dbo_enabled" not in method
+    assert "dbo_yield" not in method
 
 
-def test_qwen3_pap_can_async_submit_qkv_send_before_dbo_yield() -> None:
+def test_qwen3_pap_can_async_submit_qkv_send_before_recv() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
     start = text.index("    def _compute_pap_attention")
     end = text.index("    def _maybe_import_pap_prefill_kv_to_attention", start)
@@ -325,12 +301,9 @@ def test_qwen3_pap_can_async_submit_qkv_send_before_dbo_yield() -> None:
     assert "PAP_OFFLOAD_EXEC_ASYNC_QKV_SEND" in method
     assert "_pap_submit_async_qkv_batch_send" in method
     assert "offload_exec_send_handles" in method
-    assert method.index("_pap_submit_async_qkv_batch_send") < method.index(
-        "dbo_yield()"
-    )
-    yield_pos = method.index("dbo_yield()")
-    wait_call_pos = method.index("wait_offload_exec_sends()", yield_pos)
-    assert yield_pos < wait_call_pos
+    assert "dbo_yield()" not in method
+    wait_call_pos = method.index("wait_offload_exec_sends()")
+    assert method.index("_pap_submit_async_qkv_batch_send") < wait_call_pos
     assert wait_call_pos < method.index("recv_output_batch_message")
 
 
@@ -542,7 +515,7 @@ def test_qwen3_pap_defers_direct_mailbox_output_release_until_after_o_proj() -> 
     assert "pap_release_messages: list[Any] = []" in compute_method
     assert "projection_timeline: dict[str, Any] | None = None" in compute_method
     assert "record_projection_trace()" in compute_method
-    assert '"ubatch_id": ubatch_id' in compute_method
+    assert "ubatch_id" not in compute_method
     assert "direct_output = output_batch.view" in compute_method
     assert "pap_release_messages.append(output_message)" in compute_method
     assert "return direct_output, pap_release_messages" in compute_method

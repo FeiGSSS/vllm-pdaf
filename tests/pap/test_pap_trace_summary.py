@@ -10,12 +10,12 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
     log_dir.mkdir()
     (log_dir / "projection_0.log").write_text(
         "PAP OFFLOAD_EXEC projection trace layer=model.layers.1.self_attn.attn "
-        "ubatch_id=2 batches=1 calls=1 send_ms=0.030 trigger_ms=0.000 "
+        "batches=1 calls=1 send_ms=0.030 trigger_ms=0.000 "
         "yield_ms=0.200 recv_ms=0.700 total_ms=0.950 batch_keys=abc "
         "send_done_ns=1000000000 yield_start_ns=1000010000 "
         "yield_end_ns=1005000000 recv_done_ns=1005800000\n"
         "PAP OFFLOAD_EXEC projection timeline "
-        "layer=model.layers.1.self_attn.attn ubatch_id=2 batches=1 calls=1 "
+        "layer=model.layers.1.self_attn.attn batches=1 calls=1 "
         "pre_attn_compute_ms=0.400 send_ms=0.030 trigger_ms=0.000 "
         "yield_ms=0.200 recv_ms=0.700 o_proj_ms=0.300 "
         "remote_total_ms=0.950 self_attn_total_ms=1.750 batch_keys=abc "
@@ -24,7 +24,7 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
         "yield_end_ns=1005000000 recv_done_ns=1005800000 "
         "o_proj_done_ns=1006500000\n"
         "PAP OFFLOAD_EXEC projection layer timeline "
-        "layer=model.layers.1.self_attn.attn ubatch_id=2 "
+        "layer=model.layers.1.self_attn.attn "
         "input_norm_ms=0.100 self_attn_ms=1.750 "
         "post_attention_layernorm_ms=0.080 mlp_ms=0.600 "
         "layer_total_ms=2.600 layer_start_ns=998900000 "
@@ -71,7 +71,8 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
     assert summary["projection_trace"]["yield_ms"].median == 0.200
     assert abs(summary["projection_trace"]["gap_ms"].median - 0.020) < 1e-9
     assert summary["projection_trace"]["batches"].median == 1
-    assert summary["projection_timeline"]["ubatch_id"].median == 2
+    assert "ubatch_id" not in summary["projection_timeline"]
+    assert "ubatch_id" not in summary["projection_layer_timeline"]
     assert summary["projection_timeline"]["pre_attn_compute_ms"].median == 0.400
     assert summary["projection_timeline"]["o_proj_ms"].median == 0.300
     assert summary["projection_timeline"]["self_attn_total_ms"].median == 1.750

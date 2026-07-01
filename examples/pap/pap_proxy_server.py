@@ -24,7 +24,6 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 try:
-    from examples.pap.decode_barrier import DecodeBarrier
     from examples.pap.pd_payloads import (
         attach_pap_prefill_attention_params,
         build_prefill_payload,
@@ -32,7 +31,6 @@ try:
         enrich_prefill_kv_params,
     )
 except ModuleNotFoundError:  # pragma: no cover - direct script execution
-    from decode_barrier import DecodeBarrier  # type: ignore[no-redef]
     from pd_payloads import (  # type: ignore[no-redef]
         attach_pap_prefill_attention_params,
         build_prefill_payload,
@@ -184,13 +182,6 @@ async def lifespan(app: FastAPI):
     app.state.attention = _make_client(
         args.attention_host, args.attention_port, "attention"
     )
-    app.state.decode_barrier = DecodeBarrier.from_env()
-    if app.state.decode_barrier.enabled:
-        logger.info(
-            "decode barrier enabled count=%d timeout_s=%.3f",
-            app.state.decode_barrier.count,
-            app.state.decode_barrier.timeout_s,
-        )
     yield
     await app.state.prefill.client.aclose()
     await app.state.projection.client.aclose()
@@ -255,7 +246,6 @@ async def _handle_openai_request(api_path: str, request: Request):
         request.app.state.attention.base_url,
     )
     projection_payload.setdefault("stream", client_stream)
-    await request.app.state.decode_barrier.wait(request_id, logger=logger)
 
     if client_stream:
         return StreamingResponse(
@@ -296,7 +286,6 @@ async def health() -> dict[str, Any]:
     return {
         "status": "ok",
         "role": "pap-proxy",
-        "decode_barrier": app.state.decode_barrier.snapshot(),
     }
 
 

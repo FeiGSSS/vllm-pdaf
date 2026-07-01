@@ -1,7 +1,6 @@
 import asyncio
 from pathlib import Path
 
-from examples.pap.decode_barrier import DecodeBarrier
 from examples.pap.pap_proxy_server import (
     PAPServiceClient,
     attach_pap_prefill_attention_params,
@@ -116,13 +115,12 @@ def test_single_proxy_marks_attention_kv_installed_only_after_prefill() -> None:
     assert prefill < prefix_len < installed
 
 
-def test_single_proxy_decode_barrier_runs_before_projection_request() -> None:
+def test_single_proxy_has_no_decode_barrier() -> None:
     text = (ROOT / "examples/pap/pap_proxy_server.py").read_text()
 
-    installed = text.index("pap_attention_kv_installed=prefix_len is not None")
-    barrier = text.index("decode_barrier.wait")
-    projection = text.index("projection_resp = await _post_json")
-    assert installed < barrier < projection
+    assert "decode_barrier" not in text
+    assert "DecodeBarrier" not in text
+    assert not (ROOT / "examples/pap/decode_barrier.py").exists()
 
 
 def test_build_projection_payload_does_not_claim_attention_kv_installed_by_default(
@@ -221,32 +219,3 @@ def test_register_attention_handle_posts_internal_registration() -> None:
             {},
         )
     ]
-
-
-def test_decode_barrier_releases_when_count_arrives() -> None:
-    async def run() -> None:
-        barrier = DecodeBarrier(count=2, timeout_s=1.0)
-        releases = await asyncio.gather(barrier.wait("req-1"), barrier.wait("req-2"))
-
-        assert [release.reason for release in releases if release] == [
-            "count",
-            "count",
-        ]
-        assert [release.count for release in releases if release] == [2, 2]
-        assert barrier.snapshot()["generation"] == 1
-        assert barrier.snapshot()["arrived"] == 0
-
-    asyncio.run(run())
-
-
-def test_decode_barrier_timeout_releases_partial_generation() -> None:
-    async def run() -> None:
-        barrier = DecodeBarrier(count=3, timeout_s=0.001)
-        release = await barrier.wait("req-1")
-
-        assert release is not None
-        assert release.reason == "timeout"
-        assert release.count == 1
-        assert barrier.snapshot()["generation"] == 1
-
-    asyncio.run(run())

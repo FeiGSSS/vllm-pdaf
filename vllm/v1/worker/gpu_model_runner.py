@@ -210,7 +210,6 @@ from vllm.v1.worker.gpu_ubatch_wrapper import UBatchWrapper
 from vllm.v1.worker.kv_connector_model_runner_mixin import KVConnectorModelRunnerMixin
 from vllm.v1.worker.lora_model_runner_mixin import LoRAModelRunnerMixin
 from vllm.v1.worker.ubatch_utils import (
-    UBatchSlice,
     UBatchSlices,
     check_ubatch_thresholds,
     maybe_create_ubatch_slices,
@@ -1329,55 +1328,6 @@ class GPUModelRunner(
             ),
         }
 
-    def _pap_forward_context_kwargs_for_ubatch(
-        self,
-        ubatch_slice: UBatchSlice,
-        full_kwargs: dict[str, Any],
-    ) -> dict[str, Any]:
-        request_ids = tuple(
-            str(req_id)
-            for req_id in full_kwargs["pap_request_ids"][ubatch_slice.request_slice]
-        )
-        kwargs = dict(full_kwargs)
-        kwargs.pop("ubatch_additional_kwargs", None)
-        kwargs["pap_request_ids"] = request_ids
-        kwargs["pap_num_scheduled_tokens"] = tuple(
-            int(num_tokens)
-            for num_tokens in full_kwargs["pap_num_scheduled_tokens"][
-                ubatch_slice.request_slice
-            ]
-        )
-        kwargs["pap_num_reqs"] = len(request_ids)
-        kwargs["pap_num_actual_tokens"] = (
-            ubatch_slice.token_slice.stop - ubatch_slice.token_slice.start
-        )
-        kwargs["pap_positions"] = full_kwargs["pap_positions"][ubatch_slice.token_slice]
-        kwargs["pap_offload_exec_route_groups"] = (
-            self._pap_filter_route_groups_for_request_slice(
-                full_kwargs.get("pap_offload_exec_route_groups", ()),
-                ubatch_slice.request_slice,
-            )
-        )
-        for key in (
-            "pap_attention_tcp_endpoint_by_request",
-            "pap_attention_endpoint_by_request",
-            "pap_offload_exec_zmq_endpoint_by_request",
-            "pap_prefill_prefix_len_by_request",
-            "pap_prefill_kv_handle_by_request",
-        ):
-            kwargs[key] = self._pap_filter_mapping_for_request_ids(
-                kwargs.get(key, {}), request_ids
-            )
-        for key in (
-            "pap_attention_kv_installed_by_request",
-            "pap_import_prefill_kv_to_attention_by_request",
-        ):
-            active_request_ids = set(kwargs.get(key, ()))
-            kwargs[key] = tuple(
-                req_id for req_id in request_ids if req_id in active_request_ids
-            )
-        return kwargs
-
     @staticmethod
     def _pap_projection_kv_unaware_process() -> bool:
         return os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower() in (
@@ -1385,60 +1335,6 @@ class GPUModelRunner(
             "true",
             "yes",
         )
-
-    @staticmethod
-    def _pap_runner_microbatch_count() -> int:
-        try:
-            configured = int(os.environ.get("PAP_RUNNER_MICROBATCH_COUNT", "0"))
-        except ValueError:
-            return 0
-        return max(configured, 0)
-
-    @staticmethod
-    def _pap_runner_microbatch_threshold(uniform_decode: bool) -> int:
-        env_name = (
-            "PAP_RUNNER_MICROBATCH_DECODE_THRESHOLD"
-            if uniform_decode
-            else "PAP_RUNNER_MICROBATCH_PREFILL_THRESHOLD"
-        )
-        default = "12" if uniform_decode else "512"
-        try:
-            return int(os.environ.get(env_name, default))
-        except ValueError:
-            return int(default)
-
-    def _pap_runner_microbatch_supported_by_model(self) -> bool:
-        model_type = getattr(self.model_config.hf_config, "model_type", None)
-        if model_type == "qwen3_moe":
-            logger.warning_once(
-                "PAP runner microbatch is disabled for qwen3_moe because "
-                "the FP8 fused MoE path does not support DBO contexts"
-            )
-            return False
-        return True
-
-    def _pap_should_use_runner_microbatch(
-        self,
-        num_reqs: int,
-        num_tokens: int,
-        uniform_decode: bool,
-        cudagraph_mode: CUDAGraphMode,
-    ) -> bool:
-        if not self._pap_projection_kv_unaware_process():
-            return False
-        if not self._pap_runner_microbatch_supported_by_model():
-            return False
-        microbatch_count = self._pap_runner_microbatch_count()
-        if microbatch_count <= 1:
-            return False
-        if not isinstance(self.model, UBatchWrapper):
-            return False
-        if cudagraph_mode == CUDAGraphMode.FULL:
-            return False
-        if num_reqs < microbatch_count:
-            return False
-        threshold = self._pap_runner_microbatch_threshold(uniform_decode)
-        return num_tokens >= threshold
 
     def _update_states(self, scheduler_output: "SchedulerOutput") -> Callable | None:
         """Update the cached states and the persistent batch with the scheduler
@@ -4509,32 +4405,12 @@ class GPUModelRunner(
             num_reqs_padded = (
                 batch_desc.num_reqs if batch_desc.num_reqs is not None else num_reqs
             )
-            uniform_decode_batch = self._is_uniform_decode(
-                max_num_scheduled_tokens=max_num_scheduled_tokens,
-                uniform_decode_query_len=self.uniform_decode_query_len,
-                num_tokens=num_tokens_unpadded,
-                num_reqs=num_reqs,
-            )
-            pap_runner_microbatching = self._pap_should_use_runner_microbatch(
-                num_reqs=num_reqs,
-                num_tokens=num_tokens_unpadded,
-                uniform_decode=uniform_decode_batch,
-                cudagraph_mode=cudagraph_mode,
-            )
-            if pap_runner_microbatching:
-                should_ubatch = True
-            pap_runner_microbatch_count = self._pap_runner_microbatch_count()
             ubatch_slices, ubatch_slices_padded = maybe_create_ubatch_slices(
                 should_ubatch,
                 num_scheduled_tokens_np,
                 num_tokens_padded,
                 num_reqs_padded,
-                pap_runner_microbatch_count
-                if pap_runner_microbatching
-                else self.parallel_config.num_ubatches,
-            )
-            ubatch_slices_for_model = (
-                ubatch_slices if pap_runner_microbatching else ubatch_slices_padded
+                self.parallel_config.num_ubatches,
             )
 
             logger.debug(
@@ -4610,7 +4486,7 @@ class GPUModelRunner(
                     num_reqs_padded if pad_attn or has_separate_kv_update else num_reqs
                 ),
                 num_tokens_unpadded=num_tokens_unpadded,
-                ubatch_slices=ubatch_slices_for_model,
+                ubatch_slices=ubatch_slices_padded,
             )
 
             attn_metadata, spec_decode_common_attn_metadata = (
@@ -4651,13 +4527,6 @@ class GPUModelRunner(
                 self.optimistic_seq_lens_cpu[:num_reqs].tolist(),
                 pap_finished_req_ids,
             )
-            if pap_runner_microbatching and ubatch_slices_for_model is not None:
-                pap_additional_kwargs["ubatch_additional_kwargs"] = [
-                    self._pap_forward_context_kwargs_for_ubatch(
-                        ubatch_slice, pap_additional_kwargs
-                    )
-                    for ubatch_slice in ubatch_slices_for_model
-                ]
             if os.environ.get("PAP_DEBUG_DECISION", "").lower() in (
                 "1",
                 "true",
@@ -4714,7 +4583,7 @@ class GPUModelRunner(
                 num_tokens_across_dp=num_tokens_across_dp,
                 cudagraph_runtime_mode=cudagraph_mode,
                 batch_descriptor=batch_desc,
-                ubatch_slices=ubatch_slices_for_model,
+                ubatch_slices=ubatch_slices_padded,
                 slot_mapping=slot_mappings,
                 skip_compiled=has_encoder_input,
                 additional_kwargs=pap_additional_kwargs,
@@ -5697,14 +5566,7 @@ class GPUModelRunner(
         # wrap the model with full cudagraph wrapper if needed.
         cudagraph_mode = self.compilation_config.cudagraph_mode
         assert cudagraph_mode is not None
-        pap_runner_microbatch_count = (
-            self._pap_runner_microbatch_count()
-            if self._pap_runner_microbatch_supported_by_model()
-            else 0
-        )
-        use_runner_ubatching = (
-            self.parallel_config.use_ubatching or pap_runner_microbatch_count > 1
-        )
+        use_runner_ubatching = self.parallel_config.use_ubatching
         if (
             is_breakable_cudagraph_enabled()
             and cudagraph_mode != CUDAGraphMode.NONE
@@ -5727,7 +5589,6 @@ class GPUModelRunner(
                     self.vllm_config,
                     CUDAGraphMode.FULL,
                     self.device,
-                    num_ubatches=pap_runner_microbatch_count or None,
                 )
             else:
                 self.model = UBatchWrapper(
@@ -5735,7 +5596,6 @@ class GPUModelRunner(
                     self.vllm_config,
                     CUDAGraphMode.NONE,
                     self.device,
-                    num_ubatches=pap_runner_microbatch_count or None,
                 )
 
         get_offloader().post_init()
@@ -7269,7 +7129,6 @@ class GPUModelRunner(
         """
         Create the metadata builders for all KV cache groups and attn groups.
         """
-        pap_runner_microbatch_count = self._pap_runner_microbatch_count()
         for kv_cache_group_id in range(len(kv_cache_config.kv_cache_groups)):
             for attn_group in self.attn_groups[kv_cache_group_id]:
                 attn_group.create_metadata_builders(
@@ -7280,7 +7139,7 @@ class GPUModelRunner(
                     else None,
                     num_metadata_builders=self.parallel_config.num_ubatches
                     if self.parallel_config.use_ubatching
-                    else max(1, pap_runner_microbatch_count),
+                    else 1,
                 )
         # Calculate reorder batch threshold (if needed)
         # Note (tdoublep): do this *after* constructing builders,
