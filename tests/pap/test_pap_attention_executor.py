@@ -1,7 +1,7 @@
 import logging
 from contextlib import suppress
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 
 import pytest
 
@@ -59,8 +59,7 @@ def test_attention_executor_starts_offload_exec_transport(monkeypatch) -> None:
 
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_LOCAL_RANK", "2")
     monkeypatch.setattr(
-        "examples.pap.pap_attention_executor."
-        "build_nixl_mailbox_offload_exec_transport",
+        "examples.pap.pap_attention_executor.build_nixl_mailbox_offload_exec_transport",
         fake_build_transport,
     )
 
@@ -1948,6 +1947,83 @@ def test_run_offload_exec_mailbox_loop_releases_qkv_message(monkeypatch) -> None
     assert events == ["release", "send"]
 
 
+def test_run_offload_exec_mailbox_loop_prefetches_next_qkv_message(
+    monkeypatch,
+) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    events = []
+    second_recv_started = Event()
+
+    class FakeMessage:
+        def __init__(self, index):
+            self.index = index
+            self.tensor = torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]])
+
+        def release(self):
+            events.append(f"release{self.index}")
+
+    class FakeTransport:
+        def __init__(self, descriptor):
+            self.descriptor = descriptor
+            self.recv_calls = 0
+
+        def recv_next_qkv_batch_message(self):
+            self.recv_calls += 1
+            events.append(f"recv{self.recv_calls}")
+            if self.recv_calls == 2:
+                second_recv_started.set()
+            if self.recv_calls > 2:
+                raise KeyboardInterrupt
+            return self.descriptor, FakeMessage(self.recv_calls)
+
+        def recv_next_qkv_batch(self):
+            raise AssertionError("prefetch should use mailbox message receive")
+
+        def send_output_batch(self, descriptor, output, *, remote_address):
+            events.append("send")
+
+    compute_calls = 0
+
+    def fake_compute_batch_output(**kwargs):
+        nonlocal compute_calls
+        compute_calls += 1
+        events.append(f"compute{compute_calls}")
+        if compute_calls == 1:
+            assert second_recv_started.wait(timeout=1.0)
+        return torch.tensor([[2.0, 0.0]])
+
+    monkeypatch.setenv("PAP_ATTENTION_MAILBOX_PREFETCH", "1")
+    monkeypatch.setattr(
+        executor_module,
+        "compute_offload_exec_batch_output",
+        fake_compute_batch_output,
+    )
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                request_id="req-a",
+                layer_name="layer0",
+                step=1,
+                scale=1.0,
+            ),
+        ),
+    )
+    transport = FakeTransport(descriptor)
+
+    with suppress(KeyboardInterrupt):
+        run_offload_exec_mailbox_loop(
+            registry=PAPAttentionRegistry(storage_device="cpu"),
+            transport=transport,
+        )
+
+    assert events.index("recv2") < events.index("release1")
+    assert events.index("recv2") < events.index("send")
+
+
 def test_run_offload_exec_mailbox_loop_emits_trace(monkeypatch, caplog) -> None:
     import torch
 
@@ -1961,9 +2037,7 @@ def test_run_offload_exec_mailbox_loop_emits_trace(monkeypatch, caplog) -> None:
             self.recv_calls += 1
             if self.recv_calls > 1:
                 raise KeyboardInterrupt
-            return self.descriptor, torch.tensor(
-                [[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]]
-            )
+            return self.descriptor, torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]])
 
         def send_output_batch(self, descriptor, output, *, remote_address):
             self.sent.append((descriptor, output, remote_address))
@@ -2729,7 +2803,6 @@ def test_attention_executor_compact_tcp_payload_keeps_stateful_kv() -> None:
     assert torch.allclose(outputs[0], torch.tensor([[[2.0, 0.0]]]))
 
 
-
 def test_attention_executor_rejects_decode_when_prompt_kv_is_missing() -> None:
     import torch
     from fastapi.testclient import TestClient
@@ -3286,8 +3359,7 @@ def test_attention_registry_keeps_in_block_decode_tokens_attention_local() -> No
     assert torch.equal(decode_value_buffer[:, 0, 0], torch.arange(113, 117).float())
 
 
-def test_attention_registry_uses_local_decode_when_prefill_block_full(
-) -> None:
+def test_attention_registry_uses_local_decode_when_prefill_block_full() -> None:
     import torch
 
     from examples.pap.pap_attention_executor import (

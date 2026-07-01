@@ -824,6 +824,27 @@ TPOT lever on this workload. It removes a little setup overhead from the NIXL
 WRITE path, but the measured end-to-end QKV send cost is still dominated by
 pack/queue/publish variance and the downstream attention/resume timeline.
 
+Attention mailbox prefetch follow-up, 2026-07-01:
+
+- Change: add an optional attention-side mailbox QKV prefetch worker controlled
+  by `PAP_ATTENTION_MAILBOX_PREFETCH=1`. The worker starts receiving the next
+  QKV mailbox message while the current attention batch is being computed and
+  sent back.
+- The feature is default-off because the A/B run below did not improve TPOT on
+  the 128-request Qwen3-32B TP=2 test bed.
+
+| Config | Run root | Success | Median TPOT | Attention path after send | Projection yield | Projection recv after resume |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| prefetch on | `/home/fei/research/PD/test/baseline/pap/results/runs/20260701_134132` | 128/128 | 277.58 ms | 1.468 ms | 2.576 ms | 0.103 ms |
+| prefetch off | `/home/fei/research/PD/test/baseline/pap/results/runs/20260701_134329` | 128/128 | 256.80 ms | 1.111 ms | 2.526 ms | 0.093 ms |
+
+Interpretation: the prefetch worker is functionally correct, but in this path
+the attention-side mailbox read is already cheap in the materialized push-write
+case: attention read `prepare_ms` is about `0.002 ms`, `transfer_ms` is `0`,
+and median read total is about `0.007 ms`. Moving the receive call to a
+background thread does not remove the main bottleneck and adds scheduling
+noise. Keep this as an experimental switch, not the default optimization path.
+
 Negative follow-up:
 
 - Directly copying prefill/decode KV segments into the final padded batch,

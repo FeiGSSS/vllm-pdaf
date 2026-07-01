@@ -18,6 +18,7 @@ import socket
 import socketserver
 import time
 from dataclasses import dataclass, field
+from queue import Queue
 from threading import Condition, Lock, Thread
 from typing import Any
 
@@ -56,9 +57,9 @@ def _trace_add_elapsed_ms(
     start: float,
 ) -> None:
     if trace_stats is not None:
-        trace_stats[key] = trace_stats.get(key, 0.0) + (
-            time.perf_counter() - start
-        ) * 1000.0
+        trace_stats[key] = (
+            trace_stats.get(key, 0.0) + (time.perf_counter() - start) * 1000.0
+        )
 
 
 def _local_paged_copy_source(
@@ -593,9 +594,7 @@ class PAPAttentionRegistry:
         ] = {}
         self._prefill_paged_kv: dict[str, dict[str, PAPPrefillPagedKV]] = {}
         self._local_paged_kv_pools: dict[str, PAPLocalPagedKVPool] = {}
-        self._local_paged_kv: dict[
-            str, dict[str, PAPLocalPagedAttentionState]
-        ] = {}
+        self._local_paged_kv: dict[str, dict[str, PAPLocalPagedAttentionState]] = {}
         self._request_id_resolution_cache: dict[str, str] = {}
         self._offload_exec_session_entry_cache: dict[
             tuple[str, int, int, int, int, int], PAPOffloadExecSessionEntry
@@ -822,9 +821,7 @@ class PAPAttentionRegistry:
         first_key = non_empty_segments[0][0]
         head_dim = int(first_key.shape[-1])
         required_blocks = (int(seq_len) + int(block_size) - 1) // int(block_size)
-        state = self._local_paged_kv.setdefault(session_request_id, {}).get(
-            layer_name
-        )
+        state = self._local_paged_kv.setdefault(session_request_id, {}).get(layer_name)
         min_blocks = required_blocks
         if state is not None:
             min_blocks = max(required_blocks, len(state.block_ids))
@@ -879,9 +876,7 @@ class PAPAttentionRegistry:
     ) -> None:
         if not self._local_paged_cache_enabled():
             return
-        state = self._local_paged_kv.setdefault(session_request_id, {}).get(
-            layer_name
-        )
+        state = self._local_paged_kv.setdefault(session_request_id, {}).get(layer_name)
         if state is None:
             return
         pool = state.pool
@@ -1030,15 +1025,11 @@ class PAPAttentionRegistry:
                     session, entry.layer_name, descriptor
                 )
                 if should_append:
-                    state = self._local_paged_kv[session_request_id][
-                        entry.layer_name
-                    ]
+                    state = self._local_paged_kv[session_request_id][entry.layer_name]
                     pool = state.pool
                     seq_len = int(entry.seq_len)
                     start_position = seq_len - 1
-                    required_blocks = (
-                        seq_len + pool.block_size - 1
-                    ) // pool.block_size
+                    required_blocks = (seq_len + pool.block_size - 1) // pool.block_size
                     block_ids = state.block_ids
                     if len(block_ids) < required_blocks:
                         block_ids = (
@@ -1051,13 +1042,21 @@ class PAPAttentionRegistry:
                     logical_block = start_position // pool.block_size
                     block_offset = start_position % pool.block_size
                     local_block = block_ids[logical_block]
-                    key_state = entry.key.detach().contiguous().to(
-                        device=pool.kv_cache.device,
-                        dtype=pool.kv_cache.dtype,
+                    key_state = (
+                        entry.key.detach()
+                        .contiguous()
+                        .to(
+                            device=pool.kv_cache.device,
+                            dtype=pool.kv_cache.dtype,
+                        )
                     )
-                    value_state = entry.value.detach().contiguous().to(
-                        device=pool.kv_cache.device,
-                        dtype=pool.kv_cache.dtype,
+                    value_state = (
+                        entry.value.detach()
+                        .contiguous()
+                        .to(
+                            device=pool.kv_cache.device,
+                            dtype=pool.kv_cache.dtype,
+                        )
                     )
                     group_key = (id(pool), block_offset)
                     group = write_groups.setdefault(
@@ -1233,9 +1232,7 @@ class PAPAttentionRegistry:
                 if should_append:
                     pool = state.pool
                     start_position = seq_len - 1
-                    required_blocks = (
-                        seq_len + pool.block_size - 1
-                    ) // pool.block_size
+                    required_blocks = (seq_len + pool.block_size - 1) // pool.block_size
                     block_ids = state.block_ids
                     if len(block_ids) < required_blocks:
                         block_ids = (
@@ -1311,9 +1308,7 @@ class PAPAttentionRegistry:
                         tensor_start,
                     )
 
-                    copy_start = (
-                        time.perf_counter() if trace_stats is not None else 0.0
-                    )
+                    copy_start = time.perf_counter() if trace_stats is not None else 0.0
                     native_written = _try_local_paged_native_cache_append(
                         pool=pool,
                         key_batch=key_group,
@@ -1334,9 +1329,7 @@ class PAPAttentionRegistry:
             ), (pool, local_blocks, row_indices) in write_groups.items():
                 if id(pool) in native_written_pool_ids:
                     continue
-                tensor_start = (
-                    time.perf_counter() if trace_stats is not None else 0.0
-                )
+                tensor_start = time.perf_counter() if trace_stats is not None else 0.0
                 first_row = row_indices[0]
                 contiguous_rows = row_indices == list(
                     range(first_row, first_row + len(row_indices))
@@ -1440,9 +1433,7 @@ class PAPAttentionRegistry:
             kv_size=registration.kv_size,
         )
         with self._lock:
-            self._drop_offload_exec_session_entry_cache_locked(
-                registration.request_id
-            )
+            self._drop_offload_exec_session_entry_cache_locked(registration.request_id)
             self._sessions[registration.request_id] = session
             self._layer_events.setdefault(registration.request_id, [])
             self._decode_kv.setdefault(registration.request_id, {})
@@ -1512,9 +1503,7 @@ class PAPAttentionRegistry:
         with self._lock:
             entries: list[PAPOffloadExecSessionEntry] = []
             for request_id in request_ids:
-                session_request_id = self._resolve_session_request_id_locked(
-                    request_id
-                )
+                session_request_id = self._resolve_session_request_id_locked(request_id)
                 if session_request_id is None:
                     raise KeyError(request_id)
                 session = self._sessions[session_request_id]
@@ -1534,9 +1523,7 @@ class PAPAttentionRegistry:
                     int(num_kv_heads),
                     int(head_dim),
                 )
-                session_entry = self._offload_exec_session_entry_cache.get(
-                    cache_key
-                )
+                session_entry = self._offload_exec_session_entry_cache.get(cache_key)
                 if session_entry is None:
                     session_entry = PAPOffloadExecSessionEntry(
                         session_request_id=session_request_id,
@@ -1546,9 +1533,7 @@ class PAPAttentionRegistry:
                         num_kv_heads=cache_key[4],
                         head_dim=cache_key[5],
                     )
-                    self._offload_exec_session_entry_cache[cache_key] = (
-                        session_entry
-                    )
+                    self._offload_exec_session_entry_cache[cache_key] = session_entry
                 entries.append(session_entry)
             return entries
 
@@ -1697,9 +1682,7 @@ class PAPAttentionRegistry:
                 if candidate.startswith(
                     f"{session_request_id}-"
                 ) or candidate.startswith(f"{session_request_id}_"):
-                    self._request_id_resolution_cache[request_id] = (
-                        session_request_id
-                    )
+                    self._request_id_resolution_cache[request_id] = session_request_id
                     return session_request_id
         return None
 
@@ -1789,9 +1772,9 @@ class PAPAttentionRegistry:
                     f"prefill KV seq_len {seq_len} does not match "
                     f"registered prefix_len {expected_prefix_len}"
                 )
-            self._prefill_kv.setdefault(session_request_id, {})[layer_name] = (
-                [(key_state, value_state)]
-            )
+            self._prefill_kv.setdefault(session_request_id, {})[layer_name] = [
+                (key_state, value_state)
+            ]
             self._prefill_paged_kv.setdefault(session_request_id, {}).pop(
                 layer_name, None
             )
@@ -1868,9 +1851,9 @@ class PAPAttentionRegistry:
                 num_kv_heads=int(num_kv_heads),
                 layout=layout,  # type: ignore[arg-type]
             )
-            existing_prefill = self._prefill_paged_kv.get(
-                session_request_id, {}
-            ).get(layer_name)
+            existing_prefill = self._prefill_paged_kv.get(session_request_id, {}).get(
+                layer_name
+            )
             prefill_block_ids = [int(block_id) for block_id in block_ids]
             prefill_seq_len = seq_len
             if existing_prefill is not None:
@@ -1921,9 +1904,7 @@ class PAPAttentionRegistry:
         decode_seq_len: int | None = None,
     ) -> None:
         has_registered_prefix = int(session.prefix_len or 0) > 0
-        has_scheduler_prefix = (
-            decode_seq_len is not None and int(decode_seq_len) > 1
-        )
+        has_scheduler_prefix = decode_seq_len is not None and int(decode_seq_len) > 1
         if not has_registered_prefix and not has_scheduler_prefix:
             return
         deadline = time.monotonic() + float(
@@ -2268,9 +2249,12 @@ def compute_batch_binary_attention_response(
         serialize_tensor_bundle,
     )
 
-    trace_remote_attention = os.environ.get(
-        "PAP_OFFLOAD_EXEC_TRACE", ""
-    ).lower() in ("1", "true", "yes", "on")
+    trace_remote_attention = os.environ.get("PAP_OFFLOAD_EXEC_TRACE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
     trace_total_start = time.perf_counter() if trace_remote_attention else 0.0
     trace_deserialize_start = time.perf_counter() if trace_remote_attention else 0.0
     metadata, tensors = deserialize_tensor_bundle(payload)
@@ -2291,13 +2275,11 @@ def compute_batch_binary_attention_response(
             session = registry.get_session(
                 registry.resolve_session_request_id(request_id) or request_id
             )
-            q_size = (
-                (session.q_size if session is not None else None)
-                or int(os.environ.get("PAP_OFFLOAD_EXEC_Q_SIZE", "0"))
+            q_size = (session.q_size if session is not None else None) or int(
+                os.environ.get("PAP_OFFLOAD_EXEC_Q_SIZE", "0")
             )
-            kv_size = (
-                (session.kv_size if session is not None else None)
-                or int(os.environ.get("PAP_OFFLOAD_EXEC_KV_SIZE", "0"))
+            kv_size = (session.kv_size if session is not None else None) or int(
+                os.environ.get("PAP_OFFLOAD_EXEC_KV_SIZE", "0")
             )
             num_heads = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_HEADS", "0"))
             num_kv_heads = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "0"))
@@ -2397,9 +2379,12 @@ def compute_compact_attention_response(
         serialize_compact_attention_response,
     )
 
-    trace_remote_attention = os.environ.get(
-        "PAP_OFFLOAD_EXEC_TRACE", ""
-    ).lower() in ("1", "true", "yes", "on")
+    trace_remote_attention = os.environ.get("PAP_OFFLOAD_EXEC_TRACE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
     trace_total_start = time.perf_counter() if trace_remote_attention else 0.0
     trace_deserialize_start = time.perf_counter() if trace_remote_attention else 0.0
     items, qkv_tensors = deserialize_compact_attention_batch(payload)
@@ -2524,7 +2509,7 @@ def compute_binary_attention_response(
                     transport=offload_exec_transport,
                     remote_address=str(metadata["remote_address"]),
                     descriptor=descriptor,
-            )
+                )
         return serialize_compact_offload_exec_ack()
     if payload.startswith(COMPACT_OFFLOAD_EXEC_BATCH_MAGIC):
         if offload_exec_transport is None:
@@ -2567,9 +2552,7 @@ def compute_binary_attention_response(
             key=tensors["key"],
             value=tensors["value"],
             seq_len=int(metadata["seq_len"]),
-            block_ids=[
-                int(block_id) for block_id in metadata.get("block_ids", [])
-            ],
+            block_ids=[int(block_id) for block_id in metadata.get("block_ids", [])],
         )
         return serialize_tensor_bundle(
             {
@@ -2773,8 +2756,8 @@ def compute_offload_exec_output_from_kv_and_partial(
         registry=registry,
         request_id=request_id,
     )
-    q_size, kv_size, num_heads, num_kv_heads, head_dim = (
-        _offload_exec_attention_shapes(session=session)
+    q_size, kv_size, num_heads, num_kv_heads, head_dim = _offload_exec_attention_shapes(
+        session=session
     )
     if int(query_flat.shape[-1]) != q_size:
         raise ValueError(
@@ -2921,9 +2904,10 @@ def _compute_offload_exec_batch_output_fallback(
             ).reshape(1, -1)
         )
     if trace_stats is not None:
-        trace_stats["fallback_ms"] = trace_stats.get("fallback_ms", 0.0) + (
-            time.perf_counter() - fallback_start
-        ) * 1000.0
+        trace_stats["fallback_ms"] = (
+            trace_stats.get("fallback_ms", 0.0)
+            + (time.perf_counter() - fallback_start) * 1000.0
+        )
     return _combine_offload_exec_outputs(outputs)
 
 
@@ -2967,10 +2951,13 @@ def _compute_offload_exec_paged_flash_batch(
         device=query_batch.device,
     )
     if trace_stats is not None:
-        trace_stats["paged_metadata_ms"] = trace_stats.get(
-            "paged_metadata_ms",
-            0.0,
-        ) + (time.perf_counter() - metadata_start) * 1000.0
+        trace_stats["paged_metadata_ms"] = (
+            trace_stats.get(
+                "paged_metadata_ms",
+                0.0,
+            )
+            + (time.perf_counter() - metadata_start) * 1000.0
+        )
     if metadata.max_seq_len <= 0:
         return None
 
@@ -2993,9 +2980,10 @@ def _compute_offload_exec_paged_flash_batch(
         fa_version=fa_version,
     )
     if trace_stats is not None:
-        trace_stats["paged_flash_ms"] = trace_stats.get("paged_flash_ms", 0.0) + (
-            time.perf_counter() - paged_start
-        ) * 1000.0
+        trace_stats["paged_flash_ms"] = (
+            trace_stats.get("paged_flash_ms", 0.0)
+            + (time.perf_counter() - paged_start) * 1000.0
+        )
     if result is not None:
         return result
     return output
@@ -3075,9 +3063,7 @@ def compute_offload_exec_batch_output(
     common_scale: float | None = None
     shape_lookup_start = time.perf_counter() if trace_stats is not None else 0.0
     num_heads_default = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_HEADS", "0"))
-    num_kv_heads_default = int(
-        os.environ.get("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "0")
-    )
+    num_kv_heads_default = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "0"))
     head_dim_default = int(os.environ.get("PAP_OFFLOAD_EXEC_HEAD_DIM", "0"))
     session_entries = registry.offload_exec_batch_session_entries(
         tuple(item.request_id for item in items),
@@ -3154,23 +3140,18 @@ def compute_offload_exec_batch_output(
     paged_states: list[PAPLocalPagedAttentionState] | None = None
     if _pap_env_flag("PAP_OFFLOAD_EXEC_USE_PAGED_FLASH_ATTN"):
         append_start = time.perf_counter() if trace_stats is not None else 0.0
-        paged_states = (
-            registry.append_decode_kv_tensor_batch_for_local_paged_attention(
-                session_request_ids=tuple(
-                    session_entry.session_request_id
-                    for session_entry in session_entries
-                ),
-                layer_name=descriptor.layer_name,
-                key_batch=key_batch,
-                value_batch=value_batch,
-                seq_lens=tuple(decode_seq_lens),
-                trace_stats=trace_stats,
-            )
+        paged_states = registry.append_decode_kv_tensor_batch_for_local_paged_attention(
+            session_request_ids=tuple(
+                session_entry.session_request_id for session_entry in session_entries
+            ),
+            layer_name=descriptor.layer_name,
+            key_batch=key_batch,
+            value_batch=value_batch,
+            seq_lens=tuple(decode_seq_lens),
+            trace_stats=trace_stats,
         )
         if trace_stats is not None:
-            trace_stats["append_kv_ms"] += (
-                time.perf_counter() - append_start
-            ) * 1000.0
+            trace_stats["append_kv_ms"] += (time.perf_counter() - append_start) * 1000.0
         if paged_states is not None:
             paged_output = _compute_offload_exec_paged_flash_batch(
                 query_batch=query_batch,
@@ -3216,9 +3197,7 @@ def compute_offload_exec_batch_output(
                     )
                 )
             if trace_stats is not None:
-                trace_stats["pack_ms"] += (
-                    time.perf_counter() - pack_start
-                ) * 1000.0
+                trace_stats["pack_ms"] += (time.perf_counter() - pack_start) * 1000.0
 
     if paged_states is None:
         for index, item in enumerate(items):
@@ -3250,9 +3229,7 @@ def compute_offload_exec_batch_output(
                 sum(int(segment_key.shape[0]) for segment_key, _ in non_empty_segments)
             )
             if trace_stats is not None:
-                trace_stats["pack_ms"] += (
-                    time.perf_counter() - pack_start
-                ) * 1000.0
+                trace_stats["pack_ms"] += (time.perf_counter() - pack_start) * 1000.0
 
     pack_start = time.perf_counter() if trace_stats is not None else 0.0
     max_seq_len = max(seq_lens)
@@ -3288,9 +3265,7 @@ def compute_offload_exec_batch_output(
         zip(key_segments, value_segments, seq_lens)
     ):
         key_batch[index, :seq_len].copy_(request_key.to(device=device, dtype=dtype))
-        value_batch[index, :seq_len].copy_(
-            request_value.to(device=device, dtype=dtype)
-        )
+        value_batch[index, :seq_len].copy_(request_value.to(device=device, dtype=dtype))
         attn_mask[index, :, :, :seq_len] = True
     if trace_stats is not None:
         trace_stats["pack_ms"] += (time.perf_counter() - pack_start) * 1000.0
@@ -3340,9 +3315,7 @@ def run_offload_exec_once(
     )
     qkv = transport.recv_qkv(descriptor, remote_address=remote_address)
     trace_recv_ms = (
-        (time.perf_counter() - trace_recv_start) * 1000.0
-        if trace_offload_exec
-        else 0.0
+        (time.perf_counter() - trace_recv_start) * 1000.0 if trace_offload_exec else 0.0
     )
     trace_compute_start = time.perf_counter() if trace_offload_exec else 0.0
     logger.debug(
@@ -3492,9 +3465,7 @@ def run_offload_exec_batch_once(
         remote_address=remote_address,
     )
     trace_recv_ms = (
-        (time.perf_counter() - trace_recv_start) * 1000.0
-        if trace_offload_exec
-        else 0.0
+        (time.perf_counter() - trace_recv_start) * 1000.0 if trace_offload_exec else 0.0
     )
     if trace_offload_exec:
         trace_recv_done_ns = time.perf_counter_ns()
@@ -3583,31 +3554,11 @@ def run_offload_exec_batch_once(
                 if trace_compute_stats
                 else 0.0
             ),
-            (
-                trace_compute_stats["append_prepare_ms"]
-                if trace_compute_stats
-                else 0.0
-            ),
-            (
-                trace_compute_stats["append_record_ms"]
-                if trace_compute_stats
-                else 0.0
-            ),
-            (
-                trace_compute_stats["append_tensor_ms"]
-                if trace_compute_stats
-                else 0.0
-            ),
-            (
-                trace_compute_stats["append_copy_ms"]
-                if trace_compute_stats
-                else 0.0
-            ),
-            (
-                trace_compute_stats["append_state_ms"]
-                if trace_compute_stats
-                else 0.0
-            ),
+            (trace_compute_stats["append_prepare_ms"] if trace_compute_stats else 0.0),
+            (trace_compute_stats["append_record_ms"] if trace_compute_stats else 0.0),
+            (trace_compute_stats["append_tensor_ms"] if trace_compute_stats else 0.0),
+            (trace_compute_stats["append_copy_ms"] if trace_compute_stats else 0.0),
+            (trace_compute_stats["append_state_ms"] if trace_compute_stats else 0.0),
             tuple(qkv_batch.shape),
             tuple(output_batch.shape),
             pap_offload_exec_trace_id(descriptor.output_tensor_id),
@@ -3615,6 +3566,55 @@ def run_offload_exec_batch_once(
             trace_compute_done_ns,
             trace_send_done_ns,
         )
+
+
+def _recv_next_qkv_batch_message_or_tensor(
+    transport: Any,
+) -> tuple[Any, Any | None, torch.Tensor]:
+    recv_message_fn = getattr(transport, "recv_next_qkv_batch_message", None)
+    if callable(recv_message_fn):
+        descriptor, qkv_message = recv_message_fn()
+        return descriptor, qkv_message, qkv_message.tensor
+    descriptor, qkv_batch = transport.recv_next_qkv_batch()
+    return descriptor, None, qkv_batch
+
+
+class _QKVBatchMessagePrefetcher:
+    def __init__(self, transport: Any) -> None:
+        self._transport = transport
+        self._requests: Queue[object] = Queue()
+        self._results: Queue[tuple[bool, Any]] = Queue(maxsize=1)
+        self._stop = object()
+        self._thread = Thread(
+            target=self._run,
+            name="pap-attention-mailbox-prefetch",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def prefetch(self) -> None:
+        self._requests.put(None)
+
+    def result(self) -> tuple[Any, Any | None, torch.Tensor]:
+        ok, payload = self._results.get()
+        if ok:
+            return payload
+        raise payload
+
+    def close(self) -> None:
+        self._requests.put(self._stop)
+
+    def _run(self) -> None:
+        while True:
+            request = self._requests.get()
+            if request is self._stop:
+                return
+            try:
+                payload = _recv_next_qkv_batch_message_or_tensor(self._transport)
+            except BaseException as exc:
+                self._results.put((False, exc))
+            else:
+                self._results.put((True, payload))
 
 
 def run_offload_exec_mailbox_loop(
@@ -3630,6 +3630,15 @@ def run_offload_exec_mailbox_loop(
         "yes",
         "on",
     )
+    q_first_partial_enabled = _pap_env_flag("PAP_ATTENTION_Q_FIRST_PARTIAL")
+    prefetch_enabled = (
+        _pap_env_flag("PAP_ATTENTION_MAILBOX_PREFETCH", False)
+        and not q_first_partial_enabled
+        and callable(getattr(transport, "recv_next_qkv_batch_message", None))
+    )
+    prefetcher = _QKVBatchMessagePrefetcher(transport) if prefetch_enabled else None
+    if prefetcher is not None:
+        prefetcher.prefetch()
     while True:
         trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
         trace_recv_done_ns = 0
@@ -3637,13 +3646,13 @@ def run_offload_exec_mailbox_loop(
         trace_send_done_ns = 0
         trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
         qkv_message = None
-        q_first_partial_enabled = os.environ.get(
-            "PAP_ATTENTION_Q_FIRST_PARTIAL", ""
-        ).lower() in ("1", "true", "yes", "on")
         recv_attention_message_fn = getattr(
             transport, "recv_next_attention_batch_message", None
         )
-        if q_first_partial_enabled and callable(recv_attention_message_fn):
+        if prefetcher is not None:
+            descriptor, qkv_message, qkv_batch = prefetcher.result()
+            prefetcher.prefetch()
+        elif q_first_partial_enabled and callable(recv_attention_message_fn):
             descriptor, qkv_message = recv_attention_message_fn()
             if qkv_message.kind == "attention_query_batch":
                 run_offload_exec_query_first_partial_batch_once(
@@ -3655,12 +3664,9 @@ def run_offload_exec_mailbox_loop(
                 continue
             qkv_batch = qkv_message.tensor
         else:
-            recv_message_fn = getattr(transport, "recv_next_qkv_batch_message", None)
-            if callable(recv_message_fn):
-                descriptor, qkv_message = recv_message_fn()
-                qkv_batch = qkv_message.tensor
-            else:
-                descriptor, qkv_batch = transport.recv_next_qkv_batch()
+            descriptor, qkv_message, qkv_batch = _recv_next_qkv_batch_message_or_tensor(
+                transport
+            )
         trace_recv_ms = (
             (time.perf_counter() - trace_recv_start) * 1000.0
             if trace_offload_exec
@@ -3751,9 +3757,7 @@ def run_offload_exec_mailbox_loop(
                 else 0.0,
                 trace_compute_stats["paged_flash_ms"] if trace_compute_stats else 0.0,
                 trace_compute_stats["fallback_ms"] if trace_compute_stats else 0.0,
-                trace_compute_stats["shape_lookup_ms"]
-                if trace_compute_stats
-                else 0.0,
+                trace_compute_stats["shape_lookup_ms"] if trace_compute_stats else 0.0,
                 trace_compute_stats["qkv_split_ms"] if trace_compute_stats else 0.0,
                 trace_compute_stats["query_move_ms"] if trace_compute_stats else 0.0,
                 trace_compute_stats["query_cat_ms"] if trace_compute_stats else 0.0,
@@ -3777,11 +3781,7 @@ def run_offload_exec_mailbox_loop(
                     if trace_compute_stats
                     else 0.0
                 ),
-                (
-                    trace_compute_stats["append_copy_ms"]
-                    if trace_compute_stats
-                    else 0.0
-                ),
+                (trace_compute_stats["append_copy_ms"] if trace_compute_stats else 0.0),
                 (
                     trace_compute_stats["append_state_ms"]
                     if trace_compute_stats
@@ -3834,9 +3834,7 @@ def start_attention_tcp_server(
                         registry,
                         payload,
                         offload_exec_transport=(
-                            None
-                            if app is None
-                            else app.state.offload_exec_transport
+                            None if app is None else app.state.offload_exec_transport
                         ),
                         offload_exec_lock=(
                             None if app is None else app.state.offload_exec_lock
@@ -3930,9 +3928,7 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
                 status_code=409,
                 detail="PAP OFFLOAD_EXEC mailbox transport is not initialized",
             )
-        peer_metadata = base64.b64decode(
-            request.agent_metadata_b64.encode("ascii")
-        )
+        peer_metadata = base64.b64decode(request.agent_metadata_b64.encode("ascii"))
         with app.state.offload_exec_lock:
             if not getattr(transport, "_pap_mailbox_bound", False):
                 transport.bind_peer(peer_metadata)
@@ -4203,8 +4199,7 @@ def maybe_start_offload_exec_transport(
         )
         return
     raise RuntimeError(
-        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; "
-        "use nixl_mailbox"
+        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; use nixl_mailbox"
     )
 
 
