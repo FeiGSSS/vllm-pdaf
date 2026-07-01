@@ -924,9 +924,13 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             return True
         num_reqs = getattr(input_batch, "num_reqs", 0)
         for req_id in input_batch.req_ids[:num_reqs]:
-            if req_id in self.pap_attention_tcp_endpoint_by_req_id:
+            if (
+                req_id in self.pap_attention_endpoint_by_req_id
+                or req_id in self.pap_offload_exec_zmq_endpoint_by_req_id
+            ):
                 logger.info(
-                    "PAP enabled via per-request TCP endpoint req_id=%s", req_id
+                    "PAP enabled via per-request mailbox endpoint req_id=%s",
+                    req_id,
                 )
                 return True
         return False
@@ -937,6 +941,45 @@ class GPUModelRunner(LoRAModelRunnerMixin):
     ) -> dict[str, Any]:
         request_id_set = set(request_ids)
         return {key: value for key, value in mapping.items() if key in request_id_set}
+
+    def _pap_offload_exec_route_groups_for_batch(
+        self, input_batch: InputBatch
+    ) -> tuple[dict[str, Any], ...]:
+        from vllm.pap.data_plane import build_offload_exec_route_groups
+
+        request_ids = tuple(
+            str(req_id) for req_id in input_batch.req_ids[: input_batch.num_reqs]
+        )
+        return build_offload_exec_route_groups(
+            request_ids,
+            attention_endpoint_by_request=self.pap_attention_endpoint_by_req_id,
+            offload_exec_zmq_endpoint_by_request=(
+                self.pap_offload_exec_zmq_endpoint_by_req_id
+            ),
+            steps_by_request={
+                req_id: int(step)
+                for req_id, step in zip(
+                    request_ids,
+                    input_batch.seq_lens_cpu_upper_bound[
+                        : input_batch.num_reqs
+                    ].tolist(),
+                )
+            },
+        )
+
+    @staticmethod
+    def _pap_filter_route_groups_for_request_slice(
+        route_groups: Iterable[dict[str, Any]],
+        request_slice: slice,
+    ) -> tuple[dict[str, Any], ...]:
+        from vllm.pap.data_plane import (
+            filter_offload_exec_route_groups_for_request_slice,
+        )
+
+        return filter_offload_exec_route_groups_for_request_slice(
+            route_groups,
+            request_slice,
+        )
 
     def _pap_forward_context_kwargs(
         self,
@@ -971,6 +1014,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             ),
             "pap_offload_exec_zmq_endpoint_by_request": (
                 self._pap_offload_exec_zmq_endpoints_for_batch(input_batch)
+            ),
+            "pap_offload_exec_route_groups": (
+                self._pap_offload_exec_route_groups_for_batch(input_batch)
             ),
             "pap_prefill_prefix_len_by_request": (
                 self._pap_prefill_prefix_lens_for_batch(input_batch)
@@ -1012,6 +1058,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         kwargs["pap_num_reqs"] = len(request_ids)
         kwargs["pap_num_actual_tokens"] = token_slice.stop - token_slice.start
         kwargs["pap_positions"] = input_batch.positions[token_slice]
+        kwargs["pap_offload_exec_route_groups"] = (
+            self._pap_filter_route_groups_for_request_slice(
+                full_kwargs.get("pap_offload_exec_route_groups", ()),
+                request_slice,
+            )
+        )
         for key in (
             "pap_attention_tcp_endpoint_by_request",
             "pap_attention_endpoint_by_request",

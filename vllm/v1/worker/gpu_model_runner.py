@@ -1196,6 +1196,43 @@ class GPUModelRunner(
         request_id_set = set(request_ids)
         return {key: value for key, value in mapping.items() if key in request_id_set}
 
+    def _pap_offload_exec_route_groups_for_request_ids(
+        self,
+        request_ids: Sequence[str],
+        seq_lens_cpu_upper_bound: Sequence[int],
+    ) -> tuple[dict[str, Any], ...]:
+        from vllm.pap.data_plane import build_offload_exec_route_groups
+
+        request_ids_tuple = tuple(str(req_id) for req_id in request_ids)
+        return build_offload_exec_route_groups(
+            request_ids_tuple,
+            attention_endpoint_by_request=self.pap_attention_endpoint_by_req_id,
+            offload_exec_zmq_endpoint_by_request=(
+                self.pap_offload_exec_zmq_endpoint_by_req_id
+            ),
+            steps_by_request={
+                req_id: int(step)
+                for req_id, step in zip(
+                    request_ids_tuple,
+                    seq_lens_cpu_upper_bound,
+                )
+            },
+        )
+
+    @staticmethod
+    def _pap_filter_route_groups_for_request_slice(
+        route_groups: Iterable[dict[str, Any]],
+        request_slice: slice,
+    ) -> tuple[dict[str, Any], ...]:
+        from vllm.pap.data_plane import (
+            filter_offload_exec_route_groups_for_request_slice,
+        )
+
+        return filter_offload_exec_route_groups_for_request_slice(
+            route_groups,
+            request_slice,
+        )
+
     def _pap_enabled_for_request_ids(self, request_ids: Sequence[str]) -> bool:
         ktc = self.vllm_config.kv_transfer_config
         extra = ktc.kv_connector_extra_config if ktc is not None else {}
@@ -1203,9 +1240,13 @@ class GPUModelRunner(
         if pap_enabled:
             return True
         for req_id in request_ids:
-            if req_id in self.pap_attention_tcp_endpoint_by_req_id:
+            if (
+                req_id in self.pap_attention_endpoint_by_req_id
+                or req_id in self.pap_offload_exec_zmq_endpoint_by_req_id
+            ):
                 logger.info(
-                    "PAP enabled via per-request TCP endpoint req_id=%s", req_id
+                    "PAP enabled via per-request mailbox endpoint req_id=%s",
+                    req_id,
                 )
                 return True
         return False
@@ -1216,6 +1257,7 @@ class GPUModelRunner(
         num_scheduled_tokens: Sequence[int],
         num_actual_tokens: int,
         positions: torch.Tensor,
+        seq_lens_cpu_upper_bound: Sequence[int],
         finished_request_ids: Iterable[str] = (),
     ) -> dict[str, Any]:
         request_ids_tuple = tuple(str(req_id) for req_id in request_ids)
@@ -1250,6 +1292,12 @@ class GPUModelRunner(
                 self._pap_filter_mapping_for_request_ids(
                     self.pap_offload_exec_zmq_endpoint_by_req_id,
                     request_ids_tuple,
+                )
+            ),
+            "pap_offload_exec_route_groups": (
+                self._pap_offload_exec_route_groups_for_request_ids(
+                    request_ids_tuple,
+                    seq_lens_cpu_upper_bound,
                 )
             ),
             "pap_prefill_prefix_len_by_request": (
@@ -1304,6 +1352,12 @@ class GPUModelRunner(
             ubatch_slice.token_slice.stop - ubatch_slice.token_slice.start
         )
         kwargs["pap_positions"] = full_kwargs["pap_positions"][ubatch_slice.token_slice]
+        kwargs["pap_offload_exec_route_groups"] = (
+            self._pap_filter_route_groups_for_request_slice(
+                full_kwargs.get("pap_offload_exec_route_groups", ()),
+                ubatch_slice.request_slice,
+            )
+        )
         for key in (
             "pap_attention_tcp_endpoint_by_request",
             "pap_attention_endpoint_by_request",
@@ -4594,6 +4648,7 @@ class GPUModelRunner(
                 num_scheduled_tokens_np,
                 num_tokens_unpadded,
                 positions,
+                self.optimistic_seq_lens_cpu[:num_reqs].tolist(),
                 pap_finished_req_ids,
             )
             if pap_runner_microbatching and ubatch_slices_for_model is not None:

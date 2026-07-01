@@ -36,7 +36,9 @@ def test_model_runner_passes_pap_enabled_to_forward_context() -> None:
 
     assert '"pap_enabled"' in text
     assert "_pap_enabled_for_batch" in text
-    assert "PAP enabled via per-request TCP endpoint" in text
+    assert "PAP enabled via per-request mailbox endpoint" in text
+    assert "_pap_offload_exec_route_groups_for_batch" in text
+    assert '"pap_offload_exec_route_groups"' in text
     assert '"pap_finished_request_ids"' in text
     assert "scheduler_output.finished_req_ids" in text
 
@@ -48,6 +50,8 @@ def test_gpu_model_runner_passes_pap_request_context() -> None:
     assert "new_req_data.kv_transfer_params" in text
     assert "_pap_forward_context_kwargs" in text
     assert "additional_kwargs=pap_additional_kwargs" in text
+    assert "_pap_offload_exec_route_groups_for_request_ids" in text
+    assert '"pap_offload_exec_route_groups"' in text
     assert '"pap_attention_tcp_endpoint_by_request"' in text
     assert '"pap_finished_request_ids"' in text
     assert "scheduler_output.finished_req_ids" in text
@@ -202,23 +206,24 @@ def test_engine_core_allows_pap_metadata_without_kv_connector() -> None:
     assert "Got kv_transfer_params, but no KVConnector found" in text
 
 
-def test_qwen3_pap_path_uses_nccl_offload_exec() -> None:
+def test_qwen3_pap_path_uses_nixl_mailbox_offload_exec_without_tcp_trigger() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
 
-    start = text.index("    def _compute_pap_attention")
+    start = text.index("    def _compute_pap_attention(\n")
     end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
     method = text[start:end]
 
     assert "self.attn(" not in method
+    assert "pap_offload_exec_route_groups" in method
+    assert "select_attention_endpoint_for_request" not in method
+    assert "trigger_offload_exec_attention_batch" not in method
+    assert "requires_tcp_trigger" not in method
     assert "transport.send_qkv_batch" in method
     assert "transport.recv_output_batch" in method
     assert "recv_output_batch_message" in method
     assert "output_message.release()" in method
     assert "PAPOffloadExecBatchDescriptor" in method
-    assert "PAPOffloadExecDescriptor" in method
-    assert "trigger_offload_exec_attention_batch" in method
-    assert "_pap_offload_exec_local_address(" in method
-    assert "local_offload_exec_zmq_endpoint" in method
+    assert "PAPOffloadExecDescriptor" not in method
 
 
 def test_qwen3_pap_mailbox_transport_is_per_attention_endpoint() -> None:
@@ -309,6 +314,24 @@ def test_qwen3_pap_attention_yields_through_dbo() -> None:
     assert "dbo_yield()" in method
     assert method.index("send_qkv_batch") < method.index("dbo_yield()")
     assert method.index("dbo_yield()") < method.index("recv_output_batch")
+
+
+def test_qwen3_pap_can_async_submit_qkv_send_before_dbo_yield() -> None:
+    text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
+    start = text.index("    def _compute_pap_attention")
+    end = text.index("    def _maybe_import_pap_prefill_kv_to_attention", start)
+    method = text[start:end]
+
+    assert "PAP_OFFLOAD_EXEC_ASYNC_QKV_SEND" in method
+    assert "_pap_submit_async_qkv_batch_send" in method
+    assert "offload_exec_send_handles" in method
+    assert method.index("_pap_submit_async_qkv_batch_send") < method.index(
+        "dbo_yield()"
+    )
+    yield_pos = method.index("dbo_yield()")
+    wait_call_pos = method.index("wait_offload_exec_sends()", yield_pos)
+    assert yield_pos < wait_call_pos
+    assert wait_call_pos < method.index("recv_output_batch_message")
 
 
 def test_qwen3_pap_microbatch_recv_supports_direct_mailbox_output() -> None:
@@ -538,24 +561,33 @@ def test_qwen3_pap_gate_checks_decode_only() -> None:
     assert "pap_num_scheduled_tokens" in method
 
 
-def test_qwen3_pap_sends_position_only_offload_exec_descriptor() -> None:
+def test_qwen3_pap_uses_route_plan_steps_for_offload_exec_descriptor() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
-    start = text.index("    def _compute_pap_attention")
+    start = text.index("    def _compute_pap_attention(\n")
     end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
     method = text[start:end]
 
-    assert "seq_lens" in method
-    assert "pap_positions" in method
-    assert "positions_cpu.reshape(-1)[req_index]" in method
-    assert "seq_len != max_seq_len" in method
-    assert "differs from" in method
-    assert '"seq_len": seq_len' in method
+    assert 'route_group.get("steps"' in method
+    assert 'route_group["batch_id_suffix"]' in method
+    assert '"metadata_template"' in method
+    assert '"a": (float(self.scaling),) * len(group_steps)' in method
+    assert "items=()" in method
+    assert "PAPOffloadExecDescriptor(" not in method
+    assert "batch_descriptor.item_count" in method
+    assert "len(batch_descriptor.items)" not in method
+    assert "positions_cpu" not in method
+    assert "seq_lens_cpu" not in method
+    assert "seq_len != max_seq_len" not in method
+    assert '"request_id": request_id' not in method
+    assert '"layer_name": self.attn.layer_name' not in method
+    assert '"scale": float(self.scaling)' not in method
+    assert '"seq_len": seq_len' not in method
     assert "slot_mapping" not in method
     assert "block_id = slot // block_size" not in method
     assert '"block_id": block_id' not in method
     assert '"slot": slot' not in method
     assert "ThreadPoolExecutor" in text
-    assert "PAP_REMOTE_ATTENTION_PARALLELISM" in method
+    assert "PAP_REMOTE_ATTENTION_PARALLELISM" not in method
 
 
 def test_model_runner_passes_pap_block_size_to_forward_context() -> None:
@@ -572,10 +604,10 @@ def test_qwen3_pap_projection_trace_uses_batch_descriptor() -> None:
     end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
     method = text[start:end]
 
-    assert "offload_exec_batches[0][3].layer_name" in method
-    assert "sum(len(batch[3].items) for batch in offload_exec_batches)" in method
-    assert "offload_exec_batches[0][2].layer_name" not in method
-    assert "sum(len(batch[2].items) for batch in offload_exec_batches)" not in method
+    assert "offload_exec_batches[0][2].layer_name" in method
+    assert "sum(batch[2].item_count for batch in offload_exec_batches)" in method
+    assert "offload_exec_batches[0][3].layer_name" not in method
+    assert "sum(len(batch[3].items) for batch in offload_exec_batches)" not in method
 
 
 def test_qwen3_pap_attention_does_not_require_projection_block_size() -> None:

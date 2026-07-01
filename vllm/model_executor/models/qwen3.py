@@ -30,7 +30,7 @@ import os
 import threading
 import time
 from collections.abc import Iterable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from contextlib import nullcontext
 from functools import lru_cache
 from typing import Any
@@ -410,6 +410,143 @@ def _pap_remote_attention_executor(max_workers: int) -> ThreadPoolExecutor:
     )
 
 
+class _PAPQKVSendStats:
+    def __init__(self, *, send_ms: float, send_done_ns: int) -> None:
+        self.send_ms = float(send_ms)
+        self.send_done_ns = int(send_done_ns)
+
+
+class _PAPQKVSendHandle:
+    def __init__(
+        self,
+        future: Future[_PAPQKVSendStats] | None = None,
+        stats: _PAPQKVSendStats | None = None,
+    ) -> None:
+        self._future = future
+        self._stats = stats
+
+    @classmethod
+    def completed(cls, stats: _PAPQKVSendStats) -> "_PAPQKVSendHandle":
+        return cls(stats=stats)
+
+    def wait(self) -> _PAPQKVSendStats:
+        if self._stats is None:
+            if self._future is None:
+                raise RuntimeError("PAP async QKV send handle has no future")
+            self._stats = self._future.result()
+        return self._stats
+
+
+@lru_cache(maxsize=4)
+def _pap_async_qkv_send_executor(max_workers: int) -> ThreadPoolExecutor:
+    return ThreadPoolExecutor(
+        max_workers=max(1, int(max_workers)),
+        thread_name_prefix="pap-qkv-send",
+    )
+
+
+@lru_cache(maxsize=8)
+def _pap_async_qkv_send_stream(device_index: int) -> torch.cuda.Stream:
+    return torch.cuda.Stream(device=torch.device("cuda", int(device_index)))
+
+
+def _pap_async_qkv_send_workers() -> int:
+    try:
+        return int(os.environ.get("PAP_OFFLOAD_EXEC_ASYNC_QKV_SEND_WORKERS", "1"))
+    except ValueError:
+        return 1
+
+
+def _pap_qkv_group_cuda_device(
+    group_items: list[tuple[int, Any, tuple[torch.Tensor, ...]]],
+) -> torch.device | None:
+    for _req_index, _descriptor, qkv_segments in group_items:
+        for segment in qkv_segments:
+            if segment.device.type == "cuda":
+                return segment.device
+    return None
+
+
+def _pap_record_qkv_ready_event(
+    group_items: list[tuple[int, Any, tuple[torch.Tensor, ...]]],
+) -> tuple[torch.device, torch.cuda.Event] | None:
+    device = _pap_qkv_group_cuda_device(group_items)
+    if device is None:
+        return None
+    event = torch.cuda.Event()
+    event.record(torch.cuda.current_stream(device))
+    return device, event
+
+
+def _pap_pack_qkv_group_items(
+    group_items: list[tuple[int, Any, tuple[torch.Tensor, ...]]],
+) -> torch.Tensor:
+    if len(group_items) == 1:
+        return torch.cat(group_items[0][2], dim=-1)
+    return torch.cat(
+        [torch.cat(item[2], dim=-1) for item in group_items],
+        dim=0,
+    )
+
+
+def _pap_send_qkv_batch_job(
+    *,
+    batch_descriptor: Any,
+    group_items: list[tuple[int, Any, tuple[torch.Tensor, ...]]],
+    transport: Any,
+    remote_address: str,
+    ready_event: tuple[torch.device, torch.cuda.Event] | None = None,
+) -> _PAPQKVSendStats:
+    send_start = time.perf_counter()
+    if ready_event is None:
+        qkv_batch = _pap_pack_qkv_group_items(group_items)
+    else:
+        device, event = ready_event
+        device_index = (
+            int(device.index)
+            if device.index is not None
+            else int(torch.cuda.current_device())
+        )
+        stream = _pap_async_qkv_send_stream(device_index)
+        with torch.cuda.device(device), torch.cuda.stream(stream):
+            stream.wait_event(event)
+            qkv_batch = _pap_pack_qkv_group_items(group_items)
+        stream.synchronize()
+    transport.send_qkv_batch(
+        batch_descriptor,
+        qkv_batch,
+        remote_address=remote_address,
+    )
+    return _PAPQKVSendStats(
+        send_ms=(time.perf_counter() - send_start) * 1000.0,
+        send_done_ns=time.perf_counter_ns(),
+    )
+
+
+def _pap_submit_async_qkv_batch_send(
+    *,
+    batch_descriptor: Any,
+    group_items: list[tuple[int, Any, tuple[torch.Tensor, ...]]],
+    transport: Any,
+    remote_address: str,
+    executor: Any | None = None,
+) -> _PAPQKVSendHandle:
+    ready_event = _pap_record_qkv_ready_event(group_items)
+    send_executor = executor or _pap_async_qkv_send_executor(
+        _pap_async_qkv_send_workers()
+    )
+    future = send_executor.submit(
+        lambda: _pap_send_qkv_batch_job(
+            batch_descriptor=batch_descriptor,
+            group_items=group_items,
+            transport=transport,
+            remote_address=remote_address,
+            ready_event=ready_event,
+        )
+    )
+    return _PAPQKVSendHandle(future=future)
+
+
 def _pap_offload_exec_transport_kind() -> str:
     return os.environ.get("PAP_OFFLOAD_EXEC_TRANSPORT", "nixl_mailbox").lower()
 
@@ -512,8 +649,7 @@ def _pap_offload_exec_transport():
         )
 
     raise RuntimeError(
-        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; "
-        "use nixl_mailbox"
+        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; use nixl_mailbox"
     )
 
 
@@ -523,9 +659,7 @@ def _pap_nixl_mailbox_offload_exec_transport(attention_endpoint: str):
 
     local_rank = _pap_tensor_parallel_rank()
     actor_base = os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "projection")
-    endpoint_hash = hashlib.sha1(
-        attention_endpoint.encode("utf-8")
-    ).hexdigest()[:12]
+    endpoint_hash = hashlib.sha1(attention_endpoint.encode("utf-8")).hexdigest()[:12]
     return build_nixl_mailbox_offload_exec_transport(
         actor_id=f"{actor_base}-{endpoint_hash}",
         local_rank=local_rank,
@@ -538,12 +672,9 @@ def _pap_offload_exec_transport_for_attention_endpoint(
 ):
     transport = _pap_offload_exec_transport_kind()
     if transport in {"nixl", "nixl_mailbox"}:
-        return _pap_nixl_mailbox_offload_exec_transport(
-            str(attention_endpoint or "")
-        )
+        return _pap_nixl_mailbox_offload_exec_transport(str(attention_endpoint or ""))
     raise RuntimeError(
-        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; "
-        "use nixl_mailbox"
+        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; use nixl_mailbox"
     )
 
 
@@ -551,8 +682,6 @@ def _pap_bind_offload_exec_mailbox_peer(
     transport: Any,
     attention_endpoint: str | None,
 ) -> None:
-    if getattr(transport, "requires_tcp_trigger", True):
-        return
     if not attention_endpoint:
         raise RuntimeError(
             "PAP NIXL mailbox OFFLOAD_EXEC requires pap_attention_endpoint"
@@ -1469,41 +1598,16 @@ class Qwen3Attention(nn.Module):
         key = k.view(-1, self.num_kv_heads, self.head_dim)
         value = v.view(-1, self.num_kv_heads, self.head_dim)
 
-        seq_lens = getattr(attn_metadata, "seq_lens", None)
-        if seq_lens is None:
-            raise RuntimeError("PAP attention missing scheduler seq_lens")
-        if int(seq_lens.shape[0]) < num_reqs:
-            raise RuntimeError("PAP attention seq_lens do not cover all requests")
-
-        seq_lens_cpu = seq_lens.detach().to(device="cpu", dtype=torch.long)
-        positions = additional_kwargs.get("pap_positions")
-        if positions is None:
-            raise RuntimeError("PAP attention missing input positions")
-        if int(positions.shape[-1]) < num_reqs:
-            raise RuntimeError("PAP attention positions do not cover all requests")
-        positions_cpu = positions.detach().to(device="cpu", dtype=torch.long)
-
         from vllm.pap.data_plane import (
             PAPOffloadExecBatchDescriptor,
-            PAPOffloadExecDescriptor,
             pap_offload_exec_trace_id,
         )
-        from vllm.pap.shadow_attention import (
-            select_attention_endpoint_for_request,
-            trigger_offload_exec_attention_batch,
-        )
 
-        offload_exec_zmq_endpoint_by_request = (
-            additional_kwargs.get("pap_offload_exec_zmq_endpoint_by_request") or {}
+        route_groups = tuple(
+            additional_kwargs.get("pap_offload_exec_route_groups") or ()
         )
-        tcp_endpoint_by_request = (
-            additional_kwargs.get("pap_attention_tcp_endpoint_by_request") or {}
-        )
-        attention_endpoint_by_request = (
-            additional_kwargs.get("pap_attention_endpoint_by_request") or {}
-        )
-        default_tcp_endpoint = additional_kwargs.get("pap_attention_tcp_endpoint")
-        default_attention_endpoint = additional_kwargs.get("pap_attention_endpoint")
+        if not route_groups:
+            raise RuntimeError("PAP attention missing OFFLOAD_EXEC route groups")
         attention_kv_installed_by_request = set(
             additional_kwargs.get("pap_attention_kv_installed_by_request") or ()
         )
@@ -1513,61 +1617,70 @@ class Qwen3Attention(nn.Module):
         prefill_kv_handle_by_request = (
             additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
         )
-        remote_attention_calls: list[
-            tuple[int, str | None, str | None, str | None, dict[str, Any]]
-        ] = []
-        for req_index in range(num_reqs):
-            request_id = str(request_ids[req_index])
-            if not is_pap_request_id(request_id):
-                raise RuntimeError(
-                    f"PAP attention cannot route non-OpenAI request id {request_id}"
-                )
-            seq_len = int(positions_cpu.reshape(-1)[req_index].item()) + 1
-            max_seq_len = int(seq_lens_cpu[req_index].item())
-            if seq_len != max_seq_len:
-                raise RuntimeError(
-                    f"PAP attention position-derived seq_len {seq_len} differs from "
-                    f"scheduler seq_len {max_seq_len} for {request_id}"
-                )
-            tcp_endpoint = select_attention_endpoint_for_request(
-                request_id,
-                default_endpoint=default_tcp_endpoint,
-                endpoint_by_request=tcp_endpoint_by_request,
+        remote_attention_calls: list[tuple[int, str, str]] = []
+        offload_exec_group_templates: dict[tuple[str | None, str], dict[str, Any]] = {}
+        routed_req_indices: set[int] = set()
+        for route_group in route_groups:
+            attention_endpoint = _pap_endpoint_for_tp_rank(
+                route_group.get("attention_endpoint")
             )
-            tcp_endpoint = _pap_endpoint_for_tp_rank(tcp_endpoint)
-            attention_endpoint = select_attention_endpoint_for_request(
-                request_id,
-                default_endpoint=default_attention_endpoint,
-                endpoint_by_request=attention_endpoint_by_request,
-            )
-            attention_endpoint = _pap_endpoint_for_tp_rank(attention_endpoint)
             offload_exec_zmq_endpoint = _pap_endpoint_for_tp_rank(
-                offload_exec_zmq_endpoint_by_request.get(request_id)
+                route_group.get("offload_exec_zmq_endpoint")
             )
-            prefix_len = int(prefix_len_by_request.get(request_id) or 0)
-            prefill_kv_handle = prefill_kv_handle_by_request.get(request_id)
-            if prefix_len > 0 and request_id not in attention_kv_installed_by_request:
-                if not prefill_kv_handle:
-                    raise RuntimeError("PAP missing local prefill KV handle")
-                continue
-            remote_attention_calls.append(
-                (
-                    req_index,
-                    tcp_endpoint,
-                    attention_endpoint,
-                    offload_exec_zmq_endpoint,
-                    {
-                        "request_id": request_id,
-                        "layer_name": self.attn.layer_name,
-                        "query": query[req_index : req_index + 1],
-                        "key": key[req_index : req_index + 1],
-                        "value": value[req_index : req_index + 1],
-                        "scale": float(self.scaling),
-                        "seq_len": seq_len,
-                    },
+            if not attention_endpoint:
+                raise RuntimeError(
+                    "PAP NIXL mailbox OFFLOAD_EXEC requires pap_attention_endpoint"
                 )
+            if not offload_exec_zmq_endpoint:
+                raise RuntimeError(
+                    "PAP OFFLOAD_EXEC mailbox path missing "
+                    "pap_offload_exec_zmq_endpoint"
+                )
+            req_indices = tuple(
+                int(req_index) for req_index in route_group.get("req_indices", ())
             )
-            if offload_exec_zmq_endpoint:
+            group_request_ids = tuple(
+                str(request_id) for request_id in route_group.get("request_ids", ())
+            )
+            group_steps = tuple(int(step) for step in route_group.get("steps", ()))
+            if not (len(req_indices) == len(group_request_ids) == len(group_steps)):
+                raise RuntimeError("PAP OFFLOAD_EXEC route group is malformed")
+            template_key = (str(attention_endpoint), str(offload_exec_zmq_endpoint))
+            offload_exec_group_templates[template_key] = {
+                "batch_id_suffix": str(route_group["batch_id_suffix"]),
+                "metadata_template": {
+                    "r": group_request_ids,
+                    "s": group_steps,
+                    "a": (float(self.scaling),) * len(group_steps),
+                },
+            }
+            for group_offset, req_index in enumerate(req_indices):
+                if req_index < 0 or req_index >= num_reqs:
+                    raise RuntimeError("PAP OFFLOAD_EXEC route index out of range")
+                request_id = group_request_ids[group_offset]
+                if request_id != str(request_ids[req_index]):
+                    raise RuntimeError("PAP OFFLOAD_EXEC route request mismatch")
+                if not is_pap_request_id(request_id):
+                    raise RuntimeError(
+                        f"PAP attention cannot route non-OpenAI request id {request_id}"
+                    )
+                routed_req_indices.add(req_index)
+                prefix_len = int(prefix_len_by_request.get(request_id) or 0)
+                prefill_kv_handle = prefill_kv_handle_by_request.get(request_id)
+                if (
+                    prefix_len > 0
+                    and request_id not in attention_kv_installed_by_request
+                ):
+                    if not prefill_kv_handle:
+                        raise RuntimeError("PAP missing local prefill KV handle")
+                    raise RuntimeError("PAP attention KV is not installed")
+                remote_attention_calls.append(
+                    (
+                        req_index,
+                        str(attention_endpoint),
+                        str(offload_exec_zmq_endpoint),
+                    )
+                )
                 logger.debug(
                     "PAP OFFLOAD_EXEC ZMQ endpoint selected request_id=%s "
                     "layer=%s endpoint=%s",
@@ -1575,6 +1688,8 @@ class Qwen3Attention(nn.Module):
                     self.attn.layer_name,
                     offload_exec_zmq_endpoint,
                 )
+        if len(routed_req_indices) != num_reqs:
+            raise RuntimeError("PAP OFFLOAD_EXEC route groups do not cover batch")
 
         all_requests_offloaded = len(remote_attention_calls) == num_reqs
         direct_mailbox_output_enabled = os.environ.get(
@@ -1606,7 +1721,6 @@ class Qwen3Attention(nn.Module):
                 remote_output = remote_output.view_as(target)
             target.copy_(remote_output)
 
-        parallelism = int(os.environ.get("PAP_REMOTE_ATTENTION_PARALLELISM", "16"))
         q_first_kv_later_enabled = os.environ.get(
             "PAP_Q_FIRST_KV_LATER", ""
         ).lower() in ("1", "true", "yes", "on")
@@ -1616,6 +1730,7 @@ class Qwen3Attention(nn.Module):
             "yes",
             "on",
         )
+        async_qkv_send_enabled = _pap_env_enabled("PAP_OFFLOAD_EXEC_ASYNC_QKV_SEND")
         trace_offload_exec = os.environ.get("PAP_OFFLOAD_EXEC_TRACE", "").lower() in (
             "1",
             "true",
@@ -1632,38 +1747,26 @@ class Qwen3Attention(nn.Module):
         trace_batch_keys = ""
         trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
         offload_exec_groups: dict[
-            tuple[str | None, str | None, str],
-            list[tuple[int, PAPOffloadExecDescriptor, tuple[torch.Tensor, ...]]],
+            tuple[str | None, str],
+            list[tuple[int, None, tuple[torch.Tensor, ...]]],
         ] = {}
         for (
             req_index,
-            tcp_endpoint,
             attention_endpoint,
             offload_exec_zmq_endpoint,
-            call_kwargs,
         ) in remote_attention_calls:
-            if offload_exec_zmq_endpoint is None:
-                raise RuntimeError(
-                    "PAP OFFLOAD_EXEC path missing pap_offload_exec_zmq_endpoint"
-                )
             qkv_segments = (
-                call_kwargs["query"].reshape(1, -1),
-                call_kwargs["key"].reshape(1, -1),
-                call_kwargs["value"].reshape(1, -1),
-            )
-            descriptor = PAPOffloadExecDescriptor(
-                request_id=str(call_kwargs["request_id"]),
-                layer_name=str(call_kwargs["layer_name"]),
-                step=int(call_kwargs["seq_len"]),
-                scale=float(call_kwargs["scale"]),
+                query[req_index : req_index + 1].reshape(1, -1),
+                key[req_index : req_index + 1].reshape(1, -1),
+                value[req_index : req_index + 1].reshape(1, -1),
             )
             offload_exec_groups.setdefault(
-                (tcp_endpoint, attention_endpoint, offload_exec_zmq_endpoint),
+                (attention_endpoint, offload_exec_zmq_endpoint),
                 [],
             ).append(
                 (
                     req_index,
-                    descriptor,
+                    None,
                     qkv_segments,
                 )
             )
@@ -1671,16 +1774,14 @@ class Qwen3Attention(nn.Module):
         offload_exec_batches: list[
             tuple[
                 str | None,
-                str | None,
                 str,
                 PAPOffloadExecBatchDescriptor,
                 list[int],
                 Any,
-                str,
             ]
         ] = []
+        offload_exec_send_handles: list[_PAPQKVSendHandle | None] = []
         for (
-            tcp_endpoint,
             attention_endpoint,
             offload_exec_zmq_endpoint,
         ), group_items in offload_exec_groups.items():
@@ -1688,9 +1789,14 @@ class Qwen3Attention(nn.Module):
                 attention_endpoint,
                 offload_exec_zmq_endpoint,
             )
+            route_template = offload_exec_group_templates[
+                (str(attention_endpoint), str(offload_exec_zmq_endpoint))
+            ]
             batch_descriptor = PAPOffloadExecBatchDescriptor(
                 layer_name=self.attn.layer_name,
-                items=tuple(item[1] for item in group_items),
+                items=(),
+                batch_id_suffix=route_template["batch_id_suffix"],
+                metadata_template=route_template["metadata_template"],
             )
             _pap_bind_offload_exec_mailbox_peer(transport, attention_endpoint)
             send_query_batch = getattr(transport, "send_query_batch", None)
@@ -1703,7 +1809,6 @@ class Qwen3Attention(nn.Module):
                 callable(send_query_batch)
                 and callable(send_kv_batch)
                 and getattr(transport, "supports_query_first_kv_later", False)
-                and not getattr(transport, "requires_tcp_trigger", True)
             )
             if query_already_sent and not q_first_transport_ready:
                 raise RuntimeError(
@@ -1736,6 +1841,7 @@ class Qwen3Attention(nn.Module):
                     kv_batch,
                     remote_address=offload_exec_zmq_endpoint,
                 )
+                send_handle = None
             elif segmented_qkv_enabled and callable(send_qkv_batch_segments):
                 if len(group_items) == 1:
                     qkv_segments = group_items[0][2]
@@ -1752,30 +1858,33 @@ class Qwen3Attention(nn.Module):
                     payload_shape=(len(group_items), qkv_width),
                     remote_address=offload_exec_zmq_endpoint,
                 )
+                send_handle = None
             else:
-                if len(group_items) == 1:
-                    qkv_batch = torch.cat(group_items[0][2], dim=-1)
-                else:
-                    qkv_batch = torch.cat(
-                        [torch.cat(item[2], dim=-1) for item in group_items],
-                        dim=0,
+                if async_qkv_send_enabled:
+                    send_handle = _pap_submit_async_qkv_batch_send(
+                        batch_descriptor=batch_descriptor,
+                        group_items=group_items,
+                        transport=transport,
+                        remote_address=offload_exec_zmq_endpoint,
                     )
-                transport.send_qkv_batch(
-                    batch_descriptor,
-                    qkv_batch,
-                    remote_address=offload_exec_zmq_endpoint,
-                )
+                else:
+                    qkv_batch = _pap_pack_qkv_group_items(group_items)
+                    transport.send_qkv_batch(
+                        batch_descriptor,
+                        qkv_batch,
+                        remote_address=offload_exec_zmq_endpoint,
+                    )
+                    send_handle = None
             offload_exec_batches.append(
                 (
-                    tcp_endpoint,
                     attention_endpoint,
                     offload_exec_zmq_endpoint,
                     batch_descriptor,
                     [item[0] for item in group_items],
                     transport,
-                    _pap_offload_exec_local_address(offload_exec_zmq_endpoint),
                 )
             )
+            offload_exec_send_handles.append(send_handle)
         trace_send_ms = (
             (time.perf_counter() - trace_send_start) * 1000.0
             if trace_offload_exec
@@ -1784,74 +1893,18 @@ class Qwen3Attention(nn.Module):
         if trace_offload_exec:
             trace_send_done_ns = time.perf_counter_ns()
 
-        def trigger_offload_exec_batch_call(
-            tcp_endpoint: str | None,
-            local_address: str,
-            descriptor: PAPOffloadExecBatchDescriptor,
-        ) -> None:
-            trigger_offload_exec_attention_batch(
-                tcp_endpoint=tcp_endpoint,
-                layer_name=descriptor.layer_name,
-                items=[
-                    {
-                        "request_id": item.request_id,
-                        "step": item.step,
-                        "scale": item.scale,
-                    }
-                    for item in descriptor.items
-                ],
-                remote_address=local_address,
-            )
+        def wait_offload_exec_sends() -> None:
+            nonlocal trace_send_done_ns
+            send_done_times: list[int] = []
+            for send_handle in offload_exec_send_handles:
+                if send_handle is None:
+                    continue
+                stats = send_handle.wait()
+                send_done_times.append(stats.send_done_ns)
+            if trace_offload_exec and send_done_times:
+                trace_send_done_ns = max(send_done_times)
 
-        trace_trigger_start = time.perf_counter() if trace_offload_exec else 0.0
-        if all(
-            not getattr(batch[5], "requires_tcp_trigger", True)
-            for batch in offload_exec_batches
-        ):
-            pass
-        elif len(offload_exec_batches) <= 1 or parallelism <= 1:
-            for (
-                tcp_endpoint,
-                _attention_endpoint,
-                _offload_exec_zmq_endpoint,
-                descriptor,
-                _req_indices,
-                _transport,
-                local_offload_exec_zmq_endpoint,
-            ) in offload_exec_batches:
-                trigger_offload_exec_batch_call(
-                    tcp_endpoint,
-                    local_offload_exec_zmq_endpoint,
-                    descriptor,
-                )
-        else:
-            executor = _pap_remote_attention_executor(
-                min(parallelism, len(offload_exec_batches))
-            )
-            futures = [
-                executor.submit(
-                    trigger_offload_exec_batch_call,
-                    tcp_endpoint,
-                    local_offload_exec_zmq_endpoint,
-                    descriptor,
-                )
-                for (
-                    tcp_endpoint,
-                    _attention_endpoint,
-                    _offload_exec_zmq_endpoint,
-                    descriptor,
-                    _req_indices,
-                    _transport,
-                    local_offload_exec_zmq_endpoint,
-                ) in offload_exec_batches
-            ]
-            for future in futures:
-                future.result()
-        trace_trigger_ms = (
-            (time.perf_counter() - trace_trigger_start) * 1000.0
-            if trace_offload_exec
-            else 0.0
-        )
+        trace_trigger_ms = 0.0
 
         trace_yield_start = time.perf_counter() if trace_offload_exec else 0.0
         if trace_offload_exec:
@@ -1866,6 +1919,7 @@ class Qwen3Attention(nn.Module):
             trace_yield_end_ns = time.perf_counter_ns()
             trace_yield_ms = (time.perf_counter() - trace_yield_start) * 1000.0
 
+        wait_offload_exec_sends()
         trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
 
         def record_projection_trace() -> None:
@@ -1873,15 +1927,15 @@ class Qwen3Attention(nn.Module):
             if not trace_offload_exec or not offload_exec_batches:
                 return
             trace_batch_keys = "|".join(
-                pap_offload_exec_trace_id(batch[3].output_tensor_id)
+                pap_offload_exec_trace_id(batch[2].output_tensor_id)
                 for batch in offload_exec_batches
             )
             ubatch_id = _pap_current_ubatch_id()
-            calls = sum(len(batch[3].items) for batch in offload_exec_batches)
+            calls = sum(batch[2].item_count for batch in offload_exec_batches)
             if projection_timeline is not None:
                 projection_timeline.update(
                     {
-                        "layer": offload_exec_batches[0][3].layer_name,
+                        "layer": offload_exec_batches[0][2].layer_name,
                         "ubatch_id": ubatch_id,
                         "batches": len(offload_exec_batches),
                         "calls": calls,
@@ -1906,7 +1960,7 @@ class Qwen3Attention(nn.Module):
                 "yield_ms=%.3f recv_ms=%.3f total_ms=%.3f batch_keys=%s "
                 "send_done_ns=%d yield_start_ns=%d yield_end_ns=%d "
                 "recv_done_ns=%d",
-                offload_exec_batches[0][3].layer_name,
+                offload_exec_batches[0][2].layer_name,
                 ubatch_id,
                 len(offload_exec_batches),
                 calls,
@@ -1923,13 +1977,11 @@ class Qwen3Attention(nn.Module):
             )
 
         for (
-            _tcp_endpoint,
             _attention_endpoint,
             offload_exec_zmq_endpoint,
             batch_descriptor,
             req_indices,
             transport,
-            _local_offload_exec_zmq_endpoint,
         ) in offload_exec_batches:
             recv_output_batch_message = getattr(
                 transport, "recv_output_batch_message", None
@@ -1947,7 +1999,7 @@ class Qwen3Attention(nn.Module):
                     remote_address=offload_exec_zmq_endpoint,
                 )
             try:
-                if int(output_batch.shape[0]) != len(batch_descriptor.items):
+                if int(output_batch.shape[0]) != batch_descriptor.item_count:
                     raise RuntimeError(
                         "PAP OFFLOAD_EXEC output batch row count mismatch"
                     )

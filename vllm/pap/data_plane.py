@@ -18,6 +18,7 @@ import base64
 import hashlib
 import os
 import pickle
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Protocol
@@ -40,6 +41,90 @@ def pap_offload_exec_trace_id(value: str) -> str:
     """Short stable id for correlating Projection and Attention trace lines."""
 
     return hashlib.sha1(value.encode("utf-8")).hexdigest()[:16]
+
+
+def build_offload_exec_route_groups(
+    request_ids: Sequence[str],
+    *,
+    attention_endpoint_by_request: Mapping[str, str],
+    offload_exec_zmq_endpoint_by_request: Mapping[str, str],
+    steps_by_request: Mapping[str, int],
+) -> tuple[dict[str, Any], ...]:
+    groups: dict[tuple[str, str], dict[str, Any]] = {}
+    for req_index, req_id in enumerate(request_ids):
+        req_id = str(req_id)
+        attention_endpoint = attention_endpoint_by_request.get(req_id)
+        offload_exec_zmq_endpoint = offload_exec_zmq_endpoint_by_request.get(req_id)
+        step = steps_by_request.get(req_id)
+        if not attention_endpoint or not offload_exec_zmq_endpoint or step is None:
+            continue
+        key = (attention_endpoint, offload_exec_zmq_endpoint)
+        group = groups.setdefault(
+            key,
+            {
+                "attention_endpoint": attention_endpoint,
+                "offload_exec_zmq_endpoint": offload_exec_zmq_endpoint,
+                "req_indices": [],
+                "request_ids": [],
+                "steps": [],
+            },
+        )
+        group["req_indices"].append(req_index)
+        group["request_ids"].append(req_id)
+        group["steps"].append(int(step))
+    return tuple(
+        {
+            "attention_endpoint": group["attention_endpoint"],
+            "offload_exec_zmq_endpoint": group["offload_exec_zmq_endpoint"],
+            "req_indices": tuple(group["req_indices"]),
+            "request_ids": tuple(group["request_ids"]),
+            "steps": tuple(group["steps"]),
+            "batch_id_suffix": ",".join(
+                f"{request_id}@{step}"
+                for request_id, step in zip(group["request_ids"], group["steps"])
+            ),
+        }
+        for group in groups.values()
+    )
+
+
+def filter_offload_exec_route_groups_for_request_slice(
+    route_groups: Iterable[Mapping[str, Any]],
+    request_slice: slice,
+) -> tuple[dict[str, Any], ...]:
+    start = int(request_slice.start or 0)
+    stop = int(request_slice.stop or start)
+    filtered_groups: list[dict[str, Any]] = []
+    for group in route_groups:
+        req_indices = tuple(int(index) for index in group.get("req_indices", ()))
+        request_ids = tuple(str(req_id) for req_id in group.get("request_ids", ()))
+        steps = tuple(int(step) for step in group.get("steps", ()))
+        local_indices: list[int] = []
+        local_request_ids: list[str] = []
+        local_steps: list[int] = []
+        for offset, req_index in enumerate(req_indices):
+            if start <= req_index < stop:
+                local_indices.append(req_index - start)
+                if offset < len(request_ids):
+                    local_request_ids.append(request_ids[offset])
+                if offset < len(steps):
+                    local_steps.append(steps[offset])
+        if not local_indices:
+            continue
+        filtered_groups.append(
+            {
+                "attention_endpoint": group.get("attention_endpoint"),
+                "offload_exec_zmq_endpoint": group.get("offload_exec_zmq_endpoint"),
+                "req_indices": tuple(local_indices),
+                "request_ids": tuple(local_request_ids),
+                "steps": tuple(local_steps),
+                "batch_id_suffix": ",".join(
+                    f"{request_id}@{step}"
+                    for request_id, step in zip(local_request_ids, local_steps)
+                ),
+            }
+        )
+    return tuple(filtered_groups)
 
 
 class PAPTensorTransport(str, Enum):
@@ -71,21 +156,75 @@ class PAPOffloadExecBatchDescriptor:
 
     layer_name: str
     items: tuple[PAPOffloadExecDescriptor, ...]
+    batch_id_suffix: str | None = None
+    metadata_template: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "layer_name", str(self.layer_name))
         object.__setattr__(self, "items", tuple(self.items))
+        if self.batch_id_suffix is not None:
+            object.__setattr__(self, "batch_id_suffix", str(self.batch_id_suffix))
+        if self.metadata_template is not None:
+            template = self.metadata_template
+            try:
+                request_ids = tuple(str(request_id) for request_id in template["r"])
+                steps = tuple(int(step) for step in template["s"])
+            except KeyError as exc:
+                raise ValueError(
+                    "PAP OFFLOAD_EXEC metadata template requires r and s"
+                ) from exc
+            normalized_template: dict[str, Any] = {
+                "r": request_ids,
+                "s": steps,
+            }
+            if "a" in template:
+                normalized_template["a"] = tuple(
+                    float(scale) for scale in template["a"]
+                )
+            lengths = {len(request_ids), len(steps)}
+            if "a" in normalized_template:
+                lengths.add(len(normalized_template["a"]))
+            if len(lengths) != 1:
+                raise ValueError(
+                    "PAP OFFLOAD_EXEC metadata template length mismatch"
+                )
+            if not request_ids:
+                raise ValueError(
+                    "PAP OFFLOAD_EXEC metadata template requires at least one item"
+                )
+            object.__setattr__(self, "metadata_template", normalized_template)
         if not self.items:
-            raise ValueError("PAP OFFLOAD_EXEC batch requires at least one item")
+            if self.metadata_template is None:
+                raise ValueError(
+                    "PAP OFFLOAD_EXEC batch requires at least one item"
+                )
+            if "a" not in self.metadata_template:
+                raise ValueError(
+                    "template-only PAP OFFLOAD_EXEC batch requires scales"
+                )
+            return
+        if (
+            self.metadata_template is not None
+            and len(self.metadata_template["r"]) != len(self.items)
+        ):
+            raise ValueError("PAP OFFLOAD_EXEC batch template length mismatch")
         for item in self.items:
             if item.layer_name != self.layer_name:
                 raise ValueError("all PAP OFFLOAD_EXEC batch items must share layer")
 
     @property
+    def item_count(self) -> int:
+        if self.items:
+            return len(self.items)
+        if self.metadata_template is None:
+            return 0
+        return len(self.metadata_template["r"])
+
+    @property
     def batch_id(self) -> str:
-        entries = ",".join(
-            f"{item.request_id}@{item.step}" for item in self.items
-        )
+        if self.batch_id_suffix is not None:
+            return f"{self.layer_name}#{self.batch_id_suffix}"
+        entries = ",".join(f"{item.request_id}@{item.step}" for item in self.items)
         return f"{self.layer_name}#{entries}"
 
     @property
@@ -298,16 +437,14 @@ class PAPOffloadExecTransport(Protocol):
         qkv: torch.Tensor,
         *,
         remote_address: str,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     def recv_qkv(
         self,
         descriptor: PAPOffloadExecDescriptor,
         *,
         remote_address: str,
-    ) -> torch.Tensor:
-        ...
+    ) -> torch.Tensor: ...
 
     def send_output(
         self,
@@ -315,16 +452,14 @@ class PAPOffloadExecTransport(Protocol):
         output: torch.Tensor,
         *,
         remote_address: str,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     def recv_output(
         self,
         descriptor: PAPOffloadExecDescriptor,
         *,
         remote_address: str,
-    ) -> torch.Tensor:
-        ...
+    ) -> torch.Tensor: ...
 
     def send_qkv_batch(
         self,
@@ -332,16 +467,14 @@ class PAPOffloadExecTransport(Protocol):
         qkv: torch.Tensor,
         *,
         remote_address: str,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     def recv_qkv_batch(
         self,
         descriptor: PAPOffloadExecBatchDescriptor,
         *,
         remote_address: str,
-    ) -> torch.Tensor:
-        ...
+    ) -> torch.Tensor: ...
 
     def send_output_batch(
         self,
@@ -349,16 +482,14 @@ class PAPOffloadExecTransport(Protocol):
         output: torch.Tensor,
         *,
         remote_address: str,
-    ) -> None:
-        ...
+    ) -> None: ...
 
     def recv_output_batch(
         self,
         descriptor: PAPOffloadExecBatchDescriptor,
         *,
         remote_address: str,
-    ) -> torch.Tensor:
-        ...
+    ) -> torch.Tensor: ...
 
 
 def _clone_and_release_mailbox_message(message: Any) -> torch.Tensor:
@@ -542,23 +673,17 @@ class PAPNixlMailboxOffloadExecTransport:
         if message.kind == "attention_query_batch":
             return self._recv_query_first_qkv_batch_message(message)
         message.release()
-        raise RuntimeError(
-            f"unexpected PAP mailbox message kind: {message.kind}"
-        )
+        raise RuntimeError(f"unexpected PAP mailbox message kind: {message.kind}")
 
     def recv_next_attention_batch_message(
         self,
     ) -> tuple[PAPOffloadExecBatchDescriptor, Any]:
         message = self.endpoint.recv()
         if message.kind in {"attention_task_batch", "attention_query_batch"}:
-            descriptor = _offload_exec_batch_descriptor_from_metadata(
-                message.metadata
-            )
+            descriptor = _offload_exec_batch_descriptor_from_metadata(message.metadata)
             return descriptor, message
         message.release()
-        raise RuntimeError(
-            f"unexpected PAP mailbox message kind: {message.kind}"
-        )
+        raise RuntimeError(f"unexpected PAP mailbox message kind: {message.kind}")
 
     def recv_kv_batch_message(
         self,
@@ -675,6 +800,22 @@ def _offload_exec_descriptor_to_metadata(
 def _offload_exec_batch_descriptor_to_metadata(
     descriptor: PAPOffloadExecBatchDescriptor,
 ) -> dict[str, Any]:
+    if descriptor.metadata_template is not None:
+        if "a" in descriptor.metadata_template:
+            scales = [float(scale) for scale in descriptor.metadata_template["a"]]
+        else:
+            scales = [float(item.scale) for item in descriptor.items]
+        request_ids = list(descriptor.metadata_template["r"])
+        steps = [int(step) for step in descriptor.metadata_template["s"]]
+        if not (len(request_ids) == len(steps) == len(scales)):
+            raise ValueError("compact PAP OFFLOAD_EXEC batch metadata length mismatch")
+        return {
+            "v": 2,
+            "l": descriptor.layer_name,
+            "r": request_ids,
+            "s": steps,
+            "a": scales,
+        }
     return {
         "v": 2,
         "l": descriptor.layer_name,
