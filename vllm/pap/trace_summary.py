@@ -81,7 +81,8 @@ _ATTENTION_CORRELATION_RE = re.compile(
 _MAILBOX_SEND_RE = re.compile(
     r"PAP NIXL mailbox send trace actor=(\S+) .* kind=(\S+) nbytes=(\d+) "
     r"queue_ms=([0-9.]+) publish_ms=([0-9.]+) pack_ms=([0-9.]+) "
-    r"copy_ms=([0-9.]+) notify_ms=([0-9.]+) ack_wait_ms=([0-9.]+) "
+    r"copy_ms=([0-9.]+) notify_ms=([0-9.]+) "
+    r"(?:write_ms=([0-9.]+) )?ack_wait_ms=([0-9.]+) "
     r"total_ms=([0-9.]+)"
 )
 _MAILBOX_READ_RE = re.compile(
@@ -364,9 +365,7 @@ def summarize_pap_trace_logs(
                         float(paged_metadata_ms or 0.0)
                     )
                     attention["paged_flash_ms"].append(float(paged_flash_ms or 0.0))
-                    attention["shape_lookup_ms"].append(
-                        float(shape_lookup_ms or 0.0)
-                    )
+                    attention["shape_lookup_ms"].append(float(shape_lookup_ms or 0.0))
                     attention["qkv_split_ms"].append(float(qkv_split_ms or 0.0))
                     attention["query_move_ms"].append(float(query_move_ms or 0.0))
                     attention["query_cat_ms"].append(float(query_cat_ms or 0.0))
@@ -376,18 +375,10 @@ def summarize_pap_trace_logs(
                     attention["append_prepare_ms"].append(
                         float(append_prepare_ms or 0.0)
                     )
-                    attention["append_record_ms"].append(
-                        float(append_record_ms or 0.0)
-                    )
-                    attention["append_tensor_ms"].append(
-                        float(append_tensor_ms or 0.0)
-                    )
-                    attention["append_copy_ms"].append(
-                        float(append_copy_ms or 0.0)
-                    )
-                    attention["append_state_ms"].append(
-                        float(append_state_ms or 0.0)
-                    )
+                    attention["append_record_ms"].append(float(append_record_ms or 0.0))
+                    attention["append_tensor_ms"].append(float(append_tensor_ms or 0.0))
+                    attention["append_copy_ms"].append(float(append_copy_ms or 0.0))
+                    attention["append_state_ms"].append(float(append_state_ms or 0.0))
                     if correlation := _ATTENTION_CORRELATION_RE.search(line):
                         (
                             batch_key,
@@ -407,6 +398,7 @@ def summarize_pap_trace_logs(
                     pack_ms,
                     copy_ms,
                     notify_ms,
+                    write_ms,
                     ack_wait_ms,
                     total_ms,
                 ) = match.groups()
@@ -422,6 +414,7 @@ def summarize_pap_trace_logs(
                     ("pack_ms", pack_ms),
                     ("copy_ms", copy_ms),
                     ("notify_ms", notify_ms),
+                    ("write_ms", write_ms or 0.0),
                     ("ack_wait_ms", ack_wait_ms),
                     ("total_ms", total_ms),
                 ):

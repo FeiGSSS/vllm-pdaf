@@ -776,6 +776,31 @@ Mailbox slot alignment follow-up, 2026-07-01:
 - Four slots is not a good default for this test bed. It increased QKV wait and
   projection remote total in the measured run.
 
+QKV push-write trace follow-up, 2026-07-01:
+
+- Run:
+  `/home/fei/research/PD/test/baseline/pap/results/runs/20260701_131637`.
+- Workload: same 128-request Qwen3-32B TP=2 test bed, default three mailbox
+  slots, QKV push-write enabled.
+- Result: 128/128 successful, median TPOT `285.20 ms`, p99 TPOT `302.45 ms`.
+- The mailbox send trace now exposes `write_ms`, the NIXL WRITE portion of the
+  Projection-to-Attention QKV push-write path.
+
+| Metric, `projection:attention_task_batch` | Median | P90 | P99 |
+| --- | ---: | ---: | ---: |
+| queue_ms | 0.098 ms | 0.407 ms | 0.953 ms |
+| publish_ms | 0.529 ms | 1.196 ms | 1.933 ms |
+| pack_ms | 0.233 ms | 0.959 ms | 1.772 ms |
+| write_ms | 0.132 ms | 0.487 ms | 0.731 ms |
+| notify_ms | 0.033 ms | 0.082 ms | 0.180 ms |
+| total_ms | 0.677 ms | 1.582 ms | 2.657 ms |
+
+Interpretation: the actual NIXL WRITE is visible and is not the only, or even
+largest, median component in the Projection QKV send path. On this run, the
+median `write_ms` is smaller than median `pack_ms`, and the remaining
+Projection-to-Attention path is still dominated by the broader mailbox publish,
+Attention execution, and Projection resume timing.
+
 Negative follow-up:
 
 - Directly copying prefill/decode KV segments into the final padded batch,

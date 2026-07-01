@@ -929,7 +929,7 @@ class PAPNixlMailboxEndpoint:
             logger.info(
                 "PAP NIXL mailbox inline send trace actor=%s msg_id=%s "
                 "kind=%s nbytes=%d publish_ms=%.3f pack_ms=%.3f "
-                "copy_ms=%.3f notify_ms=%.3f total_ms=%.3f",
+                "copy_ms=%.3f notify_ms=%.3f write_ms=%.3f total_ms=%.3f",
                 self.actor_id,
                 message.msg_id,
                 message.kind,
@@ -938,6 +938,7 @@ class PAPNixlMailboxEndpoint:
                 publish_stats["pack_ms"],
                 publish_stats["copy_ms"],
                 publish_stats["notify_ms"],
+                publish_stats["write_ms"],
                 (now - send_start) * 1000.0,
             )
 
@@ -1018,7 +1019,7 @@ class PAPNixlMailboxEndpoint:
                         "PAP NIXL mailbox send trace actor=%s msg_id=%s kind=%s "
                         "nbytes=%d queue_ms=%.3f publish_ms=%.3f "
                         "pack_ms=%.3f copy_ms=%.3f notify_ms=%.3f "
-                        "ack_wait_ms=%.3f "
+                        "write_ms=%.3f ack_wait_ms=%.3f "
                         "total_ms=%.3f",
                         self.actor_id,
                         message.msg_id,
@@ -1029,6 +1030,7 @@ class PAPNixlMailboxEndpoint:
                         publish_stats["pack_ms"],
                         publish_stats["copy_ms"],
                         publish_stats["notify_ms"],
+                        publish_stats["write_ms"],
                         ack_wait_ms,
                         (now - enqueued_at) * 1000.0,
                     )

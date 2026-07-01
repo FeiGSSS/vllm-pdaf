@@ -32,8 +32,8 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
         "post_norm_done_ns=1006580000 mlp_done_ns=1007180000\n"
         "PAP NIXL mailbox send trace actor=projection msg_id=x "
         "kind=attention_task_batch nbytes=8192 queue_ms=0.020 publish_ms=0.040 "
-        "pack_ms=0.006 copy_ms=0.018 notify_ms=0.013 ack_wait_ms=0.250 "
-        "total_ms=0.310\n"
+        "pack_ms=0.006 copy_ms=0.018 notify_ms=0.013 write_ms=0.033 "
+        "ack_wait_ms=0.250 total_ms=0.310\n"
         "PAP NIXL mailbox read trace actor=projection msg_id=y "
         "kind=attention_result_batch nbytes=4096 prepare_ms=0.009 transfer_ms=0.070 "
         "transfer_polls=15 materialize_ms=0.009 total_ms=0.088\n"
@@ -121,9 +121,16 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
         == 0.800
     )
     assert summary["mailbox_send"]["projection"]["ack_wait_ms"].median == 0.250
+    assert summary["mailbox_send"]["projection"]["write_ms"].median == 0.033
     assert summary["mailbox_send"]["attention"]["total_ms"].median == 0.350
     assert summary["mailbox_read"]["attention"]["transfer_ms"].median == 0.080
     assert summary["mailbox_read"]["projection"]["total_ms"].median == 0.088
+    assert (
+        summary["mailbox_send_by_kind"]["projection:attention_task_batch"][
+            "write_ms"
+        ].median
+        == 0.033
+    )
     assert (
         summary["mailbox_send_by_kind"]["projection:attention_task_batch"][
             "total_ms"
