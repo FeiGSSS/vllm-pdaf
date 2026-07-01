@@ -138,3 +138,13 @@ def test_pap_baseline_config_exposes_pap_enabled() -> None:
     text = config.read_text()
 
     assert 'PAP_ENABLED="${PAP_ENABLED:-true}"' in text
+
+
+def test_pap_128_testbed_enables_native_kv_append() -> None:
+    script = ROOT / "benchmarks" / "disagg_benchmarks" / "run_pap_128_testbed.sh"
+    text = script.read_text()
+
+    assert (
+        'PAP_ATTENTION_LOCAL_PAGED_NATIVE_CACHE_APPEND="${PAP_ATTENTION_LOCAL_PAGED_NATIVE_CACHE_APPEND:-1}"'
+        in text
+    )
