@@ -801,6 +801,29 @@ median `write_ms` is smaller than median `pack_ms`, and the remaining
 Projection-to-Attention path is still dominated by the broader mailbox publish,
 Attention execution, and Projection resume timing.
 
+WRITE xfer handle cache follow-up, 2026-07-01:
+
+- Run:
+  `/home/fei/research/PD/test/baseline/pap/results/runs/20260701_132309`.
+- Change: cache push-write NIXL WRITE xfer handles separately from the existing
+  READ handle cache. The write cache is enabled by default with
+  `PAP_NIXL_MAILBOX_CACHE_WRITE_XFER_HANDLES=1`; generic READ xfer handle cache
+  remains default-off.
+- Result: 128/128 successful, median TPOT `258.01 ms`, p99 TPOT `290.86 ms`.
+
+| Metric, `projection:attention_task_batch` | Before cache | After cache |
+| --- | ---: | ---: |
+| write_ms median | 0.132 ms | 0.122 ms |
+| write_ms p90 | 0.487 ms | 0.473 ms |
+| write_ms p99 | 0.731 ms | 0.712 ms |
+| publish_ms median | 0.529 ms | 0.533 ms |
+| total_ms median | 0.677 ms | 0.670 ms |
+
+Interpretation: WRITE handle caching is functionally valid but not a large
+TPOT lever on this workload. It removes a little setup overhead from the NIXL
+WRITE path, but the measured end-to-end QKV send cost is still dominated by
+pack/queue/publish variance and the downstream attention/resume timeline.
+
 Negative follow-up:
 
 - Directly copying prefill/decode KV segments into the final padded batch,

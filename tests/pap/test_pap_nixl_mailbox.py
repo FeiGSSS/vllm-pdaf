@@ -1268,6 +1268,81 @@ def test_nixl_mailbox_push_write_publishes_materialized_recv_slot() -> None:
     assert endpoint._peer_recv_slot_leases == {0: "msg-push"}
 
 
+def test_nixl_mailbox_push_write_reuses_cached_xfer_handles() -> None:
+    class FakeWrapper:
+        def __init__(self):
+            self.make_prepped_xfer_calls = 0
+            self.released_xfers = []
+            self.transfers = []
+
+        def get_xfer_descs(self, blocks_data, memory_type):
+            return [tuple(blocks_data[0])]
+
+        def prep_xfer_dlist(self, agent_name, descs):
+            return (agent_name, tuple(descs))
+
+        def make_prepped_xfer(self, *args, **kwargs):
+            self.make_prepped_xfer_calls += 1
+            return f"write-xfer-{self.make_prepped_xfer_calls}"
+
+        def transfer(self, handle):
+            self.transfers.append(handle)
+            return "PROC"
+
+        def check_xfer_state(self, handle):
+            return "DONE"
+
+        def release_xfer_handle(self, handle):
+            self.released_xfers.append(handle)
+
+        def release_dlist_handle(self, handle):
+            pass
+
+    endpoint = object.__new__(PAPNixlMailboxEndpoint)
+    endpoint.actor_id = "projection"
+    endpoint.device_id = 0
+    endpoint.memory_type = "DRAM"
+    endpoint.buffer_bytes = 64
+    endpoint._peer_agent_name = "attention"
+    endpoint._peer_recv_buffer_addr = 2000
+    endpoint._peer_recv_device_id = 7
+    endpoint._peer_recv_slot_count = 1
+    endpoint._peer_recv_slot_bytes = 64
+    endpoint._wrapper = FakeWrapper()
+    endpoint._lock = RLock()
+    endpoint._cv = Condition(endpoint._lock)
+    endpoint._peer_recv_slot_leases = {}
+    endpoint._peer_recv_slot_by_msg = {}
+    endpoint._next_peer_recv_slot = 0
+    endpoint._cache_xfer_dlists_enabled = True
+    endpoint._cache_xfer_handles_enabled = False
+    endpoint._cache_write_xfer_handles_enabled = True
+    endpoint._xfer_dlist_cache = {}
+    endpoint._write_xfer_handle_cache = {}
+    endpoint._xfer_poll_sleep_seconds = 0.0
+    endpoint._trace_enabled = False
+
+    first_slot, _ = endpoint._write_payload_to_peer_recv_slot(
+        msg_id="msg-write-1",
+        source_addr=1000,
+        nbytes=8,
+    )
+    endpoint._release_peer_recv_slot_for_msg("msg-write-1")
+    second_slot, _ = endpoint._write_payload_to_peer_recv_slot(
+        msg_id="msg-write-2",
+        source_addr=1000,
+        nbytes=8,
+    )
+    endpoint._release_peer_recv_slot_for_msg("msg-write-2")
+    endpoint._release_cached_write_xfer_handles()
+
+    assert first_slot == 0
+    assert second_slot == 0
+    assert endpoint._wrapper.make_prepped_xfer_calls == 1
+    assert endpoint._wrapper.transfers == ["write-xfer-1", "write-xfer-1"]
+    assert endpoint._wrapper.released_xfers == ["write-xfer-1"]
+
+
 def test_nixl_mailbox_materialized_recv_slot_avoids_remote_read_and_releases() -> None:
     class FakeWrapper:
         def __init__(self):

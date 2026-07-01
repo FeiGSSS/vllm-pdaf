@@ -485,6 +485,9 @@ class PAPNixlMailboxEndpoint:
         self._cache_xfer_handles_enabled = _nixl_mailbox_env_bool(
             "PAP_NIXL_MAILBOX_CACHE_XFER_HANDLES", False
         )
+        self._cache_write_xfer_handles_enabled = _nixl_mailbox_env_bool(
+            "PAP_NIXL_MAILBOX_CACHE_WRITE_XFER_HANDLES", True
+        )
         self._push_write_kinds = _nixl_mailbox_env_set(
             "PAP_NIXL_MAILBOX_PUSH_WRITE_KINDS",
             "attention_task_batch",
@@ -505,6 +508,7 @@ class PAPNixlMailboxEndpoint:
             tuple[int, int, int, int, int], tuple[Any, Any]
         ] = {}
         self._xfer_handle_cache: dict[tuple[int, int, int, int, int], Any] = {}
+        self._write_xfer_handle_cache: dict[tuple[int, int, int, int, int], Any] = {}
         self._send_slot_leases: dict[int, str] = {}
         self._send_slot_by_msg: dict[str, int] = {}
         self._send_slot_wait_seconds = _nixl_mailbox_env_float(
@@ -624,10 +628,20 @@ class PAPNixlMailboxEndpoint:
             if thread is not None:
                 thread.join(timeout=2)
         self._release_cached_xfer_handles()
+        self._release_cached_write_xfer_handles()
         self._release_cached_xfer_dlists()
 
     def _release_cached_xfer_handles(self) -> None:
         cache = getattr(self, "_xfer_handle_cache", None)
+        if not cache:
+            return
+        handles = list(cache.values())
+        cache.clear()
+        for handle in handles:
+            self._wrapper.release_xfer_handle(handle)
+
+    def _release_cached_write_xfer_handles(self) -> None:
+        cache = getattr(self, "_write_xfer_handle_cache", None)
         if not cache:
             return
         handles = list(cache.values())
@@ -1527,6 +1541,50 @@ class PAPNixlMailboxEndpoint:
                 del cache[cache_key]
                 self._wrapper.release_xfer_handle(xfer_h)
 
+    def _get_write_xfer_handle(
+        self,
+        *,
+        cache_key: tuple[int, int, int, int, int],
+        local_h: Any,
+        remote_h: Any,
+    ) -> tuple[Any, bool]:
+        cache_enabled = bool(
+            getattr(self, "_cache_write_xfer_handles_enabled", False)
+            and getattr(self, "_cache_xfer_dlists_enabled", False)
+        )
+        if cache_enabled:
+            with self._lock:
+                cached = self._write_xfer_handle_cache.get(cache_key)
+            if cached is not None:
+                return cached, False
+        xfer_h = self._wrapper.make_prepped_xfer(
+            "WRITE",
+            local_h,
+            [0],
+            remote_h,
+            [0],
+        )
+        if cache_enabled:
+            with self._lock:
+                cached = self._write_xfer_handle_cache.setdefault(cache_key, xfer_h)
+            if cached != xfer_h:
+                self._wrapper.release_xfer_handle(xfer_h)
+            return cached, False
+        return xfer_h, True
+
+    def _evict_cached_write_xfer_handle(
+        self,
+        cache_key: tuple[int, int, int, int, int],
+        xfer_h: Any,
+    ) -> None:
+        cache = getattr(self, "_write_xfer_handle_cache", None)
+        if not cache:
+            return
+        with self._lock:
+            if cache.get(cache_key) == xfer_h:
+                del cache[cache_key]
+                self._wrapper.release_xfer_handle(xfer_h)
+
     def _should_push_write_message(self, message: PAPMailboxMessage) -> bool:
         if message.kind not in getattr(self, "_push_write_kinds", set()):
             return False
@@ -1548,35 +1606,28 @@ class PAPNixlMailboxEndpoint:
         trace_enabled = self._trace_enabled
         write_start = time.perf_counter() if trace_enabled else 0.0
         recv_slot_id, remote_addr = self._reserve_peer_recv_slot(msg_id, nbytes)
+        cache_key = self._read_xfer_cache_key(
+            local_addr=source_addr,
+            nbytes=nbytes,
+            remote_addr=remote_addr,
+            remote_device_id=int(self._peer_recv_device_id),
+        )
         local_h = None
         remote_h = None
         xfer_h = None
+        release_dlists = False
+        release_xfer = False
         try:
-            local_desc = self._wrapper.get_xfer_descs(
-                [(int(source_addr), int(nbytes), self.device_id)],
-                self.memory_type,
+            local_h, remote_h, release_dlists = self._get_read_dlist_handles(
+                local_addr=source_addr,
+                nbytes=nbytes,
+                remote_addr=remote_addr,
+                remote_device_id=int(self._peer_recv_device_id),
             )
-            remote_desc = self._wrapper.get_xfer_descs(
-                [
-                    (
-                        int(remote_addr),
-                        int(nbytes),
-                        int(self._peer_recv_device_id),
-                    )
-                ],
-                self.memory_type,
-            )
-            local_h = self._wrapper.prep_xfer_dlist("NIXL_INIT_AGENT", local_desc)
-            remote_h = self._wrapper.prep_xfer_dlist(
-                self._peer_agent_name,
-                remote_desc,
-            )
-            xfer_h = self._wrapper.make_prepped_xfer(
-                "WRITE",
-                local_h,
-                [0],
-                remote_h,
-                [0],
+            xfer_h, release_xfer = self._get_write_xfer_handle(
+                cache_key=cache_key,
+                local_h=local_h,
+                remote_h=remote_h,
             )
             self._wrapper.transfer(xfer_h)
             while True:
@@ -1584,6 +1635,7 @@ class PAPNixlMailboxEndpoint:
                 if state == "DONE":
                     break
                 if state != "PROC":
+                    self._evict_cached_write_xfer_handle(cache_key, xfer_h)
                     raise RuntimeError(f"PAP NIXL push transfer failed: {state}")
                 if self._xfer_poll_sleep_seconds > 0:
                     time.sleep(self._xfer_poll_sleep_seconds)
@@ -1591,11 +1643,11 @@ class PAPNixlMailboxEndpoint:
             self._release_peer_recv_slot_for_msg(msg_id)
             raise
         finally:
-            if xfer_h is not None:
+            if release_xfer and xfer_h is not None:
                 self._wrapper.release_xfer_handle(xfer_h)
-            if local_h is not None:
+            if release_dlists and local_h is not None:
                 self._wrapper.release_dlist_handle(local_h)
-            if remote_h is not None:
+            if release_dlists and remote_h is not None:
                 self._wrapper.release_dlist_handle(remote_h)
         write_ms = (
             (time.perf_counter() - write_start) * 1000.0 if trace_enabled else 0.0
