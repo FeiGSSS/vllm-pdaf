@@ -60,6 +60,87 @@ def test_nixl_mailbox_sends_qkv_segments_without_packed_tensor() -> None:
     assert message.payload_shape == (1, 6)
 
 
+def test_nixl_mailbox_sends_direct_qkv_batch_without_copy_payload() -> None:
+    class ReservedPayload:
+        def __init__(self, tensor: torch.Tensor, slot_id: int) -> None:
+            self.tensor = tensor
+            self.slot_id = slot_id
+
+    class FakeEndpoint:
+        def __init__(self) -> None:
+            self.sent = []
+            self.reserved = []
+
+        def reserve_direct_send_tensor(self, msg_id, shape, dtype):
+            tensor = torch.empty(tuple(shape), dtype=dtype)
+            self.reserved.append((msg_id, tuple(shape), dtype, tensor))
+            return ReservedPayload(tensor=tensor, slot_id=0)
+
+        def send(self, message) -> None:
+            self.sent.append(message)
+
+    endpoint = FakeEndpoint()
+    transport = PAPNixlMailboxOffloadExecTransport(endpoint)
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(PAPOffloadExecDescriptor("req-a", "layer0", 7, 0.125),),
+    )
+    qkv = torch.tensor([[1.0, 2.0, 3.0, 4.0]], dtype=torch.float32)
+
+    transport.send_qkv_batch_direct(
+        descriptor,
+        qkv,
+        remote_address="ignored",
+    )
+
+    assert len(endpoint.sent) == 1
+    message = endpoint.sent[0]
+    assert message.msg_id == descriptor.qkv_tensor_id
+    assert message.kind == "attention_task_batch"
+    assert endpoint.reserved[0][:3] == (descriptor.qkv_tensor_id, (1, 4), qkv.dtype)
+    assert message.tensor is endpoint.reserved[0][3]
+    torch.testing.assert_close(message.tensor, qkv)
+    assert message.direct_payload is True
+    assert message.payload_slot_id == 0
+    assert message.payload_segments is None
+    assert message.payload_shape == tuple(qkv.shape)
+
+
+def test_nixl_mailbox_direct_qkv_batch_supports_inference_mode_slot() -> None:
+    class ReservedPayload:
+        def __init__(self, tensor: torch.Tensor, slot_id: int) -> None:
+            self.tensor = tensor
+            self.slot_id = slot_id
+
+    class FakeEndpoint:
+        def __init__(self) -> None:
+            self.sent = []
+
+        def reserve_direct_send_tensor(self, msg_id, shape, dtype):
+            tensor = torch.empty(tuple(shape), dtype=dtype)
+            return ReservedPayload(tensor=tensor, slot_id=0)
+
+        def send(self, message) -> None:
+            self.sent.append(message)
+
+    endpoint = FakeEndpoint()
+    transport = PAPNixlMailboxOffloadExecTransport(endpoint)
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(PAPOffloadExecDescriptor("req-a", "layer0", 7, 0.125),),
+    )
+    qkv = torch.tensor([[1.0, 2.0, 3.0, 4.0]], dtype=torch.float32)
+
+    with torch.inference_mode():
+        transport.send_qkv_batch_direct(
+            descriptor,
+            qkv,
+            remote_address="ignored",
+        )
+
+    torch.testing.assert_close(endpoint.sent[0].tensor, qkv)
+
+
 def test_nixl_mailbox_transport_sends_query_then_kv_batch_messages() -> None:
     class FakeEndpoint:
         def __init__(self) -> None:

@@ -24,6 +24,7 @@ import uuid
 from collections import OrderedDict
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from math import prod
 from queue import Empty, Queue
 from threading import Condition, Event, RLock, Thread
 from typing import Any, Protocol
@@ -106,6 +107,12 @@ class PAPNixlMailboxAgentMetadata:
     slot_bytes: int
 
 
+@dataclass(frozen=True)
+class PAPMailboxDirectSendPayload:
+    tensor: torch.Tensor
+    slot_id: int | None
+
+
 def _encode_nixl_mailbox_agent_metadata(
     *,
     agent_metadata: bytes,
@@ -173,6 +180,9 @@ class PAPMailboxMessage:
         default=None, repr=False, compare=False
     )
     payload_shape: tuple[int, ...] | None = None
+    direct_payload: bool = False
+    payload_slot_id: int | None = None
+    payload_ready_event: Any | None = field(default=None, repr=False, compare=False)
     release_callback: Callable[[], None] | None = field(
         default=None, repr=False, compare=False
     )
@@ -183,6 +193,17 @@ class PAPMailboxMessage:
             raise ValueError("PAP mailbox message requires msg_id")
         if not self.kind:
             raise ValueError("PAP mailbox message requires kind")
+        if self.direct_payload:
+            if self.payload_segments is not None:
+                raise ValueError(
+                    "PAP mailbox direct payload cannot use payload_segments"
+                )
+            if self.payload_shape is None:
+                object.__setattr__(
+                    self,
+                    "payload_shape",
+                    tuple(int(dim) for dim in self.tensor.shape),
+                )
         if self.payload_segments is not None:
             if not self.payload_segments:
                 raise ValueError("PAP mailbox payload_segments must not be empty")
@@ -661,6 +682,34 @@ class PAPNixlMailboxEndpoint:
             ),
         )
 
+    def reserve_direct_send_tensor(
+        self,
+        msg_id: str,
+        *,
+        shape: tuple[int, ...],
+        dtype: torch.dtype,
+    ) -> PAPMailboxDirectSendPayload:
+        shape = tuple(int(dim) for dim in shape)
+        if not shape:
+            raise ValueError("PAP direct send tensor requires a non-empty shape")
+        nbytes = int(prod(shape) * torch.empty((), dtype=dtype).element_size())
+        slot_protocol_enabled = getattr(self, "_slot_protocol_enabled", False)
+        slot_capacity = self._slot_bytes if slot_protocol_enabled else self.buffer_bytes
+        if nbytes > slot_capacity:
+            raise RuntimeError(
+                f"PAP NIXL mailbox direct payload {msg_id} requires {nbytes} "
+                f"bytes, slot has {slot_capacity}"
+            )
+        if slot_protocol_enabled:
+            slot_id, slot_offset = self._reserve_send_slot(str(msg_id))
+        else:
+            slot_id = None
+            slot_offset = 0
+        tensor = self._send_buffer[slot_offset : slot_offset + nbytes].view(
+            dtype
+        ).reshape(shape)
+        return PAPMailboxDirectSendPayload(tensor=tensor, slot_id=slot_id)
+
     def send(self, message: PAPMailboxMessage) -> None:
         if self._inline_publish_enabled:
             self._send_inline(message)
@@ -800,7 +849,38 @@ class PAPNixlMailboxEndpoint:
         trace_enabled = self._trace_enabled
         pack_start = time.perf_counter() if trace_enabled else 0.0
         payload_segments = getattr(message, "payload_segments", None)
-        if payload_segments is not None:
+        direct_payload = bool(getattr(message, "direct_payload", False))
+        direct_payload_slot_id = getattr(message, "payload_slot_id", None)
+        if direct_payload:
+            tensor = message.tensor.detach()
+            if not tensor.is_contiguous():
+                raise RuntimeError("PAP NIXL mailbox direct payload must be contiguous")
+            ready_event = getattr(message, "payload_ready_event", None)
+            if ready_event is not None:
+                ready_event.synchronize()
+            dtype = tensor.dtype
+            shape = tuple(int(dim) for dim in message.payload_shape or tensor.shape)
+            if tuple(tensor.shape) != shape:
+                raise RuntimeError("PAP NIXL mailbox direct payload shape mismatch")
+            nbytes = int(tensor.numel() * tensor.element_size())
+            if getattr(self, "_slot_protocol_enabled", False):
+                if direct_payload_slot_id is None:
+                    raise RuntimeError(
+                        "PAP NIXL mailbox direct payload requires a send slot"
+                    )
+                slot_start = int(direct_payload_slot_id) * self._slot_bytes
+                slot_end = slot_start + self._slot_bytes
+                buffer_start = int(self._send_buffer.data_ptr())
+                payload_start = int(tensor.data_ptr())
+                payload_end = payload_start + nbytes
+                expected_start = buffer_start + slot_start
+                expected_end = buffer_start + slot_end
+                if payload_start < expected_start or payload_end > expected_end:
+                    raise RuntimeError(
+                        "PAP NIXL mailbox direct payload is outside send slot"
+                    )
+            raw_segments = ()
+        elif payload_segments is not None:
             segments = tuple(
                 segment.detach().contiguous().to(device=self.device)
                 for segment in payload_segments
@@ -824,15 +904,20 @@ class PAPNixlMailboxEndpoint:
         pack_ms = (time.perf_counter() - pack_start) * 1000.0 if trace_enabled else 0.0
         slot_protocol_enabled = getattr(self, "_slot_protocol_enabled", False)
         slot_capacity = self._slot_bytes if slot_protocol_enabled else self.buffer_bytes
-        if nbytes > slot_capacity:
+        if nbytes > slot_capacity and not direct_payload:
             raise RuntimeError(
                 f"PAP NIXL mailbox message {message.msg_id} requires {nbytes} "
                 f"bytes, slot has {slot_capacity}"
             )
-        use_send_slot_leases = self._use_send_slot_leases()
+        if nbytes > self.buffer_bytes:
+            raise RuntimeError(
+                f"PAP NIXL mailbox message {message.msg_id} requires {nbytes} "
+                f"bytes, buffer has {self.buffer_bytes}"
+            )
+        use_send_slot_leases = (not direct_payload) and self._use_send_slot_leases()
         if use_send_slot_leases:
             slot_id, slot_offset = self._reserve_send_slot(message.msg_id)
-        elif slot_protocol_enabled:
+        elif slot_protocol_enabled and not direct_payload:
             slot_id = int(getattr(self, "_next_send_slot", 0))
             self._next_send_slot = (slot_id + 1) % self._slot_count
             slot_offset = slot_id * self._slot_bytes
@@ -842,15 +927,16 @@ class PAPNixlMailboxEndpoint:
         piggybacked_acks: list[str] = []
         try:
             copy_start = time.perf_counter() if trace_enabled else 0.0
-            with torch.inference_mode(False):
-                write_offset = slot_offset
-                for raw_segment in raw_segments:
-                    segment_nbytes = int(raw_segment.numel())
-                    self._send_buffer[
-                        write_offset : write_offset + segment_nbytes
-                    ].copy_(raw_segment, non_blocking=True)
-                    write_offset += segment_nbytes
-                self._synchronize_device_stream()
+            if not direct_payload:
+                with torch.inference_mode(False):
+                    write_offset = slot_offset
+                    for raw_segment in raw_segments:
+                        segment_nbytes = int(raw_segment.numel())
+                        self._send_buffer[
+                            write_offset : write_offset + segment_nbytes
+                        ].copy_(raw_segment, non_blocking=True)
+                        write_offset += segment_nbytes
+                    self._synchronize_device_stream()
             copy_ms = (
                 (time.perf_counter() - copy_start) * 1000.0 if trace_enabled else 0.0
             )
@@ -863,7 +949,18 @@ class PAPNixlMailboxEndpoint:
                 "dtype": _dtype_name(dtype),
                 "nbytes": nbytes,
             }
-            if slot_protocol_enabled:
+            if direct_payload and direct_payload_slot_id is not None:
+                payload["slot_id"] = int(direct_payload_slot_id)
+                payload["direct_payload"] = True
+            elif direct_payload:
+                payload["addr"] = int(tensor.data_ptr())
+                payload["device_id"] = (
+                    int(tensor.device.index or 0)
+                    if tensor.device.type == "cuda"
+                    else 0
+                )
+                payload["direct_payload"] = True
+            elif slot_protocol_enabled:
                 payload["slot_id"] = slot_id
             else:
                 payload["addr"] = int(self._send_buffer.data_ptr())
@@ -884,7 +981,9 @@ class PAPNixlMailboxEndpoint:
             )
         except Exception:
             self._restore_pending_acks(piggybacked_acks)
-            if use_send_slot_leases:
+            if direct_payload and direct_payload_slot_id is not None:
+                self._release_send_slot_for_msg(message.msg_id)
+            elif use_send_slot_leases:
                 self._release_send_slot_for_msg(message.msg_id)
             raise
         return {

@@ -489,6 +489,27 @@ def _pap_pack_qkv_group_items(
     )
 
 
+def _pap_direct_qkv_batch_for_group(
+    qkv_batch: torch.Tensor | None,
+    group_items: list[tuple[int, Any, tuple[torch.Tensor, ...]]],
+) -> torch.Tensor | None:
+    if qkv_batch is None or not group_items:
+        return None
+    if qkv_batch.ndim != 2 or not qkv_batch.is_contiguous():
+        return None
+    req_indices = [int(item[0]) for item in group_items]
+    start = req_indices[0]
+    if start < 0 or req_indices != list(range(start, start + len(group_items))):
+        return None
+    stop = start + len(group_items)
+    if stop > int(qkv_batch.shape[0]):
+        return None
+    direct = qkv_batch[start:stop]
+    if not direct.is_contiguous():
+        return None
+    return direct
+
+
 def _pap_send_qkv_batch_job(
     *,
     batch_descriptor: Any,
@@ -845,6 +866,18 @@ class Qwen3Attention(nn.Module):
             k_by_head = self.k_norm(k_by_head)
             k = k_by_head.view(k.shape)
             q, k = self.rotary_emb(positions, q, k)
+        direct_qkv_send_buffer: torch.Tensor | None = None
+        if (
+            pap_attention_enabled
+            and _pap_env_enabled("PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND")
+            and qkv.ndim == 2
+            and qkv.is_contiguous()
+        ):
+            qkv[:, : self.q_size].copy_(q.reshape(qkv.shape[0], self.q_size))
+            qkv[:, self.q_size : self.q_size + self.kv_size].copy_(
+                k.reshape(qkv.shape[0], self.kv_size)
+            )
+            direct_qkv_send_buffer = qkv
         trace_pre_attn_done_ns = time.perf_counter_ns() if trace_offload_exec else 0
         trace_pre_attn_compute_ms = (
             (time.perf_counter() - trace_pre_attn_start) * 1000.0
@@ -863,6 +896,7 @@ class Qwen3Attention(nn.Module):
                 pre_attn_start_ns=trace_pre_attn_start_ns,
                 pre_attn_done_ns=trace_pre_attn_done_ns,
                 projection_timeline=projection_timeline,
+                direct_qkv_send_buffer=direct_qkv_send_buffer,
             )
             trace_o_proj_start = time.perf_counter() if trace_offload_exec else 0.0
             try:
@@ -1556,6 +1590,7 @@ class Qwen3Attention(nn.Module):
         pre_attn_start_ns: int = 0,
         pre_attn_done_ns: int = 0,
         projection_timeline: dict[str, Any] | None = None,
+        direct_qkv_send_buffer: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, list[Any]]:
         if not is_forward_context_available():
             raise RuntimeError("PAP attention requires forward context")
@@ -1730,6 +1765,7 @@ class Qwen3Attention(nn.Module):
             "yes",
             "on",
         )
+        direct_qkv_send_enabled = _pap_env_enabled("PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND")
         async_qkv_send_enabled = _pap_env_enabled("PAP_OFFLOAD_EXEC_ASYNC_QKV_SEND")
         trace_offload_exec = os.environ.get("PAP_OFFLOAD_EXEC_TRACE", "").lower() in (
             "1",
@@ -1804,18 +1840,33 @@ class Qwen3Attention(nn.Module):
             send_qkv_batch_segments = getattr(
                 transport, "send_qkv_batch_segments", None
             )
+            send_qkv_batch_direct = getattr(transport, "send_qkv_batch_direct", None)
             qkv_width = sum(int(segment.shape[-1]) for segment in group_items[0][2])
             q_first_transport_ready = (
                 callable(send_query_batch)
                 and callable(send_kv_batch)
                 and getattr(transport, "supports_query_first_kv_later", False)
             )
+            direct_qkv_batch = (
+                _pap_direct_qkv_batch_for_group(direct_qkv_send_buffer, group_items)
+                if direct_qkv_send_enabled and callable(send_qkv_batch_direct)
+                else None
+            )
             if query_already_sent and not q_first_transport_ready:
                 raise RuntimeError(
                     "PAP Q-first Projection sent query before KV, but the "
                     "transport cannot accept the KV follow-up"
                 )
-            if (
+            if direct_qkv_batch is not None:
+                if int(direct_qkv_batch.shape[-1]) != qkv_width:
+                    raise RuntimeError("PAP direct QKV batch width mismatch")
+                send_qkv_batch_direct(
+                    batch_descriptor,
+                    direct_qkv_batch,
+                    remote_address=offload_exec_zmq_endpoint,
+                )
+                send_handle = None
+            elif (
                 q_first_kv_later_enabled or query_already_sent
             ) and q_first_transport_ready:
                 if len(group_items) == 1:

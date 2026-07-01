@@ -469,6 +469,14 @@ class PAPOffloadExecTransport(Protocol):
         remote_address: str,
     ) -> None: ...
 
+    def send_qkv_batch_direct(
+        self,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        qkv: torch.Tensor,
+        *,
+        remote_address: str,
+    ) -> None: ...
+
     def recv_qkv_batch(
         self,
         descriptor: PAPOffloadExecBatchDescriptor,
@@ -500,6 +508,15 @@ def _clone_and_release_mailbox_message(message: Any) -> torch.Tensor:
             torch.cuda.current_stream(tensor.device).synchronize()
     message.release()
     return tensor
+
+
+def _record_tensor_ready_event(tensor: torch.Tensor) -> Any | None:
+    if not tensor.is_cuda:
+        return None
+    with torch.cuda.device(tensor.device):
+        event = torch.cuda.Event()
+        event.record(torch.cuda.current_stream(tensor.device))
+    return event
 
 
 class PAPNixlMailboxOffloadExecTransport:
@@ -586,6 +603,41 @@ class PAPNixlMailboxOffloadExecTransport:
             kind="attention_task_batch",
             metadata=_offload_exec_batch_descriptor_to_metadata(descriptor),
             tensor=qkv,
+        )
+
+    def send_qkv_batch_direct(
+        self,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        qkv: torch.Tensor,
+        *,
+        remote_address: str,
+    ) -> None:
+        from vllm.pap.nixl_mailbox import PAPMailboxMessage
+
+        reserve_direct_send_tensor = getattr(
+            self.endpoint,
+            "reserve_direct_send_tensor",
+            None,
+        )
+        if not callable(reserve_direct_send_tensor):
+            raise RuntimeError("PAP NIXL mailbox endpoint cannot reserve direct QKV")
+        payload = reserve_direct_send_tensor(
+            descriptor.qkv_tensor_id,
+            shape=tuple(qkv.shape),
+            dtype=qkv.dtype,
+        )
+        payload.tensor.copy_(qkv, non_blocking=True)
+        self.endpoint.send(
+            PAPMailboxMessage(
+                msg_id=descriptor.qkv_tensor_id,
+                kind="attention_task_batch",
+                metadata=_offload_exec_batch_descriptor_to_metadata(descriptor),
+                tensor=payload.tensor,
+                payload_shape=tuple(qkv.shape),
+                direct_payload=True,
+                payload_slot_id=payload.slot_id,
+                payload_ready_event=_record_tensor_ready_event(payload.tensor),
+            )
         )
 
     def send_qkv_batch_segments(

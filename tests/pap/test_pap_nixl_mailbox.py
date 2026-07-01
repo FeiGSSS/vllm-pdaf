@@ -298,6 +298,62 @@ def test_nixl_mailbox_publish_copies_payload_segments_without_packed_tensor() ->
     assert payload["nbytes"] == int(expected.numel())
 
 
+def test_nixl_mailbox_publish_direct_payload_uses_prefilled_slot() -> None:
+    class FakeWrapper:
+        def send_notif(self, agent_name, notif_msg):
+            self.agent_name = agent_name
+            self.notif_msg = notif_msg
+
+    endpoint = object.__new__(PAPNixlMailboxEndpoint)
+    endpoint.actor_id = "projection"
+    endpoint.device = torch.device("cpu")
+    endpoint.device_id = 0
+    endpoint.buffer_bytes = 128
+    endpoint._slot_count = 1
+    endpoint._slot_bytes = 128
+    endpoint._next_send_slot = 0
+    endpoint._send_slot_leases = {}
+    endpoint._send_slot_by_msg = {}
+    endpoint._lock = RLock()
+    endpoint._cv = Condition(endpoint._lock)
+    endpoint._send_buffer = torch.full((128,), 0xAB, dtype=torch.uint8)
+    endpoint._peer_agent_name = "attention"
+    endpoint._wrapper = FakeWrapper()
+    endpoint._trace_enabled = False
+    endpoint._slot_protocol_enabled = True
+    endpoint._async_send_slots_enabled = False
+    endpoint._piggyback_acks_enabled = False
+    endpoint._msgpack_notifications_enabled = True
+
+    qkv = torch.tensor([[1.0, 2.0, 3.0, 4.0]], dtype=torch.float32)
+    slot_tensor = endpoint._send_buffer[: qkv.numel() * qkv.element_size()].view(
+        qkv.dtype
+    ).reshape(qkv.shape)
+    slot_tensor.copy_(qkv)
+    message = PAPMailboxMessage(
+        msg_id="msg-direct",
+        kind="attention_task_batch",
+        metadata={"layer_name": "layer0"},
+        tensor=slot_tensor,
+        payload_shape=tuple(qkv.shape),
+        direct_payload=True,
+        payload_slot_id=0,
+    )
+
+    endpoint._publish_message(message)
+
+    payload = nixl_mailbox._decode_nixl_mailbox_notification(
+        endpoint._wrapper.notif_msg
+    )
+    assert payload["slot_id"] == 0
+    assert "addr" not in payload
+    assert "device_id" not in payload
+    assert payload["shape"] == [1, 4]
+    assert payload["nbytes"] == int(qkv.numel() * qkv.element_size())
+    torch.testing.assert_close(slot_tensor, qkv)
+    assert torch.all(endpoint._send_buffer[payload["nbytes"] :] == 0xAB)
+
+
 def test_nixl_mailbox_publish_uses_msgpack_notification_when_enabled() -> None:
     class FakeWrapper:
         def send_notif(self, agent_name, notif_msg):
