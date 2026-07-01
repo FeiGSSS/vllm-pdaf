@@ -427,6 +427,7 @@ class PAPNixlMailboxEndpoint:
         self._send_enqueued_at: dict[str, float] = {}
         self._acked: set[str] = set()
         self._pending_acks: OrderedDict[str, None] = OrderedDict()
+        self._pending_recv_releases: OrderedDict[str, int] = OrderedDict()
         self._slot_count = _nixl_mailbox_env_int("PAP_NIXL_MAILBOX_SLOT_COUNT", 1)
         if self._slot_count <= 0:
             raise ValueError("PAP_NIXL_MAILBOX_SLOT_COUNT must be positive")
@@ -482,6 +483,9 @@ class PAPNixlMailboxEndpoint:
         )
         self._piggyback_acks_enabled = _nixl_mailbox_env_bool(
             "PAP_NIXL_MAILBOX_PIGGYBACK_ACKS", False
+        )
+        self._piggyback_recv_releases_enabled = _nixl_mailbox_env_bool(
+            "PAP_NIXL_MAILBOX_PIGGYBACK_RECV_RELEASES", True
         )
         self._msgpack_notifications_enabled = _nixl_mailbox_env_bool(
             "PAP_NIXL_MAILBOX_MSGPACK_NOTIF", True
@@ -777,6 +781,11 @@ class PAPNixlMailboxEndpoint:
             self._pending_acks[str(msg_id)] = None
             self._cv.notify_all()
 
+    def _defer_recv_release(self, msg_id: str, recv_slot_id: int) -> None:
+        with self._cv:
+            self._pending_recv_releases[str(msg_id)] = int(recv_slot_id)
+            self._cv.notify_all()
+
     def _drain_pending_acks(self) -> list[str]:
         if not getattr(self, "_piggyback_acks_enabled", False):
             return []
@@ -794,6 +803,32 @@ class PAPNixlMailboxEndpoint:
             )
             restored.update(self._pending_acks)
             self._pending_acks = restored
+            self._cv.notify_all()
+
+    def _drain_pending_recv_releases(self) -> list[dict[str, int | str]]:
+        if not getattr(self, "_piggyback_recv_releases_enabled", False):
+            return []
+        with self._cv:
+            pending = [
+                {"msg_id": msg_id, "recv_slot_id": int(recv_slot_id)}
+                for msg_id, recv_slot_id in self._pending_recv_releases.items()
+            ]
+            self._pending_recv_releases.clear()
+            return pending
+
+    def _restore_pending_recv_releases(
+        self,
+        releases: list[dict[str, int | str]],
+    ) -> None:
+        if not releases:
+            return
+        with self._cv:
+            restored: OrderedDict[str, int] = OrderedDict(
+                (str(release["msg_id"]), int(release["recv_slot_id"]))
+                for release in releases
+            )
+            restored.update(self._pending_recv_releases)
+            self._pending_recv_releases = restored
             self._cv.notify_all()
 
     def _send_ack_notification(self, msg_id: str) -> None:
@@ -1076,6 +1111,7 @@ class PAPNixlMailboxEndpoint:
             slot_id = 0
             slot_offset = 0
         piggybacked_acks: list[str] = []
+        piggybacked_recv_releases: list[dict[str, int | str]] = []
         pushed_recv_slot_id: int | None = None
         write_ms = 0.0
         local_complete = False
@@ -1135,6 +1171,9 @@ class PAPNixlMailboxEndpoint:
             piggybacked_acks = self._drain_pending_acks()
             if piggybacked_acks:
                 payload["acks"] = piggybacked_acks
+            piggybacked_recv_releases = self._drain_pending_recv_releases()
+            if piggybacked_recv_releases:
+                payload["recv_releases"] = piggybacked_recv_releases
             notify_start = time.perf_counter() if trace_enabled else 0.0
             self._wrapper.send_notif(
                 self._peer_agent_name,
@@ -1148,6 +1187,7 @@ class PAPNixlMailboxEndpoint:
             )
         except Exception:
             self._restore_pending_acks(piggybacked_acks)
+            self._restore_pending_recv_releases(piggybacked_recv_releases)
             if pushed_recv_slot_id is not None:
                 self._release_peer_recv_slot_for_msg(message.msg_id)
             if direct_payload and direct_payload_slot_id is not None:
@@ -1227,6 +1267,8 @@ class PAPNixlMailboxEndpoint:
         data = _decode_nixl_mailbox_notification(payload)
         for ack_msg_id in data.get("acks") or ():
             self._ack_output(str(ack_msg_id))
+        for release in data.get("recv_releases") or ():
+            self._release_peer_recv_slot_for_msg(str(release["msg_id"]))
         message_type = str(data.get("type"))
         if message_type == "ack":
             self._ack_output(str(data["msg_id"]))
@@ -1679,12 +1721,20 @@ class PAPNixlMailboxEndpoint:
         release_callback = None
         if release_recv_slot:
             if materialized_recv_slot:
-                release_callback = (
-                    lambda recv_slot_id=recv_slot_id, msg_id=msg_id: (
-                        self._release_recv_slot(recv_slot_id, msg_id),
-                        self._send_recv_release_notification(msg_id, recv_slot_id),
+                if getattr(self, "_piggyback_recv_releases_enabled", False):
+                    release_callback = (
+                        lambda recv_slot_id=recv_slot_id, msg_id=msg_id: (
+                            self._release_recv_slot(recv_slot_id, msg_id),
+                            self._defer_recv_release(msg_id, recv_slot_id),
+                        )
                     )
-                )
+                else:
+                    release_callback = (
+                        lambda recv_slot_id=recv_slot_id, msg_id=msg_id: (
+                            self._release_recv_slot(recv_slot_id, msg_id),
+                            self._send_recv_release_notification(msg_id, recv_slot_id),
+                        )
+                    )
             else:
                 release_callback = lambda recv_slot_id=recv_slot_id, msg_id=msg_id: (
                     self._release_recv_slot(recv_slot_id, msg_id)

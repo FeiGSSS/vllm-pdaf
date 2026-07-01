@@ -1323,6 +1323,106 @@ def test_nixl_mailbox_materialized_recv_slot_avoids_remote_read_and_releases() -
     ]
 
 
+def test_nixl_mailbox_materialized_recv_release_can_piggyback() -> None:
+    class FakeWrapper:
+        def __init__(self):
+            self.notifications = []
+
+        def get_xfer_descs(self, blocks_data, memory_type):
+            raise AssertionError("materialized receive must not issue NIXL READ")
+
+        def send_notif(self, peer, *, notif_msg):
+            self.notifications.append(json.loads(notif_msg.decode("utf-8")))
+
+    endpoint = object.__new__(PAPNixlMailboxEndpoint)
+    endpoint.actor_id = "attention"
+    endpoint.device = torch.device("cpu")
+    endpoint.device_id = 0
+    endpoint.memory_type = "DRAM"
+    endpoint.buffer_bytes = 8
+    endpoint._peer_agent_name = "projection"
+    endpoint._wrapper = FakeWrapper()
+    endpoint._lock = RLock()
+    endpoint._cv = Condition(endpoint._lock)
+    endpoint._recv_buffer = torch.tensor([3.0, 4.0], dtype=torch.float32).view(
+        torch.uint8
+    )
+    endpoint._recv_slot_count = 1
+    endpoint._recv_slot_bytes = 8
+    endpoint._recv_slot_leases = {}
+    endpoint._recv_slot_wait_seconds = 0.0
+    endpoint._zero_copy_recv_enabled = True
+    endpoint._slot_protocol_enabled = True
+    endpoint._msgpack_notifications_enabled = False
+    endpoint._trace_enabled = False
+    endpoint._piggyback_recv_releases_enabled = True
+    endpoint._pending_recv_releases = OrderedDict()
+
+    message = endpoint._read_remote_message(
+        {
+            "msg_id": "msg-materialized",
+            "kind": "attention_task_batch",
+            "metadata": {},
+            "shape": [1, 2],
+            "dtype": "float32",
+            "nbytes": 8,
+            "materialized_recv_slot_id": 0,
+        }
+    )
+
+    message.release()
+
+    assert endpoint._wrapper.notifications == []
+    assert endpoint._pending_recv_releases == OrderedDict(
+        [("msg-materialized", 0)]
+    )
+
+
+def test_nixl_mailbox_publish_piggybacks_recv_releases() -> None:
+    class FakeWrapper:
+        def __init__(self):
+            self.notifications = []
+
+        def send_notif(self, peer, *, notif_msg):
+            self.notifications.append(json.loads(notif_msg.decode("utf-8")))
+
+    endpoint = object.__new__(PAPNixlMailboxEndpoint)
+    endpoint.actor_id = "attention"
+    endpoint.device = torch.device("cpu")
+    endpoint.device_id = 0
+    endpoint.memory_type = "DRAM"
+    endpoint.buffer_bytes = 64
+    endpoint._peer_agent_name = "projection"
+    endpoint._wrapper = FakeWrapper()
+    endpoint._lock = RLock()
+    endpoint._cv = Condition(endpoint._lock)
+    endpoint._send_buffer = torch.empty(64, dtype=torch.uint8)
+    endpoint._slot_protocol_enabled = False
+    endpoint._cache_xfer_dlists_enabled = False
+    endpoint._cache_xfer_handles_enabled = False
+    endpoint._push_write_kinds = set()
+    endpoint._msgpack_notifications_enabled = False
+    endpoint._piggyback_acks_enabled = False
+    endpoint._pending_acks = OrderedDict()
+    endpoint._piggyback_recv_releases_enabled = True
+    endpoint._pending_recv_releases = OrderedDict([("msg-materialized", 0)])
+    endpoint._trace_enabled = False
+
+    endpoint._publish_message(
+        PAPMailboxMessage(
+            msg_id="msg-result",
+            kind="attention_result_batch",
+            metadata={},
+            tensor=torch.tensor([[1.0, 2.0]], dtype=torch.float32),
+        )
+    )
+
+    assert endpoint._wrapper.notifications[0]["recv_releases"] == [
+        {"msg_id": "msg-materialized", "recv_slot_id": 0}
+    ]
+    assert endpoint._pending_recv_releases == OrderedDict()
+
+
 def test_nixl_mailbox_close_releases_cached_xfer_dlist_handles() -> None:
     class FakeWrapper:
         def __init__(self):
