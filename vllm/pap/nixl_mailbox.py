@@ -59,6 +59,16 @@ def _nixl_mailbox_env_int(name: str, default: int) -> int:
     return result
 
 
+def _nixl_mailbox_env_set(name: str, default: str) -> set[str]:
+    value = os.environ.get(name)
+    raw = default if value in (None, "") else value
+    return {
+        item.strip()
+        for item in raw.split(",")
+        if item.strip()
+    }
+
+
 def _nixl_mailbox_agent_config(config_cls: type | None) -> Any | None:
     if config_cls is None:
         return None
@@ -105,6 +115,9 @@ class PAPNixlMailboxAgentMetadata:
     device_id: int
     slot_count: int
     slot_bytes: int
+    recv_buffer_addr: int = 0
+    recv_slot_count: int = 1
+    recv_slot_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -120,6 +133,9 @@ def _encode_nixl_mailbox_agent_metadata(
     device_id: int,
     slot_count: int,
     slot_bytes: int,
+    recv_buffer_addr: int,
+    recv_slot_count: int,
+    recv_slot_bytes: int,
 ) -> bytes:
     payload = {
         "type": "pap_nixl_mailbox_agent",
@@ -129,6 +145,9 @@ def _encode_nixl_mailbox_agent_metadata(
         "device_id": int(device_id),
         "slot_count": int(slot_count),
         "slot_bytes": int(slot_bytes),
+        "recv_buffer_addr": int(recv_buffer_addr),
+        "recv_slot_count": int(recv_slot_count),
+        "recv_slot_bytes": int(recv_slot_bytes),
     }
     return json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
@@ -160,6 +179,9 @@ def _decode_nixl_mailbox_agent_metadata(
         device_id=int(payload["device_id"]),
         slot_count=int(payload["slot_count"]),
         slot_bytes=int(payload["slot_bytes"]),
+        recv_buffer_addr=int(payload.get("recv_buffer_addr") or 0),
+        recv_slot_count=int(payload.get("recv_slot_count") or 1),
+        recv_slot_bytes=int(payload.get("recv_slot_bytes") or 0),
     )
 
 
@@ -424,6 +446,11 @@ class PAPNixlMailboxEndpoint:
         self._peer_device_id: int | None = None
         self._peer_slot_count = 1
         self._peer_slot_bytes = 0
+        self._peer_recv_buffer_addr: int | None = None
+        self._peer_recv_device_id: int | None = None
+        self._peer_recv_slot_count = 1
+        self._peer_recv_slot_bytes = 0
+        self._next_peer_recv_slot = 0
         self._poll_sleep_seconds = _nixl_mailbox_env_float(
             "PAP_NIXL_MAILBOX_POLL_SECONDS", 0.00001
         )
@@ -446,6 +473,13 @@ class PAPNixlMailboxEndpoint:
         self._cache_xfer_dlists_enabled = _nixl_mailbox_env_bool(
             "PAP_NIXL_MAILBOX_CACHE_XFER_DLISTS", True
         )
+        self._cache_xfer_handles_enabled = _nixl_mailbox_env_bool(
+            "PAP_NIXL_MAILBOX_CACHE_XFER_HANDLES", False
+        )
+        self._push_write_kinds = _nixl_mailbox_env_set(
+            "PAP_NIXL_MAILBOX_PUSH_WRITE_KINDS",
+            "attention_task_batch",
+        )
         self._piggyback_acks_enabled = _nixl_mailbox_env_bool(
             "PAP_NIXL_MAILBOX_PIGGYBACK_ACKS", False
         )
@@ -458,6 +492,7 @@ class PAPNixlMailboxEndpoint:
         self._xfer_dlist_cache: dict[
             tuple[int, int, int, int, int], tuple[Any, Any]
         ] = {}
+        self._xfer_handle_cache: dict[tuple[int, int, int, int, int], Any] = {}
         self._send_slot_leases: dict[int, str] = {}
         self._send_slot_by_msg: dict[str, int] = {}
         self._send_slot_wait_seconds = _nixl_mailbox_env_float(
@@ -467,6 +502,8 @@ class PAPNixlMailboxEndpoint:
         self._recv_slot_wait_seconds = _nixl_mailbox_env_float(
             "PAP_NIXL_MAILBOX_RECV_SLOT_WAIT_SECONDS", 30.0
         )
+        self._peer_recv_slot_leases: dict[int, str] = {}
+        self._peer_recv_slot_by_msg: dict[str, int] = {}
 
         from vllm.distributed.nixl_utils import NixlWrapper, nixl_agent_config
 
@@ -498,12 +535,16 @@ class PAPNixlMailboxEndpoint:
         agent_metadata = self._wrapper.get_agent_metadata()
         if not getattr(self, "_slot_protocol_enabled", False):
             return agent_metadata
+        recv_buffer = getattr(self, "_recv_buffer", None)
         return _encode_nixl_mailbox_agent_metadata(
             agent_metadata=agent_metadata,
             send_buffer_addr=self._send_buffer.data_ptr(),
             device_id=self.device_id,
             slot_count=self._slot_count,
             slot_bytes=self._slot_bytes,
+            recv_buffer_addr=0 if recv_buffer is None else recv_buffer.data_ptr(),
+            recv_slot_count=int(getattr(self, "_recv_slot_count", 1)),
+            recv_slot_bytes=int(getattr(self, "_recv_slot_bytes", 0)),
         )
 
     @property
@@ -541,6 +582,11 @@ class PAPNixlMailboxEndpoint:
             self._peer_device_id = metadata.device_id
             self._peer_slot_count = metadata.slot_count
             self._peer_slot_bytes = metadata.slot_bytes
+        if metadata.recv_buffer_addr:
+            self._peer_recv_buffer_addr = metadata.recv_buffer_addr
+            self._peer_recv_device_id = metadata.device_id
+            self._peer_recv_slot_count = metadata.recv_slot_count
+            self._peer_recv_slot_bytes = metadata.recv_slot_bytes
 
     def start(self) -> None:
         if self._peer_agent_name is None:
@@ -565,7 +611,17 @@ class PAPNixlMailboxEndpoint:
         for thread in (self._sender_thread, self._receiver_thread):
             if thread is not None:
                 thread.join(timeout=2)
+        self._release_cached_xfer_handles()
         self._release_cached_xfer_dlists()
+
+    def _release_cached_xfer_handles(self) -> None:
+        cache = getattr(self, "_xfer_handle_cache", None)
+        if not cache:
+            return
+        handles = list(cache.values())
+        cache.clear()
+        for handle in handles:
+            self._wrapper.release_xfer_handle(handle)
 
     def _release_cached_xfer_dlists(self) -> None:
         cache = getattr(self, "_xfer_dlist_cache", None)
@@ -637,6 +693,76 @@ class PAPNixlMailboxEndpoint:
                 del leases[slot_id]
             cv.notify_all()
 
+    def _ensure_peer_recv_slot_state(
+        self,
+    ) -> tuple[Condition, dict[int, str], dict[str, int]]:
+        cv = getattr(self, "_cv", None)
+        if cv is None:
+            lock = getattr(self, "_lock", None)
+            if lock is None:
+                lock = RLock()
+                self._lock = lock
+            cv = Condition(lock)
+            self._cv = cv
+        leases = getattr(self, "_peer_recv_slot_leases", None)
+        if leases is None:
+            leases = {}
+            self._peer_recv_slot_leases = leases
+        by_msg = getattr(self, "_peer_recv_slot_by_msg", None)
+        if by_msg is None:
+            by_msg = {}
+            self._peer_recv_slot_by_msg = by_msg
+        return cv, leases, by_msg
+
+    def _reserve_peer_recv_slot(self, msg_id: str, nbytes: int) -> tuple[int, int]:
+        peer_recv_buffer_addr = getattr(self, "_peer_recv_buffer_addr", None)
+        peer_recv_device_id = getattr(self, "_peer_recv_device_id", None)
+        if peer_recv_buffer_addr is None or peer_recv_device_id is None:
+            raise RuntimeError("PAP NIXL mailbox peer has no receive slots")
+        peer_recv_slot_bytes = int(getattr(self, "_peer_recv_slot_bytes", 0))
+        if nbytes > peer_recv_slot_bytes:
+            raise RuntimeError(
+                f"PAP NIXL mailbox push message {msg_id} requires {nbytes} "
+                f"bytes, peer receive slot has {peer_recv_slot_bytes}"
+            )
+        peer_recv_slot_count = int(getattr(self, "_peer_recv_slot_count", 1))
+        if peer_recv_slot_count <= 0:
+            raise RuntimeError("PAP NIXL mailbox peer receive slot count invalid")
+        wait_seconds = float(getattr(self, "_recv_slot_wait_seconds", 30.0))
+        deadline = time.monotonic() + wait_seconds
+        cv, leases, by_msg = self._ensure_peer_recv_slot_state()
+        with cv:
+            while True:
+                start_slot = int(getattr(self, "_next_peer_recv_slot", 0))
+                for offset in range(peer_recv_slot_count):
+                    slot_id = (start_slot + offset) % peer_recv_slot_count
+                    if slot_id not in leases:
+                        leases[slot_id] = str(msg_id)
+                        by_msg[str(msg_id)] = slot_id
+                        self._next_peer_recv_slot = (
+                            slot_id + 1
+                        ) % peer_recv_slot_count
+                        return (
+                            slot_id,
+                            int(peer_recv_buffer_addr)
+                            + slot_id * peer_recv_slot_bytes,
+                        )
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"timed out waiting for PAP NIXL peer receive slot "
+                        f"for message {msg_id}"
+                    )
+                cv.wait(timeout=min(remaining, 0.001))
+
+    def _release_peer_recv_slot_for_msg(self, msg_id: str) -> None:
+        cv, leases, by_msg = self._ensure_peer_recv_slot_state()
+        with cv:
+            slot_id = by_msg.pop(str(msg_id), None)
+            if slot_id is not None and leases.get(slot_id) == str(msg_id):
+                del leases[slot_id]
+            cv.notify_all()
+
     def _ack_output(self, msg_id: str) -> None:
         msg_id = str(msg_id)
         with self._cv:
@@ -678,6 +804,22 @@ class PAPNixlMailboxEndpoint:
             self._peer_agent_name,
             notif_msg=_encode_nixl_mailbox_notification(
                 ack,
+                use_msgpack=getattr(self, "_msgpack_notifications_enabled", False),
+            ),
+        )
+
+    def _send_recv_release_notification(self, msg_id: str, recv_slot_id: int) -> None:
+        if self._peer_agent_name is None:
+            raise RuntimeError("PAP NIXL mailbox endpoint has no peer")
+        release = {
+            "type": "recv_release",
+            "msg_id": str(msg_id),
+            "recv_slot_id": int(recv_slot_id),
+        }
+        self._wrapper.send_notif(
+            self._peer_agent_name,
+            notif_msg=_encode_nixl_mailbox_notification(
+                release,
                 use_msgpack=getattr(self, "_msgpack_notifications_enabled", False),
             ),
         )
@@ -738,6 +880,8 @@ class PAPNixlMailboxEndpoint:
             if trace_enabled:
                 self._send_enqueued_at[message.msg_id] = send_start
         publish_stats = self._publish_message(message)
+        if publish_stats.get("local_complete"):
+            self._ack_output(message.msg_id)
         if trace_enabled:
             now = time.perf_counter()
             logger.info(
@@ -810,11 +954,17 @@ class PAPNixlMailboxEndpoint:
             try:
                 publish_stats = self._publish_message(message)
                 ack_start = time.perf_counter() if trace_enabled else 0.0
+                local_complete = bool(publish_stats.get("local_complete"))
+                if local_complete:
+                    self._ack_output(message.msg_id)
                 waits_for_ack = not (
-                    getattr(self, "_slot_protocol_enabled", False)
-                    and (
-                        getattr(self, "_async_send_slots_enabled", False)
-                        or getattr(self, "_piggyback_acks_enabled", False)
+                    local_complete
+                    or (
+                        getattr(self, "_slot_protocol_enabled", False)
+                        and (
+                            getattr(self, "_async_send_slots_enabled", False)
+                            or getattr(self, "_piggyback_acks_enabled", False)
+                        )
                     )
                 )
                 if waits_for_ack:
@@ -914,6 +1064,7 @@ class PAPNixlMailboxEndpoint:
                 f"PAP NIXL mailbox message {message.msg_id} requires {nbytes} "
                 f"bytes, buffer has {self.buffer_bytes}"
             )
+        push_write = self._should_push_write_message(message)
         use_send_slot_leases = (not direct_payload) and self._use_send_slot_leases()
         if use_send_slot_leases:
             slot_id, slot_offset = self._reserve_send_slot(message.msg_id)
@@ -925,6 +1076,9 @@ class PAPNixlMailboxEndpoint:
             slot_id = 0
             slot_offset = 0
         piggybacked_acks: list[str] = []
+        pushed_recv_slot_id: int | None = None
+        write_ms = 0.0
+        local_complete = False
         try:
             copy_start = time.perf_counter() if trace_enabled else 0.0
             if not direct_payload:
@@ -940,6 +1094,17 @@ class PAPNixlMailboxEndpoint:
             copy_ms = (
                 (time.perf_counter() - copy_start) * 1000.0 if trace_enabled else 0.0
             )
+            if direct_payload:
+                source_addr = int(tensor.data_ptr())
+            else:
+                source_addr = int(self._send_buffer.data_ptr()) + int(slot_offset)
+            if push_write:
+                pushed_recv_slot_id, write_ms = self._write_payload_to_peer_recv_slot(
+                    msg_id=message.msg_id,
+                    source_addr=source_addr,
+                    nbytes=nbytes,
+                )
+                local_complete = True
             payload = {
                 "type": "message",
                 "msg_id": message.msg_id,
@@ -949,7 +1114,9 @@ class PAPNixlMailboxEndpoint:
                 "dtype": _dtype_name(dtype),
                 "nbytes": nbytes,
             }
-            if direct_payload and direct_payload_slot_id is not None:
+            if pushed_recv_slot_id is not None:
+                payload["materialized_recv_slot_id"] = int(pushed_recv_slot_id)
+            elif direct_payload and direct_payload_slot_id is not None:
                 payload["slot_id"] = int(direct_payload_slot_id)
                 payload["direct_payload"] = True
             elif direct_payload:
@@ -981,6 +1148,8 @@ class PAPNixlMailboxEndpoint:
             )
         except Exception:
             self._restore_pending_acks(piggybacked_acks)
+            if pushed_recv_slot_id is not None:
+                self._release_peer_recv_slot_for_msg(message.msg_id)
             if direct_payload and direct_payload_slot_id is not None:
                 self._release_send_slot_for_msg(message.msg_id)
             elif use_send_slot_leases:
@@ -991,7 +1160,9 @@ class PAPNixlMailboxEndpoint:
             "pack_ms": pack_ms,
             "copy_ms": copy_ms,
             "notify_ms": notify_ms,
-            "publish_ms": pack_ms + copy_ms + notify_ms,
+            "write_ms": write_ms,
+            "publish_ms": pack_ms + copy_ms + write_ms + notify_ms,
+            "local_complete": int(local_complete),
         }
 
     def _synchronize_device_stream(self) -> None:
@@ -1060,12 +1231,17 @@ class PAPNixlMailboxEndpoint:
         if message_type == "ack":
             self._ack_output(str(data["msg_id"]))
             return
+        if message_type == "recv_release":
+            self._release_peer_recv_slot_for_msg(str(data["msg_id"]))
+            return
         if message_type != "message":
             raise RuntimeError(f"unknown PAP NIXL mailbox notification: {data}")
         message = self._read_remote_message(data)
         with self._cv:
             self._incoming[message.msg_id] = message
             self._cv.notify_all()
+        if "materialized_recv_slot_id" in data:
+            return
         if getattr(self, "_slot_protocol_enabled", False) and getattr(
             self, "_piggyback_acks_enabled", False
         ):
@@ -1165,6 +1341,42 @@ class PAPNixlMailboxEndpoint:
                 del leases[int(recv_slot_id)]
                 cv.notify_all()
 
+    def _reserve_materialized_recv_location(
+        self,
+        data: dict[str, Any],
+        nbytes: int,
+    ) -> tuple[int, int, int, bool]:
+        recv_slot_id = int(data["materialized_recv_slot_id"])
+        recv_slot_count = int(getattr(self, "_recv_slot_count", 1))
+        if recv_slot_id < 0 or recv_slot_id >= recv_slot_count:
+            raise RuntimeError(
+                f"PAP NIXL mailbox invalid materialized receive slot id: "
+                f"{recv_slot_id}"
+            )
+        recv_slot_bytes = int(getattr(self, "_recv_slot_bytes", self.buffer_bytes))
+        if nbytes > recv_slot_bytes:
+            raise RuntimeError(
+                f"PAP NIXL mailbox incoming message {data['msg_id']} requires "
+                f"{nbytes} bytes, receive slot has {recv_slot_bytes}"
+            )
+        msg_id = str(data["msg_id"])
+        wait_seconds = float(getattr(self, "_recv_slot_wait_seconds", 30.0))
+        deadline = time.monotonic() + wait_seconds
+        cv, leases = self._ensure_recv_slot_state()
+        with cv:
+            while True:
+                if recv_slot_id not in leases:
+                    leases[recv_slot_id] = msg_id
+                    recv_offset, local_addr = self._recv_slot_location(recv_slot_id)
+                    return recv_slot_id, recv_offset, local_addr, True
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError(
+                        f"timed out waiting for PAP NIXL materialized receive slot "
+                        f"for message {msg_id}"
+                    )
+                cv.wait(timeout=min(remaining, 0.001))
+
     def _get_read_dlist_handles(
         self,
         *,
@@ -1207,6 +1419,141 @@ class PAPNixlMailboxEndpoint:
             return cached[0], cached[1], False
         return local_h, remote_h, True
 
+    def _read_xfer_cache_key(
+        self,
+        *,
+        local_addr: int,
+        nbytes: int,
+        remote_addr: int,
+        remote_device_id: int,
+    ) -> tuple[int, int, int, int, int]:
+        return (
+            int(local_addr),
+            int(nbytes),
+            int(self.device_id),
+            int(remote_addr),
+            int(remote_device_id),
+        )
+
+    def _get_read_xfer_handle(
+        self,
+        *,
+        cache_key: tuple[int, int, int, int, int],
+        local_h: Any,
+        remote_h: Any,
+    ) -> tuple[Any, bool]:
+        cache_enabled = bool(
+            getattr(self, "_cache_xfer_handles_enabled", False)
+            and getattr(self, "_cache_xfer_dlists_enabled", False)
+        )
+        if cache_enabled:
+            with self._lock:
+                cached = self._xfer_handle_cache.get(cache_key)
+            if cached is not None:
+                return cached, False
+        xfer_h = self._wrapper.make_prepped_xfer(
+            "READ",
+            local_h,
+            [0],
+            remote_h,
+            [0],
+        )
+        if cache_enabled:
+            with self._lock:
+                cached = self._xfer_handle_cache.setdefault(cache_key, xfer_h)
+            if cached != xfer_h:
+                self._wrapper.release_xfer_handle(xfer_h)
+            return cached, False
+        return xfer_h, True
+
+    def _evict_cached_read_xfer_handle(
+        self,
+        cache_key: tuple[int, int, int, int, int],
+        xfer_h: Any,
+    ) -> None:
+        cache = getattr(self, "_xfer_handle_cache", None)
+        if not cache:
+            return
+        with self._lock:
+            if cache.get(cache_key) == xfer_h:
+                del cache[cache_key]
+                self._wrapper.release_xfer_handle(xfer_h)
+
+    def _should_push_write_message(self, message: PAPMailboxMessage) -> bool:
+        if message.kind not in getattr(self, "_push_write_kinds", set()):
+            return False
+        if not getattr(self, "_slot_protocol_enabled", False):
+            return False
+        return (
+            getattr(self, "_peer_recv_buffer_addr", None) is not None
+            and getattr(self, "_peer_recv_device_id", None) is not None
+            and int(getattr(self, "_peer_recv_slot_bytes", 0)) > 0
+        )
+
+    def _write_payload_to_peer_recv_slot(
+        self,
+        *,
+        msg_id: str,
+        source_addr: int,
+        nbytes: int,
+    ) -> tuple[int, float]:
+        trace_enabled = self._trace_enabled
+        write_start = time.perf_counter() if trace_enabled else 0.0
+        recv_slot_id, remote_addr = self._reserve_peer_recv_slot(msg_id, nbytes)
+        local_h = None
+        remote_h = None
+        xfer_h = None
+        try:
+            local_desc = self._wrapper.get_xfer_descs(
+                [(int(source_addr), int(nbytes), self.device_id)],
+                self.memory_type,
+            )
+            remote_desc = self._wrapper.get_xfer_descs(
+                [
+                    (
+                        int(remote_addr),
+                        int(nbytes),
+                        int(self._peer_recv_device_id),
+                    )
+                ],
+                self.memory_type,
+            )
+            local_h = self._wrapper.prep_xfer_dlist("NIXL_INIT_AGENT", local_desc)
+            remote_h = self._wrapper.prep_xfer_dlist(
+                self._peer_agent_name,
+                remote_desc,
+            )
+            xfer_h = self._wrapper.make_prepped_xfer(
+                "WRITE",
+                local_h,
+                [0],
+                remote_h,
+                [0],
+            )
+            self._wrapper.transfer(xfer_h)
+            while True:
+                state = self._wrapper.check_xfer_state(xfer_h)
+                if state == "DONE":
+                    break
+                if state != "PROC":
+                    raise RuntimeError(f"PAP NIXL push transfer failed: {state}")
+                if self._xfer_poll_sleep_seconds > 0:
+                    time.sleep(self._xfer_poll_sleep_seconds)
+        except Exception:
+            self._release_peer_recv_slot_for_msg(msg_id)
+            raise
+        finally:
+            if xfer_h is not None:
+                self._wrapper.release_xfer_handle(xfer_h)
+            if local_h is not None:
+                self._wrapper.release_dlist_handle(local_h)
+            if remote_h is not None:
+                self._wrapper.release_dlist_handle(remote_h)
+        write_ms = (
+            (time.perf_counter() - write_start) * 1000.0 if trace_enabled else 0.0
+        )
+        return recv_slot_id, write_ms
+
     def _read_remote_message(self, data: dict[str, Any]) -> PAPMailboxMessage:
         if self._peer_agent_name is None:
             raise RuntimeError("PAP NIXL mailbox endpoint has no peer")
@@ -1219,58 +1566,84 @@ class PAPNixlMailboxEndpoint:
         trace_enabled = self._trace_enabled
         prepare_start = time.perf_counter() if trace_enabled else 0.0
         msg_id = str(data["msg_id"])
-        remote_addr, remote_device_id = self._remote_payload_location(data, nbytes)
-        recv_slot_id, recv_offset, local_addr, release_recv_slot = (
-            self._reserve_local_recv_location(data, nbytes)
-        )
-        try:
-            local_h, remote_h, release_dlists = self._get_read_dlist_handles(
+        materialized_recv_slot = "materialized_recv_slot_id" in data
+        transfer_polls = 0
+        transfer_ms = 0.0
+        if materialized_recv_slot:
+            recv_slot_id, recv_offset, local_addr, release_recv_slot = (
+                self._reserve_materialized_recv_location(data, nbytes)
+            )
+            prepare_ms = (
+                (time.perf_counter() - prepare_start) * 1000.0
+                if trace_enabled
+                else 0.0
+            )
+        else:
+            remote_addr, remote_device_id = self._remote_payload_location(data, nbytes)
+            recv_slot_id, recv_offset, local_addr, release_recv_slot = (
+                self._reserve_local_recv_location(data, nbytes)
+            )
+            cache_key = self._read_xfer_cache_key(
                 local_addr=local_addr,
                 nbytes=nbytes,
                 remote_addr=remote_addr,
                 remote_device_id=remote_device_id,
             )
-        except Exception:
-            if release_recv_slot:
-                self._release_recv_slot(recv_slot_id, msg_id)
-            raise
-        xfer_h = self._wrapper.make_prepped_xfer(
-            "READ",
-            local_h,
-            [0],
-            remote_h,
-            [0],
-        )
-        prepare_ms = (
-            (time.perf_counter() - prepare_start) * 1000.0 if trace_enabled else 0.0
-        )
-        transfer_start = time.perf_counter() if trace_enabled else 0.0
-        transfer_polls = 0
-        try:
-            self._wrapper.transfer(xfer_h)
-            while True:
-                state = self._wrapper.check_xfer_state(xfer_h)
-                if state == "DONE":
-                    break
-                if state != "PROC":
-                    raise RuntimeError(f"PAP NIXL transfer failed: {state}")
-                transfer_polls += 1
-                if self._xfer_poll_sleep_seconds > 0:
-                    time.sleep(self._xfer_poll_sleep_seconds)
-        except Exception:
-            if release_recv_slot:
-                self._release_recv_slot(recv_slot_id, msg_id)
-            raise
-        finally:
-            transfer_ms = (
-                (time.perf_counter() - transfer_start) * 1000.0
+            local_h = None
+            remote_h = None
+            release_dlists = False
+            try:
+                local_h, remote_h, release_dlists = self._get_read_dlist_handles(
+                    local_addr=local_addr,
+                    nbytes=nbytes,
+                    remote_addr=remote_addr,
+                    remote_device_id=remote_device_id,
+                )
+                xfer_h, release_xfer = self._get_read_xfer_handle(
+                    cache_key=cache_key,
+                    local_h=local_h,
+                    remote_h=remote_h,
+                )
+            except Exception:
+                if release_dlists:
+                    self._wrapper.release_dlist_handle(local_h)
+                    self._wrapper.release_dlist_handle(remote_h)
+                if release_recv_slot:
+                    self._release_recv_slot(recv_slot_id, msg_id)
+                raise
+            prepare_ms = (
+                (time.perf_counter() - prepare_start) * 1000.0
                 if trace_enabled
                 else 0.0
             )
-            self._wrapper.release_xfer_handle(xfer_h)
-            if release_dlists:
-                self._wrapper.release_dlist_handle(local_h)
-                self._wrapper.release_dlist_handle(remote_h)
+            transfer_start = time.perf_counter() if trace_enabled else 0.0
+            try:
+                self._wrapper.transfer(xfer_h)
+                while True:
+                    state = self._wrapper.check_xfer_state(xfer_h)
+                    if state == "DONE":
+                        break
+                    if state != "PROC":
+                        self._evict_cached_read_xfer_handle(cache_key, xfer_h)
+                        raise RuntimeError(f"PAP NIXL transfer failed: {state}")
+                    transfer_polls += 1
+                    if self._xfer_poll_sleep_seconds > 0:
+                        time.sleep(self._xfer_poll_sleep_seconds)
+            except Exception:
+                if release_recv_slot:
+                    self._release_recv_slot(recv_slot_id, msg_id)
+                raise
+            finally:
+                transfer_ms = (
+                    (time.perf_counter() - transfer_start) * 1000.0
+                    if trace_enabled
+                    else 0.0
+                )
+                if release_xfer:
+                    self._wrapper.release_xfer_handle(xfer_h)
+                if release_dlists:
+                    self._wrapper.release_dlist_handle(local_h)
+                    self._wrapper.release_dlist_handle(remote_h)
         dtype = _dtype_from_name(str(data["dtype"]))
         shape = tuple(int(dim) for dim in data["shape"])
         materialize_start = time.perf_counter() if trace_enabled else 0.0
@@ -1305,9 +1678,17 @@ class PAPNixlMailboxEndpoint:
             )
         release_callback = None
         if release_recv_slot:
-            release_callback = lambda recv_slot_id=recv_slot_id, msg_id=msg_id: (
-                self._release_recv_slot(recv_slot_id, msg_id)
-            )
+            if materialized_recv_slot:
+                release_callback = (
+                    lambda recv_slot_id=recv_slot_id, msg_id=msg_id: (
+                        self._release_recv_slot(recv_slot_id, msg_id),
+                        self._send_recv_release_notification(msg_id, recv_slot_id),
+                    )
+                )
+            else:
+                release_callback = lambda recv_slot_id=recv_slot_id, msg_id=msg_id: (
+                    self._release_recv_slot(recv_slot_id, msg_id)
+                )
         return PAPMailboxMessage(
             msg_id=msg_id,
             kind=str(data["kind"]),

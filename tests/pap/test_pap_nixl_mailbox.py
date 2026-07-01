@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc
+import json
 from collections import OrderedDict
 from threading import Condition, RLock
 
@@ -1067,6 +1068,259 @@ def test_nixl_mailbox_read_reuses_cached_xfer_dlist_handles() -> None:
     assert endpoint._wrapper.prep_xfer_dlist_calls == 2
     assert endpoint._wrapper.released_xfers == ["xfer-0", "xfer-1"]
     assert endpoint._wrapper.released_dlists == []
+
+
+def test_nixl_mailbox_read_reuses_cached_xfer_handles() -> None:
+    class FakeWrapper:
+        def __init__(self):
+            self.make_prepped_xfer_calls = 0
+            self.released_xfers = []
+            self.transfers = []
+
+        def get_xfer_descs(self, blocks_data, memory_type):
+            return [tuple(blocks_data[0])]
+
+        def prep_xfer_dlist(self, agent_name, descs):
+            return (agent_name, tuple(descs))
+
+        def make_prepped_xfer(self, *args, **kwargs):
+            self.make_prepped_xfer_calls += 1
+            return f"xfer-{self.make_prepped_xfer_calls}"
+
+        def transfer(self, handle):
+            self.transfers.append(handle)
+            return "PROC"
+
+        def check_xfer_state(self, handle):
+            return "DONE"
+
+        def release_xfer_handle(self, handle):
+            self.released_xfers.append(handle)
+
+        def release_dlist_handle(self, handle):
+            pass
+
+    endpoint = object.__new__(PAPNixlMailboxEndpoint)
+    endpoint.actor_id = "attention"
+    endpoint.device = torch.device("cpu")
+    endpoint.device_id = 0
+    endpoint.memory_type = "DRAM"
+    endpoint.buffer_bytes = 64
+    endpoint._peer_agent_name = "projection"
+    endpoint._peer_send_buffer_addr = 1000
+    endpoint._peer_device_id = 7
+    endpoint._peer_slot_count = 1
+    endpoint._peer_slot_bytes = 64
+    endpoint._wrapper = FakeWrapper()
+    endpoint._lock = RLock()
+    endpoint._recv_buffer = torch.tensor([1.0, 2.0], dtype=torch.float32).view(
+        torch.uint8
+    )
+    endpoint._xfer_poll_sleep_seconds = 0.0
+    endpoint._trace_enabled = False
+    endpoint._zero_copy_recv_enabled = True
+    endpoint._cache_xfer_dlists_enabled = True
+    endpoint._cache_xfer_handles_enabled = True
+    endpoint._xfer_dlist_cache = {}
+    endpoint._xfer_handle_cache = {}
+    payload = {
+        "msg_id": "msg-cache",
+        "kind": "attention_task_batch",
+        "metadata": {"layer_name": "layer0"},
+        "shape": [1, 2],
+        "dtype": "float32",
+        "nbytes": 8,
+        "slot_id": 0,
+    }
+
+    first = endpoint._read_remote_message(payload)
+    first.release()
+    second = endpoint._read_remote_message({**payload, "msg_id": "msg-cache-2"})
+    second.release()
+    endpoint._release_cached_xfer_handles()
+
+    assert endpoint._wrapper.make_prepped_xfer_calls == 1
+    assert endpoint._wrapper.transfers == ["xfer-1", "xfer-1"]
+    assert endpoint._wrapper.released_xfers == ["xfer-1"]
+
+
+def test_nixl_mailbox_metadata_includes_receive_slots() -> None:
+    endpoint = object.__new__(PAPNixlMailboxEndpoint)
+    endpoint._slot_protocol_enabled = True
+    endpoint._wrapper = type(
+        "Wrapper",
+        (),
+        {"get_agent_metadata": lambda self: b"agent"},
+    )()
+    endpoint._send_buffer = torch.empty(64, dtype=torch.uint8)
+    endpoint._recv_buffer = torch.empty(128, dtype=torch.uint8)
+    endpoint.device_id = 3
+    endpoint._slot_count = 2
+    endpoint._slot_bytes = 32
+    endpoint._recv_slot_count = 4
+    endpoint._recv_slot_bytes = 32
+
+    metadata = _decode_nixl_mailbox_agent_metadata(endpoint.local_agent_metadata)
+
+    assert metadata.agent_metadata == b"agent"
+    assert metadata.send_buffer_addr == endpoint._send_buffer.data_ptr()
+    assert metadata.recv_buffer_addr == endpoint._recv_buffer.data_ptr()
+    assert metadata.recv_slot_count == 4
+    assert metadata.recv_slot_bytes == 32
+
+
+def test_nixl_mailbox_push_write_publishes_materialized_recv_slot() -> None:
+    class FakeWrapper:
+        def __init__(self):
+            self.xfers = []
+            self.notifications = []
+
+        def get_xfer_descs(self, blocks_data, memory_type):
+            return [tuple(blocks_data[0])]
+
+        def prep_xfer_dlist(self, agent_name, descs):
+            return (agent_name, tuple(descs))
+
+        def make_prepped_xfer(self, *args, **kwargs):
+            self.xfers.append(args)
+            return "write-xfer"
+
+        def transfer(self, handle):
+            return "PROC"
+
+        def check_xfer_state(self, handle):
+            return "DONE"
+
+        def release_xfer_handle(self, handle):
+            pass
+
+        def release_dlist_handle(self, handle):
+            pass
+
+        def send_notif(self, peer, *, notif_msg):
+            self.notifications.append(json.loads(notif_msg.decode("utf-8")))
+
+    endpoint = object.__new__(PAPNixlMailboxEndpoint)
+    endpoint.actor_id = "projection"
+    endpoint.device = torch.device("cpu")
+    endpoint.device_id = 0
+    endpoint.memory_type = "DRAM"
+    endpoint.buffer_bytes = 64
+    endpoint._peer_agent_name = "attention"
+    endpoint._peer_recv_buffer_addr = 2000
+    endpoint._peer_recv_device_id = 7
+    endpoint._peer_recv_slot_count = 2
+    endpoint._peer_recv_slot_bytes = 32
+    endpoint._wrapper = FakeWrapper()
+    endpoint._lock = RLock()
+    endpoint._cv = Condition(endpoint._lock)
+    endpoint._send_buffer = torch.empty(64, dtype=torch.uint8)
+    endpoint._slot_protocol_enabled = True
+    endpoint._slot_count = 1
+    endpoint._slot_bytes = 64
+    endpoint._next_send_slot = 0
+    endpoint._send_slot_leases = {}
+    endpoint._send_slot_by_msg = {}
+    endpoint._peer_recv_slot_leases = {}
+    endpoint._peer_recv_slot_by_msg = {}
+    endpoint._next_peer_recv_slot = 0
+    endpoint._cache_xfer_dlists_enabled = False
+    endpoint._cache_xfer_handles_enabled = False
+    endpoint._push_write_kinds = {"attention_task_batch"}
+    endpoint._msgpack_notifications_enabled = False
+    endpoint._piggyback_acks_enabled = False
+    endpoint._pending_acks = OrderedDict()
+    endpoint._trace_enabled = False
+
+    stats = endpoint._publish_message(
+        PAPMailboxMessage(
+            msg_id="msg-push",
+            kind="attention_task_batch",
+            metadata={},
+            tensor=torch.tensor([[1.0, 2.0]], dtype=torch.float32),
+        )
+    )
+
+    assert stats["local_complete"] == 1
+    assert endpoint._wrapper.xfers[0][0] == "WRITE"
+    assert endpoint._wrapper.xfers[0][3][1][0] == (2000, 8, 7)
+    assert endpoint._wrapper.notifications == [
+        {
+            "type": "message",
+            "msg_id": "msg-push",
+            "kind": "attention_task_batch",
+            "metadata": {},
+            "shape": [1, 2],
+            "dtype": "float32",
+            "nbytes": 8,
+            "materialized_recv_slot_id": 0,
+        }
+    ]
+    assert endpoint._peer_recv_slot_leases == {0: "msg-push"}
+
+
+def test_nixl_mailbox_materialized_recv_slot_avoids_remote_read_and_releases() -> None:
+    class FakeWrapper:
+        def __init__(self):
+            self.notifications = []
+
+        def get_xfer_descs(self, blocks_data, memory_type):
+            raise AssertionError("materialized receive must not issue NIXL READ")
+
+        def send_notif(self, peer, *, notif_msg):
+            self.notifications.append(json.loads(notif_msg.decode("utf-8")))
+
+    first_slot = torch.tensor([1.0, 2.0], dtype=torch.float32).view(torch.uint8)
+    second_slot = torch.tensor([3.0, 4.0], dtype=torch.float32).view(torch.uint8)
+    endpoint = object.__new__(PAPNixlMailboxEndpoint)
+    endpoint.actor_id = "attention"
+    endpoint.device = torch.device("cpu")
+    endpoint.device_id = 0
+    endpoint.memory_type = "DRAM"
+    endpoint.buffer_bytes = 16
+    endpoint._peer_agent_name = "projection"
+    endpoint._wrapper = FakeWrapper()
+    endpoint._lock = RLock()
+    endpoint._cv = Condition(endpoint._lock)
+    endpoint._recv_buffer = torch.cat([first_slot, second_slot])
+    endpoint._recv_slot_count = 2
+    endpoint._recv_slot_bytes = 8
+    endpoint._recv_slot_leases = {}
+    endpoint._recv_slot_wait_seconds = 0.0
+    endpoint._zero_copy_recv_enabled = True
+    endpoint._slot_protocol_enabled = True
+    endpoint._msgpack_notifications_enabled = False
+    endpoint._trace_enabled = False
+
+    message = endpoint._read_remote_message(
+        {
+            "msg_id": "msg-materialized",
+            "kind": "attention_task_batch",
+            "metadata": {},
+            "shape": [1, 2],
+            "dtype": "float32",
+            "nbytes": 8,
+            "materialized_recv_slot_id": 1,
+        }
+    )
+
+    assert message.tensor.data_ptr() == endpoint._recv_buffer.data_ptr() + 8
+    torch.testing.assert_close(
+        message.tensor,
+        torch.tensor([[3.0, 4.0]], dtype=torch.float32),
+    )
+    assert endpoint._recv_slot_leases == {1: "msg-materialized"}
+
+    message.release()
+
+    assert endpoint._recv_slot_leases == {}
+    assert endpoint._wrapper.notifications == [
+        {
+            "type": "recv_release",
+            "msg_id": "msg-materialized",
+            "recv_slot_id": 1,
+        }
+    ]
 
 
 def test_nixl_mailbox_close_releases_cached_xfer_dlist_handles() -> None:
