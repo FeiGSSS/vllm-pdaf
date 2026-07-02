@@ -459,8 +459,14 @@ def _get_or_create_paged_flash_metadata_scratch(
             (batch_size, max_blocks),
             dtype=torch.int32,
             device="cpu",
+            pin_memory=True,
         )
-        seq_lens_host = torch.empty((batch_size,), dtype=torch.int32, device="cpu")
+        seq_lens_host = torch.empty(
+            (batch_size,),
+            dtype=torch.int32,
+            device="cpu",
+            pin_memory=True,
+        )
     scratch = PAPPagedFlashMetadataScratch(
         block_table=block_table,
         seq_lens=seq_lens,
@@ -475,29 +481,43 @@ def _get_or_create_paged_flash_metadata_scratch(
 def _fill_paged_flash_metadata_scratch(
     *,
     scratch: PAPPagedFlashMetadataScratch,
-    block_signature: tuple[tuple[int, ...], ...],
-    seq_lens: list[int],
+    states: list[PAPLocalPagedAttentionState],
     max_blocks: int,
-) -> None:
+) -> int:
     if scratch.seq_lens_host is not None:
         seq_target = scratch.seq_lens_host
     else:
         seq_target = scratch.seq_lens
-    for index, seq_len in enumerate(seq_lens):
-        seq_target[index] = int(seq_len)
+
+    signature_matches = scratch.block_signature is not None and (
+        len(scratch.block_signature) == len(states)
+    )
+    max_seq_len = 0
+    for index, state in enumerate(states):
+        block_ids = state.block_ids
+        if not block_ids:
+            raise ValueError("paged FlashAttention state has no blocks")
+        seq_len = int(state.seq_len)
+        seq_target[index] = seq_len
+        if seq_len > max_seq_len:
+            max_seq_len = seq_len
+        if signature_matches and scratch.block_signature[index] != block_ids:
+            signature_matches = False
     if seq_target is not scratch.seq_lens:
         scratch.seq_lens.copy_(seq_target, non_blocking=True)
 
-    if scratch.block_signature == block_signature:
-        return
+    if signature_matches:
+        return max_seq_len
 
     if scratch.block_table_host is not None:
         block_target = scratch.block_table_host
     else:
         block_target = scratch.block_table
-    for row_index, block_ids in enumerate(block_signature):
-        if not block_ids:
-            raise ValueError("paged FlashAttention state has no blocks")
+
+    next_signature: list[tuple[int, ...]] = []
+    for row_index, state in enumerate(states):
+        block_ids = state.block_ids
+        next_signature.append(block_ids)
         last_block = int(block_ids[-1])
         for column_index in range(max_blocks):
             if column_index < len(block_ids):
@@ -506,7 +526,8 @@ def _fill_paged_flash_metadata_scratch(
                 block_target[row_index, column_index] = last_block
     if block_target is not scratch.block_table:
         scratch.block_table.copy_(block_target, non_blocking=True)
-    scratch.block_signature = block_signature
+    scratch.block_signature = tuple(next_signature)
+    return max_seq_len
 
 
 def build_paged_flash_metadata(
@@ -528,34 +549,27 @@ def build_paged_flash_metadata(
         or _pap_env_flag("PAP_ATTENTION_PAGED_METADATA_SCRATCH_CUDA", False)
     )
     if use_scratch:
-        seq_lens = []
-        block_signature = []
-        for state in states:
-            if not state.block_ids:
-                raise ValueError("paged FlashAttention state has no blocks")
-            seq_lens.append(int(state.seq_len))
-            block_signature.append(tuple(int(block_id) for block_id in state.block_ids))
         scratch = _get_or_create_paged_flash_metadata_scratch(
             pool=pool,
             batch_size=batch_size,
             max_blocks=max_blocks,
             device=device,
         )
-        _fill_paged_flash_metadata_scratch(
+        max_seq_len = _fill_paged_flash_metadata_scratch(
             scratch=scratch,
-            block_signature=tuple(block_signature),
-            seq_lens=seq_lens,
+            states=states,
             max_blocks=max_blocks,
         )
         return PAPPagedFlashMetadata(
             block_table=scratch.block_table,
             seq_lens=scratch.seq_lens,
             cu_seqlens_q=scratch.cu_seqlens_q,
-            max_seq_len=max(seq_lens),
+            max_seq_len=max_seq_len,
         )
 
     block_rows: list[list[int]] = []
     seq_lens: list[int] = []
+    max_seq_len = 0
     for state in states:
         if not state.block_ids:
             raise ValueError("paged FlashAttention state has no blocks")
@@ -563,7 +577,10 @@ def build_paged_flash_metadata(
         if len(row) < max_blocks:
             row.extend([row[-1]] * (max_blocks - len(row)))
         block_rows.append(row)
-        seq_lens.append(int(state.seq_len))
+        seq_len = int(state.seq_len)
+        seq_lens.append(seq_len)
+        if seq_len > max_seq_len:
+            max_seq_len = seq_len
 
     return PAPPagedFlashMetadata(
         block_table=torch.tensor(block_rows, dtype=torch.int32, device=device),
@@ -574,7 +591,7 @@ def build_paged_flash_metadata(
             dtype=torch.int32,
             device=device,
         ),
-        max_seq_len=max(seq_lens),
+        max_seq_len=max_seq_len,
     )
 
 

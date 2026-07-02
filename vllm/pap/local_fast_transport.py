@@ -15,10 +15,11 @@ Design highlights:
   bind handshake) as a small pickled + base64-encoded metadata blob.
 * A small ``/dev/shm`` mmap'd "doorbell" file per side carries the monotonic
   sequence number plus payload size/offset for each direction.  Sender writes
-  the doorbell only *after* the GPU memcpy has been synchronized on the
-  sending stream; receiver spin-polls the doorbell.
-* No Python-side CUDA event on the sender.  We use ``cudaStreamSynchronize``
-  (the doorbell write is the only inter-process signal).
+  the doorbell only *after* the GPU memcpy is known complete; receiver
+  spin-polls the doorbell.
+* Default sender behavior uses ``cudaStreamSynchronize`` before ringing the
+  doorbell.  An optional env-gated async mode records a CUDA event and lets a
+  helper thread wait for completion before writing the doorbell.
 * Receiver spin-wait falls back to ``os.sched_yield`` after a configurable
   number of tight iterations to avoid pinning a core forever.
 * Default OFF.  Activate with ``PAP_OFFLOAD_EXEC_TRANSPORT=local_fast``.
@@ -41,8 +42,10 @@ import json
 import mmap
 import os
 import pickle
+import queue
 import socket
 import struct
+import threading
 import time
 from dataclasses import dataclass, field
 from math import prod
@@ -79,9 +82,15 @@ DIR_OUTPUT = DOORBELL_RECORD_BYTES
 # Default recv buffer size.  Same default as the NIXL mailbox path.
 DEFAULT_BUFFER_BYTES = 16 * 1024 * 1024
 
-# Doorbell spin behavior.  Picked to allow ~us-scale notification while still
-# yielding to the OS scheduler under sustained wait.
+# Doorbell wait behavior. Keep a short tight spin for low-latency handoff, then
+# back off so long waits do not burn a CPU core and interfere with the shared
+# PA-side control plane / MPS scheduling.
 SPIN_TIGHT_ITERS = int(os.environ.get("PAP_LOCAL_FAST_SPIN_ITERS", "2048"))
+SPIN_YIELD_ITERS = int(os.environ.get("PAP_LOCAL_FAST_YIELD_ITERS", "64"))
+SPIN_SLEEP_US = int(os.environ.get("PAP_LOCAL_FAST_SLEEP_US", "20"))
+SPIN_SLEEP_AFTER_US = int(
+    os.environ.get("PAP_LOCAL_FAST_SLEEP_AFTER_US", "50")
+)
 
 
 # ---------------------------------------------------------------------------
@@ -288,6 +297,21 @@ class _LocalFastMessage:
 
 
 @dataclass
+class _PendingDoorbell:
+    direction: int
+    seq: int
+    nbytes: int
+    offset: int
+    metadata: dict[str, Any]
+    event: torch.cuda.Event
+    src_tensor_ref: torch.Tensor
+    peer_tensor_ref: torch.Tensor
+    enqueue_time: float
+    descriptor_layer_name: str
+    descriptor_batch_id: str
+
+
+@dataclass
 class _PeerState:
     """Per-peer state cached on the local transport after bind_peer."""
 
@@ -303,6 +327,13 @@ class _PeerState:
     # Expected incoming seq for each direction.  This is what we wait for.
     expected_qkv_seq: int = 1
     expected_output_seq: int = 1
+    pending_qkv_seq: int = 0
+    pending_output_seq: int = 0
+    send_lock: threading.Lock = field(default_factory=threading.Lock)
+    wait_cond: threading.Condition = field(init=False)
+
+    def __post_init__(self) -> None:
+        self.wait_cond = threading.Condition(self.send_lock)
 
 
 class PAPLocalFastTransport:
@@ -361,6 +392,11 @@ class PAPLocalFastTransport:
         self._started = False
         self._bound = False
         self._trace = _env_bool("PAP_OFFLOAD_EXEC_TRACE", False)
+        self._async_doorbell = _env_bool("PAP_LOCAL_FAST_ASYNC_DOORBELL", False)
+        self._notify_queue: queue.Queue[_PendingDoorbell | None] | None = None
+        self._notify_thread: threading.Thread | None = None
+        self._notify_error: Exception | None = None
+        self._notify_error_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Metadata exchange
@@ -434,14 +470,125 @@ class PAPLocalFastTransport:
         self.start()
 
     def start(self) -> None:
-        """No-op-ish: peer access is enabled in bind_peer, no receiver thread.
-
-        The receiver spin happens inline in each ``recv_*`` call.
-        """
+        """Start optional notifier thread; receiver spin stays inline."""
 
         if self._started:
             return
         self._started = True
+        if self._async_doorbell:
+            self._notify_queue = queue.Queue()
+            self._notify_thread = threading.Thread(
+                target=self._notify_loop,
+                name=f"pap-local-fast-notify-{self.actor_id}",
+                daemon=True,
+            )
+            self._notify_thread.start()
+
+    def _set_notify_error(self, exc: Exception) -> None:
+        with self._notify_error_lock:
+            if self._notify_error is None:
+                self._notify_error = exc
+
+    def _raise_if_notify_failed(self) -> None:
+        with self._notify_error_lock:
+            exc = self._notify_error
+        if exc is not None:
+            raise RuntimeError(
+                "PAP local fast async doorbell notifier failed"
+            ) from exc
+
+    def _next_seq(self, peer: _PeerState, direction: int) -> int:
+        if direction == DIR_QKV:
+            seq = peer.next_qkv_seq
+            peer.next_qkv_seq += 1
+            return seq
+        seq = peer.next_output_seq
+        peer.next_output_seq += 1
+        return seq
+
+    def _set_pending_seq(self, peer: _PeerState, direction: int, seq: int) -> None:
+        if direction == DIR_QKV:
+            peer.pending_qkv_seq = seq
+        else:
+            peer.pending_output_seq = seq
+
+    def _clear_pending_seq(self, peer: _PeerState, direction: int, seq: int) -> None:
+        if direction == DIR_QKV:
+            if peer.pending_qkv_seq == seq:
+                peer.pending_qkv_seq = 0
+        elif peer.pending_output_seq == seq:
+            peer.pending_output_seq = 0
+        peer.wait_cond.notify_all()
+
+    def _write_doorbell_sync(
+        self,
+        *,
+        peer: _PeerState,
+        direction: int,
+        seq: int,
+        nbytes: int,
+        offset: int,
+        metadata: dict[str, Any],
+    ) -> None:
+        _doorbell_write(
+            peer.peer_doorbell_mm,
+            direction,
+            seq=seq,
+            nbytes=nbytes,
+            offset=offset,
+            metadata=metadata,
+        )
+
+    def _notify_loop(self) -> None:
+        assert self._notify_queue is not None
+        while True:
+            job = self._notify_queue.get()
+            if job is None:
+                self._notify_queue.task_done()
+                return
+            try:
+                wait_start = time.perf_counter()
+                job.event.synchronize()
+                doorbell_start = time.perf_counter()
+                peer = self._require_peer()
+                self._write_doorbell_sync(
+                    peer=peer,
+                    direction=job.direction,
+                    seq=job.seq,
+                    nbytes=job.nbytes,
+                    offset=job.offset,
+                    metadata=job.metadata,
+                )
+                with peer.wait_cond:
+                    self._clear_pending_seq(peer, job.direction, job.seq)
+                if self._trace:
+                    kind = "qkv" if job.direction == DIR_QKV else "output"
+                    logger.info(
+                        "PAP local fast transport async doorbell trace kind=%s "
+                        "layer=%s batch=%s enqueue_ms=%.3f event_wait_ms=%.3f "
+                        "doorbell_ms=%.3f seq=%d nbytes=%d",
+                        kind,
+                        job.descriptor_layer_name,
+                        job.descriptor_batch_id,
+                        (wait_start - job.enqueue_time) * 1000.0,
+                        (doorbell_start - wait_start) * 1000.0,
+                        (time.perf_counter() - doorbell_start) * 1000.0,
+                        job.seq,
+                        job.nbytes,
+                    )
+            except Exception as exc:
+                self._set_notify_error(exc)
+                peer = self._peer
+                if peer is not None:
+                    with peer.wait_cond:
+                        peer.wait_cond.notify_all()
+                logger.exception(
+                    "PAP local fast async doorbell notifier failed actor=%s",
+                    self.actor_id,
+                )
+                return
+            finally:
+                self._notify_queue.task_done()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -467,6 +614,7 @@ class PAPLocalFastTransport:
         """
 
         peer = self._require_peer()
+        self._raise_if_notify_failed()
         nbytes = int(tensor.numel() * tensor.element_size())
         if nbytes > self.buffer_bytes:
             raise RuntimeError(
@@ -480,64 +628,88 @@ class PAPLocalFastTransport:
             )
 
         # Determine slot offset.  For the prototype we always use offset 0
-        # because QKV and output directions are strictly alternating per
-        # layer on each side and we synchronize before reusing the buffer.
+        # because both directions reuse one buffer and correctness still
+        # requires prior sends to finish before the slot is reused.
         offset = 0
+        metadata = _payload_metadata(descriptor, tensor)
 
-        # Copy raw bytes from the source tensor into the peer's uint8 recv
-        # buffer.  We re-view both sides as 1-D uint8 of the correct length
-        # so dtype/shape mismatches don't matter; the receiver reinterprets
-        # the bytes via the carried ``nbytes`` + the descriptor's expected
-        # layout.
-        src_bytes = (
-            tensor.detach().contiguous().view(-1).view(torch.uint8)
-        )
-        # ``tensor.view(-1).view(uint8)`` requires that the element size
-        # divides evenly; for the dtype/shape combinations on the PAP fast
-        # path (fp16/bf16 contiguous) this holds.  Narrow to the exact byte
-        # count defensively.
-        src_bytes = src_bytes.narrow(0, 0, nbytes)
-        dst_bytes = peer.peer_tensor.narrow(0, offset, nbytes)
+        with peer.wait_cond:
+            if self._async_doorbell:
+                while peer.pending_qkv_seq != 0 or peer.pending_output_seq != 0:
+                    self._raise_if_notify_failed()
+                    peer.wait_cond.wait(timeout=0.01)
+            self._raise_if_notify_failed()
 
-        # Memcpy on the current CUDA stream.
-        stream = torch.cuda.current_stream(self.device)
-        t_memcpy_start = time.perf_counter()
-        dst_bytes.copy_(src_bytes, non_blocking=True)
-        # Force the copy to complete on this stream *before* we write the
-        # doorbell.  Per the design doc, this is the only synchronization
-        # the receiver relies on.
-        t_sync_start = time.perf_counter()
-        stream.synchronize()
-        t_doorbell_start = time.perf_counter()
+            # Copy raw bytes from the source tensor into the peer's uint8 recv
+            # buffer.  We re-view both sides as 1-D uint8 of the correct length
+            # so dtype/shape mismatches don't matter; the receiver reinterprets
+            # the bytes via the carried ``nbytes`` + the descriptor's expected
+            # layout.
+            src_bytes = tensor.detach().contiguous().view(-1).view(torch.uint8)
+            src_bytes = src_bytes.narrow(0, 0, nbytes)
+            dst_bytes = peer.peer_tensor.narrow(0, offset, nbytes)
 
-        # Pick the next seq number for this direction and write the doorbell.
-        if direction == DIR_QKV:
-            seq = peer.next_qkv_seq
-            peer.next_qkv_seq += 1
-        else:
-            seq = peer.next_output_seq
-            peer.next_output_seq += 1
-        _doorbell_write(
-            peer.peer_doorbell_mm,
-            direction,
-            seq=seq,
-            nbytes=nbytes,
-            offset=offset,
-            metadata=_payload_metadata(descriptor, tensor),
-        )
+            stream = torch.cuda.current_stream(self.device)
+            t_memcpy_start = time.perf_counter()
+            dst_bytes.copy_(src_bytes, non_blocking=True)
+            t_sync_start = time.perf_counter()
+            seq = self._next_seq(peer, direction)
+
+            if self._async_doorbell:
+                event = torch.cuda.Event()
+                event.record(stream)
+                self._set_pending_seq(peer, direction, seq)
+                enqueue_time = time.perf_counter()
+                assert self._notify_queue is not None
+                self._notify_queue.put(
+                    _PendingDoorbell(
+                        direction=direction,
+                        seq=seq,
+                        nbytes=nbytes,
+                        offset=offset,
+                        metadata=metadata,
+                        event=event,
+                        src_tensor_ref=tensor,
+                        peer_tensor_ref=peer.peer_tensor,
+                        enqueue_time=enqueue_time,
+                        descriptor_layer_name=descriptor.layer_name,
+                        descriptor_batch_id=getattr(descriptor, "batch_id", ""),
+                    )
+                )
+                t_done = time.perf_counter()
+                sync_ms = 0.0
+                enqueue_ms = (t_done - t_sync_start) * 1000.0
+                doorbell_ms = 0.0
+            else:
+                stream.synchronize()
+                t_doorbell_start = time.perf_counter()
+                self._write_doorbell_sync(
+                    peer=peer,
+                    direction=direction,
+                    seq=seq,
+                    nbytes=nbytes,
+                    offset=offset,
+                    metadata=metadata,
+                )
+                t_done = time.perf_counter()
+                sync_ms = (t_doorbell_start - t_sync_start) * 1000.0
+                enqueue_ms = 0.0
+                doorbell_ms = (t_done - t_doorbell_start) * 1000.0
 
         if self._trace:
             kind = "qkv" if direction == DIR_QKV else "output"
             logger.info(
                 "PAP local fast transport send trace kind=%s layer=%s "
-                "batch=%s memcpy_ms=%.3f sync_ms=%.3f doorbell_ms=%.3f "
-                "nbytes=%d seq=%d",
+                "batch=%s memcpy_ms=%.3f sync_ms=%.3f enqueue_ms=%.3f "
+                "doorbell_ms=%.3f async=%d nbytes=%d seq=%d",
                 kind,
                 descriptor.layer_name,
                 getattr(descriptor, "batch_id", ""),
                 (t_sync_start - t_memcpy_start) * 1000.0,
-                (t_doorbell_start - t_sync_start) * 1000.0,
-                (time.perf_counter() - t_doorbell_start) * 1000.0,
+                sync_ms,
+                enqueue_ms,
+                doorbell_ms,
+                int(self._async_doorbell),
                 nbytes,
                 seq,
             )
@@ -566,7 +738,14 @@ class PAPLocalFastTransport:
             iters += 1
             if iters < SPIN_TIGHT_ITERS:
                 continue
-            _sched_yield()
+            if iters < SPIN_TIGHT_ITERS + SPIN_YIELD_ITERS:
+                _sched_yield()
+                continue
+            waited_us = (time.perf_counter() - t_start) * 1_000_000.0
+            if waited_us >= SPIN_SLEEP_AFTER_US:
+                time.sleep(max(SPIN_SLEEP_US, 0) / 1_000_000.0)
+            else:
+                _sched_yield()
         metadata = _doorbell_read_metadata(mm, direction, metadata_len)
         # Bump our expectation for the next round.
         if direction == DIR_QKV:
@@ -783,18 +962,147 @@ class PAPLocalFastTransport:
     # Cleanup (best-effort; daemon process exit will reclaim resources)
     # ------------------------------------------------------------------
 
+    def flush(self) -> None:
+        peer = self._peer
+        if not self._async_doorbell or peer is None:
+            return
+        with peer.wait_cond:
+            while (
+                (peer.pending_qkv_seq != 0 or peer.pending_output_seq != 0)
+                and self._notify_error is None
+            ):
+                peer.wait_cond.wait(timeout=0.01)
+        self._raise_if_notify_failed()
+
+    def barrier(self) -> None:
+        self.flush()
+
+    def wait_idle(self) -> None:
+        self.flush()
+
     def close(self) -> None:
         try:
+            self.flush()
+            if self._notify_queue is not None and self._notify_thread is not None:
+                if self._notify_thread.is_alive():
+                    self._notify_queue.put(None)
+                    self._notify_thread.join(timeout=1.0)
             if self._peer is not None:
                 if self._peer.peer_doorbell_mm is not None:
                     self._peer.peer_doorbell_mm.close()
                 if self._peer.peer_doorbell_fd is not None:
                     os.close(self._peer.peer_doorbell_fd)
-            self._doorbell_mm.close()
+            if self._doorbell_mm is not None:
+                self._doorbell_mm.close()
             if self._doorbell_fd is not None:
                 os.close(self._doorbell_fd)
         except Exception:
             pass
+        finally:
+            self._notify_queue = None
+            self._notify_thread = None
+            self._peer = None
+            self._started = False
+            self._bound = False
+            self._doorbell_fd = None
+            self._doorbell_mm = None
+            self._notify_error = None
+            self._recv_storage = None
+            self._recv_buffer = None
+
+    def __enter__(self) -> PAPLocalFastTransport:
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self.close()
+        return None
+
+    def __del__(self) -> None:
+        self.close()
+        return None
+
+    def __repr__(self) -> str:
+        return (
+            f"PAPLocalFastTransport(actor_id={self.actor_id!r}, "
+            f"device={self.device!s}, async_doorbell={self._async_doorbell})"
+        )
+
+    def __getstate__(self) -> dict[str, Any]:
+        raise TypeError("PAPLocalFastTransport is not picklable")
+
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        raise TypeError("PAPLocalFastTransport is not picklable")
+
+    def debug_state(self) -> dict[str, Any]:
+        peer = self._peer
+        return {
+            "actor_id": self.actor_id,
+            "device": str(self.device),
+            "async_doorbell": self._async_doorbell,
+            "started": self._started,
+            "bound": self._bound,
+            "notify_thread_alive": bool(
+                self._notify_thread is not None and self._notify_thread.is_alive()
+            ),
+            "pending_qkv_seq": int(peer.pending_qkv_seq) if peer is not None else 0,
+            "pending_output_seq": int(peer.pending_output_seq)
+            if peer is not None
+            else 0,
+            "notify_error": (
+                None if self._notify_error is None else str(self._notify_error)
+            ),
+        }
+
+    def sender_sync_mode(self) -> str:
+        return (
+            "async_event_notifier"
+            if self._async_doorbell
+            else "stream_synchronize"
+        )
+
+    def pending_async(self) -> bool:
+        peer = self._peer
+        if not self._async_doorbell or peer is None:
+            return False
+        return bool(peer.pending_qkv_seq != 0 or peer.pending_output_seq != 0)
+
+    def current_notify_error(self) -> str | None:
+        return None if self._notify_error is None else str(self._notify_error)
+
+    def notify_queue_size(self) -> int:
+        return 0 if self._notify_queue is None else int(self._notify_queue.qsize())
+
+    def assert_ready(self) -> None:
+        if self._doorbell_mm is None or self._recv_buffer is None:
+            raise RuntimeError("PAPLocalFastTransport is closed")
+        if not self._started or not self._bound or self._peer is None:
+            raise RuntimeError("PAPLocalFastTransport is not ready")
+        self._raise_if_notify_failed()
+
+    def describe(self) -> str:
+        return (
+            f"actor={self.actor_id} device={self.device} "
+            f"async={self._async_doorbell} started={self._started} "
+            f"bound={self._bound}"
+        )
+
+    def __str__(self) -> str:
+        return repr(self)
+
+    def __bool__(self) -> bool:
+        return True
+
+    def __len__(self) -> int:
+        return int(self.buffer_bytes)
+
+    def __hash__(self) -> int:
+        return id(self)
+
+    def __eq__(self, other: object) -> bool:
+        return self is other
+
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
 
 
 # ---------------------------------------------------------------------------
