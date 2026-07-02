@@ -30,6 +30,21 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
         "layer_total_ms=2.600 layer_start_ns=998900000 "
         "input_norm_done_ns=999000000 self_attn_done_ns=1006500000 "
         "post_norm_done_ns=1006580000 mlp_done_ns=1007180000\n"
+        "PAP OFFLOAD_EXEC projection critical path "
+        "layer=model.layers.1.self_attn.attn batch_key=abc calls=1 "
+        "input_norm_ms=0.100 qkv_ms=0.400 send_ms=0.030 "
+        "recv_ms=0.700 o_proj_ms=0.300 post_norm_ms=0.080 "
+        "mlp_ms=0.600 layer_total_ms=2.600 gaps_ms=0.390 "
+        "layer_start_ns=998900000 input_norm_done_ns=999000000 "
+        "qkv_done_ns=999400000 send_done_ns=1000000000 "
+        "recv_done_ns=1005800000 o_proj_done_ns=1006500000 "
+        "post_norm_done_ns=1006580000 mlp_done_ns=1007180000\n"
+        "PAP OFFLOAD_EXEC projection model forward "
+        "num_tokens=1 model_forward_ms=93.600 model_start_ns=900000000 "
+        "model_done_ns=993600000\n"
+        "PAP OFFLOAD_EXEC projection logits "
+        "num_tokens=1 logits_ms=1.400 logits_start_ns=993600000 "
+        "logits_done_ns=995000000\n"
         "PAP NIXL mailbox send trace actor=projection msg_id=x "
         "kind=attention_task_batch nbytes=8192 queue_ms=0.020 publish_ms=0.040 "
         "pack_ms=0.006 copy_ms=0.018 notify_ms=0.013 write_ms=0.033 "
@@ -52,8 +67,10 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
         "append_tensor_ms=0.018 append_copy_ms=0.019 "
         "append_state_ms=0.021 "
         "qkv_shape=(1, 4096) output_shape=(1, 2048) batch_key=abc "
-        "recv_done_ns=1003900000 compute_done_ns=1004100000 "
-        "send_done_ns=1004200000\n"
+        "recv_start_ns=1002000000 recv_done_ns=1003900000 "
+        "pre_compute_start_ns=1003900000 pre_compute_done_ns=1004000000 "
+        "compute_done_ns=1004100000 post_compute_done_ns=1004150000 "
+        "send_start_ns=1004150000 send_done_ns=1004200000\n"
         "PAP NIXL mailbox send trace actor=attention msg_id=z "
         "kind=attention_result_batch nbytes=4096 queue_ms=0.060 publish_ms=0.043 "
         "pack_ms=0.008 copy_ms=0.019 notify_ms=0.013 ack_wait_ms=0.230 "
@@ -79,6 +96,11 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
     assert summary["projection_layer_timeline"]["input_norm_ms"].median == 0.100
     assert summary["projection_layer_timeline"]["mlp_ms"].median == 0.600
     assert summary["projection_layer_timeline"]["layer_total_ms"].median == 2.600
+    assert summary["projection_critical_path"]["qkv_ms"].median == 0.400
+    assert summary["projection_critical_path"]["recv_ms"].median == 0.700
+    assert summary["projection_critical_path"]["gaps_ms"].median == 0.390
+    assert summary["projection_model_forward"]["model_forward_ms"].median == 93.600
+    assert summary["projection_logits"]["logits_ms"].median == 1.400
     assert summary["attention_trace"]["compute_ms"].median == 0.140
     assert summary["attention_trace"]["append_kv_ms"].median == 0.050
     assert summary["attention_trace"]["pack_ms"].median == 0.030
@@ -97,6 +119,29 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
     assert summary["attention_trace"]["append_copy_ms"].median == 0.019
     assert summary["attention_trace"]["append_state_ms"].median == 0.021
     assert summary["attention_trace"]["calls"].median == 1
+    assert (
+        summary["projection_attention_correlation"][
+            "projection_send_done_to_attention_recv_start_ms"
+        ].median
+        == 2.000
+    )
+    assert summary["projection_attention_correlation"]["attention_recv_ms"].median == 1.900
+    assert (
+        summary["projection_attention_correlation"]["attention_pre_compute_ms"].median
+        == 0.100
+    )
+    assert summary["projection_attention_correlation"]["attention_compute_ms"].median == 0.100
+    assert (
+        summary["projection_attention_correlation"]["attention_post_compute_ms"].median
+        == 0.050
+    )
+    assert summary["projection_attention_correlation"]["attention_send_ms"].median == 0.050
+    assert (
+        summary["projection_attention_correlation"][
+            "attention_send_done_to_projection_recv_done_ms"
+        ].median
+        == 1.600
+    )
     assert (
         summary["projection_attention_correlation"][
             "attention_path_after_projection_send_ms"

@@ -234,6 +234,13 @@ if TYPE_CHECKING:
 
 logger = init_logger(__name__)
 
+_TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
+
+
+def _pap_projection_critical_trace_enabled() -> bool:
+    return os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower() in _TRUE_ENV_VALUES
+
+
 AttnMetadataDict: TypeAlias = dict[str, AttentionMetadata]
 # list when ubatching is enabled
 PerLayerAttnMetadata: TypeAlias = list[AttnMetadataDict] | AttnMetadataDict
@@ -4575,6 +4582,9 @@ class GPUModelRunner(
                 num_tokens_unpadded,
                 ubatch_slices_padded,
             )
+        trace_pap_projection = _pap_projection_critical_trace_enabled()
+        trace_forward_start = time.perf_counter() if trace_pap_projection else 0.0
+        trace_forward_start_ns = time.perf_counter_ns() if trace_pap_projection else 0
         with (
             set_forward_context(
                 attn_metadata,
@@ -4602,6 +4612,7 @@ class GPUModelRunner(
                 **model_kwargs,
             )
 
+        trace_postprocess_start = time.perf_counter() if trace_pap_projection else 0.0
         with record_function_or_nullcontext("gpu_model_runner: postprocess"):
             if self.use_aux_hidden_state_outputs:
                 # True when EAGLE 3 is used.
@@ -4678,6 +4689,23 @@ class GPUModelRunner(
         # previous model forward without breaking async scheduling.
         if deferred_state_corrections_fn:
             deferred_state_corrections_fn()
+
+        if trace_pap_projection:
+            trace_postprocess_done_ns = time.perf_counter_ns()
+            trace_forward_total_ms = (
+                (trace_postprocess_done_ns - trace_forward_start_ns) / 1_000_000.0
+                if trace_forward_start_ns
+                else 0.0
+            )
+            logger.info(
+                "PAP OFFLOAD_EXEC projection runner forward "
+                "num_tokens=%d forward_and_postprocess_ms=%.3f "
+                "forward_start_ns=%d postprocess_done_ns=%d",
+                num_tokens_padded,
+                trace_forward_total_ms,
+                trace_forward_start_ns,
+                trace_postprocess_done_ns,
+            )
 
         return None
 

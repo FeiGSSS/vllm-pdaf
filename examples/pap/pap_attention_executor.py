@@ -382,8 +382,6 @@ def _try_local_paged_native_cache_append(
     value_batch: torch.Tensor,
     slot_mapping: torch.Tensor,
 ) -> bool:
-    if not _pap_env_flag("PAP_ATTENTION_LOCAL_PAGED_NATIVE_CACHE_APPEND", False):
-        return False
     if slot_mapping.numel() <= 0:
         return True
     if pool.kv_cache.device.type != "cuda":
@@ -666,8 +664,9 @@ class PAPAttentionRegistry:
         return grown
 
     @staticmethod
+    @staticmethod
     def _local_paged_cache_enabled() -> bool:
-        return _pap_env_flag("PAP_ATTENTION_LOCAL_PAGED_CACHE")
+        return True
 
     def _get_or_create_local_paged_pool_locked(
         self,
@@ -809,7 +808,7 @@ class PAPAttentionRegistry:
         block_size: int,
         num_kv_heads: int,
     ) -> None:
-        if not self._local_paged_cache_enabled() or int(seq_len) <= 0:
+        if int(seq_len) <= 0:
             return
         non_empty_segments = [
             (segment_key, segment_value)
@@ -874,8 +873,6 @@ class PAPAttentionRegistry:
         value: torch.Tensor,
         seq_len: int,
     ) -> None:
-        if not self._local_paged_cache_enabled():
-            return
         state = self._local_paged_kv.setdefault(session_request_id, {}).get(layer_name)
         if state is None:
             return
@@ -955,7 +952,7 @@ class PAPAttentionRegistry:
         by the padded-SDPA fallback.
         """
 
-        if not entries or not self._local_paged_cache_enabled():
+        if not entries:
             return None
 
         with self._lock:
@@ -1148,7 +1145,7 @@ class PAPAttentionRegistry:
     ) -> list[PAPLocalPagedAttentionState] | None:
         """Append a same-layer decode batch from batched K/V tensors."""
 
-        if not session_request_ids or not self._local_paged_cache_enabled():
+        if not session_request_ids:
             return None
         if (
             int(key_batch.shape[0]) != len(session_request_ids)
@@ -1270,58 +1267,56 @@ class PAPAttentionRegistry:
             key_source = key_batch.detach()
             value_source = value_batch.detach()
             native_written_pool_ids: set[int] = set()
-            if _pap_env_flag("PAP_ATTENTION_LOCAL_PAGED_NATIVE_CACHE_APPEND", False):
-                for pool_id, (
-                    pool,
-                    local_blocks,
-                    block_offsets,
-                    row_indices,
-                ) in native_write_batches.items():
-                    tensor_start = (
-                        time.perf_counter() if trace_stats is not None else 0.0
+            for pool_id, (
+                pool,
+                local_blocks,
+                block_offsets,
+                row_indices,
+            ) in native_write_batches.items():
+                tensor_start = (
+                    time.perf_counter() if trace_stats is not None else 0.0
+                )
+                first_row = row_indices[0]
+                contiguous_rows = row_indices == list(
+                    range(first_row, first_row + len(row_indices))
+                )
+                if contiguous_rows:
+                    row_slice = slice(first_row, first_row + len(row_indices))
+                    key_group = key_source[row_slice]
+                    value_group = value_source[row_slice]
+                else:
+                    row_index = torch.tensor(
+                        row_indices,
+                        dtype=torch.long,
+                        device=key_source.device,
                     )
-                    first_row = row_indices[0]
-                    contiguous_rows = row_indices == list(
-                        range(first_row, first_row + len(row_indices))
-                    )
-                    if contiguous_rows:
-                        row_slice = slice(first_row, first_row + len(row_indices))
-                        key_group = key_source[row_slice]
-                        value_group = value_source[row_slice]
-                    else:
-                        row_index = torch.tensor(
-                            row_indices,
-                            dtype=torch.long,
-                            device=key_source.device,
-                        )
-                        key_group = key_source.index_select(0, row_index)
-                        value_group = value_source.index_select(0, row_index)
-                    slot_mapping = _local_paged_slot_mapping_tensor(
-                        local_blocks=local_blocks,
-                        block_offsets=block_offsets,
-                        block_size=pool.block_size,
-                        device=pool.kv_cache.device,
-                    )
+                    key_group = key_source.index_select(0, row_index)
+                    value_group = value_source.index_select(0, row_index)
+                slot_mapping = _local_paged_slot_mapping_tensor(
+                    local_blocks=local_blocks,
+                    block_offsets=block_offsets,
+                    block_size=pool.block_size,
+                    device=pool.kv_cache.device,
+                )
+                _trace_add_elapsed_ms(
+                    trace_stats,
+                    "append_tensor_ms",
+                    tensor_start,
+                )
+                copy_start = time.perf_counter() if trace_stats is not None else 0.0
+                native_written = _try_local_paged_native_cache_append(
+                    pool=pool,
+                    key_batch=key_group,
+                    value_batch=value_group,
+                    slot_mapping=slot_mapping,
+                )
+                if native_written:
+                    native_written_pool_ids.add(pool_id)
                     _trace_add_elapsed_ms(
                         trace_stats,
-                        "append_tensor_ms",
-                        tensor_start,
+                        "append_copy_ms",
+                        copy_start,
                     )
-
-                    copy_start = time.perf_counter() if trace_stats is not None else 0.0
-                    native_written = _try_local_paged_native_cache_append(
-                        pool=pool,
-                        key_batch=key_group,
-                        value_batch=value_group,
-                        slot_mapping=slot_mapping,
-                    )
-                    if native_written:
-                        native_written_pool_ids.add(pool_id)
-                        _trace_add_elapsed_ms(
-                            trace_stats,
-                            "append_copy_ms",
-                            copy_start,
-                        )
 
             for (
                 _pool_id,
@@ -2883,34 +2878,6 @@ def compute_offload_exec_output(
     return output.reshape(1, -1)
 
 
-def _compute_offload_exec_batch_output_fallback(
-    *,
-    registry: PAPAttentionRegistry,
-    descriptor: Any,
-    qkv_batch: torch.Tensor,
-    trace_stats: dict[str, float] | None = None,
-) -> torch.Tensor:
-    outputs: list[torch.Tensor] = []
-    fallback_start = time.perf_counter() if trace_stats is not None else 0.0
-    for index, item in enumerate(descriptor.items):
-        outputs.append(
-            compute_offload_exec_output(
-                registry=registry,
-                request_id=item.request_id,
-                layer_name=item.layer_name,
-                qkv=qkv_batch[index : index + 1],
-                scale=item.scale,
-                step=item.step,
-            ).reshape(1, -1)
-        )
-    if trace_stats is not None:
-        trace_stats["fallback_ms"] = (
-            trace_stats.get("fallback_ms", 0.0)
-            + (time.perf_counter() - fallback_start) * 1000.0
-        )
-    return _combine_offload_exec_outputs(outputs)
-
-
 def _compute_offload_exec_paged_flash_batch(
     *,
     query_batch: torch.Tensor,
@@ -2918,8 +2885,6 @@ def _compute_offload_exec_paged_flash_batch(
     scale: float,
     trace_stats: dict[str, float] | None = None,
 ) -> torch.Tensor | None:
-    if not _pap_env_flag("PAP_OFFLOAD_EXEC_USE_PAGED_FLASH_ATTN"):
-        return None
     if not states or any(state is None for state in states):
         return None
     if not query_batch.is_cuda:
@@ -2962,6 +2927,8 @@ def _compute_offload_exec_paged_flash_batch(
         return None
 
     output = torch.empty_like(query_batch)
+    if trace_stats is not None:
+        trace_stats["pre_compute_done_ns"] = float(time.perf_counter_ns())
     fa_version = get_flash_attn_version(head_size=int(query_batch.shape[-1]))
     paged_start = time.perf_counter() if trace_stats is not None else 0.0
     result = flash_attn_varlen_func(
@@ -2984,52 +2951,10 @@ def _compute_offload_exec_paged_flash_batch(
             trace_stats.get("paged_flash_ms", 0.0)
             + (time.perf_counter() - paged_start) * 1000.0
         )
+        trace_stats["sdpa_done_ns"] = float(time.perf_counter_ns())
     if result is not None:
         return result
     return output
-
-
-def _local_paged_attention_segments(
-    state: PAPLocalPagedAttentionState,
-) -> list[tuple[torch.Tensor, torch.Tensor]]:
-    """Materialize local paged KV as fallback segments.
-
-    The paged FlashAttention path should normally consume the block table
-    directly. This helper only preserves correctness if the paged kernel is not
-    available after the local paged cache was already updated.
-    """
-
-    remaining = int(state.seq_len)
-    if remaining <= 0:
-        return []
-    key_parts: list[torch.Tensor] = []
-    value_parts: list[torch.Tensor] = []
-    for block_id in state.block_ids:
-        if remaining <= 0:
-            break
-        take = min(remaining, state.block_size)
-        key_parts.append(
-            state.kv_cache[
-                int(block_id),
-                0,
-                :take,
-                : state.num_kv_heads,
-                :,
-            ]
-        )
-        value_parts.append(
-            state.kv_cache[
-                int(block_id),
-                1,
-                :take,
-                : state.num_kv_heads,
-                :,
-            ]
-        )
-        remaining -= take
-    if not key_parts:
-        return []
-    return [(torch.cat(key_parts, dim=0), torch.cat(value_parts, dim=0))]
 
 
 def compute_offload_exec_batch_output(
@@ -3039,28 +2964,16 @@ def compute_offload_exec_batch_output(
     qkv_batch: torch.Tensor,
     trace_stats: dict[str, float] | None = None,
 ) -> torch.Tensor:
-    """Compute one OFFLOAD_EXEC attention output batch from packed QKV.
-
-    The fast path batches same-shape decode requests into one SDPA call. It
-    preserves the old per-request path for singleton, mixed-shape, or mixed-scale
-    batches.
-    """
+    """Compute one OFFLOAD_EXEC attention output batch via paged FlashAttention."""
 
     items = tuple(descriptor.items)
     if int(qkv_batch.shape[0]) != len(items):
         raise RuntimeError(
             "PAP OFFLOAD_EXEC batch QKV row count does not match descriptor"
         )
-    if len(items) <= 1:
-        return _compute_offload_exec_batch_output_fallback(
-            registry=registry,
-            descriptor=descriptor,
-            qkv_batch=qkv_batch,
-            trace_stats=trace_stats,
-        )
+    if trace_stats is not None:
+        trace_stats["pre_compute_start_ns"] = float(time.perf_counter_ns())
 
-    common_shape: tuple[int, int, int, int, int] | None = None
-    common_scale: float | None = None
     shape_lookup_start = time.perf_counter() if trace_stats is not None else 0.0
     num_heads_default = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_HEADS", "0"))
     num_kv_heads_default = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "0"))
@@ -3073,23 +2986,21 @@ def compute_offload_exec_batch_output(
         num_kv_heads=num_kv_heads_default,
         head_dim=head_dim_default,
     )
+
+    common_shape: tuple[int, int, int, int, int] | None = None
+    common_scale: float | None = None
     for item, session_entry in zip(items, session_entries):
-        q_size = session_entry.q_size
-        kv_size = session_entry.kv_size
-        num_heads = session_entry.num_heads
-        num_kv_heads = session_entry.num_kv_heads
-        head_dim = session_entry.head_dim
-        shape = (q_size, kv_size, num_heads, num_kv_heads, head_dim)
+        shape = (
+            session_entry.q_size, session_entry.kv_size,
+            session_entry.num_heads, session_entry.num_kv_heads, session_entry.head_dim,
+        )
         scale = float(item.scale)
         if common_shape is None:
             common_shape = shape
             common_scale = scale
         elif shape != common_shape or scale != common_scale:
-            return _compute_offload_exec_batch_output_fallback(
-                registry=registry,
-                descriptor=descriptor,
-                qkv_batch=qkv_batch,
-                trace_stats=trace_stats,
+            raise RuntimeError(
+                "PAP OFFLOAD_EXEC batch has mixed shapes or scales"
             )
     if trace_stats is not None:
         trace_stats["shape_lookup_ms"] += (
@@ -3097,38 +3008,21 @@ def compute_offload_exec_batch_output(
         ) * 1000.0
 
     assert common_shape is not None
-    assert common_scale is not None
     _q_size, kv_size, num_heads, num_kv_heads, head_dim = common_shape
-    expected_width = _q_size + kv_size + kv_size
-    if int(qkv_batch.shape[-1]) != expected_width:
-        raise ValueError(
-            f"packed qkv width {qkv_batch.shape[-1]} does not match "
-            f"q_size={_q_size} kv_size={kv_size}"
-        )
-
-    segments_by_item: list[list[tuple[torch.Tensor, torch.Tensor]]] = []
-    seq_lens: list[int] = []
-    decode_seq_lens: list[int] = []
-    for item in items:
-        seq_len = int(item.step)
-        if seq_len <= 0:
-            raise ValueError("PAP OFFLOAD_EXEC step must be positive")
-        decode_seq_lens.append(seq_len)
-
     batch_size = len(items)
+
     qkv_split_start = time.perf_counter() if trace_stats is not None else 0.0
-    pack_start = time.perf_counter() if trace_stats is not None else 0.0
     query_flat, key_flat, value_flat = qkv_batch.split(
-        [_q_size, kv_size, kv_size],
-        dim=-1,
+        [_q_size, kv_size, kv_size], dim=-1,
     )
     query_batch = query_flat.view(batch_size, num_heads, head_dim)
     key_batch = key_flat.view(batch_size, num_kv_heads, head_dim)
     value_batch = value_flat.view(batch_size, num_kv_heads, head_dim)
     if trace_stats is not None:
-        elapsed_ms = (time.perf_counter() - qkv_split_start) * 1000.0
-        trace_stats["qkv_split_ms"] += elapsed_ms
-        trace_stats["pack_ms"] += (time.perf_counter() - pack_start) * 1000.0
+        trace_stats["qkv_split_ms"] += (
+            time.perf_counter() - qkv_split_start
+        ) * 1000.0
+
     query_move_start = time.perf_counter() if trace_stats is not None else 0.0
     if torch.cuda.is_available():
         query_batch = query_batch.to(registry.storage_device, non_blocking=True)
@@ -3137,156 +3031,47 @@ def compute_offload_exec_batch_output(
             time.perf_counter() - query_move_start
         ) * 1000.0
 
-    paged_states: list[PAPLocalPagedAttentionState] | None = None
-    if _pap_env_flag("PAP_OFFLOAD_EXEC_USE_PAGED_FLASH_ATTN"):
-        append_start = time.perf_counter() if trace_stats is not None else 0.0
-        paged_states = registry.append_decode_kv_tensor_batch_for_local_paged_attention(
-            session_request_ids=tuple(
-                session_entry.session_request_id for session_entry in session_entries
-            ),
-            layer_name=descriptor.layer_name,
-            key_batch=key_batch,
-            value_batch=value_batch,
-            seq_lens=tuple(decode_seq_lens),
-            trace_stats=trace_stats,
-        )
-        if trace_stats is not None:
-            trace_stats["append_kv_ms"] += (time.perf_counter() - append_start) * 1000.0
-        if paged_states is not None:
-            paged_output = _compute_offload_exec_paged_flash_batch(
-                query_batch=query_batch,
-                states=list(paged_states),
-                scale=common_scale,
-                trace_stats=trace_stats,
-            )
-            if paged_output is not None:
-                reshape_start = time.perf_counter() if trace_stats is not None else 0.0
-                if paged_output.ndim == 3:
-                    paged_output = paged_output.reshape(
-                        batch_size,
-                        num_heads * head_dim,
-                    )
-                elif paged_output.ndim != 2:
-                    raise RuntimeError(
-                        "PAP paged FlashAttention output has invalid shape"
-                    )
-                if trace_stats is not None:
-                    trace_stats["reshape_ms"] += (
-                        time.perf_counter() - reshape_start
-                    ) * 1000.0
-                return paged_output
-
-            pack_start = time.perf_counter() if trace_stats is not None else 0.0
-            for state in paged_states:
-                non_empty_segments = [
-                    (segment_key, segment_value)
-                    for segment_key, segment_value in _local_paged_attention_segments(
-                        state
-                    )
-                    if segment_key.numel() > 0
-                ]
-                if not non_empty_segments:
-                    raise RuntimeError(
-                        "PAP OFFLOAD_EXEC decode attention has no KV segments"
-                    )
-                segments_by_item.append(non_empty_segments)
-                seq_lens.append(
-                    sum(
-                        int(segment_key.shape[0])
-                        for segment_key, _ in non_empty_segments
-                    )
-                )
-            if trace_stats is not None:
-                trace_stats["pack_ms"] += (time.perf_counter() - pack_start) * 1000.0
+    append_start = time.perf_counter() if trace_stats is not None else 0.0
+    decode_seq_lens = [int(item.step) for item in items]
+    paged_states = registry.append_decode_kv_tensor_batch_for_local_paged_attention(
+        session_request_ids=tuple(
+            session_entry.session_request_id for session_entry in session_entries
+        ),
+        layer_name=descriptor.layer_name,
+        key_batch=key_batch,
+        value_batch=value_batch,
+        seq_lens=tuple(decode_seq_lens),
+        trace_stats=trace_stats,
+    )
+    if trace_stats is not None:
+        trace_stats["append_kv_ms"] += (
+            time.perf_counter() - append_start
+        ) * 1000.0
 
     if paged_states is None:
-        for index, item in enumerate(items):
-            session_request_id = session_entries[index].session_request_id
-            append_start = time.perf_counter() if trace_stats is not None else 0.0
-            segments, _ = registry.append_decode_kv_at_seq_len(
-                request_id=session_request_id,
-                layer_name=item.layer_name,
-                key=key_batch[index : index + 1],
-                value=value_batch[index : index + 1],
-                seq_len=decode_seq_lens[index],
-            )
-            if trace_stats is not None:
-                trace_stats["append_kv_ms"] += (
-                    time.perf_counter() - append_start
-                ) * 1000.0
-            pack_start = time.perf_counter() if trace_stats is not None else 0.0
-            non_empty_segments = [
-                (segment_key, segment_value)
-                for segment_key, segment_value in segments
-                if segment_key.numel() > 0
-            ]
-            if not non_empty_segments:
-                raise RuntimeError(
-                    "PAP OFFLOAD_EXEC decode attention has no KV segments"
-                )
-            segments_by_item.append(non_empty_segments)
-            seq_lens.append(
-                sum(int(segment_key.shape[0]) for segment_key, _ in non_empty_segments)
-            )
-            if trace_stats is not None:
-                trace_stats["pack_ms"] += (time.perf_counter() - pack_start) * 1000.0
+        raise RuntimeError("PAP local paged cache not available for decode attention")
 
-    pack_start = time.perf_counter() if trace_stats is not None else 0.0
-    max_seq_len = max(seq_lens)
-    key_segments: list[torch.Tensor] = []
-    value_segments: list[torch.Tensor] = []
-    for non_empty_segments in segments_by_item:
-        key_segments.append(
-            torch.cat(
-                [segment_key for segment_key, _ in non_empty_segments],
-                dim=0,
-            )
-        )
-        value_segments.append(
-            torch.cat(
-                [segment_value for _, segment_value in non_empty_segments],
-                dim=0,
-            )
-        )
-    device = query_batch.device
-    dtype = query_batch.dtype
-    key_batch = torch.zeros(
-        (batch_size, max_seq_len, num_kv_heads, head_dim),
-        dtype=dtype,
-        device=device,
-    )
-    value_batch = torch.zeros_like(key_batch)
-    attn_mask = torch.zeros(
-        (batch_size, 1, 1, max_seq_len),
-        dtype=torch.bool,
-        device=device,
-    )
-    for index, (request_key, request_value, seq_len) in enumerate(
-        zip(key_segments, value_segments, seq_lens)
-    ):
-        key_batch[index, :seq_len].copy_(request_key.to(device=device, dtype=dtype))
-        value_batch[index, :seq_len].copy_(request_value.to(device=device, dtype=dtype))
-        attn_mask[index, :, :, :seq_len] = True
-    if trace_stats is not None:
-        trace_stats["pack_ms"] += (time.perf_counter() - pack_start) * 1000.0
-
-    sdpa_start = time.perf_counter() if trace_stats is not None else 0.0
-    output = torch.nn.functional.scaled_dot_product_attention(
-        query_batch.unsqueeze(2),
-        key_batch.permute(0, 2, 1, 3),
-        value_batch.permute(0, 2, 1, 3),
-        attn_mask=attn_mask,
-        dropout_p=0.0,
+    paged_output = _compute_offload_exec_paged_flash_batch(
+        query_batch=query_batch,
+        states=list(paged_states),
         scale=common_scale,
-        enable_gqa=num_heads != num_kv_heads,
+        trace_stats=trace_stats,
     )
-    if trace_stats is not None:
-        trace_stats["sdpa_ms"] += (time.perf_counter() - sdpa_start) * 1000.0
+    if paged_output is None:
+        raise RuntimeError("PAP paged FlashAttention failed")
+
     reshape_start = time.perf_counter() if trace_stats is not None else 0.0
-    output = output.squeeze(2).reshape(batch_size, num_heads * head_dim)
+    if paged_output.ndim == 3:
+        paged_output = paged_output.reshape(batch_size, num_heads * head_dim)
+    elif paged_output.ndim != 2:
+        raise RuntimeError("PAP paged FlashAttention output has invalid shape")
     if trace_stats is not None:
-        trace_stats["reshape_ms"] += (time.perf_counter() - reshape_start) * 1000.0
-    return output
+        trace_stats["reshape_ms"] += (
+            time.perf_counter() - reshape_start
+        ) * 1000.0
+        trace_stats["compute_done_ns"] = float(time.perf_counter_ns())
+        trace_stats["post_compute_done_ns"] = float(time.perf_counter_ns())
+    return paged_output
 
 
 def run_offload_exec_once(
@@ -3456,10 +3241,14 @@ def run_offload_exec_batch_once(
         "on",
     )
     trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
+    trace_recv_start_ns = 0
     trace_recv_done_ns = 0
     trace_compute_done_ns = 0
+    trace_send_start_ns = 0
     trace_send_done_ns = 0
     trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
+    if trace_offload_exec:
+        trace_recv_start_ns = time.perf_counter_ns()
     qkv_batch = transport.recv_qkv_batch(
         descriptor,
         remote_address=remote_address,
@@ -3493,6 +3282,10 @@ def run_offload_exec_batch_once(
             "append_tensor_ms": 0.0,
             "append_copy_ms": 0.0,
             "append_state_ms": 0.0,
+            "pre_compute_start_ns": 0.0,
+            "pre_compute_done_ns": 0.0,
+            "sdpa_done_ns": 0.0,
+            "post_compute_done_ns": 0.0,
         }
         if trace_offload_exec
         else None
@@ -3511,6 +3304,8 @@ def run_offload_exec_batch_once(
     if trace_offload_exec:
         trace_compute_done_ns = time.perf_counter_ns()
     trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
+    if trace_offload_exec:
+        trace_send_start_ns = time.perf_counter_ns()
     transport.send_output_batch(
         descriptor,
         output_batch,
@@ -3531,7 +3326,10 @@ def run_offload_exec_batch_once(
             "append_record_ms=%.3f append_tensor_ms=%.3f "
             "append_copy_ms=%.3f append_state_ms=%.3f "
             "qkv_shape=%s output_shape=%s batch_key=%s "
-            "recv_done_ns=%d compute_done_ns=%d send_done_ns=%d",
+            "recv_done_ns=%d compute_done_ns=%d send_done_ns=%d "
+            "recv_start_ns=%d pre_compute_start_ns=%d "
+            "pre_compute_done_ns=%d sdpa_done_ns=%d reshape_done_ns=%d "
+            "send_start_ns=%d",
             descriptor.layer_name,
             len(descriptor.items),
             trace_recv_ms,
@@ -3565,6 +3363,12 @@ def run_offload_exec_batch_once(
             trace_recv_done_ns,
             trace_compute_done_ns,
             trace_send_done_ns,
+            trace_recv_start_ns,
+            int(trace_compute_stats.get("pre_compute_start_ns", 0.0)) if trace_compute_stats else 0,
+            int(trace_compute_stats.get("pre_compute_done_ns", 0.0)) if trace_compute_stats else 0,
+            int(trace_compute_stats.get("sdpa_done_ns", 0.0)) if trace_compute_stats else 0,
+            int(trace_compute_stats.get("post_compute_done_ns", 0.0)) if trace_compute_stats else 0,
+            trace_send_start_ns,
         )
 
 
@@ -3641,10 +3445,14 @@ def run_offload_exec_mailbox_loop(
         prefetcher.prefetch()
     while True:
         trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
+        trace_recv_start_ns = 0
         trace_recv_done_ns = 0
         trace_compute_done_ns = 0
+        trace_send_start_ns = 0
         trace_send_done_ns = 0
         trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
+        if trace_offload_exec:
+            trace_recv_start_ns = time.perf_counter_ns()
         qkv_message = None
         recv_attention_message_fn = getattr(
             transport, "recv_next_attention_batch_message", None
@@ -3700,6 +3508,10 @@ def run_offload_exec_mailbox_loop(
                     "append_tensor_ms": 0.0,
                     "append_copy_ms": 0.0,
                     "append_state_ms": 0.0,
+                    "pre_compute_start_ns": 0.0,
+                    "pre_compute_done_ns": 0.0,
+                    "compute_done_ns": 0.0,
+                    "post_compute_done_ns": 0.0,
                 }
                 if trace_offload_exec
                 else None
@@ -3721,6 +3533,8 @@ def run_offload_exec_mailbox_loop(
         if trace_offload_exec:
             trace_compute_done_ns = time.perf_counter_ns()
         trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
+        if trace_offload_exec:
+            trace_send_start_ns = time.perf_counter_ns()
         transport.send_output_batch(
             descriptor,
             output_batch,
@@ -3741,7 +3555,10 @@ def run_offload_exec_mailbox_loop(
                 "append_prepare_ms=%.3f append_record_ms=%.3f "
                 "append_tensor_ms=%.3f append_copy_ms=%.3f "
                 "append_state_ms=%.3f qkv_shape=%s output_shape=%s batch_key=%s "
-                "recv_done_ns=%d compute_done_ns=%d send_done_ns=%d",
+                "recv_done_ns=%d compute_done_ns=%d send_done_ns=%d "
+                "recv_start_ns=%d pre_compute_start_ns=%d "
+                "pre_compute_done_ns=%d sdpa_done_ns=%d reshape_done_ns=%d "
+                "send_start_ns=%d",
                 descriptor.layer_name,
                 len(descriptor.items),
                 trace_recv_ms,
@@ -3793,6 +3610,12 @@ def run_offload_exec_mailbox_loop(
                 trace_recv_done_ns,
                 trace_compute_done_ns,
                 trace_send_done_ns,
+                trace_recv_start_ns,
+                int(trace_compute_stats.get("pre_compute_start_ns", 0.0)) if trace_compute_stats else 0,
+                int(trace_compute_stats.get("pre_compute_done_ns", 0.0)) if trace_compute_stats else 0,
+                int(trace_compute_stats.get("sdpa_done_ns", 0.0)) if trace_compute_stats else 0,
+                int(trace_compute_stats.get("post_compute_done_ns", 0.0)) if trace_compute_stats else 0,
+                trace_send_start_ns,
             )
 
 

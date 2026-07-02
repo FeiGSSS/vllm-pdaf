@@ -50,6 +50,34 @@ _PROJECTION_LAYER_TIMELINE_RE = re.compile(
     r"self_attn_ms=([0-9.]+) post_attention_layernorm_ms=([0-9.]+) "
     r"mlp_ms=([0-9.]+) layer_total_ms=([0-9.]+)"
 )
+_PROJECTION_CRITICAL_PATH_RE = re.compile(
+    r"projection critical path .*?calls=(\d+) "
+    r"input_norm_ms=([0-9.]+) qkv_ms=([0-9.]+) send_ms=([0-9.]+) "
+    r"recv_ms=([0-9.]+) o_proj_ms=([0-9.]+) post_norm_ms=([0-9.]+) "
+    r"mlp_ms=([0-9.]+) layer_total_ms=([0-9.]+) gaps_ms=([0-9.]+)"
+)
+_PROJECTION_MODEL_FORWARD_RE = re.compile(
+    r"projection model forward .*?num_tokens=(\d+) "
+    r"model_forward_ms=([0-9.]+)"
+)
+_PROJECTION_LOGITS_RE = re.compile(
+    r"projection logits .*?num_tokens=(\d+) logits_ms=([0-9.]+)"
+)
+_PROJECTION_RUNNER_FORWARD_RE = re.compile(
+    r"projection runner forward .*?num_tokens=(\d+) "
+    r"forward_and_postprocess_ms=([0-9.]+)"
+)
+_PROJECTION_WORKER_EXEC_RE = re.compile(
+    r"projection worker execute_model .*?num_tokens=(\d+) exec_ms=([0-9.]+)"
+)
+_PROJECTION_WORKER_SAMPLE_RE = re.compile(
+    r"projection worker sample_tokens .*?sample_ms=([0-9.]+)"
+)
+_PROJECTION_ENGINE_STEP_RE = re.compile(
+    r"projection engine step .*?num_gen=(\d+) .*?"
+    r"sched_ms=([0-9.]+) exec_and_sample_ms=([0-9.]+) "
+    r"postprocess_ms=([0-9.]+) step_ms=([0-9.]+)"
+)
 _ATTENTION_TRACE_RE = re.compile(
     r"attention mailbox batch trace .* calls=(\d+) recv_qkv_ms=([0-9.]+) "
     r"compute_ms=([0-9.]+) send_output_ms=([0-9.]+) total_ms=([0-9.]+)"
@@ -75,8 +103,18 @@ _PROJECTION_CORRELATION_RE = re.compile(
     r"batch_keys=(\S+) send_done_ns=(\d+) yield_start_ns=(\d+) "
     r"yield_end_ns=(\d+) recv_done_ns=(\d+)"
 )
-_ATTENTION_CORRELATION_RE = re.compile(
-    r"batch_key=(\S+) recv_done_ns=(\d+) compute_done_ns=(\d+) send_done_ns=(\d+)"
+_ATTENTION_CORRELATION_OLD_RE = re.compile(
+    r"batch_key=(\S+) "
+    r"recv_done_ns=(\d+) "
+    r"compute_done_ns=(\d+) "
+    r"send_done_ns=(\d+)"
+)
+_ATTENTION_CORRELATION_NEW_RE = re.compile(
+    r"batch_key=(\S+) "
+    r"recv_done_ns=(\d+) compute_done_ns=(\d+) send_done_ns=(\d+) "
+    r"recv_start_ns=(\d+) pre_compute_start_ns=(\d+) "
+    r"pre_compute_done_ns=(\d+) sdpa_done_ns=(\d+) reshape_done_ns=(\d+) "
+    r"send_start_ns=(\d+)"
 )
 _MAILBOX_SEND_RE = re.compile(
     r"PAP NIXL mailbox send trace actor=(\S+) .* kind=(\S+) nbytes=(\d+) "
@@ -174,6 +212,44 @@ def summarize_pap_trace_logs(
         "mlp_ms": [],
         "layer_total_ms": [],
     }
+    projection_critical_path: dict[str, list[float]] = {
+        "calls": [],
+        "input_norm_ms": [],
+        "qkv_ms": [],
+        "send_ms": [],
+        "recv_ms": [],
+        "o_proj_ms": [],
+        "post_norm_ms": [],
+        "mlp_ms": [],
+        "layer_total_ms": [],
+        "gaps_ms": [],
+    }
+    projection_model_forward: dict[str, list[float]] = {
+        "num_tokens": [],
+        "model_forward_ms": [],
+    }
+    projection_logits: dict[str, list[float]] = {
+        "num_tokens": [],
+        "logits_ms": [],
+    }
+    projection_runner_forward: dict[str, list[float]] = {
+        "num_tokens": [],
+        "forward_and_postprocess_ms": [],
+    }
+    projection_worker_exec: dict[str, list[float]] = {
+        "num_tokens": [],
+        "exec_ms": [],
+    }
+    projection_worker_sample: dict[str, list[float]] = {
+        "sample_ms": [],
+    }
+    projection_engine_step: dict[str, list[float]] = {
+        "num_gen": [],
+        "sched_ms": [],
+        "exec_and_sample_ms": [],
+        "postprocess_ms": [],
+        "step_ms": [],
+    }
     attention: dict[str, list[float]] = {
         "calls": [],
         "recv_qkv_ms": [],
@@ -203,7 +279,7 @@ def summarize_pap_trace_logs(
     mailbox_read_by_kind: dict[str, dict[str, list[float]]] = {}
     mailbox_wait_by_kind: dict[str, dict[str, list[float]]] = {}
     projection_correlation_entries: list[tuple[list[str], int, int, int]] = []
-    attention_send_done_ns_by_key: dict[str, int] = {}
+    attention_timestamps_by_key: dict[str, dict[str, int]] = {}
 
     for log_path in sorted(path.glob("*.log")):
         for line in log_path.read_text(errors="ignore").splitlines():
@@ -254,6 +330,85 @@ def summarize_pap_trace_logs(
                         ("layer_total_ms", layer_total_ms),
                     ):
                         projection_layer_timeline[field].append(float(value))
+                continue
+            if match := _PROJECTION_CRITICAL_PATH_RE.search(line):
+                (
+                    calls,
+                    input_norm_ms,
+                    qkv_ms,
+                    send_ms,
+                    recv_ms,
+                    o_proj_ms,
+                    post_norm_ms,
+                    mlp_ms,
+                    layer_total_ms,
+                    gaps_ms,
+                ) = match.groups()
+                layer_total = float(layer_total_ms)
+                if max_total_ms is None or layer_total <= max_total_ms:
+                    for field, value in (
+                        ("calls", calls),
+                        ("input_norm_ms", input_norm_ms),
+                        ("qkv_ms", qkv_ms),
+                        ("send_ms", send_ms),
+                        ("recv_ms", recv_ms),
+                        ("o_proj_ms", o_proj_ms),
+                        ("post_norm_ms", post_norm_ms),
+                        ("mlp_ms", mlp_ms),
+                        ("layer_total_ms", layer_total_ms),
+                        ("gaps_ms", gaps_ms),
+                    ):
+                        projection_critical_path[field].append(float(value))
+                continue
+            if match := _PROJECTION_MODEL_FORWARD_RE.search(line):
+                num_tokens, model_forward_ms = match.groups()
+                model_forward = float(model_forward_ms)
+                if max_total_ms is None or model_forward <= max_total_ms * 100:
+                    projection_model_forward["num_tokens"].append(float(num_tokens))
+                    projection_model_forward["model_forward_ms"].append(model_forward)
+                continue
+            if match := _PROJECTION_LOGITS_RE.search(line):
+                num_tokens, logits_ms = match.groups()
+                logits = float(logits_ms)
+                if max_total_ms is None or logits <= max_total_ms * 100:
+                    projection_logits["num_tokens"].append(float(num_tokens))
+                    projection_logits["logits_ms"].append(logits)
+                continue
+            if match := _PROJECTION_RUNNER_FORWARD_RE.search(line):
+                num_tokens, forward_ms = match.groups()
+                forward = float(forward_ms)
+                if max_total_ms is None or forward <= max_total_ms * 100:
+                    projection_runner_forward["num_tokens"].append(float(num_tokens))
+                    projection_runner_forward["forward_and_postprocess_ms"].append(forward)
+                continue
+            if match := _PROJECTION_WORKER_EXEC_RE.search(line):
+                num_tokens, exec_ms = match.groups()
+                exec_val = float(exec_ms)
+                if max_total_ms is None or exec_val <= max_total_ms * 100:
+                    projection_worker_exec["num_tokens"].append(float(num_tokens))
+                    projection_worker_exec["exec_ms"].append(exec_val)
+                continue
+            if match := _PROJECTION_WORKER_SAMPLE_RE.search(line):
+                sample_ms, = match.groups()
+                sample_val = float(sample_ms)
+                if max_total_ms is None or sample_val <= max_total_ms * 100:
+                    projection_worker_sample["sample_ms"].append(sample_val)
+                continue
+            if match := _PROJECTION_ENGINE_STEP_RE.search(line):
+                num_gen, sched_ms, exec_and_sample_ms, postprocess_ms, step_ms = (
+                    match.groups()
+                )
+                step_val = float(step_ms)
+                if max_total_ms is None or step_val <= max_total_ms * 100:
+                    projection_engine_step["num_gen"].append(float(num_gen))
+                    projection_engine_step["sched_ms"].append(float(sched_ms))
+                    projection_engine_step["exec_and_sample_ms"].append(
+                        float(exec_and_sample_ms)
+                    )
+                    projection_engine_step["postprocess_ms"].append(
+                        float(postprocess_ms)
+                    )
+                    projection_engine_step["step_ms"].append(step_val)
                 continue
             if match := _PROJECTION_TRACE_RE.search(line):
                 (
@@ -373,14 +528,60 @@ def summarize_pap_trace_logs(
                     attention["append_tensor_ms"].append(float(append_tensor_ms or 0.0))
                     attention["append_copy_ms"].append(float(append_copy_ms or 0.0))
                     attention["append_state_ms"].append(float(append_state_ms or 0.0))
-                    if correlation := _ATTENTION_CORRELATION_RE.search(line):
+                    if correlation_new := _ATTENTION_CORRELATION_NEW_RE.search(line):
                         (
                             batch_key,
-                            _recv_done_ns,
-                            _compute_done_ns,
+                            recv_done_ns,
+                            compute_done_ns,
                             send_done_ns,
-                        ) = correlation.groups()
-                        attention_send_done_ns_by_key[batch_key] = int(send_done_ns)
+                            recv_start_ns,
+                            pre_compute_start_ns,
+                            pre_compute_done_ns,
+                            sdpa_done_ns,
+                            reshape_done_ns,
+                            send_start_ns,
+                        ) = correlation_new.groups()
+                        pcd_raw = int(pre_compute_done_ns)
+                        attention_timestamps_by_key[batch_key] = {
+                            "recv_start_ns": int(recv_start_ns),
+                            "recv_done_ns": int(recv_done_ns),
+                            "pre_compute_start_ns": int(pre_compute_start_ns),
+                            "pre_compute_done_ns": (
+                                pcd_raw if pcd_raw > 0 else int(compute_done_ns)
+                            ),
+                            "compute_done_ns": int(compute_done_ns),
+                            "sdpa_done_ns": int(sdpa_done_ns),
+                            "reshape_done_ns": int(reshape_done_ns),
+                            "post_compute_done_ns": (
+                                int(reshape_done_ns)
+                                if int(reshape_done_ns) > 0
+                                else int(compute_done_ns)
+                            ),
+                            "send_start_ns": int(send_start_ns),
+                            "send_done_ns": int(send_done_ns),
+                            "pre_compute_done_ns_raw": pcd_raw,
+                        }
+                    elif correlation_old := _ATTENTION_CORRELATION_OLD_RE.search(line):
+                        (
+                            batch_key,
+                            recv_done_ns,
+                            compute_done_ns,
+                            send_done_ns,
+                        ) = correlation_old.groups()
+                        recv_done = int(recv_done_ns)
+                        compute_done = int(compute_done_ns)
+                        send_done = int(send_done_ns)
+                        attention_timestamps_by_key[batch_key] = {
+                            "recv_start_ns": recv_done,
+                            "recv_done_ns": recv_done,
+                            "pre_compute_start_ns": recv_done,
+                            "pre_compute_done_ns": compute_done,
+                            "compute_done_ns": compute_done,
+                            "post_compute_done_ns": compute_done,
+                            "send_start_ns": compute_done,
+                            "send_done_ns": send_done,
+                            "pre_compute_done_ns_raw": 0,
+                        }
                 continue
             if match := _MAILBOX_SEND_RE.search(line):
                 (
@@ -457,6 +658,14 @@ def summarize_pap_trace_logs(
 
     projection_attention_correlation: dict[str, list[float]] = {
         "matched_batches": [],
+        "matched_batches_fine": [],
+        "projection_send_done_to_attention_recv_start_ms": [],
+        "attention_recv_ms": [],
+        "attention_pre_compute_ms": [],
+        "attention_compute_ms": [],
+        "attention_post_compute_ms": [],
+        "attention_send_ms": [],
+        "attention_send_done_to_projection_recv_done_ms": [],
         "attention_path_after_projection_send_ms": [],
         "projection_resume_after_attention_ready_ms": [],
         "attention_ready_after_projection_resume_ms": [],
@@ -468,17 +677,56 @@ def summarize_pap_trace_logs(
         yield_end_ns,
         recv_done_ns,
     ) in projection_correlation_entries:
-        attention_done_times = [
-            attention_send_done_ns_by_key[key]
+        attention_times = [
+            attention_timestamps_by_key[key]
             for key in batch_keys
-            if key in attention_send_done_ns_by_key
+            if key in attention_timestamps_by_key
         ]
-        if len(attention_done_times) != len(batch_keys):
+        if len(attention_times) != len(batch_keys):
             continue
-        max_attention_done_ns = max(attention_done_times)
-        projection_attention_correlation["matched_batches"].append(
-            float(len(attention_done_times))
+        recv_start_ns = min(item["recv_start_ns"] for item in attention_times)
+        recv_done_ns_attention = max(item["recv_done_ns"] for item in attention_times)
+        pre_compute_start_ns = min(
+            item["pre_compute_start_ns"] for item in attention_times
         )
+        pre_compute_done_ns = max(item["pre_compute_done_ns"] for item in attention_times)
+        compute_done_ns = max(item["compute_done_ns"] for item in attention_times)
+        post_compute_done_ns = max(
+            item["post_compute_done_ns"] for item in attention_times
+        )
+        send_start_ns = min(item["send_start_ns"] for item in attention_times)
+        max_attention_done_ns = max(item["send_done_ns"] for item in attention_times)
+        projection_attention_correlation["matched_batches"].append(
+            float(len(attention_times))
+        )
+        has_fine = all(
+            item.get("pre_compute_done_ns_raw", 0) > 0 for item in attention_times
+        )
+        if has_fine:
+            projection_attention_correlation["matched_batches_fine"].append(
+                float(len(attention_times))
+            )
+            projection_attention_correlation[
+                "projection_send_done_to_attention_recv_start_ms"
+            ].append((recv_start_ns - send_done_ns) / 1_000_000.0)
+            projection_attention_correlation["attention_recv_ms"].append(
+                (recv_done_ns_attention - recv_start_ns) / 1_000_000.0
+            )
+            projection_attention_correlation["attention_pre_compute_ms"].append(
+                (pre_compute_done_ns - recv_done_ns_attention) / 1_000_000.0
+            )
+            projection_attention_correlation["attention_compute_ms"].append(
+                (compute_done_ns - pre_compute_done_ns) / 1_000_000.0
+            )
+            projection_attention_correlation["attention_post_compute_ms"].append(
+                (post_compute_done_ns - compute_done_ns) / 1_000_000.0
+            )
+            projection_attention_correlation["attention_send_ms"].append(
+                (max_attention_done_ns - send_start_ns) / 1_000_000.0
+            )
+            projection_attention_correlation[
+                "attention_send_done_to_projection_recv_done_ms"
+            ].append((recv_done_ns - max_attention_done_ns) / 1_000_000.0)
         projection_attention_correlation[
             "attention_path_after_projection_send_ms"
         ].append((max_attention_done_ns - send_done_ns) / 1_000_000.0)
@@ -501,6 +749,27 @@ def summarize_pap_trace_logs(
         },
         "projection_layer_timeline": {
             field: _stat(values) for field, values in projection_layer_timeline.items()
+        },
+        "projection_critical_path": {
+            field: _stat(values) for field, values in projection_critical_path.items()
+        },
+        "projection_model_forward": {
+            field: _stat(values) for field, values in projection_model_forward.items()
+        },
+        "projection_logits": {
+            field: _stat(values) for field, values in projection_logits.items()
+        },
+        "projection_runner_forward": {
+            field: _stat(values) for field, values in projection_runner_forward.items()
+        },
+        "projection_worker_exec": {
+            field: _stat(values) for field, values in projection_worker_exec.items()
+        },
+        "projection_worker_sample": {
+            field: _stat(values) for field, values in projection_worker_sample.items()
+        },
+        "projection_engine_step": {
+            field: _stat(values) for field, values in projection_engine_step.items()
         },
         "attention_trace": {
             field: _stat(values) for field, values in attention.items()

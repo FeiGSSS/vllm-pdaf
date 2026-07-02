@@ -86,6 +86,12 @@ from .utils import request_memory
 logger = init_logger(__name__)
 
 
+def _pap_critical_trace_enabled() -> bool:
+    return os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower() in (
+        "1", "true", "yes", "on"
+    )
+
+
 def _pap_projection_kv_unaware_process() -> bool:
     return os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower() in (
         "1",
@@ -964,7 +970,20 @@ class Worker(WorkerBase):
     def sample_tokens(
         self, grammar_output: "GrammarOutput | None"
     ) -> ModelRunnerOutput | AsyncModelRunnerOutput:
-        return self.model_runner.sample_tokens(grammar_output)
+        trace_pap = _pap_critical_trace_enabled()
+        trace_start = time.perf_counter() if trace_pap else 0.0
+        trace_start_ns = time.perf_counter_ns() if trace_pap else 0
+        output = self.model_runner.sample_tokens(grammar_output)
+        if trace_pap:
+            now_ns = time.perf_counter_ns()
+            logger.info(
+                "PAP OFFLOAD_EXEC projection worker sample_tokens "
+                "sample_ms=%.3f sample_start_ns=%d sample_done_ns=%d",
+                (now_ns - trace_start_ns) / 1_000_000.0,
+                trace_start_ns,
+                now_ns,
+            )
+        return output
 
     @torch.inference_mode()
     @with_gpu_sync_check
@@ -1027,6 +1046,9 @@ class Worker(WorkerBase):
                 comm_postprocess=comm_postprocess,
             )
 
+        trace_pap = _pap_critical_trace_enabled()
+        trace_exec_start = time.perf_counter() if trace_pap else 0.0
+        trace_exec_start_ns = time.perf_counter_ns() if trace_pap else 0
         with self.annotate_profile(scheduler_output):
             output = self.model_runner.execute_model(
                 scheduler_output, intermediate_tensors
@@ -1040,6 +1062,19 @@ class Worker(WorkerBase):
             if isinstance(
                 output, ModelRunnerOutput | AsyncModelRunnerOutput | NoneType
             ):
+                if trace_pap:
+                    now_ns = time.perf_counter_ns()
+                    logger.info(
+                        "PAP OFFLOAD_EXEC projection worker execute_model "
+                        "num_tokens=%d exec_ms=%.3f "
+                        "exec_start_ns=%d exec_done_ns=%d "
+                        "direct_output=%s",
+                        num_scheduled_tokens,
+                        (now_ns - trace_exec_start_ns) / 1_000_000.0,
+                        trace_exec_start_ns,
+                        now_ns,
+                        output is not None and not isinstance(output, IntermediateTensors),
+                    )
                 return output
 
         assert isinstance(output, IntermediateTensors)
@@ -1056,6 +1091,17 @@ class Worker(WorkerBase):
             all_gather_tensors=all_gather_tensors,
         )
 
+        if trace_pap:
+            now_ns = time.perf_counter_ns()
+            logger.info(
+                "PAP OFFLOAD_EXEC projection worker execute_model "
+                "num_tokens=%d exec_ms=%.3f exec_start_ns=%d exec_done_ns=%d "
+                "pp_send=True",
+                num_scheduled_tokens,
+                (now_ns - trace_exec_start_ns) / 1_000_000.0,
+                trace_exec_start_ns,
+                now_ns,
+            )
         return None
 
     def take_draft_token_ids(self) -> DraftTokenIds | None:

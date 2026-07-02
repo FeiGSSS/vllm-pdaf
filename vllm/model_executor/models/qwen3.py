@@ -85,6 +85,37 @@ def _pap_env_enabled(name: str) -> bool:
     return os.environ.get(name, "").lower() in _TRUE_ENV_VALUES
 
 
+def _pap_prefill_ipc_profile_enabled() -> bool:
+    return _pap_env_enabled("PAP_PREFILL_IPC_PROFILE")
+
+
+def _pap_projection_critical_trace_enabled() -> bool:
+    return _pap_env_enabled("PAP_PROJECTION_CRITICAL_TRACE")
+
+
+def _pap_projection_decode_trace_enabled() -> bool:
+    if not _pap_projection_critical_trace_enabled():
+        return False
+    if not is_forward_context_available():
+        return False
+    additional_kwargs = get_forward_context().additional_kwargs or {}
+    if not additional_kwargs.get("pap_enabled"):
+        return False
+    request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
+    num_scheduled_tokens = tuple(
+        int(num_tokens)
+        for num_tokens in additional_kwargs.get("pap_num_scheduled_tokens") or ()
+    )
+    num_reqs = int(additional_kwargs.get("pap_num_reqs") or len(num_scheduled_tokens))
+    return bool(
+        num_reqs > 0
+        and len(request_ids) >= num_reqs
+        and len(num_scheduled_tokens) >= num_reqs
+        and pap_request_ids_are_routable(request_ids, num_reqs)
+        and all(num_tokens == 1 for num_tokens in num_scheduled_tokens[:num_reqs])
+    )
+
+
 def _qwen3_layer_profile_enabled() -> bool:
     return os.environ.get("VLLM_QWEN3_LAYER_PROFILE", "").lower() in _TRUE_ENV_VALUES
 
@@ -792,12 +823,14 @@ class Qwen3Attention(nn.Module):
         self.q_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
         self._pap_imported_prefill_kv: set[tuple[str, str, int, str]] = set()
+        self._pap_last_projection_timeline: dict[str, Any] | None = None
 
     def forward(
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
     ) -> torch.Tensor:
+        self._pap_last_projection_timeline = None
         if self._should_use_pap_attention():
             q_first_result = self._compute_pap_attention_q_first_projection(
                 positions,
@@ -889,6 +922,9 @@ class Qwen3Attention(nn.Module):
             if trace_offload_exec and projection_timeline:
                 trace_o_proj_done_ns = time.perf_counter_ns()
                 trace_o_proj_ms = (time.perf_counter() - trace_o_proj_start) * 1000.0
+                projection_timeline["o_proj_ms"] = trace_o_proj_ms
+                projection_timeline["o_proj_done_ns"] = trace_o_proj_done_ns
+                self._pap_last_projection_timeline = dict(projection_timeline)
                 trace_self_attn_total_ms = (
                     (trace_o_proj_done_ns - trace_pre_attn_start_ns) / 1_000_000.0
                     if trace_pre_attn_start_ns
@@ -2065,6 +2101,8 @@ class Qwen3Attention(nn.Module):
         return final_output.view(q.shape[0], self.num_heads * self.head_dim), []
 
     def _maybe_import_pap_prefill_kv_to_attention(self) -> None:
+        profile_ipc = _pap_prefill_ipc_profile_enabled()
+        profile_total_start = time.perf_counter() if profile_ipc else 0.0
         if not is_forward_context_available():
             return
         forward_context = get_forward_context()
@@ -2139,8 +2177,18 @@ class Qwen3Attention(nn.Module):
         )
         if offload_kv_transport is not PAPTensorTransport.CUDA_IPC:
             raise RuntimeError("PAP paged Prefill KV export requires cuda_ipc")
+        seq_lens_start = time.perf_counter() if profile_ipc else 0.0
         seq_lens_cpu = seq_lens.detach().to(device="cpu", dtype=torch.long)
+        seq_lens_cpu_ms = (
+            (time.perf_counter() - seq_lens_start) * 1000.0
+            if profile_ipc
+            else 0.0
+        )
+        import_count = 0
+        block_ids_total_ms = 0.0
+        import_total_ms = 0.0
         for req_index in range(num_reqs):
+            req_profile_start = time.perf_counter() if profile_ipc else 0.0
             request_id = str(request_ids[req_index])
             if not is_pap_request_id(request_id):
                 continue
@@ -2166,22 +2214,64 @@ class Qwen3Attention(nn.Module):
                 endpoint_by_request=tcp_endpoint_by_request,
             )
             tcp_endpoint = _pap_endpoint_for_tp_rank(tcp_endpoint)
+            block_ids_start = time.perf_counter() if profile_ipc else 0.0
+            block_ids = _pap_block_ids_from_block_table(
+                block_table=block_table[req_index : req_index + 1],
+                seq_len=prefix_len,
+                block_size=int(block_size),
+            )
+            block_ids_ms = (
+                (time.perf_counter() - block_ids_start) * 1000.0
+                if profile_ipc
+                else 0.0
+            )
+            import_start = time.perf_counter() if profile_ipc else 0.0
             import_prefill_paged_kv(
                 request_id=request_id,
                 layer_name=self.attn.layer_name,
                 kv_cache=kv_cache,
-                block_ids=_pap_block_ids_from_block_table(
-                    block_table=block_table[req_index : req_index + 1],
-                    seq_len=prefix_len,
-                    block_size=int(block_size),
-                ),
+                block_ids=block_ids,
                 seq_len=prefix_len,
                 block_size=int(block_size),
                 num_kv_heads=self.num_kv_heads,
                 layout=get_kv_cache_layout(),
                 tcp_endpoint=tcp_endpoint,
             )
+            import_ms = (
+                (time.perf_counter() - import_start) * 1000.0
+                if profile_ipc
+                else 0.0
+            )
             self._pap_imported_prefill_kv.add(import_key)
+            if profile_ipc:
+                import_count += 1
+                block_ids_total_ms += block_ids_ms
+                import_total_ms += import_ms
+                logger.info(
+                    "PAP prefill IPC model profile request_id=%s layer=%s "
+                    "prefix_len=%d blocks=%d seq_lens_cpu_ms=%.3f "
+                    "block_ids_ms=%.3f import_ms=%.3f total_ms=%.3f",
+                    request_id,
+                    self.attn.layer_name,
+                    prefix_len,
+                    len(block_ids),
+                    seq_lens_cpu_ms,
+                    block_ids_ms,
+                    import_ms,
+                    (time.perf_counter() - req_profile_start) * 1000.0,
+                )
+        if profile_ipc and import_count:
+            logger.info(
+                "PAP prefill IPC model aggregate layer=%s imports=%d "
+                "seq_lens_cpu_ms=%.3f block_ids_total_ms=%.3f "
+                "import_total_ms=%.3f total_ms=%.3f",
+                self.attn.layer_name,
+                import_count,
+                seq_lens_cpu_ms,
+                block_ids_total_ms,
+                import_total_ms,
+                (time.perf_counter() - profile_total_start) * 1000.0,
+            )
 
 
 class Qwen3DecoderLayer(nn.Module):
@@ -2245,7 +2335,10 @@ class Qwen3DecoderLayer(nn.Module):
         layer_name = self.self_attn.attn.layer_name
         trace_projection_layer = _pap_env_enabled(
             "PAP_OFFLOAD_EXEC_TRACE"
-        ) and _pap_env_enabled("PAP_PROJECTION_KV_UNAWARE")
+        ) and (
+            _pap_env_enabled("PAP_PROJECTION_KV_UNAWARE")
+            or _pap_projection_critical_trace_enabled()
+        )
         trace_layer_start_ns = time.perf_counter_ns() if trace_projection_layer else 0
 
         # Self Attention
@@ -2336,6 +2429,50 @@ class Qwen3DecoderLayer(nn.Module):
                 trace_post_norm_done_ns,
                 trace_mlp_done_ns,
             )
+            projection_timeline = self.self_attn._pap_last_projection_timeline or {}
+            if _pap_projection_critical_trace_enabled() and projection_timeline:
+                qkv_ms = float(projection_timeline.get("pre_attn_compute_ms", 0.0))
+                send_ms = float(projection_timeline.get("send_ms", 0.0))
+                recv_ms = float(projection_timeline.get("recv_ms", 0.0))
+                o_proj_ms = float(projection_timeline.get("o_proj_ms", 0.0))
+                known_ms = (
+                    trace_input_norm_ms
+                    + qkv_ms
+                    + send_ms
+                    + recv_ms
+                    + o_proj_ms
+                    + trace_post_norm_ms
+                    + trace_mlp_ms
+                )
+                logger.info(
+                    "PAP OFFLOAD_EXEC projection critical path layer=%s "
+                    "batch_key=%s calls=%d input_norm_ms=%.3f qkv_ms=%.3f "
+                    "send_ms=%.3f recv_ms=%.3f o_proj_ms=%.3f "
+                    "post_norm_ms=%.3f mlp_ms=%.3f layer_total_ms=%.3f "
+                    "gaps_ms=%.3f layer_start_ns=%d input_norm_done_ns=%d "
+                    "qkv_done_ns=%d send_done_ns=%d recv_done_ns=%d "
+                    "o_proj_done_ns=%d post_norm_done_ns=%d mlp_done_ns=%d",
+                    layer_name,
+                    str(projection_timeline.get("batch_keys", "")),
+                    int(projection_timeline.get("calls", 0)),
+                    trace_input_norm_ms,
+                    qkv_ms,
+                    send_ms,
+                    recv_ms,
+                    o_proj_ms,
+                    trace_post_norm_ms,
+                    trace_mlp_ms,
+                    trace_layer_total_ms,
+                    max(0.0, trace_layer_total_ms - known_ms),
+                    trace_layer_start_ns,
+                    trace_input_norm_done_ns,
+                    int(projection_timeline.get("pre_attn_done_ns", 0)),
+                    int(projection_timeline.get("send_done_ns", 0)),
+                    int(projection_timeline.get("recv_done_ns", 0)),
+                    int(projection_timeline.get("o_proj_done_ns", 0)),
+                    trace_post_norm_done_ns,
+                    trace_mlp_done_ns,
+                )
         return hidden_states, residual
 
 
@@ -2416,16 +2553,49 @@ class Qwen3ForCausalLM(
         intermediate_tensors: IntermediateTensors | None = None,
         inputs_embeds: torch.Tensor | None = None,
     ) -> torch.Tensor | IntermediateTensors:
+        trace_projection = _pap_projection_decode_trace_enabled()
+        trace_start = time.perf_counter() if trace_projection else 0.0
+        trace_start_ns = time.perf_counter_ns() if trace_projection else 0
         hidden_states = self.model(
             input_ids, positions, intermediate_tensors, inputs_embeds
         )
+        if trace_projection:
+            trace_done_ns = time.perf_counter_ns()
+            num_tokens = 0
+            if isinstance(hidden_states, torch.Tensor):
+                num_tokens = int(hidden_states.shape[0])
+            elif input_ids is not None:
+                num_tokens = int(input_ids.shape[0])
+            elif inputs_embeds is not None:
+                num_tokens = int(inputs_embeds.shape[0])
+            logger.info(
+                "PAP OFFLOAD_EXEC projection model forward num_tokens=%d "
+                "model_forward_ms=%.3f model_start_ns=%d model_done_ns=%d",
+                num_tokens,
+                (time.perf_counter() - trace_start) * 1000.0,
+                trace_start_ns,
+                trace_done_ns,
+            )
         return hidden_states
 
     def compute_logits(
         self,
         hidden_states: torch.Tensor,
     ) -> torch.Tensor | None:
+        trace_projection = _pap_projection_decode_trace_enabled()
+        trace_start = time.perf_counter() if trace_projection else 0.0
+        trace_start_ns = time.perf_counter_ns() if trace_projection else 0
         logits = self.logits_processor(self.lm_head, hidden_states)
+        if trace_projection:
+            trace_done_ns = time.perf_counter_ns()
+            logger.info(
+                "PAP OFFLOAD_EXEC projection logits num_tokens=%d logits_ms=%.3f "
+                "logits_start_ns=%d logits_done_ns=%d",
+                int(hidden_states.shape[0]),
+                (time.perf_counter() - trace_start) * 1000.0,
+                trace_start_ns,
+                trace_done_ns,
+            )
         return logits
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:

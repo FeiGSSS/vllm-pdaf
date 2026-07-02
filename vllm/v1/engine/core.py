@@ -90,6 +90,12 @@ logger = init_logger(__name__)
 
 HANDSHAKE_TIMEOUT_MINS = 5
 
+
+def _pap_critical_trace_enabled() -> bool:
+    return os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower() in (
+        "1", "true", "yes", "on"
+    )
+
 _R = TypeVar("_R")  # Return type for collective_rpc
 
 
@@ -494,7 +500,11 @@ class EngineCore:
         # or finished and not yet removed from the batch.
         if not self.scheduler.has_requests():
             return {}, False
+        trace_pap = _pap_critical_trace_enabled()
+        trace_step_start = time.perf_counter() if trace_pap else 0.0
+        trace_step_start_ns = time.perf_counter_ns() if trace_pap else 0
         scheduler_output = self.scheduler.schedule(self._should_throttle_prefills())
+        trace_sched_done_ns = time.perf_counter_ns() if trace_pap else 0
         future = self.model_executor.execute_model(scheduler_output, non_block=True)
         grammar_output = self.scheduler.get_grammar_bitmask(scheduler_output)
         with (
@@ -505,12 +515,33 @@ class EngineCore:
             if model_output is None:
                 model_output = self.model_executor.sample_tokens(grammar_output)
 
+        trace_model_done_ns = time.perf_counter_ns() if trace_pap else 0
+
         # Before processing the model output, process any aborts that happened
         # during the model execution.
         self._process_aborts_queue()
         engine_core_outputs = self.scheduler.update_from_output(
             scheduler_output, model_output
         )
+
+        if trace_pap:
+            now_ns = time.perf_counter_ns()
+            logger.info(
+                "PAP OFFLOAD_EXEC projection engine step "
+                "num_gen=%d num_ctx=%d sched_ms=%.3f exec_and_sample_ms=%.3f "
+                "postprocess_ms=%.3f step_ms=%.3f "
+                "step_start_ns=%d sched_done_ns=%d model_done_ns=%d step_done_ns=%d",
+                scheduler_output.total_num_scheduled_tokens,
+                0,
+                (trace_sched_done_ns - trace_step_start_ns) / 1_000_000.0,
+                (trace_model_done_ns - trace_sched_done_ns) / 1_000_000.0,
+                (now_ns - trace_model_done_ns) / 1_000_000.0,
+                (now_ns - trace_step_start_ns) / 1_000_000.0,
+                trace_step_start_ns,
+                trace_sched_done_ns,
+                trace_model_done_ns,
+                now_ns,
+            )
 
         return engine_core_outputs, scheduler_output.total_num_scheduled_tokens > 0
 
