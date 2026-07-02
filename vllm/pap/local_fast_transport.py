@@ -45,6 +45,7 @@ import socket
 import struct
 import time
 from dataclasses import dataclass, field
+from math import prod
 from typing import Any
 
 import torch
@@ -63,19 +64,15 @@ from vllm.pap.data_plane import (
 # Constants / layout
 # ---------------------------------------------------------------------------
 
-# Each direction owns one "slot" record in the doorbell file.  Layout:
-#   u64 seq          # monotonic, written by sender, read by receiver
-#   u64 nbytes       # payload bytes written this slot
-#   u64 offset       # offset into peer's recv buffer
-#   u64 reserved     # padding / future use
-# Total: 32 bytes per direction.  Two directions (qkv, output) -> 64 bytes.
-DOORBELL_RECORD_BYTES = 32
+DOORBELL_HEADER_BYTES = 32
+DOORBELL_RECORD_BYTES = int(
+    os.environ.get("PAP_LOCAL_FAST_DOORBELL_RECORD_BYTES", str(64 * 1024))
+)
+if DOORBELL_RECORD_BYTES < DOORBELL_HEADER_BYTES:
+    raise RuntimeError("PAP_LOCAL_FAST_DOORBELL_RECORD_BYTES is too small")
 DOORBELL_BYTES = 2 * DOORBELL_RECORD_BYTES
-DOORBELL_SEQ_STRUCT = struct.Struct("<QQQQ")  # little-endian
+DOORBELL_SEQ_STRUCT = struct.Struct("<QQQQ")
 
-# Direction offsets within the doorbell.
-# The "qkv" direction is Projection -> Attention.
-# The "output" direction is Attention -> Projection.
 DIR_QKV = 0
 DIR_OUTPUT = DOORBELL_RECORD_BYTES
 
@@ -134,36 +131,46 @@ def _open_or_create_doorbell(path: str) -> tuple[int, mmap.mmap]:
     return fd, mm
 
 
-def _doorbell_write(mm: mmap.mmap, dir_offset: int, *, seq: int, nbytes: int,
-                    offset: int) -> None:
-    """Atomic-ish doorbell record write.
-
-    We pack the four fields into a single 32-byte struct and write it in one
-    ``mm[:]`` slice assignment.  On x86_64 this is effectively a sequence of
-    word stores that the receiver will observe in order thanks to TSO; the
-    ``seq`` field is written *last* by the sender (we explicitly order it so
-    by writing the entire record in one go, with seq first in the struct so
-    its address is the base — receiver only checks seq, then reads the rest).
-    """
-
-    record = DOORBELL_SEQ_STRUCT.pack(seq, nbytes, offset, 0)
-    # We want receiver to see seq LAST from its perspective.  Because we write
-    # the entire record in one go and the receiver only spins on seq, the
-    # memory-ordering guarantee we need is "the writes to nbytes/offset become
-    # visible before the write to seq".  x86 TSO gives this for free; on other
-    # architectures the receiver re-reads the full record after observing the
-    # seq bump, which is also safe.
-    start = dir_offset
-    end = dir_offset + DOORBELL_RECORD_BYTES
-    mm[start:end] = record
+def _doorbell_write(
+    mm: mmap.mmap,
+    dir_offset: int,
+    *,
+    seq: int,
+    nbytes: int,
+    offset: int,
+    metadata: dict[str, Any],
+) -> None:
+    meta = json.dumps(metadata, separators=(",", ":")).encode("utf-8")
+    if len(meta) > DOORBELL_RECORD_BYTES - DOORBELL_HEADER_BYTES:
+        raise RuntimeError(
+            "PAP local fast metadata is too large for the doorbell record"
+        )
+    start = int(dir_offset)
+    body_start = start + DOORBELL_HEADER_BYTES
+    mm[body_start : body_start + len(meta)] = meta
+    header = DOORBELL_SEQ_STRUCT.pack(seq, nbytes, offset, len(meta))
+    mm[start : start + DOORBELL_HEADER_BYTES] = header
 
 
-def _doorbell_read(mm: mmap.mmap, dir_offset: int) -> tuple[int, int, int]:
-    """Return (seq, nbytes, offset) for one direction."""
+def _doorbell_read_header(mm: mmap.mmap, dir_offset: int) -> tuple[int, int, int, int]:
+    raw = bytes(mm[dir_offset : dir_offset + DOORBELL_HEADER_BYTES])
+    seq, nbytes, offset, metadata_len = DOORBELL_SEQ_STRUCT.unpack(raw)
+    return int(seq), int(nbytes), int(offset), int(metadata_len)
 
-    raw = bytes(mm[dir_offset:dir_offset + DOORBELL_RECORD_BYTES])
-    seq, nbytes, offset, _reserved = DOORBELL_SEQ_STRUCT.unpack(raw)
-    return int(seq), int(nbytes), int(offset)
+
+def _doorbell_read_metadata(
+    mm: mmap.mmap,
+    dir_offset: int,
+    metadata_len: int,
+) -> dict[str, Any]:
+    if metadata_len < 0 or metadata_len > DOORBELL_RECORD_BYTES - DOORBELL_HEADER_BYTES:
+        raise RuntimeError("PAP local fast doorbell metadata length is invalid")
+    start = int(dir_offset) + DOORBELL_HEADER_BYTES
+    raw = bytes(mm[start : start + metadata_len])
+    data = json.loads(raw.decode("utf-8")) if raw else {}
+    if not isinstance(data, dict):
+        raise RuntimeError("PAP local fast doorbell metadata must be a dict")
+    return data
 
 
 def _pack_cuda_ipc_handle(tensor: torch.Tensor) -> bytes:
@@ -224,6 +231,28 @@ def _sched_yield() -> None:
         os.sched_yield()
     except AttributeError:
         time.sleep(0)
+
+
+def _dtype_name(dtype: torch.dtype) -> str:
+    return str(dtype).replace("torch.", "")
+
+
+def _dtype_from_name(name: str) -> torch.dtype:
+    dtype = getattr(torch, str(name), None)
+    if not isinstance(dtype, torch.dtype):
+        raise RuntimeError(f"unsupported PAP local fast tensor dtype: {name}")
+    return dtype
+
+
+def _payload_metadata(
+    descriptor: PAPOffloadExecBatchDescriptor,
+    tensor: torch.Tensor,
+) -> dict[str, Any]:
+    return {
+        "descriptor": _offload_exec_batch_descriptor_to_metadata(descriptor),
+        "shape": list(tensor.shape),
+        "dtype": _dtype_name(tensor.dtype),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -489,8 +518,12 @@ class PAPLocalFastTransport:
             seq = peer.next_output_seq
             peer.next_output_seq += 1
         _doorbell_write(
-            peer.peer_doorbell_mm, direction,
-            seq=seq, nbytes=nbytes, offset=offset,
+            peer.peer_doorbell_mm,
+            direction,
+            seq=seq,
+            nbytes=nbytes,
+            offset=offset,
+            metadata=_payload_metadata(descriptor, tensor),
         )
 
         if self._trace:
@@ -514,11 +547,8 @@ class PAPLocalFastTransport:
         self,
         *,
         direction: int,
-    ) -> tuple[int, int, int]:
-        """Spin until peer has rung the doorbell for ``direction``.
-
-        Returns (seq, nbytes, offset) once observed.
-        """
+    ) -> tuple[int, int, int, dict[str, Any]]:
+        """Spin until peer has rung the doorbell for ``direction``."""
 
         peer = self._require_peer()
         # We read the *local* doorbell (peer wrote into it via mmap).
@@ -530,15 +560,14 @@ class PAPLocalFastTransport:
         iters = 0
         t_start = time.perf_counter()
         while True:
-            seq, nbytes, offset = _doorbell_read(mm, direction)
+            seq, nbytes, offset, metadata_len = _doorbell_read_header(mm, direction)
             if seq >= expected and seq != 0:
                 break
             iters += 1
             if iters < SPIN_TIGHT_ITERS:
-                # tiny in-process pause; on Python this is essentially a
-                # function-call overhead.
                 continue
             _sched_yield()
+        metadata = _doorbell_read_metadata(mm, direction, metadata_len)
         # Bump our expectation for the next round.
         if direction == DIR_QKV:
             peer.expected_qkv_seq = expected + 1
@@ -555,38 +584,25 @@ class PAPLocalFastTransport:
                 offset,
                 seq,
             )
-        return seq, nbytes, offset
+        return seq, nbytes, offset, metadata
 
     def _materialize_recv(
         self,
-        descriptor: PAPOffloadExecBatchDescriptor,
         *,
         nbytes: int,
         offset: int,
-        output: bool,
+        metadata: dict[str, Any],
     ) -> torch.Tensor:
-        """Return a view of the local recv buffer holding the payload.
-
-        The sender wrote raw bytes; we know the dtype/shape from the
-        descriptor's expected item layout.  For QKV we use float16/bf16
-        based on the per-layer expectation (the calling code passes a
-        pre-shaped ``qkv`` tensor in, so we mirror its dtype/shape).
-        """
-
-        # The simplest correct thing is to return a uint8 view of nbytes
-        # and let the caller reinterpret.  However the existing call sites
-        # treat the returned tensor as already-typed, so we must produce
-        # a properly-typed view.  We infer dtype/shape from the descriptor:
-        # for QKV, item_count = number of rows; for output, same.  But we
-        # don't know head dim here without more context.  We approximate
-        # by returning a 1-D uint8 view of length nbytes and let the
-        # caller cast; this is enough for the prototype scaffolding.
-        #
-        # NOTE: this is the stub mentioned in the deliverable.  Real
-        # production would carry dtype/shape in the doorbell or descriptor
-        # and view the buffer accordingly.
-        view = self._recv_buffer.narrow(0, offset, nbytes)
-        return view
+        shape = tuple(int(dim) for dim in metadata["shape"])
+        dtype = _dtype_from_name(str(metadata["dtype"]))
+        expected_nbytes = int(prod(shape) * torch.empty((), dtype=dtype).element_size())
+        if expected_nbytes != int(nbytes):
+            raise RuntimeError(
+                f"PAP local fast payload size mismatch: metadata shape={shape} "
+                f"dtype={dtype} expects {expected_nbytes} bytes, got {nbytes}"
+            )
+        view = self._recv_buffer.narrow(0, int(offset), int(nbytes))
+        return view.view(dtype).reshape(shape)
 
     # ------------------------------------------------------------------
     # Public transport API (mirrors PAPNixlMailboxOffloadExecTransport)
@@ -674,9 +690,9 @@ class PAPLocalFastTransport:
         *,
         remote_address: str,
     ) -> torch.Tensor:
-        seq, nbytes, offset = self._recv_from_peer(direction=DIR_QKV)
+        _seq, nbytes, offset, metadata = self._recv_from_peer(direction=DIR_QKV)
         return self._materialize_recv(
-            descriptor, nbytes=nbytes, offset=offset, output=False
+            nbytes=nbytes, offset=offset, metadata=metadata
         )
 
     def send_output_batch(
@@ -696,9 +712,9 @@ class PAPLocalFastTransport:
         *,
         remote_address: str,
     ) -> torch.Tensor:
-        seq, nbytes, offset = self._recv_from_peer(direction=DIR_OUTPUT)
+        _seq, nbytes, offset, metadata = self._recv_from_peer(direction=DIR_OUTPUT)
         return self._materialize_recv(
-            descriptor, nbytes=nbytes, offset=offset, output=True
+            nbytes=nbytes, offset=offset, metadata=metadata
         )
 
     # --- message-style variants (used by attention mailbox loop) ---
@@ -742,35 +758,19 @@ class PAPLocalFastTransport:
     def recv_next_qkv_batch_message(
         self,
     ) -> tuple[PAPOffloadExecBatchDescriptor, Any]:
-        # The attention-side mailbox loop polls for the next batch without
-        # knowing the descriptor in advance.  The NIXL mailbox carries the
-        # descriptor in the message metadata; we don't have that here.
-        # We spin on the QKV doorbell until any new payload arrives, then
-        # synthesize a placeholder descriptor from the doorbell payload
-        # (which only carries nbytes).  The descriptor's layer_name / items
-        # will be filled in by the caller's metadata loop on the next
-        # iteration of the mailbox handler.
-        #
-        # NOTE: This is the second stub.  The current attention-side mailbox
-        # loop is heavily tied to the NIXL mailbox pulling descriptors from
-        # message metadata.  To make this path production-ready we would
-        # either (a) extend the doorbell record to carry a small
-        # descriptor payload (layer_name + per-row scales) or (b) ship the
-        # descriptor over a side-channel ZMQ socket.  For the prototype we
-        # return a sentinel descriptor and rely on the caller to override
-        # it.
-        seq, nbytes, offset = self._recv_from_peer(direction=DIR_QKV)
-        descriptor = PAPOffloadExecBatchDescriptor(
-            layer_name="<local_fast_pending>",
-            items=(),
-            batch_id_suffix=f"local_fast:{seq}:{nbytes}",
+        _seq, nbytes, offset, metadata = self._recv_from_peer(direction=DIR_QKV)
+        descriptor_metadata = dict(metadata["descriptor"])
+        descriptor = _offload_exec_batch_descriptor_from_metadata(
+            descriptor_metadata
         )
-        tensor = self._recv_buffer.narrow(0, offset, nbytes)
+        tensor = self._materialize_recv(
+            nbytes=nbytes, offset=offset, metadata=metadata
+        )
         message = _LocalFastMessage(
             msg_id=descriptor.qkv_tensor_id,
             kind="attention_task_batch",
             tensor=tensor,
-            metadata={"_local_fast_pending": True, "nbytes": nbytes},
+            metadata=descriptor_metadata,
         )
         return descriptor, message
 
