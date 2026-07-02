@@ -532,13 +532,6 @@ class PAPNixlMailboxOffloadExecTransport:
     def local_agent_metadata(self) -> bytes:
         return self.endpoint.local_agent_metadata
 
-    @property
-    def supports_query_first_kv_later(self) -> bool:
-        return bool(
-            getattr(self.endpoint, "_async_send_slots_enabled", False)
-            and int(getattr(self.endpoint, "_slot_count", 1)) >= 2
-        )
-
     def bind_peer(self, peer_agent_metadata: bytes) -> None:
         self.endpoint.bind_peer(peer_agent_metadata)
         self.endpoint.start()
@@ -640,55 +633,6 @@ class PAPNixlMailboxOffloadExecTransport:
             )
         )
 
-    def send_qkv_batch_segments(
-        self,
-        descriptor: PAPOffloadExecBatchDescriptor,
-        segments: tuple[torch.Tensor, ...],
-        *,
-        payload_shape: tuple[int, ...],
-        remote_address: str,
-    ) -> None:
-        from vllm.pap.nixl_mailbox import PAPMailboxMessage
-
-        self.endpoint.send(
-            PAPMailboxMessage(
-                msg_id=descriptor.qkv_tensor_id,
-                kind="attention_task_batch",
-                metadata=_offload_exec_batch_descriptor_to_metadata(descriptor),
-                tensor=segments[0],
-                payload_segments=tuple(segments),
-                payload_shape=tuple(payload_shape),
-            )
-        )
-
-    def send_query_batch(
-        self,
-        descriptor: PAPOffloadExecBatchDescriptor,
-        query: torch.Tensor,
-        *,
-        remote_address: str,
-    ) -> None:
-        self._send_message(
-            msg_id=descriptor.query_tensor_id,
-            kind="attention_query_batch",
-            metadata=_offload_exec_batch_descriptor_to_metadata(descriptor),
-            tensor=query,
-        )
-
-    def send_kv_batch(
-        self,
-        descriptor: PAPOffloadExecBatchDescriptor,
-        kv: torch.Tensor,
-        *,
-        remote_address: str,
-    ) -> None:
-        self._send_message(
-            msg_id=descriptor.kv_tensor_id,
-            kind="attention_kv_batch",
-            metadata=_offload_exec_batch_descriptor_to_metadata(descriptor),
-            tensor=kv,
-        )
-
     def recv_qkv_batch(
         self,
         descriptor: PAPOffloadExecBatchDescriptor,
@@ -722,8 +666,6 @@ class PAPNixlMailboxOffloadExecTransport:
         descriptor, message = self.recv_next_attention_batch_message()
         if message.kind == "attention_task_batch":
             return descriptor, message
-        if message.kind == "attention_query_batch":
-            return self._recv_query_first_qkv_batch_message(message)
         message.release()
         raise RuntimeError(f"unexpected PAP mailbox message kind: {message.kind}")
 
@@ -731,57 +673,11 @@ class PAPNixlMailboxOffloadExecTransport:
         self,
     ) -> tuple[PAPOffloadExecBatchDescriptor, Any]:
         message = self.endpoint.recv()
-        if message.kind in {"attention_task_batch", "attention_query_batch"}:
+        if message.kind == "attention_task_batch":
             descriptor = _offload_exec_batch_descriptor_from_metadata(message.metadata)
             return descriptor, message
         message.release()
         raise RuntimeError(f"unexpected PAP mailbox message kind: {message.kind}")
-
-    def recv_kv_batch_message(
-        self,
-        descriptor: PAPOffloadExecBatchDescriptor,
-    ) -> Any:
-        kv_message = self.endpoint.recv(descriptor.kv_tensor_id)
-        if kv_message.kind != "attention_kv_batch":
-            kv_message.release()
-            raise RuntimeError(
-                f"unexpected PAP mailbox KV message kind: {kv_message.kind}"
-            )
-        kv_descriptor = _offload_exec_batch_descriptor_from_metadata(
-            kv_message.metadata
-        )
-        if kv_descriptor != descriptor:
-            kv_message.release()
-            raise RuntimeError("PAP mailbox query/KV descriptors do not match")
-        return kv_message
-
-    def _recv_query_first_qkv_batch_message(
-        self,
-        query_message: Any,
-    ) -> tuple[PAPOffloadExecBatchDescriptor, Any]:
-        from vllm.pap.nixl_mailbox import PAPMailboxMessage
-
-        descriptor = _offload_exec_batch_descriptor_from_metadata(
-            query_message.metadata
-        )
-        try:
-            kv_message = self.recv_kv_batch_message(descriptor)
-        except Exception:
-            query_message.release()
-            raise
-        qkv = torch.cat((query_message.tensor, kv_message.tensor), dim=-1)
-
-        def release_inputs() -> None:
-            query_message.release()
-            kv_message.release()
-
-        return descriptor, PAPMailboxMessage(
-            msg_id=descriptor.qkv_tensor_id,
-            kind="attention_task_batch",
-            metadata=query_message.metadata,
-            tensor=qkv,
-            release_callback=release_inputs,
-        )
 
     def send_output_batch(
         self,
@@ -933,3 +829,26 @@ def build_nixl_mailbox_offload_exec_transport(
         ),
     )
     return PAPNixlMailboxOffloadExecTransport(endpoint)
+
+
+def build_local_fast_offload_exec_transport(
+    *,
+    actor_id: str,
+    local_rank: int,
+    buffer_bytes: int | None = None,
+):
+    """Construct a same-machine CUDA IPC + spin-doorbell transport.
+
+    Activated via ``PAP_OFFLOAD_EXEC_TRANSPORT=local_fast``.  See
+    ``vllm.pap.local_fast_transport`` for the design and constraints.
+    """
+
+    from vllm.pap.local_fast_transport import (
+        build_local_fast_offload_exec_transport as _impl,
+    )
+
+    return _impl(
+        actor_id=actor_id,
+        local_rank=local_rank,
+        buffer_bytes=buffer_bytes,
+    )

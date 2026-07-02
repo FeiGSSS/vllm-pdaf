@@ -30,7 +30,7 @@ import os
 import threading
 import time
 from collections.abc import Iterable
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from functools import lru_cache
 from typing import Any
@@ -358,28 +358,6 @@ def _qwen3_profile_write_sample(
         output.write(json.dumps(sample, sort_keys=True) + "\n")
 
 
-def _pap_qkv_projection_split_supported(qkv_proj: Any) -> bool:
-    return bool(
-        qkv_proj.quant_method.__class__.__name__ == "UnquantizedLinearMethod"
-        and hasattr(qkv_proj, "weight")
-        and not getattr(qkv_proj, "skip_bias_add", False)
-        and not getattr(qkv_proj, "gather_output", False)
-    )
-
-
-def _pap_qkv_projection_slice(
-    qkv_proj: Any,
-    hidden_states: torch.Tensor,
-    start: int,
-    size: int,
-) -> torch.Tensor:
-    weight = qkv_proj.weight.narrow(0, int(start), int(size))
-    bias = getattr(qkv_proj, "bias", None)
-    if bias is not None:
-        bias = bias.narrow(0, int(start), int(size))
-    return F.linear(hidden_states, weight, bias)
-
-
 def _pap_block_ids_from_block_table(
     *,
     block_table: torch.Tensor,
@@ -424,74 +402,6 @@ def _pap_remote_attention_executor(max_workers: int) -> ThreadPoolExecutor:
     )
 
 
-class _PAPQKVSendStats:
-    def __init__(self, *, send_ms: float, send_done_ns: int) -> None:
-        self.send_ms = float(send_ms)
-        self.send_done_ns = int(send_done_ns)
-
-
-class _PAPQKVSendHandle:
-    def __init__(
-        self,
-        future: Future[_PAPQKVSendStats] | None = None,
-        stats: _PAPQKVSendStats | None = None,
-    ) -> None:
-        self._future = future
-        self._stats = stats
-
-    @classmethod
-    def completed(cls, stats: _PAPQKVSendStats) -> "_PAPQKVSendHandle":
-        return cls(stats=stats)
-
-    def wait(self) -> _PAPQKVSendStats:
-        if self._stats is None:
-            if self._future is None:
-                raise RuntimeError("PAP async QKV send handle has no future")
-            self._stats = self._future.result()
-        return self._stats
-
-
-@lru_cache(maxsize=4)
-def _pap_async_qkv_send_executor(max_workers: int) -> ThreadPoolExecutor:
-    return ThreadPoolExecutor(
-        max_workers=max(1, int(max_workers)),
-        thread_name_prefix="pap-qkv-send",
-    )
-
-
-@lru_cache(maxsize=8)
-def _pap_async_qkv_send_stream(device_index: int) -> torch.cuda.Stream:
-    return torch.cuda.Stream(device=torch.device("cuda", int(device_index)))
-
-
-def _pap_async_qkv_send_workers() -> int:
-    try:
-        return int(os.environ.get("PAP_OFFLOAD_EXEC_ASYNC_QKV_SEND_WORKERS", "1"))
-    except ValueError:
-        return 1
-
-
-def _pap_qkv_group_cuda_device(
-    group_items: list[tuple[int, Any, tuple[torch.Tensor, ...]]],
-) -> torch.device | None:
-    for _req_index, _descriptor, qkv_segments in group_items:
-        for segment in qkv_segments:
-            if segment.device.type == "cuda":
-                return segment.device
-    return None
-
-
-def _pap_record_qkv_ready_event(
-    group_items: list[tuple[int, Any, tuple[torch.Tensor, ...]]],
-) -> tuple[torch.device, torch.cuda.Event] | None:
-    device = _pap_qkv_group_cuda_device(group_items)
-    if device is None:
-        return None
-    event = torch.cuda.Event()
-    event.record(torch.cuda.current_stream(device))
-    return device, event
-
-
 def _pap_pack_qkv_group_items(
     group_items: list[tuple[int, Any, tuple[torch.Tensor, ...]]],
 ) -> torch.Tensor:
@@ -522,64 +432,6 @@ def _pap_direct_qkv_batch_for_group(
     if not direct.is_contiguous():
         return None
     return direct
-
-
-def _pap_send_qkv_batch_job(
-    *,
-    batch_descriptor: Any,
-    group_items: list[tuple[int, Any, tuple[torch.Tensor, ...]]],
-    transport: Any,
-    remote_address: str,
-    ready_event: tuple[torch.device, torch.cuda.Event] | None = None,
-) -> _PAPQKVSendStats:
-    send_start = time.perf_counter()
-    if ready_event is None:
-        qkv_batch = _pap_pack_qkv_group_items(group_items)
-    else:
-        device, event = ready_event
-        device_index = (
-            int(device.index)
-            if device.index is not None
-            else int(torch.cuda.current_device())
-        )
-        stream = _pap_async_qkv_send_stream(device_index)
-        with torch.cuda.device(device), torch.cuda.stream(stream):
-            stream.wait_event(event)
-            qkv_batch = _pap_pack_qkv_group_items(group_items)
-        stream.synchronize()
-    transport.send_qkv_batch(
-        batch_descriptor,
-        qkv_batch,
-        remote_address=remote_address,
-    )
-    return _PAPQKVSendStats(
-        send_ms=(time.perf_counter() - send_start) * 1000.0,
-        send_done_ns=time.perf_counter_ns(),
-    )
-
-
-def _pap_submit_async_qkv_batch_send(
-    *,
-    batch_descriptor: Any,
-    group_items: list[tuple[int, Any, tuple[torch.Tensor, ...]]],
-    transport: Any,
-    remote_address: str,
-    executor: Any | None = None,
-) -> _PAPQKVSendHandle:
-    ready_event = _pap_record_qkv_ready_event(group_items)
-    send_executor = executor or _pap_async_qkv_send_executor(
-        _pap_async_qkv_send_workers()
-    )
-    future = send_executor.submit(
-        lambda: _pap_send_qkv_batch_job(
-            batch_descriptor=batch_descriptor,
-            group_items=group_items,
-            transport=transport,
-            remote_address=remote_address,
-            ready_event=ready_event,
-        )
-    )
-    return _PAPQKVSendHandle(future=future)
 
 
 def _pap_offload_exec_transport_kind() -> str:
@@ -673,7 +525,10 @@ def _pap_offload_exec_peer_zmq_port(peer_endpoint: str | None) -> int:
 
 @lru_cache(maxsize=1)
 def _pap_offload_exec_transport():
-    from vllm.pap.data_plane import build_nixl_mailbox_offload_exec_transport
+    from vllm.pap.data_plane import (
+        build_local_fast_offload_exec_transport,
+        build_nixl_mailbox_offload_exec_transport,
+    )
 
     transport = _pap_offload_exec_transport_kind()
     local_rank = _pap_tensor_parallel_rank()
@@ -682,21 +537,37 @@ def _pap_offload_exec_transport():
             actor_id=os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "projection"),
             local_rank=local_rank,
         )
+    if transport in {"local_fast", "local-fast", "cuda_ipc_fast"}:
+        return build_local_fast_offload_exec_transport(
+            actor_id=os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "projection"),
+            local_rank=local_rank,
+        )
 
     raise RuntimeError(
-        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; use nixl_mailbox"
+        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; use "
+        "nixl_mailbox or local_fast"
     )
 
 
 @lru_cache(maxsize=32)
 def _pap_nixl_mailbox_offload_exec_transport(attention_endpoint: str):
-    from vllm.pap.data_plane import build_nixl_mailbox_offload_exec_transport
+    from vllm.pap.data_plane import (
+        build_local_fast_offload_exec_transport,
+        build_nixl_mailbox_offload_exec_transport,
+    )
 
     local_rank = _pap_tensor_parallel_rank()
     actor_base = os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "projection")
     endpoint_hash = hashlib.sha1(attention_endpoint.encode("utf-8")).hexdigest()[:12]
+    actor_id = f"{actor_base}-{endpoint_hash}"
+    transport = _pap_offload_exec_transport_kind()
+    if transport in {"local_fast", "local-fast", "cuda_ipc_fast"}:
+        return build_local_fast_offload_exec_transport(
+            actor_id=actor_id,
+            local_rank=local_rank,
+        )
     return build_nixl_mailbox_offload_exec_transport(
-        actor_id=f"{actor_base}-{endpoint_hash}",
+        actor_id=actor_id,
         local_rank=local_rank,
     )
 
@@ -708,8 +579,11 @@ def _pap_offload_exec_transport_for_attention_endpoint(
     transport = _pap_offload_exec_transport_kind()
     if transport in {"nixl", "nixl_mailbox"}:
         return _pap_nixl_mailbox_offload_exec_transport(str(attention_endpoint or ""))
+    if transport in {"local_fast", "local-fast", "cuda_ipc_fast"}:
+        return _pap_nixl_mailbox_offload_exec_transport(str(attention_endpoint or ""))
     raise RuntimeError(
-        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; use nixl_mailbox"
+        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; use "
+        "nixl_mailbox or local_fast"
     )
 
 
@@ -838,19 +712,6 @@ class Qwen3Attention(nn.Module):
         hidden_states: torch.Tensor,
     ) -> torch.Tensor:
         self._pap_last_projection_timeline = None
-        if self._should_use_pap_attention():
-            q_first_result = self._compute_pap_attention_q_first_projection(
-                positions,
-                hidden_states,
-            )
-            if q_first_result is not None:
-                attn_output, pap_release_messages = q_first_result
-                try:
-                    output, _ = self.o_proj(attn_output)
-                finally:
-                    for message in pap_release_messages:
-                        message.release()
-                return output
 
         layer_name = self.attn.layer_name
         pap_attention_enabled = self._should_use_pap_attention()
@@ -1086,10 +947,6 @@ class Qwen3Attention(nn.Module):
         transport: Any,
     ) -> tuple[torch.Tensor, list[tuple[str, Any, list[int], Any]]] | None:
         if not self._should_use_pap_attention():
-            return None
-        if _pap_env_enabled("PAP_Q_FIRST_KV_LATER"):
-            return None
-        if _pap_env_enabled("PAP_SEGMENTED_QKV"):
             return None
         if int(hidden_states.shape[0]) != len(request_indices):
             return None
@@ -1386,224 +1243,12 @@ class Qwen3Attention(nn.Module):
                     output_message.release()
         return output, pap_release_messages
 
-    def _compute_pap_attention_q_first_projection(
-        self,
-        positions: torch.Tensor,
-        hidden_states: torch.Tensor,
-    ) -> tuple[torch.Tensor, list[Any]] | None:
-        if not _pap_env_enabled("PAP_Q_FIRST_PROJECTION"):
-            return None
-        if not _pap_qkv_projection_split_supported(self.qkv_proj):
-            return None
-        if not self._pap_q_first_projection_transport_supported():
-            return None
-
-        q = _pap_qkv_projection_slice(
-            self.qkv_proj,
-            hidden_states,
-            0,
-            self.q_size,
-        )
-        q_by_head = q.view(*q.shape[:-1], q.shape[-1] // self.head_dim, self.head_dim)
-        q_by_head = self.q_norm(q_by_head)
-        q = q_by_head.view(q.shape)
-        q, _ = self.rotary_emb.forward_native(positions, q, None)
-        if not self._send_pap_query_batch(q):
-            return None
-
-        kv = _pap_qkv_projection_slice(
-            self.qkv_proj,
-            hidden_states,
-            self.q_size,
-            self.kv_size * 2,
-        )
-        k, v = kv.split([self.kv_size, self.kv_size], dim=-1)
-        k_by_head = k.view(*k.shape[:-1], k.shape[-1] // self.head_dim, self.head_dim)
-        k_by_head = self.k_norm(k_by_head)
-        k = k_by_head.view(k.shape)
-        k, _ = self.rotary_emb.forward_native(positions, k, None)
-        return self._compute_pap_attention(
-            q,
-            k,
-            v,
-            query_already_sent=True,
-        )
-
-    def _pap_q_first_projection_transport_supported(self) -> bool:
-        transport = _pap_offload_exec_transport()
-        return bool(
-            not getattr(transport, "requires_tcp_trigger", True)
-            and getattr(transport, "supports_query_first_kv_later", False)
-            and callable(getattr(transport, "send_query_batch", None))
-            and callable(getattr(transport, "send_kv_batch", None))
-        )
-
-    def _send_pap_query_batch(self, q: torch.Tensor) -> bool:
-        if not is_forward_context_available():
-            return False
-
-        forward_context = get_forward_context()
-        additional_kwargs = forward_context.additional_kwargs or {}
-        metadata = forward_context.attn_metadata
-        if isinstance(metadata, dict):
-            attn_metadata = metadata.get(self.attn.layer_name)
-        elif isinstance(metadata, list) and metadata:
-            attn_metadata = metadata[0].get(self.attn.layer_name)
-        else:
-            attn_metadata = None
-        if attn_metadata is None:
-            return False
-
-        request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
-        num_reqs = int(additional_kwargs.get("pap_num_reqs") or len(request_ids))
-        num_actual_tokens = int(getattr(attn_metadata, "num_actual_tokens", q.shape[0]))
-        if num_reqs <= 0 or len(request_ids) < num_reqs:
-            return False
-        if num_actual_tokens < num_reqs:
-            return False
-
-        seq_lens = getattr(attn_metadata, "seq_lens", None)
-        if seq_lens is None or int(seq_lens.shape[0]) < num_reqs:
-            return False
-        positions = additional_kwargs.get("pap_positions")
-        if positions is None or int(positions.shape[-1]) < num_reqs:
-            return False
-        seq_lens_cpu = seq_lens.detach().to(device="cpu", dtype=torch.long)
-        positions_cpu = positions.detach().to(device="cpu", dtype=torch.long)
-
-        from vllm.pap.data_plane import (
-            PAPOffloadExecBatchDescriptor,
-            PAPOffloadExecDescriptor,
-        )
-        from vllm.pap.shadow_attention import select_attention_endpoint_for_request
-
-        offload_exec_zmq_endpoint_by_request = (
-            additional_kwargs.get("pap_offload_exec_zmq_endpoint_by_request") or {}
-        )
-        tcp_endpoint_by_request = (
-            additional_kwargs.get("pap_attention_tcp_endpoint_by_request") or {}
-        )
-        attention_endpoint_by_request = (
-            additional_kwargs.get("pap_attention_endpoint_by_request") or {}
-        )
-        default_tcp_endpoint = additional_kwargs.get("pap_attention_tcp_endpoint")
-        default_attention_endpoint = additional_kwargs.get("pap_attention_endpoint")
-        attention_kv_installed_by_request = set(
-            additional_kwargs.get("pap_attention_kv_installed_by_request") or ()
-        )
-        prefix_len_by_request = (
-            additional_kwargs.get("pap_prefill_prefix_len_by_request") or {}
-        )
-        prefill_kv_handle_by_request = (
-            additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
-        )
-        query = q.view(-1, self.num_heads, self.head_dim)
-        offload_exec_groups: dict[
-            tuple[str | None, str | None, str],
-            list[tuple[int, PAPOffloadExecDescriptor, torch.Tensor]],
-        ] = {}
-        for req_index in range(num_reqs):
-            request_id = str(request_ids[req_index])
-            if not is_pap_request_id(request_id):
-                return False
-            seq_len = int(positions_cpu.reshape(-1)[req_index].item()) + 1
-            max_seq_len = int(seq_lens_cpu[req_index].item())
-            if seq_len != max_seq_len:
-                return False
-            tcp_endpoint = select_attention_endpoint_for_request(
-                request_id,
-                default_endpoint=default_tcp_endpoint,
-                endpoint_by_request=tcp_endpoint_by_request,
-            )
-            tcp_endpoint = _pap_endpoint_for_tp_rank(tcp_endpoint)
-            attention_endpoint = select_attention_endpoint_for_request(
-                request_id,
-                default_endpoint=default_attention_endpoint,
-                endpoint_by_request=attention_endpoint_by_request,
-            )
-            attention_endpoint = _pap_endpoint_for_tp_rank(attention_endpoint)
-            offload_exec_zmq_endpoint = _pap_endpoint_for_tp_rank(
-                offload_exec_zmq_endpoint_by_request.get(request_id)
-            )
-            if offload_exec_zmq_endpoint is None:
-                return False
-            prefix_len = int(prefix_len_by_request.get(request_id) or 0)
-            prefill_kv_handle = prefill_kv_handle_by_request.get(request_id)
-            if prefix_len > 0 and request_id not in attention_kv_installed_by_request:
-                if not prefill_kv_handle:
-                    return False
-                return False
-            descriptor = PAPOffloadExecDescriptor(
-                request_id=request_id,
-                layer_name=self.attn.layer_name,
-                step=seq_len,
-                scale=float(self.scaling),
-            )
-            offload_exec_groups.setdefault(
-                (tcp_endpoint, attention_endpoint, offload_exec_zmq_endpoint),
-                [],
-            ).append((req_index, descriptor, query[req_index : req_index + 1]))
-
-        probe_transport = _pap_offload_exec_transport()
-        if (
-            getattr(probe_transport, "requires_tcp_trigger", True)
-            or not getattr(probe_transport, "supports_query_first_kv_later", False)
-            or not callable(getattr(probe_transport, "send_query_batch", None))
-        ):
-            return False
-
-        if any(
-            not attention_endpoint
-            for (
-                _tcp_endpoint,
-                attention_endpoint,
-                _offload_exec_zmq_endpoint,
-            ) in offload_exec_groups
-        ):
-            return False
-
-        for (
-            _tcp_endpoint,
-            attention_endpoint,
-            offload_exec_zmq_endpoint,
-        ), group_items in offload_exec_groups.items():
-            transport = _pap_offload_exec_transport_for_attention_endpoint(
-                attention_endpoint,
-                offload_exec_zmq_endpoint,
-            )
-            send_query_batch = getattr(transport, "send_query_batch", None)
-            if (
-                getattr(transport, "requires_tcp_trigger", True)
-                or not getattr(transport, "supports_query_first_kv_later", False)
-                or not callable(send_query_batch)
-            ):
-                return False
-            _pap_bind_offload_exec_mailbox_peer(transport, attention_endpoint)
-            batch_descriptor = PAPOffloadExecBatchDescriptor(
-                layer_name=self.attn.layer_name,
-                items=tuple(item[1] for item in group_items),
-            )
-            if len(group_items) == 1:
-                query_batch = group_items[0][2].reshape(1, -1)
-            else:
-                query_batch = torch.cat(
-                    [item[2].reshape(1, -1) for item in group_items],
-                    dim=0,
-                )
-            send_query_batch(
-                batch_descriptor,
-                query_batch,
-                remote_address=offload_exec_zmq_endpoint,
-            )
-        return True
-
     def _compute_pap_attention(
         self,
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
         *,
-        query_already_sent: bool = False,
         pre_attn_compute_ms: float = 0.0,
         pre_attn_start_ns: int = 0,
         pre_attn_done_ns: int = 0,
@@ -1774,17 +1419,7 @@ class Qwen3Attention(nn.Module):
                 remote_output = remote_output.view_as(target)
             target.copy_(remote_output)
 
-        q_first_kv_later_enabled = os.environ.get(
-            "PAP_Q_FIRST_KV_LATER", ""
-        ).lower() in ("1", "true", "yes", "on")
-        segmented_qkv_enabled = os.environ.get("PAP_SEGMENTED_QKV", "").lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        )
         direct_qkv_send_enabled = _pap_direct_qkv_send_enabled()
-        async_qkv_send_enabled = _pap_env_enabled("PAP_OFFLOAD_EXEC_ASYNC_QKV_SEND")
         trace_offload_exec = os.environ.get("PAP_OFFLOAD_EXEC_TRACE", "").lower() in (
             "1",
             "true",
@@ -1834,7 +1469,6 @@ class Qwen3Attention(nn.Module):
                 Any,
             ]
         ] = []
-        offload_exec_send_handles: list[_PAPQKVSendHandle | None] = []
         for (
             attention_endpoint,
             offload_exec_zmq_endpoint,
@@ -1853,28 +1487,13 @@ class Qwen3Attention(nn.Module):
                 metadata_template=route_template["metadata_template"],
             )
             _pap_bind_offload_exec_mailbox_peer(transport, attention_endpoint)
-            send_query_batch = getattr(transport, "send_query_batch", None)
-            send_kv_batch = getattr(transport, "send_kv_batch", None)
-            send_qkv_batch_segments = getattr(
-                transport, "send_qkv_batch_segments", None
-            )
             send_qkv_batch_direct = getattr(transport, "send_qkv_batch_direct", None)
             qkv_width = sum(int(segment.shape[-1]) for segment in group_items[0][2])
-            q_first_transport_ready = (
-                callable(send_query_batch)
-                and callable(send_kv_batch)
-                and getattr(transport, "supports_query_first_kv_later", False)
-            )
             direct_qkv_batch = (
                 _pap_direct_qkv_batch_for_group(direct_qkv_send_buffer, group_items)
                 if direct_qkv_send_enabled and callable(send_qkv_batch_direct)
                 else None
             )
-            if query_already_sent and not q_first_transport_ready:
-                raise RuntimeError(
-                    "PAP Q-first Projection sent query before KV, but the "
-                    "transport cannot accept the KV follow-up"
-                )
             if direct_qkv_batch is not None:
                 if int(direct_qkv_batch.shape[-1]) != qkv_width:
                     raise RuntimeError("PAP direct QKV batch width mismatch")
@@ -1883,67 +1502,13 @@ class Qwen3Attention(nn.Module):
                     direct_qkv_batch,
                     remote_address=offload_exec_zmq_endpoint,
                 )
-                send_handle = None
-            elif (
-                q_first_kv_later_enabled or query_already_sent
-            ) and q_first_transport_ready:
-                if len(group_items) == 1:
-                    query_batch = group_items[0][2][0]
-                    kv_batch = torch.cat(group_items[0][2][1:], dim=-1)
-                else:
-                    query_batch = torch.cat(
-                        [item[2][0] for item in group_items],
-                        dim=0,
-                    )
-                    kv_batch = torch.cat(
-                        [torch.cat(item[2][1:], dim=-1) for item in group_items],
-                        dim=0,
-                    )
-                if not query_already_sent:
-                    send_query_batch(
-                        batch_descriptor,
-                        query_batch,
-                        remote_address=offload_exec_zmq_endpoint,
-                    )
-                send_kv_batch(
-                    batch_descriptor,
-                    kv_batch,
-                    remote_address=offload_exec_zmq_endpoint,
-                )
-                send_handle = None
-            elif segmented_qkv_enabled and callable(send_qkv_batch_segments):
-                if len(group_items) == 1:
-                    qkv_segments = group_items[0][2]
-                else:
-                    qkv_segments = tuple(
-                        torch.cat(
-                            [item[2][segment_index] for item in group_items], dim=0
-                        )
-                        for segment_index in range(3)
-                    )
-                send_qkv_batch_segments(
-                    batch_descriptor,
-                    qkv_segments,
-                    payload_shape=(len(group_items), qkv_width),
-                    remote_address=offload_exec_zmq_endpoint,
-                )
-                send_handle = None
             else:
-                if async_qkv_send_enabled:
-                    send_handle = _pap_submit_async_qkv_batch_send(
-                        batch_descriptor=batch_descriptor,
-                        group_items=group_items,
-                        transport=transport,
-                        remote_address=offload_exec_zmq_endpoint,
-                    )
-                else:
-                    qkv_batch = _pap_pack_qkv_group_items(group_items)
-                    transport.send_qkv_batch(
-                        batch_descriptor,
-                        qkv_batch,
-                        remote_address=offload_exec_zmq_endpoint,
-                    )
-                    send_handle = None
+                qkv_batch = _pap_pack_qkv_group_items(group_items)
+                transport.send_qkv_batch(
+                    batch_descriptor,
+                    qkv_batch,
+                    remote_address=offload_exec_zmq_endpoint,
+                )
             offload_exec_batches.append(
                 (
                     attention_endpoint,
@@ -1953,7 +1518,6 @@ class Qwen3Attention(nn.Module):
                     transport,
                 )
             )
-            offload_exec_send_handles.append(send_handle)
         trace_send_ms = (
             (time.perf_counter() - trace_send_start) * 1000.0
             if trace_offload_exec
@@ -1962,24 +1526,12 @@ class Qwen3Attention(nn.Module):
         if trace_offload_exec:
             trace_send_done_ns = time.perf_counter_ns()
 
-        def wait_offload_exec_sends() -> None:
-            nonlocal trace_send_done_ns
-            send_done_times: list[int] = []
-            for send_handle in offload_exec_send_handles:
-                if send_handle is None:
-                    continue
-                stats = send_handle.wait()
-                send_done_times.append(stats.send_done_ns)
-            if trace_offload_exec and send_done_times:
-                trace_send_done_ns = max(send_done_times)
-
         trace_trigger_ms = 0.0
 
         trace_yield_start = time.perf_counter() if trace_offload_exec else 0.0
         if trace_offload_exec:
             trace_yield_start_ns = time.perf_counter_ns()
         trace_yield_ms = 0.0
-        wait_offload_exec_sends()
         if trace_offload_exec:
             trace_yield_end_ns = time.perf_counter_ns()
             trace_yield_ms = (time.perf_counter() - trace_yield_start) * 1000.0

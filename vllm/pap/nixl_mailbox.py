@@ -200,9 +200,6 @@ class PAPMailboxMessage:
     kind: str
     metadata: dict[str, Any]
     tensor: torch.Tensor
-    payload_segments: tuple[torch.Tensor, ...] | None = field(
-        default=None, repr=False, compare=False
-    )
     payload_shape: tuple[int, ...] | None = None
     direct_payload: bool = False
     payload_slot_id: int | None = None
@@ -218,31 +215,12 @@ class PAPMailboxMessage:
         if not self.kind:
             raise ValueError("PAP mailbox message requires kind")
         if self.direct_payload:
-            if self.payload_segments is not None:
-                raise ValueError(
-                    "PAP mailbox direct payload cannot use payload_segments"
-                )
             if self.payload_shape is None:
                 object.__setattr__(
                     self,
                     "payload_shape",
                     tuple(int(dim) for dim in self.tensor.shape),
                 )
-        if self.payload_segments is not None:
-            if not self.payload_segments:
-                raise ValueError("PAP mailbox payload_segments must not be empty")
-            if self.payload_shape is None:
-                raise ValueError("PAP mailbox segmented payload requires payload_shape")
-            object.__setattr__(
-                self,
-                "payload_segments",
-                tuple(self.payload_segments),
-            )
-            object.__setattr__(
-                self,
-                "payload_shape",
-                tuple(int(dim) for dim in self.payload_shape),
-            )
 
     def release(self) -> None:
         callback = self.release_callback
@@ -428,7 +406,6 @@ class PAPNixlMailboxEndpoint:
         self._output_pool: OrderedDict[str, PAPMailboxMessage] = OrderedDict()
         self._send_enqueued_at: dict[str, float] = {}
         self._acked: set[str] = set()
-        self._pending_acks: OrderedDict[str, None] = OrderedDict()
         self._pending_recv_releases: OrderedDict[str, int] = OrderedDict()
         self._slot_count = _nixl_mailbox_env_int("PAP_NIXL_MAILBOX_SLOT_COUNT", 1)
         if self._slot_count <= 0:
@@ -492,17 +469,11 @@ class PAPNixlMailboxEndpoint:
             "PAP_NIXL_MAILBOX_PUSH_WRITE_KINDS",
             "attention_task_batch,attention_result_batch",
         )
-        self._piggyback_acks_enabled = _nixl_mailbox_env_bool(
-            "PAP_NIXL_MAILBOX_PIGGYBACK_ACKS", False
-        )
         self._piggyback_recv_releases_enabled = _nixl_mailbox_env_bool(
             "PAP_NIXL_MAILBOX_PIGGYBACK_RECV_RELEASES", True
         )
         self._msgpack_notifications_enabled = _nixl_mailbox_env_bool(
             "PAP_NIXL_MAILBOX_MSGPACK_NOTIF", True
-        )
-        self._async_send_slots_enabled = _nixl_mailbox_env_bool(
-            "PAP_NIXL_MAILBOX_ASYNC_SEND_SLOTS", False
         )
         self._xfer_dlist_cache: dict[
             tuple[int, int, int, int, int], tuple[Any, Any]
@@ -683,11 +654,7 @@ class PAPNixlMailboxEndpoint:
     def _use_send_slot_leases(self) -> bool:
         return bool(
             getattr(self, "_slot_protocol_enabled", False)
-            and (
-                int(getattr(self, "_slot_count", 1)) > 1
-                or getattr(self, "_async_send_slots_enabled", False)
-                or getattr(self, "_piggyback_acks_enabled", False)
-            )
+            and int(getattr(self, "_slot_count", 1)) > 1
         )
 
     def _reserve_send_slot(self, msg_id: str) -> tuple[int, int]:
@@ -795,33 +762,9 @@ class PAPNixlMailboxEndpoint:
             self._release_send_slot_for_msg(msg_id)
             self._cv.notify_all()
 
-    def _defer_ack(self, msg_id: str) -> None:
-        with self._cv:
-            self._pending_acks[str(msg_id)] = None
-            self._cv.notify_all()
-
     def _defer_recv_release(self, msg_id: str, recv_slot_id: int) -> None:
         with self._cv:
             self._pending_recv_releases[str(msg_id)] = int(recv_slot_id)
-            self._cv.notify_all()
-
-    def _drain_pending_acks(self) -> list[str]:
-        if not getattr(self, "_piggyback_acks_enabled", False):
-            return []
-        with self._cv:
-            pending = list(self._pending_acks)
-            self._pending_acks.clear()
-            return pending
-
-    def _restore_pending_acks(self, msg_ids: list[str]) -> None:
-        if not msg_ids:
-            return
-        with self._cv:
-            restored: OrderedDict[str, None] = OrderedDict(
-                (str(msg_id), None) for msg_id in msg_ids
-            )
-            restored.update(self._pending_acks)
-            self._pending_acks = restored
             self._cv.notify_all()
 
     def _drain_pending_recv_releases(self) -> list[dict[str, int | str]]:
@@ -1014,16 +957,7 @@ class PAPNixlMailboxEndpoint:
                 local_complete = bool(publish_stats.get("local_complete"))
                 if local_complete:
                     self._ack_output(message.msg_id)
-                waits_for_ack = not (
-                    local_complete
-                    or (
-                        getattr(self, "_slot_protocol_enabled", False)
-                        and (
-                            getattr(self, "_async_send_slots_enabled", False)
-                            or getattr(self, "_piggyback_acks_enabled", False)
-                        )
-                    )
-                )
+                waits_for_ack = not local_complete
                 if waits_for_ack:
                     self._wait_ack(message.msg_id)
                 if trace_enabled:
@@ -1056,7 +990,6 @@ class PAPNixlMailboxEndpoint:
             raise RuntimeError("PAP NIXL mailbox endpoint has no peer")
         trace_enabled = self._trace_enabled
         pack_start = time.perf_counter() if trace_enabled else 0.0
-        payload_segments = getattr(message, "payload_segments", None)
         direct_payload = bool(getattr(message, "direct_payload", False))
         direct_payload_slot_id = getattr(message, "payload_slot_id", None)
         if direct_payload:
@@ -1088,21 +1021,6 @@ class PAPNixlMailboxEndpoint:
                         "PAP NIXL mailbox direct payload is outside send slot"
                     )
             raw_segments = ()
-        elif payload_segments is not None:
-            segments = tuple(
-                segment.detach().contiguous().to(device=self.device)
-                for segment in payload_segments
-            )
-            dtype = segments[0].dtype
-            if any(segment.dtype != dtype for segment in segments):
-                raise RuntimeError("PAP NIXL mailbox payload segments must share dtype")
-            raw_segments = tuple(
-                segment.reshape(-1).view(torch.uint8) for segment in segments
-            )
-            shape = tuple(int(dim) for dim in message.payload_shape or ())
-            if not shape:
-                raise RuntimeError("PAP NIXL mailbox segmented payload requires shape")
-            nbytes = sum(int(raw_segment.numel()) for raw_segment in raw_segments)
         else:
             tensor = message.tensor.detach().contiguous().to(device=self.device)
             dtype = tensor.dtype
@@ -1133,7 +1051,6 @@ class PAPNixlMailboxEndpoint:
         else:
             slot_id = 0
             slot_offset = 0
-        piggybacked_acks: list[str] = []
         piggybacked_recv_releases: list[dict[str, int | str]] = []
         pushed_recv_slot_id: int | None = None
         write_ms = 0.0
@@ -1189,9 +1106,6 @@ class PAPNixlMailboxEndpoint:
             else:
                 payload["addr"] = int(self._send_buffer.data_ptr())
                 payload["device_id"] = self.device_id
-            piggybacked_acks = self._drain_pending_acks()
-            if piggybacked_acks:
-                payload["acks"] = piggybacked_acks
             piggybacked_recv_releases = self._drain_pending_recv_releases()
             if piggybacked_recv_releases:
                 payload["recv_releases"] = piggybacked_recv_releases
@@ -1207,7 +1121,6 @@ class PAPNixlMailboxEndpoint:
                 (time.perf_counter() - notify_start) * 1000.0 if trace_enabled else 0.0
             )
         except Exception:
-            self._restore_pending_acks(piggybacked_acks)
             self._restore_pending_recv_releases(piggybacked_recv_releases)
             if pushed_recv_slot_id is not None:
                 self._release_peer_recv_slot_for_msg(message.msg_id)
@@ -1286,8 +1199,6 @@ class PAPNixlMailboxEndpoint:
 
     def _handle_notification(self, payload: bytes) -> None:
         data = _decode_nixl_mailbox_notification(payload)
-        for ack_msg_id in data.get("acks") or ():
-            self._ack_output(str(ack_msg_id))
         for release in data.get("recv_releases") or ():
             self._release_peer_recv_slot_for_msg(str(release["msg_id"]))
         message_type = str(data.get("type"))
@@ -1305,12 +1216,7 @@ class PAPNixlMailboxEndpoint:
             self._cv.notify_all()
         if "materialized_recv_slot_id" in data:
             return
-        if getattr(self, "_slot_protocol_enabled", False) and getattr(
-            self, "_piggyback_acks_enabled", False
-        ):
-            self._defer_ack(message.msg_id)
-        else:
-            self._send_ack_notification(message.msg_id)
+        self._send_ack_notification(message.msg_id)
 
     def _remote_payload_location(
         self, data: dict[str, Any], nbytes: int

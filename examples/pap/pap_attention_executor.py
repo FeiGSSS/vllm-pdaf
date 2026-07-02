@@ -33,6 +33,7 @@ from vllm.pap.attention_session import (
 from vllm.pap.data_plane import (
     PAPOffloadKVIPCDescriptor,
     PAPOffloadKVPagedIPCDescriptor,
+    build_local_fast_offload_exec_transport,
     build_nixl_mailbox_offload_exec_transport,
     pap_offload_exec_trace_id,
 )
@@ -3159,66 +3160,6 @@ def run_offload_exec_once(
     )
 
 
-def run_offload_exec_query_first_partial_batch_once(
-    *,
-    registry: PAPAttentionRegistry,
-    transport: Any,
-    descriptor: Any,
-    query_message: Any,
-) -> None:
-    """Compute previous-token partial attention before waiting for KV."""
-
-    query_batch = query_message.tensor
-    if int(query_batch.shape[0]) != len(descriptor.items):
-        raise RuntimeError(
-            "PAP OFFLOAD_EXEC query batch row count does not match descriptor"
-        )
-    partial_states: list[Any | None] = []
-    try:
-        for index, item in enumerate(descriptor.items):
-            partial_states.append(
-                compute_offload_exec_query_partial(
-                    registry=registry,
-                    request_id=item.request_id,
-                    layer_name=item.layer_name,
-                    query_flat=query_batch[index : index + 1],
-                    scale=item.scale,
-                    step=item.step,
-                )
-            )
-        kv_message = transport.recv_kv_batch_message(descriptor)
-        try:
-            kv_batch = kv_message.tensor
-            if int(kv_batch.shape[0]) != len(descriptor.items):
-                raise RuntimeError(
-                    "PAP OFFLOAD_EXEC KV batch row count does not match descriptor"
-                )
-            outputs: list[torch.Tensor] = []
-            for index, item in enumerate(descriptor.items):
-                outputs.append(
-                    compute_offload_exec_output_from_kv_and_partial(
-                        registry=registry,
-                        request_id=item.request_id,
-                        layer_name=item.layer_name,
-                        query_flat=query_batch[index : index + 1],
-                        kv_flat=kv_batch[index : index + 1],
-                        scale=item.scale,
-                        step=item.step,
-                        partial_state=partial_states[index],
-                    ).reshape(1, -1)
-                )
-            output_batch = _combine_offload_exec_outputs(outputs)
-        finally:
-            kv_message.release()
-    finally:
-        query_message.release()
-    transport.send_output_batch(
-        descriptor,
-        output_batch,
-        remote_address="",
-    )
-
-
 def _combine_offload_exec_outputs(outputs: list[torch.Tensor]) -> torch.Tensor:
     if len(outputs) == 1:
         return outputs[0]
@@ -3434,10 +3375,8 @@ def run_offload_exec_mailbox_loop(
         "yes",
         "on",
     )
-    q_first_partial_enabled = _pap_env_flag("PAP_ATTENTION_Q_FIRST_PARTIAL")
     prefetch_enabled = (
         _pap_env_flag("PAP_ATTENTION_MAILBOX_PREFETCH", False)
-        and not q_first_partial_enabled
         and callable(getattr(transport, "recv_next_qkv_batch_message", None))
     )
     prefetcher = _QKVBatchMessagePrefetcher(transport) if prefetch_enabled else None
@@ -3454,23 +3393,9 @@ def run_offload_exec_mailbox_loop(
         if trace_offload_exec:
             trace_recv_start_ns = time.perf_counter_ns()
         qkv_message = None
-        recv_attention_message_fn = getattr(
-            transport, "recv_next_attention_batch_message", None
-        )
         if prefetcher is not None:
             descriptor, qkv_message, qkv_batch = prefetcher.result()
             prefetcher.prefetch()
-        elif q_first_partial_enabled and callable(recv_attention_message_fn):
-            descriptor, qkv_message = recv_attention_message_fn()
-            if qkv_message.kind == "attention_query_batch":
-                run_offload_exec_query_first_partial_batch_once(
-                    registry=registry,
-                    transport=transport,
-                    descriptor=descriptor,
-                    query_message=qkv_message,
-                )
-                continue
-            qkv_batch = qkv_message.tensor
         else:
             descriptor, qkv_message, qkv_batch = _recv_next_qkv_batch_message_or_tensor(
                 transport
@@ -4021,8 +3946,20 @@ def maybe_start_offload_exec_transport(
             local_rank,
         )
         return
+    if transport in {"local_fast", "local-fast", "cuda_ipc_fast"}:
+        app.state.offload_exec_transport = build_local_fast_offload_exec_transport(
+            actor_id=os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "attention"),
+            local_rank=local_rank,
+        )
+        logger.info(
+            "PAP Attention OFFLOAD_EXEC local_fast (CUDA IPC + spin doorbell) "
+            "initialized local_rank=%d",
+            local_rank,
+        )
+        return
     raise RuntimeError(
-        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; use nixl_mailbox"
+        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; use "
+        "nixl_mailbox or local_fast"
     )
 
 
