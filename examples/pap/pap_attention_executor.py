@@ -2951,7 +2951,7 @@ def _compute_offload_exec_paged_flash_batch(
             trace_stats.get("paged_flash_ms", 0.0)
             + (time.perf_counter() - paged_start) * 1000.0
         )
-        trace_stats["sdpa_done_ns"] = float(time.perf_counter_ns())
+        trace_stats["paged_flash_done_ns"] = float(time.perf_counter_ns())
     if result is not None:
         return result
     return output
@@ -3284,7 +3284,7 @@ def run_offload_exec_batch_once(
             "append_state_ms": 0.0,
             "pre_compute_start_ns": 0.0,
             "pre_compute_done_ns": 0.0,
-            "sdpa_done_ns": 0.0,
+            "paged_flash_done_ns": 0.0,
             "post_compute_done_ns": 0.0,
         }
         if trace_offload_exec
@@ -3328,7 +3328,7 @@ def run_offload_exec_batch_once(
             "qkv_shape=%s output_shape=%s batch_key=%s "
             "recv_done_ns=%d compute_done_ns=%d send_done_ns=%d "
             "recv_start_ns=%d pre_compute_start_ns=%d "
-            "pre_compute_done_ns=%d sdpa_done_ns=%d reshape_done_ns=%d "
+            "pre_compute_done_ns=%d paged_flash_done_ns=%d reshape_done_ns=%d "
             "send_start_ns=%d",
             descriptor.layer_name,
             len(descriptor.items),
@@ -3366,7 +3366,7 @@ def run_offload_exec_batch_once(
             trace_recv_start_ns,
             int(trace_compute_stats.get("pre_compute_start_ns", 0.0)) if trace_compute_stats else 0,
             int(trace_compute_stats.get("pre_compute_done_ns", 0.0)) if trace_compute_stats else 0,
-            int(trace_compute_stats.get("sdpa_done_ns", 0.0)) if trace_compute_stats else 0,
+            int(trace_compute_stats.get("paged_flash_done_ns", 0.0)) if trace_compute_stats else 0,
             int(trace_compute_stats.get("post_compute_done_ns", 0.0)) if trace_compute_stats else 0,
             trace_send_start_ns,
         )
@@ -3557,7 +3557,7 @@ def run_offload_exec_mailbox_loop(
                 "append_state_ms=%.3f qkv_shape=%s output_shape=%s batch_key=%s "
                 "recv_done_ns=%d compute_done_ns=%d send_done_ns=%d "
                 "recv_start_ns=%d pre_compute_start_ns=%d "
-                "pre_compute_done_ns=%d sdpa_done_ns=%d reshape_done_ns=%d "
+                "pre_compute_done_ns=%d paged_flash_done_ns=%d reshape_done_ns=%d "
                 "send_start_ns=%d",
                 descriptor.layer_name,
                 len(descriptor.items),
@@ -3613,7 +3613,7 @@ def run_offload_exec_mailbox_loop(
                 trace_recv_start_ns,
                 int(trace_compute_stats.get("pre_compute_start_ns", 0.0)) if trace_compute_stats else 0,
                 int(trace_compute_stats.get("pre_compute_done_ns", 0.0)) if trace_compute_stats else 0,
-                int(trace_compute_stats.get("sdpa_done_ns", 0.0)) if trace_compute_stats else 0,
+                int(trace_compute_stats.get("paged_flash_done_ns", 0.0)) if trace_compute_stats else 0,
                 int(trace_compute_stats.get("post_compute_done_ns", 0.0)) if trace_compute_stats else 0,
                 trace_send_start_ns,
             )

@@ -113,7 +113,7 @@ _ATTENTION_CORRELATION_NEW_RE = re.compile(
     r"batch_key=(\S+) "
     r"recv_done_ns=(\d+) compute_done_ns=(\d+) send_done_ns=(\d+) "
     r"recv_start_ns=(\d+) pre_compute_start_ns=(\d+) "
-    r"pre_compute_done_ns=(\d+) sdpa_done_ns=(\d+) reshape_done_ns=(\d+) "
+    r"pre_compute_done_ns=(\d+) paged_flash_done_ns=(\d+) reshape_done_ns=(\d+) "
     r"send_start_ns=(\d+)"
 )
 _MAILBOX_SEND_RE = re.compile(
@@ -537,7 +537,7 @@ def summarize_pap_trace_logs(
                             recv_start_ns,
                             pre_compute_start_ns,
                             pre_compute_done_ns,
-                            sdpa_done_ns,
+                            paged_flash_done_ns,
                             reshape_done_ns,
                             send_start_ns,
                         ) = correlation_new.groups()
@@ -550,7 +550,7 @@ def summarize_pap_trace_logs(
                                 pcd_raw if pcd_raw > 0 else int(compute_done_ns)
                             ),
                             "compute_done_ns": int(compute_done_ns),
-                            "sdpa_done_ns": int(sdpa_done_ns),
+                            "paged_flash_done_ns": int(paged_flash_done_ns),
                             "reshape_done_ns": int(reshape_done_ns),
                             "post_compute_done_ns": (
                                 int(reshape_done_ns)

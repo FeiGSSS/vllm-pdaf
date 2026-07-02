@@ -490,7 +490,7 @@ class PAPNixlMailboxEndpoint:
         )
         self._push_write_kinds = _nixl_mailbox_env_set(
             "PAP_NIXL_MAILBOX_PUSH_WRITE_KINDS",
-            "attention_task_batch",
+            "attention_task_batch,attention_result_batch",
         )
         self._piggyback_acks_enabled = _nixl_mailbox_env_bool(
             "PAP_NIXL_MAILBOX_PIGGYBACK_ACKS", False

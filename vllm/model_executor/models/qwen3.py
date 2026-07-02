@@ -85,6 +85,13 @@ def _pap_env_enabled(name: str) -> bool:
     return os.environ.get(name, "").lower() in _TRUE_ENV_VALUES
 
 
+def _pap_direct_qkv_send_enabled() -> bool:
+    return (
+        os.environ.get("PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND", "1").lower()
+        in _TRUE_ENV_VALUES
+    )
+
+
 def _pap_prefill_ipc_profile_enabled() -> bool:
     return _pap_env_enabled("PAP_PREFILL_IPC_PROFILE")
 
@@ -878,7 +885,7 @@ class Qwen3Attention(nn.Module):
         direct_qkv_send_buffer: torch.Tensor | None = None
         if (
             pap_attention_enabled
-            and _pap_env_enabled("PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND")
+            and _pap_direct_qkv_send_enabled()
             and qkv.ndim == 2
             and qkv.is_contiguous()
         ):
@@ -1776,7 +1783,7 @@ class Qwen3Attention(nn.Module):
             "yes",
             "on",
         )
-        direct_qkv_send_enabled = _pap_env_enabled("PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND")
+        direct_qkv_send_enabled = _pap_direct_qkv_send_enabled()
         async_qkv_send_enabled = _pap_env_enabled("PAP_OFFLOAD_EXEC_ASYNC_QKV_SEND")
         trace_offload_exec = os.environ.get("PAP_OFFLOAD_EXEC_TRACE", "").lower() in (
             "1",
