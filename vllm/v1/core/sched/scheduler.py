@@ -396,6 +396,12 @@ class Scheduler(SchedulerInterface):
 
     def schedule(self, throttle_prefills: bool = False) -> SchedulerOutput:
         self.current_step += 1
+        try:
+            from vllm.pap.kv_lease import pap_sweep_expired_leases
+
+            pap_sweep_expired_leases()
+        except ImportError:
+            pass
         # NOTE(woosuk) on the scheduling algorithm:
         # There's no "decoding phase" nor "prefill phase" in the scheduler.
         # Each request just has the num_computed_tokens and
@@ -553,6 +559,38 @@ class Scheduler(SchedulerInterface):
                     )
 
                     if new_blocks is not None:
+                        # PAP unified-KV: optionally pre-reserve decode capacity
+                        # blocks so Attention can write decode suffix into the
+                        # same Prefill-owned paged KV cache.
+                        try:
+                            from vllm.pap.kv_lease import (
+                                pap_has_active_lease,
+                            )
+                            import os as _pap_os
+                            if (
+                                _pap_os.environ.get("PAP_UNIFIED_KV", "").lower()
+                                in {"1", "true", "yes", "on"}
+                                and not pap_has_active_lease(request.request_id)
+                            ):
+                                raw_cap = _pap_os.environ.get(
+                                    "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "0"
+                                )
+                                try:
+                                    extra_cap = max(0, int(raw_cap))
+                                except ValueError:
+                                    extra_cap = 0
+                                if extra_cap > 0:
+                                    target_total = (
+                                        request.num_tokens + extra_cap
+                                    )
+                                    for sm in self.kv_cache_manager.coordinator.single_type_managers:
+                                        sm.allocate_new_blocks(
+                                            request.request_id,
+                                            target_total,
+                                            target_total,
+                                        )
+                        except Exception:
+                            pass
                         # The request can be scheduled.
                         break
 
@@ -2212,7 +2250,43 @@ class Scheduler(SchedulerInterface):
     def _free_request_blocks(self, request: Request):
         """Free the request's KV blocks, deferring the return to the block
         pool when an in-flight GPU step may still write them.
+
+        PAP unified-KV lease: if the request has an active remote lease on its
+        blocks, fully bypass block-pool return; the actual free happens when
+        the lease is released via PAP control plane.
         """
+        try:
+            from vllm.pap.kv_lease import (
+                pap_active_lease_id,
+                pap_has_active_lease,
+                pap_stash_deferred_blocks,
+            )
+        except ImportError:  # PAP module optional in some unit-test paths
+            pap_has_active_lease = None  # type: ignore[assignment]
+            pap_active_lease_id = None  # type: ignore[assignment]
+            pap_stash_deferred_blocks = None  # type: ignore[assignment]
+
+        if (
+            pap_has_active_lease is not None
+            and pap_has_active_lease(request.request_id)
+        ):
+            lease_id = (
+                pap_active_lease_id(request.request_id)
+                if pap_active_lease_id is not None
+                else None
+            )
+            blocks = self.kv_cache_manager.pop_blocks_for_free(request)
+            if lease_id is not None and pap_stash_deferred_blocks is not None:
+                pap_stash_deferred_blocks(
+                    lease_id=lease_id,
+                    blocks=blocks,
+                    free_callback=self.kv_cache_manager.block_pool.free_blocks,
+                )
+            else:
+                # Lease state inconsistent: fall back to immediate free.
+                self.kv_cache_manager.block_pool.free_blocks(reversed(blocks))
+            return
+
         if not self.defer_block_free or (
             # Last scheduled step already processed: no in-flight write remains
             # (always the case for a normal finish), so free now.

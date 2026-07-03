@@ -96,6 +96,24 @@ def _pap_prefill_ipc_profile_enabled() -> bool:
     return _pap_env_enabled("PAP_PREFILL_IPC_PROFILE")
 
 
+def _pap_prefill_kv_async_enabled() -> bool:
+    return _pap_env_enabled("PAP_PREFILL_KV_ASYNC")
+
+
+def _pap_unified_kv_export_enabled() -> bool:
+    return _pap_env_enabled("PAP_UNIFIED_KV")
+
+
+def _pap_unified_kv_export_decode_capacity_tokens() -> int:
+    raw = os.environ.get("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "")
+    if not raw:
+        return 0
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 0
+
+
 def _pap_projection_critical_trace_enabled() -> bool:
     return _pap_env_enabled("PAP_PROJECTION_CRITICAL_TRACE")
 
@@ -703,7 +721,7 @@ class Qwen3Attention(nn.Module):
         )
         self.q_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
-        self._pap_imported_prefill_kv: set[tuple[str, str, int, str]] = set()
+        self._pap_imported_prefill_kv: set[tuple[str, str, int, str, bool]] = set()
         self._pap_last_projection_timeline: dict[str, Any] | None = None
 
     def forward(
@@ -1746,6 +1764,7 @@ class Qwen3Attention(nn.Module):
         import_count = 0
         block_ids_total_ms = 0.0
         import_total_ms = 0.0
+        async_import = _pap_prefill_kv_async_enabled()
         for req_index in range(num_reqs):
             req_profile_start = time.perf_counter() if profile_ipc else 0.0
             request_id = str(request_ids[req_index])
@@ -1764,6 +1783,7 @@ class Qwen3Attention(nn.Module):
                 self.attn.layer_name,
                 prefix_len,
                 str(prefill_kv_handle),
+                async_import,
             )
             if import_key in self._pap_imported_prefill_kv:
                 continue
@@ -1774,17 +1794,27 @@ class Qwen3Attention(nn.Module):
             )
             tcp_endpoint = _pap_endpoint_for_tp_rank(tcp_endpoint)
             block_ids_start = time.perf_counter() if profile_ipc else 0.0
+            unified_export = _pap_unified_kv_export_enabled()
+            unified_capacity_tokens = 0
+            if unified_export:
+                unified_capacity_tokens = (
+                    _pap_unified_kv_export_decode_capacity_tokens()
+                )
+            block_seq_len = prefix_len
+            if unified_export and unified_capacity_tokens > 0:
+                block_seq_len = prefix_len + unified_capacity_tokens
             block_ids = _pap_block_ids_from_block_table(
                 block_table=block_table[req_index : req_index + 1],
-                seq_len=prefix_len,
+                seq_len=block_seq_len,
                 block_size=int(block_size),
             )
+
             block_ids_ms = (
                 (time.perf_counter() - block_ids_start) * 1000.0
                 if profile_ipc
                 else 0.0
             )
-            import_start = time.perf_counter() if profile_ipc else 0.0
+            publish_start = time.perf_counter() if profile_ipc else 0.0
             import_prefill_paged_kv(
                 request_id=request_id,
                 layer_name=self.attn.layer_name,
@@ -1796,8 +1826,8 @@ class Qwen3Attention(nn.Module):
                 layout=get_kv_cache_layout(),
                 tcp_endpoint=tcp_endpoint,
             )
-            import_ms = (
-                (time.perf_counter() - import_start) * 1000.0
+            publish_ms = (
+                (time.perf_counter() - publish_start) * 1000.0
                 if profile_ipc
                 else 0.0
             )
@@ -1805,31 +1835,34 @@ class Qwen3Attention(nn.Module):
             if profile_ipc:
                 import_count += 1
                 block_ids_total_ms += block_ids_ms
-                import_total_ms += import_ms
+                import_total_ms += publish_ms
                 logger.info(
                     "PAP prefill IPC model profile request_id=%s layer=%s "
-                    "prefix_len=%d blocks=%d seq_lens_cpu_ms=%.3f "
-                    "block_ids_ms=%.3f import_ms=%.3f total_ms=%.3f",
+                    "prefix_len=%d blocks=%d async=%s seq_lens_cpu_ms=%.3f "
+                    "block_ids_ms=%.3f publish_response_wait_ms=%.3f "
+                    "total_ms=%.3f",
                     request_id,
                     self.attn.layer_name,
                     prefix_len,
                     len(block_ids),
+                    async_import,
                     seq_lens_cpu_ms,
                     block_ids_ms,
-                    import_ms,
+                    publish_ms,
                     (time.perf_counter() - req_profile_start) * 1000.0,
                 )
         if profile_ipc and import_count:
             logger.info(
                 "PAP prefill IPC model aggregate layer=%s imports=%d "
                 "seq_lens_cpu_ms=%.3f block_ids_total_ms=%.3f "
-                "import_total_ms=%.3f total_ms=%.3f",
+                "publish_response_wait_total_ms=%.3f total_ms=%.3f async=%s",
                 self.attn.layer_name,
                 import_count,
                 seq_lens_cpu_ms,
                 block_ids_total_ms,
                 import_total_ms,
                 (time.perf_counter() - profile_total_start) * 1000.0,
+                async_import,
             )
 
 

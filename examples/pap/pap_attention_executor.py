@@ -52,6 +52,26 @@ def _pap_env_flag(name: str, default: bool = False) -> bool:
     return value.lower() in {"1", "true", "yes", "on"}
 
 
+def _pap_attention_pool_profile_enabled() -> bool:
+    return _pap_env_flag("PAP_ATTENTION_POOL_PROFILE", False)
+
+
+def _pap_attention_copy_prefix_kv() -> bool:
+    return _pap_env_flag("PAP_ATTENTION_COPY_PREFIX_KV", False)
+
+
+def _pap_prefill_kv_async_enabled() -> bool:
+    return _pap_env_flag("PAP_PREFILL_KV_ASYNC", False)
+
+
+def _pap_prefill_ipc_profile_enabled() -> bool:
+    return _pap_env_flag("PAP_PREFILL_IPC_PROFILE", False)
+
+
+def _pap_kv_lease_profile_enabled() -> bool:
+    return _pap_env_flag("PAP_KV_LEASE_PROFILE", False)
+
+
 def _trace_add_elapsed_ms(
     trace_stats: dict[str, float] | None,
     key: str,
@@ -267,12 +287,66 @@ class PAPDecodeKVBuffer:
 
 
 @dataclass
+class PAPPrefillLayerReadiness:
+    """Import readiness for one Prefill KV descriptor."""
+
+    request_id: str
+    layer_name: str
+    descriptor_received: bool = False
+    descriptor_opened: bool = False
+    ready: bool = False
+    failed: bool = False
+    error: str = ""
+    received_at: float = field(default_factory=time.perf_counter)
+    opened_at: float = 0.0
+    ready_at: float = 0.0
+    failed_at: float = 0.0
+
+    def copy(self) -> PAPPrefillLayerReadiness:
+        return PAPPrefillLayerReadiness(
+            request_id=self.request_id,
+            layer_name=self.layer_name,
+            descriptor_received=self.descriptor_received,
+            descriptor_opened=self.descriptor_opened,
+            ready=self.ready,
+            failed=self.failed,
+            error=self.error,
+            received_at=self.received_at,
+            opened_at=self.opened_at,
+            ready_at=self.ready_at,
+            failed_at=self.failed_at,
+        )
+
+
+@dataclass
 class PAPPrefillPagedKV:
     """Paged KV backing opened from the Prefill-owned cache via IPC."""
 
     kv_cache: torch.Tensor
     block_ids: list[int]
     seq_len: int
+    block_size: int
+    num_kv_heads: int
+    layout: str
+
+
+@dataclass
+class PAPUnifiedPagedKVState:
+    """Unified Prefill-owned KV state for unified-KV mode.
+
+    The same physical KV cache backs prefix and decode suffix. Attention writes
+    decode K/V into the writable range [writable_start_token, writable_end_token)
+    via leased block IDs, and reads the full [0, seq_len) range for FA compute.
+    """
+
+    kv_cache: torch.Tensor
+    block_ids: tuple[int, ...]
+    prefix_len: int
+    seq_len: int
+    capacity_tokens: int
+    writable_start_token: int
+    writable_end_token: int
+    lease_id: str
     block_size: int
     num_kv_heads: int
     layout: str
@@ -300,6 +374,7 @@ class PAPLocalPagedKVPool:
     num_kv_heads: int
     head_dim: int
     next_block: int = 0
+    free_blocks: list[int] = field(default_factory=list)
     k_scale: torch.Tensor | None = None
     v_scale: torch.Tensor | None = None
     paged_metadata_scratch: PAPPagedFlashMetadataScratch | None = None
@@ -312,10 +387,20 @@ class PAPLocalPagedAttentionState:
     pool: PAPLocalPagedKVPool
     block_ids: tuple[int, ...]
     seq_len: int
+    base_seq_len: int = 0
+    prefix_state: PAPPrefillPagedKV | None = None
 
     @property
     def kv_cache(self) -> torch.Tensor:
         return self.pool.kv_cache
+
+    @property
+    def local_seq_len(self) -> int:
+        return max(0, int(self.seq_len) - int(self.base_seq_len))
+
+    @property
+    def has_descriptor_prefix(self) -> bool:
+        return self.prefix_state is not None and int(self.base_seq_len) > 0
 
     @property
     def block_size(self) -> int:
@@ -478,11 +563,25 @@ def _get_or_create_paged_flash_metadata_scratch(
     return scratch
 
 
+def _paged_flash_effective_seq_len(
+    state: PAPLocalPagedAttentionState | PAPPrefillPagedKV,
+    *,
+    use_base_seq_len: bool,
+) -> int:
+    seq_len = int(state.seq_len)
+    if use_base_seq_len:
+        seq_len -= int(getattr(state, "base_seq_len", 0))
+    if seq_len <= 0:
+        raise ValueError("paged FlashAttention effective seq_len must be positive")
+    return seq_len
+
+
 def _fill_paged_flash_metadata_scratch(
     *,
     scratch: PAPPagedFlashMetadataScratch,
     states: list[PAPLocalPagedAttentionState],
     max_blocks: int,
+    use_base_seq_len: bool,
 ) -> int:
     if scratch.seq_lens_host is not None:
         seq_target = scratch.seq_lens_host
@@ -497,7 +596,10 @@ def _fill_paged_flash_metadata_scratch(
         block_ids = state.block_ids
         if not block_ids:
             raise ValueError("paged FlashAttention state has no blocks")
-        seq_len = int(state.seq_len)
+        seq_len = _paged_flash_effective_seq_len(
+            state,
+            use_base_seq_len=use_base_seq_len,
+        )
         seq_target[index] = seq_len
         if seq_len > max_seq_len:
             max_seq_len = seq_len
@@ -532,8 +634,9 @@ def _fill_paged_flash_metadata_scratch(
 
 def build_paged_flash_metadata(
     *,
-    states: list[PAPLocalPagedAttentionState],
+    states: list[PAPLocalPagedAttentionState | PAPPrefillPagedKV],
     device: torch.device,
+    use_base_seq_len: bool = False,
 ) -> PAPPagedFlashMetadata:
     batch_size = len(states)
     if batch_size <= 0:
@@ -542,30 +645,35 @@ def build_paged_flash_metadata(
     if max_blocks <= 0:
         raise ValueError("paged FlashAttention metadata requires non-empty blocks")
 
-    pool = states[0].pool
-    same_pool = all(state.pool is pool for state in states)
-    use_scratch = same_pool and (
-        device.type != "cuda"
-        or _pap_env_flag("PAP_ATTENTION_PAGED_METADATA_SCRATCH_CUDA", False)
-    )
-    if use_scratch:
-        scratch = _get_or_create_paged_flash_metadata_scratch(
-            pool=pool,
-            batch_size=batch_size,
-            max_blocks=max_blocks,
-            device=device,
+    same_local_pool = all(isinstance(state, PAPLocalPagedAttentionState) for state in states)
+    use_scratch = False
+    if same_local_pool:
+        local_states = [state for state in states if isinstance(state, PAPLocalPagedAttentionState)]
+        pool = local_states[0].pool
+        same_pool = all(state.pool is pool for state in local_states)
+        use_scratch = same_pool and (
+            device.type != "cuda"
+            or _pap_env_flag("PAP_ATTENTION_PAGED_METADATA_SCRATCH_CUDA", False)
         )
-        max_seq_len = _fill_paged_flash_metadata_scratch(
-            scratch=scratch,
-            states=states,
-            max_blocks=max_blocks,
-        )
-        return PAPPagedFlashMetadata(
-            block_table=scratch.block_table,
-            seq_lens=scratch.seq_lens,
-            cu_seqlens_q=scratch.cu_seqlens_q,
-            max_seq_len=max_seq_len,
-        )
+        if use_scratch:
+            scratch = _get_or_create_paged_flash_metadata_scratch(
+                pool=pool,
+                batch_size=batch_size,
+                max_blocks=max_blocks,
+                device=device,
+            )
+            max_seq_len = _fill_paged_flash_metadata_scratch(
+                scratch=scratch,
+                states=local_states,
+                max_blocks=max_blocks,
+                use_base_seq_len=use_base_seq_len,
+            )
+            return PAPPagedFlashMetadata(
+                block_table=scratch.block_table,
+                seq_lens=scratch.seq_lens,
+                cu_seqlens_q=scratch.cu_seqlens_q,
+                max_seq_len=max_seq_len,
+            )
 
     block_rows: list[list[int]] = []
     seq_lens: list[int] = []
@@ -577,7 +685,10 @@ def build_paged_flash_metadata(
         if len(row) < max_blocks:
             row.extend([row[-1]] * (max_blocks - len(row)))
         block_rows.append(row)
-        seq_len = int(state.seq_len)
+        seq_len = _paged_flash_effective_seq_len(
+            state,
+            use_base_seq_len=use_base_seq_len,
+        )
         seq_lens.append(seq_len)
         if seq_len > max_seq_len:
             max_seq_len = seq_len
@@ -591,6 +702,56 @@ def build_paged_flash_metadata(
             dtype=torch.int32,
             device=device,
         ),
+        max_seq_len=max_seq_len,
+    )
+
+
+def build_unified_paged_flash_metadata(
+    *,
+    states: list[PAPUnifiedPagedKVState],
+    device: torch.device,
+) -> PAPPagedFlashMetadata:
+    """Build FA metadata for a single-source Prefill-owned paged KV batch.
+
+    Mirrors build_paged_flash_metadata but consumes PAPUnifiedPagedKVState and
+    skips scratch optimization (Stage 4 scaffolding: simple per-call tensors).
+    """
+    batch_size = len(states)
+    if batch_size <= 0:
+        raise ValueError(
+            "unified paged FlashAttention metadata requires at least one state"
+        )
+    max_blocks = max(len(state.block_ids) for state in states)
+    if max_blocks <= 0:
+        raise ValueError(
+            "unified paged FlashAttention metadata requires non-empty blocks"
+        )
+    block_table = torch.zeros(
+        (batch_size, max_blocks), dtype=torch.int32, device=device
+    )
+    seq_lens = torch.empty((batch_size,), dtype=torch.int32, device=device)
+    max_seq_len = 0
+    for row_index, state in enumerate(states):
+        if not state.block_ids:
+            raise ValueError("unified state has no blocks")
+        last_block = int(state.block_ids[-1])
+        for column_index in range(max_blocks):
+            if column_index < len(state.block_ids):
+                block_table[row_index, column_index] = int(
+                    state.block_ids[column_index]
+                )
+            else:
+                block_table[row_index, column_index] = last_block
+        seq_lens[row_index] = int(state.seq_len)
+        if int(state.seq_len) > max_seq_len:
+            max_seq_len = int(state.seq_len)
+    cu_seqlens_q = torch.arange(
+        0, batch_size + 1, dtype=torch.int32, device=device
+    )
+    return PAPPagedFlashMetadata(
+        block_table=block_table,
+        seq_lens=seq_lens,
+        cu_seqlens_q=cu_seqlens_q,
         max_seq_len=max_seq_len,
     )
 
@@ -609,9 +770,20 @@ class PAPAttentionRegistry:
             str, dict[str, list[tuple[torch.Tensor, torch.Tensor]]]
         ] = {}
         self._prefill_paged_kv: dict[str, dict[str, PAPPrefillPagedKV]] = {}
+        self._prefill_readiness: dict[
+            str, dict[str, PAPPrefillLayerReadiness]
+        ] = {}
+        self._prefill_async_queue: Queue[
+            tuple[PAPOffloadKVPagedIPCDescriptor, float]
+        ] = Queue()
+        self._prefill_async_worker_started = False
         self._local_paged_kv_pools: dict[str, PAPLocalPagedKVPool] = {}
         self._local_paged_kv: dict[str, dict[str, PAPLocalPagedAttentionState]] = {}
         self._request_id_resolution_cache: dict[str, str] = {}
+        self._session_lease_ids: dict[str, str] = {}
+        self._session_leased_block_ids: dict[str, tuple[int, ...]] = {}
+        self._session_lease_capacity_tokens: dict[str, int] = {}
+        self._unified_paged_kv: dict[str, dict[str, PAPUnifiedPagedKVState]] = {}
         self._offload_exec_session_entry_cache: dict[
             tuple[str, int, int, int, int, int], PAPOffloadExecSessionEntry
         ] = {}
@@ -707,9 +879,10 @@ class PAPAttentionRegistry:
                 or pool.kv_cache.device != device
             ):
                 raise ValueError("local paged KV pool shape does not match layer")
+            additional_blocks = max(0, int(min_blocks) - len(pool.free_blocks))
             self._ensure_local_paged_pool_capacity_locked(
                 pool,
-                required_blocks=pool.next_block + int(min_blocks),
+                required_blocks=pool.next_block + additional_blocks,
             )
             return pool
 
@@ -740,7 +913,8 @@ class PAPAttentionRegistry:
     ) -> None:
         if int(required_blocks) <= int(pool.kv_cache.shape[0]):
             return
-        new_capacity = max(int(required_blocks), int(pool.kv_cache.shape[0]) * 2)
+        old_capacity = int(pool.kv_cache.shape[0])
+        new_capacity = max(int(required_blocks), old_capacity * 2)
         grown = torch.empty(
             (new_capacity, *pool.kv_cache.shape[1:]),
             dtype=pool.kv_cache.dtype,
@@ -749,6 +923,16 @@ class PAPAttentionRegistry:
         if pool.next_block > 0:
             grown[: pool.next_block].copy_(pool.kv_cache[: pool.next_block])
         pool.kv_cache = grown
+        if _pap_attention_pool_profile_enabled():
+            logger.info(
+                "PAP local paged KV pool grow layer=%s old_capacity=%d "
+                "new_capacity=%d next_block=%d free_count=%d",
+                pool.layer_name,
+                old_capacity,
+                new_capacity,
+                int(pool.next_block),
+                len(pool.free_blocks),
+            )
 
     def _allocate_local_paged_blocks_locked(
         self,
@@ -759,11 +943,106 @@ class PAPAttentionRegistry:
         count = int(count)
         if count <= 0:
             return ()
+
+        reused_count = min(count, len(pool.free_blocks))
+        reused = []
+        if reused_count > 0:
+            reused = pool.free_blocks[-reused_count:]
+            del pool.free_blocks[-reused_count:]
+
+        new_count = count - reused_count
+        if new_count <= 0:
+            return tuple(reused)
+
         start = pool.next_block
-        end = start + count
+        end = start + new_count
         self._ensure_local_paged_pool_capacity_locked(pool, required_blocks=end)
         pool.next_block = end
-        return tuple(range(start, end))
+        return (*reused, *range(start, end))
+
+    def _release_local_paged_blocks_locked(self, session_request_id: str) -> None:
+        layer_states = self._local_paged_kv.get(session_request_id, {})
+        if not layer_states:
+            return
+
+        released_layers = 0
+        released_blocks = 0
+        free_count_by_layer: list[str] = []
+        for layer_name, state in list(layer_states.items()):
+            released_layers += 1
+            block_ids = tuple(int(block_id) for block_id in state.block_ids)
+            if block_ids:
+                state.pool.free_blocks.extend(block_ids)
+                released_blocks += len(block_ids)
+            free_count_by_layer.append(
+                f"{layer_name}:{len(state.pool.free_blocks)}"
+            )
+
+        self._local_paged_kv.pop(session_request_id, None)
+        if _pap_attention_pool_profile_enabled():
+            logger.info(
+                "PAP local paged KV pool release request_id=%s layers=%d "
+                "blocks=%d free_counts=%s",
+                session_request_id,
+                released_layers,
+                released_blocks,
+                ",".join(free_count_by_layer) if free_count_by_layer else "none",
+            )
+
+    def _release_session_locked(self, request_id: str) -> bool:
+        existed = self._sessions.pop(request_id, None) is not None
+        self._layer_events.pop(request_id, None)
+        self._decode_kv.pop(request_id, None)
+        self._prefill_kv.pop(request_id, None)
+        self._prefill_paged_kv.pop(request_id, None)
+        self._prefill_readiness.pop(request_id, None)
+        self._unified_paged_kv.pop(request_id, None)
+        self._release_local_paged_blocks_locked(request_id)
+        self._drop_offload_exec_session_entry_cache_locked(request_id)
+        lease_id = self._session_lease_ids.pop(request_id, None)
+        leased_blocks = self._session_leased_block_ids.pop(request_id, None)
+        self._session_lease_capacity_tokens.pop(request_id, None)
+        if lease_id is not None and _pap_kv_lease_profile_enabled():
+            logger.info(
+                "PAP Attention release session lease request_id=%s "
+                "lease_id=%s leased_blocks=%d (Prefill TTL sweep will free)",
+                request_id,
+                lease_id,
+                len(leased_blocks or ()),
+            )
+        for cached_request_id, cached_session_id in list(
+            self._request_id_resolution_cache.items()
+        ):
+            if cached_request_id == request_id or cached_session_id == request_id:
+                self._request_id_resolution_cache.pop(cached_request_id, None)
+        self._attention_sessions.free_session(request_id)
+        return existed
+
+    def _replace_existing_session_locked(self, request_id: str) -> None:
+        if request_id in self._sessions:
+            self._release_session_locked(request_id)
+            return
+
+        self._release_local_paged_blocks_locked(request_id)
+        self._layer_events.pop(request_id, None)
+        self._decode_kv.pop(request_id, None)
+        self._prefill_kv.pop(request_id, None)
+        self._prefill_paged_kv.pop(request_id, None)
+        self._prefill_readiness.pop(request_id, None)
+        self._unified_paged_kv.pop(request_id, None)
+        self._drop_offload_exec_session_entry_cache_locked(request_id)
+        for cached_request_id, cached_session_id in list(
+            self._request_id_resolution_cache.items()
+        ):
+            if cached_request_id == request_id or cached_session_id == request_id:
+                self._request_id_resolution_cache.pop(cached_request_id, None)
+        self._attention_sessions.free_session(request_id)
+        self._sessions.pop(request_id, None)
+        self._request_id_resolution_cache.pop(request_id, None)
+
+    def release_session(self, request_id: str) -> bool:
+        with self._lock:
+            return self._release_session_locked(request_id)
 
     @staticmethod
     def _copy_segments_to_local_paged_blocks(
@@ -882,6 +1161,124 @@ class PAPAttentionRegistry:
             )
         )
 
+    def _local_prefix_state_locked(
+        self,
+        session_request_id: str,
+        layer_name: str,
+    ) -> PAPPrefillPagedKV | None:
+        return self._prefill_paged_kv.setdefault(session_request_id, {}).get(layer_name)
+
+    def _canonicalize_local_paged_state_locked(
+        self,
+        *,
+        session_request_id: str,
+        layer_name: str,
+        state: PAPLocalPagedAttentionState,
+    ) -> PAPLocalPagedAttentionState:
+        prefix_state = self._local_prefix_state_locked(session_request_id, layer_name)
+        if prefix_state is None:
+            return state
+        base_seq_len = int(prefix_state.seq_len)
+        if (
+            state.prefix_state is prefix_state
+            and int(state.base_seq_len) == base_seq_len
+        ):
+            return state
+        canonical_state = PAPLocalPagedAttentionState(
+            pool=state.pool,
+            block_ids=tuple(state.block_ids),
+            seq_len=int(state.seq_len),
+            base_seq_len=base_seq_len,
+            prefix_state=prefix_state,
+        )
+        self._local_paged_kv.setdefault(session_request_id, {})[layer_name] = (
+            canonical_state
+        )
+        return canonical_state
+
+    def _ensure_local_paged_decode_state_locked(
+        self,
+        *,
+        session_request_id: str,
+        layer_name: str,
+        key: torch.Tensor,
+        seq_len: int,
+    ) -> PAPLocalPagedAttentionState:
+        state = self._local_paged_kv.setdefault(session_request_id, {}).get(layer_name)
+        prefix_state = self._local_prefix_state_locked(session_request_id, layer_name)
+        if state is not None:
+            state = self._canonicalize_local_paged_state_locked(
+                session_request_id=session_request_id,
+                layer_name=layer_name,
+                state=state,
+            )
+            if prefix_state is not None:
+                base_seq_len = int(prefix_state.seq_len)
+                if int(state.seq_len) < max(int(seq_len), base_seq_len):
+                    state = PAPLocalPagedAttentionState(
+                        pool=state.pool,
+                        block_ids=tuple(state.block_ids),
+                        seq_len=max(int(seq_len), int(state.seq_len), base_seq_len),
+                        base_seq_len=base_seq_len,
+                        prefix_state=prefix_state,
+                    )
+                    self._local_paged_kv.setdefault(session_request_id, {})[
+                        layer_name
+                    ] = state
+            return state
+
+        base_seq_len = int(prefix_state.seq_len) if prefix_state is not None else 0
+        block_size = (
+            int(prefix_state.block_size)
+            if prefix_state is not None
+            else max(1, int(key.shape[0]))
+        )
+        num_kv_heads = (
+            int(prefix_state.num_kv_heads)
+            if prefix_state is not None
+            else int(key.shape[1])
+        )
+        head_dim = int(key.shape[-1])
+        local_seq_len = max(0, int(seq_len) - base_seq_len)
+        required_blocks = (
+            (local_seq_len + block_size - 1) // block_size if local_seq_len > 0 else 0
+        )
+        pool: PAPLocalPagedKVPool | None = None
+        block_ids: tuple[int, ...] = ()
+        if required_blocks > 0:
+            pool = self._get_or_create_local_paged_pool_locked(
+                layer_name=layer_name,
+                block_size=block_size,
+                num_kv_heads=num_kv_heads,
+                head_dim=head_dim,
+                dtype=key.dtype,
+                device=key.device,
+                min_blocks=required_blocks,
+            )
+            block_ids = self._allocate_local_paged_blocks_locked(
+                pool,
+                count=required_blocks,
+            )
+        else:
+            pool = self._get_or_create_local_paged_pool_locked(
+                layer_name=layer_name,
+                block_size=block_size,
+                num_kv_heads=num_kv_heads,
+                head_dim=head_dim,
+                dtype=key.dtype,
+                device=key.device,
+                min_blocks=0,
+            )
+        state = PAPLocalPagedAttentionState(
+            pool=pool,
+            block_ids=tuple(block_ids),
+            seq_len=max(int(seq_len), base_seq_len),
+            base_seq_len=base_seq_len,
+            prefix_state=prefix_state,
+        )
+        self._local_paged_kv.setdefault(session_request_id, {})[layer_name] = state
+        return state
+
     def _append_local_paged_decode_locked(
         self,
         *,
@@ -891,17 +1288,25 @@ class PAPAttentionRegistry:
         value: torch.Tensor,
         seq_len: int,
     ) -> None:
-        state = self._local_paged_kv.setdefault(session_request_id, {}).get(layer_name)
-        if state is None:
-            return
+        state = self._ensure_local_paged_decode_state_locked(
+            session_request_id=session_request_id,
+            layer_name=layer_name,
+            key=key,
+            seq_len=int(seq_len),
+        )
         pool = state.pool
         num_tokens = int(key.shape[0])
         if num_tokens <= 0:
             return
-        start_position = int(seq_len) - num_tokens
+        start_position = int(seq_len) - int(state.base_seq_len) - num_tokens
         if start_position < 0:
             raise ValueError("decode seq_len is shorter than decode KV tensor")
-        required_blocks = (int(seq_len) + pool.block_size - 1) // pool.block_size
+        local_seq_len = max(0, int(seq_len) - int(state.base_seq_len))
+        required_blocks = (
+            (local_seq_len + pool.block_size - 1) // pool.block_size
+            if local_seq_len > 0
+            else 0
+        )
         block_ids = state.block_ids
         if len(block_ids) < required_blocks:
             block_ids = (
@@ -934,6 +1339,8 @@ class PAPAttentionRegistry:
                 pool=pool,
                 block_ids=tuple(block_ids),
                 seq_len=max(int(seq_len), state.seq_len),
+                base_seq_len=int(state.base_seq_len),
+                prefix_state=state.prefix_state,
             )
         )
 
@@ -956,7 +1363,210 @@ class PAPAttentionRegistry:
                 pool=state.pool,
                 block_ids=tuple(state.block_ids),
                 seq_len=int(state.seq_len),
+                base_seq_len=int(state.base_seq_len),
+                prefix_state=state.prefix_state,
             )
+
+    def has_descriptor_prefix_for_local_paged_attention(
+        self,
+        *,
+        session_request_ids: tuple[str, ...],
+        layer_name: str,
+    ) -> bool:
+        with self._lock:
+            for session_request_id in session_request_ids:
+                prefix_state = self._local_prefix_state_locked(
+                    session_request_id,
+                    layer_name,
+                )
+                if prefix_state is None:
+                    continue
+                state = self._local_paged_kv.setdefault(session_request_id, {}).get(
+                    layer_name
+                )
+                if state is None or state.has_descriptor_prefix:
+                    return True
+            return False
+
+    def materialize_descriptor_prefix_for_local_paged_attention(
+        self,
+        *,
+        session_request_ids: tuple[str, ...],
+        layer_name: str,
+    ) -> None:
+        with self._lock:
+            for session_request_id in session_request_ids:
+                prefix_state = self._local_prefix_state_locked(
+                    session_request_id,
+                    layer_name,
+                )
+                if prefix_state is None:
+                    continue
+                state = self._local_paged_kv.setdefault(session_request_id, {}).get(
+                    layer_name
+                )
+                if state is not None and state.local_seq_len > 0:
+                    raise RuntimeError(
+                        "PAP cannot switch a live descriptor-prefix decode session "
+                        "to copied-prefix fallback after local suffix blocks exist; "
+                        "set PAP_ATTENTION_COPY_PREFIX_KV=1 before the session starts"
+                    )
+                segments = self._prefill_kv.setdefault(session_request_id, {}).get(
+                    layer_name
+                )
+                if not segments:
+                    raise RuntimeError(
+                        "PAP copied-prefix fallback requires imported prefill KV "
+                        "segments"
+                    )
+                self._install_local_paged_prefill_locked(
+                    session_request_id=session_request_id,
+                    layer_name=layer_name,
+                    segments=segments,
+                    seq_len=int(prefix_state.seq_len),
+                    block_size=int(prefix_state.block_size),
+                    num_kv_heads=int(prefix_state.num_kv_heads),
+                )
+                self._prefill_paged_kv.setdefault(session_request_id, {}).pop(
+                    layer_name, None
+                )
+
+    def append_decode_kv_to_unified_prefill_cache(
+        self,
+        *,
+        session_request_ids: Sequence[str],
+        layer_name: str,
+        key_batch: torch.Tensor,
+        value_batch: torch.Tensor,
+        decode_seq_lens: Sequence[int],
+    ) -> int:
+        """Write a same-layer decode batch into Prefill-owned unified KV blocks.
+
+        Each row writes into its own session's unified state. Returns the
+        number of rows successfully appended.
+        """
+        unified_profile = _pap_env_flag("PAP_UNIFIED_KV_PROFILE", False)
+        if len(session_request_ids) != len(decode_seq_lens):
+            raise ValueError(
+                "PAP unified KV append session_request_ids/decode_seq_lens length mismatch"
+            )
+        append_start = time.perf_counter() if unified_profile else 0.0
+        written = 0
+        with self._lock:
+            for index, session_request_id in enumerate(session_request_ids):
+                decode_len = int(decode_seq_lens[index])
+                if decode_len <= 0:
+                    continue
+                layer_states = self._unified_paged_kv.get(session_request_id, {})
+                state = layer_states.get(layer_name)
+                if state is None:
+                    raise RuntimeError(
+                        f"PAP unified KV state missing for request_id="
+                        f"{session_request_id} layer={layer_name}"
+                    )
+                block_size = int(state.block_size)
+                kv_cache = state.kv_cache
+                position = int(state.seq_len)
+                if (
+                    position < int(state.writable_start_token)
+                    or position >= int(state.writable_end_token)
+                ):
+                    raise RuntimeError(
+                        f"PAP unified KV append out of range request_id="
+                        f"{session_request_id} layer={layer_name} position={position} "
+                        f"writable=[{state.writable_start_token},"
+                        f"{state.writable_end_token})"
+                    )
+                logical_block = position // block_size
+                block_offset = position % block_size
+                if logical_block >= len(state.block_ids):
+                    raise RuntimeError(
+                        f"PAP unified KV logical_block={logical_block} exceeds "
+                        f"block_ids len={len(state.block_ids)} (request_id="
+                        f"{session_request_id} layer={layer_name})"
+                    )
+                physical_block = int(state.block_ids[logical_block])
+                key_row = key_batch[index].to(
+                    device=kv_cache.device, dtype=kv_cache.dtype
+                )
+                value_row = value_batch[index].to(
+                    device=kv_cache.device, dtype=kv_cache.dtype
+                )
+                try:
+                    key_cache, value_cache = kv_cache.unbind(1)
+                    slot = physical_block * block_size + block_offset
+                    slot_tensor = torch.tensor(
+                        [slot],
+                        dtype=torch.int64,
+                        device=kv_cache.device,
+                    )
+                    key_row_batch = key_row.unsqueeze(0).contiguous()
+                    value_row_batch = value_row.unsqueeze(0).contiguous()
+                    k_scale = torch.ones(
+                        1, dtype=torch.float32, device=kv_cache.device
+                    )
+                    v_scale = torch.ones(
+                        1, dtype=torch.float32, device=kv_cache.device
+                    )
+                    torch.ops._C_cache_ops.reshape_and_cache_flash(
+                        key_row_batch,
+                        value_row_batch,
+                        key_cache,
+                        value_cache,
+                        slot_tensor,
+                        "auto",
+                        k_scale,
+                        v_scale,
+                    )
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"PAP unified KV append via reshape_and_cache_flash failed: {exc}"
+                    )
+                written += 1
+                new_seq_len = max(int(state.seq_len), position + 1)
+                layer_states[layer_name] = PAPUnifiedPagedKVState(
+                    kv_cache=state.kv_cache,
+                    block_ids=state.block_ids,
+                    prefix_len=state.prefix_len,
+                    seq_len=new_seq_len,
+                    capacity_tokens=state.capacity_tokens,
+                    writable_start_token=state.writable_start_token,
+                    writable_end_token=state.writable_end_token,
+                    lease_id=state.lease_id,
+                    block_size=state.block_size,
+                    num_kv_heads=state.num_kv_heads,
+                    layout=state.layout,
+                )
+                if unified_profile:
+                    logger.info(
+                        "PAP unified KV append request_id=%s layer=%s "
+                        "position=%d block=%d offset=%d seq_len=%d append_ms=%.3f",
+                        session_request_id,
+                        layer_name,
+                        position,
+                        physical_block,
+                        block_offset,
+                        new_seq_len,
+                        (time.perf_counter() - append_start) * 1000.0,
+                    )
+        return written
+
+    def get_unified_paged_states(
+        self,
+        *,
+        session_request_ids: Sequence[str],
+        layer_name: str,
+    ) -> list[PAPUnifiedPagedKVState] | None:
+        """Return per-row unified states if every row has unified state."""
+        with self._lock:
+            states: list[PAPUnifiedPagedKVState] = []
+            for session_request_id in session_request_ids:
+                layer_states = self._unified_paged_kv.get(session_request_id, {})
+                state = layer_states.get(layer_name)
+                if state is None:
+                    return None
+                states.append(state)
+            return states
 
     def append_decode_kv_batch_for_local_paged_attention(
         self,
@@ -1005,7 +1615,18 @@ class PAPAttentionRegistry:
                     session_request_id, {}
                 ).get(entry.layer_name)
                 if local_state is None:
-                    return None
+                    local_state = self._ensure_local_paged_decode_state_locked(
+                        session_request_id=session_request_id,
+                        layer_name=entry.layer_name,
+                        key=entry.key,
+                        seq_len=seq_len,
+                    )
+                else:
+                    local_state = self._canonicalize_local_paged_state_locked(
+                        session_request_id=session_request_id,
+                        layer_name=entry.layer_name,
+                        state=local_state,
+                    )
 
                 block_id = (seq_len - 1) // session.block_size
                 slot = block_id * session.block_size + (
@@ -1043,8 +1664,17 @@ class PAPAttentionRegistry:
                     state = self._local_paged_kv[session_request_id][entry.layer_name]
                     pool = state.pool
                     seq_len = int(entry.seq_len)
-                    start_position = seq_len - 1
-                    required_blocks = (seq_len + pool.block_size - 1) // pool.block_size
+                    start_position = seq_len - int(state.base_seq_len) - 1
+                    if start_position < 0:
+                        raise RuntimeError(
+                            "PAP local paged decode append start position is negative"
+                        )
+                    local_seq_len = max(0, seq_len - int(state.base_seq_len))
+                    required_blocks = (
+                        (local_seq_len + pool.block_size - 1) // pool.block_size
+                        if local_seq_len > 0
+                        else 0
+                    )
                     block_ids = state.block_ids
                     if len(block_ids) < required_blocks:
                         block_ids = (
@@ -1054,38 +1684,41 @@ class PAPAttentionRegistry:
                                 count=required_blocks - len(block_ids),
                             ),
                         )
-                    logical_block = start_position // pool.block_size
-                    block_offset = start_position % pool.block_size
-                    local_block = block_ids[logical_block]
-                    key_state = (
-                        entry.key.detach()
-                        .contiguous()
-                        .to(
-                            device=pool.kv_cache.device,
-                            dtype=pool.kv_cache.dtype,
+                    if local_seq_len > 0:
+                        logical_block = start_position // pool.block_size
+                        block_offset = start_position % pool.block_size
+                        local_block = block_ids[logical_block]
+                        key_state = (
+                            entry.key.detach()
+                            .contiguous()
+                            .to(
+                                device=pool.kv_cache.device,
+                                dtype=pool.kv_cache.dtype,
+                            )
                         )
-                    )
-                    value_state = (
-                        entry.value.detach()
-                        .contiguous()
-                        .to(
-                            device=pool.kv_cache.device,
-                            dtype=pool.kv_cache.dtype,
+                        value_state = (
+                            entry.value.detach()
+                            .contiguous()
+                            .to(
+                                device=pool.kv_cache.device,
+                                dtype=pool.kv_cache.dtype,
+                            )
                         )
-                    )
-                    group_key = (id(pool), block_offset)
-                    group = write_groups.setdefault(
-                        group_key,
-                        (pool, [], [], []),
-                    )
-                    group[1].append(local_block)
-                    group[2].append(key_state)
-                    group[3].append(value_state)
+                        group_key = (id(pool), block_offset)
+                        group = write_groups.setdefault(
+                            group_key,
+                            (pool, [], [], []),
+                        )
+                        group[1].append(local_block)
+                        group[2].append(key_state)
+                        group[3].append(value_state)
                     self._local_paged_kv[session_request_id][entry.layer_name] = (
                         PAPLocalPagedAttentionState(
                             pool=pool,
                             block_ids=tuple(block_ids),
                             seq_len=max(seq_len, state.seq_len),
+                            base_seq_len=int(state.base_seq_len),
+                            prefix_state=state.prefix_state,
                         )
                     )
 
@@ -1147,6 +1780,8 @@ class PAPAttentionRegistry:
                         pool=state.pool,
                         block_ids=tuple(state.block_ids),
                         seq_len=int(state.seq_len),
+                        base_seq_len=int(state.base_seq_len),
+                        prefix_state=state.prefix_state,
                     )
                 )
             return states
@@ -1218,7 +1853,24 @@ class PAPAttentionRegistry:
                         session_request_id, {}
                     ).get(layer_name)
                     if local_state is None:
-                        return None
+                        local_state = self._ensure_local_paged_decode_state_locked(
+                            session_request_id=session_request_id,
+                            layer_name=layer_name,
+                            key=key_batch[index],
+                            seq_len=seq_len,
+                        )
+                    else:
+                        local_state = self._canonicalize_local_paged_state_locked(
+                            session_request_id=session_request_id,
+                            layer_name=layer_name,
+                            state=local_state,
+                        )
+                else:
+                    local_state = self._canonicalize_local_paged_state_locked(
+                        session_request_id=session_request_id,
+                        layer_name=layer_name,
+                        state=local_state,
+                    )
                 prepared.append(
                     (
                         index,
@@ -1246,8 +1898,17 @@ class PAPAttentionRegistry:
                 )
                 if should_append:
                     pool = state.pool
-                    start_position = seq_len - 1
-                    required_blocks = (seq_len + pool.block_size - 1) // pool.block_size
+                    start_position = seq_len - int(state.base_seq_len) - 1
+                    if start_position < 0:
+                        raise RuntimeError(
+                            "PAP local paged tensor append start position is negative"
+                        )
+                    local_seq_len = max(0, seq_len - int(state.base_seq_len))
+                    required_blocks = (
+                        (local_seq_len + pool.block_size - 1) // pool.block_size
+                        if local_seq_len > 0
+                        else 0
+                    )
                     block_ids = state.block_ids
                     if len(block_ids) < required_blocks:
                         block_ids = (
@@ -1257,25 +1918,28 @@ class PAPAttentionRegistry:
                                 count=required_blocks - len(block_ids),
                             ),
                         )
-                    logical_block = start_position // pool.block_size
-                    block_offset = start_position % pool.block_size
-                    local_block = block_ids[logical_block]
-                    native_group = native_write_batches.setdefault(
-                        id(pool),
-                        (pool, [], [], []),
-                    )
-                    native_group[1].append(local_block)
-                    native_group[2].append(block_offset)
-                    native_group[3].append(index)
-                    group_key = (id(pool), block_offset)
-                    group = write_groups.setdefault(group_key, (pool, [], []))
-                    group[1].append(local_block)
-                    group[2].append(index)
+                    if local_seq_len > 0:
+                        logical_block = start_position // pool.block_size
+                        block_offset = start_position % pool.block_size
+                        local_block = block_ids[logical_block]
+                        native_group = native_write_batches.setdefault(
+                            id(pool),
+                            (pool, [], [], []),
+                        )
+                        native_group[1].append(local_block)
+                        native_group[2].append(block_offset)
+                        native_group[3].append(index)
+                        group_key = (id(pool), block_offset)
+                        group = write_groups.setdefault(group_key, (pool, [], []))
+                        group[1].append(local_block)
+                        group[2].append(index)
                     self._local_paged_kv[session_request_id][layer_name] = (
                         PAPLocalPagedAttentionState(
                             pool=pool,
                             block_ids=tuple(block_ids),
                             seq_len=max(seq_len, state.seq_len),
+                            base_seq_len=int(state.base_seq_len),
+                            prefix_state=state.prefix_state,
                         )
                     )
 
@@ -1425,6 +2089,8 @@ class PAPAttentionRegistry:
                         pool=state.pool,
                         block_ids=tuple(state.block_ids),
                         seq_len=int(state.seq_len),
+                        base_seq_len=int(state.base_seq_len),
+                        prefix_state=state.prefix_state,
                     )
                 )
             _trace_add_elapsed_ms(trace_stats, "append_state_ms", state_start)
@@ -1446,12 +2112,13 @@ class PAPAttentionRegistry:
             kv_size=registration.kv_size,
         )
         with self._lock:
-            self._drop_offload_exec_session_entry_cache_locked(registration.request_id)
+            self._replace_existing_session_locked(registration.request_id)
             self._sessions[registration.request_id] = session
             self._layer_events.setdefault(registration.request_id, [])
             self._decode_kv.setdefault(registration.request_id, {})
             self._prefill_kv.setdefault(registration.request_id, {})
             self._prefill_paged_kv.setdefault(registration.request_id, {})
+            self._prefill_readiness.setdefault(registration.request_id, {})
             self._local_paged_kv.setdefault(registration.request_id, {})
             self._request_id_resolution_cache[registration.request_id] = (
                 registration.request_id
@@ -1476,22 +2143,6 @@ class PAPAttentionRegistry:
             session = self._sessions.get(request_id)
             return None if session is None else session.copy()
 
-    def release_session(self, request_id: str) -> bool:
-        with self._lock:
-            existed = self._sessions.pop(request_id, None) is not None
-            self._layer_events.pop(request_id, None)
-            self._decode_kv.pop(request_id, None)
-            self._prefill_kv.pop(request_id, None)
-            self._prefill_paged_kv.pop(request_id, None)
-            self._local_paged_kv.pop(request_id, None)
-            self._drop_offload_exec_session_entry_cache_locked(request_id)
-            for cached_request_id, cached_session_id in list(
-                self._request_id_resolution_cache.items()
-            ):
-                if cached_request_id == request_id or cached_session_id == request_id:
-                    self._request_id_resolution_cache.pop(cached_request_id, None)
-            self._attention_sessions.free_session(request_id)
-            return existed
 
     def resolve_session_request_id(self, request_id: str) -> str | None:
         """Map vLLM-wrapped request ids back to the proxy-level PAP id."""
@@ -1752,6 +2403,103 @@ class PAPAttentionRegistry:
                 event.copy() for event in self._layer_events.get(session_request_id, [])
             ]
 
+    def _prefill_readiness_locked(
+        self,
+        *,
+        session_request_id: str,
+        layer_name: str,
+    ) -> PAPPrefillLayerReadiness:
+        return self._prefill_readiness.setdefault(session_request_id, {}).setdefault(
+            layer_name,
+            PAPPrefillLayerReadiness(
+                request_id=session_request_id,
+                layer_name=layer_name,
+            ),
+        )
+
+    def _mark_prefill_descriptor_received_locked(
+        self,
+        *,
+        session_request_id: str,
+        layer_name: str,
+    ) -> PAPPrefillLayerReadiness:
+        readiness = self._prefill_readiness_locked(
+            session_request_id=session_request_id,
+            layer_name=layer_name,
+        )
+        readiness.descriptor_received = True
+        readiness.received_at = time.perf_counter()
+        self._prefill_condition.notify_all()
+        return readiness
+
+    def _mark_prefill_descriptor_opened_locked(
+        self,
+        *,
+        session_request_id: str,
+        layer_name: str,
+    ) -> PAPPrefillLayerReadiness:
+        readiness = self._prefill_readiness_locked(
+            session_request_id=session_request_id,
+            layer_name=layer_name,
+        )
+        readiness.descriptor_received = True
+        readiness.descriptor_opened = True
+        readiness.opened_at = time.perf_counter()
+        self._prefill_condition.notify_all()
+        return readiness
+
+    def _mark_prefill_ready_locked(
+        self,
+        *,
+        session_request_id: str,
+        layer_name: str,
+    ) -> PAPPrefillLayerReadiness:
+        readiness = self._prefill_readiness_locked(
+            session_request_id=session_request_id,
+            layer_name=layer_name,
+        )
+        readiness.descriptor_received = True
+        readiness.descriptor_opened = True
+        readiness.ready = True
+        readiness.failed = False
+        readiness.error = ""
+        readiness.ready_at = time.perf_counter()
+        self._prefill_condition.notify_all()
+        return readiness
+
+    def _mark_prefill_failed_locked(
+        self,
+        *,
+        session_request_id: str,
+        layer_name: str,
+        error: BaseException,
+    ) -> PAPPrefillLayerReadiness:
+        readiness = self._prefill_readiness_locked(
+            session_request_id=session_request_id,
+            layer_name=layer_name,
+        )
+        readiness.failed = True
+        readiness.ready = False
+        readiness.error = str(error)
+        readiness.failed_at = time.perf_counter()
+        self._prefill_condition.notify_all()
+        return readiness
+
+    def prefill_layer_readiness(
+        self,
+        *,
+        request_id: str,
+        layer_name: str,
+    ) -> PAPPrefillLayerReadiness | None:
+        with self._lock:
+            session_request_id = self._resolve_session_request_id_locked(request_id)
+            if session_request_id is None:
+                return None
+            readiness = self._prefill_readiness.setdefault(session_request_id, {}).get(
+                layer_name
+            )
+            return None if readiness is None else readiness.copy()
+
     def import_prefill_kv(
         self,
         *,
@@ -1768,6 +2516,10 @@ class PAPAttentionRegistry:
             if session_request_id is None:
                 raise KeyError(request_id)
             session = self._sessions[session_request_id]
+            self._mark_prefill_descriptor_opened_locked(
+                session_request_id=session_request_id,
+                layer_name=layer_name,
+            )
             if copy:
                 key_state = key.detach().contiguous().to(self._storage_device)
                 value_state = value.detach().contiguous().to(self._storage_device)
@@ -1804,7 +2556,10 @@ class PAPAttentionRegistry:
             session.seq_len = imported_session.seq_len
             session.prefill_seq_lens[layer_name] = seq_len
             session.decode_seq_lens[layer_name] = seq_len
-            self._prefill_condition.notify_all()
+            self._mark_prefill_ready_locked(
+                session_request_id=session_request_id,
+                layer_name=layer_name,
+            )
             if os.environ.get("PAP_ATTENTION_KV_DEBUG", "").lower() in (
                 "1",
                 "true",
@@ -1835,6 +2590,13 @@ class PAPAttentionRegistry:
         block_size: int,
         num_kv_heads: int,
         layout: str,
+        lease_id: str | None = None,
+        leased_block_ids: tuple[int, ...] | None = None,
+        lease_capacity_tokens: int | None = None,
+        unified_kv_mode: bool = False,
+        prefix_len: int | None = None,
+        writable_start_token: int | None = None,
+        writable_end_token: int | None = None,
     ) -> int:
         from vllm.pap.remote_attention import paged_kv_segments
 
@@ -1843,7 +2605,92 @@ class PAPAttentionRegistry:
             if session_request_id is None:
                 raise KeyError(request_id)
             session = self._sessions[session_request_id]
+            if lease_id:
+                existing = self._session_lease_ids.get(session_request_id)
+                if existing is None:
+                    self._session_lease_ids[session_request_id] = lease_id
+                    if leased_block_ids is not None:
+                        self._session_leased_block_ids[session_request_id] = (
+                            tuple(int(b) for b in leased_block_ids)
+                        )
+                    if lease_capacity_tokens is not None:
+                        self._session_lease_capacity_tokens[session_request_id] = (
+                            int(lease_capacity_tokens)
+                        )
+                    if _pap_kv_lease_profile_enabled():
+                        logger.info(
+                            "PAP Attention captured lease request_id=%s "
+                            "lease_id=%s leased_blocks=%d capacity_tokens=%s",
+                            session_request_id,
+                            lease_id,
+                            len(leased_block_ids or ()),
+                            lease_capacity_tokens,
+                        )
+            self._mark_prefill_descriptor_opened_locked(
+                session_request_id=session_request_id,
+                layer_name=layer_name,
+            )
             seq_len = int(seq_len)
+            if unified_kv_mode and lease_id is not None:
+                prefix_value = (
+                    int(prefix_len) if prefix_len is not None else seq_len
+                )
+                w_start = (
+                    int(writable_start_token)
+                    if writable_start_token is not None
+                    else prefix_value
+                )
+                w_end = (
+                    int(writable_end_token)
+                    if writable_end_token is not None
+                    else prefix_value
+                )
+                capacity = (
+                    int(lease_capacity_tokens)
+                    if lease_capacity_tokens is not None
+                    else max(seq_len, w_end)
+                )
+                unified_state = PAPUnifiedPagedKVState(
+                    kv_cache=kv_cache.detach(),
+                    block_ids=tuple(int(b) for b in block_ids),
+                    prefix_len=prefix_value,
+                    seq_len=seq_len,
+                    capacity_tokens=capacity,
+                    writable_start_token=w_start,
+                    writable_end_token=w_end,
+                    lease_id=str(lease_id),
+                    block_size=int(block_size),
+                    num_kv_heads=int(num_kv_heads),
+                    layout=str(layout),
+                )
+                self._unified_paged_kv.setdefault(session_request_id, {})[
+                    layer_name
+                ] = unified_state
+                if _pap_kv_lease_profile_enabled():
+                    logger.info(
+                        "PAP unified KV state stored request_id=%s layer=%s "
+                        "prefix_len=%d seq_len=%d capacity=%d writable=%d..%d",
+                        session_request_id,
+                        layer_name,
+                        prefix_value,
+                        seq_len,
+                        capacity,
+                        w_start,
+                        w_end,
+                    )
+                self._mark_prefill_descriptor_received_locked(
+                    session_request_id=session_request_id,
+                    layer_name=layer_name,
+                )
+                self._mark_prefill_descriptor_opened_locked(
+                    session_request_id=session_request_id,
+                    layer_name=layer_name,
+                )
+                self._mark_prefill_ready_locked(
+                    session_request_id=session_request_id,
+                    layer_name=layer_name,
+                )
+                return seq_len
             if seq_len < 0:
                 raise ValueError("seq_len must be non-negative")
             expected_prefix_len = session.prefix_len
@@ -1877,36 +2724,269 @@ class PAPAttentionRegistry:
                         prefill_block_ids.append(block_id)
                 prefill_seq_len = max(int(existing_prefill.seq_len), seq_len)
 
-            self._prefill_kv.setdefault(session_request_id, {})[layer_name] = segments
-            self._prefill_paged_kv.setdefault(session_request_id, {})[layer_name] = (
-                PAPPrefillPagedKV(
-                    kv_cache=kv_cache.detach(),
-                    block_ids=prefill_block_ids,
-                    seq_len=prefill_seq_len,
-                    block_size=int(block_size),
-                    num_kv_heads=int(num_kv_heads),
-                    layout=str(layout),
-                )
+            existing_session_block_ids = [
+                int(block_id) for block_id in session.block_ids
+            ]
+            existing_session_seq_len = int(session.seq_len)
+            existing_decode_seq_len = int(
+                session.decode_seq_lens.get(layer_name, existing_session_seq_len)
             )
-            self._install_local_paged_prefill_locked(
-                session_request_id=session_request_id,
-                layer_name=layer_name,
-                segments=segments,
+            merged_session_block_ids = list(prefill_block_ids)
+            for block_id in existing_session_block_ids:
+                if block_id not in merged_session_block_ids:
+                    merged_session_block_ids.append(block_id)
+            merged_session_seq_len = max(existing_session_seq_len, prefill_seq_len)
+            merged_decode_seq_len = max(
+                existing_decode_seq_len,
+                existing_session_seq_len,
+                prefill_seq_len,
+            )
+
+            self._prefill_kv.setdefault(session_request_id, {})[layer_name] = segments
+            prefix_state = PAPPrefillPagedKV(
+                kv_cache=kv_cache.detach(),
+                block_ids=prefill_block_ids,
                 seq_len=prefill_seq_len,
                 block_size=int(block_size),
                 num_kv_heads=int(num_kv_heads),
+                layout=str(layout),
             )
+            self._prefill_paged_kv.setdefault(session_request_id, {})[layer_name] = (
+                prefix_state
+            )
+            if _pap_attention_copy_prefix_kv():
+                self._install_local_paged_prefill_locked(
+                    session_request_id=session_request_id,
+                    layer_name=layer_name,
+                    segments=segments,
+                    seq_len=prefill_seq_len,
+                    block_size=int(block_size),
+                    num_kv_heads=int(num_kv_heads),
+                )
+                self._prefill_paged_kv.setdefault(session_request_id, {}).pop(
+                    layer_name, None
+                )
+            else:
+                state = self._local_paged_kv.setdefault(session_request_id, {}).get(
+                    layer_name
+                )
+                if state is None:
+                    existing_pool = self._local_paged_kv_pools.get(layer_name)
+                    if existing_pool is None:
+                        logger.info(
+                            "PAP descriptor-resident prefix KV deferred local pool allocation request_id=%s layer=%s seq_len=%d blocks=%d",
+                            session_request_id,
+                            layer_name,
+                            prefill_seq_len,
+                            len(prefill_block_ids),
+                        )
+                    else:
+                        if (
+                            existing_pool.block_size != int(block_size)
+                            or existing_pool.num_kv_heads != int(num_kv_heads)
+                            or existing_pool.head_dim != int(kv_cache.shape[-1])
+                            or existing_pool.kv_cache.dtype != kv_cache.dtype
+                            or existing_pool.kv_cache.device != kv_cache.device
+                        ):
+                            raise ValueError(
+                                "local paged KV pool shape does not match layer"
+                            )
+                    if existing_pool is not None:
+                        self._local_paged_kv.setdefault(session_request_id, {})[
+                            layer_name
+                        ] = PAPLocalPagedAttentionState(
+                            pool=existing_pool,
+                            block_ids=(),
+                            seq_len=prefill_seq_len,
+                            base_seq_len=prefill_seq_len,
+                            prefix_state=prefix_state,
+                        )
+                else:
+                    self._local_paged_kv.setdefault(session_request_id, {})[layer_name] = (
+                        PAPLocalPagedAttentionState(
+                            pool=state.pool,
+                            block_ids=tuple(state.block_ids),
+                            seq_len=max(int(state.seq_len), prefill_seq_len),
+                            base_seq_len=prefill_seq_len,
+                            prefix_state=prefix_state,
+                        )
+                    )
+                logger.info(
+                    "PAP descriptor-resident prefix KV enabled request_id=%s layer=%s seq_len=%d blocks=%d",
+                    session_request_id,
+                    layer_name,
+                    prefill_seq_len,
+                    len(prefill_block_ids),
+                )
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
             imported_session = self._attention_sessions.import_prefill_kv(
                 session_request_id,
-                block_ids=[int(block_id) for block_id in block_ids],
-                seq_len=seq_len,
+                block_ids=merged_session_block_ids,
+                seq_len=merged_session_seq_len,
             )
             session.block_ids = tuple(imported_session.block_ids)
-            session.seq_len = imported_session.seq_len
-            session.prefill_seq_lens[layer_name] = seq_len
-            session.decode_seq_lens[layer_name] = seq_len
-            self._prefill_condition.notify_all()
-            return seq_len
+            session.seq_len = max(imported_session.seq_len, existing_session_seq_len)
+            session.prefill_seq_lens[layer_name] = prefill_seq_len
+            session.decode_seq_lens[layer_name] = merged_decode_seq_len
+            self._mark_prefill_ready_locked(
+                session_request_id=session_request_id,
+                layer_name=layer_name,
+            )
+            return prefill_seq_len
+
+    def enqueue_prefill_paged_kv_descriptor(
+        self,
+        descriptor: PAPOffloadKVPagedIPCDescriptor,
+    ) -> int:
+        queue_start = time.perf_counter()
+        with self._lock:
+            session_request_id = self._resolve_session_request_id_locked(
+                descriptor.request_id
+            )
+            if session_request_id is None:
+                raise KeyError(descriptor.request_id)
+            self._mark_prefill_descriptor_received_locked(
+                session_request_id=session_request_id,
+                layer_name=descriptor.layer_name,
+            )
+            if not self._prefill_async_worker_started:
+                Thread(
+                    target=self._prefill_async_worker_loop,
+                    daemon=True,
+                    name="pap-prefill-kv-import-worker",
+                ).start()
+                self._prefill_async_worker_started = True
+        self._prefill_async_queue.put((descriptor, queue_start))
+        if _pap_prefill_ipc_profile_enabled():
+            logger.info(
+                "PAP prefill IPC attention queued request_id=%s layer=%s "
+                "seq_len=%d blocks=%d queue_ms=%.3f",
+                descriptor.request_id,
+                descriptor.layer_name,
+                int(descriptor.seq_len),
+                len(descriptor.block_ids),
+                (time.perf_counter() - queue_start) * 1000.0,
+            )
+        return int(descriptor.seq_len)
+
+    def _prefill_async_worker_loop(self) -> None:
+        while True:
+            descriptor, queued_at = self._prefill_async_queue.get()
+            try:
+                open_start = time.perf_counter()
+                kv_cache = open_ipc_paged_kv_cache(descriptor)
+                open_ms = (time.perf_counter() - open_start) * 1000.0
+                ready_start = time.perf_counter()
+                seq_len = self.import_prefill_paged_kv(
+                    request_id=descriptor.request_id,
+                    layer_name=descriptor.layer_name,
+                    kv_cache=kv_cache,
+                    block_ids=list(descriptor.block_ids),
+                    seq_len=descriptor.seq_len,
+                    block_size=descriptor.block_size,
+                    num_kv_heads=descriptor.num_kv_heads,
+                    layout=descriptor.layout,
+                )
+                ready_ms = (time.perf_counter() - ready_start) * 1000.0
+                if _pap_prefill_ipc_profile_enabled():
+                    logger.info(
+                        "PAP prefill IPC attention ready request_id=%s layer=%s "
+                        "seq_len=%d blocks=%d queue_to_open_ms=%.3f open_ms=%.3f "
+                        "install_ms=%.3f total_ms=%.3f",
+                        descriptor.request_id,
+                        descriptor.layer_name,
+                        seq_len,
+                        len(descriptor.block_ids),
+                        (open_start - queued_at) * 1000.0,
+                        open_ms,
+                        ready_ms,
+                        (time.perf_counter() - queued_at) * 1000.0,
+                    )
+            except BaseException as exc:
+                with self._lock:
+                    session_request_id = self._resolve_session_request_id_locked(
+                        descriptor.request_id
+                    )
+                    if session_request_id is not None:
+                        self._mark_prefill_failed_locked(
+                            session_request_id=session_request_id,
+                            layer_name=descriptor.layer_name,
+                            error=exc,
+                        )
+                logger.exception(
+                    "PAP async prefill KV import failed request_id=%s layer=%s",
+                    descriptor.request_id,
+                    descriptor.layer_name,
+                )
 
     def _wait_for_prefill_layer_locked(
         self,
@@ -1924,11 +3004,45 @@ class PAPAttentionRegistry:
             os.environ.get("PAP_ATTENTION_PREFILL_WAIT_TIMEOUT", "5.0")
         )
         prefill_layer_kv = self._prefill_kv.setdefault(session_request_id, {})
-        while layer_name not in prefill_layer_kv:
+        wait_start = time.perf_counter()
+        while True:
+            readiness = self._prefill_readiness.setdefault(session_request_id, {}).get(
+                layer_name
+            )
+            if readiness is not None and readiness.failed:
+                raise RuntimeError(
+                    "prefill KV import failed before stateful decode attention: "
+                    f"{readiness.error}"
+                )
+            if readiness is not None and readiness.ready:
+                return
+            if layer_name in prefill_layer_kv:
+                return
             remaining = deadline - time.monotonic()
             if remaining <= 0:
+                state = "missing"
+                if readiness is not None:
+                    state = (
+                        "received=%s opened=%s ready=%s failed=%s"
+                        % (
+                            readiness.descriptor_received,
+                            readiness.descriptor_opened,
+                            readiness.ready,
+                            readiness.failed,
+                        )
+                    )
                 raise RuntimeError(
-                    "prefill KV must be imported before stateful decode attention"
+                    "prefill KV must be ready before stateful decode attention "
+                    f"request_id={session_request_id} layer={layer_name} state={state}"
+                )
+            if _pap_prefill_ipc_profile_enabled():
+                logger.info(
+                    "PAP prefill IPC attention wait request_id=%s layer=%s "
+                    "remaining_ms=%.3f waited_ms=%.3f",
+                    session_request_id,
+                    layer_name,
+                    remaining * 1000.0,
+                    (time.perf_counter() - wait_start) * 1000.0,
                 )
             self._prefill_condition.wait(timeout=remaining)
 
@@ -2605,6 +3719,18 @@ def compute_binary_attention_response(
         )
     if metadata.get("command") == "import_prefill_paged_kv_ipc":
         descriptor = PAPOffloadKVPagedIPCDescriptor.from_dict(metadata["descriptor"])
+        async_import = bool(metadata.get("async", False)) or _pap_prefill_kv_async_enabled()
+        if async_import:
+            seq_len = registry.enqueue_prefill_paged_kv_descriptor(descriptor)
+            return serialize_tensor_bundle(
+                {
+                    "request_id": descriptor.request_id,
+                    "layer_name": descriptor.layer_name,
+                    "seq_len": seq_len,
+                    "status": "queued",
+                },
+                {},
+            )
         kv_cache = open_ipc_paged_kv_cache(descriptor)
         seq_len = registry.import_prefill_paged_kv(
             request_id=descriptor.request_id,
@@ -2615,6 +3741,13 @@ def compute_binary_attention_response(
             block_size=descriptor.block_size,
             num_kv_heads=descriptor.num_kv_heads,
             layout=descriptor.layout,
+            lease_id=descriptor.lease_id,
+            leased_block_ids=descriptor.leased_block_ids,
+            lease_capacity_tokens=descriptor.lease_capacity_tokens,
+            unified_kv_mode=descriptor.unified_kv_mode,
+            prefix_len=descriptor.prefix_len,
+            writable_start_token=descriptor.writable_start_token,
+            writable_end_token=descriptor.writable_end_token,
         )
         logger.info(
             "PAP prefill paged KV imported via IPC descriptor request_id=%s "
@@ -2629,6 +3762,7 @@ def compute_binary_attention_response(
                 "request_id": descriptor.request_id,
                 "layer_name": descriptor.layer_name,
                 "seq_len": seq_len,
+                "status": "ready",
             },
             {},
         )
@@ -2896,11 +4030,160 @@ def compute_offload_exec_output(
     return output.reshape(1, -1)
 
 
+def _paged_flash_prefix_cache_group_key(prefix_state: PAPPrefillPagedKV) -> tuple[Any, ...]:
+    kv_cache = prefix_state.kv_cache
+    return (
+        int(kv_cache.data_ptr()),
+        tuple(int(dim) for dim in kv_cache.shape),
+        tuple(int(stride) for stride in kv_cache.stride()),
+        kv_cache.dtype,
+        kv_cache.device,
+        str(prefix_state.layout),
+        int(prefix_state.num_kv_heads),
+    )
+
+
+
+def _paged_flash_kv_cache_views(
+    prefix_state: PAPPrefillPagedKV,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    kv_cache = prefix_state.kv_cache
+    if kv_cache.ndim != 5:
+        raise RuntimeError("PAP zero-copy prefix KV requires a 5D paged KV cache")
+    if int(kv_cache.shape[0]) == 2:
+        kv_dim = 0
+    elif int(kv_cache.shape[1]) == 2:
+        kv_dim = 1
+    else:
+        raise RuntimeError(
+            "PAP zero-copy prefix KV requires a paged KV cache with a K/V dimension"
+        )
+
+    if prefix_state.layout == "NHD":
+        logical_nhd = True
+    elif prefix_state.layout == "HND":
+        logical_nhd = int(kv_cache.shape[3]) == int(prefix_state.num_kv_heads)
+    else:
+        raise RuntimeError(
+            f"PAP zero-copy prefix KV does not support layout {prefix_state.layout!r}"
+        )
+    if not logical_nhd:
+        raise RuntimeError(
+            "PAP zero-copy prefix KV requires logical NHD paged layout; "
+            "set PAP_ATTENTION_COPY_PREFIX_KV=1 to fall back to copied prefix KV"
+        )
+    if kv_dim == 0:
+        return kv_cache[0], kv_cache[1]
+    return kv_cache[:, 0], kv_cache[:, 1]
+
+
+
+def _run_paged_flash_varlen(
+    *,
+    flash_attn_varlen_func: Any,
+    fa_version: int,
+    query: torch.Tensor,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    metadata: PAPPagedFlashMetadata,
+    scale: float,
+    causal: bool,
+    return_softmax_lse: bool,
+) -> Any:
+    output = torch.empty_like(query)
+    return flash_attn_varlen_func(
+        q=query,
+        k=key_cache,
+        v=value_cache,
+        out=output,
+        cu_seqlens_q=metadata.cu_seqlens_q,
+        seqused_k=metadata.seq_lens,
+        max_seqlen_q=1,
+        max_seqlen_k=metadata.max_seq_len,
+        softmax_scale=float(scale),
+        causal=causal,
+        block_table=metadata.block_table,
+        softcap=0.0,
+        return_softmax_lse=return_softmax_lse,
+        fa_version=fa_version,
+    )
+
+
+
+def _compute_unified_paged_flash_batch(
+    *,
+    query_batch: torch.Tensor,
+    states: list[PAPUnifiedPagedKVState],
+    scale: float,
+    trace_stats: dict[str, float] | None = None,
+) -> torch.Tensor | None:
+    """Single-source Prefill-owned paged FA compute (Stage 4 unified path)."""
+    if not states:
+        return None
+    if not query_batch.is_cuda:
+        return None
+    base_kv = states[0].kv_cache
+    if any(
+        state.kv_cache.device != base_kv.device
+        or state.kv_cache.shape != base_kv.shape
+        or state.kv_cache.dtype != base_kv.dtype
+        for state in states
+    ):
+        return None
+    if base_kv.device != query_batch.device:
+        return None
+
+    try:
+        from vllm.v1.attention.backends.fa_utils import (
+            flash_attn_varlen_func,
+            get_flash_attn_version,
+            is_flash_attn_varlen_func_available,
+        )
+    except Exception:
+        return None
+    if not is_flash_attn_varlen_func_available():
+        return None
+
+    metadata = build_unified_paged_flash_metadata(
+        states=states, device=query_batch.device
+    )
+    if metadata.max_seq_len <= 0:
+        return None
+
+    fa_version = get_flash_attn_version(head_size=int(query_batch.shape[-1]))
+    key_cache, value_cache = base_kv.unbind(1)
+    metadata_start = time.perf_counter() if trace_stats is not None else 0.0
+    paged_start = time.perf_counter() if trace_stats is not None else 0.0
+    result = _run_paged_flash_varlen(
+        flash_attn_varlen_func=flash_attn_varlen_func,
+        fa_version=fa_version,
+        query=query_batch,
+        key_cache=key_cache,
+        value_cache=value_cache,
+        metadata=metadata,
+        scale=float(scale),
+        causal=True,
+        return_softmax_lse=False,
+    )
+    output = result[0] if isinstance(result, tuple) else result
+    if trace_stats is not None:
+        trace_stats["unified_metadata_ms"] = (
+            trace_stats.get("unified_metadata_ms", 0.0)
+            + (time.perf_counter() - metadata_start) * 1000.0
+        )
+        trace_stats["unified_paged_flash_ms"] = (
+            trace_stats.get("unified_paged_flash_ms", 0.0)
+            + (time.perf_counter() - paged_start) * 1000.0
+        )
+    return output
+
+
 def _compute_offload_exec_paged_flash_batch(
     *,
     query_batch: torch.Tensor,
     states: list[PAPLocalPagedAttentionState | None],
     scale: float,
+    allow_descriptor_prefix: bool = True,
     trace_stats: dict[str, float] | None = None,
 ) -> torch.Tensor | None:
     if not states or any(state is None for state in states):
@@ -2922,56 +4205,181 @@ def _compute_offload_exec_paged_flash_batch(
             get_flash_attn_version,
             is_flash_attn_varlen_func_available,
         )
+        from vllm.v1.attention.ops.merge_attn_states import merge_attn_states
     except Exception:
         return None
     if not is_flash_attn_varlen_func_available():
         return None
 
     typed_states = [state for state in states if state is not None]
-    metadata_start = time.perf_counter() if trace_stats is not None else 0.0
-    metadata = build_paged_flash_metadata(
-        states=typed_states,
-        device=query_batch.device,
-    )
-    if trace_stats is not None:
-        trace_stats["paged_metadata_ms"] = (
-            trace_stats.get(
-                "paged_metadata_ms",
-                0.0,
-            )
-            + (time.perf_counter() - metadata_start) * 1000.0
-        )
-    if metadata.max_seq_len <= 0:
-        return None
-
-    output = torch.empty_like(query_batch)
+    has_descriptor_prefix = any(state.has_descriptor_prefix for state in typed_states)
     if trace_stats is not None:
         trace_stats["pre_compute_done_ns"] = float(time.perf_counter_ns())
     fa_version = get_flash_attn_version(head_size=int(query_batch.shape[-1]))
-    paged_start = time.perf_counter() if trace_stats is not None else 0.0
-    result = flash_attn_varlen_func(
-        q=query_batch,
-        k=pool.kv_cache[:, 0],
-        v=pool.kv_cache[:, 1],
-        out=output,
-        cu_seqlens_q=metadata.cu_seqlens_q,
-        seqused_k=metadata.seq_lens,
-        max_seqlen_q=1,
-        max_seqlen_k=metadata.max_seq_len,
-        softmax_scale=float(scale),
-        causal=True,
-        block_table=metadata.block_table,
-        softcap=0.0,
-        fa_version=fa_version,
-    )
-    if trace_stats is not None:
-        trace_stats["paged_flash_ms"] = (
-            trace_stats.get("paged_flash_ms", 0.0)
-            + (time.perf_counter() - paged_start) * 1000.0
+
+    if not has_descriptor_prefix:
+        metadata_start = time.perf_counter() if trace_stats is not None else 0.0
+        metadata = build_paged_flash_metadata(
+            states=typed_states,
+            device=query_batch.device,
         )
-        trace_stats["paged_flash_done_ns"] = float(time.perf_counter_ns())
-    if result is not None:
+        if trace_stats is not None:
+            trace_stats["paged_metadata_ms"] = (
+                trace_stats.get("paged_metadata_ms", 0.0)
+                + (time.perf_counter() - metadata_start) * 1000.0
+            )
+        if metadata.max_seq_len <= 0:
+            return None
+
+        paged_start = time.perf_counter() if trace_stats is not None else 0.0
+        result = _run_paged_flash_varlen(
+            flash_attn_varlen_func=flash_attn_varlen_func,
+            fa_version=fa_version,
+            query=query_batch,
+            key_cache=pool.kv_cache[:, 0],
+            value_cache=pool.kv_cache[:, 1],
+            metadata=metadata,
+            scale=float(scale),
+            causal=True,
+            return_softmax_lse=False,
+        )
+        if trace_stats is not None:
+            trace_stats["paged_flash_ms"] = (
+                trace_stats.get("paged_flash_ms", 0.0)
+                + (time.perf_counter() - paged_start) * 1000.0
+            )
+            trace_stats["paged_flash_done_ns"] = float(time.perf_counter_ns())
         return result
+
+    if not allow_descriptor_prefix:
+        return None
+
+    if fa_version not in (3, 4):
+        return None
+
+    suffix_states = [state for state in typed_states if state.local_seq_len > 0]
+    suffix_output: torch.Tensor | None = None
+    suffix_lse: torch.Tensor | None = None
+    if suffix_states:
+        suffix_metadata_start = time.perf_counter() if trace_stats is not None else 0.0
+        suffix_metadata = build_paged_flash_metadata(
+            states=typed_states,
+            device=query_batch.device,
+            use_base_seq_len=True,
+        )
+        if trace_stats is not None:
+            trace_stats["paged_metadata_ms"] = (
+                trace_stats.get("paged_metadata_ms", 0.0)
+                + (time.perf_counter() - suffix_metadata_start) * 1000.0
+            )
+        if suffix_metadata.max_seq_len <= 0:
+            return None
+
+        paged_start = time.perf_counter() if trace_stats is not None else 0.0
+        suffix_result = _run_paged_flash_varlen(
+            flash_attn_varlen_func=flash_attn_varlen_func,
+            fa_version=fa_version,
+            query=query_batch,
+            key_cache=pool.kv_cache[:, 0],
+            value_cache=pool.kv_cache[:, 1],
+            metadata=suffix_metadata,
+            scale=float(scale),
+            causal=True,
+            return_softmax_lse=True,
+        )
+        suffix_output, suffix_lse = suffix_result
+        if trace_stats is not None:
+            trace_stats["paged_flash_ms"] = (
+                trace_stats.get("paged_flash_ms", 0.0)
+                + (time.perf_counter() - paged_start) * 1000.0
+            )
+
+    output = torch.empty_like(query_batch)
+    prefix_row_indices = [
+        index for index, state in enumerate(typed_states) if state.has_descriptor_prefix
+    ]
+    prefix_groups: dict[tuple[Any, ...], list[int]] = {}
+    for index in prefix_row_indices:
+        prefix_state = typed_states[index].prefix_state
+        assert prefix_state is not None
+        prefix_groups.setdefault(
+            _paged_flash_prefix_cache_group_key(prefix_state),
+            [],
+        ).append(index)
+
+    merge_start = time.perf_counter() if trace_stats is not None else 0.0
+    for row_indices in prefix_groups.values():
+        row_index_tensor = torch.tensor(
+            row_indices,
+            dtype=torch.long,
+            device=query_batch.device,
+        )
+        group_query = query_batch.index_select(0, row_index_tensor)
+        group_prefix_states = []
+        for row_index in row_indices:
+            prefix_state = typed_states[row_index].prefix_state
+            assert prefix_state is not None
+            group_prefix_states.append(prefix_state)
+        prefix_metadata_start = time.perf_counter() if trace_stats is not None else 0.0
+        prefix_metadata = build_paged_flash_metadata(
+            states=group_prefix_states,
+            device=query_batch.device,
+        )
+        if trace_stats is not None:
+            trace_stats["paged_metadata_ms"] = (
+                trace_stats.get("paged_metadata_ms", 0.0)
+                + (time.perf_counter() - prefix_metadata_start) * 1000.0
+            )
+        if prefix_metadata.max_seq_len <= 0:
+            continue
+        prefix_key_cache, prefix_value_cache = _paged_flash_kv_cache_views(
+            group_prefix_states[0]
+        )
+        if (
+            prefix_key_cache.device != query_batch.device
+            or prefix_value_cache.device != query_batch.device
+        ):
+            raise RuntimeError(
+                "PAP zero-copy prefix KV device does not match attention query device"
+            )
+        prefix_paged_start = time.perf_counter() if trace_stats is not None else 0.0
+        prefix_result = _run_paged_flash_varlen(
+            flash_attn_varlen_func=flash_attn_varlen_func,
+            fa_version=fa_version,
+            query=group_query,
+            key_cache=prefix_key_cache,
+            value_cache=prefix_value_cache,
+            metadata=prefix_metadata,
+            scale=float(scale),
+            causal=False,
+            return_softmax_lse=True,
+        )
+        prefix_output, prefix_lse = prefix_result
+        if trace_stats is not None:
+            trace_stats["paged_flash_ms"] = (
+                trace_stats.get("paged_flash_ms", 0.0)
+                + (time.perf_counter() - prefix_paged_start) * 1000.0
+            )
+        if suffix_output is None or suffix_lse is None:
+            output.index_copy_(0, row_index_tensor, prefix_output)
+            continue
+        suffix_group_output = suffix_output.index_select(0, row_index_tensor)
+        suffix_group_lse = suffix_lse.index_select(1, row_index_tensor)
+        merged_group_output = torch.empty_like(prefix_output)
+        merge_attn_states(
+            merged_group_output,
+            prefix_output,
+            prefix_lse,
+            suffix_group_output,
+            suffix_group_lse,
+        )
+        output.index_copy_(0, row_index_tensor, merged_group_output)
+    if trace_stats is not None:
+        trace_stats["paged_flash_done_ns"] = float(time.perf_counter_ns())
+        trace_stats["reshape_ms"] = trace_stats.get("reshape_ms", 0.0) + 0.0
+        trace_stats["fallback_ms"] = trace_stats.get("fallback_ms", 0.0) + (
+            (time.perf_counter() - merge_start) * 1000.0
+        )
     return output
 
 
@@ -3051,10 +4459,56 @@ def compute_offload_exec_batch_output(
 
     append_start = time.perf_counter() if trace_stats is not None else 0.0
     decode_seq_lens = [int(item.step) for item in items]
+    session_request_ids = tuple(
+        session_entry.session_request_id for session_entry in session_entries
+    )
+
+    unified_states = registry.get_unified_paged_states(
+        session_request_ids=session_request_ids,
+        layer_name=descriptor.layer_name,
+    )
+    if unified_states is not None:
+        written = registry.append_decode_kv_to_unified_prefill_cache(
+            session_request_ids=session_request_ids,
+            layer_name=descriptor.layer_name,
+            key_batch=key_batch,
+            value_batch=value_batch,
+            decode_seq_lens=decode_seq_lens,
+        )
+        if written <= 0:
+            raise RuntimeError(
+                "PAP unified KV append wrote no rows"
+            )
+        if trace_stats is not None:
+            trace_stats["append_kv_ms"] += (
+                time.perf_counter() - append_start
+            ) * 1000.0
+        unified_output = _compute_unified_paged_flash_batch(
+            query_batch=query_batch,
+            states=unified_states,
+            scale=common_scale,
+            trace_stats=trace_stats,
+        )
+        if unified_output is None:
+            raise RuntimeError("PAP unified paged FlashAttention failed")
+        if unified_output.ndim == 3:
+            unified_output = unified_output.reshape(
+                batch_size, num_heads * head_dim
+            )
+        if trace_stats is not None:
+            trace_stats["reshape_ms"] = (
+                trace_stats.get("reshape_ms", 0.0)
+                + (time.perf_counter() - append_start) * 0.0
+            )
+        return unified_output
+
+    if _pap_attention_copy_prefix_kv():
+        registry.materialize_descriptor_prefix_for_local_paged_attention(
+            session_request_ids=session_request_ids,
+            layer_name=descriptor.layer_name,
+        )
     paged_states = registry.append_decode_kv_tensor_batch_for_local_paged_attention(
-        session_request_ids=tuple(
-            session_entry.session_request_id for session_entry in session_entries
-        ),
+        session_request_ids=session_request_ids,
         layer_name=descriptor.layer_name,
         key_batch=key_batch,
         value_batch=value_batch,
@@ -3073,6 +4527,7 @@ def compute_offload_exec_batch_output(
         query_batch=query_batch,
         states=list(paged_states),
         scale=common_scale,
+        allow_descriptor_prefix=True,
         trace_stats=trace_stats,
     )
     if paged_output is None:

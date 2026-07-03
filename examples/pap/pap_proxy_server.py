@@ -157,6 +157,48 @@ async def _stream_projection(
             yield chunk
 
 
+async def _delete_attention_session(
+    attention: PAPServiceClient,
+    request_id: str,
+) -> None:
+    resp = await attention.client.delete(
+        f"/v1/pap/attention/sessions/{request_id}",
+        headers=_headers(request_id),
+    )
+    resp.raise_for_status()
+
+
+async def _cleanup_attention_sessions(
+    attentions: list[PAPServiceClient],
+    request_id: str,
+) -> None:
+    for attention in attentions:
+        try:
+            await _delete_attention_session(attention, request_id)
+        except Exception as exc:
+            logger.warning(
+                "failed to release PAP attention session request_id=%s "
+                "attention_endpoint=%s error=%s",
+                request_id,
+                attention.base_url,
+                exc,
+            )
+
+
+async def _stream_projection_with_cleanup(
+    client: PAPServiceClient,
+    endpoint: str,
+    payload: dict[str, Any],
+    request_id: str,
+    attentions: list[PAPServiceClient],
+):
+    try:
+        async for chunk in _stream_projection(client, endpoint, payload, request_id):
+            yield chunk
+    finally:
+        await _cleanup_attention_sessions(attentions, request_id)
+
+
 def _make_client(host: str, port: int, role: str) -> PAPServiceClient:
     base_url = f"http://{host}:{port}"
     return PAPServiceClient(
@@ -196,79 +238,88 @@ async def _handle_openai_request(api_path: str, request: Request):
     request_id = request.headers.get("X-Request-Id", uuid.uuid4().hex)
     conversation_id = str(req_data.pop("conversation_id", ""))
     client_stream = bool(req_data.get("stream", False))
-    attention_session = await register_attention_handle(
-        request.app.state.attention,
-        request_id=request_id,
-        conversation_id=conversation_id,
-        prefill_endpoint=request.app.state.prefill.base_url,
-        kv_transfer_params={},
-        prefix_len=None,
-    )
-    prefill_payload = attach_pap_prefill_attention_params(
-        build_prefill_payload(req_data),
-        pap_attention_endpoint=request.app.state.attention.base_url,
-        pap_prefill_kv_handle=str(attention_session.get("prefill_kv_handle")),
-        pap_mode=request.app.state.args.pap_mode,
-    )
-    t0 = time.time()
-    prefill_resp = await _post_json(
-        request.app.state.prefill,
-        api_path,
-        prefill_payload,
-        request_id,
-    )
-    prefill_ms = int((time.time() - t0) * 1000)
+    attention_client = request.app.state.attention
+    attention_session: dict[str, Any] | None = None
+    handed_off_stream_cleanup = False
+    try:
+        attention_session = await register_attention_handle(
+            attention_client,
+            request_id=request_id,
+            conversation_id=conversation_id,
+            prefill_endpoint=request.app.state.prefill.base_url,
+            kv_transfer_params={},
+            prefix_len=None,
+        )
+        prefill_payload = attach_pap_prefill_attention_params(
+            build_prefill_payload(req_data),
+            pap_attention_endpoint=attention_client.base_url,
+            pap_prefill_kv_handle=str(attention_session.get("prefill_kv_handle")),
+            pap_mode=request.app.state.args.pap_mode,
+        )
+        t0 = time.time()
+        prefill_resp = await _post_json(
+            request.app.state.prefill,
+            api_path,
+            prefill_payload,
+            request_id,
+        )
+        prefill_ms = int((time.time() - t0) * 1000)
 
-    kv_params = enrich_prefill_kv_params(
-        prefill_resp.get("kv_transfer_params") or {},
-        prefill_host=request.app.state.prefill.host,
-        prefill_nixl_port=request.app.state.args.prefill_nixl_port,
-    )
-    prefix_len = prefill_prefix_len_from_kv_params(kv_params)
-    logger.info(
-        "request_id=%s prefill_ms=%d prefill_prefix_len=%s prefill_kv_keys=%s",
-        request_id,
-        prefill_ms,
-        prefix_len,
-        sorted(kv_params.keys()),
-    )
-
-    projection_payload = build_projection_payload(
-        req_data,
-        kv_params,
-        pap_prefill_kv_handle=attention_session.get("prefill_kv_handle"),
-        pap_attention_kv_installed=prefix_len is not None,
-    )
-    logger.info(
-        "request_id=%s projection_kv_keys=%s attention_endpoint=%s",
-        request_id,
-        sorted(projection_payload["kv_transfer_params"].keys()),
-        request.app.state.attention.base_url,
-    )
-    projection_payload.setdefault("stream", client_stream)
-
-    if client_stream:
-        return StreamingResponse(
-            _stream_projection(
-                request.app.state.projection,
-                api_path,
-                projection_payload,
-                request_id,
-            ),
-            media_type="text/event-stream",
-            headers={"X-PAP-Prefill-Ms": str(prefill_ms)},
+        kv_params = enrich_prefill_kv_params(
+            prefill_resp.get("kv_transfer_params") or {},
+            prefill_host=request.app.state.prefill.host,
+            prefill_nixl_port=request.app.state.args.prefill_nixl_port,
+        )
+        prefix_len = prefill_prefix_len_from_kv_params(kv_params)
+        logger.info(
+            "request_id=%s prefill_ms=%d prefill_prefix_len=%s prefill_kv_keys=%s",
+            request_id,
+            prefill_ms,
+            prefix_len,
+            sorted(kv_params.keys()),
         )
 
-    projection_resp = await _post_json(
-        request.app.state.projection,
-        api_path,
-        projection_payload,
-        request_id,
-    )
-    return JSONResponse(
-        projection_resp,
-        headers={"X-PAP-Prefill-Ms": str(prefill_ms)},
-    )
+        projection_payload = build_projection_payload(
+            req_data,
+            kv_params,
+            pap_prefill_kv_handle=attention_session.get("prefill_kv_handle"),
+            pap_attention_kv_installed=prefix_len is not None,
+        )
+        logger.info(
+            "request_id=%s projection_kv_keys=%s attention_endpoint=%s",
+            request_id,
+            sorted(projection_payload["kv_transfer_params"].keys()),
+            attention_client.base_url,
+        )
+        projection_payload.setdefault("stream", client_stream)
+
+        if client_stream:
+            handed_off_stream_cleanup = True
+            return StreamingResponse(
+                _stream_projection_with_cleanup(
+                    request.app.state.projection,
+                    api_path,
+                    projection_payload,
+                    request_id,
+                    [attention_client],
+                ),
+                media_type="text/event-stream",
+                headers={"X-PAP-Prefill-Ms": str(prefill_ms)},
+            )
+
+        projection_resp = await _post_json(
+            request.app.state.projection,
+            api_path,
+            projection_payload,
+            request_id,
+        )
+        return JSONResponse(
+            projection_resp,
+            headers={"X-PAP-Prefill-Ms": str(prefill_ms)},
+        )
+    finally:
+        if attention_session is not None and not handed_off_stream_cleanup:
+            await _cleanup_attention_sessions([attention_client], request_id)
 
 
 @app.post("/v1/completions")

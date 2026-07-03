@@ -373,6 +373,14 @@ class PAPOffloadKVPagedIPCDescriptor:
     layout: str
     kv_cache: PAPCudaIPCTensorHandle
     transport: PAPTensorTransport = PAPTensorTransport.CUDA_IPC
+    lease_id: str | None = None
+    leased_block_ids: tuple[int, ...] | None = None
+    lease_seq_len: int | None = None
+    lease_capacity_tokens: int | None = None
+    unified_kv_mode: bool = False
+    prefix_len: int | None = None
+    writable_start_token: int | None = None
+    writable_end_token: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "request_id", str(self.request_id))
@@ -395,9 +403,49 @@ class PAPOffloadKVPagedIPCDescriptor:
             raise ValueError(f"unsupported KV cache layout: {self.layout}")
         if self.transport is not PAPTensorTransport.CUDA_IPC:
             raise ValueError("PAP OFFLOAD_KV paged IPC descriptor requires cuda_ipc")
+        if self.lease_id is not None:
+            object.__setattr__(self, "lease_id", str(self.lease_id))
+            leased = self.leased_block_ids
+            if leased is not None:
+                leased = tuple(int(b) for b in leased)
+                object.__setattr__(self, "leased_block_ids", leased)
+            if self.lease_seq_len is not None:
+                object.__setattr__(
+                    self, "lease_seq_len", int(self.lease_seq_len)
+                )
+            if self.lease_capacity_tokens is not None:
+                object.__setattr__(
+                    self,
+                    "lease_capacity_tokens",
+                    int(self.lease_capacity_tokens),
+                )
+        if self.unified_kv_mode:
+            if self.prefix_len is None:
+                raise ValueError("unified_kv_mode requires prefix_len")
+            object.__setattr__(self, "prefix_len", int(self.prefix_len))
+            if self.writable_start_token is None:
+                object.__setattr__(
+                    self, "writable_start_token", int(self.prefix_len)
+                )
+            else:
+                object.__setattr__(
+                    self, "writable_start_token", int(self.writable_start_token)
+                )
+            if self.writable_end_token is None:
+                object.__setattr__(
+                    self, "writable_end_token", int(self.prefix_len)
+                )
+            else:
+                object.__setattr__(
+                    self, "writable_end_token", int(self.writable_end_token)
+                )
+            if int(self.writable_start_token) > int(self.writable_end_token):
+                raise ValueError(
+                    "unified_kv_mode writable_start_token > writable_end_token"
+                )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        d = {
             "request_id": self.request_id,
             "layer_name": self.layer_name,
             "seq_len": self.seq_len,
@@ -408,6 +456,20 @@ class PAPOffloadKVPagedIPCDescriptor:
             "transport": self.transport.value,
             "kv_cache": self.kv_cache.to_dict(),
         }
+        if self.lease_id is not None:
+            d["lease_id"] = self.lease_id
+            if self.leased_block_ids is not None:
+                d["leased_block_ids"] = list(self.leased_block_ids)
+            if self.lease_seq_len is not None:
+                d["lease_seq_len"] = int(self.lease_seq_len)
+            if self.lease_capacity_tokens is not None:
+                d["lease_capacity_tokens"] = int(self.lease_capacity_tokens)
+        if self.unified_kv_mode:
+            d["unified_kv_mode"] = True
+            d["prefix_len"] = int(self.prefix_len) if self.prefix_len is not None else 0
+            d["writable_start_token"] = int(self.writable_start_token or 0)
+            d["writable_end_token"] = int(self.writable_end_token or 0)
+        return d
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PAPOffloadKVPagedIPCDescriptor:
@@ -423,6 +485,38 @@ class PAPOffloadKVPagedIPCDescriptor:
                 data.get("transport", PAPTensorTransport.CUDA_IPC)
             ),
             kv_cache=PAPCudaIPCTensorHandle.from_dict(data["kv_cache"]),
+            lease_id=data.get("lease_id"),
+            leased_block_ids=(
+                tuple(int(b) for b in data["leased_block_ids"])
+                if data.get("leased_block_ids") is not None
+                else None
+            ),
+            lease_seq_len=(
+                int(data["lease_seq_len"])
+                if data.get("lease_seq_len") is not None
+                else None
+            ),
+            lease_capacity_tokens=(
+                int(data["lease_capacity_tokens"])
+                if data.get("lease_capacity_tokens") is not None
+                else None
+            ),
+            unified_kv_mode=bool(data.get("unified_kv_mode", False)),
+            prefix_len=(
+                int(data["prefix_len"])
+                if data.get("prefix_len") is not None
+                else None
+            ),
+            writable_start_token=(
+                int(data["writable_start_token"])
+                if data.get("writable_start_token") is not None
+                else None
+            ),
+            writable_end_token=(
+                int(data["writable_end_token"])
+                if data.get("writable_end_token") is not None
+                else None
+            ),
         )
 
 

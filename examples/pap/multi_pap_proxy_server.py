@@ -48,6 +48,15 @@ logging.basicConfig(
 logger = logging.getLogger("multi_pap_proxy")
 
 
+def _pap_prefill_ipc_profile_enabled() -> bool:
+    return os.environ.get("PAP_PREFILL_IPC_PROFILE", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 PortSpec = int | tuple[int, ...]
 
 
@@ -287,18 +296,52 @@ async def register_attention_handles(
     prefix_len: int | None,
 ) -> list[dict[str, Any]]:
     sessions = []
-    for attention in attention_clients:
-        sessions.append(
-            await register_attention_handle(
-                attention,
-                request_id=request_id,
-                conversation_id=conversation_id,
-                prefill_endpoint=prefill_endpoint,
-                kv_transfer_params=kv_transfer_params,
-                prefix_len=prefix_len,
+    registered_attentions: list[MultiPAPServiceClient] = []
+    try:
+        for attention in attention_clients:
+            sessions.append(
+                await register_attention_handle(
+                    attention,
+                    request_id=request_id,
+                    conversation_id=conversation_id,
+                    prefill_endpoint=prefill_endpoint,
+                    kv_transfer_params=kv_transfer_params,
+                    prefix_len=prefix_len,
+                )
             )
-        )
+            registered_attentions.append(attention)
+    except Exception:
+        await _cleanup_attention_sessions(registered_attentions, request_id)
+        raise
     return sessions
+
+
+async def _delete_attention_session(
+    attention: MultiPAPServiceClient,
+    request_id: str,
+) -> None:
+    resp = await attention.client.delete(
+        f"/v1/pap/attention/sessions/{request_id}",
+        headers=_headers(request_id),
+    )
+    resp.raise_for_status()
+
+
+async def _cleanup_attention_sessions(
+    attention_clients: list[MultiPAPServiceClient],
+    request_id: str,
+) -> None:
+    for attention in attention_clients:
+        try:
+            await _delete_attention_session(attention, request_id)
+        except Exception as exc:
+            logger.warning(
+                "failed to release PAP attention session request_id=%s "
+                "attention_endpoint=%s error=%s",
+                request_id,
+                attention.base_url,
+                exc,
+            )
 
 
 async def _stream_projection(
@@ -307,6 +350,11 @@ async def _stream_projection(
     payload: dict[str, Any],
     request_id: str,
 ):
+    profile = _pap_prefill_ipc_profile_enabled()
+    start = time.perf_counter() if profile else 0.0
+    first_chunk = True
+    chunk_count = 0
+    byte_count = 0
     async with client.client.stream(
         "POST",
         endpoint,
@@ -314,8 +362,49 @@ async def _stream_projection(
         headers=_headers(request_id),
     ) as resp:
         resp.raise_for_status()
+        if profile:
+            logger.info(
+                "PAP proxy projection stream profile request_id=%s open_ms=%.3f",
+                request_id,
+                (time.perf_counter() - start) * 1000.0,
+            )
         async for chunk in resp.aiter_bytes():
+            if profile:
+                chunk_count += 1
+                byte_count += len(chunk)
+                if first_chunk:
+                    first_chunk = False
+                    logger.info(
+                        "PAP proxy projection stream profile request_id=%s "
+                        "first_chunk_ms=%.3f first_chunk_bytes=%d",
+                        request_id,
+                        (time.perf_counter() - start) * 1000.0,
+                        len(chunk),
+                    )
             yield chunk
+    if profile:
+        logger.info(
+            "PAP proxy projection stream profile request_id=%s total_ms=%.3f "
+            "chunks=%d bytes=%d",
+            request_id,
+            (time.perf_counter() - start) * 1000.0,
+            chunk_count,
+            byte_count,
+        )
+
+
+async def _stream_projection_with_cleanup(
+    client: MultiPAPServiceClient,
+    endpoint: str,
+    payload: dict[str, Any],
+    request_id: str,
+    attention_clients: list[MultiPAPServiceClient],
+):
+    try:
+        async for chunk in _stream_projection(client, endpoint, payload, request_id):
+            yield chunk
+    finally:
+        await _cleanup_attention_sessions(attention_clients, request_id)
 
 
 @asynccontextmanager
@@ -357,6 +446,8 @@ app = FastAPI(title="Multi PAP Proxy", lifespan=lifespan)
 
 
 async def _handle_openai_request(api_path: str, request: Request):
+    profile = _pap_prefill_ipc_profile_enabled()
+    request_start = time.perf_counter() if profile else 0.0
     req_data = await request.json()
     request_id = request.headers.get("X-Request-Id", uuid.uuid4().hex)
     conversation_id = str(req_data.pop("conversation_id", ""))
@@ -372,88 +463,124 @@ async def _handle_openai_request(api_path: str, request: Request):
     attention_clients = request.app.state.attention_clients[group]
     projection_client = request.app.state.projection_clients[projection]
 
-    attention_sessions = await register_attention_handles(
-        attention_clients,
-        request_id=request_id,
-        conversation_id=conversation_id,
-        prefill_endpoint=group.prefill_base_url,
-        kv_transfer_params={},
-        prefix_len=None,
-    )
-    attention_session = attention_sessions[0]
+    attention_sessions: list[dict[str, Any]] | None = None
+    handed_off_stream_cleanup = False
+    try:
+        register_start = time.perf_counter() if profile else 0.0
+        attention_sessions = await register_attention_handles(
+            attention_clients,
+            request_id=request_id,
+            conversation_id=conversation_id,
+            prefill_endpoint=group.prefill_base_url,
+            kv_transfer_params={},
+            prefix_len=None,
+        )
+        register_ms = (
+            (time.perf_counter() - register_start) * 1000.0 if profile else 0.0
+        )
+        attention_session = attention_sessions[0]
 
-    prefill_payload = attach_pap_prefill_attention_params(
-        build_prefill_payload(req_data),
-        pap_attention_endpoint=group.attention_base_url,
-        pap_attention_tcp_endpoint=group.attention_tcp_endpoint,
-        pap_offload_exec_zmq_endpoint=group.attention_zmq_endpoint,
-        pap_prefill_kv_handle=str(attention_session.get("prefill_kv_handle")),
-        pap_mode=request.app.state.args.pap_mode,
-    )
-    t0 = time.time()
-    prefill_resp = await _post_json(prefill, api_path, prefill_payload, request_id)
-    prefill_ms = int((time.time() - t0) * 1000)
+        prefill_payload_start = time.perf_counter() if profile else 0.0
+        prefill_payload = attach_pap_prefill_attention_params(
+            build_prefill_payload(req_data),
+            pap_attention_endpoint=group.attention_base_url,
+            pap_attention_tcp_endpoint=group.attention_tcp_endpoint,
+            pap_offload_exec_zmq_endpoint=group.attention_zmq_endpoint,
+            pap_prefill_kv_handle=str(attention_session.get("prefill_kv_handle")),
+            pap_mode=request.app.state.args.pap_mode,
+        )
+        prefill_payload_ms = (
+            (time.perf_counter() - prefill_payload_start) * 1000.0 if profile else 0.0
+        )
+        t0 = time.time()
 
-    kv_params = enrich_prefill_kv_params(
-        prefill_resp.get("kv_transfer_params") or {},
-        prefill_host=group.prefill_host,
-        prefill_nixl_port=group.prefill_nixl_port,
-    )
-    prefix_len = prefill_prefix_len_from_kv_params(kv_params)
-    projection_payload = build_projection_payload_for_group(
-        req_data,
-        kv_params,
-        group,
-        pap_prefill_kv_handle=str(attention_session.get("prefill_kv_handle")),
-        pap_attention_kv_installed=prefix_len is not None,
-    )
-    projection_payload.setdefault("stream", client_stream)
-    projection_kv_params = projection_payload.get("kv_transfer_params") or {}
-    logger.info(
-        "request_id=%s pa=%s:%d attention=%s:%s projection=%s:%d "
-        "prefill_ms=%d prefill_prefix_len=%s projection_kv_keys=%s",
-        request_id,
-        group.prefill_host,
-        group.prefill_port,
-        group.attention_host,
-        group.attention_port,
-        projection.host,
-        projection.port,
-        prefill_ms,
-        prefix_len,
-        sorted(projection_kv_params.keys()),
-    )
 
-    if client_stream:
-        return StreamingResponse(
-            _stream_projection(
-                projection_client,
-                api_path,
-                projection_payload,
+        prefill_resp = await _post_json(prefill, api_path, prefill_payload, request_id)
+        prefill_ms = int((time.time() - t0) * 1000)
+
+        projection_payload_start = time.perf_counter() if profile else 0.0
+        kv_params = enrich_prefill_kv_params(
+            prefill_resp.get("kv_transfer_params") or {},
+            prefill_host=group.prefill_host,
+            prefill_nixl_port=group.prefill_nixl_port,
+        )
+        prefix_len = prefill_prefix_len_from_kv_params(kv_params)
+        projection_payload = build_projection_payload_for_group(
+            req_data,
+            kv_params,
+            group,
+            pap_prefill_kv_handle=str(attention_session.get("prefill_kv_handle")),
+            pap_attention_kv_installed=prefix_len is not None,
+        )
+        projection_payload.setdefault("stream", client_stream)
+        projection_kv_params = projection_payload.get("kv_transfer_params") or {}
+        projection_payload_ms = (
+            (time.perf_counter() - projection_payload_start) * 1000.0
+            if profile
+            else 0.0
+        )
+        logger.info(
+            "request_id=%s pa=%s:%d attention=%s:%s projection=%s:%d "
+            "prefill_ms=%d prefill_prefix_len=%s projection_kv_keys=%s",
+            request_id,
+            group.prefill_host,
+            group.prefill_port,
+            group.attention_host,
+            group.attention_port,
+            projection.host,
+            projection.port,
+            prefill_ms,
+            prefix_len,
+            sorted(projection_kv_params.keys()),
+        )
+        if profile:
+            logger.info(
+                "PAP proxy prefill IPC profile request_id=%s register_ms=%.3f "
+                "prefill_payload_ms=%.3f prefill_ms=%d projection_payload_ms=%.3f "
+                "pre_projection_ms=%.3f",
                 request_id,
-            ),
-            media_type="text/event-stream",
+                register_ms,
+                prefill_payload_ms,
+                prefill_ms,
+                projection_payload_ms,
+                (time.perf_counter() - request_start) * 1000.0,
+            )
+
+        if client_stream:
+            handed_off_stream_cleanup = True
+            return StreamingResponse(
+                _stream_projection_with_cleanup(
+                    projection_client,
+                    api_path,
+                    projection_payload,
+                    request_id,
+                    attention_clients,
+                ),
+                media_type="text/event-stream",
+                headers={
+                    "X-PAP-Prefill-Ms": str(prefill_ms),
+                    "X-PAP-Group": str(request_number % len(request.app.state.groups)),
+                    "X-PAP-Projection": str(projection.port),
+                },
+            )
+
+        projection_resp = await _post_json(
+            projection_client,
+            api_path,
+            projection_payload,
+            request_id,
+        )
+        return JSONResponse(
+            projection_resp,
             headers={
                 "X-PAP-Prefill-Ms": str(prefill_ms),
                 "X-PAP-Group": str(request_number % len(request.app.state.groups)),
                 "X-PAP-Projection": str(projection.port),
             },
         )
-
-    projection_resp = await _post_json(
-        projection_client,
-        api_path,
-        projection_payload,
-        request_id,
-    )
-    return JSONResponse(
-        projection_resp,
-        headers={
-            "X-PAP-Prefill-Ms": str(prefill_ms),
-            "X-PAP-Group": str(request_number % len(request.app.state.groups)),
-            "X-PAP-Projection": str(projection.port),
-        },
-    )
+    finally:
+        if attention_sessions is not None and not handed_off_stream_cleanup:
+            await _cleanup_attention_sessions(attention_clients, request_id)
 
 
 @app.post("/v1/completions")

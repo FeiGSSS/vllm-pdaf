@@ -14,6 +14,7 @@ import json
 import logging
 import os
 import socket
+import time
 from collections.abc import Sequence
 from threading import local
 from typing import TYPE_CHECKING, Any
@@ -28,6 +29,43 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _TCP_CONNECTIONS = local()
+
+
+def _pap_prefill_ipc_profile_enabled() -> bool:
+    return os.environ.get("PAP_PREFILL_IPC_PROFILE", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _pap_prefill_kv_async_enabled() -> bool:
+    return os.environ.get("PAP_PREFILL_KV_ASYNC", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _pap_unified_kv_enabled() -> bool:
+    return os.environ.get("PAP_UNIFIED_KV", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _pap_unified_kv_decode_capacity_tokens() -> int:
+    raw = os.environ.get("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "")
+    if not raw:
+        return 0
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        return 0
 
 
 def _parse_tcp_endpoint(endpoint: str) -> tuple[str, int]:
@@ -357,6 +395,11 @@ def import_prefill_paged_kv(
     """Install Prefill-owned paged KV backing storage in Attention."""
 
     from vllm.pap.data_plane import PAPOffloadKVPagedIPCDescriptor
+    from vllm.pap.kv_lease import (
+        pap_active_lease_id,
+        pap_has_active_lease,
+        pap_pin_blocks,
+    )
     from vllm.pap.remote_attention import (
         deserialize_tensor_bundle,
         serialize_tensor_bundle,
@@ -369,7 +412,47 @@ def import_prefill_paged_kv(
         if timeout is not None
         else float(os.environ.get("PAP_REMOTE_ATTENTION_TIMEOUT", "5.0"))
     )
+    profile = _pap_prefill_ipc_profile_enabled()
+    total_start = time.perf_counter() if profile else 0.0
+    sync_start = time.perf_counter() if profile else 0.0
     _maybe_synchronize_cuda_ipc_tensors(kv_cache)
+    sync_ms = (
+        (time.perf_counter() - sync_start) * 1000.0 if profile else 0.0
+    )
+
+    lease_id: str | None = None
+    leased_block_ids: tuple[int, ...] | None = None
+    lease_capacity_tokens: int | None = None
+    unified_kv_mode = _pap_unified_kv_enabled()
+    prefix_len_value: int | None = None
+    writable_start_token: int | None = None
+    writable_end_token: int | None = None
+    try:
+        if unified_kv_mode and not pap_has_active_lease(request_id):
+            lease_id = pap_pin_blocks(
+                request_id=request_id,
+                block_ids=tuple(int(b) for b in block_ids),
+            )
+            leased_block_ids = tuple(int(b) for b in block_ids)
+            lease_capacity_tokens = int(seq_len)
+        elif unified_kv_mode and pap_has_active_lease(request_id):
+            lease_id = pap_active_lease_id(request_id)
+    except Exception:  # noqa: BLE001
+        # Lease registry must not break Prefill export; fail to no-lease mode.
+        lease_id = None
+        leased_block_ids = None
+        lease_capacity_tokens = None
+        unified_kv_mode = False
+    if unified_kv_mode:
+        prefix_len_value = int(seq_len)
+        planned_capacity = (
+            int(seq_len) + _pap_unified_kv_decode_capacity_tokens()
+        )
+        writable_start_token = int(seq_len)
+        writable_end_token = planned_capacity
+        lease_capacity_tokens = planned_capacity
+
+    descriptor_start = time.perf_counter() if profile else 0.0
     descriptor = PAPOffloadKVPagedIPCDescriptor(
         request_id=request_id,
         layer_name=layer_name,
@@ -379,20 +462,73 @@ def import_prefill_paged_kv(
         num_kv_heads=int(num_kv_heads),
         layout=str(layout),
         kv_cache=_make_cuda_ipc_tensor_handle(kv_cache),
+        lease_id=lease_id,
+        leased_block_ids=leased_block_ids,
+        lease_seq_len=int(seq_len) if lease_id is not None else None,
+        lease_capacity_tokens=lease_capacity_tokens,
+        unified_kv_mode=unified_kv_mode,
+        prefix_len=prefix_len_value,
+        writable_start_token=writable_start_token,
+        writable_end_token=writable_end_token,
     )
+    descriptor_ms = (
+        (time.perf_counter() - descriptor_start) * 1000.0
+        if profile
+        else 0.0
+    )
+    serialize_start = time.perf_counter() if profile else 0.0
+    async_import = _pap_prefill_kv_async_enabled()
     request_body = serialize_tensor_bundle(
         {
             "command": "import_prefill_paged_kv_ipc",
             "descriptor": descriptor.to_dict(),
+            "async": async_import,
         },
         {},
     )
+    serialize_ms = (
+        (time.perf_counter() - serialize_start) * 1000.0
+        if profile
+        else 0.0
+    )
+    post_start = time.perf_counter() if profile else 0.0
     response_body = _post_bytes_tcp(
         endpoint=tcp_endpoint,
         payload=request_body,
         timeout=request_timeout,
     )
+    post_ms = (time.perf_counter() - post_start) * 1000.0 if profile else 0.0
+    deserialize_start = time.perf_counter() if profile else 0.0
     response_metadata, _ = deserialize_tensor_bundle(response_body)
+    deserialize_ms = (
+        (time.perf_counter() - deserialize_start) * 1000.0
+        if profile
+        else 0.0
+    )
+    if profile:
+        logger.info(
+            "PAP prefill IPC transport profile request_id=%s layer=%s "
+            "seq_len=%d blocks=%d async=%s status=%s sync_ms=%.3f "
+            "descriptor_ms=%.3f serialize_ms=%.3f response_wait_ms=%.3f "
+            "deserialize_ms=%.3f total_ms=%.3f request_bytes=%d "
+            "response_bytes=%d endpoint=%s lease_id=%s",
+            request_id,
+            layer_name,
+            int(seq_len),
+            len(block_ids),
+            async_import,
+            str(response_metadata.get("status", "ready")),
+            sync_ms,
+            descriptor_ms,
+            serialize_ms,
+            post_ms,
+            deserialize_ms,
+            (time.perf_counter() - total_start) * 1000.0,
+            len(request_body),
+            len(response_body),
+            tcp_endpoint,
+            lease_id,
+        )
     return int(response_metadata["seq_len"])
 
 
