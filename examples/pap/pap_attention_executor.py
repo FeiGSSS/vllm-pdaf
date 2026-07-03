@@ -1442,22 +1442,31 @@ class PAPAttentionRegistry:
     ) -> int:
         """Write a same-layer decode batch into Prefill-owned unified KV blocks.
 
-        Each row writes into its own session's unified state. Returns the
-        number of rows successfully appended.
+        Uses a single ``reshape_and_cache_flash`` call over the batch (one GPU
+        kernel launch), mirroring the legacy local-pool fast path.
         """
         unified_profile = _pap_env_flag("PAP_UNIFIED_KV_PROFILE", False)
         if len(session_request_ids) != len(decode_seq_lens):
             raise ValueError(
-                "PAP unified KV append session_request_ids/decode_seq_lens length mismatch"
+                "PAP unified KV append session_request_ids/decode_seq_lens "
+                "length mismatch"
             )
         append_start = time.perf_counter() if unified_profile else 0.0
-        written = 0
+
+        num_rows = int(key_batch.shape[0])
+        slots: list[int] = []
+        active_indices: list[int] = []
+        base_v_cache: torch.Tensor | None = None
+
         with self._lock:
+            # Pass 1: validate slots + GPU append (one batched kernel)
             for index, session_request_id in enumerate(session_request_ids):
                 decode_len = int(decode_seq_lens[index])
                 if decode_len <= 0:
                     continue
-                layer_states = self._unified_paged_kv.get(session_request_id, {})
+                layer_states = self._unified_paged_kv.get(
+                    session_request_id, {}
+                )
                 state = layer_states.get(layer_name)
                 if state is None:
                     raise RuntimeError(
@@ -1465,7 +1474,7 @@ class PAPAttentionRegistry:
                         f"{session_request_id} layer={layer_name}"
                     )
                 block_size = int(state.block_size)
-                kv_cache = state.kv_cache
+                base_v_cache = state.kv_cache
                 position = int(state.seq_len)
                 if (
                     position < int(state.writable_start_token)
@@ -1473,57 +1482,57 @@ class PAPAttentionRegistry:
                 ):
                     raise RuntimeError(
                         f"PAP unified KV append out of range request_id="
-                        f"{session_request_id} layer={layer_name} position={position} "
-                        f"writable=[{state.writable_start_token},"
+                        f"{session_request_id} layer={layer_name} "
+                        f"position={position} writable=["
+                        f"{state.writable_start_token},"
                         f"{state.writable_end_token})"
                     )
                 logical_block = position // block_size
-                block_offset = position % block_size
                 if logical_block >= len(state.block_ids):
                     raise RuntimeError(
-                        f"PAP unified KV logical_block={logical_block} exceeds "
-                        f"block_ids len={len(state.block_ids)} (request_id="
-                        f"{session_request_id} layer={layer_name})"
+                        f"PAP unified KV logical_block={logical_block} "
+                        f"exceeds block_ids len={len(state.block_ids)} "
+                        f"(request_id={session_request_id} "
+                        f"layer={layer_name})"
                     )
                 physical_block = int(state.block_ids[logical_block])
-                key_row = key_batch[index].to(
-                    device=kv_cache.device, dtype=kv_cache.dtype
+                block_offset = position % block_size
+                slots.append(physical_block * block_size + block_offset)
+                active_indices.append(index)
+
+            if not active_indices or base_v_cache is None:
+                return 0
+
+            kb = key_batch[active_indices].to(
+                device=base_v_cache.device, dtype=base_v_cache.dtype
+            )
+            vb = value_batch[active_indices].to(
+                device=base_v_cache.device, dtype=base_v_cache.dtype
+            )
+            slot_tensor = torch.tensor(
+                slots, dtype=torch.int64, device=base_v_cache.device
+            )
+            k_scale = torch.ones(
+                1, dtype=torch.float32, device=base_v_cache.device
+            )
+            v_scale = torch.ones(
+                1, dtype=torch.float32, device=base_v_cache.device
+            )
+            key_cache, value_cache = base_v_cache.unbind(1)
+            torch.ops._C_cache_ops.reshape_and_cache_flash(
+                kb, vb, key_cache, value_cache,
+                slot_tensor, "auto", k_scale, v_scale,
+            )
+
+            # Pass 2: seq_len update
+            written = 0
+            for index in active_indices:
+                session_request_id = session_request_ids[index]
+                layer_states = self._unified_paged_kv.get(
+                    session_request_id, {}
                 )
-                value_row = value_batch[index].to(
-                    device=kv_cache.device, dtype=kv_cache.dtype
-                )
-                try:
-                    key_cache, value_cache = kv_cache.unbind(1)
-                    slot = physical_block * block_size + block_offset
-                    slot_tensor = torch.tensor(
-                        [slot],
-                        dtype=torch.int64,
-                        device=kv_cache.device,
-                    )
-                    key_row_batch = key_row.unsqueeze(0).contiguous()
-                    value_row_batch = value_row.unsqueeze(0).contiguous()
-                    k_scale = torch.ones(
-                        1, dtype=torch.float32, device=kv_cache.device
-                    )
-                    v_scale = torch.ones(
-                        1, dtype=torch.float32, device=kv_cache.device
-                    )
-                    torch.ops._C_cache_ops.reshape_and_cache_flash(
-                        key_row_batch,
-                        value_row_batch,
-                        key_cache,
-                        value_cache,
-                        slot_tensor,
-                        "auto",
-                        k_scale,
-                        v_scale,
-                    )
-                except Exception as exc:
-                    raise RuntimeError(
-                        f"PAP unified KV append via reshape_and_cache_flash failed: {exc}"
-                    )
-                written += 1
-                new_seq_len = max(int(state.seq_len), position + 1)
+                state = layer_states[layer_name]
+                new_seq_len = int(state.seq_len) + 1
                 layer_states[layer_name] = PAPUnifiedPagedKVState(
                     kv_cache=state.kv_cache,
                     block_ids=state.block_ids,
@@ -1537,18 +1546,8 @@ class PAPAttentionRegistry:
                     num_kv_heads=state.num_kv_heads,
                     layout=state.layout,
                 )
-                if unified_profile:
-                    logger.info(
-                        "PAP unified KV append request_id=%s layer=%s "
-                        "position=%d block=%d offset=%d seq_len=%d append_ms=%.3f",
-                        session_request_id,
-                        layer_name,
-                        position,
-                        physical_block,
-                        block_offset,
-                        new_seq_len,
-                        (time.perf_counter() - append_start) * 1000.0,
-                    )
+                written += 1
+
         return written
 
     def get_unified_paged_states(
