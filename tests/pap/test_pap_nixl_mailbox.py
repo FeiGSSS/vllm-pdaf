@@ -3,7 +3,6 @@ from __future__ import annotations
 import gc
 import json
 from collections import OrderedDict
-from contextlib import suppress
 from threading import Condition, RLock
 
 import pytest
@@ -1409,6 +1408,28 @@ def test_nixl_mailbox_wait_ack_polls_inline_before_wait() -> None:
     assert poll_calls == 1
     assert endpoint._output_pool == OrderedDict()
     assert endpoint._send_enqueued_at == {}
+
+
+def test_nixl_mailbox_recv_records_wait_trace_on_message() -> None:
+    endpoint = object.__new__(PAPNixlMailboxEndpoint)
+    endpoint.actor_id = "attention"
+    endpoint._lock = RLock()
+    endpoint._cv = Condition(endpoint._lock)
+    endpoint._trace_enabled = True
+    endpoint._inline_poll_enabled = False
+    endpoint._incoming = OrderedDict()
+    message = PAPMailboxMessage(
+        msg_id="msg-trace",
+        kind="attention_task_batch",
+        metadata={"layer_name": "layer0"},
+        tensor=torch.tensor([[1.0]], dtype=torch.float32),
+    )
+    endpoint._incoming[message.msg_id] = message
+
+    received = endpoint.recv(timeout=0.1)
+
+    assert received is message
+    assert received.recv_trace["wait_ms"] >= 0.0
 
 
 def test_nixl_mailbox_zero_copy_recv_returns_registered_buffer_view() -> None:

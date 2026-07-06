@@ -1110,6 +1110,87 @@ def test_run_offload_exec_mailbox_loop_emits_trace(monkeypatch, caplog) -> None:
     assert "compute_unaccounted_ms=0.004" in caplog.text
 
 
+def test_run_offload_exec_mailbox_loop_emits_recv_breakdown(
+    monkeypatch,
+    caplog,
+) -> None:
+    import torch
+
+    class FakeMessage:
+        tensor = torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]])
+        recv_trace = {
+            "wait_ms": 0.600,
+            "read_total_ms": 0.098,
+            "materialize_ms": 0.009,
+            "transfer_ms": 0.080,
+        }
+
+        def release(self):
+            pass
+
+    class FakeTransport:
+        def __init__(self, descriptor):
+            self.descriptor = descriptor
+            self.sent = []
+            self.recv_calls = 0
+
+        def recv_next_qkv_batch_message(self):
+            self.recv_calls += 1
+            if self.recv_calls > 1:
+                raise KeyboardInterrupt
+            return self.descriptor, FakeMessage()
+
+        def send_output_batch(self, descriptor, output, *, remote_address):
+            self.sent.append((descriptor, output, remote_address))
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-a",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+            q_size=2,
+            kv_size=2,
+        )
+    )
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_TRACE", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_HEAD_DIM", "2")
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                request_id="req-a",
+                layer_name="layer0",
+                step=1,
+                scale=1.0,
+            ),
+        ),
+    )
+    transport = FakeTransport(descriptor)
+    from examples.pap import pap_attention_executor as executor_module
+
+    monkeypatch.setattr(
+        executor_module,
+        "compute_offload_exec_batch_output",
+        lambda **kwargs: torch.tensor([[2.0, 0.0]]),
+    )
+
+    with (
+        caplog.at_level(logging.INFO, logger="pap_attention"),
+        suppress(KeyboardInterrupt),
+    ):
+        run_offload_exec_mailbox_loop(registry=registry, transport=transport)
+
+    assert "recv_wait_ms=0.600" in caplog.text
+    assert "recv_read_ms=0.098" in caplog.text
+    assert "recv_materialize_ms=0.009" in caplog.text
+    assert "recv_transfer_ms=0.080" in caplog.text
+    assert "recv_wait_other_ms=0.502" in caplog.text
+    assert "recv_unaccounted_ms=0.000" in caplog.text
+
+
 def test_run_offload_exec_once_resolves_wrapped_request_id(monkeypatch) -> None:
     import torch
 

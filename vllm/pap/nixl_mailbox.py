@@ -204,6 +204,9 @@ class PAPMailboxMessage:
     direct_payload: bool = False
     payload_slot_id: int | None = None
     payload_ready_event: Any | None = field(default=None, repr=False, compare=False)
+    recv_trace: dict[str, float] | None = field(
+        default=None, repr=False, compare=False
+    )
     release_callback: Callable[[], None] | None = field(
         default=None, repr=False, compare=False
     )
@@ -241,6 +244,15 @@ class PAPMailboxMessage:
             self.release()
         except Exception:
             pass
+
+
+def _merge_message_recv_trace(
+    message: PAPMailboxMessage,
+    fields: dict[str, float],
+) -> None:
+    recv_trace = dict(message.recv_trace or {})
+    recv_trace.update((key, float(value)) for key, value in fields.items())
+    object.__setattr__(message, "recv_trace", recv_trace)
 
 
 class PAPMailboxBackend(Protocol):
@@ -915,6 +927,8 @@ class PAPNixlMailboxEndpoint:
         def trace_recv_wait(message: PAPMailboxMessage) -> None:
             if not trace_enabled:
                 return
+            wait_ms = (time.perf_counter() - recv_start) * 1000.0
+            _merge_message_recv_trace(message, {"wait_ms": wait_ms})
             logger.info(
                 "PAP NIXL mailbox recv wait trace actor=%s msg_id=%s "
                 "kind=%s requested_msg_id=%s wait_ms=%.3f",
@@ -922,7 +936,7 @@ class PAPNixlMailboxEndpoint:
                 message.msg_id,
                 message.kind,
                 "" if msg_id is None else str(msg_id),
-                (time.perf_counter() - recv_start) * 1000.0,
+                wait_ms,
             )
 
         while True:
@@ -1759,7 +1773,19 @@ class PAPNixlMailboxEndpoint:
         materialize_ms = (
             (time.perf_counter() - materialize_start) * 1000.0 if trace_enabled else 0.0
         )
+        read_total_ms = prepare_ms + transfer_ms + materialize_ms
+        recv_trace = None
         if trace_enabled:
+            recv_trace = {
+                "nbytes": float(nbytes),
+                "read_prepare_ms": prepare_ms,
+                "read_slot_wait_ms": slot_wait_ms,
+                "read_handle_prepare_ms": handle_prepare_ms,
+                "transfer_ms": transfer_ms,
+                "transfer_polls": float(transfer_polls),
+                "materialize_ms": materialize_ms,
+                "read_total_ms": read_total_ms,
+            }
             logger.info(
                 "PAP NIXL mailbox read trace actor=%s msg_id=%s kind=%s "
                 "nbytes=%d prepare_ms=%.3f slot_wait_ms=%.3f "
@@ -1775,7 +1801,7 @@ class PAPNixlMailboxEndpoint:
                 transfer_ms,
                 transfer_polls,
                 materialize_ms,
-                prepare_ms + transfer_ms + materialize_ms,
+                read_total_ms,
             )
         release_callback = None
         if release_recv_slot:
@@ -1803,5 +1829,6 @@ class PAPNixlMailboxEndpoint:
             kind=str(data["kind"]),
             metadata=dict(data.get("metadata") or {}),
             tensor=tensor,
+            recv_trace=recv_trace,
             release_callback=release_callback,
         )

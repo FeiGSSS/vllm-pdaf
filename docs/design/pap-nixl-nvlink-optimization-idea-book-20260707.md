@@ -56,9 +56,20 @@ Ideas are sorted by the combined score:
 - If a result is neutral or worse, revert the code change and record the
   rejected idea in this document or a run note.
 
+## Progress
+
+Rank 1 metadata cache was implemented and kept. It reduced median
+`metadata_build_ms` from `1.84 ms` to `0.023 ms` on the warmed NIXL run.
+
+Rank 2 receive tracing was implemented and kept. The warmed NIXL trace shows
+median `recv_qkv_ms=1.515 ms`, but only `0.016 ms` is mailbox read/materialize
+and `0.000 ms` is receive-side explicit NIXL transfer. The dominant component
+is `recv_wait_other_ms=1.393 ms`, meaning attention is mostly waiting for the
+next message to become available.
+
 ## Current Next Step
 
-Implement Rank 1 first. It is not a transport change, but it removes the largest
-confirmed per-layer attention-side overhead while preserving the NIXL mailbox
-path. Rank 2 then separates true NIXL/NVLink transfer cost from projection idle
-wait before deeper communication changes.
+Implement Rank 3 next: A/B the existing NIXL mailbox low-latency knobs one at a
+time. Prioritize knobs that can reduce message-availability wait rather than
+payload transfer: inline polling, trace/telemetry overhead, slot count, ACK
+policy, and direct-output/materialized receive-slot behavior.

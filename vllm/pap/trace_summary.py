@@ -94,6 +94,12 @@ _ATTENTION_TRACE_RE = re.compile(
     r"attention mailbox batch trace .* calls=(\d+) recv_qkv_ms=([0-9.]+) "
     r"compute_ms=([0-9.]+) send_output_ms=([0-9.]+) total_ms=([0-9.]+)"
 )
+_ATTENTION_RECV_DETAIL_RE = re.compile(
+    r"recv_wait_ms=([0-9.]+) recv_read_ms=([0-9.]+) "
+    r"recv_materialize_ms=([0-9.]+) recv_transfer_ms=([0-9.]+) "
+    r"(?:recv_wait_other_ms=([0-9.]+) )?"
+    r"recv_unaccounted_ms=([0-9.]+)"
+)
 _ATTENTION_COMPUTE_DETAIL_RE = re.compile(
     r"append_kv_ms=([0-9.]+) pack_ms=([0-9.]+) "
     r"sdpa_ms=([0-9.]+) reshape_ms=([0-9.]+)"
@@ -298,6 +304,12 @@ def summarize_pap_trace_logs(
         "compute_ms": [],
         "send_output_ms": [],
         "total_ms": [],
+        "recv_wait_ms": [],
+        "recv_read_ms": [],
+        "recv_materialize_ms": [],
+        "recv_transfer_ms": [],
+        "recv_wait_other_ms": [],
+        "recv_unaccounted_ms": [],
         "append_kv_ms": [],
         "pack_ms": [],
         "sdpa_ms": [],
@@ -565,6 +577,34 @@ def summarize_pap_trace_logs(
                     attention["compute_ms"].append(compute_ms)
                     attention["send_output_ms"].append(send_ms)
                     attention["total_ms"].append(total_ms)
+                    if recv_detail := _ATTENTION_RECV_DETAIL_RE.search(line):
+                        (
+                            recv_wait_ms,
+                            recv_read_ms,
+                            recv_materialize_ms,
+                            recv_transfer_ms,
+                            recv_wait_other_ms,
+                            recv_unaccounted_ms,
+                        ) = recv_detail.groups()
+                    else:
+                        recv_wait_ms = 0.0
+                        recv_read_ms = 0.0
+                        recv_materialize_ms = 0.0
+                        recv_transfer_ms = 0.0
+                        recv_wait_other_ms = 0.0
+                        recv_unaccounted_ms = 0.0
+                    attention["recv_wait_ms"].append(float(recv_wait_ms))
+                    attention["recv_read_ms"].append(float(recv_read_ms))
+                    attention["recv_materialize_ms"].append(
+                        float(recv_materialize_ms)
+                    )
+                    attention["recv_transfer_ms"].append(float(recv_transfer_ms))
+                    attention["recv_wait_other_ms"].append(
+                        float(recv_wait_other_ms or 0.0)
+                    )
+                    attention["recv_unaccounted_ms"].append(
+                        float(recv_unaccounted_ms)
+                    )
                     if detail := _ATTENTION_COMPUTE_DETAIL_RE.search(line):
                         (
                             append_kv_ms,

@@ -3402,6 +3402,28 @@ def _recv_next_qkv_batch_message_or_tensor(
     return descriptor, None, qkv_batch
 
 
+def _qkv_message_recv_trace(
+    qkv_message: Any | None,
+    recv_qkv_ms: float,
+) -> dict[str, float]:
+    trace = getattr(qkv_message, "recv_trace", None) or {}
+
+    def trace_float(name: str) -> float:
+        value = trace.get(name, 0.0)
+        return float(value or 0.0)
+
+    wait_ms = trace_float("wait_ms")
+    read_ms = trace_float("read_total_ms")
+    return {
+        "wait_ms": wait_ms,
+        "read_ms": read_ms,
+        "materialize_ms": trace_float("materialize_ms"),
+        "transfer_ms": trace_float("transfer_ms"),
+        "wait_other_ms": max(0.0, wait_ms - read_ms),
+        "unaccounted_ms": max(0.0, recv_qkv_ms - wait_ms),
+    }
+
+
 class _QKVBatchMessagePrefetcher:
     def __init__(self, transport: Any) -> None:
         self._transport = transport
@@ -3483,6 +3505,11 @@ def run_offload_exec_mailbox_loop(
             if trace_offload_exec
             else 0.0
         )
+        trace_recv_stats = (
+            _qkv_message_recv_trace(qkv_message, trace_recv_ms)
+            if trace_offload_exec
+            else None
+        )
         if trace_offload_exec:
             trace_recv_done_ns = time.perf_counter_ns()
         try:
@@ -3556,7 +3583,11 @@ def run_offload_exec_mailbox_loop(
             logger.info(
                 "PAP OFFLOAD_EXEC attention mailbox batch trace layer=%s "
                 "calls=%d recv_qkv_ms=%.3f compute_ms=%.3f "
-                "send_output_ms=%.3f total_ms=%.3f append_kv_ms=%.3f "
+                "send_output_ms=%.3f total_ms=%.3f "
+                "recv_wait_ms=%.3f recv_read_ms=%.3f "
+                "recv_materialize_ms=%.3f recv_transfer_ms=%.3f "
+                "recv_wait_other_ms=%.3f recv_unaccounted_ms=%.3f "
+                "append_kv_ms=%.3f "
                 "pack_ms=%.3f sdpa_ms=%.3f reshape_ms=%.3f "
                 "paged_metadata_ms=%.3f paged_flash_ms=%.3f fallback_ms=%.3f "
                 "shape_lookup_ms=%.3f qkv_split_ms=%.3f query_move_ms=%.3f "
@@ -3577,6 +3608,12 @@ def run_offload_exec_mailbox_loop(
                 trace_compute_ms,
                 trace_send_ms,
                 trace_total_ms,
+                trace_recv_stats["wait_ms"] if trace_recv_stats else 0.0,
+                trace_recv_stats["read_ms"] if trace_recv_stats else 0.0,
+                trace_recv_stats["materialize_ms"] if trace_recv_stats else 0.0,
+                trace_recv_stats["transfer_ms"] if trace_recv_stats else 0.0,
+                trace_recv_stats["wait_other_ms"] if trace_recv_stats else 0.0,
+                trace_recv_stats["unaccounted_ms"] if trace_recv_stats else 0.0,
                 trace_compute_stats["append_kv_ms"] if trace_compute_stats else 0.0,
                 trace_compute_stats["pack_ms"] if trace_compute_stats else 0.0,
                 trace_compute_stats["sdpa_ms"] if trace_compute_stats else 0.0,

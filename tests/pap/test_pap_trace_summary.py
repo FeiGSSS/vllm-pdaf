@@ -77,6 +77,9 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
         "PAP OFFLOAD_EXEC attention mailbox batch trace "
         "layer=model.layers.1.self_attn.attn calls=1 recv_qkv_ms=0.820 "
         "compute_ms=0.140 send_output_ms=0.010 total_ms=0.970 "
+        "recv_wait_ms=0.600 recv_read_ms=0.098 recv_materialize_ms=0.009 "
+        "recv_transfer_ms=0.080 recv_wait_other_ms=0.502 "
+        "recv_unaccounted_ms=0.220 "
         "append_kv_ms=0.050 pack_ms=0.030 sdpa_ms=0.040 reshape_ms=0.020 "
         "paged_metadata_ms=0.060 paged_flash_ms=0.070 "
         "shape_lookup_ms=0.011 qkv_split_ms=0.012 query_move_ms=0.013 "
@@ -152,6 +155,12 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
     )
     assert summary["attention_trace"]["compute_ms"].median == 0.140
     assert summary["attention_trace"]["append_kv_ms"].median == 0.050
+    assert summary["attention_trace"]["recv_wait_ms"].median == 0.600
+    assert summary["attention_trace"]["recv_read_ms"].median == 0.098
+    assert summary["attention_trace"]["recv_materialize_ms"].median == 0.009
+    assert summary["attention_trace"]["recv_transfer_ms"].median == 0.080
+    assert summary["attention_trace"]["recv_wait_other_ms"].median == 0.502
+    assert summary["attention_trace"]["recv_unaccounted_ms"].median == 0.220
     assert summary["attention_trace"]["pack_ms"].median == 0.030
     assert summary["attention_trace"]["sdpa_ms"].median == 0.040
     assert summary["attention_trace"]["reshape_ms"].median == 0.020
