@@ -2,14 +2,19 @@ import logging
 from contextlib import suppress
 from pathlib import Path
 from threading import Event, Thread
+from typing import Any
 
+import anyio
 import pytest
+from httpx import ASGITransport, AsyncClient, Response
 
 from examples.pap.pap_attention_executor import (
     PAPAttentionRegistration,
     PAPAttentionRegistry,
+    PAPUnifiedPagedKVState,
     compute_binary_attention_response,
     compute_offload_exec_output,
+    compute_offload_exec_batch_output,
     create_app,
     maybe_start_offload_exec_transport,
     run_offload_exec_batch_once,
@@ -25,6 +30,31 @@ from vllm.pap.data_plane import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+class _ASGITestClient:
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    def request(self, method: str, url: str, **kwargs: Any) -> Response:
+        async def run_request() -> Response:
+            transport = ASGITransport(app=self.app)
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://testserver",
+            ) as client:
+                return await client.request(method, url, **kwargs)
+
+        return anyio.run(run_request)
+
+    def get(self, url: str, **kwargs: Any) -> Response:
+        return self.request("GET", url, **kwargs)
+
+    def post(self, url: str, **kwargs: Any) -> Response:
+        return self.request("POST", url, **kwargs)
+
+    def delete(self, url: str, **kwargs: Any) -> Response:
+        return self.request("DELETE", url, **kwargs)
 
 
 def test_attention_executor_declares_offload_exec_zmq_port() -> None:
@@ -335,6 +365,95 @@ def test_run_offload_exec_batch_once_uses_batched_compute(monkeypatch) -> None:
     torch.testing.assert_close(output, torch.tensor([[2.0, 0.0], [0.0, 3.0]]))
 
 
+def test_unified_offload_exec_commit_uses_descriptor_decode_token_ids(
+    monkeypatch,
+) -> None:
+    import torch
+    from examples.pap import pap_attention_executor as executor_module
+
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_HEAD_DIM", "2")
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-a",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+            q_size=2,
+            kv_size=2,
+            num_heads=1,
+            num_kv_heads=1,
+            head_dim=2,
+        )
+    )
+    registry._unified_paged_kv["req-a"] = {
+        "layer0": PAPUnifiedPagedKVState(
+            kv_cache=torch.zeros((2, 2, 4, 1, 2)),
+            block_ids=(0,),
+            prefix_len=1,
+            seq_len=1,
+            capacity_tokens=4,
+            writable_start_token=1,
+            writable_end_token=4,
+            lease_id="lease-a",
+            block_size=4,
+            num_kv_heads=1,
+            layout="NHD",
+        )
+    }
+
+    def fake_append_decode_kv_to_unified_prefill_cache(**kwargs):
+        return 1
+
+    commits = []
+
+    class FakeCommitClient:
+        enabled = True
+
+        def commit(self, *, request_id, new_seq_len, new_token_ids):
+            commits.append((request_id, new_seq_len, tuple(new_token_ids)))
+
+    monkeypatch.setattr(
+        registry,
+        "append_decode_kv_to_unified_prefill_cache",
+        fake_append_decode_kv_to_unified_prefill_cache,
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "_compute_unified_paged_flash_batch",
+        lambda **kwargs: torch.tensor([[2.0, 0.0]]),
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "_get_commit_client",
+        lambda: FakeCommitClient(),
+    )
+
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                request_id="req-a",
+                layer_name="layer0",
+                step=2,
+                scale=1.0,
+                decode_token_ids=(42,),
+            ),
+        ),
+    )
+
+    output = compute_offload_exec_batch_output(
+        registry=registry,
+        descriptor=descriptor,
+        qkv_batch=torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]]),
+    )
+
+    torch.testing.assert_close(output, torch.tensor([[2.0, 0.0]]))
+    assert commits == [("req-a", 2, (42,))]
+
+
 def test_attention_registry_caches_resolved_request_ids() -> None:
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
@@ -350,6 +469,205 @@ def test_attention_registry_caches_resolved_request_ids() -> None:
 
     assert registry.release_session("req-cache")
     assert "req-cache-0" not in registry._request_id_resolution_cache
+
+
+def test_attention_registry_release_session_notifies_prefill_lease(
+    monkeypatch,
+) -> None:
+    from examples.pap import pap_attention_executor as executor_module
+
+    released = []
+    events = []
+
+    class FakeCommitClient:
+        enabled = True
+
+        def flush_request(self, request_id):
+            events.append(("flush", request_id))
+            return True
+
+        def forget_request(self, request_id):
+            events.append(("forget", request_id))
+
+    class FakeLeaseReleaseClient:
+        enabled = True
+
+        def release(self, *, request_id, lease_id):
+            events.append(("release", request_id, lease_id))
+            released.append((request_id, lease_id))
+
+    monkeypatch.setattr(
+        executor_module,
+        "_get_commit_client",
+        lambda: FakeCommitClient(),
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "_get_lease_release_client",
+        lambda: FakeLeaseReleaseClient(),
+    )
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-lease",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+        )
+    )
+    registry._session_lease_ids["req-lease"] = "lease-1"
+    registry._session_leased_block_ids["req-lease"] = (3, 4)
+
+    assert registry.release_session("req-lease")
+
+    assert released == [("req-lease", "lease-1")]
+    assert events == [
+        ("flush", "req-lease"),
+        ("release", "req-lease", "lease-1"),
+        ("forget", "req-lease"),
+    ]
+    assert registry.get_session("req-lease") is None
+
+
+def test_attention_registry_reregister_releases_replaced_prefill_lease(
+    monkeypatch,
+) -> None:
+    from examples.pap import pap_attention_executor as executor_module
+
+    released = []
+    events = []
+
+    class FakeCommitClient:
+        enabled = True
+
+        def flush_request(self, request_id):
+            events.append(("flush", request_id))
+            return True
+
+        def forget_request(self, request_id):
+            events.append(("forget", request_id))
+
+    class FakeLeaseReleaseClient:
+        enabled = True
+
+        def release(self, *, request_id, lease_id):
+            events.append(("release", request_id, lease_id))
+            released.append((request_id, lease_id))
+
+    monkeypatch.setattr(
+        executor_module,
+        "_get_commit_client",
+        lambda: FakeCommitClient(),
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "_get_lease_release_client",
+        lambda: FakeLeaseReleaseClient(),
+    )
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-reuse",
+            conversation_id="conv-a",
+            prefill_endpoint="http://localhost:8100",
+        )
+    )
+    registry._session_lease_ids["req-reuse"] = "lease-old"
+    registry._session_leased_block_ids["req-reuse"] = (3, 4)
+
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-reuse",
+            conversation_id="conv-b",
+            prefill_endpoint="http://localhost:8100",
+        )
+    )
+
+    assert released == [("req-reuse", "lease-old")]
+    assert events == [
+        ("flush", "req-reuse"),
+        ("forget", "req-reuse"),
+        ("release", "req-reuse", "lease-old"),
+    ]
+    session = registry.get_session("req-reuse")
+    assert session is not None
+    assert session.conversation_id == "conv-b"
+
+
+def test_attention_registry_lists_prefill_readiness() -> None:
+    import torch
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-ready",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+        )
+    )
+
+    assert registry.get_prefill_readiness("req-ready") == []
+
+    registry.import_prefill_kv(
+        request_id="req-ready",
+        layer_name="layer0",
+        key=torch.zeros(2, 1, 2),
+        value=torch.zeros(2, 1, 2),
+        seq_len=2,
+        block_ids=[0],
+    )
+
+    readiness = registry.get_prefill_readiness("req-ready")
+
+    assert len(readiness) == 1
+    assert readiness[0].request_id == "req-ready"
+    assert readiness[0].layer_name == "layer0"
+    assert readiness[0].descriptor_received is True
+    assert readiness[0].descriptor_opened is True
+    assert readiness[0].ready is True
+
+
+def test_attention_prefill_readiness_endpoint() -> None:
+    import anyio
+    import torch
+    from httpx import ASGITransport, AsyncClient
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-ready",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+        )
+    )
+    registry.import_prefill_kv(
+        request_id="req-ready",
+        layer_name="layer0",
+        key=torch.zeros(2, 1, 2),
+        value=torch.zeros(2, 1, 2),
+        seq_len=2,
+        block_ids=[0],
+    )
+    app = create_app(registry=registry)
+
+    async def run_request():
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+        ) as client:
+            return await client.get(
+                "/v1/pap/attention/sessions/req-ready/prefill-readiness"
+            )
+
+    response = anyio.run(run_request)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["request_id"] == "req-ready"
+    assert body["layers"][0]["layer_name"] == "layer0"
+    assert body["layers"][0]["ready"] is True
 
 
 def test_offload_exec_batch_session_entries_reuses_and_invalidates_cache() -> None:
@@ -456,7 +774,7 @@ def test_run_offload_exec_batch_once_single_item_avoids_output_cat(
 
     from examples.pap import pap_attention_executor as executor_module
 
-    def fake_compute_offload_exec_output(**kwargs):
+    def fake_compute_offload_exec_batch_output(**kwargs):
         return torch.tensor([[2.0, 0.0]])
 
     def fail_cat(*args, **kwargs):
@@ -464,8 +782,8 @@ def test_run_offload_exec_batch_once_single_item_avoids_output_cat(
 
     monkeypatch.setattr(
         executor_module,
-        "compute_offload_exec_output",
-        fake_compute_offload_exec_output,
+        "compute_offload_exec_batch_output",
+        fake_compute_offload_exec_batch_output,
     )
     monkeypatch.setattr(torch, "cat", fail_cat)
 
@@ -537,6 +855,13 @@ def test_run_offload_exec_mailbox_loop_releases_qkv_message(monkeypatch) -> None
         ),
     )
     transport = FakeTransport(descriptor)
+    from examples.pap import pap_attention_executor as executor_module
+
+    monkeypatch.setattr(
+        executor_module,
+        "compute_offload_exec_batch_output",
+        lambda **kwargs: torch.tensor([[2.0, 0.0]]),
+    )
 
     with suppress(KeyboardInterrupt):
         run_offload_exec_mailbox_loop(registry=registry, transport=transport)
@@ -665,6 +990,13 @@ def test_run_offload_exec_mailbox_loop_emits_trace(monkeypatch, caplog) -> None:
         ),
     )
     transport = FakeTransport(descriptor)
+    from examples.pap import pap_attention_executor as executor_module
+
+    monkeypatch.setattr(
+        executor_module,
+        "compute_offload_exec_batch_output",
+        lambda **kwargs: torch.tensor([[2.0, 0.0]]),
+    )
 
     with (
         caplog.at_level(logging.INFO, logger="pap_attention"),
@@ -731,8 +1063,9 @@ def test_run_offload_exec_once_resolves_wrapped_request_id(monkeypatch) -> None:
 
 
 def test_offload_exec_endpoint_triggers_transport(monkeypatch) -> None:
+    import anyio
     import torch
-    from fastapi.testclient import TestClient
+    from httpx import ASGITransport, AsyncClient
 
     class FakeTransport:
         def __init__(self):
@@ -763,18 +1096,25 @@ def test_offload_exec_endpoint_triggers_transport(monkeypatch) -> None:
     app = create_app(registry)
     transport = FakeTransport()
     app.state.offload_exec_transport = transport
-    client = TestClient(app)
 
-    response = client.post(
-        "/v1/pap/attention/offload-exec",
-        json={
-            "request_id": "req-offload",
-            "layer_name": "layer0",
-            "step": 1,
-            "scale": 1.0,
-            "remote_address": "127.0.0.1:11300",
-        },
-    )
+    async def run_request():
+        asgi_transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=asgi_transport,
+            base_url="http://testserver",
+        ) as client:
+            return await client.post(
+                "/v1/pap/attention/offload-exec",
+                json={
+                    "request_id": "req-offload",
+                    "layer_name": "layer0",
+                    "step": 1,
+                    "scale": 1.0,
+                    "remote_address": "127.0.0.1:11300",
+                },
+            )
+
+    response = anyio.run(run_request)
 
     assert response.status_code == 200
     assert response.json()["remote_address"] == "127.0.0.1:11300"
@@ -1105,13 +1445,12 @@ def test_attention_registry_matches_wrapped_vllm_request_ids() -> None:
 
 def test_attention_executor_compute_route_returns_attention_output() -> None:
     import torch
-    from fastapi.testclient import TestClient
 
     from examples.pap.pap_attention_executor import create_app
     from vllm.pap.remote_attention import deserialize_attention_result, serialize_tensor
 
     app = create_app()
-    client = TestClient(app)
+    client = _ASGITestClient(app)
     query = torch.tensor([[[1.0, 0.0], [0.0, 1.0]]])
     key = torch.tensor([[[1.0, 0.0]], [[0.0, 1.0]]])
     value = torch.tensor([[[2.0, 0.0]], [[0.0, 4.0]]])
@@ -1136,13 +1475,12 @@ def test_attention_executor_compute_route_returns_attention_output() -> None:
 
 def test_attention_executor_append_and_compute_keeps_stateful_kv() -> None:
     import torch
-    from fastapi.testclient import TestClient
 
     from examples.pap.pap_attention_executor import create_app
     from vllm.pap.remote_attention import deserialize_attention_result, serialize_tensor
 
     app = create_app()
-    client = TestClient(app)
+    client = _ASGITestClient(app)
     client.post(
         "/v1/pap/attention/register",
         json={
@@ -1197,7 +1535,6 @@ def test_attention_executor_append_and_compute_keeps_stateful_kv() -> None:
 
 def test_attention_executor_binary_append_and_compute_keeps_stateful_kv() -> None:
     import torch
-    from fastapi.testclient import TestClient
 
     from examples.pap.pap_attention_executor import create_app
     from vllm.pap.remote_attention import (
@@ -1206,7 +1543,7 @@ def test_attention_executor_binary_append_and_compute_keeps_stateful_kv() -> Non
     )
 
     app = create_app()
-    client = TestClient(app)
+    client = _ASGITestClient(app)
     client.post(
         "/v1/pap/attention/register",
         json={
@@ -1243,7 +1580,6 @@ def test_attention_executor_binary_append_and_compute_keeps_stateful_kv() -> Non
 
 def test_attention_executor_batch_binary_append_and_compute_keeps_stateful_kv() -> None:
     import torch
-    from fastapi.testclient import TestClient
 
     from examples.pap.pap_attention_executor import create_app
     from vllm.pap.remote_attention import (
@@ -1252,7 +1588,7 @@ def test_attention_executor_batch_binary_append_and_compute_keeps_stateful_kv() 
     )
 
     app = create_app()
-    client = TestClient(app)
+    client = _ASGITestClient(app)
     for request_id in ("req-batch-0", "req-batch-1"):
         client.post(
             "/v1/pap/attention/register",
@@ -1305,7 +1641,6 @@ def test_attention_executor_batch_binary_append_and_compute_keeps_stateful_kv() 
 
 def test_attention_executor_batch_binary_accepts_packed_qkv(monkeypatch) -> None:
     import torch
-    from fastapi.testclient import TestClient
 
     from examples.pap.pap_attention_executor import create_app
     from vllm.pap.remote_attention import (
@@ -1319,7 +1654,7 @@ def test_attention_executor_batch_binary_accepts_packed_qkv(monkeypatch) -> None
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_Q_SIZE", "2")
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_KV_SIZE", "2")
     app = create_app()
-    client = TestClient(app)
+    client = _ASGITestClient(app)
     client.post(
         "/v1/pap/attention/register",
         json={
@@ -1402,13 +1737,12 @@ def test_attention_executor_compact_tcp_payload_keeps_stateful_kv() -> None:
 
 def test_attention_executor_rejects_decode_when_prompt_kv_is_missing() -> None:
     import torch
-    from fastapi.testclient import TestClient
 
     from examples.pap.pap_attention_executor import create_app
     from vllm.pap.remote_attention import serialize_tensor
 
     app = create_app()
-    client = TestClient(app)
+    client = _ASGITestClient(app)
     client.post(
         "/v1/pap/attention/register",
         json={
@@ -1438,13 +1772,12 @@ def test_attention_executor_rejects_decode_when_prompt_kv_is_missing() -> None:
 
 def test_attention_executor_imports_prefill_kv_before_stateful_decode() -> None:
     import torch
-    from fastapi.testclient import TestClient
 
     from examples.pap.pap_attention_executor import create_app
     from vllm.pap.remote_attention import deserialize_attention_result, serialize_tensor
 
     app = create_app()
-    client = TestClient(app)
+    client = _ASGITestClient(app)
     client.post(
         "/v1/pap/attention/register",
         json={
@@ -1498,7 +1831,6 @@ def test_attention_executor_imports_prefill_kv_before_stateful_decode() -> None:
 
 def test_attention_executor_binary_imports_prefill_kv_before_decode() -> None:
     import torch
-    from fastapi.testclient import TestClient
 
     from examples.pap.pap_attention_executor import create_app
     from vllm.pap.remote_attention import (
@@ -1507,7 +1839,7 @@ def test_attention_executor_binary_imports_prefill_kv_before_decode() -> None:
     )
 
     app = create_app()
-    client = TestClient(app)
+    client = _ASGITestClient(app)
     client.post(
         "/v1/pap/attention/register",
         json={
@@ -1578,7 +1910,6 @@ def test_attention_executor_binary_imports_prefill_kv_ipc_descriptor(
     monkeypatch,
 ) -> None:
     import torch
-    from fastapi.testclient import TestClient
 
     from examples.pap import pap_attention_executor
     from examples.pap.pap_attention_executor import create_app
@@ -1618,7 +1949,7 @@ def test_attention_executor_binary_imports_prefill_kv_ipc_descriptor(
         ),
     )
     app = create_app()
-    client = TestClient(app)
+    client = _ASGITestClient(app)
     client.post(
         "/v1/pap/attention/register",
         json={
@@ -1654,7 +1985,6 @@ def test_attention_executor_ipc_import_keeps_opened_tensor_views(
     monkeypatch,
 ) -> None:
     import torch
-    from fastapi.testclient import TestClient
 
     from examples.pap import pap_attention_executor
     from examples.pap.pap_attention_executor import create_app
@@ -1692,7 +2022,7 @@ def test_attention_executor_ipc_import_keeps_opened_tensor_views(
         ),
     )
     app = create_app()
-    client = TestClient(app)
+    client = _ASGITestClient(app)
     client.post(
         "/v1/pap/attention/register",
         json={
@@ -1733,7 +2063,6 @@ def test_attention_executor_paged_ipc_import_keeps_prefill_block_views(
     monkeypatch,
 ) -> None:
     import torch
-    from fastapi.testclient import TestClient
 
     from examples.pap import pap_attention_executor
     from examples.pap.pap_attention_executor import create_app
@@ -1772,7 +2101,7 @@ def test_attention_executor_paged_ipc_import_keeps_prefill_block_views(
         ),
     )
     app = create_app()
-    client = TestClient(app)
+    client = _ASGITestClient(app)
     client.post(
         "/v1/pap/attention/register",
         json={
@@ -2138,13 +2467,12 @@ def test_attention_registry_reimport_preserves_local_decode_kv() -> None:
 
 def test_attention_executor_compute_existing_prefill_token_does_not_append() -> None:
     import torch
-    from fastapi.testclient import TestClient
 
     from examples.pap.pap_attention_executor import create_app
     from vllm.pap.remote_attention import deserialize_attention_result, serialize_tensor
 
     app = create_app()
-    client = TestClient(app)
+    client = _ASGITestClient(app)
     client.post(
         "/v1/pap/attention/register",
         json={
@@ -2201,13 +2529,12 @@ def test_attention_executor_compute_existing_prefill_token_does_not_append() -> 
 
 def test_attention_executor_tracks_decode_progress_per_layer() -> None:
     import torch
-    from fastapi.testclient import TestClient
 
     from examples.pap.pap_attention_executor import create_app
     from vllm.pap.remote_attention import serialize_tensor
 
     app = create_app()
-    client = TestClient(app)
+    client = _ASGITestClient(app)
     client.post(
         "/v1/pap/attention/register",
         json={
@@ -2268,13 +2595,12 @@ def test_attention_executor_tracks_decode_progress_per_layer() -> None:
 
 def test_attention_executor_records_scheduler_descriptor_state() -> None:
     import torch
-    from fastapi.testclient import TestClient
 
     from examples.pap.pap_attention_executor import create_app
     from vllm.pap.remote_attention import serialize_tensor
 
     app = create_app()
-    client = TestClient(app)
+    client = _ASGITestClient(app)
     registered = client.post(
         "/v1/pap/attention/register",
         json={
@@ -2315,13 +2641,12 @@ def test_attention_executor_records_scheduler_descriptor_state() -> None:
 
 def test_attention_executor_rejects_bad_scheduler_descriptor() -> None:
     import torch
-    from fastapi.testclient import TestClient
 
     from examples.pap.pap_attention_executor import create_app
     from vllm.pap.remote_attention import serialize_tensor
 
     app = create_app()
-    client = TestClient(app)
+    client = _ASGITestClient(app)
     client.post(
         "/v1/pap/attention/register",
         json={

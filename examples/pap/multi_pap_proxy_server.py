@@ -20,8 +20,10 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 try:
     from examples.pap.pap_proxy_server import (
+        prefill_kv_handle_from_kv_params,
         prefill_prefix_len_from_kv_params,
         register_attention_handle,
+        wait_attention_prefill_ready,
     )
     from examples.pap.pd_payloads import (
         attach_pap_prefill_attention_params,
@@ -31,8 +33,10 @@ try:
     )
 except ModuleNotFoundError:  # pragma: no cover - direct script execution
     from pap_proxy_server import (  # type: ignore[no-redef]
+        prefill_kv_handle_from_kv_params,
         prefill_prefix_len_from_kv_params,
         register_attention_handle,
+        wait_attention_prefill_ready,
     )
     from pd_payloads import (  # type: ignore[no-redef]
         attach_pap_prefill_attention_params,
@@ -504,13 +508,25 @@ async def _handle_openai_request(api_path: str, request: Request):
             prefill_host=group.prefill_host,
             prefill_nixl_port=group.prefill_nixl_port,
         )
+        prefill_kv_handle = prefill_kv_handle_from_kv_params(
+            kv_params,
+            fallback=attention_session.get("prefill_kv_handle"),
+        )
         prefix_len = prefill_prefix_len_from_kv_params(kv_params)
+        attention_ready = False
+        if prefix_len is not None:
+            attention_ready = all(
+                [
+                    await wait_attention_prefill_ready(attention, request_id)
+                    for attention in attention_clients
+                ]
+            )
         projection_payload = build_projection_payload_for_group(
             req_data,
             kv_params,
             group,
-            pap_prefill_kv_handle=str(attention_session.get("prefill_kv_handle")),
-            pap_attention_kv_installed=prefix_len is not None,
+            pap_prefill_kv_handle=prefill_kv_handle,
+            pap_attention_kv_installed=attention_ready,
         )
         projection_payload.setdefault("stream", client_stream)
         projection_kv_params = projection_payload.get("kv_transfer_params") or {}
@@ -521,7 +537,8 @@ async def _handle_openai_request(api_path: str, request: Request):
         )
         logger.info(
             "request_id=%s pa=%s:%d attention=%s:%s projection=%s:%d "
-            "prefill_ms=%d prefill_prefix_len=%s projection_kv_keys=%s",
+            "prefill_ms=%d prefill_prefix_len=%s attention_ready=%s "
+            "projection_kv_keys=%s",
             request_id,
             group.prefill_host,
             group.prefill_port,
@@ -531,6 +548,7 @@ async def _handle_openai_request(api_path: str, request: Request):
             projection.port,
             prefill_ms,
             prefix_len,
+            attention_ready,
             sorted(projection_kv_params.keys()),
         )
         if profile:

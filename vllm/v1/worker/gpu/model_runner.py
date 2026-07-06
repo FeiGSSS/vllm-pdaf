@@ -990,6 +990,13 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             "pap_num_reqs": input_batch.num_reqs,
             "pap_num_actual_tokens": input_batch.num_tokens,
             "pap_positions": input_batch.positions,
+            "pap_input_token_ids": tuple(
+                int(token_id)
+                for token_id in input_batch.input_ids.detach()
+                .reshape(-1)[: int(input_batch.num_tokens)]
+                .to(device="cpu", dtype=torch.long)
+                .tolist()
+            ),
             "pap_enabled": self._pap_enabled_for_batch(input_batch),
             "pap_attention_tcp_endpoint": (
                 self.vllm_config.kv_transfer_config.get_from_extra_config(

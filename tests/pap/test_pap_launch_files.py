@@ -115,6 +115,16 @@ def test_pap_6pa2p_launch_forwards_routing_policy_to_proxy() -> None:
     assert '--routing-policy "$PAP_ROUTING_POLICY"' in text
 
 
+def test_pap_launch_exports_unified_kv_control_endpoints() -> None:
+    script = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
+    text = script.read_text()
+
+    assert 'PAP_UNIFIED_KV="${PAP_UNIFIED_KV:-1}"' in text
+    assert "PAP_DECODE_COMMIT_ENDPOINT" in text
+    assert "PAP_LEASE_RELEASE_ENDPOINT" in text
+    assert 'PAP_LEASE_RELEASE_ENDPOINT="$PAP_LEASE_RELEASE_ENDPOINT"' in text
+
+
 def test_pap_launch_does_not_expose_pap_runner_microbatch() -> None:
     script = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
     text = script.read_text()

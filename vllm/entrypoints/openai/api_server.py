@@ -200,6 +200,11 @@ def build_app(
 
         register_vllm_dev_api_routers(app)
 
+    if os.environ.get("PAP_UNIFIED_KV", "").lower() in {"1", "true", "yes", "on"}:
+        from vllm.pap.prefill_control_router import build_prefill_control_router
+
+        app.include_router(build_prefill_control_router())
+
     if "generate" in supported_tasks:
         from vllm.entrypoints.generate.api_router import (
             register_generate_api_routers,

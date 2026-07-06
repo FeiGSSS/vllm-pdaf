@@ -5,7 +5,7 @@ import os
 import socket
 import time
 import warnings
-from collections.abc import AsyncGenerator, Iterable, Mapping
+from collections.abc import AsyncGenerator, Iterable, Mapping, Sequence
 from copy import copy
 from typing import Any
 
@@ -927,6 +927,28 @@ class AsyncLLM(EngineClient):
 
     async def reset_encoder_cache(self) -> None:
         await self.engine_core.reset_encoder_cache_async()
+
+    async def pap_apply_decode_commit_async(
+        self,
+        request_id: str,
+        new_seq_len: int,
+        new_token_ids: Sequence[int],
+    ) -> dict[str, Any]:
+        return await self.engine_core.pap_apply_decode_commit_async(
+            request_id,
+            int(new_seq_len),
+            tuple(int(t) for t in new_token_ids),
+        )
+
+    async def pap_release_kv_lease_async(
+        self,
+        request_id: str,
+        lease_id: str,
+    ) -> dict[str, Any]:
+        return await self.engine_core.pap_release_kv_lease_async(
+            request_id,
+            lease_id,
+        )
 
     async def sleep(self, level: int = 1, mode: PauseMode = "abort") -> None:
         if level >= 1:

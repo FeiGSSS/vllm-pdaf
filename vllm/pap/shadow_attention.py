@@ -398,6 +398,7 @@ def import_prefill_paged_kv(
     from vllm.pap.kv_lease import (
         pap_active_lease_id,
         pap_has_active_lease,
+        pap_leased_block_ids,
         pap_pin_blocks,
     )
     from vllm.pap.remote_attention import (
@@ -437,12 +438,17 @@ def import_prefill_paged_kv(
             lease_capacity_tokens = int(seq_len)
         elif unified_kv_mode and pap_has_active_lease(request_id):
             lease_id = pap_active_lease_id(request_id)
-    except Exception:  # noqa: BLE001
-        # Lease registry must not break Prefill export; fail to no-lease mode.
-        lease_id = None
-        leased_block_ids = None
-        lease_capacity_tokens = None
-        unified_kv_mode = False
+            leased_block_ids = pap_leased_block_ids(request_id)
+    except Exception as exc:
+        logger.exception(
+            "PAP unified KV lease pin failed request_id=%s layer=%s blocks=%d",
+            request_id,
+            layer_name,
+            len(block_ids),
+        )
+        raise RuntimeError(
+            f"PAP unified KV lease pin failed for request_id={request_id}"
+        ) from exc
     if unified_kv_mode:
         prefix_len_value = int(seq_len)
         planned_capacity = (

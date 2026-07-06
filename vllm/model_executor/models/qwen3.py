@@ -114,6 +114,15 @@ def _pap_unified_kv_export_decode_capacity_tokens() -> int:
         return 0
 
 
+def _pap_offload_exec_session_request_id(
+    request_id: str,
+    prefill_kv_handle: Any,
+) -> str:
+    if prefill_kv_handle:
+        return str(prefill_kv_handle)
+    return str(request_id)
+
+
 def _pap_projection_critical_trace_enabled() -> bool:
     return _pap_env_enabled("PAP_PROJECTION_CRITICAL_TRACE")
 
@@ -450,6 +459,27 @@ def _pap_direct_qkv_batch_for_group(
     if not direct.is_contiguous():
         return None
     return direct
+
+
+def _pap_decode_token_ids_for_req_index(
+    input_token_ids: tuple[int, ...],
+    req_index: int,
+) -> tuple[int, ...]:
+    req_index = int(req_index)
+    if 0 <= req_index < len(input_token_ids):
+        return (int(input_token_ids[req_index]),)
+    return ()
+
+
+def _pap_decode_token_rows_for_indices(
+    input_token_ids: Iterable[int],
+    req_indices: Iterable[int],
+) -> tuple[tuple[int, ...], ...]:
+    token_ids = tuple(int(token_id) for token_id in input_token_ids)
+    return tuple(
+        _pap_decode_token_ids_for_req_index(token_ids, int(req_index))
+        for req_index in req_indices
+    )
 
 
 def _pap_offload_exec_transport_kind() -> str:
@@ -1076,6 +1106,10 @@ class Qwen3Attention(nn.Module):
         prefill_kv_handle_by_request = (
             additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
         )
+        input_token_ids = tuple(
+            int(token_id)
+            for token_id in additional_kwargs.get("pap_input_token_ids") or ()
+        )
 
         query = q.view(-1, self.num_heads, self.head_dim)
         key = k.view(-1, self.num_kv_heads, self.head_dim)
@@ -1131,11 +1165,19 @@ class Qwen3Attention(nn.Module):
                 if not prefill_kv_handle:
                     raise RuntimeError("PAP missing local prefill KV handle")
                 raise RuntimeError("PAP attention KV is not installed")
+            session_request_id = _pap_offload_exec_session_request_id(
+                request_id,
+                prefill_kv_handle,
+            )
             descriptor = PAPOffloadExecDescriptor(
-                request_id=request_id,
+                request_id=session_request_id,
                 layer_name=self.attn.layer_name,
                 step=seq_len,
                 scale=float(self.scaling),
+                decode_token_ids=_pap_decode_token_ids_for_req_index(
+                    input_token_ids,
+                    req_index,
+                ),
             )
             offload_exec_groups.setdefault(
                 (tcp_endpoint, attention_endpoint, offload_exec_zmq_endpoint),
@@ -1333,6 +1375,10 @@ class Qwen3Attention(nn.Module):
         prefill_kv_handle_by_request = (
             additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
         )
+        input_token_ids = tuple(
+            int(token_id)
+            for token_id in additional_kwargs.get("pap_input_token_ids") or ()
+        )
         remote_attention_calls: list[tuple[int, str, str]] = []
         offload_exec_group_templates: dict[tuple[str | None, str], dict[str, Any]] = {}
         routed_req_indices: set[int] = set()
@@ -1362,14 +1408,7 @@ class Qwen3Attention(nn.Module):
             if not (len(req_indices) == len(group_request_ids) == len(group_steps)):
                 raise RuntimeError("PAP OFFLOAD_EXEC route group is malformed")
             template_key = (str(attention_endpoint), str(offload_exec_zmq_endpoint))
-            offload_exec_group_templates[template_key] = {
-                "batch_id_suffix": str(route_group["batch_id_suffix"]),
-                "metadata_template": {
-                    "r": group_request_ids,
-                    "s": group_steps,
-                    "a": (float(self.scaling),) * len(group_steps),
-                },
-            }
+            group_session_request_ids: list[str] = []
             for group_offset, req_index in enumerate(req_indices):
                 if req_index < 0 or req_index >= num_reqs:
                     raise RuntimeError("PAP OFFLOAD_EXEC route index out of range")
@@ -1390,6 +1429,12 @@ class Qwen3Attention(nn.Module):
                     if not prefill_kv_handle:
                         raise RuntimeError("PAP missing local prefill KV handle")
                     raise RuntimeError("PAP attention KV is not installed")
+                group_session_request_ids.append(
+                    _pap_offload_exec_session_request_id(
+                        request_id,
+                        prefill_kv_handle,
+                    )
+                )
                 remote_attention_calls.append(
                     (
                         req_index,
@@ -1404,6 +1449,24 @@ class Qwen3Attention(nn.Module):
                     self.attn.layer_name,
                     offload_exec_zmq_endpoint,
                 )
+            offload_exec_group_templates[template_key] = {
+                "batch_id_suffix": ",".join(
+                    f"{request_id}@{step}"
+                    for request_id, step in zip(
+                        group_session_request_ids,
+                        group_steps,
+                    )
+                ),
+                "metadata_template": {
+                    "r": tuple(group_session_request_ids),
+                    "s": group_steps,
+                    "a": (float(self.scaling),) * len(group_steps),
+                    "t": _pap_decode_token_rows_for_indices(
+                        input_token_ids,
+                        req_indices,
+                    ),
+                },
+            }
         if len(routed_req_indices) != num_reqs:
             raise RuntimeError("PAP OFFLOAD_EXEC route groups do not cover batch")
 

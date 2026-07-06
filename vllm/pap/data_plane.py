@@ -182,9 +182,16 @@ class PAPOffloadExecBatchDescriptor:
                 normalized_template["a"] = tuple(
                     float(scale) for scale in template["a"]
                 )
+            if "t" in template:
+                normalized_template["t"] = tuple(
+                    tuple(int(token_id) for token_id in row)
+                    for row in template["t"]
+                )
             lengths = {len(request_ids), len(steps)}
             if "a" in normalized_template:
                 lengths.add(len(normalized_template["a"]))
+            if "t" in normalized_template:
+                lengths.add(len(normalized_template["t"]))
             if len(lengths) != 1:
                 raise ValueError(
                     "PAP OFFLOAD_EXEC metadata template length mismatch"
@@ -444,6 +451,21 @@ class PAPOffloadKVPagedIPCDescriptor:
                 raise ValueError(
                     "unified_kv_mode writable_start_token > writable_end_token"
                 )
+            if self.lease_id is None:
+                raise ValueError("unified_kv_mode requires lease_id")
+            if self.leased_block_ids is None or not self.leased_block_ids:
+                raise ValueError("unified_kv_mode requires leased_block_ids")
+            if self.lease_capacity_tokens is None:
+                raise ValueError("unified_kv_mode requires lease_capacity_tokens")
+            if int(self.lease_capacity_tokens) < int(self.writable_end_token):
+                raise ValueError(
+                    "lease_capacity_tokens must cover writable_end_token"
+                )
+            required_blocks = (
+                int(self.writable_end_token) + self.block_size - 1
+            ) // self.block_size
+            if len(self.block_ids) < required_blocks:
+                raise ValueError("block_ids must cover writable_end_token")
 
     def to_dict(self) -> dict[str, Any]:
         d = {
@@ -832,12 +854,15 @@ class PAPNixlMailboxOffloadExecTransport:
 def _offload_exec_descriptor_to_metadata(
     descriptor: PAPOffloadExecDescriptor,
 ) -> dict[str, Any]:
-    return {
+    metadata: dict[str, Any] = {
         "request_id": descriptor.request_id,
         "layer_name": descriptor.layer_name,
         "step": descriptor.step,
         "scale": descriptor.scale,
     }
+    if descriptor.decode_token_ids:
+        metadata["decode_token_ids"] = list(descriptor.decode_token_ids)
+    return metadata
 
 
 def _offload_exec_batch_descriptor_to_metadata(
@@ -850,33 +875,51 @@ def _offload_exec_batch_descriptor_to_metadata(
             scales = [float(item.scale) for item in descriptor.items]
         request_ids = list(descriptor.metadata_template["r"])
         steps = [int(step) for step in descriptor.metadata_template["s"]]
+        token_rows = [
+            [int(token_id) for token_id in row]
+            for row in descriptor.metadata_template.get("t", ())
+        ]
+        has_tokens = bool(token_rows) and any(token_rows)
         if not (len(request_ids) == len(steps) == len(scales)):
             raise ValueError("compact PAP OFFLOAD_EXEC batch metadata length mismatch")
-        return {
-            "v": 2,
+        if token_rows and len(token_rows) != len(request_ids):
+            raise ValueError("compact PAP OFFLOAD_EXEC batch metadata length mismatch")
+        metadata = {
+            "v": 3 if has_tokens else 2,
             "l": descriptor.layer_name,
             "r": request_ids,
             "s": steps,
             "a": scales,
         }
-    return {
-        "v": 2,
+        if has_tokens:
+            metadata["t"] = token_rows
+        return metadata
+    token_rows = [list(item.decode_token_ids) for item in descriptor.items]
+    has_tokens = any(token_rows)
+    metadata = {
+        "v": 3 if has_tokens else 2,
         "l": descriptor.layer_name,
         "r": [item.request_id for item in descriptor.items],
         "s": [int(item.step) for item in descriptor.items],
         "a": [float(item.scale) for item in descriptor.items],
     }
+    if has_tokens:
+        metadata["t"] = token_rows
+    return metadata
 
 
 def _offload_exec_batch_descriptor_from_metadata(
     metadata: dict[str, Any],
 ) -> PAPOffloadExecBatchDescriptor:
-    if metadata.get("v") == 2:
+    if metadata.get("v") in {2, 3}:
         layer_name = str(metadata["l"])
         request_ids = list(metadata["r"])
         steps = list(metadata["s"])
         scales = list(metadata["a"])
-        if not (len(request_ids) == len(steps) == len(scales)):
+        token_rows = metadata.get("t")
+        if token_rows is None:
+            token_rows = [()] * len(request_ids)
+        if not (len(request_ids) == len(steps) == len(scales) == len(token_rows)):
             raise ValueError("compact PAP OFFLOAD_EXEC batch metadata length mismatch")
         return PAPOffloadExecBatchDescriptor(
             layer_name=layer_name,
@@ -886,8 +929,11 @@ def _offload_exec_batch_descriptor_from_metadata(
                     layer_name=layer_name,
                     step=int(step),
                     scale=float(scale),
+                    decode_token_ids=tuple(int(t) for t in token_row),
                 )
-                for request_id, step, scale in zip(request_ids, steps, scales)
+                for request_id, step, scale, token_row in zip(
+                    request_ids, steps, scales, token_rows
+                )
             ),
         )
 
@@ -900,6 +946,9 @@ def _offload_exec_batch_descriptor_from_metadata(
                 layer_name=layer_name,
                 step=int(item["step"]),
                 scale=float(item["scale"]),
+                decode_token_ids=tuple(
+                    int(t) for t in item.get("decode_token_ids", ())
+                ),
             )
             for item in metadata["items"]
         ),

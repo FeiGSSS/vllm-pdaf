@@ -652,9 +652,16 @@ class KVCacheManager:
             new_token_ids: The newly generated token IDs from the remote
                 decode.
         """
-        if new_seq_len <= int(request.num_computed_tokens):
+        old_seq_len = int(request.num_computed_tokens)
+        if new_seq_len <= old_seq_len:
             return
         delta = [int(t) for t in new_token_ids]
+        expected_delta = int(new_seq_len) - old_seq_len
+        if len(delta) != expected_delta:
+            raise ValueError(
+                "new_token_ids length must match new_seq_len delta: "
+                f"expected {expected_delta}, got {len(delta)}"
+            )
         # Request.append_output_token_ids extends block_hashes automatically.
         request.append_output_token_ids(delta)
         request.num_computed_tokens = int(new_seq_len)

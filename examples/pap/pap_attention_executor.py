@@ -38,6 +38,7 @@ from vllm.pap.data_plane import (
     pap_offload_exec_trace_id,
 )
 from vllm.pap.decode_commit_client import DecodeCommitClient as _DecodeCommitClient
+from vllm.pap.lease_release_client import LeaseReleaseClient as _LeaseReleaseClient
 
 logging.basicConfig(
     level=logging.INFO,
@@ -46,6 +47,7 @@ logging.basicConfig(
 logger = logging.getLogger("pap_attention")
 
 _commit_client: _DecodeCommitClient | None = None
+_lease_release_client: _LeaseReleaseClient | None = None
 
 
 def _get_commit_client() -> _DecodeCommitClient:
@@ -53,6 +55,13 @@ def _get_commit_client() -> _DecodeCommitClient:
     if _commit_client is None:
         _commit_client = _DecodeCommitClient()
     return _commit_client
+
+
+def _get_lease_release_client() -> _LeaseReleaseClient:
+    global _lease_release_client
+    if _lease_release_client is None:
+        _lease_release_client = _LeaseReleaseClient()
+    return _lease_release_client
 
 
 def _pap_env_flag(name: str, default: bool = False) -> bool:
@@ -638,7 +647,7 @@ class PAPAttentionRegistry:
             grown.length = buffer.length
         return grown
 
-    def _release_session_locked(self, request_id: str) -> bool:
+    def _release_session_locked(self, request_id: str) -> tuple[bool, str | None]:
         existed = self._sessions.pop(request_id, None) is not None
         self._layer_events.pop(request_id, None)
         self._decode_kv.pop(request_id, None)
@@ -653,7 +662,7 @@ class PAPAttentionRegistry:
         if lease_id is not None and _pap_kv_lease_profile_enabled():
             logger.info(
                 "PAP Attention release session lease request_id=%s "
-                "lease_id=%s leased_blocks=%d (Prefill TTL sweep will free)",
+                "lease_id=%s leased_blocks=%d",
                 request_id,
                 lease_id,
                 len(leased_blocks or ()),
@@ -664,12 +673,12 @@ class PAPAttentionRegistry:
             if cached_request_id == request_id or cached_session_id == request_id:
                 self._request_id_resolution_cache.pop(cached_request_id, None)
         self._attention_sessions.free_session(request_id)
-        return existed
+        return existed, lease_id
 
-    def _replace_existing_session_locked(self, request_id: str) -> None:
+    def _replace_existing_session_locked(self, request_id: str) -> str | None:
         if request_id in self._sessions:
-            self._release_session_locked(request_id)
-            return
+            _existed, lease_id = self._release_session_locked(request_id)
+            return lease_id
 
         self._layer_events.pop(request_id, None)
         self._decode_kv.pop(request_id, None)
@@ -678,6 +687,9 @@ class PAPAttentionRegistry:
         self._prefill_readiness.pop(request_id, None)
         self._unified_paged_kv.pop(request_id, None)
         self._drop_offload_exec_session_entry_cache_locked(request_id)
+        lease_id = self._session_lease_ids.pop(request_id, None)
+        self._session_leased_block_ids.pop(request_id, None)
+        self._session_lease_capacity_tokens.pop(request_id, None)
         for cached_request_id, cached_session_id in list(
             self._request_id_resolution_cache.items()
         ):
@@ -686,10 +698,26 @@ class PAPAttentionRegistry:
         self._attention_sessions.free_session(request_id)
         self._sessions.pop(request_id, None)
         self._request_id_resolution_cache.pop(request_id, None)
+        return lease_id
 
     def release_session(self, request_id: str) -> bool:
         with self._lock:
-            return self._release_session_locked(request_id)
+            existed, lease_id = self._release_session_locked(request_id)
+        commit_client = _get_commit_client()
+        if commit_client.enabled and not commit_client.flush_request(request_id):
+            logger.warning(
+                "PAP decode commit flush timed out before lease release "
+                "request_id=%s",
+                request_id,
+            )
+        if lease_id is not None:
+            _get_lease_release_client().release(
+                request_id=request_id,
+                lease_id=lease_id,
+            )
+        if commit_client.enabled:
+            commit_client.forget_request(request_id)
+        return existed
 
     def append_decode_kv_to_unified_prefill_cache(
         self,
@@ -847,7 +875,9 @@ class PAPAttentionRegistry:
             kv_size=registration.kv_size,
         )
         with self._lock:
-            self._replace_existing_session_locked(registration.request_id)
+            replaced_lease_id = self._replace_existing_session_locked(
+                registration.request_id
+            )
             self._sessions[registration.request_id] = session
             self._layer_events.setdefault(registration.request_id, [])
             self._decode_kv.setdefault(registration.request_id, {})
@@ -862,6 +892,22 @@ class PAPAttentionRegistry:
                 registration.conversation_id,
                 block_size=registration.block_size,
                 max_seq_len=registration.max_seq_len,
+            )
+        if replaced_lease_id is not None:
+            commit_client = _get_commit_client()
+            if commit_client.enabled and not commit_client.flush_request(
+                registration.request_id
+            ):
+                logger.warning(
+                    "PAP decode commit flush timed out before replaced "
+                    "lease release request_id=%s",
+                    registration.request_id,
+                )
+            if commit_client.enabled:
+                commit_client.forget_request(registration.request_id)
+            _get_lease_release_client().release(
+                request_id=registration.request_id,
+                lease_id=replaced_lease_id,
             )
         logger.info(
             "registered PAP attention session request_id=%s "
@@ -1226,6 +1272,17 @@ class PAPAttentionRegistry:
                 layer_name
             )
             return None if readiness is None else readiness.copy()
+
+    def get_prefill_readiness(self, request_id: str) -> list[PAPPrefillLayerReadiness]:
+        with self._lock:
+            session_request_id = self._resolve_session_request_id_locked(request_id)
+            if session_request_id is None:
+                return []
+            readiness_by_layer = self._prefill_readiness.get(session_request_id, {})
+            return [
+                readiness.copy()
+                for _layer_name, readiness in sorted(readiness_by_layer.items())
+            ]
 
     def import_prefill_kv(
         self,
@@ -2383,6 +2440,7 @@ def compute_binary_attention_response(
                     "layer_name": descriptor.layer_name,
                     "seq_len": seq_len,
                     "status": "queued",
+                    "unified_kv_mode": descriptor.unified_kv_mode,
                 },
                 {},
             )
@@ -2418,6 +2476,7 @@ def compute_binary_attention_response(
                 "layer_name": descriptor.layer_name,
                 "seq_len": seq_len,
                 "status": "ready",
+                "unified_kv_mode": descriptor.unified_kv_mode,
             },
             {},
         )
@@ -3753,6 +3812,16 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
             "request_id": request_id,
             "events": [
                 event.__dict__ for event in registry.get_layer_events(request_id)
+            ],
+        }
+
+    @app.get("/v1/pap/attention/sessions/{request_id}/prefill-readiness")
+    async def get_prefill_readiness(request_id: str) -> dict[str, Any]:
+        return {
+            "request_id": request_id,
+            "layers": [
+                readiness.__dict__
+                for readiness in registry.get_prefill_readiness(request_id)
             ],
         }
 

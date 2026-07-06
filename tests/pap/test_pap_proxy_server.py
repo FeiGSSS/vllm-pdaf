@@ -1,13 +1,17 @@
 import asyncio
 from pathlib import Path
 
+import httpx
+
 from examples.pap.pap_proxy_server import (
     PAPServiceClient,
     attach_pap_prefill_attention_params,
     build_prefill_payload,
     build_projection_payload,
+    prefill_kv_handle_from_kv_params,
     prefill_prefix_len_from_kv_params,
     register_attention_handle,
+    wait_attention_prefill_ready,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -106,13 +110,79 @@ def test_build_projection_payload_for_pap_is_kv_unaware() -> None:
         assert key not in kv_params
 
 
-def test_single_proxy_marks_attention_kv_installed_only_after_prefill() -> None:
+def test_prefill_kv_handle_prefers_remote_request_id() -> None:
+    assert (
+        prefill_kv_handle_from_kv_params(
+            {
+                "remote_request_id": "cmpl-prefill-0-cafebabe",
+                "pap_prefill_kv_handle": "external",
+            },
+            fallback="fallback",
+        )
+        == "cmpl-prefill-0-cafebabe"
+    )
+
+
+def test_prefill_kv_handle_falls_back_to_attention_session() -> None:
+    assert (
+        prefill_kv_handle_from_kv_params({}, fallback="external")
+        == "external"
+    )
+
+
+def test_wait_attention_prefill_ready_polls_until_layers_ready() -> None:
+    class FakeClient:
+        def __init__(self):
+            self.paths = []
+            self.responses = [
+                {"request_id": "req-1", "layers": []},
+                {
+                    "request_id": "req-1",
+                    "layers": [{"layer_name": "layer0", "ready": True}],
+                },
+            ]
+
+        async def get(self, path, headers=None):
+            self.paths.append(path)
+            return httpx.Response(
+                200,
+                json=self.responses.pop(0),
+                request=httpx.Request("GET", f"http://testserver{path}"),
+            )
+
+    fake = FakeClient()
+    attention = PAPServiceClient(
+        client=fake,
+        host="127.0.0.1",
+        port=8300,
+        base_url="http://127.0.0.1:8300",
+        role="attention",
+    )
+
+    ready = asyncio.run(
+        wait_attention_prefill_ready(
+            attention,
+            "req-1",
+            timeout_s=0.5,
+            poll_interval_s=0.0,
+        )
+    )
+
+    assert ready is True
+    assert fake.paths == [
+        "/v1/pap/attention/sessions/req-1/prefill-readiness",
+        "/v1/pap/attention/sessions/req-1/prefill-readiness",
+    ]
+
+
+def test_single_proxy_marks_attention_kv_installed_only_after_readiness() -> None:
     text = (ROOT / "examples/pap/pap_proxy_server.py").read_text()
 
     prefill = text.index("prefill_resp = await _post_json")
     prefix_len = text.index("prefix_len = prefill_prefix_len_from_kv_params")
-    installed = text.index("pap_attention_kv_installed=prefix_len is not None")
-    assert prefill < prefix_len < installed
+    readiness = text.index("attention_ready =")
+    installed = text.index("pap_attention_kv_installed=attention_ready")
+    assert prefill < prefix_len < readiness < installed
 
 
 def test_single_proxy_has_no_decode_barrier() -> None:

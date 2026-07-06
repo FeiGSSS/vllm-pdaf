@@ -157,6 +157,21 @@ class EngineCoreClient(ABC):
     def reset_encoder_cache(self) -> None:
         raise NotImplementedError
 
+    def pap_apply_decode_commit(
+        self,
+        request_id: str,
+        new_seq_len: int,
+        new_token_ids: Sequence[int],
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def pap_release_kv_lease(
+        self,
+        request_id: str,
+        lease_id: str,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
     def sleep(self, level: int = 1, mode: PauseMode = "abort") -> None:
         raise NotImplementedError
 
@@ -232,6 +247,21 @@ class EngineCoreClient(ABC):
         raise NotImplementedError
 
     async def reset_encoder_cache_async(self) -> None:
+        raise NotImplementedError
+
+    async def pap_apply_decode_commit_async(
+        self,
+        request_id: str,
+        new_seq_len: int,
+        new_token_ids: Sequence[int],
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def pap_release_kv_lease_async(
+        self,
+        request_id: str,
+        lease_id: str,
+    ) -> dict[str, Any]:
         raise NotImplementedError
 
     async def sleep_async(self, level: int = 1, mode: PauseMode = "abort") -> None:
@@ -320,6 +350,25 @@ class InprocClient(EngineCoreClient):
 
     def reset_encoder_cache(self) -> None:
         self.engine_core.reset_encoder_cache()
+
+    def pap_apply_decode_commit(
+        self,
+        request_id: str,
+        new_seq_len: int,
+        new_token_ids: Sequence[int],
+    ) -> dict[str, Any]:
+        return self.engine_core.pap_apply_decode_commit(
+            request_id,
+            int(new_seq_len),
+            tuple(int(t) for t in new_token_ids),
+        )
+
+    def pap_release_kv_lease(
+        self,
+        request_id: str,
+        lease_id: str,
+    ) -> dict[str, Any]:
+        return self.engine_core.pap_release_kv_lease(request_id, lease_id)
 
     def sleep(self, level: int = 1, mode: PauseMode = "abort") -> None:
         if mode == "wait":
@@ -908,6 +957,26 @@ class SyncMPClient(MPClient):
     def reset_encoder_cache(self) -> None:
         self.call_utility("reset_encoder_cache")
 
+    def pap_apply_decode_commit(
+        self,
+        request_id: str,
+        new_seq_len: int,
+        new_token_ids: Sequence[int],
+    ) -> dict[str, Any]:
+        return self.call_utility(
+            "pap_apply_decode_commit",
+            request_id,
+            int(new_seq_len),
+            tuple(int(t) for t in new_token_ids),
+        )
+
+    def pap_release_kv_lease(
+        self,
+        request_id: str,
+        lease_id: str,
+    ) -> dict[str, Any]:
+        return self.call_utility("pap_release_kv_lease", request_id, lease_id)
+
     def add_lora(self, lora_request: LoRARequest) -> bool:
         return self.call_utility("add_lora", lora_request)
 
@@ -1155,6 +1224,30 @@ class AsyncMPClient(MPClient):
 
     async def reset_encoder_cache_async(self) -> None:
         await self.call_utility_async("reset_encoder_cache")
+
+    async def pap_apply_decode_commit_async(
+        self,
+        request_id: str,
+        new_seq_len: int,
+        new_token_ids: Sequence[int],
+    ) -> dict[str, Any]:
+        return await self.call_utility_async(
+            "pap_apply_decode_commit",
+            request_id,
+            int(new_seq_len),
+            tuple(int(t) for t in new_token_ids),
+        )
+
+    async def pap_release_kv_lease_async(
+        self,
+        request_id: str,
+        lease_id: str,
+    ) -> dict[str, Any]:
+        return await self.call_utility_async(
+            "pap_release_kv_lease",
+            request_id,
+            lease_id,
+        )
 
     async def sleep_async(self, level: int = 1, mode: PauseMode = "abort") -> None:
         await self.call_utility_async("sleep", level, mode)

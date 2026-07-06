@@ -7,7 +7,7 @@ import signal
 import threading
 import time
 from collections import defaultdict, deque
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from concurrent.futures import Future
 from contextlib import ExitStack, contextmanager
 from enum import IntEnum
@@ -374,6 +374,48 @@ class EngineCore:
                 }
             )
         return metadata
+
+    def pap_apply_decode_commit(
+        self,
+        request_id: str,
+        new_seq_len: int,
+        new_token_ids: Sequence[int],
+    ) -> dict[str, Any]:
+        requests = getattr(self.scheduler, "requests", {})
+        request = requests.get(str(request_id))
+        if request is None:
+            return {
+                "request_id": str(request_id),
+                "applied": False,
+                "reason": "unknown_request",
+            }
+        old_seq_len = int(request.num_computed_tokens)
+        self.scheduler.kv_cache_manager.apply_decode_commit(
+            request=request,
+            new_seq_len=int(new_seq_len),
+            new_token_ids=tuple(int(t) for t in new_token_ids),
+        )
+        return {
+            "request_id": str(request_id),
+            "applied": True,
+            "old_seq_len": old_seq_len,
+            "new_seq_len": int(request.num_computed_tokens),
+        }
+
+    def pap_release_kv_lease(
+        self,
+        request_id: str,
+        lease_id: str,
+    ) -> dict[str, Any]:
+        from vllm.pap.kv_lease import pap_release_lease
+
+        released = pap_release_lease(str(lease_id))
+        return {
+            "request_id": str(request_id),
+            "lease_id": str(lease_id),
+            "released": True,
+            "block_count": len(released),
+        }
 
     def add_request(self, request: Request, request_wave: int = 0):
         """Add request to the scheduler.

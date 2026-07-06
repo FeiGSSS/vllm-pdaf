@@ -11,6 +11,7 @@ computes attention.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import os
 import time
@@ -86,6 +87,20 @@ def prefill_prefix_len_from_kv_params(
     return prefix_len
 
 
+def prefill_kv_handle_from_kv_params(
+    kv_transfer_params: dict[str, Any],
+    *,
+    fallback: Any | None = None,
+) -> str | None:
+    for key in ("remote_request_id", "pap_prefill_kv_handle"):
+        value = kv_transfer_params.get(key)
+        if value:
+            return str(value)
+    if fallback:
+        return str(fallback)
+    return None
+
+
 async def register_attention_handle(
     attention: PAPServiceClient,
     request_id: str,
@@ -108,6 +123,46 @@ async def register_attention_handle(
     )
     resp.raise_for_status()
     return resp.json()
+
+
+async def wait_attention_prefill_ready(
+    attention: PAPServiceClient,
+    request_id: str,
+    *,
+    timeout_s: float | None = None,
+    poll_interval_s: float | None = None,
+) -> bool:
+    timeout = (
+        float(timeout_s)
+        if timeout_s is not None
+        else float(os.environ.get("PAP_ATTENTION_PREFILL_READY_TIMEOUT", "5.0"))
+    )
+    poll_interval = (
+        float(poll_interval_s)
+        if poll_interval_s is not None
+        else float(os.environ.get("PAP_ATTENTION_PREFILL_READY_POLL", "0.01"))
+    )
+    deadline = time.monotonic() + timeout
+    path = f"/v1/pap/attention/sessions/{request_id}/prefill-readiness"
+    while True:
+        resp = await attention.client.get(path, headers=_headers(request_id))
+        resp.raise_for_status()
+        body = resp.json()
+        layers = list(body.get("layers") or ())
+        if layers and all(bool(layer.get("ready")) for layer in layers):
+            return True
+        failed = [layer for layer in layers if layer.get("failed")]
+        if failed:
+            raise RuntimeError(
+                "PAP Attention prefill readiness failed "
+                f"request_id={request_id} layers={failed}"
+            )
+        if time.monotonic() >= deadline:
+            raise TimeoutError(
+                "timed out waiting for PAP Attention prefill readiness "
+                f"request_id={request_id}"
+            )
+        await asyncio.sleep(max(0.0, poll_interval))
 
 
 def build_projection_payload(
@@ -270,20 +325,32 @@ async def _handle_openai_request(api_path: str, request: Request):
             prefill_host=request.app.state.prefill.host,
             prefill_nixl_port=request.app.state.args.prefill_nixl_port,
         )
+        prefill_kv_handle = prefill_kv_handle_from_kv_params(
+            kv_params,
+            fallback=attention_session.get("prefill_kv_handle"),
+        )
         prefix_len = prefill_prefix_len_from_kv_params(kv_params)
+        attention_ready = False
+        if prefix_len is not None:
+            attention_ready = await wait_attention_prefill_ready(
+                attention_client,
+                request_id,
+            )
         logger.info(
-            "request_id=%s prefill_ms=%d prefill_prefix_len=%s prefill_kv_keys=%s",
+            "request_id=%s prefill_ms=%d prefill_prefix_len=%s "
+            "attention_ready=%s prefill_kv_keys=%s",
             request_id,
             prefill_ms,
             prefix_len,
+            attention_ready,
             sorted(kv_params.keys()),
         )
 
         projection_payload = build_projection_payload(
             req_data,
             kv_params,
-            pap_prefill_kv_handle=attention_session.get("prefill_kv_handle"),
-            pap_attention_kv_installed=prefix_len is not None,
+            pap_prefill_kv_handle=prefill_kv_handle,
+            pap_attention_kv_installed=attention_ready,
         )
         logger.info(
             "request_id=%s projection_kv_keys=%s attention_endpoint=%s",

@@ -394,7 +394,10 @@ def test_qwen3_pap_uses_route_plan_steps_for_offload_exec_descriptor() -> None:
     method = text[start:end]
 
     assert 'route_group.get("steps"' in method
-    assert 'route_group["batch_id_suffix"]' in method
+    assert "group_session_request_ids" in method
+    assert "_pap_offload_exec_session_request_id(" in method
+    assert '"r": tuple(group_session_request_ids)' in method
+    assert 'if request_id != str(request_ids[req_index])' in method
     assert '"metadata_template"' in method
     assert '"a": (float(self.scaling),) * len(group_steps)' in method
     assert "items=()" in method

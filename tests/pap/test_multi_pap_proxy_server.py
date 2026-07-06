@@ -227,13 +227,14 @@ def test_multi_proxy_registers_attention_before_prefill_for_local_import() -> No
     assert "register_attention_handles" in text
 
 
-def test_multi_proxy_marks_attention_kv_installed_only_after_prefill() -> None:
+def test_multi_proxy_marks_attention_kv_installed_only_after_readiness() -> None:
     text = (ROOT / "examples/pap/multi_pap_proxy_server.py").read_text()
 
     prefill = text.index("prefill_resp = await _post_json")
     prefix_len = text.index("prefix_len = prefill_prefix_len_from_kv_params")
-    installed = text.index("pap_attention_kv_installed=prefix_len is not None")
-    assert prefill < prefix_len < installed
+    readiness = text.index("attention_ready =")
+    installed = text.index("pap_attention_kv_installed=attention_ready")
+    assert prefill < prefix_len < readiness < installed
 
 
 def test_multi_proxy_has_no_decode_barrier() -> None:

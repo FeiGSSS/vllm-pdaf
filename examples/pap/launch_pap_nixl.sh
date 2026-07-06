@@ -97,6 +97,7 @@ PAP_KV_LOCALITY_PROFILE_MIN_BATCH="${PAP_KV_LOCALITY_PROFILE_MIN_BATCH:-1}"
 PAP_UNIFIED_KV="${PAP_UNIFIED_KV:-1}"
 PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-32}"
 PAP_DECODE_COMMIT_ENDPOINT="${PAP_DECODE_COMMIT_ENDPOINT:-http://127.0.0.1:${PREFILL_PORT_BASE}/v1/pap/prefill/decode-commit}"
+PAP_LEASE_RELEASE_ENDPOINT="${PAP_LEASE_RELEASE_ENDPOINT:-http://127.0.0.1:${PREFILL_PORT_BASE}/v1/pap/prefill/lease-release}"
 PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-round_robin}"
 unset PAP_ATTENTION_COPY_PREFIX_KV
 PREFILL_NIXL_PORT_BASE="${PAP_PREFILL_NIXL_PORT_BASE:-5559}"
@@ -424,6 +425,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
                 PAP_KV_LOCALITY_PROFILE="$PAP_KV_LOCALITY_PROFILE" \
                 PAP_KV_LOCALITY_PROFILE_MIN_BATCH="$PAP_KV_LOCALITY_PROFILE_MIN_BATCH" \
                 PAP_DECODE_COMMIT_ENDPOINT="$PAP_DECODE_COMMIT_ENDPOINT" \
+                PAP_LEASE_RELEASE_ENDPOINT="$PAP_LEASE_RELEASE_ENDPOINT" \
                 .venv/bin/python examples/pap/pap_attention_executor.py \
                 --host 127.0.0.1 \
                 --port "$attention_port" \
@@ -445,6 +447,8 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
             PAP_ATTENTION_KV_DEBUG="$PAP_ATTENTION_KV_DEBUG" \
             PAP_KV_LOCALITY_PROFILE="$PAP_KV_LOCALITY_PROFILE" \
             PAP_KV_LOCALITY_PROFILE_MIN_BATCH="$PAP_KV_LOCALITY_PROFILE_MIN_BATCH" \
+            PAP_DECODE_COMMIT_ENDPOINT="$PAP_DECODE_COMMIT_ENDPOINT" \
+            PAP_LEASE_RELEASE_ENDPOINT="$PAP_LEASE_RELEASE_ENDPOINT" \
             .venv/bin/python examples/pap/pap_attention_executor.py \
             --host 127.0.0.1 \
             --port "$attention_port" \
@@ -472,6 +476,8 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
             CUDA_MPS_ACTIVE_THREAD_PERCENTAGE="$PREFILL_MPS_PERCENT" \
             VLLM_PORT="$((VLLM_PORT_BASE + idx * 20))" \
             PAP_OFFLOAD_KV_TRANSPORT="$PAP_OFFLOAD_KV_TRANSPORT" \
+            PAP_UNIFIED_KV="$PAP_UNIFIED_KV" \
+            PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="$PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS" \
             VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
             VLLM_NIXL_SIDE_CHANNEL_PORT="$prefill_nixl_port" \
             .venv/bin/vllm serve "$MODEL_PATH" \
@@ -492,6 +498,8 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
         CUDA_VISIBLE_DEVICES="$gpu_csv" \
         VLLM_PORT="$((VLLM_PORT_BASE + idx * 20))" \
         PAP_OFFLOAD_KV_TRANSPORT="$PAP_OFFLOAD_KV_TRANSPORT" \
+        PAP_UNIFIED_KV="$PAP_UNIFIED_KV" \
+        PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="$PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS" \
         VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
         VLLM_NIXL_SIDE_CHANNEL_PORT="$prefill_nixl_port" \
         .venv/bin/vllm serve "$MODEL_PATH" \

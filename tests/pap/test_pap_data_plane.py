@@ -1,9 +1,12 @@
+import pytest
 import torch
 
 from vllm.pap.data_plane import (
+    PAPCudaIPCTensorHandle,
     PAPNixlMailboxOffloadExecTransport,
     PAPOffloadExecBatchDescriptor,
     PAPOffloadExecDescriptor,
+    PAPOffloadKVPagedIPCDescriptor,
     PAPTensorTransport,
     _offload_exec_batch_descriptor_from_metadata,
     _offload_exec_batch_descriptor_to_metadata,
@@ -175,6 +178,42 @@ def test_offload_exec_batch_metadata_compact_roundtrip() -> None:
     assert restored == descriptor
 
 
+def test_offload_exec_batch_metadata_roundtrips_decode_token_ids() -> None:
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                "req-a", "layer0", 7, 0.125, decode_token_ids=(42,)
+            ),
+            PAPOffloadExecDescriptor(
+                "req-b", "layer0", 8, 0.25, decode_token_ids=(99,)
+            ),
+        ),
+    )
+
+    metadata = _offload_exec_batch_descriptor_to_metadata(descriptor)
+    restored = _offload_exec_batch_descriptor_from_metadata(metadata)
+
+    assert metadata["v"] == 3
+    assert metadata["t"] == [[42], [99]]
+    assert restored.items[0].decode_token_ids == (42,)
+    assert restored.items[1].decode_token_ids == (99,)
+
+
+def test_offload_exec_batch_metadata_v2_remains_backward_compatible() -> None:
+    metadata = {
+        "v": 2,
+        "l": "layer0",
+        "r": ["req-a"],
+        "s": [7],
+        "a": [0.125],
+    }
+
+    restored = _offload_exec_batch_descriptor_from_metadata(metadata)
+
+    assert restored.items[0].decode_token_ids == ()
+
+
 def test_offload_exec_batch_metadata_accepts_legacy_items() -> None:
     metadata = {
         "layer_name": "layer0",
@@ -262,6 +301,74 @@ def test_offload_kv_paged_ipc_descriptor_roundtrip() -> None:
 
     assert restored == descriptor
     assert restored.transport is PAPTensorTransport.CUDA_IPC
+
+
+def _paged_ipc_handle() -> PAPCudaIPCTensorHandle:
+    return PAPCudaIPCTensorHandle(
+        dtype="float16",
+        shape=(2, 4, 1, 8),
+        ipc_handle={"GPU-test": ("storage", 1, 2, 3, 4, 5, 0)},
+    )
+
+
+def test_unified_paged_ipc_descriptor_requires_lease() -> None:
+    with pytest.raises(ValueError, match="requires lease_id"):
+        PAPOffloadKVPagedIPCDescriptor(
+            request_id="req-1",
+            layer_name="layer0",
+            seq_len=4,
+            block_ids=(0,),
+            block_size=4,
+            num_kv_heads=1,
+            layout="NHD",
+            kv_cache=_paged_ipc_handle(),
+            unified_kv_mode=True,
+            prefix_len=4,
+            writable_start_token=4,
+            writable_end_token=8,
+        )
+
+
+def test_unified_paged_ipc_descriptor_requires_capacity_for_writable_end() -> None:
+    with pytest.raises(ValueError, match="lease_capacity_tokens"):
+        PAPOffloadKVPagedIPCDescriptor(
+            request_id="req-1",
+            layer_name="layer0",
+            seq_len=4,
+            block_ids=(0, 1),
+            block_size=4,
+            num_kv_heads=1,
+            layout="NHD",
+            kv_cache=_paged_ipc_handle(),
+            lease_id="lease-1",
+            leased_block_ids=(0, 1),
+            lease_capacity_tokens=4,
+            unified_kv_mode=True,
+            prefix_len=4,
+            writable_start_token=4,
+            writable_end_token=8,
+        )
+
+
+def test_unified_paged_ipc_descriptor_requires_blocks_covering_writable_end() -> None:
+    with pytest.raises(ValueError, match="block_ids"):
+        PAPOffloadKVPagedIPCDescriptor(
+            request_id="req-1",
+            layer_name="layer0",
+            seq_len=4,
+            block_ids=(0,),
+            block_size=4,
+            num_kv_heads=1,
+            layout="NHD",
+            kv_cache=_paged_ipc_handle(),
+            lease_id="lease-1",
+            leased_block_ids=(0,),
+            lease_capacity_tokens=8,
+            unified_kv_mode=True,
+            prefix_len=4,
+            writable_start_token=4,
+            writable_end_token=8,
+        )
 
 
 def test_import_prefill_kv_cuda_ipc_posts_descriptor_without_tensors(
@@ -375,3 +482,60 @@ def test_import_prefill_paged_kv_cuda_ipc_posts_descriptor_without_tensors(
     assert descriptor["layout"] == "NHD"
     assert descriptor["kv_cache"]["shape"] == [2, 2, 4, 1, 2]
     assert "ipc_handle_pickled" in descriptor["kv_cache"]
+
+
+def test_import_prefill_paged_kv_unified_reuses_active_lease(
+    monkeypatch,
+) -> None:
+    from vllm.pap.kv_lease import reset_global_kv_lease_registry
+    from vllm.pap.remote_attention import (
+        deserialize_tensor_bundle,
+        serialize_tensor_bundle,
+    )
+    from vllm.pap.shadow_attention import import_prefill_paged_kv
+
+    reset_global_kv_lease_registry()
+    monkeypatch.setenv("PAP_UNIFIED_KV", "1")
+    monkeypatch.setenv("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "3")
+    descriptors = []
+
+    def fake_reduce_tensor(tensor):
+        return object(), ("storage", 1, 2, 3, 4, 5, 0)
+
+    def fake_post_bytes_tcp(*, endpoint, payload, timeout):
+        metadata, tensors = deserialize_tensor_bundle(payload)
+        assert tensors == {}
+        descriptors.append(metadata["descriptor"])
+        return serialize_tensor_bundle({"seq_len": 5}, {})
+
+    monkeypatch.setattr(
+        "vllm.pap.shadow_attention.reduce_tensor",
+        fake_reduce_tensor,
+    )
+    monkeypatch.setattr(
+        "vllm.pap.shadow_attention._post_bytes_tcp",
+        fake_post_bytes_tcp,
+    )
+
+    try:
+        kv_cache = torch.zeros(2, 2, 4, 1, 2)
+        for layer_name in ("layer0", "layer1"):
+            assert import_prefill_paged_kv(
+                request_id="cmpl-lease",
+                layer_name=layer_name,
+                kv_cache=kv_cache,
+                block_ids=[0, 1],
+                seq_len=5,
+                block_size=4,
+                num_kv_heads=1,
+                layout="NHD",
+                tcp_endpoint="127.0.0.1:8300",
+            ) == 5
+    finally:
+        reset_global_kv_lease_registry()
+
+    assert len(descriptors) == 2
+    assert descriptors[0]["lease_id"]
+    assert descriptors[1]["lease_id"] == descriptors[0]["lease_id"]
+    assert descriptors[1]["leased_block_ids"] == [0, 1]
+    assert descriptors[1]["lease_capacity_tokens"] == 8
