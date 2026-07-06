@@ -159,3 +159,24 @@ def test_commit_client_env_var(monkeypatch):
     client = DecodeCommitClient()
     assert client.enabled
     assert client.endpoint == "http://localhost:1/x"
+
+
+# --- Descriptor integration tests ---------------------------------------------
+
+
+def test_offload_exec_descriptor_supports_decode_token_ids():
+    """PAPOffloadExecDescriptor carries optional decode_token_ids."""
+    from vllm.pap.data_plane import PAPOffloadExecDescriptor
+
+    # Default: empty tuple, backward-compatible
+    desc = PAPOffloadExecDescriptor(
+        request_id="r", layer_name="l", step=10, scale=0.5,
+    )
+    assert desc.decode_token_ids == ()
+
+    # With token IDs
+    desc2 = PAPOffloadExecDescriptor(
+        request_id="r", layer_name="l", step=10, scale=0.5,
+        decode_token_ids=(42, 7),
+    )
+    assert desc2.decode_token_ids == (42, 7)

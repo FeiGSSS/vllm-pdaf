@@ -140,6 +140,7 @@ class PAPOffloadExecDescriptor:
     layer_name: str
     step: int
     scale: float
+    decode_token_ids: tuple[int, ...] = ()
 
     @property
     def qkv_tensor_id(self) -> str:

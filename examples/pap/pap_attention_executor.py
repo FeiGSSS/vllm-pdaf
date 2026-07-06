@@ -37,12 +37,22 @@ from vllm.pap.data_plane import (
     build_nixl_mailbox_offload_exec_transport,
     pap_offload_exec_trace_id,
 )
+from vllm.pap.decode_commit_client import DecodeCommitClient as _DecodeCommitClient
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("pap_attention")
+
+_commit_client: _DecodeCommitClient | None = None
+
+
+def _get_commit_client() -> _DecodeCommitClient:
+    global _commit_client
+    if _commit_client is None:
+        _commit_client = _DecodeCommitClient()
+    return _commit_client
 
 
 def _pap_env_flag(name: str, default: bool = False) -> bool:
@@ -70,6 +80,134 @@ def _pap_prefill_ipc_profile_enabled() -> bool:
 
 def _pap_kv_lease_profile_enabled() -> bool:
     return _pap_env_flag("PAP_KV_LEASE_PROFILE", False)
+
+
+def _pap_kv_locality_profile_enabled() -> bool:
+    return _pap_env_flag("PAP_KV_LOCALITY_PROFILE", False)
+
+
+_KV_LOCALITY_PROFILE_SEEN: set[tuple[str, str]] = set()
+
+
+def _block_locality_stats(
+    *,
+    block_ids: tuple[int, ...],
+    seq_len: int,
+    block_size: int,
+) -> dict[str, float | int | list[int]]:
+    live_blocks = min(
+        len(block_ids),
+        max(0, (int(seq_len) + int(block_size) - 1) // int(block_size)),
+    )
+    live = [int(block_id) for block_id in block_ids[:live_blocks]]
+    if not live:
+        return {
+            "seq_len": int(seq_len),
+            "live_blocks": 0,
+            "total_blocks": len(block_ids),
+            "reserved_blocks": len(block_ids),
+            "span": 0,
+            "density": 0.0,
+            "contiguous_pair_frac": 0.0,
+            "mean_abs_delta": 0.0,
+            "max_abs_delta": 0,
+            "runs": 0,
+            "first_blocks": [],
+            "first_deltas": [],
+        }
+    deltas = [live[index + 1] - live[index] for index in range(len(live) - 1)]
+    span = max(live) - min(live) + 1
+    contiguous_pairs = sum(1 for delta in deltas if delta == 1)
+    abs_deltas = [abs(delta) for delta in deltas]
+    return {
+        "seq_len": int(seq_len),
+        "live_blocks": live_blocks,
+        "total_blocks": len(block_ids),
+        "reserved_blocks": len(block_ids) - live_blocks,
+        "span": span,
+        "density": float(live_blocks) / float(span) if span > 0 else 0.0,
+        "contiguous_pair_frac": (
+            float(contiguous_pairs) / float(len(deltas)) if deltas else 1.0
+        ),
+        "mean_abs_delta": (
+            float(sum(abs_deltas)) / float(len(abs_deltas)) if abs_deltas else 0.0
+        ),
+        "max_abs_delta": max(abs_deltas) if abs_deltas else 0,
+        "runs": 1 + sum(1 for delta in deltas if delta != 1),
+        "first_blocks": live[:16],
+        "first_deltas": deltas[:15],
+    }
+
+
+def _log_kv_locality_profile(
+    *,
+    mode: str,
+    layer_name: str,
+    states: list[PAPUnifiedPagedKVState | PAPLocalPagedAttentionState],
+    kv_cache: torch.Tensor,
+    key_cache: torch.Tensor,
+    value_cache: torch.Tensor,
+    layout: str,
+) -> None:
+    if not _pap_kv_locality_profile_enabled():
+        return
+    min_batch = int(os.environ.get("PAP_KV_LOCALITY_PROFILE_MIN_BATCH", "1"))
+    if len(states) < min_batch:
+        return
+    profile_key = (str(mode), str(layer_name))
+    if profile_key in _KV_LOCALITY_PROFILE_SEEN:
+        return
+    _KV_LOCALITY_PROFILE_SEEN.add(profile_key)
+
+    rows = []
+    for state in states:
+        rows.append(
+            _block_locality_stats(
+                block_ids=tuple(int(block_id) for block_id in state.block_ids),
+                seq_len=int(state.seq_len),
+                block_size=int(state.block_size),
+            )
+        )
+    first = rows[0]
+
+    def avg(name: str) -> float:
+        values = [float(row[name]) for row in rows]
+        return sum(values) / float(len(values)) if values else 0.0
+
+    seq_lens = [int(row["seq_len"]) for row in rows]
+    logger.info(
+        "PAP KV locality profile mode=%s layer=%s batch=%d layout=%s "
+        "kv_shape=%s kv_stride=%s key_stride=%s value_stride=%s dtype=%s "
+        "device=%s kv_contiguous=%s seq_len_min=%d seq_len_max=%d "
+        "live_blocks_avg=%.2f total_blocks_avg=%.2f reserved_blocks_avg=%.2f "
+        "span_avg=%.2f density_avg=%.3f contiguous_pair_frac_avg=%.3f "
+        "mean_abs_delta_avg=%.2f max_abs_delta_avg=%.2f runs_avg=%.2f "
+        "first_live_blocks=%s first_deltas=%s",
+        mode,
+        layer_name,
+        len(states),
+        layout,
+        tuple(kv_cache.shape),
+        tuple(kv_cache.stride()),
+        tuple(key_cache.stride()),
+        tuple(value_cache.stride()),
+        kv_cache.dtype,
+        kv_cache.device,
+        kv_cache.is_contiguous(),
+        min(seq_lens) if seq_lens else 0,
+        max(seq_lens) if seq_lens else 0,
+        avg("live_blocks"),
+        avg("total_blocks"),
+        avg("reserved_blocks"),
+        avg("span"),
+        avg("density"),
+        avg("contiguous_pair_frac"),
+        avg("mean_abs_delta"),
+        avg("max_abs_delta"),
+        avg("runs"),
+        first["first_blocks"],
+        first["first_deltas"],
+    )
 
 
 def _trace_add_elapsed_ms(
@@ -706,16 +844,15 @@ def build_paged_flash_metadata(
     )
 
 
+_UNIFIED_MD_SCRATCH: dict[tuple[int, int], tuple[torch.Tensor, torch.Tensor]] = {}
+
+
 def build_unified_paged_flash_metadata(
     *,
     states: list[PAPUnifiedPagedKVState],
     device: torch.device,
 ) -> PAPPagedFlashMetadata:
-    """Build FA metadata for a single-source Prefill-owned paged KV batch.
-
-    Mirrors build_paged_flash_metadata but consumes PAPUnifiedPagedKVState and
-    skips scratch optimization (Stage 4 scaffolding: simple per-call tensors).
-    """
+    """Build FA metadata with scratch caching (matches legacy scratch path)."""
     batch_size = len(states)
     if batch_size <= 0:
         raise ValueError(
@@ -726,19 +863,32 @@ def build_unified_paged_flash_metadata(
         raise ValueError(
             "unified paged FlashAttention metadata requires non-empty blocks"
         )
-    block_table = torch.zeros(
-        (batch_size, max_blocks), dtype=torch.int32, device=device
-    )
-    seq_lens = torch.empty((batch_size,), dtype=torch.int32, device=device)
+    key = (batch_size, max_blocks)
+    scratch = _UNIFIED_MD_SCRATCH.get(key)
+    if scratch is None or tuple(scratch[0].shape) != (batch_size, max_blocks):
+        scratch = (
+            torch.empty(
+                (batch_size, max_blocks), dtype=torch.int32, device=device
+            ),
+            torch.empty((batch_size,), dtype=torch.int32, device=device),
+        )
+        _UNIFIED_MD_SCRATCH[key] = scratch
+    block_table, seq_lens = scratch
     max_seq_len = 0
     for row_index, state in enumerate(states):
         if not state.block_ids:
             raise ValueError("unified state has no blocks")
-        last_block = int(state.block_ids[-1])
+        last_raw = state.block_ids[-1]
+        last_block = (
+            int(last_raw.item()) if hasattr(last_raw, "item")
+            else int(last_raw)
+        )
+
         for column_index in range(max_blocks):
             if column_index < len(state.block_ids):
-                block_table[row_index, column_index] = int(
-                    state.block_ids[column_index]
+                raw = state.block_ids[column_index]
+                block_table[row_index, column_index] = (
+                    int(raw.item()) if hasattr(raw, "item") else int(raw)
                 )
             else:
                 block_table[row_index, column_index] = last_block
@@ -1495,7 +1645,11 @@ class PAPAttentionRegistry:
                         f"(request_id={session_request_id} "
                         f"layer={layer_name})"
                     )
-                physical_block = int(state.block_ids[logical_block])
+                raw_bid = state.block_ids[logical_block]
+                physical_block = (
+                    int(raw_bid.item()) if hasattr(raw_bid, "item")
+                    else int(raw_bid)
+                )
                 block_offset = position % block_size
                 slots.append(physical_block * block_size + block_offset)
                 active_indices.append(index)
@@ -4114,6 +4268,7 @@ def _compute_unified_paged_flash_batch(
     query_batch: torch.Tensor,
     states: list[PAPUnifiedPagedKVState],
     scale: float,
+    layer_name: str,
     trace_stats: dict[str, float] | None = None,
 ) -> torch.Tensor | None:
     """Single-source Prefill-owned paged FA compute (Stage 4 unified path)."""
@@ -4151,6 +4306,15 @@ def _compute_unified_paged_flash_batch(
 
     fa_version = get_flash_attn_version(head_size=int(query_batch.shape[-1]))
     key_cache, value_cache = base_kv.unbind(1)
+    _log_kv_locality_profile(
+        mode="unified",
+        layer_name=layer_name,
+        states=states,
+        kv_cache=base_kv,
+        key_cache=key_cache,
+        value_cache=value_cache,
+        layout=states[0].layout,
+    )
     metadata_start = time.perf_counter() if trace_stats is not None else 0.0
     paged_start = time.perf_counter() if trace_stats is not None else 0.0
     result = _run_paged_flash_varlen(
@@ -4182,6 +4346,7 @@ def _compute_offload_exec_paged_flash_batch(
     query_batch: torch.Tensor,
     states: list[PAPLocalPagedAttentionState | None],
     scale: float,
+    layer_name: str,
     allow_descriptor_prefix: bool = True,
     trace_stats: dict[str, float] | None = None,
 ) -> torch.Tensor | None:
@@ -4230,6 +4395,15 @@ def _compute_offload_exec_paged_flash_batch(
         if metadata.max_seq_len <= 0:
             return None
 
+        _log_kv_locality_profile(
+            mode="legacy_local",
+            layer_name=layer_name,
+            states=typed_states,
+            kv_cache=pool.kv_cache,
+            key_cache=pool.kv_cache[:, 0],
+            value_cache=pool.kv_cache[:, 1],
+            layout="NHD",
+        )
         paged_start = time.perf_counter() if trace_stats is not None else 0.0
         result = _run_paged_flash_varlen(
             flash_attn_varlen_func=flash_attn_varlen_func,
@@ -4486,6 +4660,7 @@ def compute_offload_exec_batch_output(
             query_batch=query_batch,
             states=unified_states,
             scale=common_scale,
+            layer_name=descriptor.layer_name,
             trace_stats=trace_stats,
         )
         if unified_output is None:
@@ -4499,6 +4674,16 @@ def compute_offload_exec_batch_output(
                 trace_stats.get("reshape_ms", 0.0)
                 + (time.perf_counter() - append_start) * 0.0
             )
+        commit_client = _get_commit_client()
+        if commit_client.enabled:
+            for index, item in enumerate(items):
+                commit_client.commit(
+                    request_id=item.request_id,
+                    new_seq_len=int(decode_seq_lens[index]),
+                    new_token_ids=tuple(
+                        int(t) for t in getattr(item, "decode_token_ids", ())
+                    ),
+                )
         return unified_output
 
     if _pap_attention_copy_prefix_kv():
@@ -4526,6 +4711,7 @@ def compute_offload_exec_batch_output(
         query_batch=query_batch,
         states=list(paged_states),
         scale=common_scale,
+        layer_name=descriptor.layer_name,
         allow_descriptor_prefix=True,
         trace_stats=trace_stats,
     )
