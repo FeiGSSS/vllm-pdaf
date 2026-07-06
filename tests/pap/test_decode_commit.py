@@ -57,6 +57,38 @@ def test_from_dict_missing_request_id_raises():
         )
 
 
+def test_commit_endpoint_applies_to_manager():
+    """Decode-commit POST invokes manager.apply_decode_commit with correct args."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from vllm.pap.decode_commit_router import build_commit_router
+
+    class StubManager:
+        def __init__(self):
+            self.calls = []
+
+        def apply_decode_commit(self, request, new_seq_len, new_token_ids):
+            self.calls.append((request.request_id, new_seq_len,
+                               list(new_token_ids)))
+
+    manager = StubManager()
+    stub_req = type("StubReq", (), {"request_id": "req-1"})()
+    requests = {"req-1": stub_req}
+    router = build_commit_router(manager=manager, requests=requests)
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app)
+    resp = client.post("/v1/pap/prefill/decode-commit",
+                       json={
+                           "request_id": "req-1",
+                           "new_seq_len": 17,
+                           "new_token_ids": [1, 2, 3],
+                           "layer_complete": True,
+                       })
+    assert resp.status_code == 200
+    assert manager.calls == [("req-1", 17, [1, 2, 3])]
+
+
 def test_apply_decode_commit_advances_tokens():
     """Simulate a PAP decode commit: tokens appended, num_computed updated."""
     from vllm.sampling_params import SamplingParams
