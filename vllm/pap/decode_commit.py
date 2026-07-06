@@ -1,4 +1,3 @@
-from __future__ import annotations
 from dataclasses import dataclass
 import json
 
@@ -22,7 +21,7 @@ class PAPDecodeCommit:
             request_id=str(d["request_id"]),
             new_seq_len=int(d["new_seq_len"]),
             new_token_ids=tuple(int(t) for t in d["new_token_ids"]),
-            layer_complete=bool(d.get("layer_complete", True)),
+            layer_complete=bool(d["layer_complete"]),
         )
 
     def to_dict(self) -> dict:
