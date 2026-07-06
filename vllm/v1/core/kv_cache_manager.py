@@ -633,6 +633,34 @@ class KVCacheManager:
         if self.enable_caching:
             self.coordinator.cache_blocks(request, num_computed_tokens)
 
+    def apply_decode_commit(
+        self,
+        request: Request,
+        new_seq_len: int,
+        new_token_ids: Sequence[int],
+    ) -> None:
+        """Apply a remote decode-KV commit from PAP Attention.
+
+        Advances the request's computed token count, appends the newly
+        generated token IDs (which automatically extends block hashes),
+        and informs the prefix-cache coordinator so blocks are marked as
+        cached.
+
+        Args:
+            request: The request to update.
+            new_seq_len: The total sequence length after this commit.
+            new_token_ids: The newly generated token IDs from the remote
+                decode.
+        """
+        if new_seq_len <= int(request.num_computed_tokens):
+            return
+        delta = [int(t) for t in new_token_ids]
+        # Request.append_output_token_ids extends block_hashes automatically.
+        request.append_output_token_ids(delta)
+        request.num_computed_tokens = int(new_seq_len)
+        if self.enable_caching:
+            self.coordinator.cache_blocks(request, int(new_seq_len))
+
     def create_kv_cache_blocks(
         self, blocks: tuple[list[KVCacheBlock], ...]
     ) -> KVCacheBlocks:

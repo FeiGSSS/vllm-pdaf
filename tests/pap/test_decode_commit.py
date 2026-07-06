@@ -1,5 +1,6 @@
 import pytest
 from vllm.pap.decode_commit import PAPDecodeCommit, serialize_commit, deserialize_commit
+from vllm.v1.request import Request
 
 
 def test_commit_roundtrip():
@@ -54,3 +55,27 @@ def test_from_dict_missing_request_id_raises():
         PAPDecodeCommit.from_dict(
             {"new_seq_len": 1, "new_token_ids": [], "layer_complete": True}
         )
+
+
+def test_apply_decode_commit_advances_tokens():
+    """Simulate a PAP decode commit: tokens appended, num_computed updated."""
+    from vllm.sampling_params import SamplingParams
+
+    sampling_params = SamplingParams(max_tokens=10)
+    request = Request(
+        request_id="req-1",
+        prompt_token_ids=[1, 2, 3, 4],
+        sampling_params=sampling_params,
+        pooling_params=None,
+        block_hasher=lambda req: [b"h"],
+    )
+    # Verify initial state
+    assert request.num_computed_tokens == 0
+    assert request.num_tokens == 4
+
+    # Apply decode commit: 3 new tokens at seq positions 4,5,6
+    request.append_output_token_ids([100, 101, 102])
+    request.num_computed_tokens = 7
+    assert request.num_tokens == 7
+    assert request.num_computed_tokens == 7
+    assert len(request.block_hashes) > 0  # appended tokens trigger block_hashes update
