@@ -1,5 +1,6 @@
 import pytest
 from vllm.pap.decode_commit import PAPDecodeCommit, serialize_commit, deserialize_commit
+from vllm.pap.decode_commit_client import DecodeCommitClient
 from vllm.v1.request import Request
 
 
@@ -111,3 +112,50 @@ def test_apply_decode_commit_advances_tokens():
     assert request.num_tokens == 7
     assert request.num_computed_tokens == 7
     assert len(request.block_hashes) > 0  # appended tokens trigger block_hashes update
+
+
+# --- DecodeCommitClient tests -------------------------------------------------
+
+
+def test_commit_client_posts_to_endpoint(monkeypatch):
+    """Verify the client POSTs correct JSON to the configured endpoint."""
+    posted = {}
+
+    class FakeResp:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+    def fake_post(url, json=None, timeout=None):
+        posted["url"] = url
+        posted["json"] = json
+        return FakeResp()
+
+    monkeypatch.setattr(
+        "vllm.pap.decode_commit_client.httpx.post", fake_post)
+    client = DecodeCommitClient(
+        endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit")
+    client.commit(request_id="r", new_seq_len=10, new_token_ids=(1, 2))
+    assert posted["url"].endswith("/v1/pap/prefill/decode-commit")
+    assert posted["json"]["request_id"] == "r"
+    assert posted["json"]["new_seq_len"] == 10
+    assert posted["json"]["new_token_ids"] == [1, 2]
+    assert posted["json"]["layer_complete"] is True
+
+
+def test_commit_client_disabled_when_no_endpoint():
+    """client.enabled is False when no endpoint is configured."""
+    client = DecodeCommitClient(endpoint=None)
+    assert not client.enabled
+    # commit() should be a no-op, not raise
+    client.commit(request_id="r", new_seq_len=1, new_token_ids=(1,))
+
+
+def test_commit_client_env_var(monkeypatch):
+    """Endpoint can be set via PAP_DECODE_COMMIT_ENDPOINT env var."""
+    monkeypatch.setenv("PAP_DECODE_COMMIT_ENDPOINT",
+                       "http://localhost:1/x")
+    client = DecodeCommitClient()
+    assert client.enabled
+    assert client.endpoint == "http://localhost:1/x"
