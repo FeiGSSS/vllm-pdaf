@@ -73,9 +73,15 @@ were not kept as defaults. Inline publish was kept: it reduced median
 and reduced projection-side receive wait from `1.402 ms` to about
 `1.01-1.04 ms`.
 
+Rank 4/5 batch-plan notification was implemented and kept. The NIXL mailbox
+transport now sends a full OFFLOAD_EXEC batch plan once per decode batch and
+sends only `plan_id + layer_name` for later layers. Across two warmed runs
+against the Rank 3 default baseline, mean TPOT improved from `92.335 ms` to
+`87.389 ms`, projection task send total dropped from `0.257 ms` to `0.225 ms`,
+and attention total dropped from `2.718 ms` to `2.615 ms`.
+
 ## Current Next Step
 
-Implement Rank 4 next: persistent compact notification/control metadata for
-OFFLOAD_EXEC batches. Rank 3 shows that payload transfer is not the median
-bottleneck; the next target is per-layer handoff/control overhead between
-projection publishing the next QKV task and attention observing it.
+Implement Rank 6 next: have projection write K/V directly into final unified KV
+slots and send only Q to attention. Rank 4/5 reduced control traffic, but the
+remaining data-path payload is still full QKV.

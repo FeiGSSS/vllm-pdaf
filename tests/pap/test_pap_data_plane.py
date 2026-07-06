@@ -141,6 +141,103 @@ def test_nixl_mailbox_transport_naked_next_qkv_clones_and_releases() -> None:
     assert released == [True]
 
 
+def test_nixl_mailbox_qkv_batch_uses_plan_ref_after_first_layer_by_default() -> None:
+    class FakeEndpoint:
+        def __init__(self) -> None:
+            self.sent = []
+
+        def send(self, message) -> None:
+            self.sent.append(message)
+
+    endpoint = FakeEndpoint()
+    transport = PAPNixlMailboxOffloadExecTransport(endpoint)
+    template = {
+        "r": ("req-a", "req-b"),
+        "s": (7, 8),
+        "a": (0.125, 0.125),
+        "t": ((42,), (99,)),
+    }
+    first = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(),
+        batch_id_suffix="req-a@7,req-b@8",
+        metadata_template=template,
+    )
+    second = PAPOffloadExecBatchDescriptor(
+        layer_name="layer1",
+        items=(),
+        batch_id_suffix="req-a@7,req-b@8",
+        metadata_template=template,
+    )
+    qkv = torch.zeros((2, 4), dtype=torch.float32)
+
+    transport.send_qkv_batch(first, qkv, remote_address="ignored")
+    transport.send_qkv_batch(second, qkv, remote_address="ignored")
+
+    assert endpoint.sent[0].metadata["v"] == 4
+    assert endpoint.sent[0].metadata["l"] == "layer0"
+    assert endpoint.sent[0].metadata["r"] == ["req-a", "req-b"]
+    assert endpoint.sent[0].metadata["t"] == [[42], [99]]
+    plan_id = endpoint.sent[0].metadata["p"]
+    assert endpoint.sent[1].metadata == {
+        "v": 5,
+        "l": "layer1",
+        "p": plan_id,
+    }
+
+
+def test_nixl_mailbox_qkv_batch_plan_ref_roundtrips_on_receiver_by_default() -> None:
+    class FakeEndpoint:
+        def __init__(self) -> None:
+            self.messages = []
+
+        def send(self, message) -> None:
+            self.messages.append(message)
+
+        def recv(self, msg_id=None):
+            assert msg_id is None
+            return self.messages.pop(0)
+
+    endpoint = FakeEndpoint()
+    sender = PAPNixlMailboxOffloadExecTransport(endpoint)
+    receiver = PAPNixlMailboxOffloadExecTransport(endpoint)
+    template = {
+        "r": ("req-a", "req-b"),
+        "s": (7, 8),
+        "a": (0.125, 0.125),
+        "t": ((42,), (99,)),
+    }
+    first = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(),
+        batch_id_suffix="req-a@7,req-b@8",
+        metadata_template=template,
+    )
+    second = PAPOffloadExecBatchDescriptor(
+        layer_name="layer1",
+        items=(),
+        batch_id_suffix="req-a@7,req-b@8",
+        metadata_template=template,
+    )
+    qkv = torch.zeros((2, 4), dtype=torch.float32)
+    sender.send_qkv_batch(first, qkv, remote_address="ignored")
+    sender.send_qkv_batch(second, qkv, remote_address="ignored")
+
+    restored_first, first_message = receiver.recv_next_qkv_batch_message()
+    restored_second, second_message = receiver.recv_next_qkv_batch_message()
+
+    assert first_message.metadata["v"] == 4
+    assert second_message.metadata["v"] == 5
+    assert restored_first.layer_name == "layer0"
+    assert restored_second.layer_name == "layer1"
+    assert [item.request_id for item in restored_second.items] == ["req-a", "req-b"]
+    assert [item.step for item in restored_second.items] == [7, 8]
+    assert [item.scale for item in restored_second.items] == [0.125, 0.125]
+    assert restored_second.items[0].decode_token_ids == (42,)
+    assert restored_second.items[1].decode_token_ids == (99,)
+    assert restored_second.output_tensor_id == "layer1#req-a@7,req-b@8#attn_out_batch"
+
+
 def test_offload_exec_batch_metadata_uses_compact_arrays() -> None:
     descriptor = PAPOffloadExecBatchDescriptor(
         layer_name="layer0",

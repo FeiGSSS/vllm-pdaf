@@ -25,6 +25,15 @@ from typing import Any, Protocol
 
 import torch
 
+_TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
+
+
+def _data_plane_env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value in (None, ""):
+        return bool(default)
+    return value.lower() in _TRUE_ENV_VALUES
+
 
 class PAPDataPlaneRole(str, Enum):
     PREFILL = "prefill"
@@ -644,6 +653,12 @@ class PAPNixlMailboxOffloadExecTransport:
 
     def __init__(self, endpoint: object) -> None:
         self.endpoint = endpoint
+        self._batch_plan_enabled = _data_plane_env_bool(
+            "PAP_NIXL_MAILBOX_BATCH_PLAN",
+            True,
+        )
+        self._sent_batch_plans: set[str] = set()
+        self._recv_batch_plans: dict[str, dict[str, Any]] = {}
 
     @property
     def local_agent_metadata(self) -> bytes:
@@ -711,7 +726,7 @@ class PAPNixlMailboxOffloadExecTransport:
         self._send_message(
             msg_id=descriptor.qkv_tensor_id,
             kind="attention_task_batch",
-            metadata=_offload_exec_batch_descriptor_to_metadata(descriptor),
+            metadata=self._qkv_batch_metadata(descriptor),
             tensor=qkv,
         )
 
@@ -741,7 +756,7 @@ class PAPNixlMailboxOffloadExecTransport:
             PAPMailboxMessage(
                 msg_id=descriptor.qkv_tensor_id,
                 kind="attention_task_batch",
-                metadata=_offload_exec_batch_descriptor_to_metadata(descriptor),
+                metadata=self._qkv_batch_metadata(descriptor),
                 tensor=payload.tensor,
                 payload_shape=tuple(qkv.shape),
                 direct_payload=True,
@@ -791,7 +806,12 @@ class PAPNixlMailboxOffloadExecTransport:
     ) -> tuple[PAPOffloadExecBatchDescriptor, Any]:
         message = self.endpoint.recv()
         if message.kind == "attention_task_batch":
-            descriptor = _offload_exec_batch_descriptor_from_metadata(message.metadata)
+            descriptor = _offload_exec_batch_descriptor_from_metadata(
+                message.metadata,
+                plan_cache=(
+                    self._recv_batch_plans if self._batch_plan_enabled else None
+                ),
+            )
             return descriptor, message
         message.release()
         raise RuntimeError(f"unexpected PAP mailbox message kind: {message.kind}")
@@ -848,6 +868,17 @@ class PAPNixlMailboxOffloadExecTransport:
                 metadata=metadata,
                 tensor=tensor,
             )
+        )
+
+    def _qkv_batch_metadata(
+        self,
+        descriptor: PAPOffloadExecBatchDescriptor,
+    ) -> dict[str, Any]:
+        if not self._batch_plan_enabled:
+            return _offload_exec_batch_descriptor_to_metadata(descriptor)
+        return _offload_exec_batch_descriptor_to_plan_metadata(
+            descriptor,
+            sent_plans=self._sent_batch_plans,
         )
 
 
@@ -908,9 +939,131 @@ def _offload_exec_batch_descriptor_to_metadata(
     return metadata
 
 
+def _offload_exec_batch_plan_payload(
+    descriptor: PAPOffloadExecBatchDescriptor,
+) -> dict[str, Any]:
+    metadata = _offload_exec_batch_descriptor_to_metadata(descriptor)
+    payload: dict[str, Any] = {
+        "b": descriptor.batch_id_suffix
+        or ",".join(
+            f"{request_id}@{step}"
+            for request_id, step in zip(metadata["r"], metadata["s"])
+        ),
+        "r": list(metadata["r"]),
+        "s": [int(step) for step in metadata["s"]],
+        "a": [float(scale) for scale in metadata["a"]],
+    }
+    if "t" in metadata:
+        payload["t"] = [
+            [int(token_id) for token_id in row] for row in metadata["t"]
+        ]
+    return payload
+
+
+def _offload_exec_batch_plan_id(plan_payload: dict[str, Any]) -> str:
+    token_rows = tuple(tuple(row) for row in plan_payload.get("t", ()))
+    key = (
+        str(plan_payload["b"]),
+        tuple(str(request_id) for request_id in plan_payload["r"]),
+        tuple(int(step) for step in plan_payload["s"]),
+        tuple(float(scale) for scale in plan_payload["a"]),
+        token_rows,
+    )
+    return hashlib.sha1(repr(key).encode("utf-8")).hexdigest()[:16]
+
+
+def _offload_exec_batch_descriptor_to_plan_metadata(
+    descriptor: PAPOffloadExecBatchDescriptor,
+    *,
+    sent_plans: set[str],
+) -> dict[str, Any]:
+    plan_payload = _offload_exec_batch_plan_payload(descriptor)
+    plan_id = _offload_exec_batch_plan_id(plan_payload)
+    if plan_id in sent_plans:
+        return {
+            "v": 5,
+            "l": descriptor.layer_name,
+            "p": plan_id,
+        }
+    sent_plans.add(plan_id)
+    return {
+        "v": 4,
+        "l": descriptor.layer_name,
+        "p": plan_id,
+        **plan_payload,
+    }
+
+
+def _offload_exec_batch_descriptor_from_plan_payload(
+    layer_name: str,
+    plan_payload: dict[str, Any],
+) -> PAPOffloadExecBatchDescriptor:
+    request_ids = list(plan_payload["r"])
+    steps = [int(step) for step in plan_payload["s"]]
+    scales = [float(scale) for scale in plan_payload["a"]]
+    token_rows = plan_payload.get("t")
+    if token_rows is None:
+        token_rows = [()] * len(request_ids)
+    if not (len(request_ids) == len(steps) == len(scales) == len(token_rows)):
+        raise ValueError("compact PAP OFFLOAD_EXEC batch metadata length mismatch")
+    return PAPOffloadExecBatchDescriptor(
+        layer_name=layer_name,
+        items=tuple(
+            PAPOffloadExecDescriptor(
+                request_id=str(request_id),
+                layer_name=layer_name,
+                step=int(step),
+                scale=float(scale),
+                decode_token_ids=tuple(int(t) for t in token_row),
+            )
+            for request_id, step, scale, token_row in zip(
+                request_ids,
+                steps,
+                scales,
+                token_rows,
+            )
+        ),
+        batch_id_suffix=str(plan_payload["b"]),
+    )
+
+
 def _offload_exec_batch_descriptor_from_metadata(
     metadata: dict[str, Any],
+    *,
+    plan_cache: dict[str, dict[str, Any]] | None = None,
 ) -> PAPOffloadExecBatchDescriptor:
+    if metadata.get("v") == 4:
+        layer_name = str(metadata["l"])
+        plan_id = str(metadata["p"])
+        plan_payload: dict[str, Any] = {
+            "b": str(metadata["b"]),
+            "r": list(metadata["r"]),
+            "s": list(metadata["s"]),
+            "a": list(metadata["a"]),
+        }
+        if "t" in metadata:
+            plan_payload["t"] = list(metadata["t"])
+        if plan_cache is not None:
+            plan_cache[plan_id] = plan_payload
+        return _offload_exec_batch_descriptor_from_plan_payload(
+            layer_name,
+            plan_payload,
+        )
+    if metadata.get("v") == 5:
+        if plan_cache is None:
+            raise ValueError("PAP OFFLOAD_EXEC batch plan cache is required")
+        layer_name = str(metadata["l"])
+        plan_id = str(metadata["p"])
+        try:
+            plan_payload = plan_cache[plan_id]
+        except KeyError as exc:
+            raise ValueError(
+                f"unknown PAP OFFLOAD_EXEC batch plan id: {plan_id}"
+            ) from exc
+        return _offload_exec_batch_descriptor_from_plan_payload(
+            layer_name,
+            plan_payload,
+        )
     if metadata.get("v") in {2, 3}:
         layer_name = str(metadata["l"])
         request_ids = list(metadata["r"])
