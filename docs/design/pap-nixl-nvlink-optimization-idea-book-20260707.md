@@ -67,9 +67,15 @@ and `0.000 ms` is receive-side explicit NIXL transfer. The dominant component
 is `recv_wait_other_ms=1.393 ms`, meaning attention is mostly waiting for the
 next message to become available.
 
+Rank 3 low-latency mailbox knob A/B was run. Inline polling and telemetry-off
+were not kept as defaults. Inline publish was kept: it reduced median
+`recv_wait_other_ms` from `1.393 ms` to about `1.13 ms` across repeated runs,
+and reduced projection-side receive wait from `1.402 ms` to about
+`1.01-1.04 ms`.
+
 ## Current Next Step
 
-Implement Rank 3 next: A/B the existing NIXL mailbox low-latency knobs one at a
-time. Prioritize knobs that can reduce message-availability wait rather than
-payload transfer: inline polling, trace/telemetry overhead, slot count, ACK
-policy, and direct-output/materialized receive-slot behavior.
+Implement Rank 4 next: persistent compact notification/control metadata for
+OFFLOAD_EXEC batches. Rank 3 shows that payload transfer is not the median
+bottleneck; the next target is per-layer handoff/control overhead between
+projection publishing the next QKV task and attention observing it.

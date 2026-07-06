@@ -1298,6 +1298,15 @@ def test_nixl_mailbox_msgpack_notifications_default_enabled() -> None:
     assert '"PAP_NIXL_MAILBOX_MSGPACK_NOTIF", True' in source
 
 
+def test_nixl_mailbox_inline_publish_default_enabled() -> None:
+    import inspect
+
+    source = inspect.getsource(PAPNixlMailboxEndpoint.__init__)
+
+    assert "PAP_NIXL_MAILBOX_INLINE_PUBLISH" in source
+    assert '"PAP_NIXL_MAILBOX_INLINE_PUBLISH", True' in source
+
+
 def test_nixl_mailbox_xfer_poll_interval_defaults_to_busy_poll(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

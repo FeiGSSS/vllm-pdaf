@@ -72,6 +72,13 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
         "transfer_polls=15 materialize_ms=0.009 total_ms=0.088\n"
         "PAP NIXL mailbox recv wait trace actor=projection msg_id=y "
         "kind=attention_result_batch requested_msg_id=y wait_ms=0.410\n"
+        "PAP NIXL mailbox inline send trace actor=inline_projection "
+        "msg_id=inline-x "
+        "kind=attention_task_inline nbytes=8192 publish_ms=0.050 "
+        "pack_ms=0.006 slot_wait_ms=0.005 copy_ms=0.018 "
+        "payload_ms=0.004 piggyback_ms=0.002 notify_ms=0.013 "
+        "write_ms=0.033 write_prepare_ms=0.011 write_transfer_ms=0.020 "
+        "write_polls=3 total_ms=0.060\n"
     )
     (log_dir / "attention_0.log").write_text(
         "PAP OFFLOAD_EXEC attention mailbox batch trace "
@@ -264,6 +271,24 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
             "total_ms"
         ].median
         == 0.310
+    )
+    assert (
+        summary["mailbox_send_by_kind"]["inline_projection:attention_task_inline"][
+            "queue_ms"
+        ].median
+        == 0.0
+    )
+    assert (
+        summary["mailbox_send_by_kind"]["inline_projection:attention_task_inline"][
+            "ack_wait_ms"
+        ].median
+        == 0.0
+    )
+    assert (
+        summary["mailbox_send_by_kind"]["inline_projection:attention_task_inline"][
+            "total_ms"
+        ].median
+        == 0.060
     )
     assert (
         summary["mailbox_read_by_kind"]["attention:attention_task_batch"][

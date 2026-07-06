@@ -459,7 +459,7 @@ class PAPNixlMailboxEndpoint:
             "PAP_NIXL_MAILBOX_INLINE_POLL", False
         )
         self._inline_publish_enabled = _nixl_mailbox_env_bool(
-            "PAP_NIXL_MAILBOX_INLINE_PUBLISH", False
+            "PAP_NIXL_MAILBOX_INLINE_PUBLISH", True
         )
         self._slot_protocol_enabled = _nixl_mailbox_env_bool(
             "PAP_NIXL_MAILBOX_SLOT_PROTOCOL", True

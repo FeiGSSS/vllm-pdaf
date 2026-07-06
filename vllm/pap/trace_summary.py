@@ -150,6 +150,15 @@ _MAILBOX_SEND_RE = re.compile(
     r"(?:write_polls=(\d+) )?ack_wait_ms=([0-9.]+) "
     r"total_ms=([0-9.]+)"
 )
+_MAILBOX_INLINE_SEND_RE = re.compile(
+    r"PAP NIXL mailbox inline send trace actor=(\S+) .* kind=(\S+) nbytes=(\d+) "
+    r"publish_ms=([0-9.]+) pack_ms=([0-9.]+) "
+    r"slot_wait_ms=([0-9.]+) copy_ms=([0-9.]+) "
+    r"payload_ms=([0-9.]+) piggyback_ms=([0-9.]+) "
+    r"notify_ms=([0-9.]+) write_ms=([0-9.]+) "
+    r"write_prepare_ms=([0-9.]+) write_transfer_ms=([0-9.]+) "
+    r"write_polls=(\d+) total_ms=([0-9.]+)"
+)
 _MAILBOX_READ_RE = re.compile(
     r"PAP NIXL mailbox read trace actor=(\S+) .* kind=(\S+) nbytes=(\d+) "
     r"prepare_ms=([0-9.]+) "
@@ -775,6 +784,51 @@ def summarize_pap_trace_logs(
                     ("write_transfer_ms", write_transfer_ms or 0.0),
                     ("write_polls", write_polls or 0.0),
                     ("ack_wait_ms", ack_wait_ms),
+                    ("total_ms", total_ms),
+                ):
+                    _add_grouped_value(mailbox_send, actor_group, field, float(value))
+                    _add_grouped_value(
+                        mailbox_send_by_kind, kind_group, field, float(value)
+                    )
+                continue
+            if match := _MAILBOX_INLINE_SEND_RE.search(line):
+                (
+                    actor,
+                    kind,
+                    nbytes,
+                    publish_ms,
+                    pack_ms,
+                    slot_wait_ms,
+                    copy_ms,
+                    payload_ms,
+                    piggyback_ms,
+                    notify_ms,
+                    write_ms,
+                    write_prepare_ms,
+                    write_transfer_ms,
+                    write_polls,
+                    total_ms,
+                ) = match.groups()
+                total = float(total_ms)
+                if max_total_ms is not None and total > max_total_ms:
+                    continue
+                actor_group = _mailbox_actor_group(actor)
+                kind_group = _mailbox_kind_group(actor, kind)
+                for field, value in (
+                    ("nbytes", nbytes),
+                    ("queue_ms", 0.0),
+                    ("publish_ms", publish_ms),
+                    ("pack_ms", pack_ms),
+                    ("slot_wait_ms", slot_wait_ms),
+                    ("copy_ms", copy_ms),
+                    ("payload_ms", payload_ms),
+                    ("piggyback_ms", piggyback_ms),
+                    ("notify_ms", notify_ms),
+                    ("write_ms", write_ms),
+                    ("write_prepare_ms", write_prepare_ms),
+                    ("write_transfer_ms", write_transfer_ms),
+                    ("write_polls", write_polls),
+                    ("ack_wait_ms", 0.0),
                     ("total_ms", total_ms),
                 ):
                     _add_grouped_value(mailbox_send, actor_group, field, float(value))
