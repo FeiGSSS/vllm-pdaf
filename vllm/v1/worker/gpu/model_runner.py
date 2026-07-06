@@ -121,6 +121,15 @@ from vllm.v1.worker.utils import KVBlockZeroer
 logger = init_logger(__name__)
 
 
+def _pap_projection_critical_trace_enabled() -> bool:
+    return (
+        os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower()
+        in ("1", "true", "yes", "on")
+        and os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower()
+        in ("1", "true", "yes", "on")
+    )
+
+
 class GPUModelRunner(LoRAModelRunnerMixin):
     def __init__(self, vllm_config: VllmConfig, device: torch.device):
         self.vllm_config = vllm_config
@@ -1425,6 +1434,17 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         skip_attn_for_dummy_run: bool = False,
         is_profile: bool = False,
     ) -> ModelRunnerOutput | IntermediateTensors | None:
+        trace_pap_projection = (
+            _pap_projection_critical_trace_enabled() and not dummy_run
+        )
+        trace_input_prep_start_ns = (
+            time.perf_counter_ns() if trace_pap_projection else 0
+        )
+        trace_input_prep_done_ns = 0
+        trace_metadata_done_ns = 0
+        trace_preprocess_done_ns = 0
+        trace_forward_start_ns = 0
+        trace_model_forward_done_ns = 0
         if not dummy_run:
             # Update the request states.
             self.update_pp_decode_requests()
@@ -1478,6 +1498,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             # Common case.
             # Prepare all the inputs and copy to the input buffers.
             input_batch = self.prepare_inputs(scheduler_output, batch_desc)
+            if trace_pap_projection:
+                trace_input_prep_done_ns = time.perf_counter_ns()
             block_tables, slot_mappings = self.prepare_attn(input_batch)
             # Mamba "align" pre-copy: migrate recurrent state across block
             # boundaries before the forward. Runs only on real batches, and
@@ -1534,6 +1556,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 self.kv_cache_config,
                 ubatch_slices=ubatch_slices,
             )
+        if trace_pap_projection:
+            trace_metadata_done_ns = time.perf_counter_ns()
 
         input_ids = input_batch.input_ids
         inputs_embeds = None
@@ -1591,8 +1615,13 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
         # Update the EPLB meta.
         self.eplb.prepare_forward(self.model_config, input_batch.num_tokens)
+        if trace_pap_projection:
+            trace_preprocess_done_ns = time.perf_counter_ns()
 
         # Run model.
+        trace_forward_start_ns = (
+            time.perf_counter_ns() if trace_pap_projection else 0
+        )
         if batch_desc.cg_mode == CUDAGraphMode.FULL:
             # Use explicit cudagraph replay for FULL mode.
             # NOTE(woosuk): Here, we don't need to pass the input tensors,
@@ -1666,6 +1695,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 else:
                     # Eager (NONE): call the raw model directly.
                     model_output = self.model(**model_inputs)
+        if trace_pap_projection:
+            trace_model_forward_done_ns = time.perf_counter_ns()
 
         if self.is_last_pp_rank:
             if self.use_aux_hidden_state_outputs:
@@ -1691,6 +1722,53 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             aux_hidden_states=aux_hidden_states,
             finished_req_ids=finished_req_ids,
         )
+
+        if trace_pap_projection:
+            trace_postprocess_done_ns = time.perf_counter_ns()
+            logger.info(
+                "PAP OFFLOAD_EXEC projection runner forward detail "
+                "num_tokens=%d input_prep_ms=%.3f metadata_ms=%.3f "
+                "preprocess_ms=%.3f model_forward_ms=%.3f "
+                "hidden_slice_ms=%.3f logits_ms=%.3f "
+                "postprocess_tail_ms=%.3f total_ms=%.3f "
+                "input_prep_start_ns=%d input_prep_done_ns=%d "
+                "metadata_done_ns=%d preprocess_done_ns=%d "
+                "model_forward_done_ns=%d hidden_slice_done_ns=%d "
+                "logits_done_ns=%d postprocess_done_ns=%d",
+                input_batch.num_tokens_after_padding,
+                (trace_input_prep_done_ns - trace_input_prep_start_ns)
+                / 1_000_000.0,
+                (trace_metadata_done_ns - trace_input_prep_done_ns)
+                / 1_000_000.0,
+                (trace_preprocess_done_ns - trace_metadata_done_ns)
+                / 1_000_000.0,
+                (trace_model_forward_done_ns - trace_forward_start_ns)
+                / 1_000_000.0,
+                0.0,
+                0.0,
+                (trace_postprocess_done_ns - trace_model_forward_done_ns)
+                / 1_000_000.0,
+                (trace_postprocess_done_ns - trace_input_prep_start_ns)
+                / 1_000_000.0,
+                trace_input_prep_start_ns,
+                trace_input_prep_done_ns,
+                trace_metadata_done_ns,
+                trace_preprocess_done_ns,
+                trace_model_forward_done_ns,
+                trace_model_forward_done_ns,
+                trace_model_forward_done_ns,
+                trace_postprocess_done_ns,
+            )
+            logger.info(
+                "PAP OFFLOAD_EXEC projection runner forward "
+                "num_tokens=%d forward_and_postprocess_ms=%.3f "
+                "forward_start_ns=%d postprocess_done_ns=%d",
+                input_batch.num_tokens_after_padding,
+                (trace_postprocess_done_ns - trace_forward_start_ns)
+                / 1_000_000.0,
+                trace_forward_start_ns,
+                trace_postprocess_done_ns,
+            )
 
         if not self.is_last_pp_rank:
             # Non-last PP rank: return IntermediateTensors for sending.

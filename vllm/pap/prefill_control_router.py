@@ -55,6 +55,8 @@ def build_prefill_control_router() -> APIRouter:
             tuple(req.new_token_ids),
         )
         if not result.get("applied", False):
+            if result.get("reason") in {"unknown_request", "request_finished"}:
+                return result
             raise HTTPException(status_code=404, detail=result)
         return result
 

@@ -17,6 +17,7 @@ import os
 import socket
 import socketserver
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from queue import Queue
 from threading import Condition, Lock, Thread
@@ -733,15 +734,12 @@ class PAPAttentionRegistry:
         Uses a single ``reshape_and_cache_flash`` call over the batch (one GPU
         kernel launch), mirroring the legacy local-pool fast path.
         """
-        unified_profile = _pap_env_flag("PAP_UNIFIED_KV_PROFILE", False)
         if len(session_request_ids) != len(decode_seq_lens):
             raise ValueError(
                 "PAP unified KV append session_request_ids/decode_seq_lens "
                 "length mismatch"
             )
-        append_start = time.perf_counter() if unified_profile else 0.0
 
-        num_rows = int(key_batch.shape[0])
         slots: list[int] = []
         active_indices: list[int] = []
         base_v_cache: torch.Tensor | None = None
@@ -1743,13 +1741,9 @@ class PAPAttentionRegistry:
                 state = "missing"
                 if readiness is not None:
                     state = (
-                        "received=%s opened=%s ready=%s failed=%s"
-                        % (
-                            readiness.descriptor_received,
-                            readiness.descriptor_opened,
-                            readiness.ready,
-                            readiness.failed,
-                        )
+                        f"received={readiness.descriptor_received} "
+                        f"opened={readiness.descriptor_opened} "
+                        f"ready={readiness.ready} failed={readiness.failed}"
                     )
                 raise RuntimeError(
                     "prefill KV must be ready before stateful decode attention "
@@ -2431,7 +2425,9 @@ def compute_binary_attention_response(
         )
     if metadata.get("command") == "import_prefill_paged_kv_ipc":
         descriptor = PAPOffloadKVPagedIPCDescriptor.from_dict(metadata["descriptor"])
-        async_import = bool(metadata.get("async", False)) or _pap_prefill_kv_async_enabled()
+        async_import = bool(
+            metadata.get("async", False)
+        ) or _pap_prefill_kv_async_enabled()
         if async_import:
             seq_len = registry.enqueue_prefill_paged_kv_descriptor(descriptor)
             return serialize_tensor_bundle(
@@ -2811,9 +2807,20 @@ def _compute_unified_paged_flash_batch(
     if not is_flash_attn_varlen_func_available():
         return None
 
+    metadata_start = time.perf_counter() if trace_stats is not None else 0.0
     metadata = build_unified_paged_flash_metadata(
         states=states, device=query_batch.device
     )
+    if trace_stats is not None:
+        metadata_done_ns = time.perf_counter_ns()
+        metadata_ms = (time.perf_counter() - metadata_start) * 1000.0
+        trace_stats["paged_metadata_ms"] = (
+            trace_stats.get("paged_metadata_ms", 0.0) + metadata_ms
+        )
+        trace_stats["metadata_build_ms"] = (
+            trace_stats.get("metadata_build_ms", 0.0) + metadata_ms
+        )
+        trace_stats["pre_compute_done_ns"] = float(metadata_done_ns)
     if metadata.max_seq_len <= 0:
         return None
 
@@ -2828,8 +2835,17 @@ def _compute_unified_paged_flash_batch(
         value_cache=value_cache,
         layout=states[0].layout,
     )
-    metadata_start = time.perf_counter() if trace_stats is not None else 0.0
     paged_start = time.perf_counter() if trace_stats is not None else 0.0
+    start_event = end_event = None
+    if (
+        trace_stats is not None
+        and query_batch.is_cuda
+        and torch.cuda.is_available()
+    ):
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
+        stream = torch.cuda.current_stream(query_batch.device)
+        start_event.record(stream)
     result = _run_paged_flash_varlen(
         flash_attn_varlen_func=flash_attn_varlen_func,
         fa_version=fa_version,
@@ -2841,16 +2857,25 @@ def _compute_unified_paged_flash_batch(
         causal=True,
         return_softmax_lse=False,
     )
+    if end_event is not None:
+        end_event.record(torch.cuda.current_stream(query_batch.device))
+        end_event.synchronize()
     output = result[0] if isinstance(result, tuple) else result
     if trace_stats is not None:
-        trace_stats["unified_metadata_ms"] = (
-            trace_stats.get("unified_metadata_ms", 0.0)
-            + (time.perf_counter() - metadata_start) * 1000.0
+        paged_done_ns = time.perf_counter_ns()
+        paged_wall_ms = (time.perf_counter() - paged_start) * 1000.0
+        paged_kernel_ms = (
+            start_event.elapsed_time(end_event)
+            if start_event is not None and end_event is not None
+            else paged_wall_ms
         )
-        trace_stats["unified_paged_flash_ms"] = (
-            trace_stats.get("unified_paged_flash_ms", 0.0)
-            + (time.perf_counter() - paged_start) * 1000.0
+        trace_stats["paged_flash_ms"] = (
+            trace_stats.get("paged_flash_ms", 0.0) + paged_wall_ms
         )
+        trace_stats["paged_flash_kernel_ms"] = (
+            trace_stats.get("paged_flash_kernel_ms", 0.0) + paged_kernel_ms
+        )
+        trace_stats["paged_flash_done_ns"] = float(paged_done_ns)
     return output
 
 
@@ -2963,15 +2988,18 @@ def compute_offload_exec_batch_output(
         )
         if unified_output is None:
             raise RuntimeError("PAP unified paged FlashAttention failed")
+        reshape_start = time.perf_counter() if trace_stats is not None else 0.0
         if unified_output.ndim == 3:
             unified_output = unified_output.reshape(
                 batch_size, num_heads * head_dim
             )
         if trace_stats is not None:
-            trace_stats["reshape_ms"] = (
-                trace_stats.get("reshape_ms", 0.0)
-                + (time.perf_counter() - append_start) * 0.0
+            reshape_ms = (time.perf_counter() - reshape_start) * 1000.0
+            trace_stats["reshape_ms"] = trace_stats.get("reshape_ms", 0.0) + reshape_ms
+            trace_stats["attention_output_reshape_ms"] = (
+                trace_stats.get("attention_output_reshape_ms", 0.0) + reshape_ms
             )
+            trace_stats["post_compute_done_ns"] = float(time.perf_counter_ns())
         commit_client = _get_commit_client()
         if commit_client.enabled:
             for index, item in enumerate(items):
@@ -2988,6 +3016,28 @@ def compute_offload_exec_batch_output(
         "PAP unified KV state missing for layer="
         f"{descriptor.layer_name}; set PAP_UNIFIED_KV=1"
     )
+
+
+def _finalize_offload_exec_compute_trace(
+    trace_stats: dict[str, float] | None,
+    compute_ms: float,
+) -> None:
+    if trace_stats is None:
+        return
+    explained_ms = sum(
+        float(trace_stats.get(field, 0.0))
+        for field in (
+            "shape_lookup_ms",
+            "qkv_split_ms",
+            "query_move_ms",
+            "append_kv_ms",
+            "metadata_build_ms",
+            "paged_flash_ms",
+            "attention_output_reshape_ms",
+        )
+    )
+    if float(trace_stats.get("compute_unaccounted_ms", 0.0)) <= 0.0:
+        trace_stats["compute_unaccounted_ms"] = max(0.0, compute_ms - explained_ms)
 
 
 def run_offload_exec_once(
@@ -3127,6 +3177,10 @@ def run_offload_exec_batch_once(
             "reshape_ms": 0.0,
             "paged_metadata_ms": 0.0,
             "paged_flash_ms": 0.0,
+            "metadata_build_ms": 0.0,
+            "paged_flash_kernel_ms": 0.0,
+            "attention_output_reshape_ms": 0.0,
+            "compute_unaccounted_ms": 0.0,
             "fallback_ms": 0.0,
             "shape_lookup_ms": 0.0,
             "qkv_split_ms": 0.0,
@@ -3157,6 +3211,7 @@ def run_offload_exec_batch_once(
         if trace_offload_exec
         else 0.0
     )
+    _finalize_offload_exec_compute_trace(trace_compute_stats, trace_compute_ms)
     if trace_offload_exec:
         trace_compute_done_ns = time.perf_counter_ns()
     trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
@@ -3181,6 +3236,8 @@ def run_offload_exec_batch_once(
             "append_lock_wait_ms=%.3f append_prepare_ms=%.3f "
             "append_record_ms=%.3f append_tensor_ms=%.3f "
             "append_copy_ms=%.3f append_state_ms=%.3f "
+            "metadata_build_ms=%.3f paged_flash_kernel_ms=%.3f "
+            "attention_output_reshape_ms=%.3f compute_unaccounted_ms=%.3f "
             "qkv_shape=%s output_shape=%s batch_key=%s "
             "recv_done_ns=%d compute_done_ns=%d send_done_ns=%d "
             "recv_start_ns=%d pre_compute_start_ns=%d "
@@ -3213,6 +3270,22 @@ def run_offload_exec_batch_once(
             (trace_compute_stats["append_tensor_ms"] if trace_compute_stats else 0.0),
             (trace_compute_stats["append_copy_ms"] if trace_compute_stats else 0.0),
             (trace_compute_stats["append_state_ms"] if trace_compute_stats else 0.0),
+            (trace_compute_stats["metadata_build_ms"] if trace_compute_stats else 0.0),
+            (
+                trace_compute_stats["paged_flash_kernel_ms"]
+                if trace_compute_stats
+                else 0.0
+            ),
+            (
+                trace_compute_stats["attention_output_reshape_ms"]
+                if trace_compute_stats
+                else 0.0
+            ),
+            (
+                trace_compute_stats["compute_unaccounted_ms"]
+                if trace_compute_stats
+                else 0.0
+            ),
             tuple(qkv_batch.shape),
             tuple(output_batch.shape),
             pap_offload_exec_trace_id(descriptor.output_tensor_id),
@@ -3220,10 +3293,26 @@ def run_offload_exec_batch_once(
             trace_compute_done_ns,
             trace_send_done_ns,
             trace_recv_start_ns,
-            int(trace_compute_stats.get("pre_compute_start_ns", 0.0)) if trace_compute_stats else 0,
-            int(trace_compute_stats.get("pre_compute_done_ns", 0.0)) if trace_compute_stats else 0,
-            int(trace_compute_stats.get("paged_flash_done_ns", 0.0)) if trace_compute_stats else 0,
-            int(trace_compute_stats.get("post_compute_done_ns", 0.0)) if trace_compute_stats else 0,
+            (
+                int(trace_compute_stats.get("pre_compute_start_ns", 0.0))
+                if trace_compute_stats
+                else 0
+            ),
+            (
+                int(trace_compute_stats.get("pre_compute_done_ns", 0.0))
+                if trace_compute_stats
+                else 0
+            ),
+            (
+                int(trace_compute_stats.get("paged_flash_done_ns", 0.0))
+                if trace_compute_stats
+                else 0
+            ),
+            (
+                int(trace_compute_stats.get("post_compute_done_ns", 0.0))
+                if trace_compute_stats
+                else 0
+            ),
             trace_send_start_ns,
         )
 
@@ -3337,6 +3426,10 @@ def run_offload_exec_mailbox_loop(
                     "reshape_ms": 0.0,
                     "paged_metadata_ms": 0.0,
                     "paged_flash_ms": 0.0,
+                    "metadata_build_ms": 0.0,
+                    "paged_flash_kernel_ms": 0.0,
+                    "attention_output_reshape_ms": 0.0,
+                    "compute_unaccounted_ms": 0.0,
                     "fallback_ms": 0.0,
                     "shape_lookup_ms": 0.0,
                     "qkv_split_ms": 0.0,
@@ -3350,6 +3443,7 @@ def run_offload_exec_mailbox_loop(
                     "append_state_ms": 0.0,
                     "pre_compute_start_ns": 0.0,
                     "pre_compute_done_ns": 0.0,
+                    "paged_flash_done_ns": 0.0,
                     "compute_done_ns": 0.0,
                     "post_compute_done_ns": 0.0,
                 }
@@ -3370,6 +3464,7 @@ def run_offload_exec_mailbox_loop(
             if trace_offload_exec
             else 0.0
         )
+        _finalize_offload_exec_compute_trace(trace_compute_stats, trace_compute_ms)
         if trace_offload_exec:
             trace_compute_done_ns = time.perf_counter_ns()
         trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
@@ -3394,7 +3489,10 @@ def run_offload_exec_mailbox_loop(
                 "query_cat_ms=%.3f append_lock_wait_ms=%.3f "
                 "append_prepare_ms=%.3f append_record_ms=%.3f "
                 "append_tensor_ms=%.3f append_copy_ms=%.3f "
-                "append_state_ms=%.3f qkv_shape=%s output_shape=%s batch_key=%s "
+                "append_state_ms=%.3f metadata_build_ms=%.3f "
+                "paged_flash_kernel_ms=%.3f attention_output_reshape_ms=%.3f "
+                "compute_unaccounted_ms=%.3f qkv_shape=%s output_shape=%s "
+                "batch_key=%s "
                 "recv_done_ns=%d compute_done_ns=%d send_done_ns=%d "
                 "recv_start_ns=%d pre_compute_start_ns=%d "
                 "pre_compute_done_ns=%d paged_flash_done_ns=%d reshape_done_ns=%d "
@@ -3444,6 +3542,26 @@ def run_offload_exec_mailbox_loop(
                     if trace_compute_stats
                     else 0.0
                 ),
+                (
+                    trace_compute_stats["metadata_build_ms"]
+                    if trace_compute_stats
+                    else 0.0
+                ),
+                (
+                    trace_compute_stats["paged_flash_kernel_ms"]
+                    if trace_compute_stats
+                    else 0.0
+                ),
+                (
+                    trace_compute_stats["attention_output_reshape_ms"]
+                    if trace_compute_stats
+                    else 0.0
+                ),
+                (
+                    trace_compute_stats["compute_unaccounted_ms"]
+                    if trace_compute_stats
+                    else 0.0
+                ),
                 tuple(qkv_batch.shape),
                 tuple(output_batch.shape),
                 pap_offload_exec_trace_id(descriptor.output_tensor_id),
@@ -3451,10 +3569,26 @@ def run_offload_exec_mailbox_loop(
                 trace_compute_done_ns,
                 trace_send_done_ns,
                 trace_recv_start_ns,
-                int(trace_compute_stats.get("pre_compute_start_ns", 0.0)) if trace_compute_stats else 0,
-                int(trace_compute_stats.get("pre_compute_done_ns", 0.0)) if trace_compute_stats else 0,
-                int(trace_compute_stats.get("paged_flash_done_ns", 0.0)) if trace_compute_stats else 0,
-                int(trace_compute_stats.get("post_compute_done_ns", 0.0)) if trace_compute_stats else 0,
+                (
+                    int(trace_compute_stats.get("pre_compute_start_ns", 0.0))
+                    if trace_compute_stats
+                    else 0
+                ),
+                (
+                    int(trace_compute_stats.get("pre_compute_done_ns", 0.0))
+                    if trace_compute_stats
+                    else 0
+                ),
+                (
+                    int(trace_compute_stats.get("paged_flash_done_ns", 0.0))
+                    if trace_compute_stats
+                    else 0
+                ),
+                (
+                    int(trace_compute_stats.get("post_compute_done_ns", 0.0))
+                    if trace_compute_stats
+                    else 0
+                ),
                 trace_send_start_ns,
             )
 

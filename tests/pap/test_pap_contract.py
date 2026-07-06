@@ -374,6 +374,41 @@ def test_qwen3_pap_defers_direct_mailbox_output_release_until_after_o_proj() -> 
     assert "return direct_output, pap_release_messages" in compute_method
 
 
+def test_pap_projection_runtime_emits_operation_level_ttft_trace() -> None:
+    v1_runner_text = (
+        ROOT / "vllm" / "v1" / "worker" / "gpu_model_runner.py"
+    ).read_text()
+    v2_runner_text = (
+        ROOT / "vllm" / "v1" / "worker" / "gpu" / "model_runner.py"
+    ).read_text()
+    core_text = (ROOT / "vllm" / "v1" / "engine" / "core.py").read_text()
+
+    assert "PAP OFFLOAD_EXEC projection runner forward detail" in v1_runner_text
+    assert "PAP OFFLOAD_EXEC projection runner forward detail" in v2_runner_text
+    for field in (
+        "input_prep_ms",
+        "metadata_ms",
+        "preprocess_ms",
+        "model_forward_ms",
+        "hidden_slice_ms",
+        "logits_ms",
+        "postprocess_tail_ms",
+    ):
+        assert field in v1_runner_text
+        assert field in v2_runner_text
+
+    assert "PAP OFFLOAD_EXEC projection first output" in core_text
+    assert "batch_queue.appendleft" in core_text
+    for field in (
+        "generated_tokens",
+        "sched_ms",
+        "exec_and_sample_ms",
+        "scheduler_update_ms",
+        "step_to_first_output_ms",
+    ):
+        assert field in core_text
+
+
 def test_qwen3_pap_gate_checks_decode_only() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
 

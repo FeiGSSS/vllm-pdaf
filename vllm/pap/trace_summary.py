@@ -67,6 +67,13 @@ _PROJECTION_RUNNER_FORWARD_RE = re.compile(
     r"projection runner forward .*?num_tokens=(\d+) "
     r"forward_and_postprocess_ms=([0-9.]+)"
 )
+_PROJECTION_RUNNER_FORWARD_DETAIL_RE = re.compile(
+    r"projection runner forward detail .*?num_tokens=(\d+) "
+    r"input_prep_ms=([0-9.]+) metadata_ms=([0-9.]+) "
+    r"preprocess_ms=([0-9.]+) model_forward_ms=([0-9.]+) "
+    r"hidden_slice_ms=([0-9.]+) logits_ms=([0-9.]+) "
+    r"postprocess_tail_ms=([0-9.]+) total_ms=([0-9.]+)"
+)
 _PROJECTION_WORKER_EXEC_RE = re.compile(
     r"projection worker execute_model .*?num_tokens=(\d+) exec_ms=([0-9.]+)"
 )
@@ -77,6 +84,11 @@ _PROJECTION_ENGINE_STEP_RE = re.compile(
     r"projection engine step .*?num_gen=(\d+) .*?"
     r"sched_ms=([0-9.]+) exec_and_sample_ms=([0-9.]+) "
     r"postprocess_ms=([0-9.]+) step_ms=([0-9.]+)"
+)
+_PROJECTION_FIRST_OUTPUT_RE = re.compile(
+    r"projection first output .*?generated_tokens=(\d+) "
+    r"sched_ms=([0-9.]+) exec_and_sample_ms=([0-9.]+) "
+    r"scheduler_update_ms=([0-9.]+) step_to_first_output_ms=([0-9.]+)"
 )
 _ATTENTION_TRACE_RE = re.compile(
     r"attention mailbox batch trace .* calls=(\d+) recv_qkv_ms=([0-9.]+) "
@@ -98,6 +110,10 @@ _ATTENTION_COMPUTE_DETAIL_RE = re.compile(
     r"(?: append_tensor_ms=([0-9.]+))?"
     r"(?: append_copy_ms=([0-9.]+))?"
     r"(?: append_state_ms=([0-9.]+))?"
+    r"(?: metadata_build_ms=([0-9.]+))?"
+    r"(?: paged_flash_kernel_ms=([0-9.]+))?"
+    r"(?: attention_output_reshape_ms=([0-9.]+))?"
+    r"(?: compute_unaccounted_ms=([0-9.]+))?"
 )
 _PROJECTION_CORRELATION_RE = re.compile(
     r"batch_keys=(\S+) send_done_ns=(\d+) yield_start_ns=(\d+) "
@@ -119,13 +135,21 @@ _ATTENTION_CORRELATION_NEW_RE = re.compile(
 _MAILBOX_SEND_RE = re.compile(
     r"PAP NIXL mailbox send trace actor=(\S+) .* kind=(\S+) nbytes=(\d+) "
     r"queue_ms=([0-9.]+) publish_ms=([0-9.]+) pack_ms=([0-9.]+) "
-    r"copy_ms=([0-9.]+) notify_ms=([0-9.]+) "
-    r"(?:write_ms=([0-9.]+) )?ack_wait_ms=([0-9.]+) "
+    r"(?:slot_wait_ms=([0-9.]+) )?copy_ms=([0-9.]+) "
+    r"(?:payload_ms=([0-9.]+) )?(?:piggyback_ms=([0-9.]+) )?"
+    r"notify_ms=([0-9.]+) "
+    r"(?:write_ms=([0-9.]+) )?"
+    r"(?:write_prepare_ms=([0-9.]+) )?"
+    r"(?:write_transfer_ms=([0-9.]+) )?"
+    r"(?:write_polls=(\d+) )?ack_wait_ms=([0-9.]+) "
     r"total_ms=([0-9.]+)"
 )
 _MAILBOX_READ_RE = re.compile(
     r"PAP NIXL mailbox read trace actor=(\S+) .* kind=(\S+) nbytes=(\d+) "
-    r"prepare_ms=([0-9.]+) transfer_ms=([0-9.]+) transfer_polls=(\d+) "
+    r"prepare_ms=([0-9.]+) "
+    r"(?:slot_wait_ms=([0-9.]+) )?"
+    r"(?:handle_prepare_ms=([0-9.]+) )?"
+    r"transfer_ms=([0-9.]+) transfer_polls=(\d+) "
     r"materialize_ms=([0-9.]+) total_ms=([0-9.]+)"
 )
 _MAILBOX_WAIT_RE = re.compile(
@@ -236,6 +260,17 @@ def summarize_pap_trace_logs(
         "num_tokens": [],
         "forward_and_postprocess_ms": [],
     }
+    projection_runner_forward_detail: dict[str, list[float]] = {
+        "num_tokens": [],
+        "input_prep_ms": [],
+        "metadata_ms": [],
+        "preprocess_ms": [],
+        "model_forward_ms": [],
+        "hidden_slice_ms": [],
+        "logits_ms": [],
+        "postprocess_tail_ms": [],
+        "total_ms": [],
+    }
     projection_worker_exec: dict[str, list[float]] = {
         "num_tokens": [],
         "exec_ms": [],
@@ -249,6 +284,13 @@ def summarize_pap_trace_logs(
         "exec_and_sample_ms": [],
         "postprocess_ms": [],
         "step_ms": [],
+    }
+    projection_first_output: dict[str, list[float]] = {
+        "generated_tokens": [],
+        "sched_ms": [],
+        "exec_and_sample_ms": [],
+        "scheduler_update_ms": [],
+        "step_to_first_output_ms": [],
     }
     attention: dict[str, list[float]] = {
         "calls": [],
@@ -272,6 +314,10 @@ def summarize_pap_trace_logs(
         "append_tensor_ms": [],
         "append_copy_ms": [],
         "append_state_ms": [],
+        "metadata_build_ms": [],
+        "paged_flash_kernel_ms": [],
+        "attention_output_reshape_ms": [],
+        "compute_unaccounted_ms": [],
     }
     mailbox_send: dict[str, dict[str, list[float]]] = {}
     mailbox_read: dict[str, dict[str, list[float]]] = {}
@@ -381,6 +427,33 @@ def summarize_pap_trace_logs(
                     projection_runner_forward["num_tokens"].append(float(num_tokens))
                     projection_runner_forward["forward_and_postprocess_ms"].append(forward)
                 continue
+            if match := _PROJECTION_RUNNER_FORWARD_DETAIL_RE.search(line):
+                (
+                    num_tokens,
+                    input_prep_ms,
+                    metadata_ms,
+                    preprocess_ms,
+                    model_forward_ms,
+                    hidden_slice_ms,
+                    logits_ms,
+                    postprocess_tail_ms,
+                    total_ms,
+                ) = match.groups()
+                total = float(total_ms)
+                if max_total_ms is None or total <= max_total_ms * 100:
+                    for field, value in (
+                        ("num_tokens", num_tokens),
+                        ("input_prep_ms", input_prep_ms),
+                        ("metadata_ms", metadata_ms),
+                        ("preprocess_ms", preprocess_ms),
+                        ("model_forward_ms", model_forward_ms),
+                        ("hidden_slice_ms", hidden_slice_ms),
+                        ("logits_ms", logits_ms),
+                        ("postprocess_tail_ms", postprocess_tail_ms),
+                        ("total_ms", total_ms),
+                    ):
+                        projection_runner_forward_detail[field].append(float(value))
+                continue
             if match := _PROJECTION_WORKER_EXEC_RE.search(line):
                 num_tokens, exec_ms = match.groups()
                 exec_val = float(exec_ms)
@@ -409,6 +482,25 @@ def summarize_pap_trace_logs(
                         float(postprocess_ms)
                     )
                     projection_engine_step["step_ms"].append(step_val)
+                continue
+            if match := _PROJECTION_FIRST_OUTPUT_RE.search(line):
+                (
+                    generated_tokens,
+                    sched_ms,
+                    exec_and_sample_ms,
+                    scheduler_update_ms,
+                    step_to_first_output_ms,
+                ) = match.groups()
+                first_output = float(step_to_first_output_ms)
+                if max_total_ms is None or first_output <= max_total_ms * 100:
+                    for field, value in (
+                        ("generated_tokens", generated_tokens),
+                        ("sched_ms", sched_ms),
+                        ("exec_and_sample_ms", exec_and_sample_ms),
+                        ("scheduler_update_ms", scheduler_update_ms),
+                        ("step_to_first_output_ms", step_to_first_output_ms),
+                    ):
+                        projection_first_output[field].append(float(value))
                 continue
             if match := _PROJECTION_TRACE_RE.search(line):
                 (
@@ -491,6 +583,10 @@ def summarize_pap_trace_logs(
                             append_tensor_ms,
                             append_copy_ms,
                             append_state_ms,
+                            metadata_build_ms,
+                            paged_flash_kernel_ms,
+                            attention_output_reshape_ms,
+                            compute_unaccounted_ms,
                         ) = detail.groups()
                     else:
                         append_kv_ms = pack_ms = sdpa_ms = reshape_ms = 0.0
@@ -506,6 +602,10 @@ def summarize_pap_trace_logs(
                         append_tensor_ms = 0.0
                         append_copy_ms = 0.0
                         append_state_ms = 0.0
+                        metadata_build_ms = 0.0
+                        paged_flash_kernel_ms = 0.0
+                        attention_output_reshape_ms = 0.0
+                        compute_unaccounted_ms = 0.0
                     attention["append_kv_ms"].append(float(append_kv_ms))
                     attention["pack_ms"].append(float(pack_ms))
                     attention["sdpa_ms"].append(float(sdpa_ms))
@@ -528,6 +628,18 @@ def summarize_pap_trace_logs(
                     attention["append_tensor_ms"].append(float(append_tensor_ms or 0.0))
                     attention["append_copy_ms"].append(float(append_copy_ms or 0.0))
                     attention["append_state_ms"].append(float(append_state_ms or 0.0))
+                    attention["metadata_build_ms"].append(
+                        float(metadata_build_ms or 0.0)
+                    )
+                    attention["paged_flash_kernel_ms"].append(
+                        float(paged_flash_kernel_ms or 0.0)
+                    )
+                    attention["attention_output_reshape_ms"].append(
+                        float(attention_output_reshape_ms or 0.0)
+                    )
+                    attention["compute_unaccounted_ms"].append(
+                        float(compute_unaccounted_ms or 0.0)
+                    )
                     if correlation_new := _ATTENTION_CORRELATION_NEW_RE.search(line):
                         (
                             batch_key,
@@ -591,9 +703,15 @@ def summarize_pap_trace_logs(
                     queue_ms,
                     publish_ms,
                     pack_ms,
+                    slot_wait_ms,
                     copy_ms,
+                    payload_ms,
+                    piggyback_ms,
                     notify_ms,
                     write_ms,
+                    write_prepare_ms,
+                    write_transfer_ms,
+                    write_polls,
                     ack_wait_ms,
                     total_ms,
                 ) = match.groups()
@@ -607,9 +725,15 @@ def summarize_pap_trace_logs(
                     ("queue_ms", queue_ms),
                     ("publish_ms", publish_ms),
                     ("pack_ms", pack_ms),
+                    ("slot_wait_ms", slot_wait_ms or 0.0),
                     ("copy_ms", copy_ms),
+                    ("payload_ms", payload_ms or 0.0),
+                    ("piggyback_ms", piggyback_ms or 0.0),
                     ("notify_ms", notify_ms),
                     ("write_ms", write_ms or 0.0),
+                    ("write_prepare_ms", write_prepare_ms or 0.0),
+                    ("write_transfer_ms", write_transfer_ms or 0.0),
+                    ("write_polls", write_polls or 0.0),
                     ("ack_wait_ms", ack_wait_ms),
                     ("total_ms", total_ms),
                 ):
@@ -624,6 +748,8 @@ def summarize_pap_trace_logs(
                     kind,
                     nbytes,
                     prepare_ms,
+                    slot_wait_ms,
+                    handle_prepare_ms,
                     transfer_ms,
                     transfer_polls,
                     materialize_ms,
@@ -637,6 +763,8 @@ def summarize_pap_trace_logs(
                 for field, value in (
                     ("nbytes", nbytes),
                     ("prepare_ms", prepare_ms),
+                    ("slot_wait_ms", slot_wait_ms or 0.0),
+                    ("handle_prepare_ms", handle_prepare_ms or 0.0),
                     ("transfer_ms", transfer_ms),
                     ("transfer_polls", transfer_polls),
                     ("materialize_ms", materialize_ms),
@@ -689,7 +817,9 @@ def summarize_pap_trace_logs(
         pre_compute_start_ns = min(
             item["pre_compute_start_ns"] for item in attention_times
         )
-        pre_compute_done_ns = max(item["pre_compute_done_ns"] for item in attention_times)
+        pre_compute_done_ns = max(
+            item["pre_compute_done_ns"] for item in attention_times
+        )
         compute_done_ns = max(item["compute_done_ns"] for item in attention_times)
         post_compute_done_ns = max(
             item["post_compute_done_ns"] for item in attention_times
@@ -762,6 +892,10 @@ def summarize_pap_trace_logs(
         "projection_runner_forward": {
             field: _stat(values) for field, values in projection_runner_forward.items()
         },
+        "projection_runner_forward_detail": {
+            field: _stat(values)
+            for field, values in projection_runner_forward_detail.items()
+        },
         "projection_worker_exec": {
             field: _stat(values) for field, values in projection_worker_exec.items()
         },
@@ -770,6 +904,9 @@ def summarize_pap_trace_logs(
         },
         "projection_engine_step": {
             field: _stat(values) for field, values in projection_engine_step.items()
+        },
+        "projection_first_output": {
+            field: _stat(values) for field, values in projection_first_output.items()
         },
         "attention_trace": {
             field: _stat(values) for field, values in attention.items()

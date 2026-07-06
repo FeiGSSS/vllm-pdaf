@@ -238,7 +238,12 @@ _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 
 
 def _pap_projection_critical_trace_enabled() -> bool:
-    return os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower() in _TRUE_ENV_VALUES
+    return (
+        os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower()
+        in _TRUE_ENV_VALUES
+        and os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower()
+        in _TRUE_ENV_VALUES
+    )
 
 
 AttnMetadataDict: TypeAlias = dict[str, AttentionMetadata]
@@ -4333,6 +4338,16 @@ class GPUModelRunner(
             assert kv_connector_metadata is not None
             get_kv_transfer_group().handle_preemptions(kv_connector_metadata)
 
+        trace_pap_projection = _pap_projection_critical_trace_enabled()
+        trace_input_prep_start_ns = (
+            time.perf_counter_ns() if trace_pap_projection else 0
+        )
+        trace_input_prep_done_ns = 0
+        trace_metadata_done_ns = 0
+        trace_preprocess_done_ns = 0
+        trace_model_forward_done_ns = 0
+        trace_hidden_slice_done_ns = 0
+        trace_logits_done_ns = 0
         num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
         with (
             record_function_or_nullcontext("gpu_model_runner: preprocess"),
@@ -4385,6 +4400,8 @@ class GPUModelRunner(
                 scheduler_output,
                 num_scheduled_tokens_np,
             )
+            if trace_pap_projection:
+                trace_input_prep_done_ns = time.perf_counter_ns()
 
             cascade_attn_prefix_lens = None
             # Disable cascade attention when using microbatching (DBO)
@@ -4523,6 +4540,8 @@ class GPUModelRunner(
                     slot_mappings=slot_mappings_by_group,
                 )
             )
+            if trace_pap_projection:
+                trace_metadata_done_ns = time.perf_counter_ns()
 
             (
                 input_ids,
@@ -4534,6 +4553,8 @@ class GPUModelRunner(
             ) = self._preprocess(
                 scheduler_output, num_tokens_padded, intermediate_tensors
             )
+            if trace_pap_projection:
+                trace_preprocess_done_ns = time.perf_counter_ns()
             pap_finished_req_ids = scheduler_output.finished_req_ids
             preempted_req_ids = scheduler_output.preempted_req_ids
             if preempted_req_ids:
@@ -4595,8 +4616,6 @@ class GPUModelRunner(
                 num_tokens_unpadded,
                 ubatch_slices_padded,
             )
-        trace_pap_projection = _pap_projection_critical_trace_enabled()
-        trace_forward_start = time.perf_counter() if trace_pap_projection else 0.0
         trace_forward_start_ns = time.perf_counter_ns() if trace_pap_projection else 0
         with (
             set_forward_context(
@@ -4624,8 +4643,9 @@ class GPUModelRunner(
                 inputs_embeds=inputs_embeds,
                 **model_kwargs,
             )
+        if trace_pap_projection:
+            trace_model_forward_done_ns = time.perf_counter_ns()
 
-        trace_postprocess_start = time.perf_counter() if trace_pap_projection else 0.0
         with record_function_or_nullcontext("gpu_model_runner: postprocess"):
             if self.use_aux_hidden_state_outputs:
                 # True when EAGLE 3 is used.
@@ -4653,12 +4673,18 @@ class GPUModelRunner(
                     )
 
                 sample_hidden_states = hidden_states[logits_indices]
+                if trace_pap_projection:
+                    trace_hidden_slice_done_ns = time.perf_counter_ns()
                 logits = self.model.compute_logits(sample_hidden_states)
+                if trace_pap_projection:
+                    trace_logits_done_ns = time.perf_counter_ns()
             else:
                 # Rare case.
                 assert not self.is_pooling_model
 
                 sample_hidden_states = hidden_states[logits_indices]
+                if trace_pap_projection:
+                    trace_hidden_slice_done_ns = time.perf_counter_ns()
                 if not get_pp_group().is_last_rank:
                     all_gather_tensors = {
                         "residual": not is_residual_scattered_for_sp(
@@ -4673,6 +4699,8 @@ class GPUModelRunner(
                     logits = None
                 else:
                     logits = self.model.compute_logits(sample_hidden_states)
+                    if trace_pap_projection:
+                        trace_logits_done_ns = time.perf_counter_ns()
 
                 model_output_broadcast_data: dict[str, Any] = {}
                 if logits is not None:
@@ -4683,6 +4711,8 @@ class GPUModelRunner(
                 )
                 assert broadcasted is not None
                 logits = broadcasted["logits"]
+                if trace_pap_projection and trace_logits_done_ns == 0:
+                    trace_logits_done_ns = time.perf_counter_ns()
 
         self.execute_model_state = ExecuteModelState(
             scheduler_output,
@@ -4705,10 +4735,53 @@ class GPUModelRunner(
 
         if trace_pap_projection:
             trace_postprocess_done_ns = time.perf_counter_ns()
+            if trace_hidden_slice_done_ns == 0:
+                trace_hidden_slice_done_ns = trace_model_forward_done_ns
+            if trace_logits_done_ns == 0:
+                trace_logits_done_ns = trace_hidden_slice_done_ns
             trace_forward_total_ms = (
                 (trace_postprocess_done_ns - trace_forward_start_ns) / 1_000_000.0
                 if trace_forward_start_ns
                 else 0.0
+            )
+            postprocess_tail_start_ns = max(
+                trace_logits_done_ns,
+                trace_model_forward_done_ns,
+            )
+            logger.info(
+                "PAP OFFLOAD_EXEC projection runner forward detail "
+                "num_tokens=%d input_prep_ms=%.3f metadata_ms=%.3f "
+                "preprocess_ms=%.3f model_forward_ms=%.3f "
+                "hidden_slice_ms=%.3f logits_ms=%.3f "
+                "postprocess_tail_ms=%.3f total_ms=%.3f "
+                "input_prep_start_ns=%d input_prep_done_ns=%d "
+                "metadata_done_ns=%d preprocess_done_ns=%d "
+                "model_forward_done_ns=%d hidden_slice_done_ns=%d "
+                "logits_done_ns=%d postprocess_done_ns=%d",
+                num_tokens_padded,
+                (trace_input_prep_done_ns - trace_input_prep_start_ns)
+                / 1_000_000.0,
+                (trace_metadata_done_ns - trace_input_prep_done_ns)
+                / 1_000_000.0,
+                (trace_preprocess_done_ns - trace_metadata_done_ns)
+                / 1_000_000.0,
+                (trace_model_forward_done_ns - trace_forward_start_ns)
+                / 1_000_000.0,
+                (trace_hidden_slice_done_ns - trace_model_forward_done_ns)
+                / 1_000_000.0,
+                (trace_logits_done_ns - trace_hidden_slice_done_ns)
+                / 1_000_000.0,
+                (trace_postprocess_done_ns - postprocess_tail_start_ns)
+                / 1_000_000.0,
+                trace_forward_total_ms,
+                trace_input_prep_start_ns,
+                trace_input_prep_done_ns,
+                trace_metadata_done_ns,
+                trace_preprocess_done_ns,
+                trace_model_forward_done_ns,
+                trace_hidden_slice_done_ns,
+                trace_logits_done_ns,
+                trace_postprocess_done_ns,
             )
             logger.info(
                 "PAP OFFLOAD_EXEC projection runner forward "

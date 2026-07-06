@@ -45,12 +45,30 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
         "PAP OFFLOAD_EXEC projection logits "
         "num_tokens=1 logits_ms=1.400 logits_start_ns=993600000 "
         "logits_done_ns=995000000\n"
+        "PAP OFFLOAD_EXEC projection runner forward detail "
+        "num_tokens=1 input_prep_ms=0.200 metadata_ms=0.300 "
+        "preprocess_ms=0.400 model_forward_ms=90.000 "
+        "hidden_slice_ms=0.050 logits_ms=1.200 "
+        "postprocess_tail_ms=0.150 total_ms=92.300 "
+        "input_prep_start_ns=901000000 input_prep_done_ns=901200000 "
+        "metadata_done_ns=901500000 preprocess_done_ns=901900000 "
+        "model_forward_done_ns=991900000 hidden_slice_done_ns=991950000 "
+        "logits_done_ns=993150000 postprocess_done_ns=993300000\n"
+        "PAP OFFLOAD_EXEC projection first output "
+        "request_id=abc generated_tokens=1 sched_ms=0.100 "
+        "exec_and_sample_ms=93.600 scheduler_update_ms=0.500 "
+        "step_to_first_output_ms=94.200 step_start_ns=900000000 "
+        "sched_done_ns=900100000 model_done_ns=993700000 "
+        "first_output_done_ns=994200000\n"
         "PAP NIXL mailbox send trace actor=projection msg_id=x "
         "kind=attention_task_batch nbytes=8192 queue_ms=0.020 publish_ms=0.040 "
-        "pack_ms=0.006 copy_ms=0.018 notify_ms=0.013 write_ms=0.033 "
+        "pack_ms=0.006 slot_wait_ms=0.005 copy_ms=0.018 payload_ms=0.004 "
+        "piggyback_ms=0.002 notify_ms=0.013 write_ms=0.033 "
+        "write_prepare_ms=0.011 write_transfer_ms=0.020 write_polls=3 "
         "ack_wait_ms=0.250 total_ms=0.310\n"
         "PAP NIXL mailbox read trace actor=projection msg_id=y "
-        "kind=attention_result_batch nbytes=4096 prepare_ms=0.009 transfer_ms=0.070 "
+        "kind=attention_result_batch nbytes=4096 prepare_ms=0.009 "
+        "slot_wait_ms=0.002 handle_prepare_ms=0.006 transfer_ms=0.070 "
         "transfer_polls=15 materialize_ms=0.009 total_ms=0.088\n"
         "PAP NIXL mailbox recv wait trace actor=projection msg_id=y "
         "kind=attention_result_batch requested_msg_id=y wait_ms=0.410\n"
@@ -65,18 +83,25 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
         "query_cat_ms=0.014 append_lock_wait_ms=0.015 "
         "append_prepare_ms=0.016 append_record_ms=0.017 "
         "append_tensor_ms=0.018 append_copy_ms=0.019 "
-        "append_state_ms=0.021 "
+        "append_state_ms=0.021 metadata_build_ms=0.061 "
+        "paged_flash_kernel_ms=0.071 attention_output_reshape_ms=0.022 "
+        "compute_unaccounted_ms=0.003 "
         "qkv_shape=(1, 4096) output_shape=(1, 2048) batch_key=abc "
-        "recv_start_ns=1002000000 recv_done_ns=1003900000 "
+        "recv_done_ns=1003900000 compute_done_ns=1004100000 "
+        "send_done_ns=1004200000 recv_start_ns=1002000000 "
         "pre_compute_start_ns=1003900000 pre_compute_done_ns=1004000000 "
-        "compute_done_ns=1004100000 post_compute_done_ns=1004150000 "
-        "send_start_ns=1004150000 send_done_ns=1004200000\n"
+        "paged_flash_done_ns=1004070000 reshape_done_ns=1004150000 "
+        "send_start_ns=1004150000\n"
         "PAP NIXL mailbox send trace actor=attention msg_id=z "
         "kind=attention_result_batch nbytes=4096 queue_ms=0.060 publish_ms=0.043 "
-        "pack_ms=0.008 copy_ms=0.019 notify_ms=0.013 ack_wait_ms=0.230 "
+        "pack_ms=0.008 slot_wait_ms=0.003 copy_ms=0.019 payload_ms=0.002 "
+        "piggyback_ms=0.001 notify_ms=0.013 write_ms=0.000 "
+        "write_prepare_ms=0.000 write_transfer_ms=0.000 write_polls=0 "
+        "ack_wait_ms=0.230 "
         "total_ms=0.350\n"
         "PAP NIXL mailbox read trace actor=attention msg_id=w "
-        "kind=attention_task_batch nbytes=8192 prepare_ms=0.009 transfer_ms=0.080 "
+        "kind=attention_task_batch nbytes=8192 prepare_ms=0.009 "
+        "slot_wait_ms=0.001 handle_prepare_ms=0.007 transfer_ms=0.080 "
         "transfer_polls=10 materialize_ms=0.009 total_ms=0.098\n"
         "PAP NIXL mailbox recv wait trace actor=attention msg_id=w "
         "kind=attention_task_batch requested_msg_id= wait_ms=0.600\n"
@@ -101,6 +126,30 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
     assert summary["projection_critical_path"]["gaps_ms"].median == 0.390
     assert summary["projection_model_forward"]["model_forward_ms"].median == 93.600
     assert summary["projection_logits"]["logits_ms"].median == 1.400
+    assert summary["projection_runner_forward_detail"]["input_prep_ms"].median == 0.200
+    assert summary["projection_runner_forward_detail"]["metadata_ms"].median == 0.300
+    assert summary["projection_runner_forward_detail"]["preprocess_ms"].median == 0.400
+    assert (
+        summary["projection_runner_forward_detail"]["model_forward_ms"].median
+        == 90.000
+    )
+    assert (
+        summary["projection_runner_forward_detail"]["hidden_slice_ms"].median
+        == 0.050
+    )
+    assert summary["projection_runner_forward_detail"]["logits_ms"].median == 1.200
+    assert (
+        summary["projection_runner_forward_detail"]["postprocess_tail_ms"].median
+        == 0.150
+    )
+    assert summary["projection_runner_forward_detail"]["total_ms"].median == 92.300
+    assert summary["projection_first_output"]["generated_tokens"].median == 1
+    assert summary["projection_first_output"]["sched_ms"].median == 0.100
+    assert summary["projection_first_output"]["exec_and_sample_ms"].median == 93.600
+    assert summary["projection_first_output"]["scheduler_update_ms"].median == 0.500
+    assert (
+        summary["projection_first_output"]["step_to_first_output_ms"].median == 94.200
+    )
     assert summary["attention_trace"]["compute_ms"].median == 0.140
     assert summary["attention_trace"]["append_kv_ms"].median == 0.050
     assert summary["attention_trace"]["pack_ms"].median == 0.030
@@ -118,6 +167,10 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
     assert summary["attention_trace"]["append_tensor_ms"].median == 0.018
     assert summary["attention_trace"]["append_copy_ms"].median == 0.019
     assert summary["attention_trace"]["append_state_ms"].median == 0.021
+    assert summary["attention_trace"]["metadata_build_ms"].median == 0.061
+    assert summary["attention_trace"]["paged_flash_kernel_ms"].median == 0.071
+    assert summary["attention_trace"]["attention_output_reshape_ms"].median == 0.022
+    assert summary["attention_trace"]["compute_unaccounted_ms"].median == 0.003
     assert summary["attention_trace"]["calls"].median == 1
     assert (
         summary["projection_attention_correlation"][
@@ -125,17 +178,26 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
         ].median
         == 2.000
     )
-    assert summary["projection_attention_correlation"]["attention_recv_ms"].median == 1.900
+    assert (
+        summary["projection_attention_correlation"]["attention_recv_ms"].median
+        == 1.900
+    )
     assert (
         summary["projection_attention_correlation"]["attention_pre_compute_ms"].median
         == 0.100
     )
-    assert summary["projection_attention_correlation"]["attention_compute_ms"].median == 0.100
+    assert (
+        summary["projection_attention_correlation"]["attention_compute_ms"].median
+        == 0.100
+    )
     assert (
         summary["projection_attention_correlation"]["attention_post_compute_ms"].median
         == 0.050
     )
-    assert summary["projection_attention_correlation"]["attention_send_ms"].median == 0.050
+    assert (
+        summary["projection_attention_correlation"]["attention_send_ms"].median
+        == 0.050
+    )
     assert (
         summary["projection_attention_correlation"][
             "attention_send_done_to_projection_recv_done_ms"
@@ -168,9 +230,20 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
     )
     assert summary["mailbox_send"]["projection"]["ack_wait_ms"].median == 0.250
     assert summary["mailbox_send"]["projection"]["write_ms"].median == 0.033
+    assert summary["mailbox_send"]["projection"]["slot_wait_ms"].median == 0.005
+    assert summary["mailbox_send"]["projection"]["payload_ms"].median == 0.004
+    assert summary["mailbox_send"]["projection"]["piggyback_ms"].median == 0.002
+    assert summary["mailbox_send"]["projection"]["write_prepare_ms"].median == 0.011
+    assert summary["mailbox_send"]["projection"]["write_transfer_ms"].median == 0.020
+    assert summary["mailbox_send"]["projection"]["write_polls"].median == 3
     assert summary["mailbox_send"]["attention"]["total_ms"].median == 0.350
+    assert summary["mailbox_send"]["attention"]["write_polls"].median == 0
     assert summary["mailbox_read"]["attention"]["transfer_ms"].median == 0.080
+    assert summary["mailbox_read"]["attention"]["slot_wait_ms"].median == 0.001
+    assert summary["mailbox_read"]["attention"]["handle_prepare_ms"].median == 0.007
     assert summary["mailbox_read"]["projection"]["total_ms"].median == 0.088
+    assert summary["mailbox_read"]["projection"]["slot_wait_ms"].median == 0.002
+    assert summary["mailbox_read"]["projection"]["handle_prepare_ms"].median == 0.006
     assert (
         summary["mailbox_send_by_kind"]["projection:attention_task_batch"][
             "write_ms"

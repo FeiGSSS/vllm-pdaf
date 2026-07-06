@@ -92,8 +92,11 @@ HANDSHAKE_TIMEOUT_MINS = 5
 
 
 def _pap_critical_trace_enabled() -> bool:
-    return os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower() in (
-        "1", "true", "yes", "on"
+    return (
+        os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower()
+        in ("1", "true", "yes", "on")
+        and os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower()
+        in ("1", "true", "yes", "on")
     )
 
 _R = TypeVar("_R")  # Return type for collective_rpc
@@ -166,6 +169,7 @@ class EngineCore:
         self.check_for_draft_tokens = (
             self.use_spec_decode or vllm_config.model_config.is_diffusion
         )
+        self._pap_first_output_traced_req_ids: set[str] = set()
         if self.scheduler.connector is not None:  # type: ignore
             self.model_executor.init_kv_output_aggregator(self.scheduler.connector)  # type: ignore
 
@@ -384,10 +388,16 @@ class EngineCore:
         requests = getattr(self.scheduler, "requests", {})
         request = requests.get(str(request_id))
         if request is None:
+            finished_req_ids = getattr(self.scheduler, "finished_req_ids", set())
+            reason = (
+                "request_finished"
+                if str(request_id) in finished_req_ids
+                else "unknown_request"
+            )
             return {
                 "request_id": str(request_id),
                 "applied": False,
-                "reason": "unknown_request",
+                "reason": reason,
             }
         old_seq_len = int(request.num_computed_tokens)
         self.scheduler.kv_cache_manager.apply_decode_commit(
@@ -410,12 +420,16 @@ class EngineCore:
         from vllm.pap.kv_lease import pap_release_lease
 
         released = pap_release_lease(str(lease_id))
-        return {
+        did_release = bool(released)
+        result: dict[str, Any] = {
             "request_id": str(request_id),
             "lease_id": str(lease_id),
-            "released": True,
+            "released": did_release,
             "block_count": len(released),
         }
+        if not did_release:
+            result["reason"] = "unknown_or_released_lease"
+        return result
 
     def add_request(self, request: Request, request_wave: int = 0):
         """Add request to the scheduler.
@@ -543,7 +557,6 @@ class EngineCore:
         if not self.scheduler.has_requests():
             return {}, False
         trace_pap = _pap_critical_trace_enabled()
-        trace_step_start = time.perf_counter() if trace_pap else 0.0
         trace_step_start_ns = time.perf_counter_ns() if trace_pap else 0
         scheduler_output = self.scheduler.schedule(self._should_throttle_prefills())
         trace_sched_done_ns = time.perf_counter_ns() if trace_pap else 0
@@ -568,6 +581,33 @@ class EngineCore:
 
         if trace_pap:
             now_ns = time.perf_counter_ns()
+            for output_group in engine_core_outputs.values():
+                for output in output_group.outputs:
+                    generated_tokens = len(output.new_token_ids)
+                    if (
+                        generated_tokens <= 0
+                        or output.request_id in self._pap_first_output_traced_req_ids
+                    ):
+                        continue
+                    self._pap_first_output_traced_req_ids.add(output.request_id)
+                    logger.info(
+                        "PAP OFFLOAD_EXEC projection first output "
+                        "request_id=%s generated_tokens=%d "
+                        "sched_ms=%.3f exec_and_sample_ms=%.3f "
+                        "scheduler_update_ms=%.3f step_to_first_output_ms=%.3f "
+                        "step_start_ns=%d sched_done_ns=%d model_done_ns=%d "
+                        "first_output_done_ns=%d",
+                        output.request_id,
+                        generated_tokens,
+                        (trace_sched_done_ns - trace_step_start_ns) / 1_000_000.0,
+                        (trace_model_done_ns - trace_sched_done_ns) / 1_000_000.0,
+                        (now_ns - trace_model_done_ns) / 1_000_000.0,
+                        (now_ns - trace_step_start_ns) / 1_000_000.0,
+                        trace_step_start_ns,
+                        trace_sched_done_ns,
+                        trace_model_done_ns,
+                        now_ns,
+                    )
             logger.info(
                 "PAP OFFLOAD_EXEC projection engine step "
                 "num_gen=%d num_ctx=%d sched_ms=%.3f exec_and_sample_ms=%.3f "
@@ -623,8 +663,14 @@ class EngineCore:
 
         model_executed = False
         deferred_scheduler_output = None
+        deferred_exec_future = None
+        deferred_trace_step_start_ns = 0
+        deferred_trace_sched_done_ns = 0
         if self.scheduler.has_requests():
+            trace_pap = _pap_critical_trace_enabled()
+            trace_step_start_ns = time.perf_counter_ns() if trace_pap else 0
             scheduler_output = self.scheduler.schedule(self._should_throttle_prefills())
+            trace_sched_done_ns = time.perf_counter_ns() if trace_pap else 0
             with self.log_error_detail(scheduler_output):
                 exec_future = self.model_executor.execute_model(
                     scheduler_output, non_block=True
@@ -649,10 +695,21 @@ class EngineCore:
                     # We need to defer sampling until we have processed the model output
                     # from the prior step.
                     deferred_scheduler_output = scheduler_output
+                    deferred_exec_future = exec_future
+                    deferred_trace_step_start_ns = trace_step_start_ns
+                    deferred_trace_sched_done_ns = trace_sched_done_ns
 
             if not deferred_scheduler_output:
                 # Add this step's future to the queue.
-                batch_queue.appendleft((future, scheduler_output, exec_future))
+                batch_queue.appendleft(
+                    (
+                        future,
+                        scheduler_output,
+                        exec_future,
+                        trace_step_start_ns,
+                        trace_sched_done_ns,
+                    )
+                )
                 if len(batch_queue) < self.batch_queue_size and (
                     model_executed or self.scheduler.has_requests()
                 ):
@@ -667,7 +724,13 @@ class EngineCore:
             return None, False
 
         # Block until the next result is available.
-        future, scheduler_output, exec_model_fut = batch_queue.pop()
+        (
+            future,
+            scheduler_output,
+            exec_model_fut,
+            trace_step_start_ns,
+            trace_sched_done_ns,
+        ) = batch_queue.pop()
         with (
             self.log_error_detail(scheduler_output),
             self.log_iteration_details(scheduler_output),
@@ -679,6 +742,10 @@ class EngineCore:
                 exec_model_fut.result()
                 raise RuntimeError("unexpected error")
 
+        trace_model_done_ns = (
+            time.perf_counter_ns() if _pap_critical_trace_enabled() else 0
+        )
+
         # Before processing the model output, process any aborts that happened
         # during the model execution.
         self._process_aborts_queue()
@@ -686,10 +753,57 @@ class EngineCore:
             scheduler_output, model_output
         )
 
+        if trace_model_done_ns:
+            now_ns = time.perf_counter_ns()
+            for output_group in engine_core_outputs.values():
+                for output in output_group.outputs:
+                    generated_tokens = len(output.new_token_ids)
+                    if (
+                        generated_tokens <= 0
+                        or output.request_id in self._pap_first_output_traced_req_ids
+                    ):
+                        continue
+                    self._pap_first_output_traced_req_ids.add(output.request_id)
+                    logger.info(
+                        "PAP OFFLOAD_EXEC projection first output "
+                        "request_id=%s generated_tokens=%d "
+                        "sched_ms=%.3f exec_and_sample_ms=%.3f "
+                        "scheduler_update_ms=%.3f step_to_first_output_ms=%.3f "
+                        "step_start_ns=%d sched_done_ns=%d model_done_ns=%d "
+                        "first_output_done_ns=%d",
+                        output.request_id,
+                        generated_tokens,
+                        (trace_sched_done_ns - trace_step_start_ns) / 1_000_000.0,
+                        (trace_model_done_ns - trace_sched_done_ns) / 1_000_000.0,
+                        (now_ns - trace_model_done_ns) / 1_000_000.0,
+                        (now_ns - trace_step_start_ns) / 1_000_000.0,
+                        trace_step_start_ns,
+                        trace_sched_done_ns,
+                        trace_model_done_ns,
+                        now_ns,
+                    )
+            logger.info(
+                "PAP OFFLOAD_EXEC projection engine step "
+                "num_gen=%d num_ctx=%d sched_ms=%.3f exec_and_sample_ms=%.3f "
+                "postprocess_ms=%.3f step_ms=%.3f "
+                "step_start_ns=%d sched_done_ns=%d model_done_ns=%d step_done_ns=%d",
+                scheduler_output.total_num_scheduled_tokens,
+                0,
+                (trace_sched_done_ns - trace_step_start_ns) / 1_000_000.0,
+                (trace_model_done_ns - trace_sched_done_ns) / 1_000_000.0,
+                (now_ns - trace_model_done_ns) / 1_000_000.0,
+                (now_ns - trace_step_start_ns) / 1_000_000.0,
+                trace_step_start_ns,
+                trace_sched_done_ns,
+                trace_model_done_ns,
+                now_ns,
+            )
+
         # NOTE(nick): We can either handle the deferred tasks here or save
         # in a field and do it immediately once step_with_batch_queue is
         # re-called. The latter slightly favors TTFT over TPOT/throughput.
         if deferred_scheduler_output:
+            assert deferred_exec_future is not None
             # When draft tokens are used with structured output, validate them
             # before computing the grammar bitmask for the deferred request.
             if self.check_for_draft_tokens:
@@ -707,7 +821,15 @@ class EngineCore:
                 deferred_scheduler_output
             )
             future = self.model_executor.sample_tokens(grammar_output, non_block=True)
-            batch_queue.appendleft((future, deferred_scheduler_output, exec_future))
+            batch_queue.appendleft(
+                (
+                    future,
+                    deferred_scheduler_output,
+                    deferred_exec_future,
+                    deferred_trace_step_start_ns,
+                    deferred_trace_sched_done_ns,
+                )
+            )
 
         return engine_core_outputs, model_executed
 

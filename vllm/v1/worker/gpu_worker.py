@@ -87,8 +87,11 @@ logger = init_logger(__name__)
 
 
 def _pap_critical_trace_enabled() -> bool:
-    return os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower() in (
-        "1", "true", "yes", "on"
+    return (
+        os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower()
+        in ("1", "true", "yes", "on")
+        and os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower()
+        in ("1", "true", "yes", "on")
     )
 
 
@@ -971,7 +974,6 @@ class Worker(WorkerBase):
         self, grammar_output: "GrammarOutput | None"
     ) -> ModelRunnerOutput | AsyncModelRunnerOutput:
         trace_pap = _pap_critical_trace_enabled()
-        trace_start = time.perf_counter() if trace_pap else 0.0
         trace_start_ns = time.perf_counter_ns() if trace_pap else 0
         output = self.model_runner.sample_tokens(grammar_output)
         if trace_pap:
@@ -1047,7 +1049,6 @@ class Worker(WorkerBase):
             )
 
         trace_pap = _pap_critical_trace_enabled()
-        trace_exec_start = time.perf_counter() if trace_pap else 0.0
         trace_exec_start_ns = time.perf_counter_ns() if trace_pap else 0
         with self.annotate_profile(scheduler_output):
             output = self.model_runner.execute_model(
@@ -1073,7 +1074,8 @@ class Worker(WorkerBase):
                         (now_ns - trace_exec_start_ns) / 1_000_000.0,
                         trace_exec_start_ns,
                         now_ns,
-                        output is not None and not isinstance(output, IntermediateTensors),
+                        output is not None
+                        and not isinstance(output, IntermediateTensors),
                     )
                 return output
 

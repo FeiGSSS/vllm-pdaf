@@ -37,7 +37,6 @@ from typing import Any
 
 import torch
 from torch import nn
-from torch.nn import functional as F
 from transformers import Qwen3Config
 
 from vllm.compilation.decorators import support_torch_compile
@@ -124,7 +123,9 @@ def _pap_offload_exec_session_request_id(
 
 
 def _pap_projection_critical_trace_enabled() -> bool:
-    return _pap_env_enabled("PAP_PROJECTION_CRITICAL_TRACE")
+    return _pap_env_enabled("PAP_PROJECTION_KV_UNAWARE") and _pap_env_enabled(
+        "PAP_PROJECTION_CRITICAL_TRACE"
+    )
 
 
 def _pap_projection_decode_trace_enabled() -> bool:

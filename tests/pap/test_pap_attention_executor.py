@@ -13,8 +13,8 @@ from examples.pap.pap_attention_executor import (
     PAPAttentionRegistry,
     PAPUnifiedPagedKVState,
     compute_binary_attention_response,
-    compute_offload_exec_output,
     compute_offload_exec_batch_output,
+    compute_offload_exec_output,
     create_app,
     maybe_start_offload_exec_transport,
     run_offload_exec_batch_once,
@@ -369,6 +369,7 @@ def test_unified_offload_exec_commit_uses_descriptor_decode_token_ids(
     monkeypatch,
 ) -> None:
     import torch
+
     from examples.pap import pap_attention_executor as executor_module
 
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
@@ -992,10 +993,23 @@ def test_run_offload_exec_mailbox_loop_emits_trace(monkeypatch, caplog) -> None:
     transport = FakeTransport(descriptor)
     from examples.pap import pap_attention_executor as executor_module
 
+    def fake_compute_offload_exec_batch_output(**kwargs):
+        trace_stats = kwargs["trace_stats"]
+        trace_stats["paged_metadata_ms"] = 0.125
+        trace_stats["paged_flash_ms"] = 0.250
+        trace_stats["metadata_build_ms"] = 0.125
+        trace_stats["paged_flash_kernel_ms"] = 0.250
+        trace_stats["attention_output_reshape_ms"] = 0.031
+        trace_stats["compute_unaccounted_ms"] = 0.004
+        trace_stats["pre_compute_done_ns"] = 200
+        trace_stats["paged_flash_done_ns"] = 300
+        trace_stats["post_compute_done_ns"] = 400
+        return torch.tensor([[2.0, 0.0]])
+
     monkeypatch.setattr(
         executor_module,
         "compute_offload_exec_batch_output",
-        lambda **kwargs: torch.tensor([[2.0, 0.0]]),
+        fake_compute_offload_exec_batch_output,
     )
 
     with (
@@ -1013,6 +1027,10 @@ def test_run_offload_exec_mailbox_loop_emits_trace(monkeypatch, caplog) -> None:
     assert "compute_ms=" in caplog.text
     assert "send_output_ms=" in caplog.text
     assert "total_ms=" in caplog.text
+    assert "metadata_build_ms=0.125" in caplog.text
+    assert "paged_flash_kernel_ms=0.250" in caplog.text
+    assert "attention_output_reshape_ms=0.031" in caplog.text
+    assert "compute_unaccounted_ms=0.004" in caplog.text
 
 
 def test_run_offload_exec_once_resolves_wrapped_request_id(monkeypatch) -> None:
