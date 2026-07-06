@@ -12,6 +12,7 @@ from examples.pap.pap_attention_executor import (
     PAPAttentionRegistration,
     PAPAttentionRegistry,
     PAPUnifiedPagedKVState,
+    build_unified_paged_flash_metadata,
     compute_binary_attention_response,
     compute_offload_exec_batch_output,
     compute_offload_exec_output,
@@ -55,6 +56,82 @@ class _ASGITestClient:
 
     def delete(self, url: str, **kwargs: Any) -> Response:
         return self.request("DELETE", url, **kwargs)
+
+
+def test_unified_paged_flash_metadata_reuses_identical_decode_signature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    reset_cache = getattr(
+        executor_module,
+        "reset_unified_paged_flash_metadata_cache",
+        None,
+    )
+    cache_stats = getattr(
+        executor_module,
+        "unified_paged_flash_metadata_cache_stats",
+        None,
+    )
+    assert callable(reset_cache)
+    assert callable(cache_stats)
+    reset_cache()
+
+    arange_calls = 0
+    real_arange = torch.arange
+
+    def counted_arange(*args, **kwargs):
+        nonlocal arange_calls
+        arange_calls += 1
+        return real_arange(*args, **kwargs)
+
+    monkeypatch.setattr(executor_module.torch, "arange", counted_arange)
+    kv_cache = torch.zeros((4, 2, 4, 1, 2), dtype=torch.float32)
+    states = [
+        PAPUnifiedPagedKVState(
+            kv_cache=kv_cache,
+            block_ids=(0, 1),
+            prefix_len=5,
+            seq_len=6,
+            capacity_tokens=8,
+            writable_start_token=5,
+            writable_end_token=8,
+            lease_id="lease-a",
+            block_size=4,
+            num_kv_heads=1,
+            layout="NHD",
+        ),
+        PAPUnifiedPagedKVState(
+            kv_cache=kv_cache,
+            block_ids=(2, 3),
+            prefix_len=5,
+            seq_len=6,
+            capacity_tokens=8,
+            writable_start_token=5,
+            writable_end_token=8,
+            lease_id="lease-b",
+            block_size=4,
+            num_kv_heads=1,
+            layout="NHD",
+        ),
+    ]
+
+    first = build_unified_paged_flash_metadata(
+        states=states,
+        device=torch.device("cpu"),
+    )
+    second = build_unified_paged_flash_metadata(
+        states=states,
+        device=torch.device("cpu"),
+    )
+
+    assert cache_stats() == {"hits": 1, "misses": 1, "entries": 1}
+    assert arange_calls == 1
+    assert second.block_table.data_ptr() == first.block_table.data_ptr()
+    assert second.seq_lens.data_ptr() == first.seq_lens.data_ptr()
+    assert second.cu_seqlens_q.data_ptr() == first.cu_seqlens_q.data_ptr()
 
 
 def test_attention_executor_declares_offload_exec_zmq_port() -> None:
