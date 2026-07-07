@@ -836,6 +836,15 @@ class PAPAttentionRegistry:
                 block_size = int(state.block_size)
                 base_v_cache = state.kv_cache
                 position = int(state.seq_len)
+                if decode_len <= position:
+                    continue
+                if decode_len != position + 1:
+                    raise RuntimeError(
+                        f"PAP unified KV append out of order request_id="
+                        f"{session_request_id} layer={layer_name} "
+                        f"current_seq_len={position} "
+                        f"decode_seq_len={decode_len}"
+                    )
                 if (
                     position < int(state.writable_start_token)
                     or position >= int(state.writable_end_token)
@@ -896,20 +905,7 @@ class PAPAttentionRegistry:
                     session_request_id, {}
                 )
                 state = layer_states[layer_name]
-                new_seq_len = int(state.seq_len) + 1
-                layer_states[layer_name] = PAPUnifiedPagedKVState(
-                    kv_cache=state.kv_cache,
-                    block_ids=state.block_ids,
-                    prefix_len=state.prefix_len,
-                    seq_len=new_seq_len,
-                    capacity_tokens=state.capacity_tokens,
-                    writable_start_token=state.writable_start_token,
-                    writable_end_token=state.writable_end_token,
-                    lease_id=state.lease_id,
-                    block_size=state.block_size,
-                    num_kv_heads=state.num_kv_heads,
-                    layout=state.layout,
-                )
+                state.seq_len = int(state.seq_len) + 1
                 written += 1
 
         return written
@@ -3038,6 +3034,10 @@ def compute_offload_exec_batch_output(
         layer_name=descriptor.layer_name,
     )
     if unified_states is not None:
+        commit_new_seq_lens: list[int | None] = [
+            int(decode_len) if int(decode_len) > int(state.seq_len) else None
+            for decode_len, state in zip(decode_seq_lens, unified_states)
+        ]
         written = registry.append_decode_kv_to_unified_prefill_cache(
             session_request_ids=session_request_ids,
             layer_name=descriptor.layer_name,
@@ -3045,7 +3045,7 @@ def compute_offload_exec_batch_output(
             value_batch=value_batch,
             decode_seq_lens=decode_seq_lens,
         )
-        if written <= 0:
+        if any(seq_len is not None for seq_len in commit_new_seq_lens) and written <= 0:
             raise RuntimeError(
                 "PAP unified KV append wrote no rows"
             )
@@ -3077,9 +3077,12 @@ def compute_offload_exec_batch_output(
         commit_client = _get_commit_client()
         if commit_client.enabled:
             for index, item in enumerate(items):
+                new_seq_len = commit_new_seq_lens[index]
+                if new_seq_len is None:
+                    continue
                 commit_client.commit(
                     request_id=item.request_id,
-                    new_seq_len=int(decode_seq_lens[index]),
+                    new_seq_len=new_seq_len,
                     new_token_ids=tuple(
                         int(t) for t in getattr(item, "decode_token_ids", ())
                     ),

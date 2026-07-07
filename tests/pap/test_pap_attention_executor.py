@@ -532,6 +532,95 @@ def test_unified_offload_exec_commit_uses_descriptor_decode_token_ids(
     assert commits == [("req-a", 2, (42,))]
 
 
+def test_unified_offload_exec_overlap_step_does_not_commit(
+    monkeypatch,
+) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_HEAD_DIM", "2")
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-a",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+            q_size=2,
+            kv_size=2,
+            num_heads=1,
+            num_kv_heads=1,
+            head_dim=2,
+        )
+    )
+    registry._unified_paged_kv["req-a"] = {
+        "layer0": PAPUnifiedPagedKVState(
+            kv_cache=torch.zeros((2, 2, 4, 1, 2)),
+            block_ids=(0,),
+            prefix_len=1,
+            seq_len=1,
+            capacity_tokens=4,
+            writable_start_token=1,
+            writable_end_token=4,
+            lease_id="lease-a",
+            block_size=4,
+            num_kv_heads=1,
+            layout="NHD",
+        )
+    }
+
+    commits = []
+
+    class FakeCommitClient:
+        enabled = True
+
+        def commit(self, *, request_id, new_seq_len, new_token_ids):
+            commits.append((request_id, new_seq_len, tuple(new_token_ids)))
+
+    monkeypatch.setattr(
+        executor_module.torch.ops._C_cache_ops,
+        "reshape_and_cache_flash",
+        lambda *args: None,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "_compute_unified_paged_flash_batch",
+        lambda **kwargs: torch.tensor([[2.0, 0.0]]),
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "_get_commit_client",
+        lambda: FakeCommitClient(),
+    )
+
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                request_id="req-a",
+                layer_name="layer0",
+                step=1,
+                scale=1.0,
+                decode_token_ids=(42,),
+            ),
+        ),
+    )
+
+    output = compute_offload_exec_batch_output(
+        registry=registry,
+        descriptor=descriptor,
+        qkv_batch=torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]]),
+    )
+
+    torch.testing.assert_close(output, torch.tensor([[2.0, 0.0]]))
+    assert commits == []
+    assert registry._unified_paged_kv["req-a"]["layer0"].seq_len == 1
+
+
 def test_attention_registry_caches_resolved_request_ids() -> None:
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
