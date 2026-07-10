@@ -9,6 +9,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient, Response
 
 from examples.pap.pap_attention_executor import (
+    _offload_exec_batch_rows,
     PAPAttentionRegistration,
     PAPAttentionRegistry,
     PAPUnifiedPagedKVState,
@@ -56,6 +57,27 @@ class _ASGITestClient:
 
     def delete(self, url: str, **kwargs: Any) -> Response:
         return self.request("DELETE", url, **kwargs)
+
+
+def test_offload_exec_batch_rows_uses_template_without_items() -> None:
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(),
+        batch_id_suffix="req-a@7,req-b@8",
+        metadata_template={
+            "r": ("req-a", "req-b"),
+            "s": (7, 8),
+            "a": (0.125, 0.125),
+            "t": ((42,), (99,)),
+        },
+    )
+
+    assert _offload_exec_batch_rows(descriptor) == (
+        ("req-a", "req-b"),
+        (7, 8),
+        (0.125, 0.125),
+        ((42,), (99,)),
+    )
 
 
 def test_unified_paged_flash_metadata_reuses_identical_decode_signature(
@@ -621,6 +643,349 @@ def test_unified_offload_exec_overlap_step_does_not_commit(
     assert registry._unified_paged_kv["req-a"]["layer0"].seq_len == 1
 
 
+def test_unified_decode_append_all_active_reuses_inputs_and_scales(
+    monkeypatch,
+) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    kv_cache = torch.zeros((4, 2, 4, 1, 2))
+    registry._unified_paged_kv = {
+        request_id: {
+            "layer0": PAPUnifiedPagedKVState(
+                kv_cache=kv_cache,
+                block_ids=(block_id,),
+                prefix_len=1,
+                seq_len=1,
+                capacity_tokens=4,
+                writable_start_token=1,
+                writable_end_token=4,
+                lease_id=f"lease-{request_id}",
+                block_size=4,
+                num_kv_heads=1,
+                layout="NHD",
+            )
+        }
+        for request_id, block_id in (("req-a", 0), ("req-b", 1))
+    }
+    calls = []
+
+    def fake_reshape_and_cache_flash(*args):
+        calls.append(args)
+
+    monkeypatch.setattr(
+        executor_module.torch.ops._C_cache_ops,
+        "reshape_and_cache_flash",
+        fake_reshape_and_cache_flash,
+        raising=False,
+    )
+    key = torch.arange(4, dtype=torch.float32).reshape(2, 1, 2)
+    value = key + 10
+
+    written = registry.append_decode_kv_to_unified_prefill_cache(
+        session_request_ids=("req-a", "req-b"),
+        layer_name="layer0",
+        key_batch=key,
+        value_batch=value,
+        decode_seq_lens=(2, 2),
+    )
+    first_scales = (calls[0][6], calls[0][7])
+    next_key = key + 20
+    next_value = value + 20
+    registry.append_decode_kv_to_unified_prefill_cache(
+        session_request_ids=("req-a", "req-b"),
+        layer_name="layer0",
+        key_batch=next_key,
+        value_batch=next_value,
+        decode_seq_lens=(3, 3),
+    )
+
+    assert written == 2
+    assert calls[0][0].data_ptr() == key.data_ptr()
+    assert calls[0][1].data_ptr() == value.data_ptr()
+    assert calls[1][0].data_ptr() == next_key.data_ptr()
+    assert calls[1][1].data_ptr() == next_value.data_ptr()
+    assert calls[1][6].data_ptr() == first_scales[0].data_ptr()
+    assert calls[1][7].data_ptr() == first_scales[1].data_ptr()
+    assert registry.decode_append_fast_path_stats() == {
+        "fast_path_hits": 2,
+        "fallbacks": 0,
+        "scale_cache_entries": 1,
+        "slot_plan_hits": 0,
+        "slot_plan_misses": 0,
+        "slot_plan_entries": 0,
+        "slot_topology_mismatches": 0,
+    }
+
+
+def test_unified_decode_append_reuses_slot_plan_across_layers(
+    monkeypatch,
+) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    for request_id in ("req-a", "req-b"):
+        registry.register_prefill_kv(
+            PAPAttentionRegistration(
+                request_id=request_id,
+                conversation_id="conv",
+                prefill_endpoint="http://localhost:8100",
+            )
+        )
+    layer_caches = {
+        layer_name: torch.zeros((4, 2, 4, 1, 2))
+        for layer_name in ("layer0", "layer1")
+    }
+    for layer_name, kv_cache in layer_caches.items():
+        for request_id, block_id in (("req-a", 0), ("req-b", 1)):
+            registry.import_prefill_paged_kv(
+                request_id=request_id,
+                layer_name=layer_name,
+                kv_cache=kv_cache,
+                block_ids=[block_id],
+                seq_len=1,
+                block_size=4,
+                num_kv_heads=1,
+                layout="NHD",
+                lease_id=f"lease-{request_id}",
+                lease_capacity_tokens=4,
+                unified_kv_mode=True,
+                prefix_len=1,
+                writable_start_token=1,
+                writable_end_token=4,
+            )
+    calls = []
+    monkeypatch.setattr(
+        executor_module.torch.ops._C_cache_ops,
+        "reshape_and_cache_flash",
+        lambda *args: calls.append(args),
+        raising=False,
+    )
+    key = torch.arange(4, dtype=torch.float32).reshape(2, 1, 2)
+
+    for layer_name in ("layer0", "layer1"):
+        written = registry.append_decode_kv_to_unified_prefill_cache(
+            session_request_ids=("req-a", "req-b"),
+            layer_name=layer_name,
+            key_batch=key,
+            value_batch=key + 10,
+            decode_seq_lens=(2, 2),
+        )
+        assert written == 2
+
+    assert calls[0][4].tolist() == [1, 5]
+    assert calls[1][4].data_ptr() == calls[0][4].data_ptr()
+    assert registry.decode_append_fast_path_stats() == {
+        "fast_path_hits": 2,
+        "fallbacks": 0,
+        "scale_cache_entries": 1,
+        "slot_plan_hits": 1,
+        "slot_plan_misses": 1,
+        "slot_plan_entries": 1,
+        "slot_topology_mismatches": 0,
+    }
+
+
+def test_unified_decode_append_disables_slot_plan_for_mixed_topology(
+    monkeypatch,
+) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-a",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+        )
+    )
+    for layer_name, block_id in (("layer0", 0), ("layer1", 1)):
+        registry.import_prefill_paged_kv(
+            request_id="req-a",
+            layer_name=layer_name,
+            kv_cache=torch.zeros((4, 2, 4, 1, 2)),
+            block_ids=[block_id],
+            seq_len=1,
+            block_size=4,
+            num_kv_heads=1,
+            layout="NHD",
+            lease_id="lease-a",
+            lease_capacity_tokens=4,
+            unified_kv_mode=True,
+            prefix_len=1,
+            writable_start_token=1,
+            writable_end_token=4,
+        )
+    calls = []
+    monkeypatch.setattr(
+        executor_module.torch.ops._C_cache_ops,
+        "reshape_and_cache_flash",
+        lambda *args: calls.append(args),
+        raising=False,
+    )
+    key = torch.ones((1, 1, 2))
+
+    for layer_name in ("layer0", "layer1"):
+        registry.append_decode_kv_to_unified_prefill_cache(
+            session_request_ids=("req-a",),
+            layer_name=layer_name,
+            key_batch=key,
+            value_batch=key,
+            decode_seq_lens=(2,),
+        )
+
+    assert calls[0][4].tolist() == [1]
+    assert calls[1][4].tolist() == [5]
+    assert calls[1][4].data_ptr() != calls[0][4].data_ptr()
+    stats = registry.decode_append_fast_path_stats()
+    assert stats["slot_plan_hits"] == 0
+    assert stats["slot_plan_misses"] == 0
+    assert stats["slot_plan_entries"] == 0
+    assert stats["slot_topology_mismatches"] == 1
+
+
+def test_unified_decode_append_slot_plan_uses_session_generation(
+    monkeypatch,
+) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+
+    def install_session(block_id: int) -> None:
+        registry.register_prefill_kv(
+            PAPAttentionRegistration(
+                request_id="req-a",
+                conversation_id="conv",
+                prefill_endpoint="http://localhost:8100",
+            )
+        )
+        for layer_name in ("layer0", "layer1"):
+            registry.import_prefill_paged_kv(
+                request_id="req-a",
+                layer_name=layer_name,
+                kv_cache=torch.zeros((4, 2, 4, 1, 2)),
+                block_ids=[block_id],
+                seq_len=1,
+                block_size=4,
+                num_kv_heads=1,
+                layout="NHD",
+                lease_id="lease-a",
+                lease_capacity_tokens=4,
+                unified_kv_mode=True,
+                prefix_len=1,
+                writable_start_token=1,
+                writable_end_token=4,
+            )
+
+    calls = []
+    monkeypatch.setattr(
+        executor_module.torch.ops._C_cache_ops,
+        "reshape_and_cache_flash",
+        lambda *args: calls.append(args),
+        raising=False,
+    )
+    key = torch.ones((1, 1, 2))
+
+    def append_both_layers() -> None:
+        for layer_name in ("layer0", "layer1"):
+            registry.append_decode_kv_to_unified_prefill_cache(
+                session_request_ids=("req-a",),
+                layer_name=layer_name,
+                key_batch=key,
+                value_batch=key,
+                decode_seq_lens=(2,),
+            )
+
+    install_session(0)
+    append_both_layers()
+    with registry._lock:
+        registry._release_session_locked("req-a")
+    install_session(1)
+    append_both_layers()
+
+    assert calls[0][4].tolist() == [1]
+    assert calls[1][4].data_ptr() == calls[0][4].data_ptr()
+    assert calls[2][4].tolist() == [5]
+    assert calls[2][4].data_ptr() != calls[0][4].data_ptr()
+    assert calls[3][4].data_ptr() == calls[2][4].data_ptr()
+    stats = registry.decode_append_fast_path_stats()
+    assert stats["slot_plan_hits"] == 2
+    assert stats["slot_plan_misses"] == 2
+    assert stats["slot_plan_entries"] == 2
+
+
+def test_unified_decode_append_partial_batch_uses_fallback_gather(
+    monkeypatch,
+) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    kv_cache = torch.zeros((4, 2, 4, 1, 2))
+    registry._unified_paged_kv = {
+        "req-a": {
+            "layer0": PAPUnifiedPagedKVState(
+                kv_cache=kv_cache,
+                block_ids=(0,),
+                prefix_len=1,
+                seq_len=2,
+                capacity_tokens=4,
+                writable_start_token=1,
+                writable_end_token=4,
+                lease_id="lease-a",
+                block_size=4,
+                num_kv_heads=1,
+                layout="NHD",
+            )
+        },
+        "req-b": {
+            "layer0": PAPUnifiedPagedKVState(
+                kv_cache=kv_cache,
+                block_ids=(1,),
+                prefix_len=1,
+                seq_len=2,
+                capacity_tokens=4,
+                writable_start_token=1,
+                writable_end_token=4,
+                lease_id="lease-b",
+                block_size=4,
+                num_kv_heads=1,
+                layout="NHD",
+            )
+        },
+    }
+    calls = []
+    monkeypatch.setattr(
+        executor_module.torch.ops._C_cache_ops,
+        "reshape_and_cache_flash",
+        lambda *args: calls.append(args),
+        raising=False,
+    )
+    key = torch.arange(4, dtype=torch.float32).reshape(2, 1, 2)
+
+    written = registry.append_decode_kv_to_unified_prefill_cache(
+        session_request_ids=("req-a", "req-b"),
+        layer_name="layer0",
+        key_batch=key,
+        value_batch=key + 10,
+        decode_seq_lens=(2, 3),
+    )
+
+    assert written == 1
+    assert calls[0][0].shape == (1, 1, 2)
+    assert calls[0][0].data_ptr() != key.data_ptr()
+    assert registry.decode_append_fast_path_stats()["fallbacks"] == 1
+
+
 def test_attention_registry_caches_resolved_request_ids() -> None:
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
@@ -653,6 +1018,24 @@ def test_attention_registry_reports_active_session_count() -> None:
     assert registry.active_session_count() == 1
     assert registry.release_session("req-count")
     assert registry.active_session_count() == 0
+
+
+def test_attention_fast_path_stats_endpoint() -> None:
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    client = _ASGITestClient(create_app(registry=registry))
+
+    response = client.get("/v1/pap/attention/stats")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "fast_path_hits": 0,
+        "fallbacks": 0,
+        "scale_cache_entries": 0,
+        "slot_plan_hits": 0,
+        "slot_plan_misses": 0,
+        "slot_plan_entries": 0,
+        "slot_topology_mismatches": 0,
+    }
 
 
 def test_attention_registry_release_session_notifies_prefill_lease(

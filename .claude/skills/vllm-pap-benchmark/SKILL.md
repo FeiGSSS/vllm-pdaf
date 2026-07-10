@@ -155,10 +155,18 @@ Treat it as a performance-only historical run.
 ## PD NIXL Run
 
 Prefer the canonical PD baseline result above for comparison unless the user
-asks to rerun PD. There is intentionally no external shell command here. If the
-user explicitly asks to rerun PD, first add a self-contained bundled runner
-under `.claude/skills/vllm-pap-benchmark/scripts/` rather than calling existing
-project benchmark shell scripts.
+asks to rerun PD. A self-contained 1P1D runner and proxy are bundled in this
+skill; do not call existing project benchmark shell scripts:
+
+```bash
+QPS=8 RUN_ID=my_pd_run \
+bash .claude/skills/vllm-pap-benchmark/scripts/run_pd_same_workload.sh
+```
+
+The runner defaults to the canonical PD engine configuration and GPUs 1/2.
+Override `PD_PREFILL_GPU` and `PD_DECODE_GPU` only after checking occupancy. It
+records effective configuration, Git state, completeness, and a correctness
+log audit. Its cleanup is scoped to process groups created by that run.
 
 ## Result Comparison
 

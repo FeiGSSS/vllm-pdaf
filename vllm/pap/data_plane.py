@@ -997,6 +997,8 @@ def _offload_exec_batch_descriptor_to_plan_metadata(
 def _offload_exec_batch_descriptor_from_plan_payload(
     layer_name: str,
     plan_payload: dict[str, Any],
+    *,
+    template_only: bool = False,
 ) -> PAPOffloadExecBatchDescriptor:
     request_ids = list(plan_payload["r"])
     steps = [int(step) for step in plan_payload["s"]]
@@ -1006,6 +1008,20 @@ def _offload_exec_batch_descriptor_from_plan_payload(
         token_rows = [()] * len(request_ids)
     if not (len(request_ids) == len(steps) == len(scales) == len(token_rows)):
         raise ValueError("compact PAP OFFLOAD_EXEC batch metadata length mismatch")
+    if template_only:
+        return PAPOffloadExecBatchDescriptor(
+            layer_name=layer_name,
+            items=(),
+            batch_id_suffix=str(plan_payload["b"]),
+            metadata_template={
+                "r": tuple(str(request_id) for request_id in request_ids),
+                "s": tuple(steps),
+                "a": tuple(scales),
+                "t": tuple(
+                    tuple(int(t) for t in token_row) for token_row in token_rows
+                ),
+            },
+        )
     return PAPOffloadExecBatchDescriptor(
         layer_name=layer_name,
         items=tuple(
@@ -1031,6 +1047,7 @@ def _offload_exec_batch_descriptor_from_metadata(
     metadata: dict[str, Any],
     *,
     plan_cache: dict[str, dict[str, Any]] | None = None,
+    template_only: bool = False,
 ) -> PAPOffloadExecBatchDescriptor:
     if metadata.get("v") == 4:
         layer_name = str(metadata["l"])
@@ -1048,6 +1065,7 @@ def _offload_exec_batch_descriptor_from_metadata(
         return _offload_exec_batch_descriptor_from_plan_payload(
             layer_name,
             plan_payload,
+            template_only=template_only,
         )
     if metadata.get("v") == 5:
         if plan_cache is None:
@@ -1063,6 +1081,7 @@ def _offload_exec_batch_descriptor_from_metadata(
         return _offload_exec_batch_descriptor_from_plan_payload(
             layer_name,
             plan_payload,
+            template_only=template_only,
         )
     if metadata.get("v") in {2, 3}:
         layer_name = str(metadata["l"])

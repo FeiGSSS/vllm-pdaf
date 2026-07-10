@@ -208,7 +208,7 @@ def test_qwen3_pap_path_uses_nixl_mailbox_offload_exec_without_tcp_trigger() -> 
     method = text[start:end]
 
     assert "self.attn(" not in method
-    assert "pap_offload_exec_route_groups" in method
+    assert "_pap_offload_exec_step_groups(" in method
     assert "select_attention_endpoint_for_request" not in method
     assert "trigger_offload_exec_attention_batch" not in method
     assert "requires_tcp_trigger" not in method
@@ -439,17 +439,21 @@ def test_qwen3_pap_gate_checks_decode_only() -> None:
 
 def test_qwen3_pap_uses_route_plan_steps_for_offload_exec_descriptor() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
+    helper_start = text.index("def _pap_offload_exec_step_groups(\n")
+    helper_end = text.index("\ndef _pap_offload_exec_base_zmq_port")
+    helper = text[helper_start:helper_end]
     start = text.index("    def _compute_pap_attention(\n")
     end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
     method = text[start:end]
 
-    assert 'route_group.get("steps"' in method
-    assert "group_session_request_ids" in method
-    assert "_pap_offload_exec_session_request_id(" in method
-    assert '"r": tuple(group_session_request_ids)' in method
-    assert "if request_id != str(request_ids[req_index])" in method
-    assert '"metadata_template"' in method
-    assert '"a": (float(self.scaling),) * len(group_steps)' in method
+    assert 'route_group.get("steps"' in helper
+    assert "session_request_ids" in helper
+    assert "_pap_offload_exec_session_request_id(" in helper
+    assert '"r": tuple(session_request_ids)' in helper
+    assert "if request_id != str(request_ids[req_index])" in helper
+    assert "metadata_template=" in helper
+    assert '"a": (float(scaling),) * len(group_steps)' in helper
+    assert "_pap_offload_exec_step_groups(" in method
     assert "items=()" in method
     assert "PAPOffloadExecDescriptor(" not in method
     assert "batch_descriptor.item_count" in method
@@ -505,11 +509,12 @@ def test_qwen3_pap_uses_empty_output_when_all_requests_offloaded() -> None:
     end = text.index("    def _maybe_import_pap_prefill_kv_to_attention")
     method = text[start:end]
 
-    assert "all_requests_offloaded = len(remote_attention_calls) == num_reqs" in method
+    all_offloaded = "sum(len(group.req_indices) for group in step_groups) == num_reqs"
+    assert all_offloaded in method
     assert "torch.empty_like(query)" in method
     assert "torch.zeros_like(query)" in method
-    assert method.index("remote_attention_calls: list") < method.index(
-        "all_requests_offloaded = len(remote_attention_calls) == num_reqs"
+    assert method.index("step_groups = _pap_offload_exec_step_groups") < method.index(
+        all_offloaded
     )
 
 

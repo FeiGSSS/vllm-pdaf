@@ -32,6 +32,7 @@ import time
 from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any
 
@@ -441,25 +442,22 @@ def _pap_pack_qkv_group_items(
     )
 
 
-def _pap_direct_qkv_batch_for_group(
+def _pap_direct_qkv_batch_for_indices(
     qkv_batch: torch.Tensor | None,
-    group_items: list[tuple[int, Any, tuple[torch.Tensor, ...]]],
+    req_indices: tuple[int, ...],
 ) -> torch.Tensor | None:
-    if qkv_batch is None or not group_items:
+    if qkv_batch is None or not req_indices:
         return None
     if qkv_batch.ndim != 2 or not qkv_batch.is_contiguous():
         return None
-    req_indices = [int(item[0]) for item in group_items]
-    start = req_indices[0]
-    if start < 0 or req_indices != list(range(start, start + len(group_items))):
+    start = int(req_indices[0])
+    if start < 0 or req_indices != tuple(range(start, start + len(req_indices))):
         return None
-    stop = start + len(group_items)
+    stop = start + len(req_indices)
     if stop > int(qkv_batch.shape[0]):
         return None
     direct = qkv_batch[start:stop]
-    if not direct.is_contiguous():
-        return None
-    return direct
+    return direct if direct.is_contiguous() else None
 
 
 def _pap_decode_token_ids_for_req_index(
@@ -523,6 +521,132 @@ def _pap_endpoint_for_tp_rank(value: Any, *, tp_rank: int | None = None) -> Any:
             )
         return value[rank]
     return value
+
+
+@dataclass(frozen=True)
+class _PAPOffloadExecStepGroup:
+    attention_endpoint: str
+    offload_exec_zmq_endpoint: str
+    req_indices: tuple[int, ...]
+    batch_id_suffix: str
+    metadata_template: dict[str, Any]
+
+
+_PAP_STEP_GROUPS_KEY = "_pap_qwen3_offload_exec_step_groups"
+
+
+def _pap_offload_exec_step_groups(
+    additional_kwargs: dict[str, Any],
+    *,
+    num_reqs: int,
+    scaling: float,
+) -> tuple[_PAPOffloadExecStepGroup, ...]:
+    cached = additional_kwargs.get(_PAP_STEP_GROUPS_KEY)
+    if cached is not None:
+        return tuple(cached)
+
+    request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
+    route_groups = tuple(
+        additional_kwargs.get("pap_offload_exec_route_groups") or ()
+    )
+    if not route_groups:
+        raise RuntimeError("PAP attention missing OFFLOAD_EXEC route groups")
+
+    attention_kv_installed = set(
+        additional_kwargs.get("pap_attention_kv_installed_by_request") or ()
+    )
+    prefix_len_by_request = (
+        additional_kwargs.get("pap_prefill_prefix_len_by_request") or {}
+    )
+    prefill_kv_handle_by_request = (
+        additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
+    )
+    input_token_ids = tuple(
+        int(token_id)
+        for token_id in additional_kwargs.get("pap_input_token_ids") or ()
+    )
+
+    step_groups: list[_PAPOffloadExecStepGroup] = []
+    routed_req_indices: set[int] = set()
+    for route_group in route_groups:
+        attention_endpoint = _pap_endpoint_for_tp_rank(
+            route_group.get("attention_endpoint")
+        )
+        offload_exec_zmq_endpoint = _pap_endpoint_for_tp_rank(
+            route_group.get("offload_exec_zmq_endpoint")
+        )
+        if not attention_endpoint:
+            raise RuntimeError(
+                "PAP NIXL mailbox OFFLOAD_EXEC requires pap_attention_endpoint"
+            )
+        if not offload_exec_zmq_endpoint:
+            raise RuntimeError(
+                "PAP OFFLOAD_EXEC mailbox path missing pap_offload_exec_zmq_endpoint"
+            )
+
+        req_indices = tuple(
+            int(req_index) for req_index in route_group.get("req_indices", ())
+        )
+        group_request_ids = tuple(
+            str(request_id) for request_id in route_group.get("request_ids", ())
+        )
+        group_steps = tuple(int(step) for step in route_group.get("steps", ()))
+        if not (len(req_indices) == len(group_request_ids) == len(group_steps)):
+            raise RuntimeError("PAP OFFLOAD_EXEC route group is malformed")
+
+        session_request_ids: list[str] = []
+        for group_offset, req_index in enumerate(req_indices):
+            if req_index < 0 or req_index >= num_reqs:
+                raise RuntimeError("PAP OFFLOAD_EXEC route index out of range")
+            request_id = group_request_ids[group_offset]
+            if request_id != str(request_ids[req_index]):
+                raise RuntimeError("PAP OFFLOAD_EXEC route request mismatch")
+            if not is_pap_request_id(request_id):
+                raise RuntimeError(
+                    f"PAP attention cannot route non-OpenAI request id {request_id}"
+                )
+            routed_req_indices.add(req_index)
+            prefix_len = int(prefix_len_by_request.get(request_id) or 0)
+            prefill_kv_handle = prefill_kv_handle_by_request.get(request_id)
+            if prefix_len > 0 and request_id not in attention_kv_installed:
+                if not prefill_kv_handle:
+                    raise RuntimeError("PAP missing local prefill KV handle")
+                raise RuntimeError("PAP attention KV is not installed")
+            session_request_ids.append(
+                _pap_offload_exec_session_request_id(
+                    request_id,
+                    prefill_kv_handle,
+                )
+            )
+
+        batch_id_suffix = ",".join(
+            f"{request_id}@{step}"
+            for request_id, step in zip(session_request_ids, group_steps)
+        )
+        step_groups.append(
+            _PAPOffloadExecStepGroup(
+                attention_endpoint=str(attention_endpoint),
+                offload_exec_zmq_endpoint=str(offload_exec_zmq_endpoint),
+                req_indices=req_indices,
+                batch_id_suffix=batch_id_suffix,
+                metadata_template={
+                    "r": tuple(session_request_ids),
+                    "s": group_steps,
+                    "a": (float(scaling),) * len(group_steps),
+                    "t": _pap_decode_token_rows_for_indices(
+                        input_token_ids,
+                        req_indices,
+                    ),
+                },
+            )
+        )
+
+    if len(routed_req_indices) != num_reqs:
+        raise RuntimeError("PAP OFFLOAD_EXEC route groups do not cover batch")
+
+    result = tuple(step_groups)
+    additional_kwargs[_PAP_STEP_GROUPS_KEY] = result
+    return result
 
 
 def _pap_offload_exec_base_zmq_port() -> int:
@@ -1263,7 +1387,7 @@ class Qwen3Attention(nn.Module):
                     remote_address=offload_exec_zmq_endpoint,
                 )
             try:
-                if int(output_batch.shape[0]) != len(batch_descriptor.items):
+                if int(output_batch.shape[0]) != batch_descriptor.item_count:
                     raise RuntimeError(
                         "PAP OFFLOAD_EXEC output batch row count mismatch"
                     )
@@ -1271,7 +1395,7 @@ class Qwen3Attention(nn.Module):
                     _pap_env_enabled("PAP_DIRECT_MAILBOX_OUTPUT")
                     and output_message is not None
                     and len(sent_batches) == 1
-                    and len(req_indices) == len(batch_descriptor.items)
+                    and len(req_indices) == batch_descriptor.item_count
                     and output_batch.device == query.device
                     and output_batch.dtype == query.dtype
                     and int(output_batch.numel()) == int(query.numel())
@@ -1362,116 +1486,14 @@ class Qwen3Attention(nn.Module):
             pap_offload_exec_trace_id,
         )
 
-        route_groups = tuple(
-            additional_kwargs.get("pap_offload_exec_route_groups") or ()
+        step_groups = _pap_offload_exec_step_groups(
+            additional_kwargs,
+            num_reqs=num_reqs,
+            scaling=float(self.scaling),
         )
-        if not route_groups:
-            raise RuntimeError("PAP attention missing OFFLOAD_EXEC route groups")
-        attention_kv_installed_by_request = set(
-            additional_kwargs.get("pap_attention_kv_installed_by_request") or ()
+        all_requests_offloaded = (
+            sum(len(group.req_indices) for group in step_groups) == num_reqs
         )
-        prefix_len_by_request = (
-            additional_kwargs.get("pap_prefill_prefix_len_by_request") or {}
-        )
-        prefill_kv_handle_by_request = (
-            additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
-        )
-        input_token_ids = tuple(
-            int(token_id)
-            for token_id in additional_kwargs.get("pap_input_token_ids") or ()
-        )
-        remote_attention_calls: list[tuple[int, str, str]] = []
-        offload_exec_group_templates: dict[tuple[str | None, str], dict[str, Any]] = {}
-        routed_req_indices: set[int] = set()
-        for route_group in route_groups:
-            attention_endpoint = _pap_endpoint_for_tp_rank(
-                route_group.get("attention_endpoint")
-            )
-            offload_exec_zmq_endpoint = _pap_endpoint_for_tp_rank(
-                route_group.get("offload_exec_zmq_endpoint")
-            )
-            if not attention_endpoint:
-                raise RuntimeError(
-                    "PAP NIXL mailbox OFFLOAD_EXEC requires pap_attention_endpoint"
-                )
-            if not offload_exec_zmq_endpoint:
-                raise RuntimeError(
-                    "PAP OFFLOAD_EXEC mailbox path missing "
-                    "pap_offload_exec_zmq_endpoint"
-                )
-            req_indices = tuple(
-                int(req_index) for req_index in route_group.get("req_indices", ())
-            )
-            group_request_ids = tuple(
-                str(request_id) for request_id in route_group.get("request_ids", ())
-            )
-            group_steps = tuple(int(step) for step in route_group.get("steps", ()))
-            if not (len(req_indices) == len(group_request_ids) == len(group_steps)):
-                raise RuntimeError("PAP OFFLOAD_EXEC route group is malformed")
-            template_key = (str(attention_endpoint), str(offload_exec_zmq_endpoint))
-            group_session_request_ids: list[str] = []
-            for group_offset, req_index in enumerate(req_indices):
-                if req_index < 0 or req_index >= num_reqs:
-                    raise RuntimeError("PAP OFFLOAD_EXEC route index out of range")
-                request_id = group_request_ids[group_offset]
-                if request_id != str(request_ids[req_index]):
-                    raise RuntimeError("PAP OFFLOAD_EXEC route request mismatch")
-                if not is_pap_request_id(request_id):
-                    raise RuntimeError(
-                        f"PAP attention cannot route non-OpenAI request id {request_id}"
-                    )
-                routed_req_indices.add(req_index)
-                prefix_len = int(prefix_len_by_request.get(request_id) or 0)
-                prefill_kv_handle = prefill_kv_handle_by_request.get(request_id)
-                if (
-                    prefix_len > 0
-                    and request_id not in attention_kv_installed_by_request
-                ):
-                    if not prefill_kv_handle:
-                        raise RuntimeError("PAP missing local prefill KV handle")
-                    raise RuntimeError("PAP attention KV is not installed")
-                group_session_request_ids.append(
-                    _pap_offload_exec_session_request_id(
-                        request_id,
-                        prefill_kv_handle,
-                    )
-                )
-                remote_attention_calls.append(
-                    (
-                        req_index,
-                        str(attention_endpoint),
-                        str(offload_exec_zmq_endpoint),
-                    )
-                )
-                logger.debug(
-                    "PAP OFFLOAD_EXEC ZMQ endpoint selected request_id=%s "
-                    "layer=%s endpoint=%s",
-                    request_id,
-                    self.attn.layer_name,
-                    offload_exec_zmq_endpoint,
-                )
-            offload_exec_group_templates[template_key] = {
-                "batch_id_suffix": ",".join(
-                    f"{request_id}@{step}"
-                    for request_id, step in zip(
-                        group_session_request_ids,
-                        group_steps,
-                    )
-                ),
-                "metadata_template": {
-                    "r": tuple(group_session_request_ids),
-                    "s": group_steps,
-                    "a": (float(self.scaling),) * len(group_steps),
-                    "t": _pap_decode_token_rows_for_indices(
-                        input_token_ids,
-                        req_indices,
-                    ),
-                },
-            }
-        if len(routed_req_indices) != num_reqs:
-            raise RuntimeError("PAP OFFLOAD_EXEC route groups do not cover batch")
-
-        all_requests_offloaded = len(remote_attention_calls) == num_reqs
         direct_mailbox_output_enabled = os.environ.get(
             "PAP_DIRECT_MAILBOX_OUTPUT", ""
         ).lower() in ("1", "true", "yes", "on")
@@ -1517,31 +1539,6 @@ class Qwen3Attention(nn.Module):
         trace_total_ms = 0.0
         trace_batch_keys = ""
         trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
-        offload_exec_groups: dict[
-            tuple[str | None, str],
-            list[tuple[int, None, tuple[torch.Tensor, ...]]],
-        ] = {}
-        for (
-            req_index,
-            attention_endpoint,
-            offload_exec_zmq_endpoint,
-        ) in remote_attention_calls:
-            qkv_segments = (
-                query[req_index : req_index + 1].reshape(1, -1),
-                key[req_index : req_index + 1].reshape(1, -1),
-                value[req_index : req_index + 1].reshape(1, -1),
-            )
-            offload_exec_groups.setdefault(
-                (attention_endpoint, offload_exec_zmq_endpoint),
-                [],
-            ).append(
-                (
-                    req_index,
-                    None,
-                    qkv_segments,
-                )
-            )
-
         offload_exec_batches: list[
             tuple[
                 str | None,
@@ -1551,28 +1548,31 @@ class Qwen3Attention(nn.Module):
                 Any,
             ]
         ] = []
-        for (
-            attention_endpoint,
-            offload_exec_zmq_endpoint,
-        ), group_items in offload_exec_groups.items():
+        for step_group in step_groups:
+            attention_endpoint = step_group.attention_endpoint
+            offload_exec_zmq_endpoint = step_group.offload_exec_zmq_endpoint
+            req_indices = step_group.req_indices
             transport = _pap_offload_exec_transport_for_attention_endpoint(
                 attention_endpoint,
                 offload_exec_zmq_endpoint,
             )
-            route_template = offload_exec_group_templates[
-                (str(attention_endpoint), str(offload_exec_zmq_endpoint))
-            ]
             batch_descriptor = PAPOffloadExecBatchDescriptor(
                 layer_name=self.attn.layer_name,
                 items=(),
-                batch_id_suffix=route_template["batch_id_suffix"],
-                metadata_template=route_template["metadata_template"],
+                batch_id_suffix=step_group.batch_id_suffix,
+                metadata_template=step_group.metadata_template,
             )
             _pap_bind_offload_exec_mailbox_peer(transport, attention_endpoint)
             send_qkv_batch_direct = getattr(transport, "send_qkv_batch_direct", None)
-            qkv_width = sum(int(segment.shape[-1]) for segment in group_items[0][2])
+            qkv_width = (
+                self.num_heads * self.head_dim
+                + 2 * self.num_kv_heads * self.head_dim
+            )
             direct_qkv_batch = (
-                _pap_direct_qkv_batch_for_group(direct_qkv_send_buffer, group_items)
+                _pap_direct_qkv_batch_for_indices(
+                    direct_qkv_send_buffer,
+                    req_indices,
+                )
                 if direct_qkv_send_enabled and callable(send_qkv_batch_direct)
                 else None
             )
@@ -1585,6 +1585,18 @@ class Qwen3Attention(nn.Module):
                     remote_address=offload_exec_zmq_endpoint,
                 )
             else:
+                group_items = [
+                    (
+                        req_index,
+                        None,
+                        (
+                            query[req_index : req_index + 1].reshape(1, -1),
+                            key[req_index : req_index + 1].reshape(1, -1),
+                            value[req_index : req_index + 1].reshape(1, -1),
+                        ),
+                    )
+                    for req_index in req_indices
+                ]
                 qkv_batch = _pap_pack_qkv_group_items(group_items)
                 transport.send_qkv_batch(
                     batch_descriptor,
@@ -1596,7 +1608,7 @@ class Qwen3Attention(nn.Module):
                     attention_endpoint,
                     offload_exec_zmq_endpoint,
                     batch_descriptor,
-                    [item[0] for item in group_items],
+                    list(req_indices),
                     transport,
                 )
             )

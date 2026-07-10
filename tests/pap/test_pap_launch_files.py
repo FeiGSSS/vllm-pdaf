@@ -3,6 +3,41 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_pap_benchmark_runner_captures_attention_fast_path_stats() -> None:
+    runner = (
+        ROOT
+        / ".claude"
+        / "skills"
+        / "vllm-pap-benchmark"
+        / "scripts"
+        / "run_pap_same_pd_workload.sh"
+    )
+    text = runner.read_text()
+
+    assert "PAP_DECODE_SLOT_PLAN_CACHE_LIMIT" in text
+    assert "/v1/pap/attention/stats" in text
+    assert "attention_fast_path_stats.json" in text
+    assert "capture_attention_fast_path_stats" in text
+
+
+def test_pd_benchmark_runner_is_self_contained_and_scoped() -> None:
+    skill_dir = ROOT / ".claude" / "skills" / "vllm-pap-benchmark"
+    runner = skill_dir / "scripts" / "run_pd_same_workload.sh"
+    proxy = skill_dir / "scripts" / "nixl_pd_proxy.py"
+    text = runner.read_text()
+
+    assert proxy.is_file()
+    assert 'PROXY_SCRIPT="${SKILL_DIR}/scripts/nixl_pd_proxy.py"' in text
+    assert "launch_service.sh" not in text
+    assert "run_benchmark.sh" not in text
+    assert "pkill" not in text
+    assert "nvidia-smi" not in text
+    assert 'PD_PREFILL_GPU:-1' in text
+    assert 'PD_DECODE_GPU:-2' in text
+    assert 'QPS="${QPS:-16}"' in text
+    assert 'VLLM_DTYPE="${PD_VLLM_DTYPE:-float16}"' in text
+
+
 def test_pap_readme_documents_projection_as_decode_owner() -> None:
     readme = ROOT / "examples" / "pap" / "README.md"
     text = readme.read_text()

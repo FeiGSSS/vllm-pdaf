@@ -238,6 +238,42 @@ def test_nixl_mailbox_qkv_batch_plan_ref_roundtrips_on_receiver_by_default() -> 
     assert restored_second.output_tensor_id == "layer1#req-a@7,req-b@8#attn_out_batch"
 
 
+def test_batch_plan_ref_can_restore_template_only_descriptor() -> None:
+    plan_cache = {}
+    full = {
+        "v": 4,
+        "l": "layer0",
+        "p": "plan-a",
+        "b": "req-a@7,req-b@8",
+        "r": ["req-a", "req-b"],
+        "s": [7, 8],
+        "a": [0.125, 0.125],
+        "t": [[42], [99]],
+    }
+
+    first = _offload_exec_batch_descriptor_from_metadata(
+        full,
+        plan_cache=plan_cache,
+        template_only=True,
+    )
+    second = _offload_exec_batch_descriptor_from_metadata(
+        {"v": 5, "l": "layer1", "p": "plan-a"},
+        plan_cache=plan_cache,
+        template_only=True,
+    )
+
+    assert first.items == ()
+    assert second.items == ()
+    assert second.item_count == 2
+    assert second.batch_id_suffix == "req-a@7,req-b@8"
+    assert second.metadata_template == {
+        "r": ("req-a", "req-b"),
+        "s": (7, 8),
+        "a": (0.125, 0.125),
+        "t": ((42,), (99,)),
+    }
+
+
 def test_offload_exec_batch_metadata_uses_compact_arrays() -> None:
     descriptor = PAPOffloadExecBatchDescriptor(
         layer_name="layer0",

@@ -651,9 +651,26 @@ class PAPAttentionRegistry:
         self._session_leased_block_ids: dict[str, tuple[int, ...]] = {}
         self._session_lease_capacity_tokens: dict[str, int] = {}
         self._unified_paged_kv: dict[str, dict[str, PAPUnifiedPagedKVState]] = {}
+        self._session_epochs: dict[str, int] = {}
+        self._next_session_epoch = 1
+        self._unified_slot_topologies: dict[
+            str, tuple[tuple[int, ...], int, str]
+        ] = {}
+        self._unified_slot_topology_uniform: dict[str, bool] = {}
+        self._decode_slot_plan_cache: OrderedDict[
+            tuple[Any, ...], torch.Tensor
+        ] = OrderedDict()
         self._offload_exec_session_entry_cache: dict[
             tuple[str, int, int, int, int, int], PAPOffloadExecSessionEntry
         ] = {}
+        self._reshape_cache_scales: dict[
+            str, tuple[torch.Tensor, torch.Tensor]
+        ] = {}
+        self._decode_append_fast_path_hits = 0
+        self._decode_append_fallbacks = 0
+        self._decode_slot_plan_cache_hits = 0
+        self._decode_slot_plan_cache_misses = 0
+        self._decode_slot_topology_mismatches = 0
         self._attention_sessions = AttentionSessionStore()
 
     @staticmethod
@@ -720,6 +737,73 @@ class PAPAttentionRegistry:
             grown.length = buffer.length
         return grown
 
+    @staticmethod
+    def _decode_slot_plan_cache_limit() -> int:
+        return int(os.environ.get("PAP_DECODE_SLOT_PLAN_CACHE_LIMIT", "256"))
+
+    def _record_unified_slot_topology_locked(
+        self,
+        *,
+        session_request_id: str,
+        state: PAPUnifiedPagedKVState,
+    ) -> None:
+        topology = (
+            state.block_ids,
+            int(state.block_size),
+            str(state.kv_cache.device),
+        )
+        existing = self._unified_slot_topologies.get(session_request_id)
+        if existing is None:
+            self._unified_slot_topologies[session_request_id] = topology
+            self._unified_slot_topology_uniform[session_request_id] = True
+            return
+        if existing == topology:
+            return
+        if self._unified_slot_topology_uniform.get(session_request_id, False):
+            self._decode_slot_topology_mismatches += 1
+            logger.warning(
+                "PAP unified KV slot topology differs across layers; "
+                "disabling cross-layer slot-plan cache request_id=%s",
+                session_request_id,
+            )
+        self._unified_slot_topology_uniform[session_request_id] = False
+
+    def _decode_slot_plan_key_locked(
+        self,
+        *,
+        session_request_ids: Sequence[str],
+        decode_seq_lens: Sequence[int],
+        device: torch.device,
+    ) -> tuple[Any, ...] | None:
+        session_generations: list[tuple[str, int]] = []
+        for session_request_id in session_request_ids:
+            if not self._unified_slot_topology_uniform.get(
+                session_request_id, False
+            ):
+                return None
+            epoch = self._session_epochs.get(session_request_id)
+            if epoch is None:
+                return None
+            session_generations.append((session_request_id, int(epoch)))
+        return (
+            tuple(session_generations),
+            tuple(int(seq_len) for seq_len in decode_seq_lens),
+            str(device),
+        )
+
+    def _store_decode_slot_plan_locked(
+        self,
+        key: tuple[Any, ...],
+        slot_tensor: torch.Tensor,
+    ) -> None:
+        limit = self._decode_slot_plan_cache_limit()
+        if limit <= 0:
+            return
+        self._decode_slot_plan_cache[key] = slot_tensor
+        self._decode_slot_plan_cache.move_to_end(key)
+        while len(self._decode_slot_plan_cache) > limit:
+            self._decode_slot_plan_cache.popitem(last=False)
+
     def _release_session_locked(self, request_id: str) -> tuple[bool, str | None]:
         existed = self._sessions.pop(request_id, None) is not None
         self._layer_events.pop(request_id, None)
@@ -728,6 +812,9 @@ class PAPAttentionRegistry:
         self._prefill_paged_kv.pop(request_id, None)
         self._prefill_readiness.pop(request_id, None)
         self._unified_paged_kv.pop(request_id, None)
+        self._session_epochs.pop(request_id, None)
+        self._unified_slot_topologies.pop(request_id, None)
+        self._unified_slot_topology_uniform.pop(request_id, None)
         self._drop_offload_exec_session_entry_cache_locked(request_id)
         lease_id = self._session_lease_ids.pop(request_id, None)
         leased_blocks = self._session_leased_block_ids.pop(request_id, None)
@@ -759,6 +846,9 @@ class PAPAttentionRegistry:
         self._prefill_paged_kv.pop(request_id, None)
         self._prefill_readiness.pop(request_id, None)
         self._unified_paged_kv.pop(request_id, None)
+        self._session_epochs.pop(request_id, None)
+        self._unified_slot_topologies.pop(request_id, None)
+        self._unified_slot_topology_uniform.pop(request_id, None)
         self._drop_offload_exec_session_entry_cache_locked(request_id)
         lease_id = self._session_lease_ids.pop(request_id, None)
         self._session_leased_block_ids.pop(request_id, None)
@@ -812,8 +902,8 @@ class PAPAttentionRegistry:
                 "length mismatch"
             )
 
-        slots: list[int] = []
         active_indices: list[int] = []
+        active_states: list[PAPUnifiedPagedKVState] = []
         base_v_cache: torch.Tensor | None = None
 
         with self._lock:
@@ -829,7 +919,6 @@ class PAPAttentionRegistry:
                         f"PAP unified KV state missing for request_id="
                         f"{session_request_id} layer={layer_name}"
                     )
-                block_size = int(state.block_size)
                 base_v_cache = state.kv_cache
                 position = int(state.seq_len)
                 if decode_len <= position:
@@ -851,36 +940,85 @@ class PAPAttentionRegistry:
                         f"{state.writable_start_token},"
                         f"{state.writable_end_token})"
                     )
-                logical_block = position // block_size
-                if logical_block >= len(state.block_ids):
-                    raise RuntimeError(
-                        f"PAP unified KV logical_block={logical_block} "
-                        f"exceeds block_ids len={len(state.block_ids)} "
-                        f"(request_id={session_request_id} "
-                        f"layer={layer_name})"
-                    )
-                raw_bid = state.block_ids[logical_block]
-                physical_block = (
-                    int(raw_bid.item()) if hasattr(raw_bid, "item") else int(raw_bid)
-                )
-                block_offset = position % block_size
-                slots.append(physical_block * block_size + block_offset)
                 active_indices.append(index)
+                active_states.append(state)
 
             if not active_indices or base_v_cache is None:
                 return 0
 
-            kb = key_batch[active_indices].to(
-                device=base_v_cache.device, dtype=base_v_cache.dtype
-            )
-            vb = value_batch[active_indices].to(
-                device=base_v_cache.device, dtype=base_v_cache.dtype
-            )
-            slot_tensor = torch.tensor(
-                slots, dtype=torch.int64, device=base_v_cache.device
-            )
-            k_scale = torch.ones(1, dtype=torch.float32, device=base_v_cache.device)
-            v_scale = torch.ones(1, dtype=torch.float32, device=base_v_cache.device)
+            all_rows_active = len(active_indices) == len(session_request_ids)
+            if all_rows_active:
+                self._decode_append_fast_path_hits += 1
+                kb = key_batch
+                vb = value_batch
+            else:
+                self._decode_append_fallbacks += 1
+                kb = key_batch[active_indices]
+                vb = value_batch[active_indices]
+            if kb.device != base_v_cache.device or kb.dtype != base_v_cache.dtype:
+                kb = kb.to(device=base_v_cache.device, dtype=base_v_cache.dtype)
+            if vb.device != base_v_cache.device or vb.dtype != base_v_cache.dtype:
+                vb = vb.to(device=base_v_cache.device, dtype=base_v_cache.dtype)
+            slot_plan_key = None
+            slot_tensor = None
+            if all_rows_active:
+                slot_plan_key = self._decode_slot_plan_key_locked(
+                    session_request_ids=session_request_ids,
+                    decode_seq_lens=decode_seq_lens,
+                    device=base_v_cache.device,
+                )
+                if slot_plan_key is not None:
+                    slot_tensor = self._decode_slot_plan_cache.get(slot_plan_key)
+                    if slot_tensor is not None:
+                        self._decode_slot_plan_cache_hits += 1
+                        self._decode_slot_plan_cache.move_to_end(slot_plan_key)
+                    else:
+                        self._decode_slot_plan_cache_misses += 1
+            if slot_tensor is None:
+                slots: list[int] = []
+                for state in active_states:
+                    position = int(state.seq_len)
+                    block_size = int(state.block_size)
+                    logical_block = position // block_size
+                    if logical_block >= len(state.block_ids):
+                        raise RuntimeError(
+                            f"PAP unified KV logical_block={logical_block} "
+                            f"exceeds block_ids len={len(state.block_ids)} "
+                            f"(layer={layer_name})"
+                        )
+                    physical_block = _coerce_block_id(
+                        state.block_ids[logical_block]
+                    )
+                    slots.append(
+                        physical_block * block_size + position % block_size
+                    )
+                slot_tensor = torch.tensor(
+                    slots,
+                    dtype=torch.int64,
+                    device=base_v_cache.device,
+                )
+                if slot_plan_key is not None:
+                    self._store_decode_slot_plan_locked(
+                        slot_plan_key,
+                        slot_tensor,
+                    )
+            scale_key = str(base_v_cache.device)
+            scales = self._reshape_cache_scales.get(scale_key)
+            if scales is None:
+                scales = (
+                    torch.ones(
+                        1,
+                        dtype=torch.float32,
+                        device=base_v_cache.device,
+                    ),
+                    torch.ones(
+                        1,
+                        dtype=torch.float32,
+                        device=base_v_cache.device,
+                    ),
+                )
+                self._reshape_cache_scales[scale_key] = scales
+            k_scale, v_scale = scales
             key_cache, value_cache = base_v_cache.unbind(1)
             torch.ops._C_cache_ops.reshape_and_cache_flash(
                 kb,
@@ -903,6 +1041,20 @@ class PAPAttentionRegistry:
                 written += 1
 
         return written
+
+    def decode_append_fast_path_stats(self) -> dict[str, int]:
+        with self._lock:
+            return {
+                "fast_path_hits": self._decode_append_fast_path_hits,
+                "fallbacks": self._decode_append_fallbacks,
+                "scale_cache_entries": len(self._reshape_cache_scales),
+                "slot_plan_hits": self._decode_slot_plan_cache_hits,
+                "slot_plan_misses": self._decode_slot_plan_cache_misses,
+                "slot_plan_entries": len(self._decode_slot_plan_cache),
+                "slot_topology_mismatches": (
+                    self._decode_slot_topology_mismatches
+                ),
+            }
 
     def get_unified_paged_states(
         self,
@@ -940,6 +1092,10 @@ class PAPAttentionRegistry:
             replaced_lease_id = self._replace_existing_session_locked(
                 registration.request_id
             )
+            self._session_epochs[registration.request_id] = (
+                self._next_session_epoch
+            )
+            self._next_session_epoch += 1
             self._sessions[registration.request_id] = session
             self._layer_events.setdefault(registration.request_id, [])
             self._decode_kv.setdefault(registration.request_id, {})
@@ -1511,6 +1667,10 @@ class PAPAttentionRegistry:
                     block_size=int(block_size),
                     num_kv_heads=int(num_kv_heads),
                     layout=str(layout),
+                )
+                self._record_unified_slot_topology_locked(
+                    session_request_id=session_request_id,
+                    state=unified_state,
                 )
                 self._unified_paged_kv.setdefault(session_request_id, {})[
                     layer_name
@@ -2872,6 +3032,37 @@ def _compute_unified_paged_flash_batch(
     return output
 
 
+def _offload_exec_batch_rows(
+    descriptor: Any,
+) -> tuple[
+    tuple[str, ...],
+    tuple[int, ...],
+    tuple[float, ...],
+    tuple[tuple[int, ...], ...],
+]:
+    template = getattr(descriptor, "metadata_template", None)
+    if template is not None:
+        request_ids = tuple(str(request_id) for request_id in template["r"])
+        steps = tuple(int(step) for step in template["s"])
+        scales = tuple(float(scale) for scale in template["a"])
+        token_rows = tuple(
+            tuple(int(token_id) for token_id in row)
+            for row in template.get("t", ((),) * len(request_ids))
+        )
+    else:
+        items = tuple(descriptor.items)
+        request_ids = tuple(str(item.request_id) for item in items)
+        steps = tuple(int(item.step) for item in items)
+        scales = tuple(float(item.scale) for item in items)
+        token_rows = tuple(
+            tuple(int(token_id) for token_id in item.decode_token_ids)
+            for item in items
+        )
+    if not (len(request_ids) == len(steps) == len(scales) == len(token_rows)):
+        raise RuntimeError("PAP OFFLOAD_EXEC batch descriptor length mismatch")
+    return request_ids, steps, scales, token_rows
+
+
 def compute_offload_exec_batch_output(
     *,
     registry: PAPAttentionRegistry,
@@ -2881,8 +3072,8 @@ def compute_offload_exec_batch_output(
 ) -> torch.Tensor:
     """Compute one OFFLOAD_EXEC attention output batch via paged FlashAttention."""
 
-    items = tuple(descriptor.items)
-    if int(qkv_batch.shape[0]) != len(items):
+    request_ids, steps, scales, token_rows = _offload_exec_batch_rows(descriptor)
+    if int(qkv_batch.shape[0]) != len(request_ids):
         raise RuntimeError(
             "PAP OFFLOAD_EXEC batch QKV row count does not match descriptor"
         )
@@ -2894,7 +3085,7 @@ def compute_offload_exec_batch_output(
     num_kv_heads_default = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "0"))
     head_dim_default = int(os.environ.get("PAP_OFFLOAD_EXEC_HEAD_DIM", "0"))
     session_entries = registry.offload_exec_batch_session_entries(
-        tuple(item.request_id for item in items),
+        request_ids,
         default_q_size=int(os.environ.get("PAP_OFFLOAD_EXEC_Q_SIZE", "0")),
         default_kv_size=int(os.environ.get("PAP_OFFLOAD_EXEC_KV_SIZE", "0")),
         num_heads=num_heads_default,
@@ -2904,7 +3095,7 @@ def compute_offload_exec_batch_output(
 
     common_shape: tuple[int, int, int, int, int] | None = None
     common_scale: float | None = None
-    for item, session_entry in zip(items, session_entries):
+    for scale, session_entry in zip(scales, session_entries):
         shape = (
             session_entry.q_size,
             session_entry.kv_size,
@@ -2912,11 +3103,10 @@ def compute_offload_exec_batch_output(
             session_entry.num_kv_heads,
             session_entry.head_dim,
         )
-        scale = float(item.scale)
         if common_shape is None:
             common_shape = shape
-            common_scale = scale
-        elif shape != common_shape or scale != common_scale:
+            common_scale = float(scale)
+        elif shape != common_shape or float(scale) != common_scale:
             raise RuntimeError("PAP OFFLOAD_EXEC batch has mixed shapes or scales")
     if trace_stats is not None:
         trace_stats["shape_lookup_ms"] += (
@@ -2925,7 +3115,7 @@ def compute_offload_exec_batch_output(
 
     assert common_shape is not None
     _q_size, kv_size, num_heads, num_kv_heads, head_dim = common_shape
-    batch_size = len(items)
+    batch_size = len(request_ids)
 
     qkv_split_start = time.perf_counter() if trace_stats is not None else 0.0
     query_flat, key_flat, value_flat = qkv_batch.split(
@@ -2947,7 +3137,7 @@ def compute_offload_exec_batch_output(
         ) * 1000.0
 
     append_start = time.perf_counter() if trace_stats is not None else 0.0
-    decode_seq_lens = [int(item.step) for item in items]
+    decode_seq_lens = list(steps)
     session_request_ids = tuple(
         session_entry.session_request_id for session_entry in session_entries
     )
@@ -2993,16 +3183,14 @@ def compute_offload_exec_batch_output(
             trace_stats["post_compute_done_ns"] = float(time.perf_counter_ns())
         commit_client = _get_commit_client()
         if commit_client.enabled:
-            for index, item in enumerate(items):
+            for index, request_id in enumerate(request_ids):
                 new_seq_len = commit_new_seq_lens[index]
                 if new_seq_len is None:
                     continue
                 commit_client.commit(
-                    request_id=item.request_id,
+                    request_id=request_id,
                     new_seq_len=new_seq_len,
-                    new_token_ids=tuple(
-                        int(t) for t in getattr(item, "decode_token_ids", ())
-                    ),
+                    new_token_ids=token_rows[index],
                 )
         return unified_output
 
@@ -3158,7 +3346,7 @@ def run_offload_exec_batch_once(
     )
     if trace_offload_exec:
         trace_recv_done_ns = time.perf_counter_ns()
-    if int(qkv_batch.shape[0]) != len(descriptor.items):
+    if int(qkv_batch.shape[0]) != descriptor.item_count:
         raise RuntimeError(
             "PAP OFFLOAD_EXEC batch QKV row count does not match descriptor"
         )
@@ -3238,7 +3426,7 @@ def run_offload_exec_batch_once(
             "pre_compute_done_ns=%d paged_flash_done_ns=%d reshape_done_ns=%d "
             "send_start_ns=%d",
             descriptor.layer_name,
-            len(descriptor.items),
+            descriptor.item_count,
             trace_recv_ms,
             trace_compute_ms,
             trace_send_ms,
@@ -3432,7 +3620,7 @@ def run_offload_exec_mailbox_loop(
         if trace_offload_exec:
             trace_recv_done_ns = time.perf_counter_ns()
         try:
-            if int(qkv_batch.shape[0]) != len(descriptor.items):
+            if int(qkv_batch.shape[0]) != descriptor.item_count:
                 raise RuntimeError(
                     "PAP OFFLOAD_EXEC mailbox batch QKV row count does not "
                     "match descriptor"
@@ -3522,7 +3710,7 @@ def run_offload_exec_mailbox_loop(
                 "pre_compute_done_ns=%d paged_flash_done_ns=%d reshape_done_ns=%d "
                 "send_start_ns=%d",
                 descriptor.layer_name,
-                len(descriptor.items),
+                descriptor.item_count,
                 trace_recv_ms,
                 trace_compute_ms,
                 trace_send_ms,
@@ -3698,6 +3886,10 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
             "role": "attention",
             "sessions": registry.size(),
         }
+
+    @app.get("/v1/pap/attention/stats")
+    async def attention_stats() -> dict[str, int]:
+        return registry.decode_append_fast_path_stats()
 
     @app.post("/v1/pap/attention/register")
     async def register(
@@ -4045,7 +4237,7 @@ def maybe_start_offload_exec_transport(
             local_rank=local_rank,
         )
         logger.info(
-            "PAP Attention OFFLOAD_EXEC local_fast (CUDA IPC + spin doorbell) "
+            "PAP Attention OFFLOAD_EXEC local_fast CUDA IPC ring "
             "initialized local_rank=%d",
             local_rank,
         )
