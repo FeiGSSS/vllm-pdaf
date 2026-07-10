@@ -1,0 +1,716 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Self-contained PAP benchmark runner for the canonical PD comparison workload.
+# Do not delegate to project benchmark shell scripts from here; update this file
+# when the PAP startup contract changes.
+
+ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
+PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
+VLLM_BIN="${VLLM_BIN:-${ROOT_DIR}/.venv/bin/vllm}"
+PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE="${PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE:-0}"
+PAP_BENCH_STRICT_CORRECTNESS_AUDIT="${PAP_BENCH_STRICT_CORRECTNESS_AUDIT:-1}"
+
+GIT_COMMIT=""
+GIT_COMMIT_SHORT=""
+GIT_TRACKED_WORKTREE_DIRTY=0
+
+MODEL_PATH="${MODEL_PATH:-/data/ssd1/llm-models/Qwen3-8B}"
+DATASET_NAME="${DATASET_NAME:-sonnet}"
+BENCH_DIR="${BENCH_DIR:-/home/fei/research/PD/refer_codes/vllm/benchmarks}"
+DATASET_PATH="${DATASET_PATH:-${BENCH_DIR}/sonnet_4x.txt}"
+
+INPUT_LEN="${INPUT_LEN:-128}"
+OUTPUT_LEN="${OUTPUT_LEN:-32}"
+PREFIX_LEN="${PREFIX_LEN:-50}"
+QPS="${QPS:-16}"
+NUM_PROMPTS="${NUM_PROMPTS:-128}"
+BENCH_NUM_WARMUPS="${BENCH_NUM_WARMUPS:-0}"
+BENCH_TIMEOUT="${BENCH_TIMEOUT:-900}"
+SERVER_START_TIMEOUT="${SERVER_START_TIMEOUT:-900}"
+CLUSTER_READY_WAIT_SECONDS="${CLUSTER_READY_WAIT_SECONDS:-30}"
+PAP_BENCH_SESSION_DRAIN_TIMEOUT="${PAP_BENCH_SESSION_DRAIN_TIMEOUT:-15}"
+
+TOPOLOGY="${PAP_TOPOLOGY:-1pa1p}"
+TOPOLOGY_TAG="1PA1P"
+RESULTS_ROOT="${RESULTS_ROOT:-/home/fei/research/PD/test/baseline/pap/results}"
+RUN_ID="${RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
+RUN_ROOT="${RUN_ROOT:-${RESULTS_ROOT}/runs/${RUN_ID}}"
+RUN_LOG_DIR="${RUN_LOG_DIR:-${RUN_ROOT}/service_logs}"
+
+PAP_PROXY_PORT="${PAP_PROXY_PORT:-9460}"
+PREFILL_PORT="${PAP_PREFILL_PORT:-8100}"
+PROJECTION_PORT="${PAP_PROJECTION_PORT:-8200}"
+ATTENTION_PORT="${PAP_ATTENTION_PORT:-8300}"
+ATTENTION_TCP_PORT="${PAP_ATTENTION_TCP_PORT:-9300}"
+ATTENTION_ZMQ_PORT="${PAP_ATTENTION_ZMQ_PORT:-10300}"
+PROJECTION_ZMQ_PORT="${PAP_PROJECTION_ZMQ_PORT:-11300}"
+PREFILL_NIXL_PORT="${PAP_PREFILL_NIXL_PORT:-5559}"
+VLLM_PREFILL_PORT="${PAP_VLLM_PREFILL_PORT:-50000}"
+VLLM_PROJECTION_PORT="${PAP_VLLM_PROJECTION_PORT:-50020}"
+
+PAP_PREFILL_GPUS="${PAP_PREFILL_GPUS:-1}"
+PAP_PROJECTION_GPUS="${PAP_PROJECTION_GPUS:-2}"
+PAP_TP_SIZE="${PAP_TP_SIZE:-1}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-512}"
+MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8192}"
+MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
+PAP_PREFILL_GPU_MEMORY_UTILIZATION="${PAP_PREFILL_GPU_MEMORY_UTILIZATION:-0.76}"
+PAP_PROJECTION_GPU_MEMORY_UTILIZATION="${PAP_PROJECTION_GPU_MEMORY_UTILIZATION:-0.76}"
+PAP_PREFILL_MPS_PERCENT="${PAP_PREFILL_MPS_PERCENT:-70}"
+PAP_ATTENTION_MPS_PERCENT="${PAP_ATTENTION_MPS_PERCENT:-30}"
+PAP_ENABLE_MPS="${PAP_ENABLE_MPS:-1}"
+PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT:-nixl_mailbox}"
+PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT:-cuda_ipc}"
+PAP_OFFLOAD_EXEC_TRACE="${PAP_OFFLOAD_EXEC_TRACE:-0}"
+PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND="${PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND:-1}"
+PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT="${PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT:-0}"
+PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT_OUTPUT="${PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT_OUTPUT:-0}"
+PAP_NIXL_MAILBOX_INLINE_PUBLISH="${PAP_NIXL_MAILBOX_INLINE_PUBLISH:-1}"
+PAP_NIXL_MAILBOX_BATCH_PLAN="${PAP_NIXL_MAILBOX_BATCH_PLAN:-1}"
+PAP_UNIFIED_MD_CACHE_LIMIT="${PAP_UNIFIED_MD_CACHE_LIMIT:-256}"
+PAP_DIRECT_MAILBOX_OUTPUT="${PAP_DIRECT_MAILBOX_OUTPUT:-}"
+if [[ -z "${PAP_DIRECT_MAILBOX_OUTPUT}" ]]; then
+  if [[ "${PAP_OFFLOAD_EXEC_TRANSPORT}" == "local_fast" ]]; then
+    PAP_DIRECT_MAILBOX_OUTPUT=1
+  else
+    PAP_DIRECT_MAILBOX_OUTPUT=0
+  fi
+fi
+PAP_LOCAL_FAST_ASYNC_DOORBELL="${PAP_LOCAL_FAST_ASYNC_DOORBELL:-0}"
+PAP_LOCAL_FAST_SPIN_ITERS="${PAP_LOCAL_FAST_SPIN_ITERS:-2048}"
+PAP_LOCAL_FAST_YIELD_ITERS="${PAP_LOCAL_FAST_YIELD_ITERS:-64}"
+PAP_LOCAL_FAST_SLEEP_US="${PAP_LOCAL_FAST_SLEEP_US:-20}"
+PAP_LOCAL_FAST_SLEEP_AFTER_US="${PAP_LOCAL_FAST_SLEEP_AFTER_US:-50}"
+PAP_REMOTE_ATTENTION_PARALLELISM="${PAP_REMOTE_ATTENTION_PARALLELISM:-16}"
+PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-round_robin}"
+PAP_UNIFIED_KV="${PAP_UNIFIED_KV:-1}"
+PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-32}"
+PAP_DECODE_COMMIT_ENDPOINT="${PAP_DECODE_COMMIT_ENDPOINT:-http://127.0.0.1:${PREFILL_PORT}/v1/pap/prefill/decode-commit}"
+PAP_LEASE_RELEASE_ENDPOINT="${PAP_LEASE_RELEASE_ENDPOINT:-http://127.0.0.1:${PREFILL_PORT}/v1/pap/prefill/lease-release}"
+PAP_DECODE_COMMIT_FAIL_CLOSED="${PAP_DECODE_COMMIT_FAIL_CLOSED:-1}"
+PAP_DECODE_COMMIT_TIMEOUT="${PAP_DECODE_COMMIT_TIMEOUT:-0.2}"
+PAP_DECODE_COMMIT_QUEUE_SIZE="${PAP_DECODE_COMMIT_QUEUE_SIZE:-1024}"
+PAP_DECODE_COMMIT_MAX_ATTEMPTS="${PAP_DECODE_COMMIT_MAX_ATTEMPTS:-8}"
+PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS="${PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS:-0.05}"
+PAP_DECODE_COMMIT_RETRY_MAX_SECONDS="${PAP_DECODE_COMMIT_RETRY_MAX_SECONDS:-0.5}"
+PAP_DECODE_COMMIT_FLUSH_TIMEOUT="${PAP_DECODE_COMMIT_FLUSH_TIMEOUT:-5.0}"
+PAP_LEASE_RELEASE_TIMEOUT="${PAP_LEASE_RELEASE_TIMEOUT:-0.2}"
+PAP_LEASE_RELEASE_MAX_ATTEMPTS="${PAP_LEASE_RELEASE_MAX_ATTEMPTS:-5}"
+PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS="${PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS:-0.05}"
+PAP_LEASE_RELEASE_RETRY_MAX_SECONDS="${PAP_LEASE_RELEASE_RETRY_MAX_SECONDS:-0.5}"
+PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS:-300}"
+
+export PAP_OFFLOAD_EXEC_TRACE
+export PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND
+export PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT
+export PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT_OUTPUT
+export PAP_NIXL_MAILBOX_INLINE_PUBLISH
+export PAP_NIXL_MAILBOX_BATCH_PLAN
+export PAP_UNIFIED_MD_CACHE_LIMIT
+export PAP_DECODE_COMMIT_FAIL_CLOSED
+export PAP_DECODE_COMMIT_TIMEOUT
+export PAP_DECODE_COMMIT_QUEUE_SIZE
+export PAP_DECODE_COMMIT_MAX_ATTEMPTS
+export PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS
+export PAP_DECODE_COMMIT_RETRY_MAX_SECONDS
+export PAP_DECODE_COMMIT_FLUSH_TIMEOUT
+export PAP_LEASE_RELEASE_TIMEOUT
+export PAP_LEASE_RELEASE_MAX_ATTEMPTS
+export PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS
+export PAP_LEASE_RELEASE_RETRY_MAX_SECONDS
+export PAP_KV_LEASE_TTL_SECONDS
+
+export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
+export VLLM_USE_V1=1
+export VLLM_ENABLE_V1_MULTIPROCESSING="${VLLM_ENABLE_V1_MULTIPROCESSING:-1}"
+export VLLM_WORKER_MULTIPROC_METHOD="${VLLM_WORKER_MULTIPROC_METHOD:-spawn}"
+export UCX_TLS="${UCX_TLS:-cuda_ipc,cuda_copy,tcp}"
+export UCX_NET_DEVICES="${UCX_NET_DEVICES:-all}"
+export PYTHONHASHSEED="${PYTHONHASHSEED:-123}"
+
+append_no_proxy() {
+  local var_name="$1"
+  local current="${!var_name:-}"
+  local host
+  for host in 127.0.0.1 localhost; do
+    case ",${current}," in
+      *",${host},"*) ;;
+      *) current="${current:+${current},}${host}" ;;
+    esac
+  done
+  printf -v "${var_name}" '%s' "${current}"
+  export "${var_name}"
+}
+
+append_no_proxy NO_PROXY
+append_no_proxy no_proxy
+
+PIDS=()
+MPS_STARTED=0
+MPS_PIPE_DIR="${PAP_MPS_PIPE_DIR:-/tmp/pap-mps-${USER:-user}-${TOPOLOGY}-$$/pa-0}"
+MPS_LOG_DIR="${PAP_MPS_LOG_DIR:-${RUN_LOG_DIR}/mps-log/pa-0}"
+
+cleanup() {
+  local code=$?
+  set +e
+  local pid
+  for pid in "${PIDS[@]:-}"; do
+    kill "${pid}" >/dev/null 2>&1 || true
+  done
+  sleep 2
+  for pid in "${PIDS[@]:-}"; do
+    kill -0 "${pid}" >/dev/null 2>&1 && kill -KILL "${pid}" >/dev/null 2>&1 || true
+  done
+  for pid in "${PIDS[@]:-}"; do
+    wait "${pid}" >/dev/null 2>&1 || true
+  done
+  if [[ "${MPS_STARTED}" == "1" ]]; then
+    timeout 5 bash -c 'echo quit | CUDA_MPS_PIPE_DIRECTORY="$0" nvidia-cuda-mps-control' \
+      "${MPS_PIPE_DIR}" >/dev/null 2>&1 || true
+  fi
+  exit "${code}"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM
+
+die() {
+  echo "ERROR: $*" >&2
+  exit 1
+}
+
+wait_for_http() {
+  local url="$1"
+  local name="$2"
+  local start
+  start="$(date +%s)"
+  while true; do
+    if curl -fsS "${url}" >/dev/null 2>&1; then
+      echo "${name} is ready at ${url}"
+      return 0
+    fi
+    if (( "$(date +%s)" - start > SERVER_START_TIMEOUT )); then
+      die "Timed out waiting for ${name} at ${url}"
+    fi
+    sleep 2
+  done
+}
+
+check_children_alive() {
+  local pid
+  for pid in "${PIDS[@]:-}"; do
+    if ! kill -0 "${pid}" >/dev/null 2>&1; then
+      die "managed child exited unexpectedly: pid=${pid}"
+    fi
+  done
+}
+
+wait_cluster_stable() {
+  local remaining="${CLUSTER_READY_WAIT_SECONDS}"
+  while (( remaining > 0 )); do
+    check_children_alive
+    sleep 2
+    remaining=$((remaining - 2))
+  done
+}
+
+wait_attention_sessions_drained() {
+  local url="http://127.0.0.1:${ATTENTION_PORT}/v1/pap/attention/sessions"
+  local start response
+  start="$(date +%s)"
+  while true; do
+    response="$(curl -fsS "${url}" 2>/dev/null || true)"
+    if [[ "${response}" == *'"active_sessions":0'* ]]; then
+      {
+        printf 'STATUS=passed\n'
+        printf 'ACTIVE_SESSIONS=0\n'
+        printf 'TIMEOUT_SECONDS=%q\n' "${PAP_BENCH_SESSION_DRAIN_TIMEOUT}"
+      } > "${RUN_ROOT}/session_drain.env"
+      echo "PAP Attention sessions drained"
+      return 0
+    fi
+    check_children_alive
+    if (( "$(date +%s)" - start > PAP_BENCH_SESSION_DRAIN_TIMEOUT )); then
+      {
+        printf 'STATUS=failed\n'
+        printf 'LAST_RESPONSE=%q\n' "${response}"
+        printf 'TIMEOUT_SECONDS=%q\n' "${PAP_BENCH_SESSION_DRAIN_TIMEOUT}"
+      } > "${RUN_ROOT}/session_drain.env"
+      die "Timed out waiting for PAP Attention sessions to drain"
+    fi
+    sleep 1
+  done
+}
+
+ensure_ports_free() {
+  "${PYTHON_BIN}" - "$@" <<'PY'
+import socket
+import sys
+
+busy = []
+for raw_port in sys.argv[1:]:
+    port = int(raw_port)
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(0.2)
+    try:
+        if sock.connect_ex(("127.0.0.1", port)) == 0:
+            busy.append(str(port))
+    finally:
+        sock.close()
+
+if busy:
+    print("Ports already in use: " + ", ".join(busy), file=sys.stderr)
+    raise SystemExit(1)
+PY
+}
+
+ensure_dataset() {
+  if [[ -f "${DATASET_PATH}" ]]; then
+    return
+  fi
+  [[ -f "${BENCH_DIR}/sonnet.txt" ]] || die "Missing ${BENCH_DIR}/sonnet.txt"
+  mkdir -p "$(dirname "${DATASET_PATH}")"
+  : > "${DATASET_PATH}"
+  for _ in 1 2 3 4; do
+    cat "${BENCH_DIR}/sonnet.txt" >> "${DATASET_PATH}"
+  done
+}
+
+capture_git_state() {
+  GIT_COMMIT="$(git rev-parse HEAD)"
+  GIT_COMMIT_SHORT="$(git rev-parse --short HEAD)"
+  git status --short > "${RUN_ROOT}/git_status.txt"
+  git diff --binary > "${RUN_ROOT}/tracked_worktree.patch"
+  if [[ -s "${RUN_ROOT}/tracked_worktree.patch" ]]; then
+    GIT_TRACKED_WORKTREE_DIRTY=1
+  fi
+  if [[ "${PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE}" == "1" \
+    && "${GIT_TRACKED_WORKTREE_DIRTY}" == "1" ]]; then
+    die "Tracked worktree is dirty; see ${RUN_ROOT}/git_status.txt"
+  fi
+}
+
+write_effective_config() {
+  {
+    printf 'MODE=%q\n' "pap"
+    printf 'TOPOLOGY=%q\n' "${TOPOLOGY}"
+    printf 'MODEL_PATH=%q\n' "${MODEL_PATH}"
+    printf 'DATASET_NAME=%q\n' "${DATASET_NAME}"
+    printf 'DATASET_PATH=%q\n' "${DATASET_PATH}"
+    printf 'BENCH_DIR=%q\n' "${BENCH_DIR}"
+    printf 'PREFIX_LEN=%q\n' "${PREFIX_LEN}"
+    printf 'NUM_PROMPTS=%q\n' "${NUM_PROMPTS}"
+    printf 'INPUT_LENS_CSV=%q\n' "${INPUT_LEN}"
+    printf 'OUTPUT_LENS_CSV=%q\n' "${OUTPUT_LEN}"
+    printf 'QPS_CSV=%q\n' "${QPS}"
+    printf 'BENCH_NUM_WARMUPS=%q\n' "${BENCH_NUM_WARMUPS}"
+    printf 'BENCH_TIMEOUT=%q\n' "${BENCH_TIMEOUT}"
+    printf 'SERVER_START_TIMEOUT=%q\n' "${SERVER_START_TIMEOUT}"
+    printf 'RESULTS_ROOT=%q\n' "${RESULTS_ROOT}"
+    printf 'RUN_ROOT=%q\n' "${RUN_ROOT}"
+    printf 'RUN_LOG_DIR=%q\n' "${RUN_LOG_DIR}"
+    printf 'PROXY_PORT=%q\n' "${PAP_PROXY_PORT}"
+    printf 'VLLM_BIN=%q\n' "${VLLM_BIN}"
+    printf 'PYTHON_BIN=%q\n' "${PYTHON_BIN}"
+    printf 'GIT_COMMIT=%q\n' "${GIT_COMMIT}"
+    printf 'GIT_COMMIT_SHORT=%q\n' "${GIT_COMMIT_SHORT}"
+    printf 'GIT_TRACKED_WORKTREE_DIRTY=%q\n' "${GIT_TRACKED_WORKTREE_DIRTY}"
+    printf 'PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE=%q\n' "${PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE}"
+    printf 'PAP_BENCH_STRICT_CORRECTNESS_AUDIT=%q\n' "${PAP_BENCH_STRICT_CORRECTNESS_AUDIT}"
+    printf 'VLLM_USE_FLASHINFER_SAMPLER=%q\n' "${VLLM_USE_FLASHINFER_SAMPLER}"
+    printf 'NO_PROXY=%q\n' "${NO_PROXY}"
+    printf 'no_proxy=%q\n' "${no_proxy}"
+    printf 'PAP_PROXY_PORT=%q\n' "${PAP_PROXY_PORT}"
+    printf 'PAP_PREFILL_GPU_MEMORY_UTILIZATION=%q\n' "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}"
+    printf 'PAP_PROJECTION_GPU_MEMORY_UTILIZATION=%q\n' "${PAP_PROJECTION_GPU_MEMORY_UTILIZATION}"
+    printf 'PAP_PREFILL_MPS_PERCENT=%q\n' "${PAP_PREFILL_MPS_PERCENT}"
+    printf 'PAP_ATTENTION_MPS_PERCENT=%q\n' "${PAP_ATTENTION_MPS_PERCENT}"
+    printf 'PAP_ENABLE_MPS=%q\n' "${PAP_ENABLE_MPS}"
+    printf 'PAP_OFFLOAD_EXEC_TRANSPORT=%q\n' "${PAP_OFFLOAD_EXEC_TRANSPORT}"
+    printf 'PAP_OFFLOAD_KV_TRANSPORT=%q\n' "${PAP_OFFLOAD_KV_TRANSPORT}"
+    printf 'PAP_OFFLOAD_EXEC_TRACE=%q\n' "${PAP_OFFLOAD_EXEC_TRACE}"
+    printf 'PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND=%q\n' "${PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND}"
+    printf 'PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT=%q\n' "${PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT}"
+    printf 'PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT_OUTPUT=%q\n' "${PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT_OUTPUT}"
+    printf 'PAP_NIXL_MAILBOX_INLINE_PUBLISH=%q\n' "${PAP_NIXL_MAILBOX_INLINE_PUBLISH}"
+    printf 'PAP_NIXL_MAILBOX_BATCH_PLAN=%q\n' "${PAP_NIXL_MAILBOX_BATCH_PLAN}"
+    printf 'PAP_UNIFIED_MD_CACHE_LIMIT=%q\n' "${PAP_UNIFIED_MD_CACHE_LIMIT}"
+    printf 'PAP_DIRECT_MAILBOX_OUTPUT=%q\n' "${PAP_DIRECT_MAILBOX_OUTPUT}"
+    printf 'PAP_LOCAL_FAST_ASYNC_DOORBELL=%q\n' "${PAP_LOCAL_FAST_ASYNC_DOORBELL}"
+    printf 'PAP_LOCAL_FAST_SPIN_ITERS=%q\n' "${PAP_LOCAL_FAST_SPIN_ITERS}"
+    printf 'PAP_LOCAL_FAST_YIELD_ITERS=%q\n' "${PAP_LOCAL_FAST_YIELD_ITERS}"
+    printf 'PAP_LOCAL_FAST_SLEEP_US=%q\n' "${PAP_LOCAL_FAST_SLEEP_US}"
+    printf 'PAP_LOCAL_FAST_SLEEP_AFTER_US=%q\n' "${PAP_LOCAL_FAST_SLEEP_AFTER_US}"
+    printf 'PAP_PREFILL_GPUS=%q\n' "${PAP_PREFILL_GPUS}"
+    printf 'PAP_PROJECTION_GPUS=%q\n' "${PAP_PROJECTION_GPUS}"
+    printf 'PAP_UNIFIED_KV=%q\n' "${PAP_UNIFIED_KV}"
+    printf 'PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS=%q\n' "${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}"
+    printf 'PAP_DECODE_COMMIT_ENDPOINT=%q\n' "${PAP_DECODE_COMMIT_ENDPOINT}"
+    printf 'PAP_DECODE_COMMIT_FAIL_CLOSED=%q\n' "${PAP_DECODE_COMMIT_FAIL_CLOSED}"
+    printf 'PAP_DECODE_COMMIT_TIMEOUT=%q\n' "${PAP_DECODE_COMMIT_TIMEOUT}"
+    printf 'PAP_DECODE_COMMIT_QUEUE_SIZE=%q\n' "${PAP_DECODE_COMMIT_QUEUE_SIZE}"
+    printf 'PAP_DECODE_COMMIT_MAX_ATTEMPTS=%q\n' "${PAP_DECODE_COMMIT_MAX_ATTEMPTS}"
+    printf 'PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS=%q\n' "${PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS}"
+    printf 'PAP_DECODE_COMMIT_RETRY_MAX_SECONDS=%q\n' "${PAP_DECODE_COMMIT_RETRY_MAX_SECONDS}"
+    printf 'PAP_DECODE_COMMIT_FLUSH_TIMEOUT=%q\n' "${PAP_DECODE_COMMIT_FLUSH_TIMEOUT}"
+    printf 'PAP_LEASE_RELEASE_ENDPOINT=%q\n' "${PAP_LEASE_RELEASE_ENDPOINT}"
+    printf 'PAP_LEASE_RELEASE_TIMEOUT=%q\n' "${PAP_LEASE_RELEASE_TIMEOUT}"
+    printf 'PAP_LEASE_RELEASE_MAX_ATTEMPTS=%q\n' "${PAP_LEASE_RELEASE_MAX_ATTEMPTS}"
+    printf 'PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS=%q\n' "${PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS}"
+    printf 'PAP_LEASE_RELEASE_RETRY_MAX_SECONDS=%q\n' "${PAP_LEASE_RELEASE_RETRY_MAX_SECONDS}"
+    printf 'PAP_KV_LEASE_TTL_SECONDS=%q\n' "${PAP_KV_LEASE_TTL_SECONDS}"
+    printf 'MAX_MODEL_LEN=%q\n' "${MAX_MODEL_LEN}"
+    printf 'MAX_NUM_BATCHED_TOKENS=%q\n' "${MAX_NUM_BATCHED_TOKENS}"
+    printf 'MAX_NUM_SEQS=%q\n' "${MAX_NUM_SEQS}"
+    printf 'CLUSTER_READY_WAIT_SECONDS=%q\n' "${CLUSTER_READY_WAIT_SECONDS}"
+    printf 'PAP_BENCH_SESSION_DRAIN_TIMEOUT=%q\n' "${PAP_BENCH_SESSION_DRAIN_TIMEOUT}"
+  } > "${RUN_ROOT}/effective_config.env"
+}
+
+write_run_metadata() {
+  RUN_ROOT="${RUN_ROOT}" \
+  INPUT_LEN="${INPUT_LEN}" \
+  OUTPUT_LEN="${OUTPUT_LEN}" \
+  QPS="${QPS}" \
+  NUM_PROMPTS="${NUM_PROMPTS}" \
+  MODEL_PATH="${MODEL_PATH}" \
+  PREFIX_LEN="${PREFIX_LEN}" \
+  BENCH_NUM_WARMUPS="${BENCH_NUM_WARMUPS}" \
+  MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
+  MAX_NUM_SEQS="${MAX_NUM_SEQS}" \
+  PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT}" \
+  PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
+  PAP_DIRECT_MAILBOX_OUTPUT="${PAP_DIRECT_MAILBOX_OUTPUT}" \
+  GIT_COMMIT="${GIT_COMMIT}" \
+  GIT_COMMIT_SHORT="${GIT_COMMIT_SHORT}" \
+  GIT_TRACKED_WORKTREE_DIRTY="${GIT_TRACKED_WORKTREE_DIRTY}" \
+  PAP_PROXY_PORT="${PAP_PROXY_PORT}" \
+  RUN_ID="${RUN_ID}" \
+  "${PYTHON_BIN}" - <<'PY'
+import json
+import os
+from datetime import datetime
+
+metadata = {
+    "mode": "pap",
+    "topology": "1pa1p",
+    "run_id": os.environ["RUN_ID"],
+    "result_root": os.environ["RUN_ROOT"],
+    "input_lens": [os.environ["INPUT_LEN"]],
+    "output_lens": [os.environ["OUTPUT_LEN"]],
+    "qps": [os.environ["QPS"]],
+    "num_prompts": os.environ["NUM_PROMPTS"],
+    "model_path": os.environ["MODEL_PATH"],
+    "prefix_len": os.environ["PREFIX_LEN"],
+    "num_warmups": os.environ["BENCH_NUM_WARMUPS"],
+    "max_model_len": os.environ["MAX_MODEL_LEN"],
+    "max_num_seqs": os.environ["MAX_NUM_SEQS"],
+    "offload_exec_transport": os.environ["PAP_OFFLOAD_EXEC_TRANSPORT"],
+    "offload_kv_transport": os.environ["PAP_OFFLOAD_KV_TRANSPORT"],
+    "direct_mailbox_output": os.environ["PAP_DIRECT_MAILBOX_OUTPUT"] == "1",
+    "git_commit": os.environ["GIT_COMMIT"],
+    "git_commit_short": os.environ["GIT_COMMIT_SHORT"],
+    "git_tracked_worktree_dirty": (
+        os.environ["GIT_TRACKED_WORKTREE_DIRTY"] == "1"
+    ),
+    "proxy_port": os.environ["PAP_PROXY_PORT"],
+    "config_dir": "self-contained skill runner",
+    "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+}
+with open(os.path.join(os.environ["RUN_ROOT"], "run_metadata.json"), "w",
+          encoding="utf-8") as f:
+    json.dump(metadata, f, indent=2)
+    f.write("\n")
+PY
+}
+
+validate_benchmark_result() {
+  local result_path="$1"
+  NUM_PROMPTS="${NUM_PROMPTS}" "${PYTHON_BIN}" - "${result_path}" <<'PY'
+import json
+import os
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    result = json.load(f)
+
+expected = int(os.environ["NUM_PROMPTS"])
+completed = int(result.get("completed", 0))
+failed = int(result.get("failed", 0))
+if completed != expected or failed != 0:
+    raise SystemExit(
+        f"benchmark result is incomplete: completed={completed}, "
+        f"failed={failed}, expected={expected}"
+    )
+PY
+}
+
+audit_correctness_logs() {
+  local matches_path="${RUN_ROOT}/correctness_audit_matches.log"
+  local summary_path="${RUN_ROOT}/correctness_audit.env"
+  local pattern
+  pattern='PAP decode commit failed|new_token_ids length must match new_seq_len delta|PAP decode commit flush timed out|PAP decode commit queue full|PAP lease release failed|PAP unified KV append out of range|PAP unified KV state missing|PAP unified paged FlashAttention failed'
+
+  if rg -n --no-heading "${pattern}" "${RUN_LOG_DIR}" > "${matches_path}"; then
+    {
+      printf 'STATUS=failed\n'
+      printf 'MATCH_COUNT=%s\n' "$(wc -l < "${matches_path}")"
+      printf 'STRICT=%q\n' "${PAP_BENCH_STRICT_CORRECTNESS_AUDIT}"
+    } > "${summary_path}"
+    if [[ "${PAP_BENCH_STRICT_CORRECTNESS_AUDIT}" == "1" ]]; then
+      cat "${matches_path}" >&2
+      die "PAP correctness audit failed; see ${matches_path}"
+    fi
+    return
+  fi
+
+  : > "${matches_path}"
+  {
+    printf 'STATUS=passed\n'
+    printf 'MATCH_COUNT=0\n'
+    printf 'STRICT=%q\n' "${PAP_BENCH_STRICT_CORRECTNESS_AUDIT}"
+  } > "${summary_path}"
+}
+
+cd "${ROOT_DIR}"
+
+[[ "${TOPOLOGY}" == "1pa1p" ]] || die "This runner is intentionally fixed to 1pa1p"
+[[ "${PAP_TP_SIZE}" == "1" ]] || die "This runner is intentionally fixed to PAP_TP_SIZE=1"
+[[ -x "${PYTHON_BIN}" ]] || die "PYTHON_BIN is not executable: ${PYTHON_BIN}"
+[[ -x "${VLLM_BIN}" ]] || die "VLLM_BIN is not executable: ${VLLM_BIN}"
+[[ -d "${MODEL_PATH}" ]] || die "Model path does not exist: ${MODEL_PATH}"
+
+"${PYTHON_BIN}" -c 'import nixl' >/dev/null 2>&1 \
+  || die "Python package 'nixl' is not installed in .venv"
+
+ensure_dataset
+mkdir -p "${RUN_ROOT}" "${RUN_LOG_DIR}"
+capture_git_state
+ensure_ports_free \
+  "${PAP_PROXY_PORT}" "${PREFILL_PORT}" "${PROJECTION_PORT}" \
+  "${ATTENTION_PORT}" "${ATTENTION_TCP_PORT}" "${ATTENTION_ZMQ_PORT}" \
+  "${PROJECTION_ZMQ_PORT}" "${PREFILL_NIXL_PORT}" \
+  "${VLLM_PREFILL_PORT}" "${VLLM_PROJECTION_PORT}"
+
+read -r MODEL_NUM_HEADS MODEL_NUM_KV_HEADS MODEL_HEAD_DIM < <(
+  "${PYTHON_BIN}" - "${MODEL_PATH}/config.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    config = json.load(f)
+num_heads = int(config["num_attention_heads"])
+num_kv_heads = int(config["num_key_value_heads"])
+head_dim = int(config.get("head_dim") or config["hidden_size"] // num_heads)
+print(num_heads, num_kv_heads, head_dim)
+PY
+)
+
+PAP_OFFLOAD_EXEC_NUM_HEADS="${PAP_OFFLOAD_EXEC_NUM_HEADS:-${MODEL_NUM_HEADS}}"
+PAP_OFFLOAD_EXEC_NUM_KV_HEADS="${PAP_OFFLOAD_EXEC_NUM_KV_HEADS:-${MODEL_NUM_KV_HEADS}}"
+PAP_OFFLOAD_EXEC_HEAD_DIM="${PAP_OFFLOAD_EXEC_HEAD_DIM:-${MODEL_HEAD_DIM}}"
+PAP_OFFLOAD_EXEC_Q_SIZE="${PAP_OFFLOAD_EXEC_Q_SIZE:-$((PAP_OFFLOAD_EXEC_NUM_HEADS * PAP_OFFLOAD_EXEC_HEAD_DIM))}"
+PAP_OFFLOAD_EXEC_KV_SIZE="${PAP_OFFLOAD_EXEC_KV_SIZE:-$((PAP_OFFLOAD_EXEC_NUM_KV_HEADS * PAP_OFFLOAD_EXEC_HEAD_DIM))}"
+
+if [[ "${PAP_ENABLE_MPS}" == "1" ]]; then
+  command -v nvidia-cuda-mps-control >/dev/null 2>&1 \
+    || die "PAP_ENABLE_MPS=1 but nvidia-cuda-mps-control was not found"
+  mkdir -p "${MPS_PIPE_DIR}" "${MPS_LOG_DIR}"
+  CUDA_VISIBLE_DEVICES="${PAP_PREFILL_GPUS}" \
+  CUDA_MPS_PIPE_DIRECTORY="${MPS_PIPE_DIR}" \
+  CUDA_MPS_LOG_DIRECTORY="${MPS_LOG_DIR}" \
+  nvidia-cuda-mps-control -d
+  MPS_STARTED=1
+fi
+
+echo "Starting PAP Attention on GPU ${PAP_PREFILL_GPUS}"
+if [[ "${PAP_ENABLE_MPS}" == "1" ]]; then
+  env \
+    CUDA_VISIBLE_DEVICES=0 \
+    CUDA_MPS_PIPE_DIRECTORY="${MPS_PIPE_DIR}" \
+    CUDA_MPS_LOG_DIRECTORY="${MPS_LOG_DIR}" \
+    CUDA_MPS_ACTIVE_THREAD_PERCENTAGE="${PAP_ATTENTION_MPS_PERCENT}" \
+    PAP_NIXL_MAILBOX_ACTOR_ID="attention-0-0" \
+    PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT}" \
+    PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
+    PAP_DIRECT_MAILBOX_OUTPUT="${PAP_DIRECT_MAILBOX_OUTPUT}" \
+    PAP_LOCAL_FAST_ASYNC_DOORBELL="${PAP_LOCAL_FAST_ASYNC_DOORBELL}" \
+    PAP_LOCAL_FAST_SPIN_ITERS="${PAP_LOCAL_FAST_SPIN_ITERS}" \
+    PAP_LOCAL_FAST_YIELD_ITERS="${PAP_LOCAL_FAST_YIELD_ITERS}" \
+    PAP_LOCAL_FAST_SLEEP_US="${PAP_LOCAL_FAST_SLEEP_US}" \
+    PAP_LOCAL_FAST_SLEEP_AFTER_US="${PAP_LOCAL_FAST_SLEEP_AFTER_US}" \
+    PAP_OFFLOAD_EXEC_LOCAL_RANK=0 \
+    PAP_OFFLOAD_EXEC_Q_SIZE="${PAP_OFFLOAD_EXEC_Q_SIZE}" \
+    PAP_OFFLOAD_EXEC_KV_SIZE="${PAP_OFFLOAD_EXEC_KV_SIZE}" \
+    PAP_OFFLOAD_EXEC_NUM_HEADS="${PAP_OFFLOAD_EXEC_NUM_HEADS}" \
+    PAP_OFFLOAD_EXEC_NUM_KV_HEADS="${PAP_OFFLOAD_EXEC_NUM_KV_HEADS}" \
+    PAP_OFFLOAD_EXEC_HEAD_DIM="${PAP_OFFLOAD_EXEC_HEAD_DIM}" \
+    PAP_DECODE_COMMIT_ENDPOINT="${PAP_DECODE_COMMIT_ENDPOINT}" \
+    PAP_LEASE_RELEASE_ENDPOINT="${PAP_LEASE_RELEASE_ENDPOINT}" \
+    "${PYTHON_BIN}" examples/pap/pap_attention_executor.py \
+      --host 127.0.0.1 \
+      --port "${ATTENTION_PORT}" \
+      --tcp-port "${ATTENTION_TCP_PORT}" \
+      --offload-exec-zmq-port "${ATTENTION_ZMQ_PORT}" \
+      > "${RUN_LOG_DIR}/attention_0_0.log" 2>&1 &
+else
+  env \
+    CUDA_VISIBLE_DEVICES="${PAP_PREFILL_GPUS}" \
+    PAP_NIXL_MAILBOX_ACTOR_ID="attention-0-0" \
+    PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT}" \
+    PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
+    PAP_DIRECT_MAILBOX_OUTPUT="${PAP_DIRECT_MAILBOX_OUTPUT}" \
+    PAP_LOCAL_FAST_ASYNC_DOORBELL="${PAP_LOCAL_FAST_ASYNC_DOORBELL}" \
+    PAP_LOCAL_FAST_SPIN_ITERS="${PAP_LOCAL_FAST_SPIN_ITERS}" \
+    PAP_LOCAL_FAST_YIELD_ITERS="${PAP_LOCAL_FAST_YIELD_ITERS}" \
+    PAP_LOCAL_FAST_SLEEP_US="${PAP_LOCAL_FAST_SLEEP_US}" \
+    PAP_LOCAL_FAST_SLEEP_AFTER_US="${PAP_LOCAL_FAST_SLEEP_AFTER_US}" \
+    PAP_OFFLOAD_EXEC_LOCAL_RANK=0 \
+    PAP_OFFLOAD_EXEC_Q_SIZE="${PAP_OFFLOAD_EXEC_Q_SIZE}" \
+    PAP_OFFLOAD_EXEC_KV_SIZE="${PAP_OFFLOAD_EXEC_KV_SIZE}" \
+    PAP_OFFLOAD_EXEC_NUM_HEADS="${PAP_OFFLOAD_EXEC_NUM_HEADS}" \
+    PAP_OFFLOAD_EXEC_NUM_KV_HEADS="${PAP_OFFLOAD_EXEC_NUM_KV_HEADS}" \
+    PAP_OFFLOAD_EXEC_HEAD_DIM="${PAP_OFFLOAD_EXEC_HEAD_DIM}" \
+    PAP_DECODE_COMMIT_ENDPOINT="${PAP_DECODE_COMMIT_ENDPOINT}" \
+    PAP_LEASE_RELEASE_ENDPOINT="${PAP_LEASE_RELEASE_ENDPOINT}" \
+    "${PYTHON_BIN}" examples/pap/pap_attention_executor.py \
+      --host 127.0.0.1 \
+      --port "${ATTENTION_PORT}" \
+      --tcp-port "${ATTENTION_TCP_PORT}" \
+      --offload-exec-zmq-port "${ATTENTION_ZMQ_PORT}" \
+      > "${RUN_LOG_DIR}/attention_0_0.log" 2>&1 &
+fi
+PIDS+=("$!")
+
+wait_for_http "http://127.0.0.1:${ATTENTION_PORT}/health" "PAP Attention"
+
+echo "Starting PAP Prefill on GPU ${PAP_PREFILL_GPUS}"
+if [[ "${PAP_ENABLE_MPS}" == "1" ]]; then
+  env \
+    CUDA_VISIBLE_DEVICES=0 \
+    CUDA_MPS_PIPE_DIRECTORY="${MPS_PIPE_DIR}" \
+    CUDA_MPS_LOG_DIRECTORY="${MPS_LOG_DIR}" \
+    CUDA_MPS_ACTIVE_THREAD_PERCENTAGE="${PAP_PREFILL_MPS_PERCENT}" \
+    VLLM_PORT="${VLLM_PREFILL_PORT}" \
+    PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
+    PAP_UNIFIED_KV="${PAP_UNIFIED_KV}" \
+    PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}" \
+    VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
+    VLLM_NIXL_SIDE_CHANNEL_PORT="${PREFILL_NIXL_PORT}" \
+    "${VLLM_BIN}" serve "${MODEL_PATH}" \
+      --port "${PREFILL_PORT}" \
+      --host 127.0.0.1 \
+      --enforce-eager \
+      --generation-config vllm \
+      --enable-request-id-headers \
+      --max-model-len "${MAX_MODEL_LEN}" \
+      --max-num-seqs "${MAX_NUM_SEQS}" \
+      --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
+      --tensor-parallel-size "${PAP_TP_SIZE}" \
+      --gpu-memory-utilization "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}" \
+      --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer"}' \
+      > "${RUN_LOG_DIR}/prefill_0.log" 2>&1 &
+else
+  env \
+    CUDA_VISIBLE_DEVICES="${PAP_PREFILL_GPUS}" \
+    VLLM_PORT="${VLLM_PREFILL_PORT}" \
+    PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
+    PAP_UNIFIED_KV="${PAP_UNIFIED_KV}" \
+    PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}" \
+    VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
+    VLLM_NIXL_SIDE_CHANNEL_PORT="${PREFILL_NIXL_PORT}" \
+    "${VLLM_BIN}" serve "${MODEL_PATH}" \
+      --port "${PREFILL_PORT}" \
+      --host 127.0.0.1 \
+      --enforce-eager \
+      --generation-config vllm \
+      --enable-request-id-headers \
+      --max-model-len "${MAX_MODEL_LEN}" \
+      --max-num-seqs "${MAX_NUM_SEQS}" \
+      --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
+      --tensor-parallel-size "${PAP_TP_SIZE}" \
+      --gpu-memory-utilization "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}" \
+      --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer"}' \
+      > "${RUN_LOG_DIR}/prefill_0.log" 2>&1 &
+fi
+PIDS+=("$!")
+
+echo "Starting PAP Projection on GPU ${PAP_PROJECTION_GPUS}"
+env \
+  CUDA_VISIBLE_DEVICES="${PAP_PROJECTION_GPUS}" \
+  VLLM_PORT="${VLLM_PROJECTION_PORT}" \
+  PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT}" \
+  PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
+  PAP_DIRECT_MAILBOX_OUTPUT="${PAP_DIRECT_MAILBOX_OUTPUT}" \
+  PAP_LOCAL_FAST_ASYNC_DOORBELL="${PAP_LOCAL_FAST_ASYNC_DOORBELL}" \
+  PAP_LOCAL_FAST_SPIN_ITERS="${PAP_LOCAL_FAST_SPIN_ITERS}" \
+  PAP_LOCAL_FAST_YIELD_ITERS="${PAP_LOCAL_FAST_YIELD_ITERS}" \
+  PAP_LOCAL_FAST_SLEEP_US="${PAP_LOCAL_FAST_SLEEP_US}" \
+  PAP_LOCAL_FAST_SLEEP_AFTER_US="${PAP_LOCAL_FAST_SLEEP_AFTER_US}" \
+  PAP_OFFLOAD_EXEC_HOST=127.0.0.1 \
+  PAP_OFFLOAD_EXEC_ZMQ_PORT="${PROJECTION_ZMQ_PORT}" \
+  PAP_ATTENTION_ZMQ_PORT_BASE="${ATTENTION_ZMQ_PORT}" \
+  PAP_ATTENTION_PORT_BASE="${ATTENTION_PORT}" \
+  PAP_TP_SIZE="${PAP_TP_SIZE}" \
+  PAP_PROJECTION_KV_UNAWARE=1 \
+  PAP_REMOTE_ATTENTION_PARALLELISM="${PAP_REMOTE_ATTENTION_PARALLELISM}" \
+  "${VLLM_BIN}" serve "${MODEL_PATH}" \
+    --port "${PROJECTION_PORT}" \
+    --host 127.0.0.1 \
+    --enforce-eager \
+    --generation-config vllm \
+    --enable-request-id-headers \
+    --max-model-len "${MAX_MODEL_LEN}" \
+    --max-num-seqs "${MAX_NUM_SEQS}" \
+    --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
+    --tensor-parallel-size "${PAP_TP_SIZE}" \
+    --gpu-memory-utilization "${PAP_PROJECTION_GPU_MEMORY_UTILIZATION}" \
+    > "${RUN_LOG_DIR}/projection_0.log" 2>&1 &
+PIDS+=("$!")
+
+wait_for_http "http://127.0.0.1:${PREFILL_PORT}/health" "PAP Prefill"
+wait_for_http "http://127.0.0.1:${PROJECTION_PORT}/health" "PAP Projection"
+
+PAP_GROUPS_SPEC="127.0.0.1:${PREFILL_PORT}:${PREFILL_NIXL_PORT}:127.0.0.1:${ATTENTION_PORT}:${ATTENTION_TCP_PORT}:${ATTENTION_ZMQ_PORT}"
+PROJECTIONS_SPEC="127.0.0.1:${PROJECTION_PORT}"
+
+echo "Starting multi PAP proxy on port ${PAP_PROXY_PORT}"
+"${PYTHON_BIN}" examples/pap/multi_pap_proxy_server.py \
+  --host 127.0.0.1 \
+  --port "${PAP_PROXY_PORT}" \
+  --pap-groups "${PAP_GROUPS_SPEC}" \
+  --projections "${PROJECTIONS_SPEC}" \
+  --routing-policy "${PAP_ROUTING_POLICY}" \
+  > "${RUN_LOG_DIR}/proxy.log" 2>&1 &
+PIDS+=("$!")
+
+wait_for_http "http://127.0.0.1:${PAP_PROXY_PORT}/health" "multi PAP proxy"
+wait_cluster_stable
+
+write_effective_config
+write_run_metadata
+
+TAG="${TOPOLOGY_TAG}_i${INPUT_LEN}_o${OUTPUT_LEN}_q${QPS}"
+echo "=== Running ${TAG} on port ${PAP_PROXY_PORT} ==="
+timeout "${BENCH_TIMEOUT}" "${VLLM_BIN}" bench serve \
+  --backend vllm \
+  --model "${MODEL_PATH}" \
+  --dataset-name "${DATASET_NAME}" \
+  --dataset-path "${DATASET_PATH}" \
+  --sonnet-input-len "${INPUT_LEN}" \
+  --sonnet-output-len "${OUTPUT_LEN}" \
+  --sonnet-prefix-len "${PREFIX_LEN}" \
+  --num-prompts "${NUM_PROMPTS}" \
+  --port "${PAP_PROXY_PORT}" \
+  --save-result \
+  --result-dir "${RUN_ROOT}" \
+  --result-filename "${TAG}.json" \
+  --request-rate "${QPS}" \
+  --num-warmups "${BENCH_NUM_WARMUPS}" \
+  2>&1 | tee "${RUN_ROOT}/${TAG}.log"
+
+validate_benchmark_result "${RUN_ROOT}/${TAG}.json"
+wait_attention_sessions_drained
+audit_correctness_logs
+
+echo "RUN_ROOT=${RUN_ROOT}"

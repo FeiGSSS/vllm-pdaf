@@ -1,0 +1,241 @@
+---
+name: vllm-pap-benchmark
+description: Run and compare vLLM PAP, PAP-local, PAP-NIXL, and PD/NIXL serving benchmarks in this repository. Use when benchmarking PAP performance, rerunning the PD baseline, tracing PAP overhead, comparing PD vs PAP, or choosing a standard workload for PAP experiments.
+---
+
+# vLLM PAP Benchmark
+
+Use this skill for PAP/PD benchmark and tracing work in
+`/home/fei/research/PD/vllm-pap`. Keep benchmark parameters explicit and do
+not choose a new workload unless the user asks for one.
+
+## Canonical Comparison Workload
+
+Default to the existing PD baseline workload:
+
+- Model: `/data/ssd1/llm-models/Qwen3-8B`
+- Dataset: `sonnet`
+- Dataset path: `/home/fei/research/PD/refer_codes/vllm/benchmarks/sonnet_4x.txt`
+- Input length: `128`
+- Output length: `32`
+- Prefix length: `50`
+- Request rate: `16`
+- Number of prompts: `128`
+- Warmups: `0`
+- Max model length: `512`
+- Max sequences: `64`
+
+Canonical PD baseline result:
+
+```text
+/home/fei/research/PD/test/baseline/nixl_disaggregated/results/runs/20260701_171300/1P1D_i128_o32_q16.json
+```
+
+PD baseline metrics from that run:
+
+- Successful/failed: `128/0`
+- Duration: `8.98 s`
+- Request throughput: `14.26 req/s`
+- Output throughput: `456.22 tok/s`
+- Total token throughput: `2198.47 tok/s`
+- Mean/median/p99 TTFT: `246.82 / 212.53 / 470.69 ms`
+- Mean/median/p99 TPOT: `24.69 / 24.28 / 26.27 ms`
+- Mean/p99 ITL: `24.69 / 26.97 ms`
+- Peak concurrent requests: `42`
+
+## Required Environment Rules
+
+Always run from the repository root:
+
+```bash
+cd /home/fei/research/PD/vllm-pap
+```
+
+Use the repo virtualenv tools. Do not use system `python3` or bare `pip`.
+
+```text
+VLLM_BIN=/home/fei/research/PD/vllm-pap/.venv/bin/vllm
+PYTHON_BIN=/home/fei/research/PD/vllm-pap/.venv/bin/python
+```
+
+For PAP benchmark runs, always disable FlashInfer sampler until the sampler JIT
+failure is fixed:
+
+```bash
+VLLM_USE_FLASHINFER_SAMPLER=0
+```
+
+Without this, PAP startup can fail with a FlashInfer/CUB compile error like:
+
+```text
+flashinfer/sampling.cuh ... BlockAdjacentDifference ... has no member "FlagHeads"
+```
+
+Benchmark clients use environment proxy settings. If `HTTP_PROXY` or
+`HTTPS_PROXY` is set, ensure local requests bypass it:
+
+```text
+NO_PROXY=127.0.0.1,localhost
+no_proxy=127.0.0.1,localhost
+```
+
+The bundled PAP runner appends these entries automatically and records them in
+`effective_config.env`.
+
+## PAP NIXL Mailbox Run
+
+Use only bundled scripts from this skill for runnable shell workflows. Do not
+call existing project benchmark shell scripts from this skill; the benchmark
+environment must be self-contained here.
+
+Run the default PAP-vs-PD comparison workload with:
+
+```bash
+bash .claude/skills/vllm-pap-benchmark/scripts/run_pap_same_pd_workload.sh
+```
+
+For a canonical baseline, require a clean tracked worktree:
+
+```bash
+PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE=1 \
+bash .claude/skills/vllm-pap-benchmark/scripts/run_pap_same_pd_workload.sh
+```
+
+The runner contains the full service startup, benchmark command, environment
+defaults, FlashInfer sampler workaround, run metadata writing, and cleanup
+logic. It may call repository Python entrypoints and `.venv/bin/vllm` because
+those are the implementation under test, but it must not delegate to another
+project shell script.
+
+The runner records the full Git commit, tracked dirty state, `git_status.txt`,
+and `tracked_worktree.patch`. It also fails closed by default when the client
+result is incomplete or service logs contain decode-commit, lease-release, or
+unified-KV consistency errors. It waits for Attention's active session count to
+reach zero and records `session_drain.env`, so ACK flush and lease release must
+finish before services are stopped. Set
+`PAP_BENCH_STRICT_CORRECTNESS_AUDIT=0` only for diagnostic failure capture, not
+for a baseline result.
+
+The correctness-valid clean baseline for `e9044a88c` consists of three runs:
+
+```text
+/home/fei/research/PD/vllm-pap/test/baseline/pap/results/runs/20260710_e904_nixl_rep1_clean/1PA1P_i128_o32_q16.json
+/home/fei/research/PD/vllm-pap/test/baseline/pap/results/runs/20260710_e904_nixl_rep2_clean/1PA1P_i128_o32_q16.json
+/home/fei/research/PD/vllm-pap/test/baseline/pap/results/runs/20260710_e904_nixl_rep3_clean/1PA1P_i128_o32_q16.json
+```
+
+All three runs used a clean tracked worktree, completed `128/0`, and passed the
+strict correctness audit with zero matches. Across-run medians are:
+
+- Successful/failed: `128/0`
+- Duration: `16.58 s`
+- Request throughput: `7.72 req/s`
+- Output throughput: `247.01 tok/s`
+- Total token throughput: `1190.33 tok/s`
+- Mean/median/p99 TTFT: `1554.57 / 837.53 / 6993.54 ms`
+- Mean/median/p99 TPOT: `79.89 / 82.96 / 92.33 ms`
+- Mean/p99 ITL: `79.89 / 112.38 ms`
+- Peak concurrent requests: `102`
+
+The ACK-watermark and reliable lease protocol was validated end to end at:
+
+```text
+/home/fei/research/PD/vllm-pap/test/baseline/pap/results/runs/20260710_ack_watermark_e2e_drain
+```
+
+It completed `128/0`, passed strict correctness and session-drain checks, and
+recorded `128` registrations, `128` session DELETEs, and `128` successful lease
+releases. Its tracked worktree was dirty, so use it as protocol validation, not
+as a replacement performance baseline.
+
+The older `20260707_090030` run used commit `328384e90`, predates
+`e9044a88c`, and contains decode-commit failures despite reporting `128/0`.
+Treat it as a performance-only historical run.
+
+## PD NIXL Run
+
+Prefer the canonical PD baseline result above for comparison unless the user
+asks to rerun PD. There is intentionally no external shell command here. If the
+user explicitly asks to rerun PD, first add a self-contained bundled runner
+under `.claude/skills/vllm-pap-benchmark/scripts/` rather than calling existing
+project benchmark shell scripts.
+
+## Result Comparison
+
+Compare a PAP result against the canonical PD baseline with:
+
+```bash
+.venv/bin/python .claude/skills/vllm-pap-benchmark/scripts/compare_pd_pap_results.py \
+  --pap /path/to/1PA1P_i128_o32_q16.json
+```
+
+Omit `--pap` to compare against the latest same-workload PAP result recorded in
+this skill.
+
+## Before Running
+
+Check and record:
+
+- Current commit: `git rev-parse --short HEAD`
+- Worktree state: `git status --short`
+- Existing benchmark processes:
+  `ps -ef | rg -n "pap|vllm|run_benchmark|benchmark|9460|8100|8200|8300"`
+- GPU occupancy if relevant:
+  `nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader`
+- Proxy environment:
+  `env | sort | rg -i "proxy|no_proxy"`
+
+If ports or GPUs are occupied by unrelated work, do not kill them without user
+approval. Choose new PAP ports only if the user agrees that the result remains
+comparable.
+
+## After Running
+
+Verify the generated run directory:
+
+- Read `effective_config.env`.
+- Read `run_metadata.json`.
+- Read `correctness_audit.env` and require `STATUS=passed`.
+- Read `session_drain.env` and require `STATUS=passed` and `ACTIVE_SESSIONS=0`.
+- Confirm `git_tracked_worktree_dirty` is false for canonical baselines.
+- Confirm input length, output length, prefix length, qps, prompts, warmups,
+  model path, and transport match the intended comparison.
+- Confirm `NO_PROXY` and `no_proxy` include `127.0.0.1` and `localhost`.
+- Confirm there are no failed requests.
+
+If all benchmark requests fail with `Forbidden`, check whether local requests
+were sent through an HTTP proxy. A proxy-caused failure typically has no
+`/v1/completions` entries in `service_logs/proxy.log`, only `/health`; rerun
+with local `NO_PROXY` entries before investigating PAP internals.
+
+Compare at least these JSON fields:
+
+- `completed`
+- `failed`
+- `duration`
+- `request_throughput`
+- `output_throughput`
+- `total_token_throughput`
+- `mean_ttft_ms`, `median_ttft_ms`, `p99_ttft_ms`
+- `mean_tpot_ms`, `median_tpot_ms`, `p99_tpot_ms`
+- `mean_itl_ms`, `p99_itl_ms`
+- `max_concurrent_requests`
+
+Interpretation rule:
+
+- If PAP has much higher `max_concurrent_requests` than PD, TTFT includes queue
+  buildup. Say this explicitly instead of attributing all TTFT regression to a
+  single attention or communication operation.
+- Do not compare runs with different `NUM_PROMPTS`, `PREFIX_LEN`,
+  `BENCH_NUM_WARMUPS`, or `MAX_MODEL_LEN` as same-workload results.
+
+## Known Historical Non-Comparable Run
+
+Do not use this as the same-workload PD comparison:
+
+```text
+/home/fei/research/PD/test/baseline/pap/results/runs/20260707_024400/1PA1P_i128_o32_q16.json
+```
+
+It used `NUM_PROMPTS=64`, `PREFIX_LEN=0`, `BENCH_NUM_WARMUPS=16`, and
+`MAX_MODEL_LEN=256`, so it is only historical context.
