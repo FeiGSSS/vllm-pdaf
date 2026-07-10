@@ -185,6 +185,21 @@ def test_engine_core_allows_pap_metadata_without_kv_connector() -> None:
     assert "Got kv_transfer_params, but no KVConnector found" in text
 
 
+def test_nixl_pull_scheduler_has_no_pap_projection_bypass() -> None:
+    text = (
+        ROOT
+        / "vllm"
+        / "distributed"
+        / "kv_transfer"
+        / "kv_connector"
+        / "v1"
+        / "nixl"
+        / "pull_scheduler.py"
+    ).read_text()
+
+    assert "pap_attention_kv_installed" not in text
+
+
 def test_qwen3_pap_path_uses_nixl_mailbox_offload_exec_without_tcp_trigger() -> None:
     text = (ROOT / "vllm" / "model_executor" / "models" / "qwen3.py").read_text()
 
@@ -432,7 +447,7 @@ def test_qwen3_pap_uses_route_plan_steps_for_offload_exec_descriptor() -> None:
     assert "group_session_request_ids" in method
     assert "_pap_offload_exec_session_request_id(" in method
     assert '"r": tuple(group_session_request_ids)' in method
-    assert 'if request_id != str(request_ids[req_index])' in method
+    assert "if request_id != str(request_ids[req_index])" in method
     assert '"metadata_template"' in method
     assert '"a": (float(self.scaling),) * len(group_steps)' in method
     assert "items=()" in method
@@ -519,7 +534,8 @@ def test_qwen3_prefill_uses_paged_kv_import_for_cuda_ipc() -> None:
 
     assert "import_prefill_paged_kv" in method
     assert "import_prefill_kv_from_paged_cache" not in method
-    assert "block_ids=_pap_block_ids_from_block_table(" in method
+    assert "block_ids = _pap_block_ids_from_block_table(" in method
+    assert "block_ids=block_ids" in method
     assert "kv_cache=kv_cache" in method
 
 

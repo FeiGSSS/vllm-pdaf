@@ -71,17 +71,6 @@ class NixlPullConnectorScheduler(NixlBaseConnectorScheduler):
         if (
             params is not None
             and params.get("do_remote_decode")
-            and params.get("pap_attention_kv_installed")
-        ):
-            # PAP true-split installs prefill KV directly on the Attention
-            # workers. Projection still receives the remote block descriptor for
-            # lifecycle bookkeeping, but it must not pull those KV blocks into
-            # the Projection worker cache.
-            return 0, False
-
-        if (
-            params is not None
-            and params.get("do_remote_decode")
             and params.get("remote_block_ids")
             and all(
                 p in params
@@ -148,11 +137,6 @@ class NixlPullConnectorScheduler(NixlBaseConnectorScheduler):
             and not params.get("_remote_blocks_processed")
         ):
             if params.get("remote_block_ids"):
-                if params.get("pap_attention_kv_installed"):
-                    self._reqs_need_recv[request.request_id] = (request, ())
-                    params["do_remote_prefill"] = False
-                    params["_remote_blocks_processed"] = True
-                    return
                 if all(
                     p in params
                     for p in (
