@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import torch
 
+
 def test_direct_qkv_batch_for_group_reuses_contiguous_projection_layout() -> None:
     from vllm.model_executor.models.qwen3 import _pap_direct_qkv_batch_for_group
 
