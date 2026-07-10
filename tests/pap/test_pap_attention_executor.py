@@ -638,6 +638,23 @@ def test_attention_registry_caches_resolved_request_ids() -> None:
     assert "req-cache-0" not in registry._request_id_resolution_cache
 
 
+def test_attention_registry_reports_active_session_count() -> None:
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    assert registry.active_session_count() == 0
+
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-count",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+        )
+    )
+
+    assert registry.active_session_count() == 1
+    assert registry.release_session("req-count")
+    assert registry.active_session_count() == 0
+
+
 def test_attention_registry_release_session_notifies_prefill_lease(
     monkeypatch,
 ) -> None:
@@ -694,6 +711,52 @@ def test_attention_registry_release_session_notifies_prefill_lease(
         ("forget", "req-lease"),
     ]
     assert registry.get_session("req-lease") is None
+
+
+def test_attention_registry_does_not_release_lease_before_commit_ack(
+    monkeypatch,
+) -> None:
+    from examples.pap import pap_attention_executor as executor_module
+
+    events = []
+
+    class FakeCommitClient:
+        enabled = True
+
+        def flush_request(self, request_id):
+            events.append(("flush", request_id))
+            return False
+
+        def forget_request(self, request_id):
+            events.append(("forget", request_id))
+
+    class FakeLeaseReleaseClient:
+        def release(self, *, request_id, lease_id):
+            events.append(("release", request_id, lease_id))
+
+    monkeypatch.setattr(
+        executor_module,
+        "_get_commit_client",
+        lambda: FakeCommitClient(),
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "_get_lease_release_client",
+        lambda: FakeLeaseReleaseClient(),
+    )
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-unacked",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+        )
+    )
+    registry._session_lease_ids["req-unacked"] = "lease-1"
+
+    assert registry.release_session("req-unacked")
+    assert events == [("flush", "req-unacked")]
 
 
 def test_attention_registry_reregister_releases_replaced_prefill_lease(

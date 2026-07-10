@@ -92,12 +92,18 @@ HANDSHAKE_TIMEOUT_MINS = 5
 
 
 def _pap_critical_trace_enabled() -> bool:
-    return (
-        os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower()
-        in ("1", "true", "yes", "on")
-        and os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower()
-        in ("1", "true", "yes", "on")
+    return os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    ) and os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
     )
+
 
 _R = TypeVar("_R")  # Return type for collective_rpc
 
@@ -388,7 +394,9 @@ class EngineCore:
         requests = getattr(self.scheduler, "requests", {})
         request = requests.get(str(request_id))
         if request is None:
-            finished_req_ids = getattr(self.scheduler, "finished_req_ids", set())
+            finished_req_ids: set[str] = getattr(
+                self.scheduler, "finished_req_ids", set()
+            )
             reason = (
                 "request_finished"
                 if str(request_id) in finished_req_ids
@@ -400,11 +408,15 @@ class EngineCore:
                 "reason": reason,
             }
         old_seq_len = int(request.num_computed_tokens)
-        self.scheduler.kv_cache_manager.apply_decode_commit(
+        kv_cache_manager = cast(Any, self.scheduler).kv_cache_manager
+        kv_cache_manager.apply_decode_commit(
             request=request,
             new_seq_len=int(new_seq_len),
             new_token_ids=tuple(int(t) for t in new_token_ids),
         )
+        from vllm.pap.kv_lease import pap_refresh_lease
+
+        pap_refresh_lease(str(request_id))
         return {
             "request_id": str(request_id),
             "applied": True,

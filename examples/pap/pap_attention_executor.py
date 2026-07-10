@@ -641,9 +641,7 @@ class PAPAttentionRegistry:
             str, dict[str, list[tuple[torch.Tensor, torch.Tensor]]]
         ] = {}
         self._prefill_paged_kv: dict[str, dict[str, PAPPrefillPagedKV]] = {}
-        self._prefill_readiness: dict[
-            str, dict[str, PAPPrefillLayerReadiness]
-        ] = {}
+        self._prefill_readiness: dict[str, dict[str, PAPPrefillLayerReadiness]] = {}
         self._prefill_async_queue: Queue[
             tuple[PAPOffloadKVPagedIPCDescriptor, float]
         ] = Queue()
@@ -781,10 +779,10 @@ class PAPAttentionRegistry:
         commit_client = _get_commit_client()
         if commit_client.enabled and not commit_client.flush_request(request_id):
             logger.warning(
-                "PAP decode commit flush timed out before lease release "
-                "request_id=%s",
+                "PAP decode commit flush timed out before lease release request_id=%s",
                 request_id,
             )
+            return existed
         if lease_id is not None:
             _get_lease_release_client().release(
                 request_id=request_id,
@@ -824,9 +822,7 @@ class PAPAttentionRegistry:
                 decode_len = int(decode_seq_lens[index])
                 if decode_len <= 0:
                     continue
-                layer_states = self._unified_paged_kv.get(
-                    session_request_id, {}
-                )
+                layer_states = self._unified_paged_kv.get(session_request_id, {})
                 state = layer_states.get(layer_name)
                 if state is None:
                     raise RuntimeError(
@@ -845,9 +841,8 @@ class PAPAttentionRegistry:
                         f"current_seq_len={position} "
                         f"decode_seq_len={decode_len}"
                     )
-                if (
-                    position < int(state.writable_start_token)
-                    or position >= int(state.writable_end_token)
+                if position < int(state.writable_start_token) or position >= int(
+                    state.writable_end_token
                 ):
                     raise RuntimeError(
                         f"PAP unified KV append out of range request_id="
@@ -866,8 +861,7 @@ class PAPAttentionRegistry:
                     )
                 raw_bid = state.block_ids[logical_block]
                 physical_block = (
-                    int(raw_bid.item()) if hasattr(raw_bid, "item")
-                    else int(raw_bid)
+                    int(raw_bid.item()) if hasattr(raw_bid, "item") else int(raw_bid)
                 )
                 block_offset = position % block_size
                 slots.append(physical_block * block_size + block_offset)
@@ -885,25 +879,25 @@ class PAPAttentionRegistry:
             slot_tensor = torch.tensor(
                 slots, dtype=torch.int64, device=base_v_cache.device
             )
-            k_scale = torch.ones(
-                1, dtype=torch.float32, device=base_v_cache.device
-            )
-            v_scale = torch.ones(
-                1, dtype=torch.float32, device=base_v_cache.device
-            )
+            k_scale = torch.ones(1, dtype=torch.float32, device=base_v_cache.device)
+            v_scale = torch.ones(1, dtype=torch.float32, device=base_v_cache.device)
             key_cache, value_cache = base_v_cache.unbind(1)
             torch.ops._C_cache_ops.reshape_and_cache_flash(
-                kb, vb, key_cache, value_cache,
-                slot_tensor, "auto", k_scale, v_scale,
+                kb,
+                vb,
+                key_cache,
+                value_cache,
+                slot_tensor,
+                "auto",
+                k_scale,
+                v_scale,
             )
 
             # Pass 2: seq_len update
             written = 0
             for index in active_indices:
                 session_request_id = session_request_ids[index]
-                layer_states = self._unified_paged_kv.get(
-                    session_request_id, {}
-                )
+                layer_states = self._unified_paged_kv.get(session_request_id, {})
                 state = layer_states[layer_name]
                 state.seq_len = int(state.seq_len) + 1
                 written += 1
@@ -963,20 +957,22 @@ class PAPAttentionRegistry:
             )
         if replaced_lease_id is not None:
             commit_client = _get_commit_client()
-            if commit_client.enabled and not commit_client.flush_request(
+            commits_acked = not commit_client.enabled or commit_client.flush_request(
                 registration.request_id
-            ):
+            )
+            if not commits_acked:
                 logger.warning(
                     "PAP decode commit flush timed out before replaced "
                     "lease release request_id=%s",
                     registration.request_id,
                 )
-            if commit_client.enabled:
+            if commit_client.enabled and commits_acked:
                 commit_client.forget_request(registration.request_id)
-            _get_lease_release_client().release(
-                request_id=registration.request_id,
-                lease_id=replaced_lease_id,
-            )
+            if commits_acked:
+                _get_lease_release_client().release(
+                    request_id=registration.request_id,
+                    lease_id=replaced_lease_id,
+                )
         logger.info(
             "registered PAP attention session request_id=%s "
             "conversation_id=%s kv_keys=%s",
@@ -991,6 +987,9 @@ class PAPAttentionRegistry:
             session = self._sessions.get(request_id)
             return None if session is None else session.copy()
 
+    def active_session_count(self) -> int:
+        with self._lock:
+            return len(self._sessions)
 
     def resolve_session_request_id(self, request_id: str) -> str | None:
         """Map vLLM-wrapped request ids back to the proxy-level PAP id."""
@@ -1462,12 +1461,12 @@ class PAPAttentionRegistry:
                 if existing is None:
                     self._session_lease_ids[session_request_id] = lease_id
                     if leased_block_ids is not None:
-                        self._session_leased_block_ids[session_request_id] = (
-                            tuple(int(b) for b in leased_block_ids)
+                        self._session_leased_block_ids[session_request_id] = tuple(
+                            int(b) for b in leased_block_ids
                         )
                     if lease_capacity_tokens is not None:
-                        self._session_lease_capacity_tokens[session_request_id] = (
-                            int(lease_capacity_tokens)
+                        self._session_lease_capacity_tokens[session_request_id] = int(
+                            lease_capacity_tokens
                         )
                     if _pap_kv_lease_profile_enabled():
                         logger.info(
@@ -1484,9 +1483,7 @@ class PAPAttentionRegistry:
             )
             seq_len = int(seq_len)
             if unified_kv_mode and lease_id is not None:
-                prefix_value = (
-                    int(prefix_len) if prefix_len is not None else seq_len
-                )
+                prefix_value = int(prefix_len) if prefix_len is not None else seq_len
                 w_start = (
                     int(writable_start_token)
                     if writable_start_token is not None
@@ -1606,75 +1603,6 @@ class PAPAttentionRegistry:
             self._prefill_paged_kv.setdefault(session_request_id, {})[layer_name] = (
                 prefix_state
             )
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
             imported_session = self._attention_sessions.import_prefill_kv(
                 session_request_id,
@@ -2495,9 +2423,9 @@ def compute_binary_attention_response(
         )
     if metadata.get("command") == "import_prefill_paged_kv_ipc":
         descriptor = PAPOffloadKVPagedIPCDescriptor.from_dict(metadata["descriptor"])
-        async_import = bool(
-            metadata.get("async", False)
-        ) or _pap_prefill_kv_async_enabled()
+        async_import = (
+            bool(metadata.get("async", False)) or _pap_prefill_kv_async_enabled()
+        )
         if async_import:
             seq_len = registry.enqueue_prefill_paged_kv_descriptor(descriptor)
             return serialize_tensor_bundle(
@@ -2841,7 +2769,6 @@ def _run_paged_flash_varlen(
     )
 
 
-
 def _compute_unified_paged_flash_batch(
     *,
     query_batch: torch.Tensor,
@@ -2907,11 +2834,7 @@ def _compute_unified_paged_flash_batch(
     )
     paged_start = time.perf_counter() if trace_stats is not None else 0.0
     start_event = end_event = None
-    if (
-        trace_stats is not None
-        and query_batch.is_cuda
-        and torch.cuda.is_available()
-    ):
+    if trace_stats is not None and query_batch.is_cuda and torch.cuda.is_available():
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
         stream = torch.cuda.current_stream(query_batch.device)
@@ -2983,17 +2906,18 @@ def compute_offload_exec_batch_output(
     common_scale: float | None = None
     for item, session_entry in zip(items, session_entries):
         shape = (
-            session_entry.q_size, session_entry.kv_size,
-            session_entry.num_heads, session_entry.num_kv_heads, session_entry.head_dim,
+            session_entry.q_size,
+            session_entry.kv_size,
+            session_entry.num_heads,
+            session_entry.num_kv_heads,
+            session_entry.head_dim,
         )
         scale = float(item.scale)
         if common_shape is None:
             common_shape = shape
             common_scale = scale
         elif shape != common_shape or scale != common_scale:
-            raise RuntimeError(
-                "PAP OFFLOAD_EXEC batch has mixed shapes or scales"
-            )
+            raise RuntimeError("PAP OFFLOAD_EXEC batch has mixed shapes or scales")
     if trace_stats is not None:
         trace_stats["shape_lookup_ms"] += (
             time.perf_counter() - shape_lookup_start
@@ -3005,15 +2929,14 @@ def compute_offload_exec_batch_output(
 
     qkv_split_start = time.perf_counter() if trace_stats is not None else 0.0
     query_flat, key_flat, value_flat = qkv_batch.split(
-        [_q_size, kv_size, kv_size], dim=-1,
+        [_q_size, kv_size, kv_size],
+        dim=-1,
     )
     query_batch = query_flat.view(batch_size, num_heads, head_dim)
     key_batch = key_flat.view(batch_size, num_kv_heads, head_dim)
     value_batch = value_flat.view(batch_size, num_kv_heads, head_dim)
     if trace_stats is not None:
-        trace_stats["qkv_split_ms"] += (
-            time.perf_counter() - qkv_split_start
-        ) * 1000.0
+        trace_stats["qkv_split_ms"] += (time.perf_counter() - qkv_split_start) * 1000.0
 
     query_move_start = time.perf_counter() if trace_stats is not None else 0.0
     if torch.cuda.is_available():
@@ -3046,13 +2969,9 @@ def compute_offload_exec_batch_output(
             decode_seq_lens=decode_seq_lens,
         )
         if any(seq_len is not None for seq_len in commit_new_seq_lens) and written <= 0:
-            raise RuntimeError(
-                "PAP unified KV append wrote no rows"
-            )
+            raise RuntimeError("PAP unified KV append wrote no rows")
         if trace_stats is not None:
-            trace_stats["append_kv_ms"] += (
-                time.perf_counter() - append_start
-            ) * 1000.0
+            trace_stats["append_kv_ms"] += (time.perf_counter() - append_start) * 1000.0
         unified_output = _compute_unified_paged_flash_batch(
             query_batch=query_batch,
             states=unified_states,
@@ -3064,9 +2983,7 @@ def compute_offload_exec_batch_output(
             raise RuntimeError("PAP unified paged FlashAttention failed")
         reshape_start = time.perf_counter() if trace_stats is not None else 0.0
         if unified_output.ndim == 3:
-            unified_output = unified_output.reshape(
-                batch_size, num_heads * head_dim
-            )
+            unified_output = unified_output.reshape(batch_size, num_heads * head_dim)
         if trace_stats is not None:
             reshape_ms = (time.perf_counter() - reshape_start) * 1000.0
             trace_stats["reshape_ms"] = trace_stats.get("reshape_ms", 0.0) + reshape_ms
@@ -3478,10 +3395,9 @@ def run_offload_exec_mailbox_loop(
         "yes",
         "on",
     )
-    prefetch_enabled = (
-        _pap_env_flag("PAP_ATTENTION_MAILBOX_PREFETCH", False)
-        and callable(getattr(transport, "recv_next_qkv_batch_message", None))
-    )
+    prefetch_enabled = _pap_env_flag(
+        "PAP_ATTENTION_MAILBOX_PREFETCH", False
+    ) and callable(getattr(transport, "recv_next_qkv_batch_message", None))
     prefetcher = _QKVBatchMessagePrefetcher(transport) if prefetch_enabled else None
     if prefetcher is not None:
         prefetcher.prefetch()
@@ -4062,6 +3978,10 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
                 event.__dict__ for event in registry.get_layer_events(request_id)
             ],
         }
+
+    @app.get("/v1/pap/attention/sessions")
+    async def get_active_session_count() -> dict[str, int]:
+        return {"active_sessions": registry.active_session_count()}
 
     @app.get("/v1/pap/attention/sessions/{request_id}/prefill-readiness")
     async def get_prefill_readiness(request_id: str) -> dict[str, Any]:

@@ -52,6 +52,10 @@ def test_pap_6pa2p_launch_uses_multi_proxy_and_expected_counts() -> None:
     assert "Projection vLLM metadata-only" in text
     assert 'kv_role":"kv_consumer"' not in text
     assert "projection_kv_transfer_config" not in text
+    projection = text.split("for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do", 1)[
+        1
+    ].split("done", 1)[0]
+    assert "--kv-transfer-config" not in projection
     assert "PAP_MPS_PIPE_BASE_DIR" in text
     assert "build_pap_groups_spec" in text
     assert "build_projections_spec" in text
@@ -123,6 +127,7 @@ def test_pap_launch_exports_unified_kv_control_endpoints() -> None:
     assert "PAP_DECODE_COMMIT_ENDPOINT" in text
     assert "PAP_LEASE_RELEASE_ENDPOINT" in text
     assert 'PAP_LEASE_RELEASE_ENDPOINT="$PAP_LEASE_RELEASE_ENDPOINT"' in text
+    assert 'PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS:-300}"' in text
 
 
 def test_pap_launch_does_not_expose_pap_runner_microbatch() -> None:

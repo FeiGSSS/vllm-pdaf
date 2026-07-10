@@ -13,8 +13,8 @@ import os
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
-from typing import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass, field, replace
 
 logger = logging.getLogger(__name__)
 
@@ -29,13 +29,14 @@ def _kv_lease_profile_enabled() -> bool:
 
 
 def _kv_lease_default_ttl_seconds() -> float:
-    raw = os.environ.get("PAP_KV_LEASE_TTL_SECONDS", "")
+    raw = os.environ.get("PAP_KV_LEASE_TTL_SECONDS", "300")
     if not raw:
-        return 0.0
+        return 300.0
     try:
         return max(0.0, float(raw))
     except ValueError:
-        return 0.0
+        logger.warning("Invalid PAP_KV_LEASE_TTL_SECONDS=%r; using 300 seconds", raw)
+        return 300.0
 
 
 @dataclass(frozen=True)
@@ -59,16 +60,15 @@ class PAPKVLeaseRegistry:
       vLLM scheduler free path.
     - Deferred block objects (with optional release callback) can be stashed
       on the registry so scheduler finish can fully bypass block_pool free.
-    - `expired leases` are detected by TTL but not auto-freed in Stage 1;
-      callers must explicitly call release or sweep_expired_leases.
+    - Expired leases are freed when the scheduler calls sweep_expired_leases.
     """
 
     _lock: threading.RLock = field(default_factory=threading.RLock)
     _by_lease: dict[str, PAPKVLeaseEntry] = field(default_factory=dict)
     _active_by_request: dict[str, str] = field(default_factory=dict)
     _ttl_seconds: float = field(default_factory=_kv_lease_default_ttl_seconds)
-    _deferred_blocks: dict[str, tuple[object, Callable[[object], None] | None]] = (
-        field(default_factory=dict)
+    _deferred_blocks: dict[str, tuple[object, Callable[[object], None] | None]] = field(
+        default_factory=dict
     )
 
     def pin_blocks(
@@ -121,9 +121,7 @@ class PAPKVLeaseRegistry:
             entry = self._by_lease.pop(lease_id, None)
             if entry is None:
                 if _kv_lease_profile_enabled():
-                    logger.info(
-                        "PAP KV lease release miss lease_id=%s", lease_id
-                    )
+                    logger.info("PAP KV lease release miss lease_id=%s", lease_id)
                 return ()
             active = self._active_by_request.get(entry.request_id)
             if active == lease_id:
@@ -176,9 +174,7 @@ class PAPKVLeaseRegistry:
                 raise KeyError(f"unknown lease_id: {lease_id}")
             self._deferred_blocks[lease_id] = (blocks, free_callback)
         if _kv_lease_profile_enabled():
-            logger.info(
-                "PAP KV lease stash deferred lease_id=%s", lease_id
-            )
+            logger.info("PAP KV lease stash deferred lease_id=%s", lease_id)
 
     def pop_deferred_blocks(
         self, lease_id: str
@@ -194,9 +190,7 @@ class PAPKVLeaseRegistry:
             entry = self._by_lease.get(lease_id)
             if entry is None or entry.released_at is not None:
                 return False
-            if entry.expires_at is not None and time.time() > entry.expires_at:
-                return False
-            return True
+            return entry.expires_at is None or time.time() <= entry.expires_at
 
     def leased_block_ids(self, request_id: str) -> tuple[int, ...]:
         with self._lock:
@@ -224,6 +218,23 @@ class PAPKVLeaseRegistry:
                 return None
             return lease_id
 
+    def refresh_lease(self, request_id: str) -> bool:
+        """Extend the active lease after an acknowledged decode commit."""
+        with self._lock:
+            lease_id = self._active_by_request.get(str(request_id))
+            if lease_id is None:
+                return False
+            entry = self._by_lease.get(lease_id)
+            if entry is None or entry.released_at is not None:
+                return False
+            if self._ttl_seconds <= 0:
+                return True
+            self._by_lease[lease_id] = replace(
+                entry,
+                expires_at=time.time() + self._ttl_seconds,
+            )
+            return True
+
     def sweep_expired_leases(self) -> list[str]:
         """Drop expired leases from active map and free their deferred blocks.
 
@@ -234,13 +245,13 @@ class PAPKVLeaseRegistry:
         swept: list[str] = []
         now = time.time()
         with self._lock:
-            for request_id, lease_id in list(self._active_by_request.items()):
-                entry = self._by_lease.get(lease_id)
-                if entry is None or entry.released_at is not None:
-                    self._active_by_request.pop(request_id, None)
+            for lease_id, entry in list(self._by_lease.items()):
+                if entry.released_at is not None:
                     continue
                 if entry.expires_at is not None and now > entry.expires_at:
-                    self._active_by_request.pop(request_id, None)
+                    active = self._active_by_request.get(entry.request_id)
+                    if active == lease_id:
+                        self._active_by_request.pop(entry.request_id, None)
                     swept.append(lease_id)
         for lease_id in swept:
             self.release_lease(lease_id)
@@ -295,6 +306,10 @@ def pap_leased_block_ids(request_id: str) -> tuple[int, ...]:
 
 def pap_active_lease_id(request_id: str) -> str | None:
     return get_global_kv_lease_registry().active_lease_id(request_id)
+
+
+def pap_refresh_lease(request_id: str) -> bool:
+    return get_global_kv_lease_registry().refresh_lease(request_id)
 
 
 def pap_stash_deferred_blocks(

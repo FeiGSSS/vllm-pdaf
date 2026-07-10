@@ -2,12 +2,14 @@ import pytest
 
 from vllm.pap.decode_commit import PAPDecodeCommit, deserialize_commit, serialize_commit
 from vllm.pap.decode_commit_client import DecodeCommitClient
+from vllm.pap.lease_release_client import LeaseReleaseClient
 from vllm.v1.request import Request
 
 
 def test_commit_roundtrip():
     commit = PAPDecodeCommit(
         request_id="req-1",
+        commit_seq=3,
         new_seq_len=17,
         new_token_ids=[42, 7, 99],
         layer_complete=True,
@@ -19,7 +21,11 @@ def test_commit_roundtrip():
 
 def test_commit_tuple_input():
     commit = PAPDecodeCommit(
-        request_id="r", new_seq_len=5, new_token_ids=(1, 2), layer_complete=True
+        request_id="r",
+        commit_seq=1,
+        new_seq_len=5,
+        new_token_ids=(1, 2),
+        layer_complete=True,
     )
     assert isinstance(commit.new_token_ids, tuple)
     assert commit.new_token_ids == (1, 2)
@@ -27,7 +33,11 @@ def test_commit_tuple_input():
 
 def test_commit_layer_incomplete():
     commit = PAPDecodeCommit(
-        request_id="r", new_seq_len=1, new_token_ids=(), layer_complete=False
+        request_id="r",
+        commit_seq=1,
+        new_seq_len=1,
+        new_token_ids=(),
+        layer_complete=False,
     )
     assert commit.layer_complete is False
     blob = serialize_commit(commit)
@@ -37,7 +47,11 @@ def test_commit_layer_incomplete():
 
 def test_commit_empty_tokens():
     commit = PAPDecodeCommit(
-        request_id="r", new_seq_len=0, new_token_ids=(), layer_complete=True
+        request_id="r",
+        commit_seq=1,
+        new_seq_len=0,
+        new_token_ids=(),
+        layer_complete=True,
     )
     assert commit.new_token_ids == ()
     blob = serialize_commit(commit)
@@ -48,14 +62,35 @@ def test_commit_empty_tokens():
 def test_from_dict_missing_layer_complete_raises():
     with pytest.raises(KeyError):
         PAPDecodeCommit.from_dict(
-            {"request_id": "x", "new_seq_len": 1, "new_token_ids": []}
+            {
+                "request_id": "x",
+                "commit_seq": 1,
+                "new_seq_len": 1,
+                "new_token_ids": [],
+            }
         )
 
 
 def test_from_dict_missing_request_id_raises():
     with pytest.raises(KeyError):
         PAPDecodeCommit.from_dict(
-            {"new_seq_len": 1, "new_token_ids": [], "layer_complete": True}
+            {
+                "commit_seq": 1,
+                "new_seq_len": 1,
+                "new_token_ids": [],
+                "layer_complete": True,
+            }
+        )
+
+
+def test_commit_rejects_non_positive_commit_seq():
+    with pytest.raises(ValueError, match="commit_seq"):
+        PAPDecodeCommit(
+            request_id="r",
+            commit_seq=0,
+            new_seq_len=1,
+            new_token_ids=(1,),
+            layer_complete=True,
         )
 
 
@@ -91,6 +126,7 @@ def test_commit_endpoint_applies_to_manager():
                 "/v1/pap/prefill/decode-commit",
                 json={
                     "request_id": "req-1",
+                    "commit_seq": 1,
                     "new_seq_len": 17,
                     "new_token_ids": [1, 2, 3],
                     "layer_complete": True,
@@ -101,6 +137,7 @@ def test_commit_endpoint_applies_to_manager():
     resp, calls = anyio.run(run_request)
 
     assert resp.status_code == 200
+    assert resp.json()["acked_commit_seq"] == 1
     assert calls == [("req-1", 17, [1, 2, 3])]
 
 
@@ -138,6 +175,7 @@ def test_commit_endpoint_falls_back_to_sync_engine_client():
                 "/v1/pap/prefill/decode-commit",
                 json={
                     "request_id": "req-1",
+                    "commit_seq": 1,
                     "new_seq_len": 18,
                     "new_token_ids": [4],
                     "layer_complete": True,
@@ -148,10 +186,11 @@ def test_commit_endpoint_falls_back_to_sync_engine_client():
     resp, calls = anyio.run(run_request)
 
     assert resp.status_code == 200
+    assert resp.json()["acked_commit_seq"] == 1
     assert calls == [("req-1", 18, (4,))]
 
 
-def test_commit_endpoint_treats_unknown_request_as_idempotent():
+def test_commit_endpoint_rejects_unacknowledged_unknown_request():
     import anyio
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
@@ -181,6 +220,7 @@ def test_commit_endpoint_treats_unknown_request_as_idempotent():
                 "/v1/pap/prefill/decode-commit",
                 json={
                     "request_id": "req-finished",
+                    "commit_seq": 1,
                     "new_seq_len": 18,
                     "new_token_ids": [4],
                     "layer_complete": True,
@@ -189,9 +229,56 @@ def test_commit_endpoint_treats_unknown_request_as_idempotent():
 
     resp = anyio.run(run_request)
 
-    assert resp.status_code == 200
-    assert resp.json()["applied"] is False
-    assert resp.json()["reason"] == "unknown_request"
+    assert resp.status_code == 409
+    assert resp.json()["detail"]["applied"] is False
+    assert resp.json()["detail"]["reason"] == "unknown_request"
+
+
+def test_commit_endpoint_deduplicates_acknowledged_sequence():
+    import anyio
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from vllm.pap.prefill_control_router import build_prefill_control_router
+
+    class StubEngineClient:
+        def __init__(self):
+            self.calls = []
+
+        async def pap_apply_decode_commit_async(
+            self, request_id, new_seq_len, new_token_ids
+        ):
+            self.calls.append((request_id, new_seq_len, tuple(new_token_ids)))
+            return {"request_id": request_id, "applied": True}
+
+    async def run_requests():
+        engine_client = StubEngineClient()
+        app = FastAPI()
+        app.state.engine_client = engine_client
+        app.include_router(build_prefill_control_router())
+        transport = ASGITransport(app=app)
+        payload = {
+            "request_id": "req-1",
+            "commit_seq": 1,
+            "new_seq_len": 17,
+            "new_token_ids": [1, 2, 3],
+            "layer_complete": True,
+        }
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+        ) as client:
+            first = await client.post("/v1/pap/prefill/decode-commit", json=payload)
+            duplicate = await client.post("/v1/pap/prefill/decode-commit", json=payload)
+        return first, duplicate, engine_client.calls
+
+    first, duplicate, calls = anyio.run(run_requests)
+
+    assert first.status_code == 200
+    assert duplicate.status_code == 200
+    assert duplicate.json()["acked_commit_seq"] == 1
+    assert duplicate.json()["idempotent"] is True
+    assert calls == [("req-1", 17, (1, 2, 3))]
 
 
 def test_prefill_control_router_releases_lease():
@@ -385,7 +472,7 @@ def test_apply_decode_commit_rejects_token_delta_mismatch():
         manager.apply_decode_commit(request, new_seq_len=6, new_token_ids=[100])
 
 
-def test_engine_core_pap_apply_decode_commit_uses_scheduler_manager():
+def test_engine_core_pap_apply_decode_commit_uses_scheduler_manager(monkeypatch):
     from vllm.v1.engine.core import EngineCore
 
     class StubManager:
@@ -396,16 +483,26 @@ def test_engine_core_pap_apply_decode_commit_uses_scheduler_manager():
             self.calls.append((request.request_id, new_seq_len, tuple(new_token_ids)))
             request.num_computed_tokens = new_seq_len
 
-    request = type("StubReq", (), {
-        "request_id": "req-1",
-        "num_computed_tokens": 4,
-    })()
+    request = type(
+        "StubReq",
+        (),
+        {
+            "request_id": "req-1",
+            "num_computed_tokens": 4,
+        },
+    )()
     manager = StubManager()
+    refreshed = []
+    monkeypatch.setattr("vllm.pap.kv_lease.pap_refresh_lease", refreshed.append)
     core = object.__new__(EngineCore)
-    core.scheduler = type("StubScheduler", (), {
-        "requests": {"req-1": request},
-        "kv_cache_manager": manager,
-    })()
+    core.scheduler = type(
+        "StubScheduler",
+        (),
+        {
+            "requests": {"req-1": request},
+            "kv_cache_manager": manager,
+        },
+    )()
 
     result = core.pap_apply_decode_commit("req-1", 5, (42,))
 
@@ -416,15 +513,20 @@ def test_engine_core_pap_apply_decode_commit_uses_scheduler_manager():
         "new_seq_len": 5,
     }
     assert manager.calls == [("req-1", 5, (42,))]
+    assert refreshed == ["req-1"]
 
 
 def test_engine_core_pap_apply_decode_commit_reports_unknown_request():
     from vllm.v1.engine.core import EngineCore
 
     core = object.__new__(EngineCore)
-    core.scheduler = type("StubScheduler", (), {
-        "requests": {},
-    })()
+    core.scheduler = type(
+        "StubScheduler",
+        (),
+        {
+            "requests": {},
+        },
+    )()
 
     result = core.pap_apply_decode_commit("missing", 5, (42,))
 
@@ -478,6 +580,19 @@ def test_engine_core_pap_release_kv_lease_reports_miss(monkeypatch):
 # --- DecodeCommitClient tests -------------------------------------------------
 
 
+class _CommitAckResponse:
+    status_code = 200
+
+    def __init__(self, acked_commit_seq: int):
+        self.acked_commit_seq = acked_commit_seq
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return {"acked_commit_seq": self.acked_commit_seq}
+
+
 def test_commit_client_posts_to_endpoint(monkeypatch):
     """Verify the client POSTs correct JSON to the configured endpoint."""
     from threading import Event
@@ -485,26 +600,21 @@ def test_commit_client_posts_to_endpoint(monkeypatch):
     posted = {}
     posted_event = Event()
 
-    class FakeResp:
-        status_code = 200
-
-        def raise_for_status(self):
-            pass
-
     def fake_post(url, json=None, timeout=None):
         posted["url"] = url
         posted["json"] = json
         posted_event.set()
-        return FakeResp()
+        return _CommitAckResponse(json["commit_seq"])
 
-    monkeypatch.setattr(
-        "vllm.pap.decode_commit_client.httpx.post", fake_post)
+    monkeypatch.setattr("vllm.pap.decode_commit_client.httpx.post", fake_post)
     client = DecodeCommitClient(
-        endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit")
+        endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit"
+    )
     client.commit(request_id="r", new_seq_len=10, new_token_ids=(1, 2))
     assert posted_event.wait(timeout=1.0)
     assert posted["url"].endswith("/v1/pap/prefill/decode-commit")
     assert posted["json"]["request_id"] == "r"
+    assert posted["json"]["commit_seq"] == 1
     assert posted["json"]["new_seq_len"] == 10
     assert posted["json"]["new_token_ids"] == [1, 2]
     assert posted["json"]["layer_complete"] is True
@@ -520,8 +630,7 @@ def test_commit_client_disabled_when_no_endpoint():
 
 def test_commit_client_env_var(monkeypatch):
     """Endpoint can be set via PAP_DECODE_COMMIT_ENDPOINT env var."""
-    monkeypatch.setenv("PAP_DECODE_COMMIT_ENDPOINT",
-                       "http://localhost:1/x")
+    monkeypatch.setenv("PAP_DECODE_COMMIT_ENDPOINT", "http://localhost:1/x")
     client = DecodeCommitClient()
     assert client.enabled
     assert client.endpoint == "http://localhost:1/x"
@@ -534,21 +643,15 @@ def test_commit_client_commit_does_not_block_on_slow_post(monkeypatch):
     post_started = Event()
     release_post = Event()
 
-    class FakeResp:
-        status_code = 200
-
-        def raise_for_status(self):
-            pass
-
     def fake_post(url, json=None, timeout=None):
         post_started.set()
         release_post.wait(timeout=1.0)
-        return FakeResp()
+        return _CommitAckResponse(json["commit_seq"])
 
-    monkeypatch.setattr(
-        "vllm.pap.decode_commit_client.httpx.post", fake_post)
+    monkeypatch.setattr("vllm.pap.decode_commit_client.httpx.post", fake_post)
     client = DecodeCommitClient(
-        endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit")
+        endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit"
+    )
     timer = Timer(0.2, release_post.set)
     timer.start()
     start = time.perf_counter()
@@ -568,21 +671,15 @@ def test_commit_client_deduplicates_pending_payloads(monkeypatch):
     posted = []
     posted_event = Event()
 
-    class FakeResp:
-        status_code = 200
-
-        def raise_for_status(self):
-            pass
-
     def fake_post(url, json=None, timeout=None):
         posted.append(json)
         posted_event.set()
-        return FakeResp()
+        return _CommitAckResponse(json["commit_seq"])
 
-    monkeypatch.setattr(
-        "vllm.pap.decode_commit_client.httpx.post", fake_post)
+    monkeypatch.setattr("vllm.pap.decode_commit_client.httpx.post", fake_post)
     client = DecodeCommitClient(
-        endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit")
+        endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit"
+    )
 
     for _ in range(8):
         client.commit(request_id="r", new_seq_len=10, new_token_ids=(1,))
@@ -601,22 +698,16 @@ def test_commit_client_coalesces_queued_request_to_latest_state(monkeypatch):
     release_first_post = Event()
     posted = []
 
-    class FakeResp:
-        status_code = 200
-
-        def raise_for_status(self):
-            pass
-
     def fake_post(url, json=None, timeout=None):
         posted.append(json)
         first_post_started.set()
         release_first_post.wait(timeout=1.0)
-        return FakeResp()
+        return _CommitAckResponse(json["commit_seq"])
 
-    monkeypatch.setattr(
-        "vllm.pap.decode_commit_client.httpx.post", fake_post)
+    monkeypatch.setattr("vllm.pap.decode_commit_client.httpx.post", fake_post)
     client = DecodeCommitClient(
-        endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit")
+        endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit"
+    )
 
     client.commit(request_id="blocker", new_seq_len=1, new_token_ids=(1,))
     assert first_post_started.wait(timeout=1.0)
@@ -629,6 +720,7 @@ def test_commit_client_coalesces_queued_request_to_latest_state(monkeypatch):
     assert client.flush_request("r", timeout_s=1.0)
     assert len(posted) == 2
     assert posted[1]["request_id"] == "r"
+    assert posted[1]["commit_seq"] == 3
     assert posted[1]["new_seq_len"] == 12
     assert posted[1]["new_token_ids"] == [10, 11, 12]
 
@@ -641,28 +733,20 @@ def test_commit_client_flush_request_waits_for_pending(monkeypatch):
     release_post = Event()
     flush_result = []
 
-    class FakeResp:
-        status_code = 200
-
-        def raise_for_status(self):
-            pass
-
     def fake_post(url, json=None, timeout=None):
         post_started.set()
         release_post.wait(timeout=1.0)
-        return FakeResp()
+        return _CommitAckResponse(json["commit_seq"])
 
-    monkeypatch.setattr(
-        "vllm.pap.decode_commit_client.httpx.post", fake_post)
+    monkeypatch.setattr("vllm.pap.decode_commit_client.httpx.post", fake_post)
     client = DecodeCommitClient(
-        endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit")
+        endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit"
+    )
     client.commit(request_id="r", new_seq_len=10, new_token_ids=(1,))
     assert post_started.wait(timeout=1.0)
 
     thread = Thread(
-        target=lambda: flush_result.append(
-            client.flush_request("r", timeout_s=1.0)
-        )
+        target=lambda: flush_result.append(client.flush_request("r", timeout_s=1.0))
     )
     thread.start()
     time.sleep(0.05)
@@ -671,6 +755,160 @@ def test_commit_client_flush_request_waits_for_pending(monkeypatch):
     release_post.set()
     thread.join(timeout=1.0)
     assert flush_result == [True]
+
+
+def test_commit_client_retries_until_ack(monkeypatch):
+    attempts = []
+
+    def fake_post(url, json=None, timeout=None):
+        attempts.append(json["commit_seq"])
+        if len(attempts) < 3:
+            raise RuntimeError("temporary failure")
+        return _CommitAckResponse(json["commit_seq"])
+
+    monkeypatch.setattr("vllm.pap.decode_commit_client.httpx.post", fake_post)
+    client = DecodeCommitClient(
+        endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit",
+        max_attempts=3,
+        retry_initial_s=0,
+    )
+
+    client.commit(request_id="r", new_seq_len=10, new_token_ids=(1,))
+
+    assert client.flush_request("r", timeout_s=1.0)
+    assert attempts == [1, 1, 1]
+
+
+def test_commit_client_flush_fails_without_ack(monkeypatch):
+    attempts = []
+
+    def fake_post(url, json=None, timeout=None):
+        attempts.append(json["commit_seq"])
+        raise RuntimeError("persistent failure")
+
+    monkeypatch.setattr("vllm.pap.decode_commit_client.httpx.post", fake_post)
+    client = DecodeCommitClient(
+        endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit",
+        max_attempts=2,
+        retry_initial_s=0,
+    )
+
+    client.commit(request_id="r", new_seq_len=10, new_token_ids=(1,))
+
+    assert not client.flush_request("r", timeout_s=1.0)
+    assert attempts == [1, 1]
+
+
+class _LeaseReleaseResponse:
+    status_code = 200
+
+    def __init__(self, body):
+        self.body = body
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self.body
+
+
+def test_lease_release_client_retries_until_ack(monkeypatch):
+    attempts = []
+
+    def fake_post(url, json=None, timeout=None):
+        attempts.append(json)
+        if len(attempts) == 1:
+            raise RuntimeError("temporary failure")
+        return _LeaseReleaseResponse({"released": True})
+
+    monkeypatch.setattr("vllm.pap.lease_release_client.httpx.post", fake_post)
+    client = LeaseReleaseClient(
+        endpoint="http://127.0.0.1:9999/v1/pap/prefill/lease-release",
+        max_attempts=2,
+        retry_initial_s=0,
+    )
+
+    assert client.release(request_id="r", lease_id="lease-1")
+    assert len(attempts) == 2
+
+
+def test_lease_release_client_accepts_idempotent_release(monkeypatch):
+    def fake_post(url, json=None, timeout=None):
+        return _LeaseReleaseResponse(
+            {"released": False, "reason": "unknown_or_released_lease"}
+        )
+
+    monkeypatch.setattr("vllm.pap.lease_release_client.httpx.post", fake_post)
+    client = LeaseReleaseClient(
+        endpoint="http://127.0.0.1:9999/v1/pap/prefill/lease-release",
+        max_attempts=1,
+    )
+
+    assert client.release(request_id="r", lease_id="lease-1")
+
+
+def test_lease_release_client_reports_terminal_failure(monkeypatch):
+    attempts = []
+
+    def fake_post(url, json=None, timeout=None):
+        attempts.append(json)
+        raise RuntimeError("persistent failure")
+
+    monkeypatch.setattr("vllm.pap.lease_release_client.httpx.post", fake_post)
+    client = LeaseReleaseClient(
+        endpoint="http://127.0.0.1:9999/v1/pap/prefill/lease-release",
+        max_attempts=2,
+        retry_initial_s=0,
+    )
+
+    assert not client.release(request_id="r", lease_id="lease-1")
+    assert len(attempts) == 2
+
+
+def test_kv_lease_default_ttl_is_finite(monkeypatch):
+    from vllm.pap.kv_lease import PAPKVLeaseRegistry
+
+    monkeypatch.delenv("PAP_KV_LEASE_TTL_SECONDS", raising=False)
+
+    assert PAPKVLeaseRegistry()._ttl_seconds == 300.0
+
+
+def test_kv_lease_refresh_extends_expiry(monkeypatch):
+    from vllm.pap.kv_lease import PAPKVLeaseRegistry
+
+    now = [100.0]
+    monkeypatch.setattr("vllm.pap.kv_lease.time.time", lambda: now[0])
+    registry = PAPKVLeaseRegistry(_ttl_seconds=10.0)
+    lease_id = registry.pin_blocks(request_id="r", block_ids=(1, 2))
+    assert registry._by_lease[lease_id].expires_at == 110.0
+
+    now[0] = 105.0
+
+    assert registry.refresh_lease("r")
+    assert registry._by_lease[lease_id].expires_at == 115.0
+
+
+def test_kv_lease_sweeps_replaced_expired_lease(monkeypatch):
+    from vllm.pap.kv_lease import PAPKVLeaseRegistry
+
+    now = [100.0]
+    monkeypatch.setattr("vllm.pap.kv_lease.time.time", lambda: now[0])
+    registry = PAPKVLeaseRegistry(_ttl_seconds=10.0)
+    old_lease = registry.pin_blocks(request_id="r", block_ids=(1, 2))
+    freed = []
+    registry.stash_deferred_blocks(
+        lease_id=old_lease,
+        blocks=(1, 2),
+        free_callback=freed.append,
+    )
+
+    now[0] = 105.0
+    new_lease = registry.pin_blocks(request_id="r", block_ids=(3, 4))
+    now[0] = 111.0
+
+    assert registry.sweep_expired_leases() == [old_lease]
+    assert freed == [(1, 2)]
+    assert registry.active_lease_id("r") == new_lease
 
 
 # --- Descriptor integration tests ---------------------------------------------
@@ -682,13 +920,19 @@ def test_offload_exec_descriptor_supports_decode_token_ids():
 
     # Default: empty tuple, backward-compatible
     desc = PAPOffloadExecDescriptor(
-        request_id="r", layer_name="l", step=10, scale=0.5,
+        request_id="r",
+        layer_name="l",
+        step=10,
+        scale=0.5,
     )
     assert desc.decode_token_ids == ()
 
     # With token IDs
     desc2 = PAPOffloadExecDescriptor(
-        request_id="r", layer_name="l", step=10, scale=0.5,
+        request_id="r",
+        layer_name="l",
+        step=10,
+        scale=0.5,
         decode_token_ids=(42, 7),
     )
     assert desc2.decode_token_ids == (42, 7)
