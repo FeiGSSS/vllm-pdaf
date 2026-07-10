@@ -722,7 +722,7 @@ def _pap_offload_exec_transport():
     )
 
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=None)
 def _pap_nixl_mailbox_offload_exec_transport(attention_endpoint: str):
     from vllm.pap.data_plane import (
         build_local_fast_offload_exec_transport,
@@ -732,7 +732,7 @@ def _pap_nixl_mailbox_offload_exec_transport(attention_endpoint: str):
     local_rank = _pap_tensor_parallel_rank()
     actor_base = os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "projection")
     endpoint_hash = hashlib.sha1(attention_endpoint.encode("utf-8")).hexdigest()[:12]
-    actor_id = f"{actor_base}-{endpoint_hash}"
+    actor_id = f"{actor_base}-r{local_rank}-{endpoint_hash}"
     transport = _pap_offload_exec_transport_kind()
     if transport in {"local_fast", "local-fast", "cuda_ipc_fast"}:
         return build_local_fast_offload_exec_transport(

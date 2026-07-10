@@ -32,25 +32,43 @@ CLUSTER_READY_WAIT_SECONDS="${CLUSTER_READY_WAIT_SECONDS:-30}"
 PAP_BENCH_SESSION_DRAIN_TIMEOUT="${PAP_BENCH_SESSION_DRAIN_TIMEOUT:-15}"
 
 TOPOLOGY="${PAP_TOPOLOGY:-1pa1p}"
-TOPOLOGY_TAG="1PA1P"
+if [[ ! "${TOPOLOGY}" =~ ^([0-9]+)pa([0-9]+)p$ ]]; then
+  echo "ERROR: unsupported PAP topology: ${TOPOLOGY}" >&2
+  exit 2
+fi
+PA_COUNT="${PAP_PA_COUNT:-${BASH_REMATCH[1]}}"
+PROJECTION_COUNT="${PAP_PROJECTION_COUNT:-${BASH_REMATCH[2]}}"
+if [[ ! "${PA_COUNT}" =~ ^[1-9][0-9]*$ \
+  || ! "${PROJECTION_COUNT}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: PAP topology counts must be positive: ${TOPOLOGY}" >&2
+  exit 2
+fi
+TOPOLOGY_TAG="$(printf '%s' "${TOPOLOGY}" | tr '[:lower:]' '[:upper:]')"
 RESULTS_ROOT="${RESULTS_ROOT:-/home/fei/research/PD/test/baseline/pap/results}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
 RUN_ROOT="${RUN_ROOT:-${RESULTS_ROOT}/runs/${RUN_ID}}"
 RUN_LOG_DIR="${RUN_LOG_DIR:-${RUN_ROOT}/service_logs}"
 
 PAP_PROXY_PORT="${PAP_PROXY_PORT:-9460}"
-PREFILL_PORT="${PAP_PREFILL_PORT:-8100}"
-PROJECTION_PORT="${PAP_PROJECTION_PORT:-8200}"
-ATTENTION_PORT="${PAP_ATTENTION_PORT:-8300}"
-ATTENTION_TCP_PORT="${PAP_ATTENTION_TCP_PORT:-9300}"
-ATTENTION_ZMQ_PORT="${PAP_ATTENTION_ZMQ_PORT:-10300}"
-PROJECTION_ZMQ_PORT="${PAP_PROJECTION_ZMQ_PORT:-11300}"
-PREFILL_NIXL_PORT="${PAP_PREFILL_NIXL_PORT:-5559}"
-VLLM_PREFILL_PORT="${PAP_VLLM_PREFILL_PORT:-50000}"
-VLLM_PROJECTION_PORT="${PAP_VLLM_PROJECTION_PORT:-50020}"
+PREFILL_PORT_BASE="${PAP_PREFILL_PORT_BASE:-${PAP_PREFILL_PORT:-8100}}"
+PROJECTION_PORT_BASE="${PAP_PROJECTION_PORT_BASE:-${PAP_PROJECTION_PORT:-8200}}"
+ATTENTION_PORT_BASE="${PAP_ATTENTION_PORT_BASE:-${PAP_ATTENTION_PORT:-8300}}"
+ATTENTION_TCP_PORT_BASE="${PAP_ATTENTION_TCP_PORT_BASE:-${PAP_ATTENTION_TCP_PORT:-9300}}"
+ATTENTION_ZMQ_PORT_BASE="${PAP_ATTENTION_ZMQ_PORT_BASE:-${PAP_ATTENTION_ZMQ_PORT:-10300}}"
+PROJECTION_ZMQ_PORT_BASE="${PAP_PROJECTION_ZMQ_PORT_BASE:-${PAP_PROJECTION_ZMQ_PORT:-11300}}"
+PREFILL_NIXL_PORT_BASE="${PAP_PREFILL_NIXL_PORT_BASE:-${PAP_PREFILL_NIXL_PORT:-5559}}"
+VLLM_PREFILL_PORT_BASE="${PAP_VLLM_PREFILL_PORT_BASE:-${PAP_VLLM_PREFILL_PORT:-50000}}"
+VLLM_PROJECTION_PORT_BASE="${PAP_VLLM_PROJECTION_PORT_BASE:-${PAP_VLLM_PROJECTION_PORT:-$((VLLM_PREFILL_PORT_BASE + PA_COUNT * 20))}}"
 
-PAP_PREFILL_GPUS="${PAP_PREFILL_GPUS:-1}"
-PAP_PROJECTION_GPUS="${PAP_PROJECTION_GPUS:-2}"
+if (( PA_COUNT == 1 && PROJECTION_COUNT == 1 )); then
+  DEFAULT_PREFILL_GPUS=1
+  DEFAULT_PROJECTION_GPUS=2
+else
+  DEFAULT_PREFILL_GPUS="$(seq -s, 0 $((PA_COUNT - 1)))"
+  DEFAULT_PROJECTION_GPUS="$(seq -s, "${PA_COUNT}" $((PA_COUNT + PROJECTION_COUNT - 1)))"
+fi
+PAP_PREFILL_GPUS="${PAP_PREFILL_GPUS:-${DEFAULT_PREFILL_GPUS}}"
+PAP_PROJECTION_GPUS="${PAP_PROJECTION_GPUS:-${DEFAULT_PROJECTION_GPUS}}"
 PAP_TP_SIZE="${PAP_TP_SIZE:-1}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-512}"
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8192}"
@@ -90,8 +108,8 @@ PAP_REMOTE_ATTENTION_PARALLELISM="${PAP_REMOTE_ATTENTION_PARALLELISM:-16}"
 PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-round_robin}"
 PAP_UNIFIED_KV="${PAP_UNIFIED_KV:-1}"
 PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-32}"
-PAP_DECODE_COMMIT_ENDPOINT="${PAP_DECODE_COMMIT_ENDPOINT:-http://127.0.0.1:${PREFILL_PORT}/v1/pap/prefill/decode-commit}"
-PAP_LEASE_RELEASE_ENDPOINT="${PAP_LEASE_RELEASE_ENDPOINT:-http://127.0.0.1:${PREFILL_PORT}/v1/pap/prefill/lease-release}"
+PAP_DECODE_COMMIT_ENDPOINT="${PAP_DECODE_COMMIT_ENDPOINT:-}"
+PAP_LEASE_RELEASE_ENDPOINT="${PAP_LEASE_RELEASE_ENDPOINT:-}"
 PAP_DECODE_COMMIT_FAIL_CLOSED="${PAP_DECODE_COMMIT_FAIL_CLOSED:-1}"
 PAP_DECODE_COMMIT_TIMEOUT="${PAP_DECODE_COMMIT_TIMEOUT:-0.2}"
 PAP_DECODE_COMMIT_QUEUE_SIZE="${PAP_DECODE_COMMIT_QUEUE_SIZE:-1024}"
@@ -152,9 +170,67 @@ append_no_proxy NO_PROXY
 append_no_proxy no_proxy
 
 PIDS=()
-MPS_STARTED=0
-MPS_PIPE_DIR="${PAP_MPS_PIPE_DIR:-/tmp/pap-mps-${USER:-user}-${TOPOLOGY}-$$/pa-0}"
-MPS_LOG_DIR="${PAP_MPS_LOG_DIR:-${RUN_LOG_DIR}/mps-log/pa-0}"
+PREFILL_GPUS=()
+PROJECTION_GPUS=()
+MPS_PIPE_DIRS=()
+MPS_LOG_DIRS=()
+MPS_STARTED_DIRS=()
+MPS_PIPE_BASE_DIR="${PAP_MPS_PIPE_BASE_DIR:-/tmp/pap-mps-${USER:-user}-${TOPOLOGY}-$$}"
+MPS_LOG_BASE_DIR="${PAP_MPS_LOG_BASE_DIR:-${RUN_LOG_DIR}/mps-log}"
+
+split_csv() {
+  local csv="$1"
+  local -n output="$2"
+  IFS=',' read -r -a output <<< "${csv}"
+}
+
+require_count() {
+  local name="$1"
+  local actual="$2"
+  local expected="$3"
+  (( actual >= expected )) \
+    || die "${name} has ${actual} entries but needs at least ${expected}"
+}
+
+join_by_comma() {
+  local IFS=','
+  echo "$*"
+}
+
+build_pap_groups_spec() {
+  local items=()
+  local idx
+  for (( idx=0; idx<PA_COUNT; idx++ )); do
+    items+=(
+      "127.0.0.1:$((PREFILL_PORT_BASE + idx)):$((PREFILL_NIXL_PORT_BASE + idx)):127.0.0.1:$((ATTENTION_PORT_BASE + idx)):$((ATTENTION_TCP_PORT_BASE + idx)):$((ATTENTION_ZMQ_PORT_BASE + idx))"
+    )
+  done
+  join_by_comma "${items[@]}"
+}
+
+build_projections_spec() {
+  local items=()
+  local idx
+  for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
+    items+=("127.0.0.1:$((PROJECTION_PORT_BASE + idx))")
+  done
+  join_by_comma "${items[@]}"
+}
+
+start_mps_for_pa() {
+  local idx="$1"
+  local gpu="$2"
+  local pipe_dir="${MPS_PIPE_BASE_DIR}/pa-${idx}"
+  local log_dir="${MPS_LOG_BASE_DIR}/pa-${idx}"
+  mkdir -p "${pipe_dir}" "${log_dir}"
+  MPS_PIPE_DIRS[idx]="${pipe_dir}"
+  MPS_LOG_DIRS[idx]="${log_dir}"
+  CUDA_VISIBLE_DEVICES="${gpu}" \
+  CUDA_MPS_PIPE_DIRECTORY="${pipe_dir}" \
+  CUDA_MPS_LOG_DIRECTORY="${log_dir}" \
+  nvidia-cuda-mps-control -d
+  MPS_STARTED_DIRS+=("${pipe_dir}")
+}
 
 cleanup() {
   local code=$?
@@ -170,10 +246,11 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     wait "${pid}" >/dev/null 2>&1 || true
   done
-  if [[ "${MPS_STARTED}" == "1" ]]; then
+  local pipe_dir
+  for pipe_dir in "${MPS_STARTED_DIRS[@]:-}"; do
     timeout 5 bash -c 'echo quit | CUDA_MPS_PIPE_DIRECTORY="$0" nvidia-cuda-mps-control' \
-      "${MPS_PIPE_DIR}" >/dev/null 2>&1 || true
-  fi
+      "${pipe_dir}" >/dev/null 2>&1 || true
+  done
   exit "${code}"
 }
 trap cleanup EXIT
@@ -220,25 +297,38 @@ wait_cluster_stable() {
 }
 
 wait_attention_sessions_drained() {
-  local url="http://127.0.0.1:${ATTENTION_PORT}/v1/pap/attention/sessions"
-  local start response
+  local start response idx active_sessions last_responses
   start="$(date +%s)"
   while true; do
-    response="$(curl -fsS "${url}" 2>/dev/null || true)"
-    if [[ "${response}" == *'"active_sessions":0'* ]]; then
+    active_sessions=0
+    last_responses=""
+    for (( idx=0; idx<PA_COUNT; idx++ )); do
+      response="$(
+        curl -fsS \
+          "http://127.0.0.1:$((ATTENTION_PORT_BASE + idx))/v1/pap/attention/sessions" \
+          2>/dev/null || true
+      )"
+      last_responses+="pa${idx}=${response} "
+      if [[ "${response}" != *'"active_sessions":0'* ]]; then
+        active_sessions=$((active_sessions + 1))
+      fi
+    done
+    if (( active_sessions == 0 )); then
       {
         printf 'STATUS=passed\n'
         printf 'ACTIVE_SESSIONS=0\n'
+        printf 'ATTENTION_INSTANCE_COUNT=%q\n' "${PA_COUNT}"
         printf 'TIMEOUT_SECONDS=%q\n' "${PAP_BENCH_SESSION_DRAIN_TIMEOUT}"
       } > "${RUN_ROOT}/session_drain.env"
-      echo "PAP Attention sessions drained"
+      echo "All ${PA_COUNT} PAP Attention sessions drained"
       return 0
     fi
     check_children_alive
     if (( "$(date +%s)" - start > PAP_BENCH_SESSION_DRAIN_TIMEOUT )); then
       {
         printf 'STATUS=failed\n'
-        printf 'LAST_RESPONSE=%q\n' "${response}"
+        printf 'ACTIVE_ATTENTION_INSTANCES=%q\n' "${active_sessions}"
+        printf 'LAST_RESPONSES=%q\n' "${last_responses}"
         printf 'TIMEOUT_SECONDS=%q\n' "${PAP_BENCH_SESSION_DRAIN_TIMEOUT}"
       } > "${RUN_ROOT}/session_drain.env"
       die "Timed out waiting for PAP Attention sessions to drain"
@@ -248,10 +338,34 @@ wait_attention_sessions_drained() {
 }
 
 capture_attention_fast_path_stats() {
-  local url="http://127.0.0.1:${ATTENTION_PORT}/v1/pap/attention/stats"
-  local output_path="${RUN_ROOT}/attention_fast_path_stats.json"
-  curl -fsS "${url}" -o "${output_path}" \
-    || die "Failed to capture PAP Attention fast-path stats"
+  local idx
+  local stats_paths=()
+  for (( idx=0; idx<PA_COUNT; idx++ )); do
+    local output_path="${RUN_ROOT}/attention_fast_path_stats_${idx}.json"
+    curl -fsS \
+      "http://127.0.0.1:$((ATTENTION_PORT_BASE + idx))/v1/pap/attention/stats" \
+      -o "${output_path}" \
+      || die "Failed to capture PAP Attention ${idx} fast-path stats"
+    stats_paths+=("${output_path}")
+  done
+  if (( PA_COUNT == 1 )); then
+    cp "${stats_paths[0]}" "${RUN_ROOT}/attention_fast_path_stats.json"
+    return
+  fi
+  "${PYTHON_BIN}" - "${RUN_ROOT}/attention_fast_path_stats.json" \
+    "${stats_paths[@]}" <<'PY'
+import json
+import sys
+
+output_path = sys.argv[1]
+instances = []
+for index, path in enumerate(sys.argv[2:]):
+    with open(path, encoding="utf-8") as source:
+        instances.append({"attention_index": index, "stats": json.load(source)})
+with open(output_path, "w", encoding="utf-8") as output:
+    json.dump({"instances": instances}, output, indent=2)
+    output.write("\n")
+PY
 }
 
 ensure_ports_free() {
@@ -306,6 +420,8 @@ write_effective_config() {
   {
     printf 'MODE=%q\n' "pap"
     printf 'TOPOLOGY=%q\n' "${TOPOLOGY}"
+    printf 'PA_COUNT=%q\n' "${PA_COUNT}"
+    printf 'PROJECTION_COUNT=%q\n' "${PROJECTION_COUNT}"
     printf 'MODEL_PATH=%q\n' "${MODEL_PATH}"
     printf 'DATASET_NAME=%q\n' "${DATASET_NAME}"
     printf 'DATASET_PATH=%q\n' "${DATASET_PATH}"
@@ -359,6 +475,10 @@ write_effective_config() {
     printf 'PAP_LOCAL_FAST_SLEEP_AFTER_US=%q\n' "${PAP_LOCAL_FAST_SLEEP_AFTER_US}"
     printf 'PAP_PREFILL_GPUS=%q\n' "${PAP_PREFILL_GPUS}"
     printf 'PAP_PROJECTION_GPUS=%q\n' "${PAP_PROJECTION_GPUS}"
+    printf 'PAP_ROUTING_POLICY=%q\n' "${PAP_ROUTING_POLICY}"
+    printf 'PREFILL_PORT_BASE=%q\n' "${PREFILL_PORT_BASE}"
+    printf 'PROJECTION_PORT_BASE=%q\n' "${PROJECTION_PORT_BASE}"
+    printf 'ATTENTION_PORT_BASE=%q\n' "${ATTENTION_PORT_BASE}"
     printf 'PAP_UNIFIED_KV=%q\n' "${PAP_UNIFIED_KV}"
     printf 'PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS=%q\n' "${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}"
     printf 'PAP_DECODE_COMMIT_ENDPOINT=%q\n' "${PAP_DECODE_COMMIT_ENDPOINT}"
@@ -383,6 +503,70 @@ write_effective_config() {
   } > "${RUN_ROOT}/effective_config.env"
 }
 
+write_topology_manifest() {
+  RUN_ROOT="${RUN_ROOT}" \
+  TOPOLOGY="${TOPOLOGY}" \
+  PA_COUNT="${PA_COUNT}" \
+  PROJECTION_COUNT="${PROJECTION_COUNT}" \
+  PREFILL_GPUS="${PAP_PREFILL_GPUS}" \
+  PROJECTION_GPUS="${PAP_PROJECTION_GPUS}" \
+  PREFILL_PORT_BASE="${PREFILL_PORT_BASE}" \
+  PREFILL_NIXL_PORT_BASE="${PREFILL_NIXL_PORT_BASE}" \
+  ATTENTION_PORT_BASE="${ATTENTION_PORT_BASE}" \
+  ATTENTION_TCP_PORT_BASE="${ATTENTION_TCP_PORT_BASE}" \
+  ATTENTION_ZMQ_PORT_BASE="${ATTENTION_ZMQ_PORT_BASE}" \
+  PROJECTION_PORT_BASE="${PROJECTION_PORT_BASE}" \
+  PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY}" \
+  "${PYTHON_BIN}" - <<'PY'
+import json
+import os
+
+pa_count = int(os.environ["PA_COUNT"])
+projection_count = int(os.environ["PROJECTION_COUNT"])
+prefill_gpus = os.environ["PREFILL_GPUS"].split(",")
+projection_gpus = os.environ["PROJECTION_GPUS"].split(",")
+
+def base(name: str) -> int:
+    return int(os.environ[name])
+
+manifest = {
+    "topology": os.environ["TOPOLOGY"],
+    "routing_policy": os.environ["PAP_ROUTING_POLICY"],
+    "pa_groups": [
+        {
+            "id": index,
+            "gpu": prefill_gpus[index],
+            "prefill": f"http://127.0.0.1:{base('PREFILL_PORT_BASE') + index}",
+            "prefill_nixl_port": base("PREFILL_NIXL_PORT_BASE") + index,
+            "attention": (
+                f"http://127.0.0.1:{base('ATTENTION_PORT_BASE') + index}"
+            ),
+            "attention_tcp_port": base("ATTENTION_TCP_PORT_BASE") + index,
+            "attention_zmq_port": base("ATTENTION_ZMQ_PORT_BASE") + index,
+        }
+        for index in range(pa_count)
+    ],
+    "projections": [
+        {
+            "id": index,
+            "gpu": projection_gpus[index],
+            "endpoint": (
+                f"http://127.0.0.1:{base('PROJECTION_PORT_BASE') + index}"
+            ),
+        }
+        for index in range(projection_count)
+    ],
+}
+with open(
+    os.path.join(os.environ["RUN_ROOT"], "topology_manifest.json"),
+    "w",
+    encoding="utf-8",
+) as output:
+    json.dump(manifest, output, indent=2)
+    output.write("\n")
+PY
+}
+
 write_run_metadata() {
   RUN_ROOT="${RUN_ROOT}" \
   INPUT_LEN="${INPUT_LEN}" \
@@ -404,6 +588,10 @@ write_run_metadata() {
   GIT_COMMIT_SHORT="${GIT_COMMIT_SHORT}" \
   GIT_TRACKED_WORKTREE_DIRTY="${GIT_TRACKED_WORKTREE_DIRTY}" \
   PAP_PROXY_PORT="${PAP_PROXY_PORT}" \
+  TOPOLOGY="${TOPOLOGY}" \
+  PA_COUNT="${PA_COUNT}" \
+  PROJECTION_COUNT="${PROJECTION_COUNT}" \
+  PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY}" \
   RUN_ID="${RUN_ID}" \
   "${PYTHON_BIN}" - <<'PY'
 import json
@@ -412,7 +600,10 @@ from datetime import datetime
 
 metadata = {
     "mode": "pap",
-    "topology": "1pa1p",
+    "topology": os.environ["TOPOLOGY"],
+    "pa_count": int(os.environ["PA_COUNT"]),
+    "projection_count": int(os.environ["PROJECTION_COUNT"]),
+    "routing_policy": os.environ["PAP_ROUTING_POLICY"],
     "run_id": os.environ["RUN_ID"],
     "result_root": os.environ["RUN_ROOT"],
     "input_lens": [os.environ["INPUT_LEN"]],
@@ -498,9 +689,133 @@ audit_correctness_logs() {
   } > "${summary_path}"
 }
 
+audit_xy_routes() {
+  local summary_path="${RUN_ROOT}/routing_audit.env"
+  if RUN_ROOT="${RUN_ROOT}" \
+    RUN_LOG_DIR="${RUN_LOG_DIR}" \
+    NUM_PROMPTS="${NUM_PROMPTS}" \
+    PA_COUNT="${PA_COUNT}" \
+    PROJECTION_COUNT="${PROJECTION_COUNT}" \
+    PREFILL_PORT_BASE="${PREFILL_PORT_BASE}" \
+    PROJECTION_PORT_BASE="${PROJECTION_PORT_BASE}" \
+    PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY}" \
+    "${PYTHON_BIN}" - <<'PY'
+import json
+import os
+import re
+from collections import Counter
+from pathlib import Path
+
+run_root = Path(os.environ["RUN_ROOT"])
+log_dir = Path(os.environ["RUN_LOG_DIR"])
+expected_requests = int(os.environ["NUM_PROMPTS"])
+pa_count = int(os.environ["PA_COUNT"])
+projection_count = int(os.environ["PROJECTION_COUNT"])
+prefill_base = int(os.environ["PREFILL_PORT_BASE"])
+projection_base = int(os.environ["PROJECTION_PORT_BASE"])
+routing_policy = os.environ["PAP_ROUTING_POLICY"]
+route_pattern = re.compile(
+    r"request_id=\S+ pa=[^:\s]+:(\d+).* projection=[^:\s]+:(\d+)"
+)
+
+proxy_text = (log_dir / "proxy.log").read_text(errors="replace")
+routes = [
+    (int(match.group(1)), int(match.group(2)))
+    for match in route_pattern.finditer(proxy_text)
+]
+pa_routes = Counter(pa_port for pa_port, _ in routes)
+projection_routes = Counter(projection_port for _, projection_port in routes)
+expected_pa_routes = Counter()
+expected_projection_routes = Counter()
+errors = []
+for request_number in range(expected_requests):
+    group_index = request_number % pa_count
+    projection_index = request_number % projection_count
+    if routing_policy == "projection_affinity":
+        groups_per_projection = (
+            pa_count + projection_count - 1
+        ) // projection_count
+        projection_index = min(
+            group_index // groups_per_projection,
+            projection_count - 1,
+        )
+    elif routing_policy == "projection_sticky":
+        group_index = projection_index % pa_count
+    elif routing_policy != "round_robin":
+        errors.append(f"unsupported routing policy {routing_policy!r}")
+        group_index = 0
+        projection_index = 0
+    expected_pa_routes[prefill_base + group_index] += 1
+    expected_projection_routes[projection_base + projection_index] += 1
+if len(routes) != expected_requests:
+    errors.append(
+        f"routed request count {len(routes)} != expected {expected_requests}"
+    )
+if pa_routes != expected_pa_routes:
+    errors.append(
+        f"PA route counts {dict(pa_routes)} != expected "
+        f"{dict(expected_pa_routes)}"
+    )
+if projection_routes != expected_projection_routes:
+    errors.append(
+        f"Projection route counts {dict(projection_routes)} != expected "
+        f"{dict(expected_projection_routes)}"
+    )
+
+control_counts = {}
+release_marker = '"POST /v1/pap/prefill/lease-release HTTP/1.1" 200 OK'
+commit_marker = '"POST /v1/pap/prefill/decode-commit HTTP/1.1" 200 OK'
+for index in range(pa_count):
+    port = prefill_base + index
+    prefill_text = (log_dir / f"prefill_{index}.log").read_text(errors="replace")
+    releases = prefill_text.count(release_marker)
+    commits = prefill_text.count(commit_marker)
+    routed = pa_routes[port]
+    control_counts[port] = {
+        "routed_requests": routed,
+        "decode_commit_200": commits,
+        "lease_release_200": releases,
+    }
+    if releases != routed:
+        errors.append(
+            f"PA port {port} release count {releases} != routed {routed}"
+        )
+    if commits < routed:
+        errors.append(
+            f"PA port {port} commit count {commits} < routed {routed}"
+        )
+
+audit = {
+    "status": "failed" if errors else "passed",
+    "route_count": len(routes),
+    "pa_routes": dict(sorted(pa_routes.items())),
+    "projection_routes": dict(sorted(projection_routes.items())),
+    "prefill_control_counts": control_counts,
+    "errors": errors,
+}
+with open(run_root / "routing_audit.json", "w", encoding="utf-8") as output:
+    json.dump(audit, output, indent=2)
+    output.write("\n")
+if errors:
+    raise SystemExit("; ".join(errors))
+PY
+  then
+    {
+      printf 'STATUS=passed\n'
+      printf 'EXPECTED_REQUESTS=%q\n' "${NUM_PROMPTS}"
+      printf 'PA_COUNT=%q\n' "${PA_COUNT}"
+      printf 'PROJECTION_COUNT=%q\n' "${PROJECTION_COUNT}"
+    } > "${summary_path}"
+  else
+    printf 'STATUS=failed\n' > "${summary_path}"
+    die "PAP x:y routing audit failed; see ${RUN_ROOT}/routing_audit.json"
+  fi
+}
+
 cd "${ROOT_DIR}"
 
-[[ "${TOPOLOGY}" == "1pa1p" ]] || die "This runner is intentionally fixed to 1pa1p"
+(( PA_COUNT >= 1 && PROJECTION_COUNT >= 1 )) \
+  || die "PAP topology must contain at least one PA and one Projection"
 [[ "${PAP_TP_SIZE}" == "1" ]] || die "This runner is intentionally fixed to PAP_TP_SIZE=1"
 [[ -x "${PYTHON_BIN}" ]] || die "PYTHON_BIN is not executable: ${PYTHON_BIN}"
 [[ -x "${VLLM_BIN}" ]] || die "VLLM_BIN is not executable: ${VLLM_BIN}"
@@ -512,11 +827,31 @@ cd "${ROOT_DIR}"
 ensure_dataset
 mkdir -p "${RUN_ROOT}" "${RUN_LOG_DIR}"
 capture_git_state
-ensure_ports_free \
-  "${PAP_PROXY_PORT}" "${PREFILL_PORT}" "${PROJECTION_PORT}" \
-  "${ATTENTION_PORT}" "${ATTENTION_TCP_PORT}" "${ATTENTION_ZMQ_PORT}" \
-  "${PROJECTION_ZMQ_PORT}" "${PREFILL_NIXL_PORT}" \
-  "${VLLM_PREFILL_PORT}" "${VLLM_PROJECTION_PORT}"
+split_csv "${PAP_PREFILL_GPUS}" PREFILL_GPUS
+split_csv "${PAP_PROJECTION_GPUS}" PROJECTION_GPUS
+require_count "PAP_PREFILL_GPUS" "${#PREFILL_GPUS[@]}" "${PA_COUNT}"
+require_count \
+  "PAP_PROJECTION_GPUS" "${#PROJECTION_GPUS[@]}" "${PROJECTION_COUNT}"
+
+ports=("${PAP_PROXY_PORT}")
+for (( idx=0; idx<PA_COUNT; idx++ )); do
+  ports+=(
+    "$((PREFILL_PORT_BASE + idx))"
+    "$((ATTENTION_PORT_BASE + idx))"
+    "$((ATTENTION_TCP_PORT_BASE + idx))"
+    "$((ATTENTION_ZMQ_PORT_BASE + idx))"
+    "$((PREFILL_NIXL_PORT_BASE + idx))"
+    "$((VLLM_PREFILL_PORT_BASE + idx * 20))"
+  )
+done
+for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
+  ports+=(
+    "$((PROJECTION_PORT_BASE + idx))"
+    "$((PROJECTION_ZMQ_PORT_BASE + idx))"
+    "$((VLLM_PROJECTION_PORT_BASE + idx * 20))"
+  )
+done
+ensure_ports_free "${ports[@]}"
 
 read -r MODEL_NUM_HEADS MODEL_NUM_KV_HEADS MODEL_HEAD_DIM < <(
   "${PYTHON_BIN}" - "${MODEL_PATH}/config.json" <<'PY'
@@ -541,22 +876,31 @@ PAP_OFFLOAD_EXEC_KV_SIZE="${PAP_OFFLOAD_EXEC_KV_SIZE:-$((PAP_OFFLOAD_EXEC_NUM_KV
 if [[ "${PAP_ENABLE_MPS}" == "1" ]]; then
   command -v nvidia-cuda-mps-control >/dev/null 2>&1 \
     || die "PAP_ENABLE_MPS=1 but nvidia-cuda-mps-control was not found"
-  mkdir -p "${MPS_PIPE_DIR}" "${MPS_LOG_DIR}"
-  CUDA_VISIBLE_DEVICES="${PAP_PREFILL_GPUS}" \
-  CUDA_MPS_PIPE_DIRECTORY="${MPS_PIPE_DIR}" \
-  CUDA_MPS_LOG_DIRECTORY="${MPS_LOG_DIR}" \
-  nvidia-cuda-mps-control -d
-  MPS_STARTED=1
+  for (( idx=0; idx<PA_COUNT; idx++ )); do
+    start_mps_for_pa "${idx}" "${PREFILL_GPUS[idx]}"
+  done
 fi
 
-echo "Starting PAP Attention on GPU ${PAP_PREFILL_GPUS}"
-if [[ "${PAP_ENABLE_MPS}" == "1" ]]; then
+for (( idx=0; idx<PA_COUNT; idx++ )); do
+  attention_port=$((ATTENTION_PORT_BASE + idx))
+  attention_tcp_port=$((ATTENTION_TCP_PORT_BASE + idx))
+  attention_zmq_port=$((ATTENTION_ZMQ_PORT_BASE + idx))
+  prefill_control_port=$((PREFILL_PORT_BASE + idx))
+  decode_commit_endpoint="${PAP_DECODE_COMMIT_ENDPOINT:-http://127.0.0.1:${prefill_control_port}/v1/pap/prefill/decode-commit}"
+  lease_release_endpoint="${PAP_LEASE_RELEASE_ENDPOINT:-http://127.0.0.1:${prefill_control_port}/v1/pap/prefill/lease-release}"
+  attention_env=("CUDA_VISIBLE_DEVICES=${PREFILL_GPUS[idx]}")
+  if [[ "${PAP_ENABLE_MPS}" == "1" ]]; then
+    attention_env=(
+      "CUDA_VISIBLE_DEVICES=0"
+      "CUDA_MPS_PIPE_DIRECTORY=${MPS_PIPE_DIRS[idx]}"
+      "CUDA_MPS_LOG_DIRECTORY=${MPS_LOG_DIRS[idx]}"
+      "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=${PAP_ATTENTION_MPS_PERCENT}"
+    )
+  fi
+  echo "Starting PAP Attention ${idx} on GPU ${PREFILL_GPUS[idx]}"
   env \
-    CUDA_VISIBLE_DEVICES=0 \
-    CUDA_MPS_PIPE_DIRECTORY="${MPS_PIPE_DIR}" \
-    CUDA_MPS_LOG_DIRECTORY="${MPS_LOG_DIR}" \
-    CUDA_MPS_ACTIVE_THREAD_PERCENTAGE="${PAP_ATTENTION_MPS_PERCENT}" \
-    PAP_NIXL_MAILBOX_ACTOR_ID="attention-0-0" \
+    "${attention_env[@]}" \
+    PAP_NIXL_MAILBOX_ACTOR_ID="attention-${idx}-0" \
     PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT}" \
     PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
     PAP_DIRECT_MAILBOX_OUTPUT="${PAP_DIRECT_MAILBOX_OUTPUT}" \
@@ -575,18 +919,69 @@ if [[ "${PAP_ENABLE_MPS}" == "1" ]]; then
     PAP_OFFLOAD_EXEC_NUM_HEADS="${PAP_OFFLOAD_EXEC_NUM_HEADS}" \
     PAP_OFFLOAD_EXEC_NUM_KV_HEADS="${PAP_OFFLOAD_EXEC_NUM_KV_HEADS}" \
     PAP_OFFLOAD_EXEC_HEAD_DIM="${PAP_OFFLOAD_EXEC_HEAD_DIM}" \
-    PAP_DECODE_COMMIT_ENDPOINT="${PAP_DECODE_COMMIT_ENDPOINT}" \
-    PAP_LEASE_RELEASE_ENDPOINT="${PAP_LEASE_RELEASE_ENDPOINT}" \
+    PAP_DECODE_COMMIT_ENDPOINT="${decode_commit_endpoint}" \
+    PAP_LEASE_RELEASE_ENDPOINT="${lease_release_endpoint}" \
     "${PYTHON_BIN}" examples/pap/pap_attention_executor.py \
       --host 127.0.0.1 \
-      --port "${ATTENTION_PORT}" \
-      --tcp-port "${ATTENTION_TCP_PORT}" \
-      --offload-exec-zmq-port "${ATTENTION_ZMQ_PORT}" \
-      > "${RUN_LOG_DIR}/attention_0_0.log" 2>&1 &
-else
+      --port "${attention_port}" \
+      --tcp-port "${attention_tcp_port}" \
+      --offload-exec-zmq-port "${attention_zmq_port}" \
+      > "${RUN_LOG_DIR}/attention_${idx}_0.log" 2>&1 &
+  PIDS+=("$!")
+done
+
+for (( idx=0; idx<PA_COUNT; idx++ )); do
+  wait_for_http \
+    "http://127.0.0.1:$((ATTENTION_PORT_BASE + idx))/health" \
+    "PAP Attention ${idx}"
+done
+
+for (( idx=0; idx<PA_COUNT; idx++ )); do
+  prefill_port=$((PREFILL_PORT_BASE + idx))
+  prefill_nixl_port=$((PREFILL_NIXL_PORT_BASE + idx))
+  prefill_env=("CUDA_VISIBLE_DEVICES=${PREFILL_GPUS[idx]}")
+  if [[ "${PAP_ENABLE_MPS}" == "1" ]]; then
+    prefill_env=(
+      "CUDA_VISIBLE_DEVICES=0"
+      "CUDA_MPS_PIPE_DIRECTORY=${MPS_PIPE_DIRS[idx]}"
+      "CUDA_MPS_LOG_DIRECTORY=${MPS_LOG_DIRS[idx]}"
+      "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=${PAP_PREFILL_MPS_PERCENT}"
+    )
+  fi
+  echo "Starting PAP Prefill ${idx} on GPU ${PREFILL_GPUS[idx]}"
   env \
-    CUDA_VISIBLE_DEVICES="${PAP_PREFILL_GPUS}" \
-    PAP_NIXL_MAILBOX_ACTOR_ID="attention-0-0" \
+    "${prefill_env[@]}" \
+    VLLM_PORT="$((VLLM_PREFILL_PORT_BASE + idx * 20))" \
+    PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
+    PAP_UNIFIED_KV="${PAP_UNIFIED_KV}" \
+    PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}" \
+    PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS}" \
+    VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
+    VLLM_NIXL_SIDE_CHANNEL_PORT="${prefill_nixl_port}" \
+    "${VLLM_BIN}" serve "${MODEL_PATH}" \
+      --port "${prefill_port}" \
+      --host 127.0.0.1 \
+      --enforce-eager \
+      --generation-config vllm \
+      --enable-request-id-headers \
+      --max-model-len "${MAX_MODEL_LEN}" \
+      --max-num-seqs "${MAX_NUM_SEQS}" \
+      --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
+      --tensor-parallel-size "${PAP_TP_SIZE}" \
+      --gpu-memory-utilization "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}" \
+      --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer"}' \
+      > "${RUN_LOG_DIR}/prefill_${idx}.log" 2>&1 &
+  PIDS+=("$!")
+done
+
+for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
+  projection_port=$((PROJECTION_PORT_BASE + idx))
+  projection_zmq_port=$((PROJECTION_ZMQ_PORT_BASE + idx))
+  echo "Starting PAP Projection ${idx} on GPU ${PROJECTION_GPUS[idx]}"
+  env \
+    CUDA_VISIBLE_DEVICES="${PROJECTION_GPUS[idx]}" \
+    VLLM_PORT="$((VLLM_PROJECTION_PORT_BASE + idx * 20))" \
+    PAP_NIXL_MAILBOX_ACTOR_ID="projection-${idx}" \
     PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT}" \
     PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
     PAP_DIRECT_MAILBOX_OUTPUT="${PAP_DIRECT_MAILBOX_OUTPUT}" \
@@ -598,41 +993,15 @@ else
     PAP_LOCAL_FAST_YIELD_ITERS="${PAP_LOCAL_FAST_YIELD_ITERS}" \
     PAP_LOCAL_FAST_SLEEP_US="${PAP_LOCAL_FAST_SLEEP_US}" \
     PAP_LOCAL_FAST_SLEEP_AFTER_US="${PAP_LOCAL_FAST_SLEEP_AFTER_US}" \
-    PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}" \
-    PAP_OFFLOAD_EXEC_LOCAL_RANK=0 \
-    PAP_OFFLOAD_EXEC_Q_SIZE="${PAP_OFFLOAD_EXEC_Q_SIZE}" \
-    PAP_OFFLOAD_EXEC_KV_SIZE="${PAP_OFFLOAD_EXEC_KV_SIZE}" \
-    PAP_OFFLOAD_EXEC_NUM_HEADS="${PAP_OFFLOAD_EXEC_NUM_HEADS}" \
-    PAP_OFFLOAD_EXEC_NUM_KV_HEADS="${PAP_OFFLOAD_EXEC_NUM_KV_HEADS}" \
-    PAP_OFFLOAD_EXEC_HEAD_DIM="${PAP_OFFLOAD_EXEC_HEAD_DIM}" \
-    PAP_DECODE_COMMIT_ENDPOINT="${PAP_DECODE_COMMIT_ENDPOINT}" \
-    PAP_LEASE_RELEASE_ENDPOINT="${PAP_LEASE_RELEASE_ENDPOINT}" \
-    "${PYTHON_BIN}" examples/pap/pap_attention_executor.py \
-      --host 127.0.0.1 \
-      --port "${ATTENTION_PORT}" \
-      --tcp-port "${ATTENTION_TCP_PORT}" \
-      --offload-exec-zmq-port "${ATTENTION_ZMQ_PORT}" \
-      > "${RUN_LOG_DIR}/attention_0_0.log" 2>&1 &
-fi
-PIDS+=("$!")
-
-wait_for_http "http://127.0.0.1:${ATTENTION_PORT}/health" "PAP Attention"
-
-echo "Starting PAP Prefill on GPU ${PAP_PREFILL_GPUS}"
-if [[ "${PAP_ENABLE_MPS}" == "1" ]]; then
-  env \
-    CUDA_VISIBLE_DEVICES=0 \
-    CUDA_MPS_PIPE_DIRECTORY="${MPS_PIPE_DIR}" \
-    CUDA_MPS_LOG_DIRECTORY="${MPS_LOG_DIR}" \
-    CUDA_MPS_ACTIVE_THREAD_PERCENTAGE="${PAP_PREFILL_MPS_PERCENT}" \
-    VLLM_PORT="${VLLM_PREFILL_PORT}" \
-    PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
-    PAP_UNIFIED_KV="${PAP_UNIFIED_KV}" \
-    PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}" \
-    VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
-    VLLM_NIXL_SIDE_CHANNEL_PORT="${PREFILL_NIXL_PORT}" \
+    PAP_OFFLOAD_EXEC_HOST=127.0.0.1 \
+    PAP_OFFLOAD_EXEC_ZMQ_PORT="${projection_zmq_port}" \
+    PAP_ATTENTION_ZMQ_PORT_BASE="${ATTENTION_ZMQ_PORT_BASE}" \
+    PAP_ATTENTION_PORT_BASE="${ATTENTION_PORT_BASE}" \
+    PAP_TP_SIZE="${PAP_TP_SIZE}" \
+    PAP_PROJECTION_KV_UNAWARE=1 \
+    PAP_REMOTE_ATTENTION_PARALLELISM="${PAP_REMOTE_ATTENTION_PARALLELISM}" \
     "${VLLM_BIN}" serve "${MODEL_PATH}" \
-      --port "${PREFILL_PORT}" \
+      --port "${projection_port}" \
       --host 127.0.0.1 \
       --enforce-eager \
       --generation-config vllm \
@@ -641,75 +1010,24 @@ if [[ "${PAP_ENABLE_MPS}" == "1" ]]; then
       --max-num-seqs "${MAX_NUM_SEQS}" \
       --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
       --tensor-parallel-size "${PAP_TP_SIZE}" \
-      --gpu-memory-utilization "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}" \
-      --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer"}' \
-      > "${RUN_LOG_DIR}/prefill_0.log" 2>&1 &
-else
-  env \
-    CUDA_VISIBLE_DEVICES="${PAP_PREFILL_GPUS}" \
-    VLLM_PORT="${VLLM_PREFILL_PORT}" \
-    PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
-    PAP_UNIFIED_KV="${PAP_UNIFIED_KV}" \
-    PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}" \
-    VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
-    VLLM_NIXL_SIDE_CHANNEL_PORT="${PREFILL_NIXL_PORT}" \
-    "${VLLM_BIN}" serve "${MODEL_PATH}" \
-      --port "${PREFILL_PORT}" \
-      --host 127.0.0.1 \
-      --enforce-eager \
-      --generation-config vllm \
-      --enable-request-id-headers \
-      --max-model-len "${MAX_MODEL_LEN}" \
-      --max-num-seqs "${MAX_NUM_SEQS}" \
-      --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
-      --tensor-parallel-size "${PAP_TP_SIZE}" \
-      --gpu-memory-utilization "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}" \
-      --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer"}' \
-      > "${RUN_LOG_DIR}/prefill_0.log" 2>&1 &
-fi
-PIDS+=("$!")
+      --gpu-memory-utilization "${PAP_PROJECTION_GPU_MEMORY_UTILIZATION}" \
+      > "${RUN_LOG_DIR}/projection_${idx}.log" 2>&1 &
+  PIDS+=("$!")
+done
 
-echo "Starting PAP Projection on GPU ${PAP_PROJECTION_GPUS}"
-env \
-  CUDA_VISIBLE_DEVICES="${PAP_PROJECTION_GPUS}" \
-  VLLM_PORT="${VLLM_PROJECTION_PORT}" \
-  PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT}" \
-  PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
-  PAP_DIRECT_MAILBOX_OUTPUT="${PAP_DIRECT_MAILBOX_OUTPUT}" \
-  PAP_LOCAL_FAST_ASYNC_DOORBELL="${PAP_LOCAL_FAST_ASYNC_DOORBELL}" \
-  PAP_LOCAL_FAST_STREAM_ORDERED="${PAP_LOCAL_FAST_STREAM_ORDERED}" \
-  PAP_LOCAL_FAST_SLOT_COUNT="${PAP_LOCAL_FAST_SLOT_COUNT}" \
-  PAP_LOCAL_FAST_BATCH_PLAN="${PAP_LOCAL_FAST_BATCH_PLAN}" \
-  PAP_LOCAL_FAST_SPIN_ITERS="${PAP_LOCAL_FAST_SPIN_ITERS}" \
-  PAP_LOCAL_FAST_YIELD_ITERS="${PAP_LOCAL_FAST_YIELD_ITERS}" \
-  PAP_LOCAL_FAST_SLEEP_US="${PAP_LOCAL_FAST_SLEEP_US}" \
-  PAP_LOCAL_FAST_SLEEP_AFTER_US="${PAP_LOCAL_FAST_SLEEP_AFTER_US}" \
-  PAP_OFFLOAD_EXEC_HOST=127.0.0.1 \
-  PAP_OFFLOAD_EXEC_ZMQ_PORT="${PROJECTION_ZMQ_PORT}" \
-  PAP_ATTENTION_ZMQ_PORT_BASE="${ATTENTION_ZMQ_PORT}" \
-  PAP_ATTENTION_PORT_BASE="${ATTENTION_PORT}" \
-  PAP_TP_SIZE="${PAP_TP_SIZE}" \
-  PAP_PROJECTION_KV_UNAWARE=1 \
-  PAP_REMOTE_ATTENTION_PARALLELISM="${PAP_REMOTE_ATTENTION_PARALLELISM}" \
-  "${VLLM_BIN}" serve "${MODEL_PATH}" \
-    --port "${PROJECTION_PORT}" \
-    --host 127.0.0.1 \
-    --enforce-eager \
-    --generation-config vllm \
-    --enable-request-id-headers \
-    --max-model-len "${MAX_MODEL_LEN}" \
-    --max-num-seqs "${MAX_NUM_SEQS}" \
-    --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
-    --tensor-parallel-size "${PAP_TP_SIZE}" \
-    --gpu-memory-utilization "${PAP_PROJECTION_GPU_MEMORY_UTILIZATION}" \
-    > "${RUN_LOG_DIR}/projection_0.log" 2>&1 &
-PIDS+=("$!")
+for (( idx=0; idx<PA_COUNT; idx++ )); do
+  wait_for_http \
+    "http://127.0.0.1:$((PREFILL_PORT_BASE + idx))/health" \
+    "PAP Prefill ${idx}"
+done
+for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
+  wait_for_http \
+    "http://127.0.0.1:$((PROJECTION_PORT_BASE + idx))/health" \
+    "PAP Projection ${idx}"
+done
 
-wait_for_http "http://127.0.0.1:${PREFILL_PORT}/health" "PAP Prefill"
-wait_for_http "http://127.0.0.1:${PROJECTION_PORT}/health" "PAP Projection"
-
-PAP_GROUPS_SPEC="127.0.0.1:${PREFILL_PORT}:${PREFILL_NIXL_PORT}:127.0.0.1:${ATTENTION_PORT}:${ATTENTION_TCP_PORT}:${ATTENTION_ZMQ_PORT}"
-PROJECTIONS_SPEC="127.0.0.1:${PROJECTION_PORT}"
+PAP_GROUPS_SPEC="$(build_pap_groups_spec)"
+PROJECTIONS_SPEC="$(build_projections_spec)"
 
 echo "Starting multi PAP proxy on port ${PAP_PROXY_PORT}"
 "${PYTHON_BIN}" examples/pap/multi_pap_proxy_server.py \
@@ -725,6 +1043,7 @@ wait_for_http "http://127.0.0.1:${PAP_PROXY_PORT}/health" "multi PAP proxy"
 wait_cluster_stable
 
 write_effective_config
+write_topology_manifest
 write_run_metadata
 
 TAG="${TOPOLOGY_TAG}_i${INPUT_LEN}_o${OUTPUT_LEN}_q${QPS}"
@@ -749,6 +1068,7 @@ timeout "${BENCH_TIMEOUT}" "${VLLM_BIN}" bench serve \
 validate_benchmark_result "${RUN_ROOT}/${TAG}.json"
 wait_attention_sessions_drained
 capture_attention_fast_path_stats
+audit_xy_routes
 audit_correctness_logs
 
 echo "RUN_ROOT=${RUN_ROOT}"

@@ -620,6 +620,37 @@ def test_commit_client_posts_to_endpoint(monkeypatch):
     assert posted["json"]["layer_complete"] is True
 
 
+def test_commit_client_can_route_each_request_to_its_prefill(monkeypatch):
+    """A process-wide client must not pin every PA session to PA0."""
+    from threading import Event
+
+    monkeypatch.delenv("PAP_DECODE_COMMIT_ENDPOINT", raising=False)
+    posted = {}
+    posted_event = Event()
+
+    def fake_post(url, json=None, timeout=None):
+        posted["url"] = url
+        posted["json"] = json
+        posted_event.set()
+        return _CommitAckResponse(json["commit_seq"])
+
+    monkeypatch.setattr("vllm.pap.decode_commit_client.httpx.post", fake_post)
+    client = DecodeCommitClient(endpoint=None)
+    endpoint = "http://127.0.0.1:8103/v1/pap/prefill/decode-commit"
+
+    client.commit(
+        request_id="pa3-request",
+        new_seq_len=10,
+        new_token_ids=(7,),
+        endpoint=endpoint,
+    )
+
+    assert client.flush_request("pa3-request", timeout_s=1.0)
+    assert posted_event.wait(timeout=1.0)
+    assert posted["url"] == endpoint
+    assert posted["json"]["request_id"] == "pa3-request"
+
+
 def test_commit_client_disabled_when_no_endpoint():
     """client.enabled is False when no endpoint is configured."""
     client = DecodeCommitClient(endpoint=None)
@@ -830,6 +861,30 @@ def test_lease_release_client_retries_until_ack(monkeypatch):
 
     assert client.release(request_id="r", lease_id="lease-1")
     assert len(attempts) == 2
+
+
+def test_lease_release_client_can_route_to_session_prefill(monkeypatch):
+    monkeypatch.delenv("PAP_LEASE_RELEASE_ENDPOINT", raising=False)
+    posted = {}
+
+    def fake_post(url, json=None, timeout=None):
+        posted["url"] = url
+        posted["json"] = json
+        return _LeaseReleaseResponse({"released": True})
+
+    monkeypatch.setattr("vllm.pap.lease_release_client.httpx.post", fake_post)
+    client = LeaseReleaseClient(endpoint=None, max_attempts=1)
+    endpoint = "http://127.0.0.1:8103/v1/pap/prefill/lease-release"
+
+    assert client.release(
+        request_id="pa3-request",
+        lease_id="lease-pa3",
+        endpoint=endpoint,
+    )
+    assert posted == {
+        "url": endpoint,
+        "json": {"request_id": "pa3-request", "lease_id": "lease-pa3"},
+    }
 
 
 def test_lease_release_client_accepts_idempotent_release(monkeypatch):

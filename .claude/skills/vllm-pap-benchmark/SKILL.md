@@ -94,6 +94,20 @@ Run the default PAP-vs-PD comparison workload with:
 bash .claude/skills/vllm-pap-benchmark/scripts/run_pap_same_pd_workload.sh
 ```
 
+The same self-contained runner supports arbitrary positive `xPAyP` TP1
+topologies. Set one GPU per PA group and one GPU per Projection instance:
+
+```bash
+PAP_TOPOLOGY=3pa2p \
+PAP_PREFILL_GPUS=1,2,3 \
+PAP_PROJECTION_GPUS=4,5 \
+bash .claude/skills/vllm-pap-benchmark/scripts/run_pap_same_pd_workload.sh
+```
+
+The default routing policy is `round_robin`, which exercises the lazy
+Projection-to-Attention crossbar and uses every configured Projection.
+`projection_affinity` remains available for static pairing.
+
 For a canonical baseline, require a clean tracked worktree:
 
 ```bash
@@ -108,13 +122,29 @@ those are the implementation under test, but it must not delegate to another
 project shell script.
 
 The runner records the full Git commit, tracked dirty state, `git_status.txt`,
-and `tracked_worktree.patch`. It also fails closed by default when the client
-result is incomplete or service logs contain decode-commit, lease-release, or
-unified-KV consistency errors. It waits for Attention's active session count to
-reach zero and records `session_drain.env`, so ACK flush and lease release must
-finish before services are stopped. Set
+`tracked_worktree.patch`, and `topology_manifest.json`. It also fails closed by
+default when the client result is incomplete or service logs contain
+decode-commit, lease-release, or unified-KV consistency errors. For x:y runs,
+`routing_audit.json` verifies the routing policy's expected PA/Projection
+distribution plus per-PA request, commit, and release counts. It waits for all
+Attention instances' active session counts to reach zero and records
+`session_drain.env`, so ACK flush and lease release must finish before services
+are stopped. Set
 `PAP_BENCH_STRICT_CORRECTNESS_AUDIT=0` only for diagnostic failure capture, not
 for a baseline result.
+
+The initial x:y implementation was validated with Qwen3-8B on `1PA2P`,
+`2PA1P`, `2PA2P`, and non-divisible `3PA2P`; fixed 70/30 MPS was additionally
+validated on `2PA1P`. These are correctness smoke runs with shorter output and
+lower QPS, not canonical PD performance comparisons:
+
+```text
+/home/fei/research/PD/vllm-pap/test/baseline/pap/results/runs/20260710_xpayp_1pa2p_smoke_v1
+/home/fei/research/PD/vllm-pap/test/baseline/pap/results/runs/20260710_xpayp_2pa1p_smoke_v1
+/home/fei/research/PD/vllm-pap/test/baseline/pap/results/runs/20260710_xpayp_2pa2p_smoke_v1
+/home/fei/research/PD/vllm-pap/test/baseline/pap/results/runs/20260710_xpayp_3pa2p_smoke_v1
+/home/fei/research/PD/vllm-pap/test/baseline/pap/results/runs/20260710_xpayp_2pa1p_mps_smoke_v1
+```
 
 The correctness-valid clean baseline for `e9044a88c` consists of three runs:
 
@@ -203,6 +233,8 @@ Verify the generated run directory:
 
 - Read `effective_config.env`.
 - Read `run_metadata.json`.
+- Read `topology_manifest.json`.
+- Read `routing_audit.env` and require `STATUS=passed`.
 - Read `correctness_audit.env` and require `STATUS=passed`.
 - Read `session_drain.env` and require `STATUS=passed` and `ACTIVE_SESSIONS=0`.
 - Confirm `git_tracked_worktree_dirty` is false for canonical baselines.

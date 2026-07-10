@@ -4,6 +4,7 @@
 from vllm.model_executor.models.qwen3 import (
     _pap_decode_token_rows_for_indices,
     _pap_endpoint_for_tp_rank,
+    _pap_nixl_mailbox_offload_exec_transport,
     _pap_offload_exec_step_groups,
     _pap_offload_exec_session_request_id,
 )
@@ -33,6 +34,33 @@ def test_pap_endpoint_for_tp_rank_selects_sequence_entry() -> None:
         )
         == "http://127.0.0.1:8301"
     )
+
+
+def test_pap_projection_mailbox_actor_id_includes_tp_rank(
+    monkeypatch,
+) -> None:
+    built = []
+
+    def fake_build_transport(*, actor_id, local_rank):
+        built.append((actor_id, local_rank))
+        return object()
+
+    monkeypatch.setenv("PAP_NIXL_MAILBOX_ACTOR_ID", "projection-3")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_LOCAL_RANK", "1")
+    monkeypatch.setattr(
+        "vllm.pap.data_plane.build_nixl_mailbox_offload_exec_transport",
+        fake_build_transport,
+    )
+    _pap_nixl_mailbox_offload_exec_transport.cache_clear()
+    try:
+        _pap_nixl_mailbox_offload_exec_transport("http://127.0.0.1:8302")
+    finally:
+        _pap_nixl_mailbox_offload_exec_transport.cache_clear()
+
+    assert len(built) == 1
+    actor_id, local_rank = built[0]
+    assert actor_id.startswith("projection-3-r1-")
+    assert local_rank == 1
 
 
 def test_pap_decode_token_rows_for_indices_selects_request_tokens() -> None:

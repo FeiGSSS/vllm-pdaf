@@ -96,14 +96,14 @@ PAP_KV_LOCALITY_PROFILE="${PAP_KV_LOCALITY_PROFILE:-0}"
 PAP_KV_LOCALITY_PROFILE_MIN_BATCH="${PAP_KV_LOCALITY_PROFILE_MIN_BATCH:-1}"
 PAP_UNIFIED_KV="${PAP_UNIFIED_KV:-1}"
 PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-32}"
-PAP_DECODE_COMMIT_ENDPOINT="${PAP_DECODE_COMMIT_ENDPOINT:-http://127.0.0.1:${PREFILL_PORT_BASE}/v1/pap/prefill/decode-commit}"
+PAP_DECODE_COMMIT_ENDPOINT="${PAP_DECODE_COMMIT_ENDPOINT:-}"
 PAP_DECODE_COMMIT_TIMEOUT="${PAP_DECODE_COMMIT_TIMEOUT:-0.2}"
 PAP_DECODE_COMMIT_QUEUE_SIZE="${PAP_DECODE_COMMIT_QUEUE_SIZE:-1024}"
 PAP_DECODE_COMMIT_MAX_ATTEMPTS="${PAP_DECODE_COMMIT_MAX_ATTEMPTS:-8}"
 PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS="${PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS:-0.05}"
 PAP_DECODE_COMMIT_RETRY_MAX_SECONDS="${PAP_DECODE_COMMIT_RETRY_MAX_SECONDS:-0.5}"
 PAP_DECODE_COMMIT_FLUSH_TIMEOUT="${PAP_DECODE_COMMIT_FLUSH_TIMEOUT:-5.0}"
-PAP_LEASE_RELEASE_ENDPOINT="${PAP_LEASE_RELEASE_ENDPOINT:-http://127.0.0.1:${PREFILL_PORT_BASE}/v1/pap/prefill/lease-release}"
+PAP_LEASE_RELEASE_ENDPOINT="${PAP_LEASE_RELEASE_ENDPOINT:-}"
 PAP_LEASE_RELEASE_TIMEOUT="${PAP_LEASE_RELEASE_TIMEOUT:-0.2}"
 PAP_LEASE_RELEASE_MAX_ATTEMPTS="${PAP_LEASE_RELEASE_MAX_ATTEMPTS:-5}"
 PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS="${PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS:-0.05}"
@@ -419,6 +419,9 @@ if [[ "$ENABLE_MPS" == "1" ]]; then
 fi
 
 for (( idx=0; idx<PA_COUNT; idx++ )); do
+    prefill_control_port=$((PREFILL_PORT_BASE + idx))
+    decode_commit_endpoint="${PAP_DECODE_COMMIT_ENDPOINT:-http://127.0.0.1:${prefill_control_port}/v1/pap/prefill/decode-commit}"
+    lease_release_endpoint="${PAP_LEASE_RELEASE_ENDPOINT:-http://127.0.0.1:${prefill_control_port}/v1/pap/prefill/lease-release}"
     for (( rank=0; rank<PAP_TP_SIZE; rank++ )); do
         gpu="$(gpu_group_rank PREFILL_GPUS "$idx" "$rank")"
         attention_port=$((ATTENTION_PORT_BASE + idx * PAP_TP_SIZE + rank))
@@ -441,8 +444,8 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
                 PAP_ATTENTION_KV_DEBUG="$PAP_ATTENTION_KV_DEBUG" \
                 PAP_KV_LOCALITY_PROFILE="$PAP_KV_LOCALITY_PROFILE" \
                 PAP_KV_LOCALITY_PROFILE_MIN_BATCH="$PAP_KV_LOCALITY_PROFILE_MIN_BATCH" \
-                PAP_DECODE_COMMIT_ENDPOINT="$PAP_DECODE_COMMIT_ENDPOINT" \
-                PAP_LEASE_RELEASE_ENDPOINT="$PAP_LEASE_RELEASE_ENDPOINT" \
+                PAP_DECODE_COMMIT_ENDPOINT="$decode_commit_endpoint" \
+                PAP_LEASE_RELEASE_ENDPOINT="$lease_release_endpoint" \
                 .venv/bin/python examples/pap/pap_attention_executor.py \
                 --host 127.0.0.1 \
                 --port "$attention_port" \
@@ -464,8 +467,8 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
             PAP_ATTENTION_KV_DEBUG="$PAP_ATTENTION_KV_DEBUG" \
             PAP_KV_LOCALITY_PROFILE="$PAP_KV_LOCALITY_PROFILE" \
             PAP_KV_LOCALITY_PROFILE_MIN_BATCH="$PAP_KV_LOCALITY_PROFILE_MIN_BATCH" \
-            PAP_DECODE_COMMIT_ENDPOINT="$PAP_DECODE_COMMIT_ENDPOINT" \
-            PAP_LEASE_RELEASE_ENDPOINT="$PAP_LEASE_RELEASE_ENDPOINT" \
+            PAP_DECODE_COMMIT_ENDPOINT="$decode_commit_endpoint" \
+            PAP_LEASE_RELEASE_ENDPOINT="$lease_release_endpoint" \
             .venv/bin/python examples/pap/pap_attention_executor.py \
             --host 127.0.0.1 \
             --port "$attention_port" \
@@ -546,6 +549,7 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     echo "Starting PAP Projection vLLM metadata-only $idx on GPU(s) $gpu_csv"
     CUDA_VISIBLE_DEVICES="$gpu_csv" \
     VLLM_PORT="$((VLLM_PORT_BASE + PA_COUNT * 20 + idx * 20))" \
+    PAP_NIXL_MAILBOX_ACTOR_ID="projection-${idx}" \
     PAP_OFFLOAD_EXEC_TRANSPORT="$PAP_OFFLOAD_EXEC_TRANSPORT" \
     PAP_OFFLOAD_KV_TRANSPORT="$PAP_OFFLOAD_KV_TRANSPORT" \
     PAP_OFFLOAD_EXEC_HOST=127.0.0.1 \

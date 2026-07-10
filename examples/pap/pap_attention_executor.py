@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import logging
 import os
 import socket
@@ -50,6 +51,13 @@ logger = logging.getLogger("pap_attention")
 
 _commit_client: _DecodeCommitClient | None = None
 _lease_release_client: _LeaseReleaseClient | None = None
+
+_DECODE_COMMIT_PATH = "/v1/pap/prefill/decode-commit"
+_LEASE_RELEASE_PATH = "/v1/pap/prefill/lease-release"
+
+
+def _prefill_control_endpoint(prefill_endpoint: str, path: str) -> str:
+    return f"{str(prefill_endpoint).rstrip('/')}{path}"
 
 
 def _get_commit_client() -> _DecodeCommitClient:
@@ -485,6 +493,7 @@ class PAPOffloadExecSessionEntry:
     """Shape metadata for one OFFLOAD_EXEC request in a batch."""
 
     session_request_id: str
+    prefill_endpoint: str
     q_size: int
     kv_size: int
     num_heads: int
@@ -804,8 +813,12 @@ class PAPAttentionRegistry:
         while len(self._decode_slot_plan_cache) > limit:
             self._decode_slot_plan_cache.popitem(last=False)
 
-    def _release_session_locked(self, request_id: str) -> tuple[bool, str | None]:
-        existed = self._sessions.pop(request_id, None) is not None
+    def _release_session_locked(
+        self, request_id: str
+    ) -> tuple[bool, str | None, str | None]:
+        session = self._sessions.pop(request_id, None)
+        existed = session is not None
+        prefill_endpoint = None if session is None else session.prefill_endpoint
         self._layer_events.pop(request_id, None)
         self._decode_kv.pop(request_id, None)
         self._prefill_kv.pop(request_id, None)
@@ -833,12 +846,16 @@ class PAPAttentionRegistry:
             if cached_request_id == request_id or cached_session_id == request_id:
                 self._request_id_resolution_cache.pop(cached_request_id, None)
         self._attention_sessions.free_session(request_id)
-        return existed, lease_id
+        return existed, lease_id, prefill_endpoint
 
-    def _replace_existing_session_locked(self, request_id: str) -> str | None:
+    def _replace_existing_session_locked(
+        self, request_id: str
+    ) -> tuple[str | None, str | None]:
         if request_id in self._sessions:
-            _existed, lease_id = self._release_session_locked(request_id)
-            return lease_id
+            _existed, lease_id, prefill_endpoint = self._release_session_locked(
+                request_id
+            )
+            return lease_id, prefill_endpoint
 
         self._layer_events.pop(request_id, None)
         self._decode_kv.pop(request_id, None)
@@ -861,25 +878,35 @@ class PAPAttentionRegistry:
         self._attention_sessions.free_session(request_id)
         self._sessions.pop(request_id, None)
         self._request_id_resolution_cache.pop(request_id, None)
-        return lease_id
+        return lease_id, None
 
     def release_session(self, request_id: str) -> bool:
         with self._lock:
-            existed, lease_id = self._release_session_locked(request_id)
+            existed, lease_id, prefill_endpoint = self._release_session_locked(
+                request_id
+            )
         commit_client = _get_commit_client()
-        if commit_client.enabled and not commit_client.flush_request(request_id):
+        if not commit_client.flush_request(request_id):
             logger.warning(
                 "PAP decode commit flush timed out before lease release request_id=%s",
                 request_id,
             )
             return existed
         if lease_id is not None:
+            release_endpoint = (
+                None
+                if prefill_endpoint is None
+                else _prefill_control_endpoint(
+                    prefill_endpoint,
+                    _LEASE_RELEASE_PATH,
+                )
+            )
             _get_lease_release_client().release(
                 request_id=request_id,
                 lease_id=lease_id,
+                endpoint=release_endpoint,
             )
-        if commit_client.enabled:
-            commit_client.forget_request(request_id)
+        commit_client.forget_request(request_id)
         return existed
 
     def append_decode_kv_to_unified_prefill_cache(
@@ -1089,8 +1116,10 @@ class PAPAttentionRegistry:
             kv_size=registration.kv_size,
         )
         with self._lock:
-            replaced_lease_id = self._replace_existing_session_locked(
-                registration.request_id
+            replaced_lease_id, replaced_prefill_endpoint = (
+                self._replace_existing_session_locked(
+                    registration.request_id
+                )
             )
             self._session_epochs[registration.request_id] = (
                 self._next_session_epoch
@@ -1113,21 +1142,28 @@ class PAPAttentionRegistry:
             )
         if replaced_lease_id is not None:
             commit_client = _get_commit_client()
-            commits_acked = not commit_client.enabled or commit_client.flush_request(
-                registration.request_id
-            )
+            commits_acked = commit_client.flush_request(registration.request_id)
             if not commits_acked:
                 logger.warning(
                     "PAP decode commit flush timed out before replaced "
                     "lease release request_id=%s",
                     registration.request_id,
                 )
-            if commit_client.enabled and commits_acked:
+            if commits_acked:
                 commit_client.forget_request(registration.request_id)
             if commits_acked:
+                release_endpoint = (
+                    None
+                    if replaced_prefill_endpoint is None
+                    else _prefill_control_endpoint(
+                        replaced_prefill_endpoint,
+                        _LEASE_RELEASE_PATH,
+                    )
+                )
                 _get_lease_release_client().release(
                     request_id=registration.request_id,
                     lease_id=replaced_lease_id,
+                    endpoint=release_endpoint,
                 )
         logger.info(
             "registered PAP attention session request_id=%s "
@@ -1194,6 +1230,7 @@ class PAPAttentionRegistry:
                 if session_entry is None:
                     session_entry = PAPOffloadExecSessionEntry(
                         session_request_id=session_request_id,
+                        prefill_endpoint=session.prefill_endpoint,
                         q_size=q_size,
                         kv_size=kv_size,
                         num_heads=cache_key[3],
@@ -3182,16 +3219,19 @@ def compute_offload_exec_batch_output(
             )
             trace_stats["post_compute_done_ns"] = float(time.perf_counter_ns())
         commit_client = _get_commit_client()
-        if commit_client.enabled:
-            for index, request_id in enumerate(request_ids):
-                new_seq_len = commit_new_seq_lens[index]
-                if new_seq_len is None:
-                    continue
-                commit_client.commit(
-                    request_id=request_id,
-                    new_seq_len=new_seq_len,
-                    new_token_ids=token_rows[index],
-                )
+        for index, request_id in enumerate(request_ids):
+            new_seq_len = commit_new_seq_lens[index]
+            if new_seq_len is None:
+                continue
+            commit_client.commit(
+                request_id=request_id,
+                new_seq_len=new_seq_len,
+                new_token_ids=token_rows[index],
+                endpoint=_prefill_control_endpoint(
+                    session_entries[index].prefill_endpoint,
+                    _DECODE_COMMIT_PATH,
+                ),
+            )
         return unified_output
 
     raise RuntimeError(
@@ -3876,8 +3916,12 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
     app = FastAPI(title="PAP Attention Executor")
     app.state.registry = registry
     app.state.offload_exec_transport = None
+    app.state.offload_exec_transports = {}
     app.state.offload_exec_lock = Lock()
     app.state.offload_exec_mailbox_loop_started = False
+    app.state.offload_exec_mailbox_loop_peers = set()
+    app.state.offload_exec_local_rank = 0
+    app.state.offload_exec_actor_base = "attention"
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
@@ -3941,18 +3985,35 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
     async def bind_offload_exec_mailbox(
         request: PAPOffloadExecMailboxBindRequest,
     ) -> dict[str, Any]:
-        transport = app.state.offload_exec_transport
-        if transport is None or not hasattr(transport, "local_agent_metadata"):
-            raise HTTPException(
-                status_code=409,
-                detail="PAP OFFLOAD_EXEC mailbox transport is not initialized",
-            )
         peer_metadata = base64.b64decode(request.agent_metadata_b64.encode("ascii"))
+        peer_key = hashlib.sha1(peer_metadata).hexdigest()[:16]
         with app.state.offload_exec_lock:
-            if not getattr(transport, "_pap_mailbox_bound", False):
+            transport = app.state.offload_exec_transports.get(peer_key)
+            if transport is None:
+                initial_transport = app.state.offload_exec_transport
+                if (
+                    not app.state.offload_exec_transports
+                    and initial_transport is not None
+                ):
+                    transport = initial_transport
+                else:
+                    transport = _build_attention_offload_exec_transport(
+                        actor_id=(
+                            f"{app.state.offload_exec_actor_base}-{peer_key}"
+                        ),
+                        local_rank=app.state.offload_exec_local_rank,
+                    )
+                if not hasattr(transport, "local_agent_metadata"):
+                    raise HTTPException(
+                        status_code=409,
+                        detail=(
+                            "PAP OFFLOAD_EXEC mailbox transport is not initialized"
+                        ),
+                    )
                 transport.bind_peer(peer_metadata)
                 transport._pap_mailbox_bound = True
-            if not app.state.offload_exec_mailbox_loop_started:
+                app.state.offload_exec_transports[peer_key] = transport
+            if peer_key not in app.state.offload_exec_mailbox_loop_peers:
                 Thread(
                     target=run_offload_exec_mailbox_loop,
                     kwargs={
@@ -3960,8 +4021,9 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
                         "transport": transport,
                     },
                     daemon=True,
-                    name="pap-offload-exec-mailbox-loop",
+                    name=f"pap-offload-exec-mailbox-loop-{peer_key}",
                 ).start()
+                app.state.offload_exec_mailbox_loop_peers.add(peer_key)
                 app.state.offload_exec_mailbox_loop_started = True
         return {
             "agent_metadata_b64": base64.b64encode(
@@ -4220,28 +4282,49 @@ def maybe_start_offload_exec_transport(
     if zmq_port is None:
         return
     local_rank = int(os.environ.get("PAP_OFFLOAD_EXEC_LOCAL_RANK", "0"))
+    actor_base = os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "attention")
+    app.state.offload_exec_local_rank = local_rank
+    app.state.offload_exec_actor_base = actor_base
+    app.state.offload_exec_transport = _build_attention_offload_exec_transport(
+        actor_id=actor_base,
+        local_rank=local_rank,
+    )
     transport = os.environ.get("PAP_OFFLOAD_EXEC_TRANSPORT", "nixl_mailbox").lower()
     if transport in {"nixl", "nixl_mailbox"}:
-        app.state.offload_exec_transport = build_nixl_mailbox_offload_exec_transport(
-            actor_id=os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "attention"),
-            local_rank=local_rank,
-        )
         logger.info(
             "PAP Attention OFFLOAD_EXEC NIXL mailbox initialized local_rank=%d",
             local_rank,
         )
         return
     if transport in {"local_fast", "local-fast", "cuda_ipc_fast"}:
-        app.state.offload_exec_transport = build_local_fast_offload_exec_transport(
-            actor_id=os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "attention"),
-            local_rank=local_rank,
-        )
         logger.info(
             "PAP Attention OFFLOAD_EXEC local_fast CUDA IPC ring "
             "initialized local_rank=%d",
             local_rank,
         )
         return
+    raise RuntimeError(
+        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; use "
+        "nixl_mailbox or local_fast"
+    )
+
+
+def _build_attention_offload_exec_transport(
+    *,
+    actor_id: str,
+    local_rank: int,
+) -> Any:
+    transport = os.environ.get("PAP_OFFLOAD_EXEC_TRANSPORT", "nixl_mailbox").lower()
+    if transport in {"nixl", "nixl_mailbox"}:
+        return build_nixl_mailbox_offload_exec_transport(
+            actor_id=actor_id,
+            local_rank=local_rank,
+        )
+    if transport in {"local_fast", "local-fast", "cuda_ipc_fast"}:
+        return build_local_fast_offload_exec_transport(
+            actor_id=actor_id,
+            local_rank=local_rank,
+        )
     raise RuntimeError(
         f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; use "
         "nixl_mailbox or local_fast"

@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import logging
 from contextlib import suppress
 from pathlib import Path
@@ -198,6 +200,83 @@ def test_attention_executor_starts_offload_exec_transport(monkeypatch) -> None:
         "actor_id": "attention",
         "local_rank": 2,
     }
+
+
+def test_attention_executor_binds_each_projection_to_distinct_transport(
+    monkeypatch,
+) -> None:
+    from examples.pap import pap_attention_executor as executor_module
+
+    class FakeTransport:
+        def __init__(self, actor_id: str, local_rank: int) -> None:
+            self.actor_id = actor_id
+            self.local_rank = local_rank
+            self.local_agent_metadata = f"local:{actor_id}".encode()
+            self.bound_peers: list[bytes] = []
+
+        def bind_peer(self, peer_metadata: bytes) -> None:
+            self.bound_peers.append(peer_metadata)
+
+    transports: list[FakeTransport] = []
+    loops_started: list[FakeTransport] = []
+    loops_ready = Event()
+
+    def fake_build_transport(*, actor_id: str, local_rank: int) -> FakeTransport:
+        transport = FakeTransport(actor_id, local_rank)
+        transports.append(transport)
+        return transport
+
+    def fake_mailbox_loop(*, registry, transport) -> None:
+        loops_started.append(transport)
+        if len(loops_started) == 2:
+            loops_ready.set()
+
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_LOCAL_RANK", "2")
+    monkeypatch.setenv("PAP_NIXL_MAILBOX_ACTOR_ID", "attention-4")
+    monkeypatch.setattr(
+        executor_module,
+        "_build_attention_offload_exec_transport",
+        fake_build_transport,
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "run_offload_exec_mailbox_loop",
+        fake_mailbox_loop,
+    )
+
+    app = create_app()
+    maybe_start_offload_exec_transport(app=app, host="127.0.0.1", zmq_port=10300)
+    client = _ASGITestClient(app)
+    peers = (b"projection-a", b"projection-b")
+    responses = []
+    for peer_metadata in peers:
+        responses.append(
+            client.post(
+                "/v1/pap/attention/offload-exec-mailbox/bind",
+                json={
+                    "agent_metadata_b64": base64.b64encode(peer_metadata).decode()
+                },
+            )
+        )
+
+    assert all(response.status_code == 200 for response in responses)
+    assert len(transports) == 2
+    assert transports[0].actor_id == "attention-4"
+    peer_b_hash = hashlib.sha1(peers[1]).hexdigest()[:16]
+    assert transports[1].actor_id == f"attention-4-{peer_b_hash}"
+    assert transports[0].local_rank == transports[1].local_rank == 2
+    assert transports[0].bound_peers == [peers[0]]
+    assert transports[1].bound_peers == [peers[1]]
+    assert loops_ready.wait(timeout=1.0)
+    assert set(loops_started) == set(transports)
+
+    rebound = client.post(
+        "/v1/pap/attention/offload-exec-mailbox/bind",
+        json={"agent_metadata_b64": base64.b64encode(peers[0]).decode()},
+    )
+    assert rebound.status_code == 200
+    assert len(transports) == 2
+    assert transports[0].bound_peers == [peers[0]]
 
 
 def test_attention_executor_rejects_nccl_offload_exec_transport(monkeypatch) -> None:
@@ -512,8 +591,10 @@ def test_unified_offload_exec_commit_uses_descriptor_decode_token_ids(
     class FakeCommitClient:
         enabled = True
 
-        def commit(self, *, request_id, new_seq_len, new_token_ids):
-            commits.append((request_id, new_seq_len, tuple(new_token_ids)))
+        def commit(self, *, request_id, new_seq_len, new_token_ids, endpoint):
+            commits.append(
+                (request_id, new_seq_len, tuple(new_token_ids), endpoint)
+            )
 
     monkeypatch.setattr(
         registry,
@@ -551,7 +632,14 @@ def test_unified_offload_exec_commit_uses_descriptor_decode_token_ids(
     )
 
     torch.testing.assert_close(output, torch.tensor([[2.0, 0.0]]))
-    assert commits == [("req-a", 2, (42,))]
+    assert commits == [
+        (
+            "req-a",
+            2,
+            (42,),
+            "http://localhost:8100/v1/pap/prefill/decode-commit",
+        )
+    ]
 
 
 def test_unified_offload_exec_overlap_step_does_not_commit(
@@ -599,8 +687,10 @@ def test_unified_offload_exec_overlap_step_does_not_commit(
     class FakeCommitClient:
         enabled = True
 
-        def commit(self, *, request_id, new_seq_len, new_token_ids):
-            commits.append((request_id, new_seq_len, tuple(new_token_ids)))
+        def commit(self, *, request_id, new_seq_len, new_token_ids, endpoint):
+            commits.append(
+                (request_id, new_seq_len, tuple(new_token_ids), endpoint)
+            )
 
     monkeypatch.setattr(
         executor_module.torch.ops._C_cache_ops,
@@ -1059,8 +1149,8 @@ def test_attention_registry_release_session_notifies_prefill_lease(
     class FakeLeaseReleaseClient:
         enabled = True
 
-        def release(self, *, request_id, lease_id):
-            events.append(("release", request_id, lease_id))
+        def release(self, *, request_id, lease_id, endpoint):
+            events.append(("release", request_id, lease_id, endpoint))
             released.append((request_id, lease_id))
 
     monkeypatch.setattr(
@@ -1090,7 +1180,12 @@ def test_attention_registry_release_session_notifies_prefill_lease(
     assert released == [("req-lease", "lease-1")]
     assert events == [
         ("flush", "req-lease"),
-        ("release", "req-lease", "lease-1"),
+        (
+            "release",
+            "req-lease",
+            "lease-1",
+            "http://localhost:8100/v1/pap/prefill/lease-release",
+        ),
         ("forget", "req-lease"),
     ]
     assert registry.get_session("req-lease") is None
@@ -1114,8 +1209,8 @@ def test_attention_registry_does_not_release_lease_before_commit_ack(
             events.append(("forget", request_id))
 
     class FakeLeaseReleaseClient:
-        def release(self, *, request_id, lease_id):
-            events.append(("release", request_id, lease_id))
+        def release(self, *, request_id, lease_id, endpoint):
+            events.append(("release", request_id, lease_id, endpoint))
 
     monkeypatch.setattr(
         executor_module,
@@ -1163,8 +1258,8 @@ def test_attention_registry_reregister_releases_replaced_prefill_lease(
     class FakeLeaseReleaseClient:
         enabled = True
 
-        def release(self, *, request_id, lease_id):
-            events.append(("release", request_id, lease_id))
+        def release(self, *, request_id, lease_id, endpoint):
+            events.append(("release", request_id, lease_id, endpoint))
             released.append((request_id, lease_id))
 
     monkeypatch.setattr(
@@ -1201,7 +1296,12 @@ def test_attention_registry_reregister_releases_replaced_prefill_lease(
     assert events == [
         ("flush", "req-reuse"),
         ("forget", "req-reuse"),
-        ("release", "req-reuse", "lease-old"),
+        (
+            "release",
+            "req-reuse",
+            "lease-old",
+            "http://localhost:8100/v1/pap/prefill/lease-release",
+        ),
     ]
     session = registry.get_session("req-reuse")
     assert session is not None

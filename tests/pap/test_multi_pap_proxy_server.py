@@ -173,6 +173,32 @@ def test_select_instances_can_group_pa_by_projection_affinity() -> None:
     ]
 
 
+def test_projection_affinity_is_stable_for_non_divisible_xy_topology() -> None:
+    groups = [
+        PAPGroup("127.0.0.1", 8100 + idx, 5559 + idx, "127.0.0.1", 8300 + idx)
+        for idx in range(5)
+    ]
+    projections = [
+        ProjectionInstance("127.0.0.1", 8200 + idx) for idx in range(3)
+    ]
+
+    selected = [
+        select_instances(
+            request_number,
+            groups,
+            projections,
+            routing_policy="projection_affinity",
+        )
+        for request_number in range(15)
+    ]
+    projection_by_group: dict[int, set[int]] = {}
+    for group, projection in selected:
+        projection_by_group.setdefault(group.prefill_port, set()).add(projection.port)
+
+    assert all(len(ports) == 1 for ports in projection_by_group.values())
+    assert set().union(*projection_by_group.values()) == {8200, 8201, 8202}
+
+
 def test_select_instances_can_stick_pa_to_projection() -> None:
     groups = [
         PAPGroup("127.0.0.1", 8100 + idx, 5559 + idx, "127.0.0.1", 8300 + idx)

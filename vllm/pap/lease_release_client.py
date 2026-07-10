@@ -49,15 +49,25 @@ class LeaseReleaseClient:
     def enabled(self) -> bool:
         return bool(self.endpoint)
 
-    def release(self, *, request_id: str, lease_id: str) -> bool:
-        if not self.enabled:
+    def enabled_for(self, endpoint: str | None = None) -> bool:
+        return bool(endpoint or self.endpoint)
+
+    def release(
+        self,
+        *,
+        request_id: str,
+        lease_id: str,
+        endpoint: str | None = None,
+    ) -> bool:
+        target_endpoint = str(endpoint or self.endpoint or "")
+        if not target_endpoint:
             return True
         delay_s = self.retry_initial_s
         last_error: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
             try:
                 response = httpx.post(
-                    str(self.endpoint),
+                    target_endpoint,
                     json={"request_id": request_id, "lease_id": lease_id},
                     timeout=self.timeout_s,
                 )

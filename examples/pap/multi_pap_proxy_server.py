@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Multi-instance PAP proxy for 6 Prefill+Attention and 2 Projection runs."""
+"""Multi-instance proxy for arbitrary PAP Prefill+Attention/Projection ratios."""
 
 from __future__ import annotations
 
@@ -466,6 +466,7 @@ async def _handle_openai_request(api_path: str, request: Request):
     prefill = request.app.state.prefill_clients[group]
     attention_clients = request.app.state.attention_clients[group]
     projection_client = request.app.state.projection_clients[projection]
+    group_index = request.app.state.groups.index(group)
 
     attention_sessions: list[dict[str, Any]] | None = None
     handed_off_stream_cleanup = False
@@ -497,8 +498,6 @@ async def _handle_openai_request(api_path: str, request: Request):
             (time.perf_counter() - prefill_payload_start) * 1000.0 if profile else 0.0
         )
         t0 = time.time()
-
-
         prefill_resp = await _post_json(prefill, api_path, prefill_payload, request_id)
         prefill_ms = int((time.time() - t0) * 1000)
 
@@ -577,7 +576,7 @@ async def _handle_openai_request(api_path: str, request: Request):
                 media_type="text/event-stream",
                 headers={
                     "X-PAP-Prefill-Ms": str(prefill_ms),
-                    "X-PAP-Group": str(request_number % len(request.app.state.groups)),
+                    "X-PAP-Group": str(group_index),
                     "X-PAP-Projection": str(projection.port),
                 },
             )
@@ -592,7 +591,7 @@ async def _handle_openai_request(api_path: str, request: Request):
             projection_resp,
             headers={
                 "X-PAP-Prefill-Ms": str(prefill_ms),
-                "X-PAP-Group": str(request_number % len(request.app.state.groups)),
+                "X-PAP-Group": str(group_index),
                 "X-PAP-Projection": str(projection.port),
             },
         )

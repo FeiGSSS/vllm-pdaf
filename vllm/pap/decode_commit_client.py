@@ -73,6 +73,7 @@ class DecodeCommitClient:
         )
         self._queue: queue.Queue[dict] | None = None
         self._worker: threading.Thread | None = None
+        self._worker_lock = threading.Lock()
         self._pending_lock = threading.Lock()
         self._pending_done = threading.Condition(self._pending_lock)
         self._pending_by_request: dict[str, int] = {}
@@ -83,6 +84,23 @@ class DecodeCommitClient:
         self._failed_commit_seq_by_request: dict[str, int] = {}
         self._failure_by_request: dict[str, str] = {}
         if self.enabled:
+            self._ensure_worker()
+
+    @property
+    def enabled(self) -> bool:
+        """Whether the client has a configured endpoint to talk to."""
+        return bool(self.endpoint)
+
+    def enabled_for(self, endpoint: str | None = None) -> bool:
+        """Whether a default or per-session endpoint is available."""
+        return bool(endpoint or self.endpoint)
+
+    def _ensure_worker(self) -> None:
+        if self._worker is not None:
+            return
+        with self._worker_lock:
+            if self._worker is not None:
+                return
             self._queue = queue.Queue(maxsize=max(1, self.queue_size))
             self._worker = threading.Thread(
                 target=self._run_worker,
@@ -91,11 +109,6 @@ class DecodeCommitClient:
             )
             self._worker.start()
 
-    @property
-    def enabled(self) -> bool:
-        """Whether the client has a configured endpoint to talk to."""
-        return bool(self.endpoint)
-
     def commit(
         self,
         *,
@@ -103,6 +116,7 @@ class DecodeCommitClient:
         new_seq_len: int,
         new_token_ids: Iterable[int],
         layer_complete: bool = True,
+        endpoint: str | None = None,
     ) -> None:
         """Enqueue a decode-commit notification without blocking on HTTP.
 
@@ -110,9 +124,10 @@ class DecodeCommitClient:
         and the local queue is full. Delivery failures are exposed by
         :meth:`flush_request`.
         """
-        if not self.enabled:
+        target_endpoint = str(endpoint or self.endpoint)
+        if not target_endpoint:
             return
-
+        self._ensure_worker()
         if self._queue is None:
             return
         with self._pending_done:
@@ -130,14 +145,16 @@ class DecodeCommitClient:
                 "layer_complete": bool(layer_complete),
             }
             queued_item = self._queued_item_by_request.get(request_id)
-            if queued_item is not None and self._coalesce_payload(
-                queued_item["payload"], payload
+            if (
+                queued_item is not None
+                and queued_item["endpoint"] == target_endpoint
+                and self._coalesce_payload(queued_item["payload"], payload)
             ):
                 self._latest_seen_seq_len_by_request[request_id] = new_seq_len
                 self._latest_commit_seq_by_request[request_id] = commit_seq
                 return
 
-            item = {"payload": payload}
+            item = {"payload": payload, "endpoint": target_endpoint}
             try:
                 self._queue.put_nowait(item)
             except queue.Full as exc:
@@ -163,8 +180,6 @@ class DecodeCommitClient:
 
     def flush_request(self, request_id: str, timeout_s: float | None = None) -> bool:
         """Wait for Prefill to ACK all commits issued for *request_id*."""
-        if not self.enabled:
-            return True
         if timeout_s is None:
             timeout_s = float(os.environ.get("PAP_DECODE_COMMIT_FLUSH_TIMEOUT", "5.0"))
         deadline = time.monotonic() + max(0.0, float(timeout_s))
@@ -196,12 +211,13 @@ class DecodeCommitClient:
         while True:
             item = self._queue.get()
             payload = item["payload"]
+            endpoint = str(item["endpoint"])
             request_id = str(payload["request_id"])
             with self._pending_done:
                 if self._queued_item_by_request.get(request_id) is item:
                     self._queued_item_by_request.pop(request_id, None)
             try:
-                acked_commit_seq = self._post_commit(payload)
+                acked_commit_seq = self._post_commit(payload, endpoint)
             except Exception as exc:
                 logger.warning(
                     "PAP decode commit failed request_id=%s commit_seq=%d "
@@ -279,13 +295,13 @@ class DecodeCommitClient:
             return True
         return False
 
-    def _post_commit(self, payload: dict) -> int:
+    def _post_commit(self, payload: dict, endpoint: str) -> int:
         delay_s = self.retry_initial_s
         last_error: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
             try:
                 resp = httpx.post(
-                    str(self.endpoint), json=payload, timeout=self.timeout_s
+                    endpoint, json=payload, timeout=self.timeout_s
                 )
                 resp.raise_for_status()
                 body = resp.json()

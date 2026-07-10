@@ -20,6 +20,32 @@ def test_pap_benchmark_runner_captures_attention_fast_path_stats() -> None:
     assert "capture_attention_fast_path_stats" in text
 
 
+def test_pap_benchmark_runner_supports_arbitrary_xy_topology() -> None:
+    runner = (
+        ROOT
+        / ".claude"
+        / "skills"
+        / "vllm-pap-benchmark"
+        / "scripts"
+        / "run_pap_same_pd_workload.sh"
+    )
+    text = runner.read_text()
+
+    assert "^([0-9]+)pa([0-9]+)p$" in text
+    assert 'PA_COUNT="${PAP_PA_COUNT:-${BASH_REMATCH[1]}}"' in text
+    assert (
+        'PROJECTION_COUNT="${PAP_PROJECTION_COUNT:-${BASH_REMATCH[2]}}"'
+        in text
+    )
+    assert "This runner is intentionally fixed to 1pa1p" not in text
+    assert "for (( idx=0; idx<PA_COUNT; idx++ ))" in text
+    assert "for (( idx=0; idx<PROJECTION_COUNT; idx++ ))" in text
+    assert "topology_manifest.json" in text
+    assert "routing_audit.json" in text
+    assert "audit_xy_routes" in text
+    assert 'PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-round_robin}"' in text
+
+
 def test_pd_benchmark_runner_is_self_contained_and_scoped() -> None:
     skill_dir = ROOT / ".claude" / "skills" / "vllm-pap-benchmark"
     runner = skill_dir / "scripts" / "run_pd_same_workload.sh"
@@ -161,8 +187,17 @@ def test_pap_launch_exports_unified_kv_control_endpoints() -> None:
     assert 'PAP_UNIFIED_KV="${PAP_UNIFIED_KV:-1}"' in text
     assert "PAP_DECODE_COMMIT_ENDPOINT" in text
     assert "PAP_LEASE_RELEASE_ENDPOINT" in text
-    assert 'PAP_LEASE_RELEASE_ENDPOINT="$PAP_LEASE_RELEASE_ENDPOINT"' in text
+    assert 'PAP_DECODE_COMMIT_ENDPOINT="$decode_commit_endpoint"' in text
+    assert 'PAP_LEASE_RELEASE_ENDPOINT="$lease_release_endpoint"' in text
+    assert "PREFILL_PORT_BASE + idx" in text
     assert 'PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS:-300}"' in text
+
+
+def test_pap_launch_assigns_unique_projection_mailbox_actor_ids() -> None:
+    script = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
+    text = script.read_text()
+
+    assert 'PAP_NIXL_MAILBOX_ACTOR_ID="projection-${idx}"' in text
 
 
 def test_pap_launch_does_not_expose_pap_runner_microbatch() -> None:
