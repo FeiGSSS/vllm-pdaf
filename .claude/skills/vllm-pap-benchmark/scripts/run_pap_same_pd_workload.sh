@@ -12,7 +12,8 @@ PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE="${PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORK
 PAP_BENCH_STRICT_CORRECTNESS_AUDIT="${PAP_BENCH_STRICT_CORRECTNESS_AUDIT:-1}"
 PAP_BENCH_CLIENT_MODE="${PAP_BENCH_CLIENT_MODE:-canonical}"
 case "${PAP_BENCH_CLIENT_MODE}" in
-  canonical | multiturn_prefix_cache | multiturn_chat_prefix_cache) ;;
+  canonical | multiturn_prefix_cache | multiturn_chat_prefix_cache \
+    | multiturn_north_star) ;;
   *)
     echo "ERROR: unsupported PAP_BENCH_CLIENT_MODE=${PAP_BENCH_CLIENT_MODE}" >&2
     exit 2
@@ -33,7 +34,9 @@ OUTPUT_LEN="${OUTPUT_LEN:-32}"
 PREFIX_LEN="${PREFIX_LEN:-50}"
 QPS="${QPS:-16}"
 NUM_PROMPTS="${NUM_PROMPTS:-128}"
-if [[ "${PAP_BENCH_CLIENT_MODE}" != "canonical" ]]; then
+if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" ]]; then
+  NUM_PROMPTS=2
+elif [[ "${PAP_BENCH_CLIENT_MODE}" != "canonical" ]]; then
   NUM_PROMPTS=3
 fi
 BENCH_NUM_WARMUPS="${BENCH_NUM_WARMUPS:-0}"
@@ -59,6 +62,9 @@ RESULTS_ROOT="${RESULTS_ROOT:-/home/fei/research/PD/test/baseline/pap/results}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
 RUN_ROOT="${RUN_ROOT:-${RESULTS_ROOT}/runs/${RUN_ID}}"
 RUN_LOG_DIR="${RUN_LOG_DIR:-${RUN_ROOT}/service_logs}"
+PAP_NORTH_STAR_HARDWARE_SIGNATURE="${PAP_NORTH_STAR_HARDWARE_SIGNATURE:-NVIDIA-L20x2}"
+PAP_NORTH_STAR_CONVERSATION_ID="${PAP_NORTH_STAR_CONVERSATION_ID:-${RUN_ID}-conversation-0}"
+PAP_NORTH_STAR_CACHE_SALT="${PAP_NORTH_STAR_CACHE_SALT:-${RUN_ID}-cache-salt}"
 
 PAP_PROXY_PORT="${PAP_PROXY_PORT:-9460}"
 PREFILL_PORT_BASE="${PAP_PREFILL_PORT_BASE:-${PAP_PREFILL_PORT:-8100}}"
@@ -81,6 +87,7 @@ fi
 PAP_PREFILL_GPUS="${PAP_PREFILL_GPUS:-${DEFAULT_PREFILL_GPUS}}"
 PAP_PROJECTION_GPUS="${PAP_PROJECTION_GPUS:-${DEFAULT_PROJECTION_GPUS}}"
 PAP_TP_SIZE="${PAP_TP_SIZE:-1}"
+PAP_VLLM_DTYPE="${PAP_VLLM_DTYPE:-auto}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-512}"
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8192}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
@@ -553,6 +560,13 @@ write_effective_config() {
     printf 'PAP_LOCAL_FAST_SLEEP_AFTER_US=%q\n' "${PAP_LOCAL_FAST_SLEEP_AFTER_US}"
     printf 'PAP_PREFILL_GPUS=%q\n' "${PAP_PREFILL_GPUS}"
     printf 'PAP_PROJECTION_GPUS=%q\n' "${PAP_PROJECTION_GPUS}"
+    printf 'PAP_VLLM_DTYPE=%q\n' "${PAP_VLLM_DTYPE}"
+    printf 'PAP_NORTH_STAR_HARDWARE_SIGNATURE=%q\n' \
+      "${PAP_NORTH_STAR_HARDWARE_SIGNATURE}"
+    printf 'PAP_NORTH_STAR_CONVERSATION_ID=%q\n' \
+      "${PAP_NORTH_STAR_CONVERSATION_ID}"
+    printf 'PAP_NORTH_STAR_CACHE_SALT=%q\n' \
+      "${PAP_NORTH_STAR_CACHE_SALT}"
     printf 'PAP_ROUTING_POLICY=%q\n' "${PAP_ROUTING_POLICY}"
     printf 'PREFILL_PORT_BASE=%q\n' "${PREFILL_PORT_BASE}"
     printf 'PROJECTION_PORT_BASE=%q\n' "${PROJECTION_PORT_BASE}"
@@ -667,6 +681,7 @@ write_run_metadata() {
   PAP_ATTENTION_COMBINE_WAIT_US="${PAP_ATTENTION_COMBINE_WAIT_US}" \
   PAP_ATTENTION_ACTIVE_PEER_TRACKING="${PAP_ATTENTION_ACTIVE_PEER_TRACKING}" \
   PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" \
+  PAP_VLLM_DTYPE="${PAP_VLLM_DTYPE}" \
   GIT_COMMIT="${GIT_COMMIT}" \
   GIT_COMMIT_SHORT="${GIT_COMMIT_SHORT}" \
   GIT_TRACKED_WORKTREE_DIRTY="${GIT_TRACKED_WORKTREE_DIRTY}" \
@@ -720,6 +735,7 @@ metadata = {
     "prompt_tokens_details": (
         os.environ["PAP_ENABLE_PROMPT_TOKENS_DETAILS"] == "1"
     ),
+    "dtype": os.environ["PAP_VLLM_DTYPE"],
     "git_commit": os.environ["GIT_COMMIT"],
     "git_commit_short": os.environ["GIT_COMMIT_SHORT"],
     "git_tracked_worktree_dirty": (
@@ -754,6 +770,44 @@ if completed != expected or failed != 0:
         f"benchmark result is incomplete: completed={completed}, "
         f"failed={failed}, expected={expected}"
     )
+PY
+}
+
+validate_north_star_result() {
+  local result_path="$1"
+  "${PYTHON_BIN}" - "${result_path}" <<'PY'
+import json
+import math
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as file_obj:
+    result = json.load(file_obj)
+
+if result.get("validity") != {"status": "passed", "cache_gate": "passed"}:
+    raise SystemExit(f"north-star validity failed: {result.get('validity')}")
+if result.get("architecture") != "pap":
+    raise SystemExit(f"north-star architecture is not pap: {result.get('architecture')}")
+if (result.get("topology") or {}).get("name") != "1pa1p":
+    raise SystemExit(f"north-star topology is not 1pa1p: {result.get('topology')}")
+rounds = result.get("rounds") or []
+if len(rounds) != 2:
+    raise SystemExit(f"north-star expected two rounds, got {len(rounds)}")
+for index, round_result in enumerate(rounds, start=1):
+    if round_result.get("completion_tokens") != 256:
+        raise SystemExit(f"round {index} did not return 256 tokens")
+    if round_result.get("finish_reason") != "length":
+        raise SystemExit(f"round {index} did not finish by length")
+    for metric in ("ttft_ms", "tpot_ms", "latency_ms"):
+        value = round_result.get(metric)
+        if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+            raise SystemExit(f"round {index} has invalid {metric}: {value}")
+cache = result.get("cache_validation") or {}
+if cache.get("status") != "passed":
+    raise SystemExit(f"north-star cache validation failed: {cache}")
+if int(cache.get("decode_derived_hit_tokens", 0)) < 16:
+    raise SystemExit("north-star second turn has no Decode-derived cache block")
+if not result.get("profile_fingerprint"):
+    raise SystemExit("north-star profile fingerprint is missing")
 PY
 }
 
@@ -930,7 +984,33 @@ cd "${ROOT_DIR}"
 (( PA_COUNT >= 1 && PROJECTION_COUNT >= 1 )) \
   || die "PAP topology must contain at least one PA and one Projection"
 [[ "${PAP_TP_SIZE}" == "1" ]] || die "This runner is intentionally fixed to PAP_TP_SIZE=1"
-if [[ "${PAP_BENCH_CLIENT_MODE}" != "canonical" ]]; then
+if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" ]]; then
+  [[ "${TOPOLOGY}" == "1pa1p" ]] \
+    || die "multiturn_north_star requires PAP_TOPOLOGY=1pa1p"
+  [[ "${INPUT_LEN}" == "16000" ]] \
+    || die "multiturn_north_star requires INPUT_LEN=16000"
+  [[ "${OUTPUT_LEN}" == "256" ]] \
+    || die "multiturn_north_star requires OUTPUT_LEN=256"
+  [[ "${MAX_MODEL_LEN}" == "20000" ]] \
+    || die "multiturn_north_star requires MAX_MODEL_LEN=20000"
+  [[ "${MAX_NUM_BATCHED_TOKENS}" == "4096" ]] \
+    || die "multiturn_north_star requires MAX_NUM_BATCHED_TOKENS=4096"
+  [[ "${MAX_NUM_SEQS}" == "2" ]] \
+    || die "multiturn_north_star requires MAX_NUM_SEQS=2"
+  [[ "${PAP_VLLM_DTYPE}" == "float16" ]] \
+    || die "multiturn_north_star requires PAP_VLLM_DTYPE=float16"
+  [[ "${PAP_PREFIX_CACHE_AUDIT}" == "0" ]] \
+    || die "multiturn_north_star forbids PAP_PREFIX_CACHE_AUDIT"
+  [[ "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" == "1" ]] \
+    || die "multiturn_north_star requires prompt token details"
+  [[ "${PAP_ENABLE_MPS}" == "1" ]] \
+    || die "multiturn_north_star requires PAP_ENABLE_MPS=1"
+  [[ "${PAP_PREFILL_MPS_PERCENT}" == "70" \
+    && "${PAP_ATTENTION_MPS_PERCENT}" == "30" ]] \
+    || die "multiturn_north_star requires PAP MPS 70/30"
+  (( PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS >= OUTPUT_LEN )) \
+    || die "PAP unified KV decode capacity is too small for north-star output"
+elif [[ "${PAP_BENCH_CLIENT_MODE}" != "canonical" ]]; then
   [[ "${PA_COUNT}" == "1" && "${PROJECTION_COUNT}" == "1" ]] \
     || die "multi-turn prefix-cache modes require PAP_TOPOLOGY=1pa1p"
   [[ "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" == "1" ]] \
@@ -1090,8 +1170,12 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       --host 127.0.0.1 \
       --enforce-eager \
       --generation-config vllm \
+      --dtype "${PAP_VLLM_DTYPE}" \
       --enable-request-id-headers \
       "${PREFILL_OBSERVABILITY_ARGS[@]}" \
+      --enable-prefix-caching \
+      --enable-chunked-prefill \
+      --block-size "${PAP_MULTITURN_BLOCK_SIZE}" \
       --max-model-len "${MAX_MODEL_LEN}" \
       --max-num-seqs "${MAX_NUM_SEQS}" \
       --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
@@ -1133,7 +1217,9 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
       --host 127.0.0.1 \
       --enforce-eager \
       --generation-config vllm \
+      --dtype "${PAP_VLLM_DTYPE}" \
       --enable-request-id-headers \
+      --block-size "${PAP_MULTITURN_BLOCK_SIZE}" \
       --max-model-len "${MAX_MODEL_LEN}" \
       --max-num-seqs "${MAX_NUM_SEQS}" \
       --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
@@ -1226,6 +1312,32 @@ case "${PAP_BENCH_CLIENT_MODE}" in
       --block-size "${PAP_MULTITURN_BLOCK_SIZE}" \
       --min-decode-hit-blocks "${PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS}" \
       2>&1 | tee "${RUN_ROOT}/${TAG}.log"
+    ;;
+  multiturn_north_star)
+    TAG="${TOPOLOGY_TAG}_multiturn_north_star"
+    echo "=== Running ${TAG} on port ${PAP_PROXY_PORT} ==="
+    timeout "${BENCH_TIMEOUT}" "${PYTHON_BIN}" \
+      benchmarks/multi_turn/pap_pd_multiturn_client.py \
+      --base-url "http://127.0.0.1:${PAP_PROXY_PORT}" \
+      --model "${MODEL_PATH}" \
+      --corpus "${DATASET_PATH}" \
+      --result "${RUN_ROOT}/result.json" \
+      --architecture "pap" \
+      --topology "${TOPOLOGY}" \
+      --conversation-id "${PAP_NORTH_STAR_CONVERSATION_ID}" \
+      --cache-salt "${PAP_NORTH_STAR_CACHE_SALT}" \
+      --hardware-signature "${PAP_NORTH_STAR_HARDWARE_SIGNATURE}" \
+      --document-tokens "${INPUT_LEN}" \
+      --append-tokens 120 \
+      --output-tokens "${OUTPUT_LEN}" \
+      --block-size "${PAP_MULTITURN_BLOCK_SIZE}" \
+      --dtype "${PAP_VLLM_DTYPE}" \
+      --tensor-parallel-size "${PAP_TP_SIZE}" \
+      --max-model-len "${MAX_MODEL_LEN}" \
+      --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
+      --max-num-seqs "${MAX_NUM_SEQS}" \
+      2>&1 | tee "${RUN_ROOT}/${TAG}.log"
+    validate_north_star_result "${RUN_ROOT}/result.json"
     ;;
 esac
 

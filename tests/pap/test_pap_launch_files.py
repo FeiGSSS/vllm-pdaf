@@ -94,6 +94,39 @@ def test_pap_benchmark_runner_supports_two_turn_prefix_cache_audit() -> None:
     assert 'PAP_PREFIX_CACHE_AUDIT="${PAP_PREFIX_CACHE_AUDIT}"' in text
 
 
+def test_pap_runner_supports_multiturn_north_star() -> None:
+    runner = (
+        ROOT
+        / ".claude"
+        / "skills"
+        / "vllm-pap-benchmark"
+        / "scripts"
+        / "run_pap_same_pd_workload.sh"
+    )
+    text = runner.read_text()
+
+    assert "multiturn_north_star" in text
+    assert "benchmarks/multi_turn/pap_pd_multiturn_client.py" in text
+    assert 'PAP_VLLM_DTYPE="${PAP_VLLM_DTYPE:-auto}"' in text
+    assert text.count('--dtype "${PAP_VLLM_DTYPE}"') == 3
+    assert '[[ "${TOPOLOGY}" == "1pa1p" ]]' in text
+    assert '[[ "${INPUT_LEN}" == "16000" ]]' in text
+    assert '[[ "${OUTPUT_LEN}" == "256" ]]' in text
+    assert '[[ "${MAX_MODEL_LEN}" == "20000" ]]' in text
+    assert '[[ "${MAX_NUM_BATCHED_TOKENS}" == "4096" ]]' in text
+    assert '[[ "${MAX_NUM_SEQS}" == "2" ]]' in text
+    assert '[[ "${PAP_PREFIX_CACHE_AUDIT}" == "0" ]]' in text
+    assert '[[ "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" == "1" ]]' in text
+    assert '--architecture "pap"' in text
+    assert '--topology "${TOPOLOGY}"' in text
+    assert '--hardware-signature "${PAP_NORTH_STAR_HARDWARE_SIGNATURE}"' in text
+    assert '--result "${RUN_ROOT}/result.json"' in text
+    assert "validate_north_star_result" in text
+    assert text.index("validate_north_star_result") < text.rindex(
+        "wait_attention_sessions_drained"
+    )
+
+
 def test_pd_benchmark_runner_is_self_contained_and_scoped() -> None:
     skill_dir = ROOT / ".claude" / "skills" / "vllm-pap-benchmark"
     runner = skill_dir / "scripts" / "run_pd_same_workload.sh"
