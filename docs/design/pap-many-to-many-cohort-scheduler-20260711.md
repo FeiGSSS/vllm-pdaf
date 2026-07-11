@@ -1462,3 +1462,45 @@ failure 都为 0。结果目录：
   20260711_active_peer_2pa1p_smoke
   20260711_active_peer_3pa2p_smoke
 ```
+
+### 24.4 提交后 clean 2PA2P 正式基线
+
+实现提交为 `54bd1a59c0bb1e1b0ad8d7c237bad1f533162cc4`。提交后在命令行显式
+清除 `PAP_ATTENTION_ACTIVE_PEER_TRACKING`，由 benchmark runner 的
+`central_combine && Projection count > 1` 默认策略开启 tracking，并使用
+`PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE=1` 重跑三轮：
+
+| rep | mean TTFT | mean TPOT | median TPOT | p99 TPOT | req/s | combine 覆盖率 | timeout | membership update |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | `227.762 ms` | `39.746 ms` | `40.490 ms` | `50.806 ms` | `3.823` | `84.27%` | `799` | `74` |
+| 2 | `227.908 ms` | `39.269 ms` | `39.179 ms` | `48.569 ms` | `3.844` | `82.51%` | `671` | `88` |
+| 3 | `225.056 ms` | `40.724 ms` | `41.693 ms` | `50.031 ms` | `3.842` | `82.30%` | `658` | `78` |
+| 三轮中位数 | `227.762 ms` | `39.746 ms` | `40.490 ms` | `50.031 ms` | `3.842` | `82.51%` | `671` | `78` |
+
+三轮 metadata 均确认 tracking 为 `true`、commit 一致且 tracked worktree clean；每轮均为
+`128/0`，四个 pair 各 32 个请求。correctness、routing、session drain 全部通过，两个
+Attention 实例的 dispatcher failure、dropped item 和 stale membership update 均为 0；
+服务结束时 active source set 全部为空。各 PA 均观察到两个 Projection source 的单调
+generation，说明默认开启路径和 inactive 收尾路径均实际生效。
+
+与同 QPS 4 的 PD 三轮参照比较：
+
+| 指标 | PD 1P1D | PAP 2PA2P active-source | PAP / PD |
+| --- | ---: | ---: | ---: |
+| mean TPOT | `24.506 ms` | `39.746 ms` | `1.622x` |
+| median TPOT | `24.482 ms` | `40.490 ms` | `1.654x` |
+| p99 TPOT | `25.756 ms` | `50.031 ms` | `1.942x` |
+| mean TTFT | `176.401 ms` | `227.762 ms` | `1.291x` |
+| request throughput | `3.890 req/s` | `3.842 req/s` | `0.988x` |
+
+mean、median、p99 TPOT 的正式 clean 基线均达到 `<2x PD`。相对 Phase 3 的
+`bdb7a7dc7` clean 基线，mean TPOT、p99 TPOT 和 mean TTFT 分别改善约
+`4.9%`、`11.9%` 和 `4.6%`。这与严格 A/B 的方向一致，同时排除了 tracked patch 和
+显式开关配置对结论的影响。
+
+正式结果：
+
+```text
+/home/fei/research/PD/test/baseline/pap/results/runs/
+  20260711_54bd1a59c_2pa2p_active_q4_rep{1,2,3}
+```
