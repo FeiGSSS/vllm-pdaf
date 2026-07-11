@@ -36,6 +36,8 @@
 - 三个长期 sub-agent 分别负责三个架构 lane，主 agent 负责资源与证据仲裁；
 - 不扫描 MPS；PAP 保持当前 70/30 Prefill/Attention 配置；
 - 主矩阵 inter-turn think time 为 0，TTL/长思考时间留给后续独立实验。
+- 不照搬短 Prompt PAP benchmark 的 concurrency、`max_num_seqs` 或 memory-utilization；
+  长上下文按实际 KV token capacity 和安全余量分级 admission。
 
 ## 3. 非目标
 
@@ -48,7 +50,8 @@ Test 1 不包含：
 - partial-block attach、final-token closure 或跨 PA KV migration；
 - 30 秒以上 think time、TTL 过期和缓存保持性扫描；
 - 在同一实验提交中修改 PAP/PD 性能实现并宣称提升；
-- 以一次 OOM 后临时降低单个 cell 的 workload 来制造可比较结果。
+- 用 CUDA OOM 探测容量边界，或在 OOM 后临时降低单个 cell 的 workload 来制造可比较
+  结果。
 
 若实验暴露 correctness 缺陷，应先单独修复和验证，再用新 commit 重跑受影响的
 完整 comparison group。
@@ -111,8 +114,9 @@ PD 服务使用非 deprecated 的 NIXL roles：Prefill 为 `kv_producer`，Decod
 - dtype=`float16`；
 - `--enforce-eager`；
 - `max_model_len=40960`；
-- `max_num_batched_tokens=8192`；
-- `max_num_seqs=64`；
+- `max_num_batched_tokens=4096`，在 32K/C1 preflight 证明 8192 具有同等 OOM
+  headroom 后才允许整组统一提升；
+- `max_num_seqs` 按 context profile 固定为 4K:8、16K:4、32K:2；
 - chunked prefill 开启；
 - prefix caching 显式开启；
 - KV block size=16；
@@ -127,7 +131,43 @@ PAP 和 PD 可以使用不同的、已经验证过的 lane-specific memory-utili
 架构的进程和权重布局不同；但每条 lane 只能在正式矩阵前做一次 32K/C1 preflight，
 随后冻结配置。所有数值必须写入 effective config，不能按 cell 临时调整。
 
-### 5.3 Conversation 语义
+### 5.3 OOM 预防与 admission Gate
+
+长上下文不能复用短负载的 scale knobs。每条 lane 启动后必须从服务日志或控制接口取得
+实际 KV block/token capacity。对一个待运行 cell，先计算：
+
+```text
+required_live_tokens =
+    active_conversations
+    * max_rendered_context_tokens_per_conversation
+```
+
+只有满足以下条件才允许发请求：
+
+```text
+required_live_tokens <= 0.70 * reported_usable_kv_token_capacity
+```
+
+30% 余量用于 block fragmentation、PAP reserved decode slots、Prefill chunk workspace、
+临时 tensors 和观测误差。若任一 lane 不满足，同一 comparison group 不启动；该 point
+记录为 `admission-limited`，而不是通过实际 CUDA OOM 测量容量。
+
+分级顺序固定为：
+
+1. 4K/C1；
+2. 16K/C1；
+3. 32K/C1；
+4. 对应 context 的下一 concurrency point；
+5. 只有前一点的峰值 KV 使用仍低于 70% 才进入更高点。
+
+32K/C4 需要单独把三条 lane 的 `max_num_seqs` 从 2 统一提升到 4，并重新运行
+32K/C1 preflight；任一 lane 不满足 70% Gate 时，三条 lane 都不运行 C4。
+
+运行中监控 peak allocated/free KV blocks 和 GPU memory。出现 `CUDA out of memory` 后
+不得继续使用同一服务进程；保存失败证据、停止该 lane 的更高点并重新评估 admission
+计算。OOM run 一律为 `invalid`，不提供 latency 或 throughput 结论。
+
+### 5.4 Conversation 语义
 
 本文的一个 `round` 指一次 user 请求和一次 assistant 回复。一个 conversation 内：
 
@@ -246,7 +286,7 @@ p90 和跨运行中位数；单 cell 样本不足时，p99 只能标记为 diagn
 | ---: | --- |
 | 4K | 1 / 4 / 8 |
 | 16K | 4 |
-| 32K | 4，仅在 memory preflight 通过后 |
+| 32K | 4，仅在 70% KV-capacity admission Gate 通过后 |
 
 mandatory 新增规模：
 
@@ -255,8 +295,8 @@ mandatory 新增规模：
 = 12 logical cells
 ```
 
-32K/C4 是 3 个 conditional cells。OOM 是有效容量边界，保留日志与显存状态，但其
-latency 标记为 `invalid`，不进入延迟平均。
+32K/C4 是 3 个 conditional cells。容量边界优先由 token-budget admission Gate 给出；
+意外 OOM 只作为失败证据保留，其 latency/throughput 一律 `invalid`。
 
 ### 7.5 Tail 确认点
 
@@ -379,6 +419,7 @@ decode_start_wait_ms
 - GPU memory used/free、GPU utilization；
 - CPU utilization、host memory 和必要时的 PCIe counters；
 - actual GPU pair 和 topology snapshot。
+- reported usable KV blocks/tokens、required-live-token estimate 和 70% Gate decision。
 
 ## 10. 正确性和有效性 Gate
 
@@ -397,7 +438,8 @@ decode_start_wait_ms
 - tracked worktree clean；
 - model、workload、GPU、ports、proxy bypass 和 effective config 完整记录。
 
-容量 cell 的 OOM 可作为 `valid capacity failure`，但不能同时被引用为 latency result。
+容量 cell 应在 OOM 前由 admission Gate 拒绝。若仍出现 OOM，该 run 为 `invalid`，不能
+被引用为 latency、throughput 或正常容量结果。
 如果输出 token 不一致、KV 分账不闭合或 remote blocks 错配，则是 correctness failure，
 整个 comparison group 停止，先修复再重跑。
 
@@ -503,14 +545,15 @@ GPU，也不能杀死不属于当前 run process group 的进程。
 2. 单元测试 token accounting、Prompt/LCP、manifest 和 summary schema；
 3. 提交代码并要求 tracked worktree clean；
 4. 每条 lane 完成 32K/C1 memory preflight 并冻结配置；
-5. 执行 Gate 0；
-6. 执行 parallel interference Gate；
-7. Matrix 1 全部 cell 先跑 rep1，审计后补 rep2/rep3；
-8. Matrix 2 同样按 rep1→审计→补齐执行；
-9. Matrix 3 从低 context/concurrency 向高点递增；
-10. 补齐 tail repetitions；
-11. 生成三路 comparison tables、break-even 图和容量图；
-12. 更新 PAP 实验历史索引并提交结果摘要。
+5. 保存三条 lane 的 KV capacity，并验证所有 manifest cells 的 70% admission decision；
+6. 执行 Gate 0；
+7. 执行 parallel interference Gate；
+8. Matrix 1 全部 cell 先跑 rep1，审计后补 rep2/rep3；
+9. Matrix 2 同样按 rep1→审计→补齐执行；
+10. Matrix 3 从低 context/concurrency 向高点递增，每一点重新检查 peak headroom；
+11. 补齐 tail repetitions；
+12. 生成三路 comparison tables、break-even 图和容量图；
+13. 更新 PAP 实验历史索引并提交结果摘要。
 
 停止条件：
 
@@ -522,7 +565,8 @@ GPU，也不能杀死不属于当前 run process group 的进程。
 - runner 发现非本 run 进程/端口冲突；
 - 代码或配置在三条 lane 之间发生未记录变化。
 
-OOM 只停止该 lane 更高 concurrency points，不抹去已经通过的低点。
+意外 OOM 立即销毁该服务进程，停止对应 context 的更高 concurrency points，并把
+admission estimate 缺陷作为待修问题；它不抹去此前独立、已通过的低点。
 
 ## 15. Artifact 与目录合同
 
@@ -551,6 +595,7 @@ round_summary.json
 cache_accounting.json
 transfer_summary.json
 resource_samples.csv
+capacity_admission.json
 correctness_audit.env
 lifecycle_audit.env
 service_logs/
