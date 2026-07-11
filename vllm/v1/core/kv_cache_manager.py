@@ -639,6 +639,9 @@ class KVCacheManager:
             num_computed_tokens: The number of computed tokens, including tokens
                 that are already cached and tokens to be cached.
         """
+        params = request.kv_transfer_params
+        if params and params.get("pap_projection_kv_unaware"):
+            return
         if self.enable_caching:
             self.coordinator.cache_blocks(request, num_computed_tokens)
 

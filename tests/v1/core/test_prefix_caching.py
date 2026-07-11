@@ -148,6 +148,26 @@ def test_cache_blocks_requires_allocated_slots():
         manager.cache_blocks(request, num_computed_tokens=9 * block_size)
 
 
+def test_cache_blocks_skips_pap_projection_without_local_kv():
+    from types import SimpleNamespace
+
+    from vllm.v1.core.kv_cache_manager import KVCacheManager
+
+    cache_calls = []
+    manager = object.__new__(KVCacheManager)
+    manager.enable_caching = True
+    manager.coordinator = SimpleNamespace(
+        cache_blocks=lambda *args: cache_calls.append(args)
+    )
+    request = SimpleNamespace(
+        kv_transfer_params={"pap_projection_kv_unaware": True}
+    )
+
+    manager.cache_blocks(request, num_computed_tokens=128)
+
+    assert cache_calls == []
+
+
 def make_kv_cache_config_hybrid_model(
     block_size: int,
     num_blocks: int,
