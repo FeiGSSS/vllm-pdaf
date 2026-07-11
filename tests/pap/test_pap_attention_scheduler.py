@@ -4,6 +4,7 @@
 from threading import Event, Thread
 
 import pytest
+import torch
 
 from vllm.pap.attention_scheduler import (
     PAPAttentionDispatcher,
@@ -345,8 +346,12 @@ def test_dispatcher_coalesces_compatible_item_arriving_within_window() -> None:
     )
     first = _make_item("p0", released)
     first.descriptor = "layer0"
+    first.arrival_ns = 1_000_000
+    first.qkv_batch = torch.tensor([0, 1])
     second = _make_item("p1", released)
     second.descriptor = "layer0"
+    second.arrival_ns = 1_075_000
+    second.qkv_batch = torch.tensor([2, 3])
     dispatcher.enqueue(first)
     original_get = dispatcher._queue.get
     blocking_get_calls = 0
@@ -377,7 +382,52 @@ def test_dispatcher_coalesces_compatible_item_arriving_within_window() -> None:
     assert stats["dispatcher_coalesce_waits"] == 1
     assert stats["dispatcher_coalesce_timeouts"] == 0
     assert stats["dispatcher_waited_compatible_candidates"] == 1
+    assert stats["dispatcher_coalesce_wait_outcomes"] == {
+        "compatible": 1,
+        "incompatible": 0,
+        "timeout": 0,
+        "stopped": 0,
+    }
+    assert sum(stats["dispatcher_coalesce_wait_us_histogram"].values()) == 1
+    assert stats["dispatcher_compatible_arrival_skew_samples"] == 1
+    assert stats["dispatcher_compatible_arrival_skew_ns_sum"] == 75_000
+    assert stats["dispatcher_compatible_arrival_skew_ns_max"] == 75_000
+    assert stats["dispatcher_compatible_arrival_skew_us_histogram"] == {
+        "le_50": 0,
+        "le_100": 1,
+        "le_200": 0,
+        "le_500": 0,
+        "le_1000": 0,
+        "gt_1000": 0,
+    }
     assert stats["dispatcher_expected_group_size"] == 2
+
+
+def test_dispatcher_records_coalesce_timeout_outcome() -> None:
+    released: list[str] = []
+    dispatcher = PAPAttentionDispatcher(
+        batch_handler=lambda _items: None,
+        compatibility_key=lambda item: item.descriptor,
+        coalesce_timeout_s=0.001,
+        expected_group_size=2,
+    )
+    item = _make_item("p0", released)
+    item.descriptor = "layer0"
+    dispatcher.enqueue(item)
+
+    assert dispatcher.dispatch_next(timeout=0.1)
+
+    stats = dispatcher.stats()
+    assert stats["dispatcher_coalesce_waits"] == 1
+    assert stats["dispatcher_coalesce_timeouts"] == 1
+    assert stats["dispatcher_coalesce_wait_outcomes"] == {
+        "compatible": 0,
+        "incompatible": 0,
+        "timeout": 1,
+        "stopped": 0,
+    }
+    assert sum(stats["dispatcher_coalesce_wait_us_histogram"].values()) == 1
+    assert stats["dispatcher_compatible_arrival_skew_samples"] == 0
 
 
 def test_dispatcher_prefers_designated_peer_when_layers_mismatch() -> None:
@@ -450,6 +500,14 @@ def test_dispatcher_waits_for_preferred_peer_before_selecting_group() -> None:
     assert handled == [("projection-0",)]
     assert released == ["projection-0"]
     assert not lagging.wait_completed(timeout=0)
+    stats = dispatcher.stats()
+    assert stats["dispatcher_waited_compatible_candidates"] == 0
+    assert stats["dispatcher_coalesce_wait_outcomes"] == {
+        "compatible": 0,
+        "incompatible": 1,
+        "timeout": 0,
+        "stopped": 0,
+    }
 
 
 def test_invalid_preferred_key_falls_back_without_losing_ready_item() -> None:

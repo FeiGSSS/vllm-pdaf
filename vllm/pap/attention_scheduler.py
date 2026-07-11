@@ -16,6 +16,22 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _STOP = object()
+_LATENCY_HISTOGRAM_BUCKETS_US = (50, 100, 200, 500, 1000)
+
+
+def _latency_histogram() -> dict[str, int]:
+    return {
+        **{f"le_{upper_us}": 0 for upper_us in _LATENCY_HISTOGRAM_BUCKETS_US},
+        "gt_1000": 0,
+    }
+
+
+def _latency_histogram_bucket(duration_ns: int) -> str:
+    duration_us = max(0, int(duration_ns)) / 1000.0
+    for upper_us in _LATENCY_HISTOGRAM_BUCKETS_US:
+        if duration_us <= upper_us:
+            return f"le_{upper_us}"
+    return "gt_1000"
 
 
 @dataclass
@@ -116,6 +132,17 @@ class PAPAttentionDispatcher:
         self._waited_compatible_candidates = 0
         self._coalesce_wait_ns_sum = 0
         self._coalesce_wait_ns_max = 0
+        self._coalesce_wait_outcomes = {
+            "compatible": 0,
+            "incompatible": 0,
+            "timeout": 0,
+            "stopped": 0,
+        }
+        self._coalesce_wait_us_histogram = _latency_histogram()
+        self._compatible_arrival_skew_samples = 0
+        self._compatible_arrival_skew_ns_sum = 0
+        self._compatible_arrival_skew_ns_max = 0
+        self._compatible_arrival_skew_us_histogram = _latency_histogram()
         self._preferred_peer_selections = 0
 
     def start(self) -> None:
@@ -285,6 +312,22 @@ class PAPAttentionDispatcher:
                 ),
                 "dispatcher_coalesce_wait_ns_sum": (self._coalesce_wait_ns_sum),
                 "dispatcher_coalesce_wait_ns_max": (self._coalesce_wait_ns_max),
+                "dispatcher_coalesce_wait_outcomes": dict(self._coalesce_wait_outcomes),
+                "dispatcher_coalesce_wait_us_histogram": dict(
+                    self._coalesce_wait_us_histogram
+                ),
+                "dispatcher_compatible_arrival_skew_samples": (
+                    self._compatible_arrival_skew_samples
+                ),
+                "dispatcher_compatible_arrival_skew_ns_sum": (
+                    self._compatible_arrival_skew_ns_sum
+                ),
+                "dispatcher_compatible_arrival_skew_ns_max": (
+                    self._compatible_arrival_skew_ns_max
+                ),
+                "dispatcher_compatible_arrival_skew_us_histogram": dict(
+                    self._compatible_arrival_skew_us_histogram
+                ),
                 "dispatcher_coalesce_timeout_us": int(
                     self._coalesce_timeout_s * 1_000_000
                 ),
@@ -433,9 +476,30 @@ class PAPAttentionDispatcher:
         compatible_candidates = len(compatible) - 1
         incompatible_candidates = len(ready) - len(compatible)
         compatible_ids = {id(item) for item in compatible}
+        compatible_candidate_ids = {
+            id(item) for item in compatible if item is not selected
+        }
         waited_compatible_candidates = sum(
-            id(item) in compatible_ids for item in waited_items
+            id(item) in compatible_candidate_ids for item in waited_items
         )
+        compatible_arrival_skews_ns = [
+            abs(int(item.arrival_ns) - int(selected.arrival_ns))
+            for item in compatible
+            if item is not selected
+        ]
+        coalesce_wait_outcome: str | None = None
+        if coalesce_waits:
+            if coalesce_timeouts:
+                coalesce_wait_outcome = "timeout"
+            elif (
+                any(id(item) in compatible_ids for item in waited_items)
+                and len(compatible) > 1
+            ):
+                coalesce_wait_outcome = "compatible"
+            elif stop_entries and not waited_items:
+                coalesce_wait_outcome = "stopped"
+            else:
+                coalesce_wait_outcome = "incompatible"
         preferred_selection = int(
             preferred_peer_id is not None and selected.peer_id == preferred_peer_id
         )
@@ -451,6 +515,19 @@ class PAPAttentionDispatcher:
                 self._coalesce_wait_ns_max,
                 coalesce_wait_ns,
             )
+            if coalesce_wait_outcome is not None:
+                self._coalesce_wait_outcomes[coalesce_wait_outcome] += 1
+                wait_bucket = _latency_histogram_bucket(coalesce_wait_ns)
+                self._coalesce_wait_us_histogram[wait_bucket] += 1
+            for skew_ns in compatible_arrival_skews_ns:
+                self._compatible_arrival_skew_samples += 1
+                self._compatible_arrival_skew_ns_sum += skew_ns
+                self._compatible_arrival_skew_ns_max = max(
+                    self._compatible_arrival_skew_ns_max,
+                    skew_ns,
+                )
+                skew_bucket = _latency_histogram_bucket(skew_ns)
+                self._compatible_arrival_skew_us_histogram[skew_bucket] += 1
             self._preferred_peer_selections += preferred_selection
         return tuple(compatible)
 
