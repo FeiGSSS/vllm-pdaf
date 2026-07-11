@@ -127,6 +127,77 @@ def test_pap_runner_supports_multiturn_north_star() -> None:
     )
 
 
+def test_multiturn_north_star_orchestrator_is_fixed_and_serial() -> None:
+    script = (
+        ROOT
+        / ".claude"
+        / "skills"
+        / "vllm-pap-benchmark"
+        / "scripts"
+        / "run_multiturn_north_star.sh"
+    )
+    assert script.is_file()
+    text = script.read_text()
+
+    assert 'MODE="${1:-quick}"' in text
+    assert "REPETITIONS=1" in text
+    assert "REPETITIONS=3" in text
+    assert "for (( rep=1; rep<=REPETITIONS; rep++ ))" in text
+    assert "run_pap_same_pd_workload.sh" in text
+    assert "PAP_BENCH_CLIENT_MODE=multiturn_north_star" in text
+    assert "PAP_TOPOLOGY=1pa1p" in text
+    assert "PAP_PREFILL_GPUS=1" in text
+    assert "PAP_PROJECTION_GPUS=2" in text
+    assert "INPUT_LEN=16000" in text
+    assert "OUTPUT_LEN=256" in text
+    assert "MAX_MODEL_LEN=20000" in text
+    assert "MAX_NUM_BATCHED_TOKENS=4096" in text
+    assert "MAX_NUM_SEQS=2" in text
+    assert "PAP_VLLM_DTYPE=float16" in text
+    assert "PAP_PREFIX_CACHE_AUDIT=0" in text
+    assert "PAP_ENABLE_PROMPT_TOKENS_DETAILS=1" in text
+    assert "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS=256" in text
+    assert "PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE" in text
+    assert "nvidia-smi" in text
+    assert "compare_pap_pd_multiturn.py" in text
+    assert " aggregate " in text
+    assert " compare " in text
+    assert "write-reference" not in text
+    assert "pkill" not in text
+    assert "python3" not in text
+    assert "pip install" not in text
+
+
+def test_pd_multiturn_reference_bootstrap_uses_unchanged_official_proxy() -> None:
+    script = (
+        ROOT
+        / ".claude"
+        / "skills"
+        / "vllm-pap-benchmark"
+        / "scripts"
+        / "bootstrap_pd_multiturn_reference.sh"
+    )
+    assert script.is_file()
+    text = script.read_text()
+
+    assert "REPETITIONS=3" in text
+    assert "examples/disaggregated/disaggregated_serving/disagg_proxy_multiturn.py" in text
+    assert "pap_pd_multiturn_client.py" in text
+    assert '--architecture "pd"' in text
+    assert '--topology "1p1d"' in text
+    assert "CUDA_VISIBLE_DEVICES=1" in text
+    assert "CUDA_VISIBLE_DEVICES=2" in text
+    assert '"kv_role":"kv_producer"' in text
+    assert '"kv_role":"kv_consumer"' in text
+    assert '"bidirectional_kv_xfer":true' in text
+    assert "cache HIT" in text
+    assert "/tmp/pap_pd_multiturn_reference_candidate.json" in text
+    assert "write-reference" not in text
+    assert "pkill" not in text
+    assert "python3" not in text
+    assert "pip install" not in text
+
+
 def test_pd_benchmark_runner_is_self_contained_and_scoped() -> None:
     skill_dir = ROOT / ".claude" / "skills" / "vllm-pap-benchmark"
     runner = skill_dir / "scripts" / "run_pd_same_workload.sh"
