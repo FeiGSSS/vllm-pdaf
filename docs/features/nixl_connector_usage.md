@@ -136,9 +136,21 @@ python tests/v1/kv_connector/nixl_integration/toy_proxy_server.py \
     - In bidirectional mode, the decoder caches KV blocks for multi-turn conversations. This TTL controls how long those blocks are held before being released. Unlike the prefiller lease, this TTL is not renewed via heartbeats.
     - Example: `--kv-transfer-config '{"kv_connector_extra_config": {"decoder_kv_blocks_ttl": 600}}'`
 
-## Bidirectional KV Transfer (Multi-turn)
+## One-way and Bidirectional KV Transfer (Multi-turn)
 
 In standard disaggregated prefilling, KV cache flows in one direction: Prefill (P) computes the KV cache and Decode (D) reads from P. For multi-turn conversations this is wasteful — D already holds the KV cache corresponding to the generated tokens from prior turns, yet P must recompute it from scratch on every new turn. Bidirectional KV transfer lets P **pull** existing KV blocks from D via RDMA before computing only the new tokens, significantly reducing Time-To-First-Token (TTFT) for long-prefill such as **multi-turn heavy scenarios**.
+
+The multi-turn proxy exposes this choice explicitly:
+
+- `--reuse-mode oneway` keeps the standard P→D transfer, but never looks up,
+  consumes, or stores a decoder conversation handle. This is the control mode.
+- `--reuse-mode bidirectional` additionally offers the previous D handle to P and
+  stores the new D handle for the next turn. This remains the compatibility
+  default, but benchmark commands should always pass it explicitly.
+
+A proxy cache hit means only that a D→P handle was **offered**. The transfer was
+actually selected only when P reports a non-zero
+`usage.prompt_tokens_details.external_cached_tokens` value.
 
 ### How it works
 
@@ -207,18 +219,49 @@ sequenceDiagram
 4. Proxy forwards the request to D with P's updated `kv_transfer_params`.
 5. D reads the new KV blocks from P, generates the response, and returns updated `kv_transfer_params` which the proxy caches for the next turn.
 
-### Configuration
+### One-way configuration
+
+Use the normal producer/consumer roles and explicitly disable bidirectional
+transfer on both services. P must expose prompt-token details because the proxy
+validates the exclusive local/external/computed accounting before dispatching D.
+
+```bash
+# Prefill producer
+vllm serve <MODEL> \
+  --enable-prompt-tokens-details \
+  --kv-transfer-config '{
+    "kv_connector": "NixlConnector",
+    "kv_role": "kv_producer",
+    "kv_connector_extra_config": {
+      "bidirectional_kv_xfer": false
+    }
+  }'
+
+# Decode consumer
+vllm serve <MODEL> \
+  --kv-transfer-config '{
+    "kv_connector": "NixlConnector",
+    "kv_role": "kv_consumer",
+    "kv_connector_extra_config": {
+      "bidirectional_kv_xfer": false
+    }
+  }'
+```
+
+### Bidirectional configuration
 
 Enable bidirectional KV transfer by setting `bidirectional_kv_xfer` in `kv_connector_extra_config` on **both** P and D instances:
 
 ```bash
 # Prefill instance
 vllm serve <MODEL> \
+  --enable-prompt-tokens-details \
   --kv-transfer-config '{
     "kv_connector": "NixlConnector",
     "kv_role": "kv_producer",
     "kv_connector_extra_config": {
-      "bidirectional_kv_xfer": true
+      "bidirectional_kv_xfer": true,
+      "kv_recompute_threshold": 64
     }
   }'
 
@@ -228,7 +271,8 @@ vllm serve <MODEL> \
     "kv_connector": "NixlConnector",
     "kv_role": "kv_consumer",
     "kv_connector_extra_config": {
-      "bidirectional_kv_xfer": true
+      "bidirectional_kv_xfer": true,
+      "kv_recompute_threshold": 64
     }
   }'
 ```
@@ -241,15 +285,32 @@ Additional configuration options in `kv_connector_extra_config`:
 | `kv_recompute_threshold` | `64` | Minimum number of remote tokens required to trigger a D→P pull. Below this threshold, P recomputes locally instead of pulling (to amortize transfer latency). |
 | `decoder_kv_blocks_ttl` | `480` | TTL (seconds) for KV blocks cached on D for bidirectional reuse. Blocks are released after this duration. Not renewed via heartbeats. |
 
+Use `kv_recompute_threshold=64` for formal benchmark results. Setting the
+threshold to `0` forces small D→P candidates through the transfer-selection path
+and is useful only as a diagnostic path check; it is not a valid performance
+comparison configuration.
+
 ### Multi-turn proxy setup
 
-Use the provided multi-turn proxy to manage `kv_transfer_params` caching across conversation turns:
+Run the proxy with an explicit mode. One-way keeps P→D transfer but disables all
+conversation-cache access:
 
 ```bash
 python examples/disaggregated/disaggregated_serving/disagg_proxy_multiturn.py \
   --host 0.0.0.0 --port 8000 \
   --prefiller-host <P_IP> --prefiller-port 8100 \
-  --decoder-host <D_IP> --decoder-port 8200
+  --decoder-host <D_IP> --decoder-port 8200 \
+  --reuse-mode oneway
+```
+
+Bidirectional mode manages `kv_transfer_params` across conversation turns:
+
+```bash
+python examples/disaggregated/disaggregated_serving/disagg_proxy_multiturn.py \
+  --host 0.0.0.0 --port 8000 \
+  --prefiller-host <P_IP> --prefiller-port 8100 \
+  --decoder-host <D_IP> --decoder-port 8200 \
+  --reuse-mode bidirectional
 ```
 
 The proxy supports multiple P and D instances via round-robin:
@@ -258,8 +319,25 @@ The proxy supports multiple P and D instances via round-robin:
 python examples/disaggregated/disaggregated_serving/disagg_proxy_multiturn.py \
   --host 0.0.0.0 --port 8000 \
   --prefiller-hosts <P_IP1> <P_IP2> --prefiller-ports 8100 8100 \
-  --decoder-hosts <D_IP1> <D_IP2> --decoder-ports 8200 8200
+  --decoder-hosts <D_IP1> <D_IP2> --decoder-ports 8200 8200 \
+  --reuse-mode bidirectional
 ```
+
+Both streaming and non-streaming responses include the following validated
+prefill-accounting headers:
+
+```text
+X-VLLM-Prefill-Prompt-Tokens
+X-VLLM-Prefill-Local-Cached-Tokens
+X-VLLM-Prefill-External-Cached-Tokens
+X-VLLM-Prefill-Computed-Tokens
+X-VLLM-PD-Reuse-Mode
+X-VLLM-D2P-Transfer-Selected
+```
+
+`GET /stats` reports fixed-cardinality request, cache, offered/selected transfer,
+token, failure, and timing fields. An unavailable timing is `null` with a reason;
+the proxy does not substitute a fabricated zero.
 
 ### Client usage
 
@@ -294,13 +372,23 @@ curl http://localhost:8000/v1/chat/completions \
 !!! note
     The `conversation_id` field is a non-standard extension to the OpenAI API. It is consumed by the proxy and not forwarded to the vLLM engine.
 
+    Add `--require-conversation-id` to the proxy for controlled benchmarks. In
+    that strict mode, a missing ID is rejected instead of silently disabling
+    cross-turn reuse.
+
 ### Benchmarking the multi-turn proxy
 
 [`benchmarks/multi_turn/benchmark_serving_multi_turn.py`](../../benchmarks/multi_turn/benchmark_serving_multi_turn.py) supports targeting the disaggregated multi-turn proxy with the `--send-conversation-id` flag, which injects a per-conversation `conversation_id` into every request payload so the proxy can key cross-turn KV cache reuse.
 
-The flag is **off by default** so the benchmark is compatible with strict OpenAI-compatible frontends that reject unknown top-level fields. When benchmarking the multi-turn proxy you must pass it explicitly — otherwise every turn lands as a cache MISS and the bidirectional KV transfer path is never exercised.
+The flag is **off by default** so the benchmark is compatible with strict OpenAI-compatible frontends that reject unknown top-level fields. When benchmarking the multi-turn proxy you must pass it explicitly — otherwise every turn lands as a cache MISS and the bidirectional KV transfer path is never exercised. Start the benchmark proxy with an explicit `--reuse-mode` and `--require-conversation-id` so a configuration mistake fails closed.
 
 ```bash
+# Start the strict proxy first (choose oneway for the control run).
+python examples/disaggregated/disaggregated_serving/disagg_proxy_multiturn.py \
+  --prefiller-host <P_IP> --prefiller-port 8100 \
+  --decoder-host <D_IP> --decoder-port 8200 \
+  --reuse-mode bidirectional --require-conversation-id
+
 python benchmarks/multi_turn/benchmark_serving_multi_turn.py \
   --model <MODEL> --served-model-name <NAME> \
   --url http://<proxy_host>:8000 \
