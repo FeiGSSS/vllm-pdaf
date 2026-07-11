@@ -2,11 +2,12 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from vllm.model_executor.models.qwen3 import (
+    _pap_bind_offload_exec_mailbox_peer,
     _pap_decode_token_rows_for_indices,
     _pap_endpoint_for_tp_rank,
     _pap_nixl_mailbox_offload_exec_transport,
-    _pap_offload_exec_step_groups,
     _pap_offload_exec_session_request_id,
+    _pap_offload_exec_step_groups,
 )
 
 
@@ -61,6 +62,37 @@ def test_pap_projection_mailbox_actor_id_includes_tp_rank(
     actor_id, local_rank = built[0]
     assert actor_id.startswith("projection-3-r1-")
     assert local_rank == 1
+
+
+def test_pap_mailbox_bind_uses_stable_projection_source_id(monkeypatch) -> None:
+    calls = []
+
+    class FakeTransport:
+        local_agent_metadata = b"projection-metadata"
+
+        def bind_peer(self, metadata):
+            calls.append(("bind", metadata))
+
+    def fake_bind(**kwargs):
+        calls.append(("request", kwargs))
+        return b"attention-metadata"
+
+    monkeypatch.setenv("PAP_NIXL_MAILBOX_ACTOR_ID", "projection-3")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_LOCAL_RANK", "1")
+    monkeypatch.setattr(
+        "vllm.pap.shadow_attention.bind_offload_exec_mailbox",
+        fake_bind,
+    )
+    transport = FakeTransport()
+
+    _pap_bind_offload_exec_mailbox_peer(
+        transport,
+        "http://127.0.0.1:8302",
+    )
+
+    assert calls[0][0] == "request"
+    assert calls[0][1]["source_id"] == "projection-3-r1"
+    assert calls[1] == ("bind", b"attention-metadata")
 
 
 def test_pap_decode_token_rows_for_indices_selects_request_tokens() -> None:

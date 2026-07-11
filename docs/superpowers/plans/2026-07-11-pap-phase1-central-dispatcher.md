@@ -298,14 +298,19 @@ dispatcher_failures == 0
 
 This proves Phase 1 changed ownership but did not accidentally combine work.
 
-- [ ] **Step 4: Run same-code 1PA1P legacy/central QPS 4 A/B**
+- [x] **Step 4: Run same-code 1PA1P legacy/central QPS 4 A/B**
 
 Run three no-trace repetitions per mode using the canonical i128/o32/prefix50,
 128 requests, QPS 4 workload. Compare median TPOT across repetitions. Require
 central correctness and no more than 3% median TPOT regression before enabling
 central mode for Phase 2 work.
 
-- [ ] **Step 5: Checkpoint commit**
+Completed on commit `d654f6011`: legacy three-run median TPOT was
+`28.138 ms`; `central_fifo` was `28.514 ms` (`+1.34%`). Median TTFT changed
+from `169.799 ms` to `170.455 ms` (`+0.39%`). All six runs completed `128/0`
+and passed correctness, routing, and session-drain audits.
+
+- [x] **Step 5: Checkpoint commit**
 
 Stage only Phase 1 source, tests, plan/design documentation, and benchmark
 script changes. Do not stage result directories or unrelated untracked files.

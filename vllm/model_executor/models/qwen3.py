@@ -464,9 +464,7 @@ def _pap_req_indices_are_contiguous(req_indices: tuple[int, ...]) -> bool:
     if not req_indices:
         return False
     start = int(req_indices[0])
-    return start >= 0 and req_indices == tuple(
-        range(start, start + len(req_indices))
-    )
+    return start >= 0 and req_indices == tuple(range(start, start + len(req_indices)))
 
 
 def _pap_decode_token_ids_for_req_index(
@@ -555,9 +553,7 @@ def _pap_offload_exec_step_groups(
         return tuple(cached)
 
     request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
-    route_groups = tuple(
-        additional_kwargs.get("pap_offload_exec_route_groups") or ()
-    )
+    route_groups = tuple(additional_kwargs.get("pap_offload_exec_route_groups") or ())
     if not route_groups:
         raise RuntimeError("PAP attention missing OFFLOAD_EXEC route groups")
 
@@ -571,8 +567,7 @@ def _pap_offload_exec_step_groups(
         additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
     )
     input_token_ids = tuple(
-        int(token_id)
-        for token_id in additional_kwargs.get("pap_input_token_ids") or ()
+        int(token_id) for token_id in additional_kwargs.get("pap_input_token_ids") or ()
     )
 
     step_groups: list[_PAPOffloadExecStepGroup] = []
@@ -784,6 +779,10 @@ def _pap_bind_offload_exec_mailbox_peer(
     peer_metadata = bind_offload_exec_mailbox(
         attention_endpoint=attention_endpoint,
         local_agent_metadata=transport.local_agent_metadata,
+        source_id=(
+            f"{os.environ.get('PAP_NIXL_MAILBOX_ACTOR_ID', 'projection')}"
+            f"-r{_pap_tensor_parallel_rank()}"
+        ),
     )
     transport.bind_peer(peer_metadata)
     transport._pap_mailbox_bound = True
@@ -1268,9 +1267,7 @@ class Qwen3Attention(nn.Module):
                     f"PAP attention cannot route non-OpenAI request id {request_id}"
                 )
             if num_scheduled_tokens and int(num_scheduled_tokens[req_index]) != 1:
-                raise RuntimeError(
-                    "PAP remote attention expects one token per request"
-                )
+                raise RuntimeError("PAP remote attention expects one token per request")
             seq_len = int(positions_cpu[req_index].item()) + 1
             max_seq_len = int(seq_lens_cpu[req_index].item())
             if seq_len != max_seq_len:
@@ -1590,8 +1587,7 @@ class Qwen3Attention(nn.Module):
             _pap_bind_offload_exec_mailbox_peer(transport, attention_endpoint)
             send_qkv_batch_direct = getattr(transport, "send_qkv_batch_direct", None)
             qkv_width = (
-                self.num_heads * self.head_dim
-                + 2 * self.num_kv_heads * self.head_dim
+                self.num_heads * self.head_dim + 2 * self.num_kv_heads * self.head_dim
             )
             direct_qkv_batch = (
                 _pap_direct_qkv_batch_for_indices(
@@ -1690,9 +1686,7 @@ class Qwen3Attention(nn.Module):
                         "yield_end_ns": trace_yield_end_ns,
                         "recv_done_ns": trace_recv_done_ns,
                         "route_groups": len(step_groups),
-                        "contiguous_route_groups": (
-                            trace_contiguous_route_groups
-                        ),
+                        "contiguous_route_groups": (trace_contiguous_route_groups),
                         "direct_qkv_groups": trace_direct_qkv_groups,
                         "packed_qkv_groups": trace_packed_qkv_groups,
                         "direct_output_rows": trace_direct_output_rows,
@@ -1883,9 +1877,7 @@ class Qwen3Attention(nn.Module):
         seq_lens_start = time.perf_counter() if profile_ipc else 0.0
         seq_lens_cpu = seq_lens.detach().to(device="cpu", dtype=torch.long)
         seq_lens_cpu_ms = (
-            (time.perf_counter() - seq_lens_start) * 1000.0
-            if profile_ipc
-            else 0.0
+            (time.perf_counter() - seq_lens_start) * 1000.0 if profile_ipc else 0.0
         )
         import_count = 0
         block_ids_total_ms = 0.0
@@ -1936,9 +1928,7 @@ class Qwen3Attention(nn.Module):
             )
 
             block_ids_ms = (
-                (time.perf_counter() - block_ids_start) * 1000.0
-                if profile_ipc
-                else 0.0
+                (time.perf_counter() - block_ids_start) * 1000.0 if profile_ipc else 0.0
             )
             publish_start = time.perf_counter() if profile_ipc else 0.0
             import_prefill_paged_kv(
@@ -1953,9 +1943,7 @@ class Qwen3Attention(nn.Module):
                 tcp_endpoint=tcp_endpoint,
             )
             publish_ms = (
-                (time.perf_counter() - publish_start) * 1000.0
-                if profile_ipc
-                else 0.0
+                (time.perf_counter() - publish_start) * 1000.0 if profile_ipc else 0.0
             )
             self._pap_imported_prefill_kv.add(import_key)
             if profile_ipc:
@@ -2051,9 +2039,7 @@ class Qwen3DecoderLayer(nn.Module):
         residual: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         layer_name = self.self_attn.attn.layer_name
-        trace_projection_layer = _pap_env_enabled(
-            "PAP_OFFLOAD_EXEC_TRACE"
-        ) and (
+        trace_projection_layer = _pap_env_enabled("PAP_OFFLOAD_EXEC_TRACE") and (
             _pap_env_enabled("PAP_PROJECTION_KV_UNAWARE")
             or _pap_projection_critical_trace_enabled()
         )

@@ -15,7 +15,9 @@ from examples.pap.pap_attention_executor import (
     PAPAttentionRegistry,
     PAPUnifiedPagedKVState,
     _execute_offload_exec_work_item,
+    _execute_offload_exec_work_items,
     _offload_exec_batch_rows,
+    _offload_exec_work_item_compatibility_key,
     build_unified_paged_flash_metadata,
     compute_binary_attention_response,
     compute_offload_exec_batch_output,
@@ -27,7 +29,10 @@ from examples.pap.pap_attention_executor import (
     run_offload_exec_mailbox_receiver_loop,
     run_offload_exec_once,
 )
-from vllm.pap.attention_scheduler import PAPAttentionDispatcher
+from vllm.pap.attention_scheduler import (
+    PAPAttentionDispatcher,
+    PAPAttentionWorkItem,
+)
 from vllm.pap.data_plane import (
     PAPCudaIPCTensorHandle,
     PAPOffloadExecBatchDescriptor,
@@ -258,9 +263,7 @@ def test_attention_executor_binds_each_projection_to_distinct_transport(
         responses.append(
             client.post(
                 "/v1/pap/attention/offload-exec-mailbox/bind",
-                json={
-                    "agent_metadata_b64": base64.b64encode(peer_metadata).decode()
-                },
+                json={"agent_metadata_b64": base64.b64encode(peer_metadata).decode()},
             )
         )
 
@@ -274,9 +277,7 @@ def test_attention_executor_binds_each_projection_to_distinct_transport(
     assert transports[1].bound_peers == [peers[1]]
     assert loops_ready.wait(timeout=1.0)
     assert set(loops_started) == set(transports)
-    assert set(loop_peer_ids) == {
-        hashlib.sha1(peer).hexdigest()[:16] for peer in peers
-    }
+    assert set(loop_peer_ids) == {hashlib.sha1(peer).hexdigest()[:16] for peer in peers}
 
     rebound = client.post(
         "/v1/pap/attention/offload-exec-mailbox/bind",
@@ -287,8 +288,10 @@ def test_attention_executor_binds_each_projection_to_distinct_transport(
     assert transports[0].bound_peers == [peers[0]]
 
 
+@pytest.mark.parametrize("dispatch_mode", ["central_fifo", "central_combine"])
 def test_attention_executor_central_mode_shares_one_dispatcher(
     monkeypatch,
+    dispatch_mode,
 ) -> None:
     from examples.pap import pap_attention_executor as executor_module
 
@@ -315,7 +318,7 @@ def test_attention_executor_central_mode_shares_one_dispatcher(
         if len(receiver_contexts) == 2:
             receivers_ready.set()
 
-    monkeypatch.setenv("PAP_ATTENTION_DISPATCH_MODE", "central_fifo")
+    monkeypatch.setenv("PAP_ATTENTION_DISPATCH_MODE", dispatch_mode)
     monkeypatch.setattr(
         executor_module,
         "_build_attention_offload_exec_transport",
@@ -331,11 +334,12 @@ def test_attention_executor_central_mode_shares_one_dispatcher(
     client = _ASGITestClient(app)
     peers = (b"projection-a", b"projection-b")
 
-    for peer_metadata in peers:
+    for peer_index, peer_metadata in enumerate(peers):
         response = client.post(
             "/v1/pap/attention/offload-exec-mailbox/bind",
             json={
-                "agent_metadata_b64": base64.b64encode(peer_metadata).decode()
+                "agent_metadata_b64": base64.b64encode(peer_metadata).decode(),
+                "source_id": f"projection-{peer_index}",
             },
         )
         assert response.status_code == 200
@@ -345,11 +349,15 @@ def test_attention_executor_central_mode_shares_one_dispatcher(
     assert dispatcher is not None
     assert {id(context[1]) for context in receiver_contexts} == {id(dispatcher)}
     assert {context[2] for context in receiver_contexts} == {
-        hashlib.sha1(peer).hexdigest()[:16] for peer in peers
+        "projection-0",
+        "projection-1",
     }
     stats = client.get("/v1/pap/attention/stats").json()
-    assert stats["attention_dispatch_mode"] == "central_fifo"
+    assert stats["attention_dispatch_mode"] == dispatch_mode
     assert stats["dispatcher_running"] is True
+    if dispatch_mode == "central_combine":
+        assert stats["dispatcher_expected_group_size"] == 2
+        assert stats["dispatcher_preferred_peer_id"] == "projection-0"
     dispatcher.stop(drain=True, timeout=1.0)
 
 
@@ -358,6 +366,78 @@ def test_attention_executor_rejects_unknown_dispatch_mode(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="PAP_ATTENTION_DISPATCH_MODE"):
         create_app()
+
+
+def test_attention_executor_builds_central_combine_dispatcher(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("PAP_ATTENTION_DISPATCH_MODE", "central_combine")
+    monkeypatch.setenv("PAP_ATTENTION_COMBINE_WAIT_US", "250")
+
+    app = create_app()
+
+    assert app.state.offload_exec_dispatch_mode == "central_combine"
+    dispatcher = app.state.offload_exec_dispatcher
+    assert dispatcher is not None
+    assert dispatcher._batch_handler is not None
+    assert dispatcher._compatibility_key is not None
+    stats = dispatcher.stats()
+    assert stats["dispatcher_coalesce_timeout_us"] == 250
+    assert stats["dispatcher_expected_group_size"] == 1
+
+
+def test_mailbox_bind_sends_stable_projection_source_id(monkeypatch) -> None:
+    import json
+
+    from vllm.pap import shadow_attention
+
+    response_metadata = b"attention-metadata"
+    response_body = json.dumps(
+        {"agent_metadata_b64": base64.b64encode(response_metadata).decode("ascii")}
+    ).encode("utf-8")
+
+    class FakeSocket:
+        def __init__(self) -> None:
+            self.sent = b""
+            self.responses = [
+                b"HTTP/1.1 200 OK\r\nContent-Length: "
+                + str(len(response_body)).encode("ascii")
+                + b"\r\n\r\n"
+                + response_body,
+                b"",
+            ]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def settimeout(self, _timeout):
+            pass
+
+        def sendall(self, payload):
+            self.sent += payload
+
+        def recv(self, _size):
+            return self.responses.pop(0)
+
+    fake_socket = FakeSocket()
+    monkeypatch.setattr(
+        shadow_attention.socket,
+        "create_connection",
+        lambda *_args, **_kwargs: fake_socket,
+    )
+
+    result = shadow_attention.bind_offload_exec_mailbox(
+        attention_endpoint="http://127.0.0.1:8300",
+        local_agent_metadata=b"projection-metadata",
+        source_id="projection-0-r0",
+    )
+
+    request_body = fake_socket.sent.partition(b"\r\n\r\n")[2]
+    assert json.loads(request_body)["source_id"] == "projection-0-r0"
+    assert result == response_metadata
 
 
 def test_attention_executor_rejects_nccl_offload_exec_transport(monkeypatch) -> None:
@@ -673,9 +753,7 @@ def test_unified_offload_exec_commit_uses_descriptor_decode_token_ids(
         enabled = True
 
         def commit(self, *, request_id, new_seq_len, new_token_ids, endpoint):
-            commits.append(
-                (request_id, new_seq_len, tuple(new_token_ids), endpoint)
-            )
+            commits.append((request_id, new_seq_len, tuple(new_token_ids), endpoint))
 
     monkeypatch.setattr(
         registry,
@@ -769,9 +847,7 @@ def test_unified_offload_exec_overlap_step_does_not_commit(
         enabled = True
 
         def commit(self, *, request_id, new_seq_len, new_token_ids, endpoint):
-            commits.append(
-                (request_id, new_seq_len, tuple(new_token_ids), endpoint)
-            )
+            commits.append((request_id, new_seq_len, tuple(new_token_ids), endpoint))
 
     monkeypatch.setattr(
         executor_module.torch.ops._C_cache_ops,
@@ -908,8 +984,7 @@ def test_unified_decode_append_reuses_slot_plan_across_layers(
             )
         )
     layer_caches = {
-        layer_name: torch.zeros((4, 2, 4, 1, 2))
-        for layer_name in ("layer0", "layer1")
+        layer_name: torch.zeros((4, 2, 4, 1, 2)) for layer_name in ("layer0", "layer1")
     }
     for layer_name, kv_cache in layer_caches.items():
         for request_id, block_id in (("req-a", 0), ("req-b", 1)):
@@ -1750,12 +1825,8 @@ def test_mailbox_receiver_enqueues_without_computing(monkeypatch) -> None:
 
     assert len(dispatcher.items) == 1
     assert released == []
-    assert registry.offload_exec_dispatch_stats()[
-        "offload_exec_peer_batches"
-    ] == 1
-    assert registry.offload_exec_dispatch_stats()[
-        "offload_exec_compute_calls"
-    ] == 0
+    assert registry.offload_exec_dispatch_stats()["offload_exec_peer_batches"] == 1
+    assert registry.offload_exec_dispatch_stats()["offload_exec_compute_calls"] == 0
     dispatcher.items[0].release_input()
     assert released == ["release"]
 
@@ -1918,13 +1989,181 @@ def test_central_dispatcher_computes_and_sends_to_each_source(monkeypatch) -> No
 
     assert compute_peers == [1.0, 1.0]
     for peer_id in ("projection-a", "projection-b"):
-        assert events.index(f"send:{peer_id}") < events.index(
-            f"release:{peer_id}"
-        )
+        assert events.index(f"send:{peer_id}") < events.index(f"release:{peer_id}")
     stats = registry.offload_exec_dispatch_stats()
     assert stats["offload_exec_peer_batches"] == 2
     assert stats["offload_exec_compute_calls"] == 2
     assert stats["offload_exec_max_source_batches_per_compute"] == 1
+
+
+def test_central_combine_executes_once_and_scatters_to_sources(
+    monkeypatch,
+) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    class FakeTransport:
+        def __init__(self) -> None:
+            self.sent = []
+
+        def send_output_batch(self, descriptor, output, *, remote_address):
+            self.sent.append((descriptor, output.clone(), remote_address))
+
+    descriptors = [
+        PAPOffloadExecBatchDescriptor(
+            layer_name="layer0",
+            items=(
+                PAPOffloadExecDescriptor(
+                    request_id="req-a",
+                    layer_name="layer0",
+                    step=3,
+                    scale=0.5,
+                    decode_token_ids=(41,),
+                ),
+            ),
+        ),
+        PAPOffloadExecBatchDescriptor(
+            layer_name="layer0",
+            items=(),
+            batch_id_suffix="req-b@7",
+            metadata_template={
+                "r": ("req-b",),
+                "s": (7,),
+                "a": (0.5,),
+                "t": ((42,),),
+            },
+        ),
+    ]
+    transports = [FakeTransport(), FakeTransport()]
+    items = tuple(
+        PAPAttentionWorkItem(
+            descriptor=descriptor,
+            qkv_batch=torch.full((1, 6), float(index + 1)),
+            transport=transport,
+            peer_id=f"projection-{index}",
+            arrival_ns=1,
+        )
+        for index, (descriptor, transport) in enumerate(zip(descriptors, transports))
+    )
+    compute_calls = []
+
+    def fake_compute(**kwargs):
+        rows = _offload_exec_batch_rows(kwargs["descriptor"])
+        compute_calls.append((rows, kwargs["qkv_batch"].clone()))
+        return torch.tensor([[10.0, 11.0], [20.0, 21.0]])
+
+    monkeypatch.setattr(
+        executor_module,
+        "compute_offload_exec_batch_output",
+        fake_compute,
+    )
+    registry = PAPAttentionRegistry(storage_device="cpu")
+
+    _execute_offload_exec_work_items(registry=registry, items=items)
+
+    assert len(compute_calls) == 1
+    request_ids, steps, scales, token_rows = compute_calls[0][0]
+    assert request_ids == ("req-a", "req-b")
+    assert steps == (3, 7)
+    assert scales == (0.5, 0.5)
+    assert token_rows == ((41,), (42,))
+    torch.testing.assert_close(
+        compute_calls[0][1],
+        torch.tensor(
+            [
+                [1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+                [2.0, 2.0, 2.0, 2.0, 2.0, 2.0],
+            ]
+        ),
+    )
+    assert transports[0].sent[0][0] is descriptors[0]
+    assert transports[1].sent[0][0] is descriptors[1]
+    torch.testing.assert_close(
+        transports[0].sent[0][1],
+        torch.tensor([[10.0, 11.0]]),
+    )
+    torch.testing.assert_close(
+        transports[1].sent[0][1],
+        torch.tensor([[20.0, 21.0]]),
+    )
+    stats = registry.offload_exec_dispatch_stats()
+    assert stats["offload_exec_compute_calls"] == 1
+    assert stats["offload_exec_compute_rows"] == 2
+    assert stats["offload_exec_source_batches_per_compute_sum"] == 2
+    assert stats["offload_exec_max_source_batches_per_compute"] == 2
+
+
+def test_central_combine_single_item_reuses_fifo_executor(monkeypatch) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                request_id="req-a",
+                layer_name="layer0",
+                step=1,
+                scale=0.5,
+            ),
+        ),
+    )
+    item = PAPAttentionWorkItem(
+        descriptor=descriptor,
+        qkv_batch=torch.ones((1, 6)),
+        transport=object(),
+        peer_id="projection-0",
+        arrival_ns=1,
+    )
+    calls = []
+    monkeypatch.setattr(
+        executor_module,
+        "_execute_offload_exec_work_item",
+        lambda **kwargs: calls.append(kwargs),
+    )
+    registry = PAPAttentionRegistry(storage_device="cpu")
+
+    _execute_offload_exec_work_items(registry=registry, items=(item,))
+
+    assert calls == [{"registry": registry, "item": item}]
+
+
+def test_central_combine_compatibility_key_rejects_layer_or_scale() -> None:
+    import torch
+
+    def make_item(layer_name: str, scale: float) -> PAPAttentionWorkItem:
+        descriptor = PAPOffloadExecBatchDescriptor(
+            layer_name=layer_name,
+            items=(
+                PAPOffloadExecDescriptor(
+                    request_id=f"req-{layer_name}-{scale}",
+                    layer_name=layer_name,
+                    step=1,
+                    scale=scale,
+                ),
+            ),
+        )
+        return PAPAttentionWorkItem(
+            descriptor=descriptor,
+            qkv_batch=torch.ones((1, 6)),
+            transport=object(),
+            peer_id="projection",
+            arrival_ns=1,
+        )
+
+    baseline = _offload_exec_work_item_compatibility_key(make_item("layer0", 0.5))
+
+    assert baseline == _offload_exec_work_item_compatibility_key(
+        make_item("layer0", 0.5)
+    )
+    assert baseline != _offload_exec_work_item_compatibility_key(
+        make_item("layer1", 0.5)
+    )
+    assert baseline != _offload_exec_work_item_compatibility_key(
+        make_item("layer0", 1.0)
+    )
 
 
 def test_central_dispatcher_preserves_cuda_ready_dependency(monkeypatch) -> None:

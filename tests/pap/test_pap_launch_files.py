@@ -19,10 +19,16 @@ def test_pap_benchmark_runner_captures_attention_fast_path_stats() -> None:
     assert "attention_fast_path_stats.json" in text
     assert "capture_attention_fast_path_stats" in text
     assert (
-        'PAP_ATTENTION_DISPATCH_MODE="${PAP_ATTENTION_DISPATCH_MODE:-legacy}"'
-        in text
+        'PAP_ATTENTION_DISPATCH_MODE="${PAP_ATTENTION_DISPATCH_MODE:-legacy}"' in text
     )
+    assert (
+        'PAP_ATTENTION_COMBINE_WAIT_US="${PAP_ATTENTION_COMBINE_WAIT_US:-'
+        '${DEFAULT_ATTENTION_COMBINE_WAIT_US}}"' in text
+    )
+    assert "DEFAULT_ATTENTION_COMBINE_WAIT_US=200" in text
+    assert "DEFAULT_ATTENTION_COMBINE_WAIT_US=1000" in text
     assert '"attention_dispatch_mode"' in text
+    assert '"attention_combine_wait_us"' in text
 
 
 def test_pap_benchmark_runner_supports_arbitrary_xy_topology() -> None:
@@ -38,10 +44,7 @@ def test_pap_benchmark_runner_supports_arbitrary_xy_topology() -> None:
 
     assert "^([0-9]+)pa([0-9]+)p$" in text
     assert 'PA_COUNT="${PAP_PA_COUNT:-${BASH_REMATCH[1]}}"' in text
-    assert (
-        'PROJECTION_COUNT="${PAP_PROJECTION_COUNT:-${BASH_REMATCH[2]}}"'
-        in text
-    )
+    assert 'PROJECTION_COUNT="${PAP_PROJECTION_COUNT:-${BASH_REMATCH[2]}}"' in text
     assert "This runner is intentionally fixed to 1pa1p" not in text
     assert "for (( idx=0; idx<PA_COUNT; idx++ ))" in text
     assert "for (( idx=0; idx<PROJECTION_COUNT; idx++ ))" in text
@@ -63,8 +66,8 @@ def test_pd_benchmark_runner_is_self_contained_and_scoped() -> None:
     assert "run_benchmark.sh" not in text
     assert "pkill" not in text
     assert "nvidia-smi" not in text
-    assert 'PD_PREFILL_GPU:-1' in text
-    assert 'PD_DECODE_GPU:-2' in text
+    assert "PD_PREFILL_GPU:-1" in text
+    assert "PD_DECODE_GPU:-2" in text
     assert 'QPS="${QPS:-16}"' in text
     assert 'VLLM_DTYPE="${PD_VLLM_DTYPE:-float16}"' in text
 

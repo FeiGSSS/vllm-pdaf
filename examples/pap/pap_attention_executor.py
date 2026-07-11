@@ -38,6 +38,7 @@ from vllm.pap.attention_session import (
     AttentionSessionStore,
 )
 from vllm.pap.data_plane import (
+    PAPOffloadExecBatchDescriptor,
     PAPOffloadKVIPCDescriptor,
     PAPOffloadKVPagedIPCDescriptor,
     build_local_fast_offload_exec_transport,
@@ -87,9 +88,10 @@ def _pap_env_flag(name: str, default: bool = False) -> bool:
 
 def _pap_attention_dispatch_mode() -> str:
     mode = os.environ.get("PAP_ATTENTION_DISPATCH_MODE", "legacy").lower()
-    if mode not in {"legacy", "central_fifo"}:
+    if mode not in {"legacy", "central_fifo", "central_combine"}:
         raise ValueError(
-            "PAP_ATTENTION_DISPATCH_MODE must be legacy or central_fifo, "
+            "PAP_ATTENTION_DISPATCH_MODE must be legacy, central_fifo, or "
+            "central_combine, "
             f"got {mode!r}"
         )
     return mode
@@ -314,6 +316,7 @@ class PAPOffloadExecMailboxBindRequest(BaseModel):
     """Projection NIXL mailbox metadata used for one-time OFFLOAD_EXEC bind."""
 
     agent_metadata_b64: str
+    source_id: str | None = None
 
 
 class PAPAttentionLayerEventRequest(BaseModel):
@@ -676,19 +679,15 @@ class PAPAttentionRegistry:
         self._unified_paged_kv: dict[str, dict[str, PAPUnifiedPagedKVState]] = {}
         self._session_epochs: dict[str, int] = {}
         self._next_session_epoch = 1
-        self._unified_slot_topologies: dict[
-            str, tuple[tuple[int, ...], int, str]
-        ] = {}
+        self._unified_slot_topologies: dict[str, tuple[tuple[int, ...], int, str]] = {}
         self._unified_slot_topology_uniform: dict[str, bool] = {}
-        self._decode_slot_plan_cache: OrderedDict[
-            tuple[Any, ...], torch.Tensor
-        ] = OrderedDict()
+        self._decode_slot_plan_cache: OrderedDict[tuple[Any, ...], torch.Tensor] = (
+            OrderedDict()
+        )
         self._offload_exec_session_entry_cache: dict[
             tuple[str, int, int, int, int, int], PAPOffloadExecSessionEntry
         ] = {}
-        self._reshape_cache_scales: dict[
-            str, tuple[torch.Tensor, torch.Tensor]
-        ] = {}
+        self._reshape_cache_scales: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
         self._decode_append_fast_path_hits = 0
         self._decode_append_fallbacks = 0
         self._decode_slot_plan_cache_hits = 0
@@ -810,9 +809,7 @@ class PAPAttentionRegistry:
     ) -> tuple[Any, ...] | None:
         session_generations: list[tuple[str, int]] = []
         for session_request_id in session_request_ids:
-            if not self._unified_slot_topology_uniform.get(
-                session_request_id, False
-            ):
+            if not self._unified_slot_topology_uniform.get(session_request_id, False):
                 return None
             epoch = self._session_epochs.get(session_request_id)
             if epoch is None:
@@ -1037,12 +1034,8 @@ class PAPAttentionRegistry:
                             f"exceeds block_ids len={len(state.block_ids)} "
                             f"(layer={layer_name})"
                         )
-                    physical_block = _coerce_block_id(
-                        state.block_ids[logical_block]
-                    )
-                    slots.append(
-                        physical_block * block_size + position % block_size
-                    )
+                    physical_block = _coerce_block_id(state.block_ids[logical_block])
+                    slots.append(physical_block * block_size + position % block_size)
                 slot_tensor = torch.tensor(
                     slots,
                     dtype=torch.int64,
@@ -1102,9 +1095,7 @@ class PAPAttentionRegistry:
                 "slot_plan_hits": self._decode_slot_plan_cache_hits,
                 "slot_plan_misses": self._decode_slot_plan_cache_misses,
                 "slot_plan_entries": len(self._decode_slot_plan_cache),
-                "slot_topology_mismatches": (
-                    self._decode_slot_topology_mismatches
-                ),
+                "slot_topology_mismatches": (self._decode_slot_topology_mismatches),
             }
 
     def record_offload_exec_peer_batch(
@@ -1129,9 +1120,7 @@ class PAPAttentionRegistry:
         with self._offload_exec_stats_lock:
             self._offload_exec_compute_calls += 1
             self._offload_exec_compute_rows += int(rows)
-            self._offload_exec_source_batches_per_compute_sum += int(
-                source_batches
-            )
+            self._offload_exec_source_batches_per_compute_sum += int(source_batches)
             self._offload_exec_max_source_batches_per_compute = max(
                 self._offload_exec_max_source_batches_per_compute,
                 int(source_batches),
@@ -1196,13 +1185,9 @@ class PAPAttentionRegistry:
         )
         with self._lock:
             replaced_lease_id, replaced_prefill_endpoint = (
-                self._replace_existing_session_locked(
-                    registration.request_id
-                )
+                self._replace_existing_session_locked(registration.request_id)
             )
-            self._session_epochs[registration.request_id] = (
-                self._next_session_epoch
-            )
+            self._session_epochs[registration.request_id] = self._next_session_epoch
             self._next_session_epoch += 1
             self._sessions[registration.request_id] = session
             self._layer_events.setdefault(registration.request_id, [])
@@ -3171,8 +3156,7 @@ def _offload_exec_batch_rows(
         steps = tuple(int(item.step) for item in items)
         scales = tuple(float(item.scale) for item in items)
         token_rows = tuple(
-            tuple(int(token_id) for token_id in item.decode_token_ids)
-            for item in items
+            tuple(int(token_id) for token_id in item.decode_token_ids) for item in items
         )
     if not (len(request_ids) == len(steps) == len(scales) == len(token_rows)):
         raise RuntimeError("PAP OFFLOAD_EXEC batch descriptor length mismatch")
@@ -3702,9 +3686,77 @@ def _wait_offload_exec_ready_event(item: PAPAttentionWorkItem) -> None:
     if item.ready_event is None:
         return
     with torch.cuda.device(item.qkv_batch.device):
-        torch.cuda.current_stream(item.qkv_batch.device).wait_event(
-            item.ready_event
-        )
+        torch.cuda.current_stream(item.qkv_batch.device).wait_event(item.ready_event)
+
+
+def _offload_exec_work_item_compatibility_key(
+    item: PAPAttentionWorkItem,
+) -> tuple[Any, ...]:
+    """Return the same-layer ABI key used for ready-item combination."""
+
+    descriptor = item.descriptor
+    _request_ids, _steps, scales, _token_rows = _offload_exec_batch_rows(descriptor)
+    common_scale: float | tuple[float, ...]
+    if scales and all(scale == scales[0] for scale in scales):
+        common_scale = scales[0]
+    else:
+        common_scale = scales
+    qkv_batch = item.qkv_batch
+    return (
+        str(descriptor.layer_name),
+        str(qkv_batch.device),
+        str(qkv_batch.dtype),
+        tuple(int(dim) for dim in qkv_batch.shape[1:]),
+        common_scale,
+    )
+
+
+def _combine_offload_exec_work_items(
+    items: tuple[PAPAttentionWorkItem, ...],
+) -> tuple[PAPOffloadExecBatchDescriptor, torch.Tensor, tuple[int, ...]]:
+    if not items:
+        raise ValueError("PAP Attention combine requires at least one item")
+    first_key = _offload_exec_work_item_compatibility_key(items[0])
+    layer_name = str(items[0].descriptor.layer_name)
+    request_ids: list[str] = []
+    steps: list[int] = []
+    scales: list[float] = []
+    token_rows: list[tuple[int, ...]] = []
+    row_counts: list[int] = []
+    qkv_batches: list[torch.Tensor] = []
+    for item in items:
+        if _offload_exec_work_item_compatibility_key(item) != first_key:
+            raise RuntimeError(
+                "PAP Attention attempted to combine incompatible work items"
+            )
+        descriptor = item.descriptor
+        rows = _offload_exec_batch_rows(descriptor)
+        request_ids.extend(rows[0])
+        steps.extend(rows[1])
+        scales.extend(rows[2])
+        token_rows.extend(rows[3])
+        row_count = int(descriptor.item_count)
+        if int(item.qkv_batch.shape[0]) != row_count:
+            raise RuntimeError(
+                "PAP OFFLOAD_EXEC mailbox batch QKV row count does not match descriptor"
+            )
+        row_counts.append(row_count)
+        qkv_batches.append(item.qkv_batch)
+    combined_descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name=layer_name,
+        items=(),
+        batch_id_suffix="combined-" + "-".join(str(item.peer_id) for item in items),
+        metadata_template={
+            "r": tuple(request_ids),
+            "s": tuple(steps),
+            "a": tuple(scales),
+            "t": tuple(token_rows),
+        },
+    )
+    combined_qkv = (
+        qkv_batches[0] if len(qkv_batches) == 1 else torch.cat(qkv_batches, dim=0)
+    )
+    return combined_descriptor, combined_qkv, tuple(row_counts)
 
 
 def run_offload_exec_mailbox_receiver_loop(
@@ -3720,11 +3772,9 @@ def run_offload_exec_mailbox_receiver_loop(
     while True:
         trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
         trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
-        trace_recv_start_ns = (
-            time.perf_counter_ns() if trace_offload_exec else 0
-        )
-        descriptor, qkv_message, qkv_batch = (
-            _recv_next_qkv_batch_message_or_tensor(transport)
+        trace_recv_start_ns = time.perf_counter_ns() if trace_offload_exec else 0
+        descriptor, qkv_message, qkv_batch = _recv_next_qkv_batch_message_or_tensor(
+            transport
         )
         arrival_ns = time.perf_counter_ns()
         trace_recv_ms = (
@@ -3768,6 +3818,114 @@ def run_offload_exec_mailbox_receiver_loop(
         except BaseException:
             item.release_input()
             raise
+
+
+def _new_offload_exec_compute_trace_stats() -> dict[str, float]:
+    return {
+        "append_kv_ms": 0.0,
+        "pack_ms": 0.0,
+        "sdpa_ms": 0.0,
+        "reshape_ms": 0.0,
+        "paged_metadata_ms": 0.0,
+        "paged_flash_ms": 0.0,
+        "metadata_build_ms": 0.0,
+        "paged_flash_kernel_ms": 0.0,
+        "attention_output_reshape_ms": 0.0,
+        "compute_unaccounted_ms": 0.0,
+        "fallback_ms": 0.0,
+        "shape_lookup_ms": 0.0,
+        "qkv_split_ms": 0.0,
+        "query_move_ms": 0.0,
+        "query_cat_ms": 0.0,
+        "append_lock_wait_ms": 0.0,
+        "append_prepare_ms": 0.0,
+        "append_record_ms": 0.0,
+        "append_tensor_ms": 0.0,
+        "append_copy_ms": 0.0,
+        "append_state_ms": 0.0,
+        "pre_compute_start_ns": 0.0,
+        "pre_compute_done_ns": 0.0,
+        "paged_flash_done_ns": 0.0,
+        "post_compute_done_ns": 0.0,
+    }
+
+
+def _execute_offload_exec_work_items(
+    *,
+    registry: PAPAttentionRegistry,
+    items: tuple[PAPAttentionWorkItem, ...],
+) -> None:
+    """Combine one ready compatibility group and scatter its output."""
+
+    if len(items) == 1:
+        _execute_offload_exec_work_item(
+            registry=registry,
+            item=items[0],
+        )
+        return
+    for item in items:
+        _wait_offload_exec_ready_event(item)
+    descriptor, qkv_batch, row_counts = _combine_offload_exec_work_items(items)
+    trace_offload_exec = any(
+        bool(item.trace_context.get("enabled", False)) for item in items
+    )
+    trace_compute_stats = (
+        _new_offload_exec_compute_trace_stats() if trace_offload_exec else None
+    )
+    registry.record_offload_exec_compute(
+        layer_name=descriptor.layer_name,
+        rows=descriptor.item_count,
+        source_batches=len(items),
+    )
+    trace_compute_start = time.perf_counter() if trace_offload_exec else 0.0
+    output_batch = compute_offload_exec_batch_output(
+        registry=registry,
+        descriptor=descriptor,
+        qkv_batch=qkv_batch,
+        trace_stats=trace_compute_stats,
+    )
+    trace_compute_ms = (
+        (time.perf_counter() - trace_compute_start) * 1000.0
+        if trace_offload_exec
+        else 0.0
+    )
+    _finalize_offload_exec_compute_trace(trace_compute_stats, trace_compute_ms)
+    if int(output_batch.shape[0]) != sum(row_counts):
+        raise RuntimeError(
+            "PAP combined Attention output row count does not match inputs"
+        )
+    trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
+    row_start = 0
+    for item, row_count in zip(items, row_counts):
+        item.transport.send_output_batch(
+            item.descriptor,
+            output_batch.narrow(0, row_start, row_count),
+            remote_address="",
+        )
+        row_start += row_count
+    if not trace_offload_exec:
+        return
+    trace_send_ms = (time.perf_counter() - trace_send_start) * 1000.0
+    queue_wait_ms = max(
+        (float(item.queue_wait_ns) / 1_000_000.0 for item in items),
+        default=0.0,
+    )
+    logger.info(
+        "PAP OFFLOAD_EXEC attention combined batch trace layer=%s calls=%d "
+        "source_batches=%d compute_ms=%.3f send_output_ms=%.3f "
+        "queue_wait_ms=%.3f qkv_shape=%s output_shape=%s batch_key=%s "
+        "peers=%s",
+        descriptor.layer_name,
+        descriptor.item_count,
+        len(items),
+        trace_compute_ms,
+        trace_send_ms,
+        queue_wait_ms,
+        tuple(qkv_batch.shape),
+        tuple(output_batch.shape),
+        pap_offload_exec_trace_id(descriptor.output_tensor_id),
+        ",".join(item.peer_id for item in items),
+    )
 
 
 def _execute_offload_exec_work_item(
@@ -3835,9 +3993,7 @@ def _execute_offload_exec_work_item(
         else 0.0
     )
     _finalize_offload_exec_compute_trace(trace_compute_stats, trace_compute_ms)
-    trace_compute_done_ns = (
-        time.perf_counter_ns() if trace_offload_exec else 0
-    )
+    trace_compute_done_ns = time.perf_counter_ns() if trace_offload_exec else 0
     trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
     trace_send_start_ns = time.perf_counter_ns() if trace_offload_exec else 0
     item.transport.send_output_batch(
@@ -3849,9 +4005,7 @@ def _execute_offload_exec_work_item(
         return
     trace_send_done_ns = time.perf_counter_ns()
     trace_send_ms = (time.perf_counter() - trace_send_start) * 1000.0
-    trace_total_start = float(
-        trace_context.get("total_start", trace_compute_start)
-    )
+    trace_total_start = float(trace_context.get("total_start", trace_compute_start))
     trace_total_ms = (time.perf_counter() - trace_total_start) * 1000.0
     trace_recv_stats = trace_context.get("recv_stats") or {}
     compute_stats = trace_compute_stats or {}
@@ -3909,18 +4063,10 @@ def _execute_offload_exec_work_item(
         "compute_done_ns": trace_compute_done_ns,
         "send_done_ns": trace_send_done_ns,
         "recv_start_ns": int(trace_context.get("recv_start_ns", 0)),
-        "pre_compute_start_ns": int(
-            compute_stats.get("pre_compute_start_ns", 0.0)
-        ),
-        "pre_compute_done_ns": int(
-            compute_stats.get("pre_compute_done_ns", 0.0)
-        ),
-        "paged_flash_done_ns": int(
-            compute_stats.get("paged_flash_done_ns", 0.0)
-        ),
-        "reshape_done_ns": int(
-            compute_stats.get("post_compute_done_ns", 0.0)
-        ),
+        "pre_compute_start_ns": int(compute_stats.get("pre_compute_start_ns", 0.0)),
+        "pre_compute_done_ns": int(compute_stats.get("pre_compute_done_ns", 0.0)),
+        "paged_flash_done_ns": int(compute_stats.get("paged_flash_done_ns", 0.0)),
+        "reshape_done_ns": int(compute_stats.get("post_compute_done_ns", 0.0)),
         "send_start_ns": trace_send_start_ns,
         "queue_wait_ms": item.queue_wait_ns / 1_000_000.0,
         "peer": item.peer_id,
@@ -3984,9 +4130,7 @@ def run_offload_exec_mailbox_loop(
     prefetch_enabled = _pap_env_flag(
         "PAP_ATTENTION_MAILBOX_PREFETCH", False
     ) and callable(getattr(transport, "recv_next_qkv_batch_message", None))
-    peer_id = peer_id or str(
-        getattr(transport, "actor_id", type(transport).__name__)
-    )
+    peer_id = peer_id or str(getattr(transport, "actor_id", type(transport).__name__))
     prefetcher = _QKVBatchMessagePrefetcher(transport) if prefetch_enabled else None
     if prefetcher is not None:
         prefetcher.prefetch()
@@ -4291,14 +4435,15 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
     app.state.registry = registry
     app.state.offload_exec_transport = None
     app.state.offload_exec_transports = {}
+    app.state.offload_exec_source_ids = {}
     app.state.offload_exec_lock = Lock()
     app.state.offload_exec_mailbox_loop_started = False
     app.state.offload_exec_mailbox_loop_peers = set()
     app.state.offload_exec_local_rank = 0
     app.state.offload_exec_actor_base = "attention"
     app.state.offload_exec_dispatch_mode = dispatch_mode
-    app.state.offload_exec_dispatcher = (
-        PAPAttentionDispatcher(
+    if dispatch_mode == "central_fifo":
+        app.state.offload_exec_dispatcher = PAPAttentionDispatcher(
             handler=lambda item: _execute_offload_exec_work_item(
                 registry=registry,
                 item=item,
@@ -4307,9 +4452,23 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
                 os.environ.get("PAP_ATTENTION_DISPATCH_QUEUE_SIZE", "0")
             ),
         )
-        if dispatch_mode == "central_fifo"
-        else None
-    )
+    elif dispatch_mode == "central_combine":
+        app.state.offload_exec_dispatcher = PAPAttentionDispatcher(
+            batch_handler=lambda items: _execute_offload_exec_work_items(
+                registry=registry,
+                items=items,
+            ),
+            compatibility_key=_offload_exec_work_item_compatibility_key,
+            max_queue_size=int(
+                os.environ.get("PAP_ATTENTION_DISPATCH_QUEUE_SIZE", "0")
+            ),
+            coalesce_timeout_s=(
+                float(os.environ.get("PAP_ATTENTION_COMBINE_WAIT_US", "0"))
+                / 1_000_000.0
+            ),
+        )
+    else:
+        app.state.offload_exec_dispatcher = None
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
@@ -4384,7 +4543,24 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         peer_metadata = base64.b64decode(request.agent_metadata_b64.encode("ascii"))
         peer_key = hashlib.sha1(peer_metadata).hexdigest()[:16]
+        source_id = str(request.source_id or peer_key)
         with app.state.offload_exec_lock:
+            existing_source_id = app.state.offload_exec_source_ids.get(peer_key)
+            if existing_source_id is not None and existing_source_id != source_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail="PAP mailbox peer changed its stable source id",
+                )
+            if any(
+                existing_peer_key != peer_key and existing_source_id == source_id
+                for existing_peer_key, existing_source_id in (
+                    app.state.offload_exec_source_ids.items()
+                )
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="PAP mailbox source id is already bound",
+                )
             transport = app.state.offload_exec_transports.get(peer_key)
             if transport is None:
                 initial_transport = app.state.offload_exec_transport
@@ -4395,9 +4571,7 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
                     transport = initial_transport
                 else:
                     transport = _build_attention_offload_exec_transport(
-                        actor_id=(
-                            f"{app.state.offload_exec_actor_base}-{peer_key}"
-                        ),
+                        actor_id=(f"{app.state.offload_exec_actor_base}-{peer_key}"),
                         local_rank=app.state.offload_exec_local_rank,
                     )
                 if not hasattr(transport, "local_agent_metadata"):
@@ -4410,9 +4584,19 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
                 transport.bind_peer(peer_metadata)
                 transport._pap_mailbox_bound = True
                 app.state.offload_exec_transports[peer_key] = transport
+            app.state.offload_exec_source_ids[peer_key] = source_id
+            if dispatch_mode == "central_combine":
+                dispatcher = app.state.offload_exec_dispatcher
+                assert dispatcher is not None
+                dispatcher.set_expected_group_size(
+                    len(app.state.offload_exec_transports)
+                )
+                dispatcher.set_preferred_peer_id(
+                    min(app.state.offload_exec_source_ids.values())
+                )
             if peer_key not in app.state.offload_exec_mailbox_loop_peers:
                 dispatcher = app.state.offload_exec_dispatcher
-                if dispatch_mode == "central_fifo":
+                if dispatch_mode in {"central_fifo", "central_combine"}:
                     assert dispatcher is not None
                     dispatcher.start()
                     target = run_offload_exec_mailbox_receiver_loop
@@ -4420,7 +4604,7 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
                         "registry": registry,
                         "transport": transport,
                         "dispatcher": dispatcher,
-                        "peer_id": peer_key,
+                        "peer_id": source_id,
                     }
                     thread_kind = "receiver"
                 else:
@@ -4435,9 +4619,7 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
                     target=target,
                     kwargs=kwargs,
                     daemon=True,
-                    name=(
-                        f"pap-offload-exec-mailbox-{thread_kind}-{peer_key}"
-                    ),
+                    name=(f"pap-offload-exec-mailbox-{thread_kind}-{peer_key}"),
                 ).start()
                 app.state.offload_exec_mailbox_loop_peers.add(peer_key)
                 app.state.offload_exec_mailbox_loop_started = True

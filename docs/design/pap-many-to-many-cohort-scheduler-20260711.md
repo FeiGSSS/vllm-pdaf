@@ -2,7 +2,7 @@
 
 日期：2026-07-11
 
-状态：源码审计与开发计划完成，尚未开始行为修改
+状态：Phase 0/1/2 已实现并完成 GPU 验证；Phase 3 route layout 待实施
 
 代码基线：`feature/pap @ 45c302bb33e4752ee67dca18da1816e2da937d83`
 
@@ -1101,3 +1101,61 @@ full-crossbar baseline，再进入 central dispatcher 重构。
 
 只有达到以上门槛后，才把当前“连接层支持任意 x:y”升级为“执行与调度层支持任意
 x:y”，随后进入多轮 resident KV 开发。
+
+## 21. 2026-07-11 Phase 1/2 实施结果
+
+### 21.1 Phase 1 等价中央调度器
+
+`d654f6011` 上完成了同代码、交替顺序、每种模式三轮的 1PA1P QPS 4
+A/B：
+
+| 模式 | 三轮 median TTFT 的中位数 | 三轮 median TPOT 的中位数 |
+| --- | ---: | ---: |
+| legacy | `169.799 ms` | `28.138 ms` |
+| central_fifo | `170.455 ms` | `28.514 ms` |
+| central 相对 legacy | `+0.39%` | `+1.34%` |
+
+六轮均为 `128/0`，correctness、routing、session drain 全部通过。中央 ingress、
+CUDA ready-event 所有权和单 compute thread 可以作为 combine 基线。
+
+### 21.2 Phase 2 同层 combine/scatter
+
+新增 `central_combine`：
+
+- dispatcher 从当前 ready 集合中选择同 layer、同 QKV ABI、同 scale 的任务；
+- 多来源 QKV 在 GPU 上拼接，一次 KV append + paged FlashAttention；
+- output 按原 descriptor 和 transport 的 row slice scatter；
+- 单来源直接复用 `central_fifo` executor；
+- bounded coalescing window 只等待已连接 peer 的短到达差；
+- bind 协议携带稳定的 `projection-N-rank` source id；
+- 多 PA 使用相同的确定性 Projection leader，使失相 cohort 先追赶、再同层合并。
+
+诊断与标准负载结果：
+
+| 拓扑/策略 | median TTFT | median TPOT | 结果 |
+| --- | ---: | ---: | --- |
+| 1PA2P central_fifo 旧基线 | - | `53.67 ms` | 三轮中位数 |
+| 1PA2P combine，200 us | `184.84 ms` | `36.75 ms` | `128/0` |
+| 2PA2P full crossbar，combine 前 | `291.85 ms` | `74.29 ms` | `32/0` |
+| 2PA2P leader combine，1 ms | `176.65 ms` | `40.58 ms` | `128/0` |
+
+以相同工作负载的 PD `24.28 ms` 为参照，1PA2P 和 2PA2P 分别为约
+`1.51x` 和 `1.67x`，均低于 `<2x PD` 的 `48.55 ms` 门槛。1PA2P 相对旧基线
+改善 `31.5%`；2PA2P 在 leader 对齐前后改善 `45.4%`。
+
+标准 2PA2P 运行中四个 pair 均为 32 个请求。两个 PA 的 source-batch 合并覆盖率
+分别为 `91.45%` 和 `91.93%`，dispatcher failure 为 0；correctness、routing、
+decode commit、lease release 和双 PA session drain 全部通过。
+
+相关运行目录：
+
+```text
+test/baseline/pap/results/runs/
+  20260711_d654f6011_1pa1p_{legacy,central}_q4_rep{1,2,3}
+  20260711_phase2_1pa2p_combine_wait200us_q4_rep1
+  20260711_phase2_2pa2p_leader_align_wait1000us_q4_rep1
+```
+
+Phase 2 的 GPU 数值来自带 tracked patch 的实现验证，提交后仍需按相同参数做 clean
+复跑。下一阶段是 P 端 route-aware gather/scatter：当前 full-crossbar 的 request rows
+按 PA 交织，仍会触发非连续 QKV packing 和逐 row output copy。

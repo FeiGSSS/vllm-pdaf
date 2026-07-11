@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from threading import Event
+from threading import Event, Thread
 
 import pytest
 
@@ -204,3 +204,283 @@ def test_dispatcher_drop_continues_after_release_error() -> None:
     assert stats["dispatcher_dropped"] == 2
     assert stats["dispatcher_failures"] == 1
     assert stats["dispatcher_fatal_error"] == "RuntimeError: release failed"
+
+
+def test_dispatcher_combines_all_ready_compatible_items() -> None:
+    handled: list[tuple[str, ...]] = []
+    released: list[str] = []
+    dispatcher = PAPAttentionDispatcher(
+        batch_handler=lambda items: handled.append(
+            tuple(item.peer_id for item in items)
+        ),
+        compatibility_key=lambda item: item.descriptor,
+    )
+    first = _make_item("p0", released)
+    first.descriptor = "layer0"
+    incompatible = _make_item("p1", released)
+    incompatible.descriptor = "layer1"
+    compatible = _make_item("p2", released)
+    compatible.descriptor = "layer0"
+    dispatcher.enqueue(first)
+    dispatcher.enqueue(incompatible)
+    dispatcher.enqueue(compatible)
+
+    assert dispatcher.dispatch_next(timeout=0.1)
+
+    assert handled == [("p0", "p2")]
+    assert released == ["p0", "p2"]
+    assert first.wait_completed(timeout=0)
+    assert compatible.wait_completed(timeout=0)
+    assert not incompatible.wait_completed(timeout=0)
+    stats = dispatcher.stats()
+    assert stats["dispatcher_dispatched"] == 2
+    assert stats["dispatcher_dispatch_groups"] == 1
+    assert stats["dispatcher_combined_groups"] == 1
+    assert stats["dispatcher_max_items_per_group"] == 2
+    assert stats["dispatcher_queue_depth"] == 1
+    assert stats["dispatcher_ready_candidates"] == 2
+    assert stats["dispatcher_compatible_candidates"] == 1
+    assert stats["dispatcher_incompatible_candidates"] == 1
+
+    assert dispatcher.dispatch_next(timeout=0.1)
+
+    assert handled == [("p0", "p2"), ("p1",)]
+    assert released == ["p0", "p2", "p1"]
+    assert incompatible.wait_completed(timeout=0)
+
+
+def test_dispatcher_batch_failure_releases_and_completes_whole_group() -> None:
+    released: list[str] = []
+
+    def fail(_items: tuple[PAPAttentionWorkItem, ...]) -> None:
+        raise RuntimeError("combined boom")
+
+    dispatcher = PAPAttentionDispatcher(
+        batch_handler=fail,
+        compatibility_key=lambda item: item.descriptor,
+    )
+    first = _make_item("p0", released)
+    first.descriptor = "layer0"
+    second = _make_item("p1", released)
+    second.descriptor = "layer0"
+    dispatcher.enqueue(first)
+    dispatcher.enqueue(second)
+
+    with pytest.raises(RuntimeError, match="combined boom"):
+        dispatcher.dispatch_next(timeout=0.1)
+
+    assert released == ["p0", "p1"]
+    assert first.wait_completed(timeout=0)
+    assert second.wait_completed(timeout=0)
+    stats = dispatcher.stats()
+    assert stats["dispatcher_dispatched"] == 0
+    assert stats["dispatcher_failures"] == 1
+    assert stats["dispatcher_queue_depth"] == 0
+
+
+def test_bounded_dispatcher_counts_deferred_items_toward_capacity() -> None:
+    released: list[str] = []
+    dispatcher = PAPAttentionDispatcher(
+        batch_handler=lambda _items: None,
+        compatibility_key=lambda item: item.descriptor,
+        max_queue_size=3,
+    )
+    for peer_id, layer_name in (
+        ("p0", "layer0"),
+        ("p1", "layer1"),
+        ("p2", "layer0"),
+    ):
+        item = _make_item(peer_id, released)
+        item.descriptor = layer_name
+        dispatcher.enqueue(item)
+    assert dispatcher.dispatch_next(timeout=0.1)
+    for peer_id in ("p3", "p4"):
+        item = _make_item(peer_id, released)
+        item.descriptor = "layer2"
+        dispatcher.enqueue(item)
+
+    overflow = _make_item("p5", released)
+    overflow.descriptor = "layer2"
+    with pytest.raises(RuntimeError, match="queue is full"):
+        dispatcher.enqueue(overflow)
+
+    assert dispatcher.stats()["dispatcher_queue_depth"] == 3
+
+
+def test_compatibility_key_failure_releases_first_item() -> None:
+    released: list[str] = []
+
+    def fail_key(_item: PAPAttentionWorkItem) -> str:
+        raise RuntimeError("bad compatibility key")
+
+    dispatcher = PAPAttentionDispatcher(
+        batch_handler=lambda _items: None,
+        compatibility_key=fail_key,
+    )
+    item = _make_item("p0", released)
+    dispatcher.enqueue(item)
+
+    with pytest.raises(RuntimeError, match="bad compatibility key"):
+        dispatcher.dispatch_next(timeout=0.1)
+
+    assert released == ["p0"]
+    assert item.wait_completed(timeout=0)
+    stats = dispatcher.stats()
+    assert stats["dispatcher_queue_depth"] == 0
+    assert stats["dispatcher_failures"] == 1
+
+
+def test_dispatcher_coalesces_compatible_item_arriving_within_window() -> None:
+    handled: list[tuple[str, ...]] = []
+    released: list[str] = []
+    enqueue_second = Event()
+
+    dispatcher = PAPAttentionDispatcher(
+        batch_handler=lambda items: handled.append(
+            tuple(item.peer_id for item in items)
+        ),
+        compatibility_key=lambda item: str(item.descriptor),
+        coalesce_timeout_s=0.1,
+        expected_group_size=2,
+    )
+    first = _make_item("p0", released)
+    first.descriptor = "layer0"
+    second = _make_item("p1", released)
+    second.descriptor = "layer0"
+    dispatcher.enqueue(first)
+    original_get = dispatcher._queue.get
+    blocking_get_calls = 0
+
+    def get_and_signal(block=True, timeout=None):
+        nonlocal blocking_get_calls
+        if block:
+            blocking_get_calls += 1
+            if blocking_get_calls == 2:
+                enqueue_second.set()
+        return original_get(block=block, timeout=timeout)
+
+    dispatcher._queue.get = get_and_signal
+
+    def enqueue_later() -> None:
+        assert enqueue_second.wait(timeout=1.0)
+        dispatcher.enqueue(second)
+
+    producer = Thread(target=enqueue_later)
+    producer.start()
+    assert dispatcher.dispatch_next(timeout=0.1)
+    producer.join(timeout=1.0)
+
+    assert not producer.is_alive()
+    assert handled == [("p0", "p1")]
+    assert released == ["p0", "p1"]
+    stats = dispatcher.stats()
+    assert stats["dispatcher_coalesce_waits"] == 1
+    assert stats["dispatcher_coalesce_timeouts"] == 0
+    assert stats["dispatcher_waited_compatible_candidates"] == 1
+    assert stats["dispatcher_expected_group_size"] == 2
+
+
+def test_dispatcher_prefers_designated_peer_when_layers_mismatch() -> None:
+    handled: list[tuple[str, ...]] = []
+    released: list[str] = []
+    dispatcher = PAPAttentionDispatcher(
+        batch_handler=lambda items: handled.append(
+            tuple(item.peer_id for item in items)
+        ),
+        compatibility_key=lambda item: item.descriptor,
+    )
+    dispatcher.set_preferred_peer_id("projection-0")
+    lagging = _make_item("projection-1", released)
+    lagging.descriptor = "layer5"
+    leader = _make_item("projection-0", released)
+    leader.descriptor = "layer2"
+    dispatcher.enqueue(lagging)
+    dispatcher.enqueue(leader)
+
+    assert dispatcher.dispatch_next(timeout=0.1)
+
+    assert handled == [("projection-0",)]
+    assert released == ["projection-0"]
+    assert leader.wait_completed(timeout=0)
+    assert not lagging.wait_completed(timeout=0)
+    assert dispatcher.stats()["dispatcher_queue_depth"] == 1
+
+
+def test_dispatcher_waits_for_preferred_peer_before_selecting_group() -> None:
+    handled: list[tuple[str, ...]] = []
+    released: list[str] = []
+    request_leader = Event()
+    dispatcher = PAPAttentionDispatcher(
+        batch_handler=lambda items: handled.append(
+            tuple(item.peer_id for item in items)
+        ),
+        compatibility_key=lambda item: str(item.descriptor),
+        coalesce_timeout_s=0.1,
+        expected_group_size=2,
+    )
+    dispatcher.set_preferred_peer_id("projection-0")
+    lagging = _make_item("projection-1", released)
+    lagging.descriptor = "layer5"
+    leader = _make_item("projection-0", released)
+    leader.descriptor = "layer2"
+    dispatcher.enqueue(lagging)
+    original_get = dispatcher._queue.get
+    blocking_get_calls = 0
+
+    def get_and_signal(block=True, timeout=None):
+        nonlocal blocking_get_calls
+        if block:
+            blocking_get_calls += 1
+            if blocking_get_calls == 2:
+                request_leader.set()
+        return original_get(block=block, timeout=timeout)
+
+    dispatcher._queue.get = get_and_signal
+
+    def enqueue_later() -> None:
+        assert request_leader.wait(timeout=1.0)
+        dispatcher.enqueue(leader)
+
+    producer = Thread(target=enqueue_later)
+    producer.start()
+    assert dispatcher.dispatch_next(timeout=0.1)
+    producer.join(timeout=1.0)
+
+    assert not producer.is_alive()
+    assert handled == [("projection-0",)]
+    assert released == ["projection-0"]
+    assert not lagging.wait_completed(timeout=0)
+
+
+def test_invalid_preferred_key_falls_back_without_losing_ready_item() -> None:
+    handled: list[str] = []
+    released: list[str] = []
+
+    def compatibility_key(item: PAPAttentionWorkItem) -> str:
+        if item.peer_id == "projection-0":
+            raise RuntimeError("invalid leader")
+        return str(item.descriptor)
+
+    dispatcher = PAPAttentionDispatcher(
+        batch_handler=lambda items: handled.extend(item.peer_id for item in items),
+        compatibility_key=compatibility_key,
+    )
+    dispatcher.set_preferred_peer_id("projection-0")
+    healthy = _make_item("projection-1", released)
+    healthy.descriptor = "layer5"
+    invalid = _make_item("projection-0", released)
+    invalid.descriptor = "layer2"
+    dispatcher.enqueue(healthy)
+    dispatcher.enqueue(invalid)
+
+    assert dispatcher.dispatch_next(timeout=0.1)
+
+    assert handled == ["projection-1"]
+    assert released == ["projection-1"]
+    assert dispatcher.stats()["dispatcher_queue_depth"] == 1
+
+    with pytest.raises(RuntimeError, match="invalid leader"):
+        dispatcher.dispatch_next(timeout=0.1)
+
+    assert released == ["projection-1", "projection-0"]
+    assert invalid.wait_completed(timeout=0)

@@ -150,9 +150,7 @@ def trigger_offload_exec_attention(
     """Trigger Attention to receive QKV and send O over OFFLOAD_EXEC."""
 
     if not tcp_endpoint:
-        raise RuntimeError(
-            "PAP OFFLOAD_EXEC trigger requires a TCP control endpoint"
-        )
+        raise RuntimeError("PAP OFFLOAD_EXEC trigger requires a TCP control endpoint")
 
     from vllm.pap.remote_attention import (
         deserialize_compact_offload_exec_ack,
@@ -221,6 +219,7 @@ def bind_offload_exec_mailbox(
     *,
     attention_endpoint: str,
     local_agent_metadata: bytes,
+    source_id: str | None = None,
     timeout: float | None = None,
 ) -> bytes:
     """Bind Projection's NIXL mailbox endpoint to one Attention endpoint."""
@@ -235,14 +234,12 @@ def bind_offload_exec_mailbox(
         raise ValueError(f"unsupported PAP attention endpoint: {attention_endpoint}")
     port = "" if parsed.port is None else f":{parsed.port}"
     path = "/v1/pap/attention/offload-exec-mailbox/bind"
-    body = json.dumps(
-        {
-            "agent_metadata_b64": base64.b64encode(local_agent_metadata).decode(
-                "ascii"
-            )
-        },
-        separators=(",", ":"),
-    ).encode("utf-8")
+    request_payload = {
+        "agent_metadata_b64": base64.b64encode(local_agent_metadata).decode("ascii")
+    }
+    if source_id is not None:
+        request_payload["source_id"] = str(source_id)
+    body = json.dumps(request_payload, separators=(",", ":")).encode("utf-8")
     request = (
         f"POST {path} HTTP/1.1\r\n"
         f"Host: {parsed.hostname}{port}\r\n"
@@ -265,9 +262,7 @@ def bind_offload_exec_mailbox(
     header, _, payload = response.partition(b"\r\n\r\n")
     status_line = header.splitlines()[0].decode("ascii", errors="replace")
     if " 200 " not in status_line:
-        raise RuntimeError(
-            f"PAP mailbox bind failed: {status_line} {payload[:256]!r}"
-        )
+        raise RuntimeError(f"PAP mailbox bind failed: {status_line} {payload[:256]!r}")
     data = json.loads(payload.decode("utf-8"))
     return base64.b64decode(str(data["agent_metadata_b64"]).encode("ascii"))
 
@@ -417,9 +412,7 @@ def import_prefill_paged_kv(
     total_start = time.perf_counter() if profile else 0.0
     sync_start = time.perf_counter() if profile else 0.0
     _maybe_synchronize_cuda_ipc_tensors(kv_cache)
-    sync_ms = (
-        (time.perf_counter() - sync_start) * 1000.0 if profile else 0.0
-    )
+    sync_ms = (time.perf_counter() - sync_start) * 1000.0 if profile else 0.0
 
     lease_id: str | None = None
     leased_block_ids: tuple[int, ...] | None = None
@@ -451,9 +444,7 @@ def import_prefill_paged_kv(
         ) from exc
     if unified_kv_mode:
         prefix_len_value = int(seq_len)
-        planned_capacity = (
-            int(seq_len) + _pap_unified_kv_decode_capacity_tokens()
-        )
+        planned_capacity = int(seq_len) + _pap_unified_kv_decode_capacity_tokens()
         writable_start_token = int(seq_len)
         writable_end_token = planned_capacity
         lease_capacity_tokens = planned_capacity
@@ -478,9 +469,7 @@ def import_prefill_paged_kv(
         writable_end_token=writable_end_token,
     )
     descriptor_ms = (
-        (time.perf_counter() - descriptor_start) * 1000.0
-        if profile
-        else 0.0
+        (time.perf_counter() - descriptor_start) * 1000.0 if profile else 0.0
     )
     serialize_start = time.perf_counter() if profile else 0.0
     async_import = _pap_prefill_kv_async_enabled()
@@ -492,11 +481,7 @@ def import_prefill_paged_kv(
         },
         {},
     )
-    serialize_ms = (
-        (time.perf_counter() - serialize_start) * 1000.0
-        if profile
-        else 0.0
-    )
+    serialize_ms = (time.perf_counter() - serialize_start) * 1000.0 if profile else 0.0
     post_start = time.perf_counter() if profile else 0.0
     response_body = _post_bytes_tcp(
         endpoint=tcp_endpoint,
@@ -507,9 +492,7 @@ def import_prefill_paged_kv(
     deserialize_start = time.perf_counter() if profile else 0.0
     response_metadata, _ = deserialize_tensor_bundle(response_body)
     deserialize_ms = (
-        (time.perf_counter() - deserialize_start) * 1000.0
-        if profile
-        else 0.0
+        (time.perf_counter() - deserialize_start) * 1000.0 if profile else 0.0
     )
     if profile:
         logger.info(
