@@ -48,8 +48,10 @@ V1 scheduler and NIXL connector, NVIDIA L20 GPUs.
   accounting mismatch, output mismatch, lifecycle failure, or unexpected process/
   port ownership makes the run invalid and stops all higher points in that lane.
 - Never use `pkill`, never kill an unrelated PID, and never touch GPU 0 while the
-  unrelated service seen there remains active. Every launched process must have a
-  recorded process group and be terminated only through that group.
+  unrelated service seen there remains active. Every launched service, client,
+  proxy, and sampler must have a recorded process group and be terminated only
+  through that group. The CUDA MPS daemon is the sole exception: record its unique
+  pipe/log directories and stop it only through that pipe's control endpoint.
 - Formal performance runs require tracked code to be committed and clean. Existing
   untracked raw artifacts do not block the tracked-clean check and must not be added.
 - Formal performance can run in parallel only after the 16K/R4/C2 solo-vs-parallel
@@ -206,6 +208,12 @@ V1 scheduler and NIXL connector, NVIDIA L20 GPUs.
                    output_tokens: int) -> float
   stable_cell_id(...) -> str
   ```
+
+  The module also exposes a `capacity` CLI subcommand. It accepts repeated
+  `--service-log NAME=PATH`, repeated `--required-service NAME`, active
+  conversations, actual maximum rendered context tokens, safety fraction, and
+  `--output`; it writes the exact `CapacityAdmission.to_dict()` JSON atomically
+  and exits 0 only for `admitted`.
 
   `CapacityAdmission.to_dict()` emits reported per-service capacities, their
   minimum usable capacity, required live tokens, budget tokens, fraction 0.70,
@@ -381,7 +389,7 @@ V1 scheduler and NIXL connector, NVIDIA L20 GPUs.
 **Interfaces:**
 - Consumes: the generic headers from Task 3; PAP supplies the same headers from
   `multi_pap_proxy_server.py`.
-- Produces: `conversation_metrics.jsonl`, `cache_accounting.json`,
+- Produces: `conversation_metrics.jsonl`, `request_accounting.jsonl`,
   `correctness_audit.env`, and a deterministic `input_manifest.json` containing
   per-round prompt-token digests and exact token counts.
 - CLI supports `--api exact|chat`, `--mode audit|performance`, `--base-url`,
@@ -556,7 +564,9 @@ V1 scheduler and NIXL connector, NVIDIA L20 GPUs.
   detailed prompt-token usage. Snapshot `/metrics` immediately before and after
   each subrun; store raw snapshots plus deltas for
   `prompt_tokens_by_source`, local/external prefix-cache counters, and NIXL
-  bytes/time in `cache_accounting.json` and `transfer_summary.json`.
+  bytes/time. Merge the run-level cache deltas with the client's immutable
+  `request_accounting.jsonl` into `cache_accounting.json`; never overwrite the
+  client evidence. Store NIXL-specific deltas in `transfer_summary.json`.
 
 - [ ] **Step 7: Add single-cell dispatch and progressive-order guards**
 
