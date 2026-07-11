@@ -2,9 +2,10 @@
 
 日期：2026-07-11
 
-状态：Phase 0/1/2 已实现并完成 GPU 验证；Phase 3 route layout 待实施
+状态：Phase 0/1/2 已提交；Phase 3 vectorized route fallback 已实现并完成严格 A/B，
+待提交后 clean 复跑
 
-代码基线：`feature/pap @ 45c302bb33e4752ee67dca18da1816e2da937d83`
+代码基线：`feature/pap @ 12b689d1bcafeda399edad5836d877c28928435e`
 
 关联文档：
 
@@ -1159,3 +1160,89 @@ test/baseline/pap/results/runs/
 Phase 2 的 GPU 数值来自带 tracked patch 的实现验证，提交后仍需按相同参数做 clean
 复跑。下一阶段是 P 端 route-aware gather/scatter：当前 full-crossbar 的 request rows
 按 PA 交织，仍会触发非连续 QKV packing 和逐 row output copy。
+
+## 22. 2026-07-11 Phase 3 实施结果
+
+### 22.1 实现边界
+
+本阶段没有重排 vLLM scheduler 的 row，也没有修改 Projection GEMM 的 cohort。相比直接
+实施 endpoint-stable partition，先完成风险更小、可独立归因的 vectorized fallback：
+
+- 同一 scheduler forward 为每个非连续 route group 构造一次 CUDA `long` index；
+- index tensor 缓存在 `additional_kwargs`，36 层复用；
+- 非连续 QKV 从逐 row view + `torch.cat` 改为一次 `torch.index_select`；
+- 非连续 Attention output 从 Python 逐 row `copy_` 改为一次 `index_copy_`；
+- 连续 route 保持 view/slice，完整单 group 保持 direct QKV/direct output；
+- `PAP_BATCHED_ROUTE_COPY=0|1` 提供同代码 A/B 和故障回退，默认开启；
+- benchmark runner 将该开关写入 effective config 和 run metadata。
+
+因此本阶段解决的是“交织 rows 的重复 Python/CUDA launch 开销”，不声称已经完成
+endpoint-stable scheduler layout。只有 profiler 证明一次 gather/scatter 仍是主要瓶颈时，
+才继续修改 persistent `InputBatch` 的 row order。
+
+### 22.2 2PA2P full-crossbar 严格 A/B
+
+固定 Qwen3-8B、sonnet i128/o32/prefix50、128 prompts、QPS 4、local-fast、MPS
+70/30、`central_combine`、1 ms combine window，按 legacy/batched 交替运行三轮。
+两组使用同一代码和 tracked patch，只改变 `PAP_BATCHED_ROUTE_COPY`：
+
+| 指标（三轮中位数） | legacy `0` | batched `1` | 变化 |
+| --- | ---: | ---: | ---: |
+| mean TPOT | `44.735 ms` | `41.923 ms` | `-2.812 ms` / `-6.29%` |
+| mean TTFT | `241.747 ms` | `239.018 ms` | `-2.729 ms` / `-1.13%` |
+| p99 TPOT | `58.267 ms` | `56.333 ms` | `-1.934 ms` / `-3.32%` |
+| combine 覆盖率 | `93.38%` | `93.13%` | 基本相同 |
+
+三组配对 TPOT 降幅分别为 `4.279 ms`、`2.812 ms`、`1.357 ms`，方向一致。
+六轮全部 `128/0`，四个 PA/P pair 各 32 个请求；correctness、routing、session drain
+全部通过，dispatcher failure 为 0。收益不是通过减少 Attention combine 得到的。
+
+batched 三轮中位数约为 PD `24.28 ms` 的 `1.73x`，低于 `<2x PD` 的
+`48.55 ms` 门槛。
+
+原始结果：
+
+```text
+test/baseline/pap/results/runs/
+  20260711_phase3_ab_legacy_rep{1,2,3}
+  20260711_phase3_ab_batched_rep{1,2,3}
+```
+
+### 22.3 拓扑回归与已识别边界
+
+1PA1P QPS 4 单次回归为 `128/0`、TPOT `28.51 ms`，相对 Phase 2 clean
+`28.19 ms` 为 `+1.1%`，处于门槛内。
+
+1PA2P 的单次运行仍在 `38--48 ms` 间波动，且 TPOT 与 PA combine 覆盖率一起变化。
+专项 trace 覆盖 2,592 个 Projection layer forward，全部满足：
+
+```text
+route_groups == contiguous_route_groups
+direct_qkv_groups == route_groups
+packed_qkv_groups == 0
+scattered_output_rows == 0
+```
+
+也就是说 1PA2P 在该拓扑中始终使用完整连续 route 的 direct QKV/direct output，本阶段
+新增的非连续 gather/scatter 没有执行。该波动属于 Phase 2 已存在的多 Projection
+cohort 相位稳定性问题，不能归因于 Phase 3；下一优化阶段应针对 source arrival skew、
+leader catch-up 和 bounded wait 稳定性单独设计 A/B。
+
+相关回归/trace：
+
+```text
+test/baseline/pap/results/runs/
+  20260711_phase3_1pa1p_batched_q4_regression
+  20260711_phase3_1pa2p_batched_q4_regression
+  20260711_phase3_1pa2p_legacy_q4_ab1
+  20260711_phase3_1pa2p_route_trace_smoke
+```
+
+### 22.4 验证状态
+
+- `tests/pap`: `354 passed, 3 skipped`；
+- Phase 3 聚焦 contract: `70 passed`；
+- Ruff check/format、runner `bash -n`、`git diff --check` 通过；
+- 未运行 pre-commit；
+- 当前 GPU A/B 为 tracked-dirty 实现验证，提交后需用 clean worktree 复跑 2PA2P
+  batched 三轮，才能升级为正式性能基线。

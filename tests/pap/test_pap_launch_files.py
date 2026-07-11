@@ -27,6 +27,10 @@ def test_pap_benchmark_runner_captures_attention_fast_path_stats() -> None:
     )
     assert "DEFAULT_ATTENTION_COMBINE_WAIT_US=200" in text
     assert "DEFAULT_ATTENTION_COMBINE_WAIT_US=1000" in text
+    assert 'PAP_BATCHED_ROUTE_COPY="${PAP_BATCHED_ROUTE_COPY:-1}"' in text
+    assert "export PAP_BATCHED_ROUTE_COPY" in text
+    assert "printf 'PAP_BATCHED_ROUTE_COPY=%q\\n'" in text
+    assert '"batched_route_copy"' in text
     assert '"attention_dispatch_mode"' in text
     assert '"attention_combine_wait_us"' in text
 

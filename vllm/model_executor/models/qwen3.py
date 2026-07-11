@@ -26,6 +26,7 @@
 import atexit
 import hashlib
 import json
+import math
 import os
 import threading
 import time
@@ -33,7 +34,7 @@ from collections.abc import Iterable
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from dataclasses import dataclass
-from functools import lru_cache
+from functools import cache, lru_cache
 from typing import Any
 
 import torch
@@ -90,6 +91,10 @@ def _pap_direct_qkv_send_enabled() -> bool:
         os.environ.get("PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND", "1").lower()
         in _TRUE_ENV_VALUES
     )
+
+
+def _pap_batched_route_copy_enabled() -> bool:
+    return os.environ.get("PAP_BATCHED_ROUTE_COPY", "1").lower() in _TRUE_ENV_VALUES
 
 
 def _pap_prefill_ipc_profile_enabled() -> bool:
@@ -460,6 +465,84 @@ def _pap_direct_qkv_batch_for_indices(
     return direct if direct.is_contiguous() else None
 
 
+def _pap_route_index_tensor(
+    additional_kwargs: dict[str, Any],
+    req_indices: tuple[int, ...],
+    *,
+    device: torch.device,
+) -> torch.Tensor:
+    cache = additional_kwargs.setdefault(
+        "_pap_qwen3_route_index_tensors",
+        {},
+    )
+    cache_key = (str(torch.device(device)), req_indices)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+    index_tensor = torch.tensor(
+        req_indices,
+        dtype=torch.long,
+        device=device,
+    )
+    cache[cache_key] = index_tensor
+    return index_tensor
+
+
+def _pap_qkv_batch_for_indices(
+    qkv_batch: torch.Tensor | None,
+    req_indices: tuple[int, ...],
+    *,
+    index_tensor: torch.Tensor | None,
+) -> tuple[torch.Tensor | None, bool]:
+    direct = _pap_direct_qkv_batch_for_indices(qkv_batch, req_indices)
+    if direct is not None:
+        return direct, True
+    if (
+        qkv_batch is None
+        or qkv_batch.ndim != 2
+        or not qkv_batch.is_contiguous()
+        or not req_indices
+        or index_tensor is None
+    ):
+        return None, False
+    return torch.index_select(qkv_batch, 0, index_tensor), False
+
+
+def _pap_scatter_attention_output_group(
+    output: torch.Tensor,
+    remote_output: torch.Tensor,
+    *,
+    req_indices: tuple[int, ...],
+    index_tensor: torch.Tensor | None,
+) -> None:
+    if not req_indices:
+        raise RuntimeError("PAP remote attention output has no route rows")
+    remote_output = remote_output.to(
+        device=output.device,
+        dtype=output.dtype,
+        non_blocking=True,
+    )
+    target_shape = (len(req_indices), *output.shape[1:])
+    target_numel = math.prod(target_shape)
+    if int(remote_output.numel()) != int(target_numel):
+        raise RuntimeError(
+            "PAP remote attention output shape mismatch: "
+            f"got {tuple(remote_output.shape)}, expected {target_shape}"
+        )
+    remote_output = remote_output.reshape(target_shape)
+    if _pap_req_indices_are_contiguous(req_indices):
+        start = int(req_indices[0])
+        output[start : start + len(req_indices)].copy_(remote_output)
+        return
+    if index_tensor is None:
+        index_tensor = torch.tensor(
+            req_indices,
+            dtype=torch.long,
+            device=output.device,
+        )
+    output.index_copy_(0, index_tensor, remote_output)
+
+
 def _pap_req_indices_are_contiguous(req_indices: tuple[int, ...]) -> bool:
     if not req_indices:
         return False
@@ -726,7 +809,7 @@ def _pap_offload_exec_transport():
     )
 
 
-@lru_cache(maxsize=None)
+@cache
 def _pap_nixl_mailbox_offload_exec_transport(attention_endpoint: str):
     from vllm.pap.data_plane import (
         build_local_fast_offload_exec_transport,
@@ -1525,6 +1608,9 @@ class Qwen3Attention(nn.Module):
                 )
             return output
 
+        direct_qkv_send_enabled = _pap_direct_qkv_send_enabled()
+        batched_route_copy_enabled = _pap_batched_route_copy_enabled()
+
         def apply_remote_output(req_index: int, remote_output: torch.Tensor) -> None:
             target = get_copy_output_buffer()[req_index : req_index + 1]
             remote_output = remote_output.to(device=output.device, dtype=output.dtype)
@@ -1538,7 +1624,6 @@ class Qwen3Attention(nn.Module):
                 remote_output = remote_output.view_as(target)
             target.copy_(remote_output)
 
-        direct_qkv_send_enabled = _pap_direct_qkv_send_enabled()
         trace_offload_exec = os.environ.get("PAP_OFFLOAD_EXEC_TRACE", "").lower() in (
             "1",
             "true",
@@ -1564,16 +1649,27 @@ class Qwen3Attention(nn.Module):
                 str | None,
                 str,
                 PAPOffloadExecBatchDescriptor,
-                list[int],
+                tuple[int, ...],
                 Any,
+                torch.Tensor | None,
             ]
         ] = []
         for step_group in step_groups:
             attention_endpoint = step_group.attention_endpoint
             offload_exec_zmq_endpoint = step_group.offload_exec_zmq_endpoint
             req_indices = step_group.req_indices
-            if trace_offload_exec and _pap_req_indices_are_contiguous(req_indices):
+            route_is_contiguous = _pap_req_indices_are_contiguous(req_indices)
+            if trace_offload_exec and route_is_contiguous:
                 trace_contiguous_route_groups += 1
+            route_index_tensor = (
+                None
+                if route_is_contiguous or not batched_route_copy_enabled
+                else _pap_route_index_tensor(
+                    additional_kwargs,
+                    req_indices,
+                    device=query.device,
+                )
+            )
             transport = _pap_offload_exec_transport_for_attention_endpoint(
                 attention_endpoint,
                 offload_exec_zmq_endpoint,
@@ -1589,17 +1685,27 @@ class Qwen3Attention(nn.Module):
             qkv_width = (
                 self.num_heads * self.head_dim + 2 * self.num_kv_heads * self.head_dim
             )
-            direct_qkv_batch = (
-                _pap_direct_qkv_batch_for_indices(
-                    direct_qkv_send_buffer,
-                    req_indices,
-                )
-                if direct_qkv_send_enabled and callable(send_qkv_batch_direct)
-                else None
-            )
+            direct_qkv_batch: torch.Tensor | None = None
+            direct_layout = False
+            if direct_qkv_send_enabled and callable(send_qkv_batch_direct):
+                if batched_route_copy_enabled:
+                    direct_qkv_batch, direct_layout = _pap_qkv_batch_for_indices(
+                        direct_qkv_send_buffer,
+                        req_indices,
+                        index_tensor=route_index_tensor,
+                    )
+                else:
+                    direct_qkv_batch = _pap_direct_qkv_batch_for_indices(
+                        direct_qkv_send_buffer,
+                        req_indices,
+                    )
+                    direct_layout = direct_qkv_batch is not None
             if direct_qkv_batch is not None:
                 if trace_offload_exec:
-                    trace_direct_qkv_groups += 1
+                    if direct_layout:
+                        trace_direct_qkv_groups += 1
+                    else:
+                        trace_packed_qkv_groups += 1
                 if int(direct_qkv_batch.shape[-1]) != qkv_width:
                     raise RuntimeError("PAP direct QKV batch width mismatch")
                 send_qkv_batch_direct(
@@ -1633,8 +1739,9 @@ class Qwen3Attention(nn.Module):
                     attention_endpoint,
                     offload_exec_zmq_endpoint,
                     batch_descriptor,
-                    list(req_indices),
+                    req_indices,
                     transport,
+                    route_index_tensor,
                 )
             )
         trace_send_ms = (
@@ -1729,6 +1836,7 @@ class Qwen3Attention(nn.Module):
             batch_descriptor,
             req_indices,
             transport,
+            route_index_tensor,
         ) in offload_exec_batches:
             recv_output_batch_message = getattr(
                 transport, "recv_output_batch_message", None
@@ -1754,7 +1862,7 @@ class Qwen3Attention(nn.Module):
                     direct_mailbox_output_enabled
                     and len(offload_exec_batches) == 1
                     and len(req_indices) == num_reqs
-                    and req_indices == list(range(num_reqs))
+                    and req_indices == tuple(range(num_reqs))
                     and output_batch.device == query.device
                     and output_batch.dtype == query.dtype
                     and int(output_batch.numel())
@@ -1781,11 +1889,19 @@ class Qwen3Attention(nn.Module):
                     return direct_output, pap_release_messages
                 if trace_offload_exec:
                     trace_scattered_output_rows += len(req_indices)
-                for descriptor_index, req_index in enumerate(req_indices):
-                    apply_remote_output(
-                        req_index,
-                        output_batch[descriptor_index : descriptor_index + 1],
+                if batched_route_copy_enabled:
+                    _pap_scatter_attention_output_group(
+                        get_copy_output_buffer(),
+                        output_batch,
+                        req_indices=req_indices,
+                        index_tensor=route_index_tensor,
                     )
+                else:
+                    for descriptor_index, req_index in enumerate(req_indices):
+                        apply_remote_output(
+                            req_index,
+                            output_batch[descriptor_index : descriptor_index + 1],
+                        )
             finally:
                 if output_message is not None:
                     output_message.release()
