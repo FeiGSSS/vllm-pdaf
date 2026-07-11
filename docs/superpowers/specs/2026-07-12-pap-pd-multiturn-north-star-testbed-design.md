@@ -61,7 +61,7 @@ PAP，并同时回答两个问题：
 | 第二轮新增正文 | 同一语料后续 120 tokens，渲染后记录真实长度 |
 | 每轮输出 | 256 tokens |
 | Sampling | `temperature=0`、`seed=0`、`ignore_eos=true` |
-| Qwen thinking | 关闭 |
+| Qwen thinking | 开启并完整保留 assistant 内容，保证跨轮 token continuity |
 | Warmup | 0；每个 repetition 重启服务 |
 | Tokenizer | `local_files_only=True`、`trust_remote_code=False` |
 

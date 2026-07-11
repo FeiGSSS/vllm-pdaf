@@ -26,7 +26,7 @@ tokenizer, Bash, vLLM OpenAI-compatible streaming API, NIXL, JSON and Markdown.
 - Use only local model `/data/ssd1/llm-models/Qwen3-8B` and local corpus
   `/home/fei/research/PD/refer_codes/vllm/benchmarks/sonnet_4x.txt`.
 - Freeze profile `qwen3_8b_chat_16k_2turn_o256_c1_v1`: 16,000 document tokens,
-  120-token append, two 256-token outputs, thinking off, concurrency one.
+  120-token append, two 256-token outputs, thinking on, concurrency one.
 - Freeze FP16, TP1, eager, max model length 20,000, max batched tokens 4,096,
   max sequences 2, GPU 1/2, and PAP MPS 70/30.
 - Performance runs set `PAP_PREFIX_CACHE_AUDIT=0` and read SSE through HTTP EOF.

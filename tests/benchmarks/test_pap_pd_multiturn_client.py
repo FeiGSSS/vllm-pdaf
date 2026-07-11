@@ -267,7 +267,7 @@ def test_build_chat_payload_freezes_north_star_sampling() -> None:
         "stream": True,
         "stream_options": {"include_usage": True},
         "return_token_ids": True,
-        "chat_template_kwargs": {"enable_thinking": False},
+        "chat_template_kwargs": {"enable_thinking": True},
     }
 
 

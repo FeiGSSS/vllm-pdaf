@@ -221,7 +221,7 @@ def build_chat_payload(
         "stream": True,
         "stream_options": {"include_usage": True},
         "return_token_ids": True,
-        "chat_template_kwargs": {"enable_thinking": False},
+        "chat_template_kwargs": {"enable_thinking": True},
     }
 
 
@@ -423,7 +423,7 @@ def _profile(config: NorthStarConfig, corpus: str) -> dict[str, object]:
         "output_tokens_per_round": config.output_tokens,
         "rounds": 2,
         "active_conversations": 1,
-        "enable_thinking": False,
+        "enable_thinking": True,
         "temperature": 0,
         "seed": 0,
         "ignore_eos": True,
