@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 from collections import deque
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 
+from vllm.platforms.cpu import CpuPlatform
 from vllm.v1.core.sched.async_scheduler import AsyncScheduler
 from vllm.v1.core.sched.output import CachedRequestData, SchedulerOutput
 from vllm.v1.outputs import ModelRunnerOutput
@@ -98,6 +99,34 @@ def test_abort():
     for i, req in enumerate(requests):
         assert req.status == RequestStatus.FINISHED_ABORTED
         assert req.num_output_tokens == abort_order_copy.index(i)
+
+
+def test_new_request_joins_next_plan_without_displacing_running_cohort():
+    with patch("vllm.platforms.current_platform", CpuPlatform()):
+        scheduler = create_scheduler(async_scheduling=True)
+    req0, req1, newcomer = create_requests(
+        num_requests=3,
+        max_tokens=8,
+        req_ids=["req-0", "req-1", "newcomer"],
+    )
+    cohort_ids = {req0.request_id, req1.request_id}
+    scheduler.add_request(req0)
+    scheduler.add_request(req1)
+
+    first_plan = scheduler.schedule()
+    second_plan = scheduler.schedule()
+    assert set(first_plan.num_scheduled_tokens) == cohort_ids
+    assert set(second_plan.num_scheduled_tokens) == cohort_ids
+
+    scheduler.add_request(newcomer)
+    scheduler.update_from_output(
+        first_plan,
+        _make_model_runner_output(first_plan),
+    )
+    next_plan = scheduler.schedule()
+
+    assert cohort_ids <= set(next_plan.num_scheduled_tokens)
+    assert newcomer.request_id in next_plan.num_scheduled_tokens
 
 
 def test_preempt():

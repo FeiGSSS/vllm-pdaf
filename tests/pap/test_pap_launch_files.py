@@ -18,6 +18,11 @@ def test_pap_benchmark_runner_captures_attention_fast_path_stats() -> None:
     assert "/v1/pap/attention/stats" in text
     assert "attention_fast_path_stats.json" in text
     assert "capture_attention_fast_path_stats" in text
+    assert (
+        'PAP_ATTENTION_DISPATCH_MODE="${PAP_ATTENTION_DISPATCH_MODE:-legacy}"'
+        in text
+    )
+    assert '"attention_dispatch_mode"' in text
 
 
 def test_pap_benchmark_runner_supports_arbitrary_xy_topology() -> None:

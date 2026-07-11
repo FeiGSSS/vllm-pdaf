@@ -9,6 +9,7 @@ import logging
 import os
 import time
 import uuid
+from collections import Counter
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from itertools import count
@@ -216,6 +217,10 @@ def select_instances(
     group = groups[group_index]
     if routing_policy == "round_robin":
         projection_index = request_number % len(projections)
+    elif routing_policy == "crossbar_round_robin":
+        projection_index = (
+            request_number // len(groups) + group_index
+        ) % len(projections)
     elif routing_policy == "projection_affinity":
         groups_per_projection = (len(groups) + len(projections) - 1) // len(projections)
         projection_index = min(
@@ -417,6 +422,7 @@ async def lifespan(app: FastAPI):
     app.state.groups = parse_pap_groups(args.pap_groups)
     app.state.projections = parse_projection_instances(args.projections)
     app.state.request_counter = count()
+    app.state.pair_counts = Counter()
     app.state.prefill_clients = {
         group: _make_client(group.prefill_host, group.prefill_port, "prefill")
         for group in app.state.groups
@@ -467,6 +473,9 @@ async def _handle_openai_request(api_path: str, request: Request):
     attention_clients = request.app.state.attention_clients[group]
     projection_client = request.app.state.projection_clients[projection]
     group_index = request.app.state.groups.index(group)
+    projection_index = request.app.state.projections.index(projection)
+    pair_name = f"pa{group_index}:p{projection_index}"
+    request.app.state.pair_counts[pair_name] += 1
 
     attention_sessions: list[dict[str, Any]] | None = None
     handed_off_stream_cleanup = False
@@ -536,6 +545,7 @@ async def _handle_openai_request(api_path: str, request: Request):
         )
         logger.info(
             "request_id=%s pa=%s:%d attention=%s:%s projection=%s:%d "
+            "pa_index=%d projection_index=%d pair=%s "
             "prefill_ms=%d prefill_prefix_len=%s attention_ready=%s "
             "projection_kv_keys=%s",
             request_id,
@@ -545,6 +555,9 @@ async def _handle_openai_request(api_path: str, request: Request):
             group.attention_port,
             projection.host,
             projection.port,
+            group_index,
+            projection_index,
+            pair_name,
             prefill_ms,
             prefix_len,
             attention_ready,
@@ -578,6 +591,8 @@ async def _handle_openai_request(api_path: str, request: Request):
                     "X-PAP-Prefill-Ms": str(prefill_ms),
                     "X-PAP-Group": str(group_index),
                     "X-PAP-Projection": str(projection.port),
+                    "X-PAP-Projection-Index": str(projection_index),
+                    "X-PAP-Pair": pair_name,
                 },
             )
 
@@ -593,6 +608,8 @@ async def _handle_openai_request(api_path: str, request: Request):
                 "X-PAP-Prefill-Ms": str(prefill_ms),
                 "X-PAP-Group": str(group_index),
                 "X-PAP-Projection": str(projection.port),
+                "X-PAP-Projection-Index": str(projection_index),
+                "X-PAP-Pair": pair_name,
             },
         )
     finally:
@@ -617,6 +634,20 @@ async def health() -> dict[str, Any]:
         "role": "multi-pap-proxy",
         "groups": len(app.state.groups),
         "projections": len(app.state.projections),
+        "routing_policy": app.state.args.routing_policy,
+        "pair_counts": dict(sorted(app.state.pair_counts.items())),
+    }
+
+
+@app.get("/v1/pap/topology/stats")
+async def topology_stats() -> dict[str, Any]:
+    pair_counts = dict(sorted(app.state.pair_counts.items()))
+    return {
+        "pa_count": len(app.state.groups),
+        "projection_count": len(app.state.projections),
+        "routing_policy": app.state.args.routing_policy,
+        "total_requests": sum(pair_counts.values()),
+        "pair_counts": pair_counts,
     }
 
 
@@ -641,7 +672,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--routing-policy",
         default=os.environ.get("PAP_ROUTING_POLICY", "round_robin"),
-        choices=("round_robin", "projection_affinity", "projection_sticky"),
+        choices=(
+            "round_robin",
+            "crossbar_round_robin",
+            "projection_affinity",
+            "projection_sticky",
+        ),
     )
     return parser.parse_args()
 

@@ -131,6 +131,63 @@ def test_select_instances_round_robins_pa_and_projection_independently() -> None
     ]
 
 
+def test_select_instances_crossbar_round_robin_covers_all_2x2_pairs() -> None:
+    groups = [
+        PAPGroup("127.0.0.1", 8100 + idx, 5559 + idx, "127.0.0.1", 8300 + idx)
+        for idx in range(2)
+    ]
+    projections = [
+        ProjectionInstance("127.0.0.1", 8200 + idx) for idx in range(2)
+    ]
+
+    selected = [
+        select_instances(
+            request_number,
+            groups,
+            projections,
+            routing_policy="crossbar_round_robin",
+        )
+        for request_number in range(4)
+    ]
+
+    assert [
+        (group.prefill_port, projection.port)
+        for group, projection in selected
+    ] == [
+        (8100, 8200),
+        (8101, 8201),
+        (8100, 8201),
+        (8101, 8200),
+    ]
+
+
+def test_crossbar_round_robin_balances_non_divisible_topology() -> None:
+    groups = [
+        PAPGroup("127.0.0.1", 8100 + idx, 5559 + idx, "127.0.0.1", 8300 + idx)
+        for idx in range(3)
+    ]
+    projections = [
+        ProjectionInstance("127.0.0.1", 8200 + idx) for idx in range(2)
+    ]
+
+    selected = [
+        select_instances(
+            request_number,
+            groups,
+            projections,
+            routing_policy="crossbar_round_robin",
+        )
+        for request_number in range(12)
+    ]
+    pair_counts: dict[tuple[int, int], int] = {}
+    for group, projection in selected:
+        pair = (group.prefill_port, projection.port)
+        pair_counts[pair] = pair_counts.get(pair, 0) + 1
+
+    assert len(pair_counts) == 6
+    assert set(pair_counts.values()) == {2}
+
+
 def test_select_instances_can_group_pa_by_projection_affinity() -> None:
     groups = [
         PAPGroup("127.0.0.1", 8100 + idx, 5559 + idx, "127.0.0.1", 8300 + idx)

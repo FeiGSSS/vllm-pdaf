@@ -88,6 +88,8 @@ PAP_NIXL_MAILBOX_INLINE_PUBLISH="${PAP_NIXL_MAILBOX_INLINE_PUBLISH:-1}"
 PAP_NIXL_MAILBOX_BATCH_PLAN="${PAP_NIXL_MAILBOX_BATCH_PLAN:-1}"
 PAP_UNIFIED_MD_CACHE_LIMIT="${PAP_UNIFIED_MD_CACHE_LIMIT:-256}"
 PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT:-256}"
+PAP_ATTENTION_DISPATCH_MODE="${PAP_ATTENTION_DISPATCH_MODE:-legacy}"
+PAP_ATTENTION_DISPATCH_QUEUE_SIZE="${PAP_ATTENTION_DISPATCH_QUEUE_SIZE:-0}"
 PAP_DIRECT_MAILBOX_OUTPUT="${PAP_DIRECT_MAILBOX_OUTPUT:-}"
 if [[ -z "${PAP_DIRECT_MAILBOX_OUTPUT}" ]]; then
   if [[ "${PAP_OFFLOAD_EXEC_TRANSPORT}" == "local_fast" ]]; then
@@ -131,6 +133,8 @@ export PAP_NIXL_MAILBOX_INLINE_PUBLISH
 export PAP_NIXL_MAILBOX_BATCH_PLAN
 export PAP_UNIFIED_MD_CACHE_LIMIT
 export PAP_DECODE_SLOT_PLAN_CACHE_LIMIT
+export PAP_ATTENTION_DISPATCH_MODE
+export PAP_ATTENTION_DISPATCH_QUEUE_SIZE
 export PAP_DECODE_COMMIT_FAIL_CLOSED
 export PAP_DECODE_COMMIT_TIMEOUT
 export PAP_DECODE_COMMIT_QUEUE_SIZE
@@ -368,6 +372,13 @@ with open(output_path, "w", encoding="utf-8") as output:
 PY
 }
 
+capture_proxy_topology_stats() {
+  curl -fsS \
+    "http://127.0.0.1:${PAP_PROXY_PORT}/v1/pap/topology/stats" \
+    -o "${RUN_ROOT}/topology_runtime_stats.json" \
+    || die "Failed to capture PAP proxy topology stats"
+}
+
 ensure_ports_free() {
   "${PYTHON_BIN}" - "$@" <<'PY'
 import socket
@@ -464,6 +475,9 @@ write_effective_config() {
     printf 'PAP_NIXL_MAILBOX_BATCH_PLAN=%q\n' "${PAP_NIXL_MAILBOX_BATCH_PLAN}"
     printf 'PAP_UNIFIED_MD_CACHE_LIMIT=%q\n' "${PAP_UNIFIED_MD_CACHE_LIMIT}"
     printf 'PAP_DECODE_SLOT_PLAN_CACHE_LIMIT=%q\n' "${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}"
+    printf 'PAP_ATTENTION_DISPATCH_MODE=%q\n' "${PAP_ATTENTION_DISPATCH_MODE}"
+    printf 'PAP_ATTENTION_DISPATCH_QUEUE_SIZE=%q\n' \
+      "${PAP_ATTENTION_DISPATCH_QUEUE_SIZE}"
     printf 'PAP_DIRECT_MAILBOX_OUTPUT=%q\n' "${PAP_DIRECT_MAILBOX_OUTPUT}"
     printf 'PAP_LOCAL_FAST_ASYNC_DOORBELL=%q\n' "${PAP_LOCAL_FAST_ASYNC_DOORBELL}"
     printf 'PAP_LOCAL_FAST_STREAM_ORDERED=%q\n' "${PAP_LOCAL_FAST_STREAM_ORDERED}"
@@ -584,6 +598,7 @@ write_run_metadata() {
   PAP_LOCAL_FAST_STREAM_ORDERED="${PAP_LOCAL_FAST_STREAM_ORDERED}" \
   PAP_LOCAL_FAST_SLOT_COUNT="${PAP_LOCAL_FAST_SLOT_COUNT}" \
   PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}" \
+  PAP_ATTENTION_DISPATCH_MODE="${PAP_ATTENTION_DISPATCH_MODE}" \
   GIT_COMMIT="${GIT_COMMIT}" \
   GIT_COMMIT_SHORT="${GIT_COMMIT_SHORT}" \
   GIT_TRACKED_WORKTREE_DIRTY="${GIT_TRACKED_WORKTREE_DIRTY}" \
@@ -625,6 +640,7 @@ metadata = {
     "decode_slot_plan_cache_limit": int(
         os.environ["PAP_DECODE_SLOT_PLAN_CACHE_LIMIT"]
     ),
+    "attention_dispatch_mode": os.environ["PAP_ATTENTION_DISPATCH_MODE"],
     "git_commit": os.environ["GIT_COMMIT"],
     "git_commit_short": os.environ["GIT_COMMIT_SHORT"],
     "git_tracked_worktree_dirty": (
@@ -725,13 +741,22 @@ routes = [
 ]
 pa_routes = Counter(pa_port for pa_port, _ in routes)
 projection_routes = Counter(projection_port for _, projection_port in routes)
+pair_routes = Counter(
+    f"pa{pa_port - prefill_base}:p{projection_port - projection_base}"
+    for pa_port, projection_port in routes
+)
 expected_pa_routes = Counter()
 expected_projection_routes = Counter()
+expected_pair_routes = Counter()
 errors = []
 for request_number in range(expected_requests):
     group_index = request_number % pa_count
     projection_index = request_number % projection_count
-    if routing_policy == "projection_affinity":
+    if routing_policy == "crossbar_round_robin":
+        projection_index = (
+            request_number // pa_count + group_index
+        ) % projection_count
+    elif routing_policy == "projection_affinity":
         groups_per_projection = (
             pa_count + projection_count - 1
         ) // projection_count
@@ -747,6 +772,7 @@ for request_number in range(expected_requests):
         projection_index = 0
     expected_pa_routes[prefill_base + group_index] += 1
     expected_projection_routes[projection_base + projection_index] += 1
+    expected_pair_routes[f"pa{group_index}:p{projection_index}"] += 1
 if len(routes) != expected_requests:
     errors.append(
         f"routed request count {len(routes)} != expected {expected_requests}"
@@ -760,6 +786,11 @@ if projection_routes != expected_projection_routes:
     errors.append(
         f"Projection route counts {dict(projection_routes)} != expected "
         f"{dict(expected_projection_routes)}"
+    )
+if pair_routes != expected_pair_routes:
+    errors.append(
+        f"PA/Projection pair counts {dict(pair_routes)} != expected "
+        f"{dict(expected_pair_routes)}"
     )
 
 control_counts = {}
@@ -790,6 +821,8 @@ audit = {
     "route_count": len(routes),
     "pa_routes": dict(sorted(pa_routes.items())),
     "projection_routes": dict(sorted(projection_routes.items())),
+    "pair_routes": dict(sorted(pair_routes.items())),
+    "expected_pair_routes": dict(sorted(expected_pair_routes.items())),
     "prefill_control_counts": control_counts,
     "errors": errors,
 }
@@ -805,6 +838,7 @@ PY
       printf 'EXPECTED_REQUESTS=%q\n' "${NUM_PROMPTS}"
       printf 'PA_COUNT=%q\n' "${PA_COUNT}"
       printf 'PROJECTION_COUNT=%q\n' "${PROJECTION_COUNT}"
+      printf 'ROUTING_POLICY=%q\n' "${PAP_ROUTING_POLICY}"
     } > "${summary_path}"
   else
     printf 'STATUS=failed\n' > "${summary_path}"
@@ -913,6 +947,8 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_LOCAL_FAST_SLEEP_US="${PAP_LOCAL_FAST_SLEEP_US}" \
     PAP_LOCAL_FAST_SLEEP_AFTER_US="${PAP_LOCAL_FAST_SLEEP_AFTER_US}" \
     PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}" \
+    PAP_ATTENTION_DISPATCH_MODE="${PAP_ATTENTION_DISPATCH_MODE}" \
+    PAP_ATTENTION_DISPATCH_QUEUE_SIZE="${PAP_ATTENTION_DISPATCH_QUEUE_SIZE}" \
     PAP_OFFLOAD_EXEC_LOCAL_RANK=0 \
     PAP_OFFLOAD_EXEC_Q_SIZE="${PAP_OFFLOAD_EXEC_Q_SIZE}" \
     PAP_OFFLOAD_EXEC_KV_SIZE="${PAP_OFFLOAD_EXEC_KV_SIZE}" \
@@ -1067,6 +1103,7 @@ timeout "${BENCH_TIMEOUT}" "${VLLM_BIN}" bench serve \
 
 validate_benchmark_result "${RUN_ROOT}/${TAG}.json"
 wait_attention_sessions_drained
+capture_proxy_topology_stats
 capture_attention_fast_path_stats
 audit_xy_routes
 audit_correctness_logs

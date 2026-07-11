@@ -11,10 +11,11 @@ import pytest
 from httpx import ASGITransport, AsyncClient, Response
 
 from examples.pap.pap_attention_executor import (
-    _offload_exec_batch_rows,
     PAPAttentionRegistration,
     PAPAttentionRegistry,
     PAPUnifiedPagedKVState,
+    _execute_offload_exec_work_item,
+    _offload_exec_batch_rows,
     build_unified_paged_flash_metadata,
     compute_binary_attention_response,
     compute_offload_exec_batch_output,
@@ -23,8 +24,10 @@ from examples.pap.pap_attention_executor import (
     maybe_start_offload_exec_transport,
     run_offload_exec_batch_once,
     run_offload_exec_mailbox_loop,
+    run_offload_exec_mailbox_receiver_loop,
     run_offload_exec_once,
 )
+from vllm.pap.attention_scheduler import PAPAttentionDispatcher
 from vllm.pap.data_plane import (
     PAPCudaIPCTensorHandle,
     PAPOffloadExecBatchDescriptor,
@@ -219,6 +222,7 @@ def test_attention_executor_binds_each_projection_to_distinct_transport(
 
     transports: list[FakeTransport] = []
     loops_started: list[FakeTransport] = []
+    loop_peer_ids: list[str] = []
     loops_ready = Event()
 
     def fake_build_transport(*, actor_id: str, local_rank: int) -> FakeTransport:
@@ -226,8 +230,9 @@ def test_attention_executor_binds_each_projection_to_distinct_transport(
         transports.append(transport)
         return transport
 
-    def fake_mailbox_loop(*, registry, transport) -> None:
+    def fake_mailbox_loop(*, registry, transport, peer_id) -> None:
         loops_started.append(transport)
+        loop_peer_ids.append(peer_id)
         if len(loops_started) == 2:
             loops_ready.set()
 
@@ -269,6 +274,9 @@ def test_attention_executor_binds_each_projection_to_distinct_transport(
     assert transports[1].bound_peers == [peers[1]]
     assert loops_ready.wait(timeout=1.0)
     assert set(loops_started) == set(transports)
+    assert set(loop_peer_ids) == {
+        hashlib.sha1(peer).hexdigest()[:16] for peer in peers
+    }
 
     rebound = client.post(
         "/v1/pap/attention/offload-exec-mailbox/bind",
@@ -277,6 +285,79 @@ def test_attention_executor_binds_each_projection_to_distinct_transport(
     assert rebound.status_code == 200
     assert len(transports) == 2
     assert transports[0].bound_peers == [peers[0]]
+
+
+def test_attention_executor_central_mode_shares_one_dispatcher(
+    monkeypatch,
+) -> None:
+    from examples.pap import pap_attention_executor as executor_module
+
+    class FakeTransport:
+        def __init__(self, actor_id: str, local_rank: int) -> None:
+            self.actor_id = actor_id
+            self.local_rank = local_rank
+            self.local_agent_metadata = f"local:{actor_id}".encode()
+
+        def bind_peer(self, peer_metadata: bytes) -> None:
+            pass
+
+    transports = []
+    receiver_contexts = []
+    receivers_ready = Event()
+
+    def fake_build_transport(*, actor_id, local_rank):
+        transport = FakeTransport(actor_id, local_rank)
+        transports.append(transport)
+        return transport
+
+    def fake_receiver_loop(*, registry, transport, dispatcher, peer_id):
+        receiver_contexts.append((transport, dispatcher, peer_id))
+        if len(receiver_contexts) == 2:
+            receivers_ready.set()
+
+    monkeypatch.setenv("PAP_ATTENTION_DISPATCH_MODE", "central_fifo")
+    monkeypatch.setattr(
+        executor_module,
+        "_build_attention_offload_exec_transport",
+        fake_build_transport,
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "run_offload_exec_mailbox_receiver_loop",
+        fake_receiver_loop,
+    )
+    app = create_app()
+    maybe_start_offload_exec_transport(app=app, host="127.0.0.1", zmq_port=10300)
+    client = _ASGITestClient(app)
+    peers = (b"projection-a", b"projection-b")
+
+    for peer_metadata in peers:
+        response = client.post(
+            "/v1/pap/attention/offload-exec-mailbox/bind",
+            json={
+                "agent_metadata_b64": base64.b64encode(peer_metadata).decode()
+            },
+        )
+        assert response.status_code == 200
+
+    assert receivers_ready.wait(timeout=1.0)
+    dispatcher = app.state.offload_exec_dispatcher
+    assert dispatcher is not None
+    assert {id(context[1]) for context in receiver_contexts} == {id(dispatcher)}
+    assert {context[2] for context in receiver_contexts} == {
+        hashlib.sha1(peer).hexdigest()[:16] for peer in peers
+    }
+    stats = client.get("/v1/pap/attention/stats").json()
+    assert stats["attention_dispatch_mode"] == "central_fifo"
+    assert stats["dispatcher_running"] is True
+    dispatcher.stop(drain=True, timeout=1.0)
+
+
+def test_attention_executor_rejects_unknown_dispatch_mode(monkeypatch) -> None:
+    monkeypatch.setenv("PAP_ATTENTION_DISPATCH_MODE", "separate_cohorts")
+
+    with pytest.raises(ValueError, match="PAP_ATTENTION_DISPATCH_MODE"):
+        create_app()
 
 
 def test_attention_executor_rejects_nccl_offload_exec_transport(monkeypatch) -> None:
@@ -1118,6 +1199,7 @@ def test_attention_fast_path_stats_endpoint() -> None:
 
     assert response.status_code == 200
     assert response.json() == {
+        "attention_dispatch_mode": "legacy",
         "fast_path_hits": 0,
         "fallbacks": 0,
         "scale_cache_entries": 0,
@@ -1125,6 +1207,15 @@ def test_attention_fast_path_stats_endpoint() -> None:
         "slot_plan_misses": 0,
         "slot_plan_entries": 0,
         "slot_topology_mismatches": 0,
+        "offload_exec_peer_batches": 0,
+        "offload_exec_peer_rows": 0,
+        "offload_exec_compute_calls": 0,
+        "offload_exec_compute_rows": 0,
+        "offload_exec_source_batches_per_compute_sum": 0,
+        "offload_exec_max_source_batches_per_compute": 0,
+        "offload_exec_peer_batches_by_source": {},
+        "offload_exec_peer_rows_by_source": {},
+        "offload_exec_compute_calls_by_layer": {},
     }
 
 
@@ -1577,9 +1668,434 @@ def test_run_offload_exec_mailbox_loop_releases_qkv_message(monkeypatch) -> None
     )
 
     with suppress(KeyboardInterrupt):
-        run_offload_exec_mailbox_loop(registry=registry, transport=transport)
+        run_offload_exec_mailbox_loop(
+            registry=registry,
+            transport=transport,
+            peer_id="projection-a",
+        )
 
     assert events == ["release", "send"]
+    assert registry.offload_exec_dispatch_stats() == {
+        "offload_exec_peer_batches": 1,
+        "offload_exec_peer_rows": 1,
+        "offload_exec_compute_calls": 1,
+        "offload_exec_compute_rows": 1,
+        "offload_exec_source_batches_per_compute_sum": 1,
+        "offload_exec_max_source_batches_per_compute": 1,
+        "offload_exec_peer_batches_by_source": {"projection-a": 1},
+        "offload_exec_peer_rows_by_source": {"projection-a": 1},
+        "offload_exec_compute_calls_by_layer": {"layer0": 1},
+    }
+
+
+def test_mailbox_receiver_enqueues_without_computing(monkeypatch) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    released = []
+
+    class FakeMessage:
+        tensor = torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]])
+
+        def release(self):
+            released.append("release")
+
+    class FakeTransport:
+        def __init__(self, descriptor):
+            self.descriptor = descriptor
+            self.recv_calls = 0
+
+        def recv_next_qkv_batch_message(self):
+            self.recv_calls += 1
+            if self.recv_calls > 1:
+                raise KeyboardInterrupt
+            return self.descriptor, FakeMessage()
+
+    class FakeDispatcher:
+        def __init__(self):
+            self.items = []
+
+        def enqueue(self, item):
+            self.items.append(item)
+            item.mark_completed()
+
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                request_id="req-a",
+                layer_name="layer0",
+                step=1,
+                scale=1.0,
+            ),
+        ),
+    )
+    transport = FakeTransport(descriptor)
+    dispatcher = FakeDispatcher()
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    monkeypatch.setattr(
+        executor_module,
+        "compute_offload_exec_batch_output",
+        lambda **_kwargs: pytest.fail("receiver must not compute"),
+    )
+
+    with suppress(KeyboardInterrupt):
+        run_offload_exec_mailbox_receiver_loop(
+            registry=registry,
+            transport=transport,
+            dispatcher=dispatcher,
+            peer_id="projection-a",
+        )
+
+    assert len(dispatcher.items) == 1
+    assert released == []
+    assert registry.offload_exec_dispatch_stats()[
+        "offload_exec_peer_batches"
+    ] == 1
+    assert registry.offload_exec_dispatch_stats()[
+        "offload_exec_compute_calls"
+    ] == 0
+    dispatcher.items[0].release_input()
+    assert released == ["release"]
+
+
+def test_mailbox_receiver_waits_for_dispatch_before_busy_spinning_again() -> None:
+    import torch
+
+    enqueued = Event()
+    receiver_done = Event()
+
+    class FakeMessage:
+        tensor = torch.ones((1, 6))
+
+        def release(self):
+            pass
+
+    class FakeTransport:
+        def __init__(self, descriptor):
+            self.descriptor = descriptor
+            self.recv_calls = 0
+
+        def recv_next_qkv_batch_message(self):
+            self.recv_calls += 1
+            if self.recv_calls > 1:
+                raise KeyboardInterrupt
+            return self.descriptor, FakeMessage()
+
+    class FakeDispatcher:
+        def __init__(self):
+            self.items = []
+
+        def enqueue(self, item):
+            self.items.append(item)
+            enqueued.set()
+
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                request_id="req-a",
+                layer_name="layer0",
+                step=1,
+                scale=1.0,
+            ),
+        ),
+    )
+    transport = FakeTransport(descriptor)
+    dispatcher = FakeDispatcher()
+
+    def receive() -> None:
+        with suppress(KeyboardInterrupt):
+            run_offload_exec_mailbox_receiver_loop(
+                registry=PAPAttentionRegistry(storage_device="cpu"),
+                transport=transport,
+                dispatcher=dispatcher,
+                peer_id="projection-a",
+            )
+        receiver_done.set()
+
+    thread = Thread(target=receive, daemon=True)
+    thread.start()
+
+    assert enqueued.wait(timeout=1.0)
+    assert transport.recv_calls == 1
+    assert not receiver_done.wait(timeout=0.05)
+    dispatcher.items[0].release_input()
+    dispatcher.items[0].mark_completed()
+
+    assert receiver_done.wait(timeout=1.0)
+    assert transport.recv_calls == 2
+
+
+def test_central_dispatcher_computes_and_sends_to_each_source(monkeypatch) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    events = []
+
+    class FakeMessage:
+        def __init__(self, peer_id):
+            self.peer_id = peer_id
+            self.tensor = torch.ones((1, 6))
+
+        def release(self):
+            events.append(f"release:{self.peer_id}")
+
+    class FakeTransport:
+        def __init__(self, peer_id, descriptor):
+            self.peer_id = peer_id
+            self.descriptor = descriptor
+            self.recv_calls = 0
+
+        def recv_next_qkv_batch_message(self):
+            self.recv_calls += 1
+            if self.recv_calls > 1:
+                raise KeyboardInterrupt
+            return self.descriptor, FakeMessage(self.peer_id)
+
+        def send_output_batch(self, descriptor, output, *, remote_address):
+            events.append(f"send:{self.peer_id}")
+
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                request_id="req-a",
+                layer_name="layer0",
+                step=1,
+                scale=1.0,
+            ),
+        ),
+    )
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    compute_peers = []
+
+    def fake_compute(**kwargs):
+        compute_peers.append(float(kwargs["qkv_batch"][0, 0]))
+        return torch.ones((1, 2))
+
+    monkeypatch.setattr(
+        executor_module,
+        "compute_offload_exec_batch_output",
+        fake_compute,
+    )
+    dispatcher = PAPAttentionDispatcher(
+        handler=lambda item: _execute_offload_exec_work_item(
+            registry=registry,
+            item=item,
+        )
+    )
+    transports = [
+        FakeTransport("projection-a", descriptor),
+        FakeTransport("projection-b", descriptor),
+    ]
+
+    def receive(source) -> None:
+        with suppress(KeyboardInterrupt):
+            run_offload_exec_mailbox_receiver_loop(
+                registry=registry,
+                transport=source,
+                dispatcher=dispatcher,
+                peer_id=source.peer_id,
+            )
+
+    dispatcher.start()
+    receiver_threads = []
+    for transport in transports:
+        thread = Thread(
+            target=receive,
+            args=(transport,),
+            daemon=True,
+        )
+        receiver_threads.append(thread)
+        thread.start()
+    for thread in receiver_threads:
+        thread.join(timeout=1.0)
+        assert not thread.is_alive()
+    dispatcher.stop(drain=True, timeout=1.0)
+
+    assert compute_peers == [1.0, 1.0]
+    for peer_id in ("projection-a", "projection-b"):
+        assert events.index(f"send:{peer_id}") < events.index(
+            f"release:{peer_id}"
+        )
+    stats = registry.offload_exec_dispatch_stats()
+    assert stats["offload_exec_peer_batches"] == 2
+    assert stats["offload_exec_compute_calls"] == 2
+    assert stats["offload_exec_max_source_batches_per_compute"] == 1
+
+
+def test_central_dispatcher_preserves_cuda_ready_dependency(monkeypatch) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    events = []
+    ready_event = object()
+
+    class FakeMessage:
+        tensor = torch.ones((1, 6))
+
+        def release(self):
+            events.append("release")
+
+    class FakeTransport:
+        def __init__(self, descriptor):
+            self.descriptor = descriptor
+            self.recv_calls = 0
+
+        def recv_next_qkv_batch_message(self):
+            self.recv_calls += 1
+            if self.recv_calls > 1:
+                raise KeyboardInterrupt
+            return self.descriptor, FakeMessage()
+
+        def send_output_batch(self, descriptor, output, *, remote_address):
+            events.append("send")
+
+    class FakeDispatcher:
+        def __init__(self):
+            self.items = []
+
+        def enqueue(self, item):
+            self.items.append(item)
+            item.mark_completed()
+
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                request_id="req-a",
+                layer_name="layer0",
+                step=1,
+                scale=1.0,
+            ),
+        ),
+    )
+    dispatcher = FakeDispatcher()
+    monkeypatch.setattr(
+        executor_module,
+        "_record_offload_exec_ready_event",
+        lambda _tensor: events.append("record") or ready_event,
+        raising=False,
+    )
+    with suppress(KeyboardInterrupt):
+        run_offload_exec_mailbox_receiver_loop(
+            registry=PAPAttentionRegistry(storage_device="cpu"),
+            transport=FakeTransport(descriptor),
+            dispatcher=dispatcher,
+            peer_id="projection-a",
+        )
+
+    assert events == ["record"]
+    assert dispatcher.items[0].ready_event is ready_event
+
+    def wait_ready(item):
+        assert item.ready_event is ready_event
+        events.append("wait")
+
+    def fake_compute(**_kwargs):
+        events.append("compute")
+        return torch.ones((1, 2))
+
+    monkeypatch.setattr(
+        executor_module,
+        "_wait_offload_exec_ready_event",
+        wait_ready,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "compute_offload_exec_batch_output",
+        fake_compute,
+    )
+    _execute_offload_exec_work_item(
+        registry=PAPAttentionRegistry(storage_device="cpu"),
+        item=dispatcher.items[0],
+    )
+    dispatcher.items[0].release_input()
+
+    assert events == ["record", "wait", "compute", "send", "release"]
+
+
+def test_central_dispatcher_preserves_mailbox_trace_contract(
+    monkeypatch,
+    caplog,
+) -> None:
+    import time
+
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap.attention_scheduler import PAPAttentionWorkItem
+
+    class FakeTransport:
+        def send_output_batch(self, descriptor, output, *, remote_address):
+            pass
+
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                request_id="req-a",
+                layer_name="layer0",
+                step=1,
+                scale=1.0,
+            ),
+        ),
+    )
+    now_ns = time.perf_counter_ns()
+    item = PAPAttentionWorkItem(
+        descriptor=descriptor,
+        qkv_batch=torch.ones((1, 6)),
+        transport=FakeTransport(),
+        peer_id="projection-a",
+        arrival_ns=now_ns,
+        trace_context={
+            "enabled": True,
+            "total_start": time.perf_counter(),
+            "recv_start_ns": now_ns - 100_000,
+            "recv_done_ns": now_ns,
+            "recv_ms": 0.1,
+            "recv_stats": {
+                "wait_ms": 0.05,
+                "read_ms": 0.02,
+                "materialize_ms": 0.01,
+                "transfer_ms": 0.01,
+                "wait_other_ms": 0.03,
+                "unaccounted_ms": 0.05,
+            },
+        },
+    )
+
+    def fake_compute(**kwargs):
+        assert kwargs["trace_stats"] is not None
+        return torch.ones((1, 2))
+
+    monkeypatch.setattr(
+        executor_module,
+        "compute_offload_exec_batch_output",
+        fake_compute,
+    )
+    dispatcher = PAPAttentionDispatcher(
+        handler=lambda work_item: _execute_offload_exec_work_item(
+            registry=PAPAttentionRegistry(storage_device="cpu"),
+            item=work_item,
+        )
+    )
+    dispatcher.enqueue(item)
+
+    with caplog.at_level(logging.INFO, logger="pap_attention"):
+        assert dispatcher.dispatch_next(timeout=0.1)
+
+    assert (
+        "PAP OFFLOAD_EXEC attention mailbox batch trace layer=layer0 calls=1"
+        in caplog.text
+    )
+    assert "queue_wait_ms=" in caplog.text
+    assert "peer=projection-a" in caplog.text
 
 
 def test_run_offload_exec_mailbox_loop_prefetches_next_qkv_message(

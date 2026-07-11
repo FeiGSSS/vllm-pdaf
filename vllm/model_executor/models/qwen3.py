@@ -450,14 +450,23 @@ def _pap_direct_qkv_batch_for_indices(
         return None
     if qkv_batch.ndim != 2 or not qkv_batch.is_contiguous():
         return None
-    start = int(req_indices[0])
-    if start < 0 or req_indices != tuple(range(start, start + len(req_indices))):
+    if not _pap_req_indices_are_contiguous(req_indices):
         return None
+    start = int(req_indices[0])
     stop = start + len(req_indices)
     if stop > int(qkv_batch.shape[0]):
         return None
     direct = qkv_batch[start:stop]
     return direct if direct.is_contiguous() else None
+
+
+def _pap_req_indices_are_contiguous(req_indices: tuple[int, ...]) -> bool:
+    if not req_indices:
+        return False
+    start = int(req_indices[0])
+    return start >= 0 and req_indices == tuple(
+        range(start, start + len(req_indices))
+    )
 
 
 def _pap_decode_token_ids_for_req_index(
@@ -983,7 +992,10 @@ class Qwen3Attention(nn.Module):
                     "self_attn_total_ms=%.3f batch_keys=%s "
                     "pre_attn_start_ns=%d pre_attn_done_ns=%d "
                     "send_done_ns=%d yield_start_ns=%d yield_end_ns=%d "
-                    "recv_done_ns=%d o_proj_done_ns=%d",
+                    "recv_done_ns=%d o_proj_done_ns=%d "
+                    "route_groups=%d contiguous_route_groups=%d "
+                    "direct_qkv_groups=%d packed_qkv_groups=%d "
+                    "direct_output_rows=%d scattered_output_rows=%d",
                     layer_name,
                     int(projection_timeline.get("batches", 0)),
                     int(projection_timeline.get("calls", 0)),
@@ -1003,6 +1015,12 @@ class Qwen3Attention(nn.Module):
                     int(projection_timeline.get("yield_end_ns", 0)),
                     int(projection_timeline.get("recv_done_ns", 0)),
                     trace_o_proj_done_ns,
+                    int(projection_timeline.get("route_groups", 0)),
+                    int(projection_timeline.get("contiguous_route_groups", 0)),
+                    int(projection_timeline.get("direct_qkv_groups", 0)),
+                    int(projection_timeline.get("packed_qkv_groups", 0)),
+                    int(projection_timeline.get("direct_output_rows", 0)),
+                    int(projection_timeline.get("scattered_output_rows", 0)),
                 )
             return output
         with _qwen3_profile_context(
@@ -1538,6 +1556,11 @@ class Qwen3Attention(nn.Module):
         trace_recv_ms = 0.0
         trace_total_ms = 0.0
         trace_batch_keys = ""
+        trace_contiguous_route_groups = 0
+        trace_direct_qkv_groups = 0
+        trace_packed_qkv_groups = 0
+        trace_direct_output_rows = 0
+        trace_scattered_output_rows = 0
         trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
         offload_exec_batches: list[
             tuple[
@@ -1552,6 +1575,8 @@ class Qwen3Attention(nn.Module):
             attention_endpoint = step_group.attention_endpoint
             offload_exec_zmq_endpoint = step_group.offload_exec_zmq_endpoint
             req_indices = step_group.req_indices
+            if trace_offload_exec and _pap_req_indices_are_contiguous(req_indices):
+                trace_contiguous_route_groups += 1
             transport = _pap_offload_exec_transport_for_attention_endpoint(
                 attention_endpoint,
                 offload_exec_zmq_endpoint,
@@ -1577,6 +1602,8 @@ class Qwen3Attention(nn.Module):
                 else None
             )
             if direct_qkv_batch is not None:
+                if trace_offload_exec:
+                    trace_direct_qkv_groups += 1
                 if int(direct_qkv_batch.shape[-1]) != qkv_width:
                     raise RuntimeError("PAP direct QKV batch width mismatch")
                 send_qkv_batch_direct(
@@ -1585,6 +1612,8 @@ class Qwen3Attention(nn.Module):
                     remote_address=offload_exec_zmq_endpoint,
                 )
             else:
+                if trace_offload_exec:
+                    trace_packed_qkv_groups += 1
                 group_items = [
                     (
                         req_index,
@@ -1660,6 +1689,14 @@ class Qwen3Attention(nn.Module):
                         "yield_start_ns": trace_yield_start_ns,
                         "yield_end_ns": trace_yield_end_ns,
                         "recv_done_ns": trace_recv_done_ns,
+                        "route_groups": len(step_groups),
+                        "contiguous_route_groups": (
+                            trace_contiguous_route_groups
+                        ),
+                        "direct_qkv_groups": trace_direct_qkv_groups,
+                        "packed_qkv_groups": trace_packed_qkv_groups,
+                        "direct_output_rows": trace_direct_output_rows,
+                        "scattered_output_rows": trace_scattered_output_rows,
                     }
                 )
             logger.info(
@@ -1667,7 +1704,10 @@ class Qwen3Attention(nn.Module):
                 "calls=%d send_ms=%.3f trigger_ms=%.3f "
                 "yield_ms=%.3f recv_ms=%.3f total_ms=%.3f batch_keys=%s "
                 "send_done_ns=%d yield_start_ns=%d yield_end_ns=%d "
-                "recv_done_ns=%d",
+                "recv_done_ns=%d route_groups=%d "
+                "contiguous_route_groups=%d direct_qkv_groups=%d "
+                "packed_qkv_groups=%d direct_output_rows=%d "
+                "scattered_output_rows=%d",
                 offload_exec_batches[0][2].layer_name,
                 len(offload_exec_batches),
                 calls,
@@ -1681,6 +1721,12 @@ class Qwen3Attention(nn.Module):
                 trace_yield_start_ns,
                 trace_yield_end_ns,
                 trace_recv_done_ns,
+                len(step_groups),
+                trace_contiguous_route_groups,
+                trace_direct_qkv_groups,
+                trace_packed_qkv_groups,
+                trace_direct_output_rows,
+                trace_scattered_output_rows,
             )
 
         for (
@@ -1721,6 +1767,8 @@ class Qwen3Attention(nn.Module):
                     == int(q.shape[0]) * self.num_heads * self.head_dim
                 )
                 if can_use_direct_output:
+                    if trace_offload_exec:
+                        trace_direct_output_rows += len(req_indices)
                     direct_output = output_batch.view(
                         q.shape[0], self.num_heads * self.head_dim
                     )
@@ -1737,6 +1785,8 @@ class Qwen3Attention(nn.Module):
                         ) * 1000.0
                         record_projection_trace()
                     return direct_output, pap_release_messages
+                if trace_offload_exec:
+                    trace_scattered_output_rows += len(req_indices)
                 for descriptor_index, req_index in enumerate(req_indices):
                     apply_remote_output(
                         req_index,
