@@ -35,6 +35,28 @@ The formal medians are:
 | 1 | 8250.232 | 25.083 |
 | 2 | 269.013 | 25.163 |
 
+## Initial PAP reference
+
+`pap_reference.json` was created from:
+
+```text
+test/baseline/pap/results/runs/
+  20260712_032326_3ec26b314_pap_multiturn_formal/
+```
+
+All three repetitions hit the exact `16272`-token second-turn cache boundary,
+computed only `146` new prompt tokens, drained every Attention session, and
+passed the strict service-log audit. The formal medians are:
+
+| Round | TTFT (ms) | TPOT (ms) | PAP/PD TTFT | PAP/PD TPOT |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 6496.455 | 56.487 | 0.787x | 2.252x |
+| 2 | 278.483 | 55.967 | 1.035x | 2.224x |
+
+The round-two north-star boundary is `< 50.327 ms/token`; the initial PAP
+reference is `5.640 ms/token` above it. This is the starting control for all
+subsequent PAP-only optimizations.
+
 ## Reference policy
 
 Daily PAP runs never update these files. Refresh PD with

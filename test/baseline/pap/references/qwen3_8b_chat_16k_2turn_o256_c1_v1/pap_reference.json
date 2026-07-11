@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "kind": "reference",
+  "profile": {
+    "profile_id": "qwen3_8b_chat_16k_2turn_o256_c1_v1",
+    "model": "/data/ssd1/llm-models/Qwen3-8B",
+    "corpus_path": "/home/fei/research/PD/refer_codes/vllm/benchmarks/sonnet_4x.txt",
+    "corpus_sha256": "4a53bd26108f9193c693ab6a9482ee5ce5102b545b70a5ca3a8cb11ca1171859",
+    "api": "/v1/chat/completions",
+    "document_tokens": 16000,
+    "append_tokens": 120,
+    "output_tokens_per_round": 256,
+    "rounds": 2,
+    "active_conversations": 1,
+    "enable_thinking": true,
+    "temperature": 0,
+    "seed": 0,
+    "ignore_eos": true,
+    "return_token_ids": true,
+    "block_size": 16,
+    "dtype": "float16",
+    "tensor_parallel_size": 1,
+    "max_model_len": 20000,
+    "max_num_batched_tokens": 4096,
+    "max_num_seqs": 2
+  },
+  "profile_fingerprint": "b60ed5b2e0bcbc2d881e50cac5e9d4da91023508d65fefd3feb494806544625d",
+  "architecture": "pap",
+  "topology": {
+    "name": "1pa1p",
+    "pa_count": 1,
+    "projection_count": 1,
+    "pd_prefill_count": 0,
+    "pd_decode_count": 0
+  },
+  "hardware_signature": "NVIDIA L20x2",
+  "mode": "formal",
+  "repetition_count": 3,
+  "validity": {
+    "status": "passed"
+  },
+  "metrics": {
+    "round_1": {
+      "ttft_ms": 6496.454968000762,
+      "tpot_ms": 56.48731879579524,
+      "latency_ms": 20916.89429595135
+    },
+    "round_2": {
+      "ttft_ms": 278.48328289110214,
+      "tpot_ms": 55.96678925897269,
+      "latency_ms": 14550.014543929137
+    },
+    "conversation_latency_ms": 35466.90883988049
+  },
+  "raw_metrics": {
+    "round_1": {
+      "ttft_ms": [
+        6512.628003023565,
+        6405.873670009896,
+        6496.454968000762
+      ],
+      "tpot_ms": [
+        56.48731879579524,
+        55.44570707442129,
+        57.40240628639346
+      ],
+      "latency_ms": [
+        20916.89429595135,
+        20544.528973987326,
+        21134.068571031094
+      ]
+    },
+    "round_2": {
+      "ttft_ms": [
+        278.48328289110214,
+        274.9724850291386,
+        308.8857540860772
+      ],
+      "tpot_ms": [
+        55.96678925897269,
+        55.144729987973825,
+        57.71946438825598
+      ],
+      "latency_ms": [
+        14550.014543929137,
+        14336.878631962463,
+        15027.349173091352
+      ]
+    },
+    "conversation_latency_ms": [
+      35466.90883988049,
+      34881.40760594979,
+      36161.417744122446
+    ]
+  },
+  "source_results": [
+    "/home/fei/research/PD/vllm-pap/test/baseline/pap/results/runs/20260712_032326_3ec26b314_pap_multiturn_formal/rep1/result.json",
+    "/home/fei/research/PD/vllm-pap/test/baseline/pap/results/runs/20260712_032326_3ec26b314_pap_multiturn_formal/rep2/result.json",
+    "/home/fei/research/PD/vllm-pap/test/baseline/pap/results/runs/20260712_032326_3ec26b314_pap_multiturn_formal/rep3/result.json"
+  ],
+  "reference_architecture": "pap",
+  "created_at": "2026-07-12T03:27:26+08:00"
+}
