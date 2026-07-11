@@ -91,7 +91,7 @@ def build_chat_payload(
         "stream": False,
         "return_token_ids": True,
         "cache_salt": cache_salt,
-        "chat_template_kwargs": {"enable_thinking": False},
+        "chat_template_kwargs": {"enable_thinking": True},
     }
 
 
@@ -122,7 +122,7 @@ def _render_chat_prompt_token_ids(
         [dict(message) for message in messages],
         tokenize=True,
         add_generation_prompt=True,
-        enable_thinking=False,
+        enable_thinking=True,
     )
     if isinstance(rendered, Mapping):
         rendered = rendered.get("input_ids")
@@ -370,6 +370,7 @@ def run_audit(args: argparse.Namespace) -> dict[str, Any]:
         "model": args.model,
         "base_url": args.base_url,
         "api_path": "/v1/chat/completions",
+        "enable_thinking": True,
         "block_size": args.block_size,
         "minimum_first_prompt_tokens": args.min_first_prompt_tokens,
         "first_prompt_tokens": first_prompt_tokens,

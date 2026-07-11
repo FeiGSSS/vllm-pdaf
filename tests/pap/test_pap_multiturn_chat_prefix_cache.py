@@ -34,7 +34,7 @@ def test_chat_prefix_metrics_use_true_retokenized_lcp() -> None:
     }
 
 
-def test_build_chat_payload_is_deterministic_and_disables_thinking() -> None:
+def test_build_chat_payload_is_deterministic_and_enables_thinking() -> None:
     messages = [{"role": "user", "content": "hello"}]
 
     payload = build_chat_payload(
@@ -54,7 +54,7 @@ def test_build_chat_payload_is_deterministic_and_disables_thinking() -> None:
         "stream": False,
         "return_token_ids": True,
         "cache_salt": "warm-salt",
-        "chat_template_kwargs": {"enable_thinking": False},
+        "chat_template_kwargs": {"enable_thinking": True},
     }
 
 
@@ -62,6 +62,7 @@ def test_render_chat_prompt_accepts_tokenizer_batch_encoding() -> None:
     class Tokenizer:
         @staticmethod
         def apply_chat_template(*args, **kwargs):
+            assert kwargs["enable_thinking"] is True
             return {
                 "input_ids": [1, 2, 3],
                 "attention_mask": [1, 1, 1],

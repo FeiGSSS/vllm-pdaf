@@ -27,6 +27,10 @@ Transformers tokenizer, vLLM OpenAI Chat Completions, Bash, and pytest.
 - Accept that the final sampled token and partial cache block may miss.
 - Do not write message text or raw token IDs to result files; use counts and
   SHA-256 digests.
+- Use Qwen3's thinking template. The non-thinking template inserts an empty
+  reasoning scaffold into the generation prompt but omits it when the
+  assistant response is rendered as history, so it cannot preserve the decode
+  token prefix across turns.
 - Never use system `python3`, bare `pip`, pre-commit, or commit hooks.
 
 ---
@@ -117,7 +121,7 @@ def chat_prefix_metrics(first_prompt_token_ids, first_output_token_ids,
 
 Load the tokenizer with `local_files_only=True` and
 `trust_remote_code=False`. Repeat the first user text until
-`apply_chat_template(..., add_generation_prompt=True, enable_thinking=False)`
+`apply_chat_template(..., add_generation_prompt=True, enable_thinking=True)`
 reaches `--min-first-prompt-tokens`. Send each request with this body:
 
 ```python
@@ -131,7 +135,7 @@ reaches `--min-first-prompt-tokens`. Send each request with this body:
     "stream": False,
     "return_token_ids": True,
     "cache_salt": cache_salt,
-    "chat_template_kwargs": {"enable_thinking": False},
+    "chat_template_kwargs": {"enable_thinking": True},
 }
 ```
 
