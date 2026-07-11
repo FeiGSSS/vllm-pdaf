@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "profile_id": "qwen3_8b_chat_16k_2turn_o256_c1_v1",
+  "profile_fingerprint": "b60ed5b2e0bcbc2d881e50cac5e9d4da91023508d65fefd3feb494806544625d",
+  "model": "/data/ssd1/llm-models/Qwen3-8B",
+  "corpus_path": "/home/fei/research/PD/refer_codes/vllm/benchmarks/sonnet_4x.txt",
+  "corpus_sha256": "4a53bd26108f9193c693ab6a9482ee5ce5102b545b70a5ca3a8cb11ca1171859",
+  "hardware_signature": "NVIDIA L20x2",
+  "workload": {
+    "api": "/v1/chat/completions",
+    "rounds": 2,
+    "active_conversations": 1,
+    "document_tokens": 16000,
+    "append_tokens": 120,
+    "output_tokens_per_round": 256,
+    "enable_thinking": true,
+    "temperature": 0,
+    "seed": 0,
+    "ignore_eos": true,
+    "return_token_ids": true
+  },
+  "engine": {
+    "dtype": "float16",
+    "tensor_parallel_size": 1,
+    "block_size": 16,
+    "max_model_len": 20000,
+    "max_num_batched_tokens": 4096,
+    "max_num_seqs": 2,
+    "enforce_eager": true,
+    "prefix_caching": true,
+    "chunked_prefill": true
+  },
+  "pd_reuse_mode": "official_streaming_one_way",
+  "pap_topology": "1pa1p",
+  "pd_topology": "1p1d"
+}
