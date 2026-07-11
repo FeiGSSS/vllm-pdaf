@@ -2,10 +2,10 @@
 
 日期：2026-07-11
 
-状态：Phase 0/1/2/3 已提交；Phase 3 vectorized route fallback 已完成严格 A/B 与
-提交后 clean 三轮复跑
+状态：Phase 0/1/2/3 与 Phase 4 等待观测已提交；Phase 4 自适应窗口实验已完成严格
+A/B 并因均值、覆盖率退化而回退
 
-代码基线：`feature/pap @ bdb7a7dc74d429c5efd9de7adf9d2c9e250c60e0`
+代码基线：`feature/pap @ 581387a513e20fcf6c5515774c61ced352653d2b`
 
 关联文档：
 
@@ -1287,4 +1287,70 @@ mean/median TPOT 已稳定达到 `<2x PD`；p99 TPOT 尚未达到 2x，说明下
 ```text
 test/baseline/pap/results/runs/
   20260711_bdb7a7dc7_2pa2p_batched_q4_rep{1,2,3}
+```
+
+## 23. 2026-07-11 Phase 4 等待观测与自适应窗口实验
+
+### 23.1 可观测性
+
+提交 `581387a51` 为 dispatcher 增加了以下统计，不改变默认 1 ms 固定窗口：
+
+- coalesce wait 的 `compatible`、`incompatible`、`timeout`、`stopped` 结果；
+- 实际等待时长直方图；
+- 兼容任务相对首任务的 arrival-skew 直方图、sum、max 和 sample 数；
+- identity-safe work-item 计数，避免 Tensor 值比较触发歧义或把 preferred item
+  误计为自己的候选。
+
+2PA2P QPS 4 诊断运行是 `128/0`，Mean/Median/P99 TPOT 分别为
+`40.228/39.285/52.981 ms`，合并覆盖率 `91.01%`。两个 PA 合计记录 46,068 个兼容
+arrival-skew 样本：`93.0% <= 100 us`、`98.0% <= 200 us`、约 `0.3% > 1 ms`。
+
+但 arrival-skew 不能直接作为 dispatcher 的等待窗口：任务可能在 dispatcher 已经开始
+等待前到达，也可能受前一个 GPU dispatch 的服务时间影响。实际等待结果中有 6,686 次
+纯 timeout；排除这些 timeout 后，成功或提前终止的等待约 `1.8%` 超过 500 us。
+
+原始结果：
+
+```text
+test/baseline/pap/results/runs/20260711_phase4_wait_hist_q4_rep1
+```
+
+### 23.2 两状态自适应窗口原型
+
+实验原型使用 `aligning=1000 us`、`steady=200/500 us`：连续兼容 group 后进入短窗口，
+steady 阶段看到不兼容 peer 后重新进入 aligning。该实现只用于 tracked-dirty A/B，没有
+提交到代码基线。
+
+200 us 单轮立即失败：Mean TPOT `45.079 ms`、P99 TPOT `64.618 ms`、合并覆盖率仅
+`76.89%`。因此正式 A/B 只比较固定 1 ms 与 500 us 自适应窗口，并按 fixed/adaptive
+交替顺序各运行三轮：
+
+| 指标（三轮中位数） | 固定 1 ms | 自适应 1 ms/500 us | 变化 |
+| --- | ---: | ---: | ---: |
+| mean TPOT | `42.516 ms` | `42.880 ms` | `+0.86%` |
+| median TPOT | `41.926 ms` | `42.202 ms` | `+0.66%` |
+| p99 TPOT | `55.033 ms` | `53.259 ms` | `-3.22%` |
+| mean TTFT | `234.649 ms` | `240.574 ms` | `+2.52%` |
+| request throughput | `3.822 req/s` | `3.812 req/s` | `-0.25%` |
+| combine 覆盖率 | `91.60%` | `86.15%` | `-5.45 pp` |
+
+六轮均为 `128/0`，四个 pair 各 32 个请求；correctness、routing、session drain 全部
+通过，dispatcher failure 为 0。自适应组每轮发生 552--796 次 phase transition，说明
+单个 PA 上不同 layer bucket 的到达状态持续交错，二态全局窗口发生抖动。虽然跨轮中位
+P99 有小幅改善，但 mean/median TPOT、TTFT 和合并覆盖率同时退化，不满足 Phase 4
+“均值/吞吐胜出且 tail 不恶化”的启用门槛。
+
+结论：回退自适应状态机，保留固定 1 ms 默认与观测指标。下一步不再扫描另一个全局
+timeout，而是把 active peer set、cohort generation 和 layer bucket 纳入调度状态：只对
+当前 generation 中已知活跃、预计会到达同 layer 的 peer 做有限等待；idle/finished peer
+不得进入 barrier。这能把“是否值得等”从时间启发式改为显式 cohort contract。
+
+原始结果：
+
+```text
+test/baseline/pap/results/runs/
+  20260711_phase4_adaptive200_q4_rep1
+  20260711_phase4_ab_fixed_rep{1,2,3}
+  20260711_phase4_adaptive500_q4_rep1
+  20260711_phase4_ab_adaptive500_rep{2,3}
 ```
