@@ -211,10 +211,11 @@ bash .claude/skills/vllm-pap-benchmark/scripts/run_multiturn_north_star.sh forma
 
 Refresh PD only through `bootstrap_pd_multiturn_reference.sh`. That script uses
 the unchanged official streaming proxy and validates the current effective
-semantics from P/D token-source metrics: local cache reuse on both engines and
-P-to-D NIXL transfer. Streaming chat currently does not return the Decode KV
-handle, so proxy-level D-to-P lookup remains a miss; do not patch PD for this
-benchmark. Reference writes are always explicit.
+semantics from P/D token-source metrics: exact local cache boundaries,
+prompt-source conservation, and second-turn P-to-D NIXL transfer. Streaming
+chat currently does not return the Decode KV handle, so this lane uses the
+default one-way connector mode and proxy-level D-to-P lookup remains a miss;
+do not patch PD for this benchmark. Reference writes are always explicit.
 
 ## Result Comparison
 

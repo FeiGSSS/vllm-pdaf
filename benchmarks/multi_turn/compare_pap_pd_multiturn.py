@@ -94,7 +94,7 @@ def validate_repetition(result: Mapping[str, object]) -> None:
     allowed_cache_statuses = (
         {"passed"}
         if architecture == "pap"
-        else {"official_streaming_metrics_passed"}
+        else {"official_streaming_one_way_metrics_passed"}
     )
     if cache.get("status") not in allowed_cache_statuses:
         raise ValueError(f"cache validation did not pass: {cache}")

@@ -58,12 +58,13 @@ bash \
 
 The PD lane deliberately runs the unchanged official streaming proxy. In the
 current API, streaming chat chunks do not carry the Decode-side
-`kv_transfer_params`, so both proxy lookups are `MISS`. The validity gate does
-not pretend otherwise: it snapshots P/D `/metrics` and requires second-turn
-local cache reuse on both engines plus Prefill-to-Decode NIXL transfer. Results
-record this frozen behavior as
-`official_streaming_local_cache_plus_p_to_d`. A future upstream semantic
-change requires a new reference instead of silently mixing measurements.
+`kv_transfer_params`, so both proxy lookups are `MISS`. The lane therefore uses
+the default one-way NIXL mode instead of paying for unreachable bidirectional
+pinning. The validity gate snapshots P/D `/metrics` and checks exact two-round
+token-source conservation, exact local cache boundaries on both engines, and a
+second Prefill-to-Decode transfer. Results record this frozen behavior as
+`official_streaming_one_way`. A future upstream semantic change requires a new
+reference instead of silently mixing measurements.
 
 The daily PAP commands never start PD and never update a reference. Raw run
 directories remain under `results/runs/`. Tracked references live under

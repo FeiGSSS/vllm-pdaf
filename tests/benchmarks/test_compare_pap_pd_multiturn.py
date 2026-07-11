@@ -34,7 +34,7 @@ def make_repetition(
     cache_status = (
         "passed"
         if architecture == "pap"
-        else "official_streaming_metrics_passed"
+        else "official_streaming_one_way_metrics_passed"
     )
     topology = (
         {

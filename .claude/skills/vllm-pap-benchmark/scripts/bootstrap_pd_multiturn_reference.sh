@@ -6,6 +6,7 @@ PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 VLLM_BIN="${VLLM_BIN:-${ROOT_DIR}/.venv/bin/vllm}"
 CLIENT="${ROOT_DIR}/benchmarks/multi_turn/pap_pd_multiturn_client.py"
 COMPARER="${ROOT_DIR}/benchmarks/multi_turn/compare_pap_pd_multiturn.py"
+PD_REUSE_AUDITOR="${ROOT_DIR}/benchmarks/multi_turn/pd_multiturn_reuse_metrics.py"
 OFFICIAL_PROXY="${ROOT_DIR}/examples/disaggregated/disaggregated_serving/disagg_proxy_multiturn.py"
 MODEL_PATH="${MODEL_PATH:-/data/ssd1/llm-models/Qwen3-8B}"
 DATASET_PATH="${DATASET_PATH:-/home/fei/research/PD/refer_codes/vllm/benchmarks/sonnet_4x.txt}"
@@ -18,7 +19,11 @@ for required in "${PYTHON_BIN}" "${VLLM_BIN}"; do
     exit 1
   }
 done
-for required in "${CLIENT}" "${COMPARER}" "${OFFICIAL_PROXY}"; do
+for required in \
+  "${CLIENT}" \
+  "${COMPARER}" \
+  "${PD_REUSE_AUDITOR}" \
+  "${OFFICIAL_PROXY}"; do
   [[ -f "${required}" ]] || {
     echo "required file is missing: ${required}" >&2
     exit 1
@@ -105,94 +110,11 @@ audit_and_close_pd_result() {
   local proxy_log="$2"
   local prefill_metrics="$3"
   local decode_metrics="$4"
-  "${PYTHON_BIN}" - \
-    "${result_path}" \
-    "${proxy_log}" \
-    "${prefill_metrics}" \
-    "${decode_metrics}" <<'PY'
-import json
-import os
-import re
-import sys
-from pathlib import Path
-
-path = Path(sys.argv[1])
-proxy_log = Path(sys.argv[2]).read_text(encoding="utf-8")
-prefill_metrics_text = Path(sys.argv[3]).read_text(encoding="utf-8")
-decode_metrics_text = Path(sys.argv[4]).read_text(encoding="utf-8")
-
-metric_pattern = re.compile(
-    r'vllm:prompt_tokens_by_source_total\{[^\n]*?source="([^"]+)"'
-    r'[^\n]*?\}\s+([\d.eE+\-]+)'
-)
-
-
-def token_sources(metrics_text: str) -> dict[str, float]:
-    sources = {
-        "local_compute": 0.0,
-        "local_cache_hit": 0.0,
-        "external_kv_transfer": 0.0,
-    }
-    for source, raw_value in metric_pattern.findall(metrics_text):
-        if source in sources:
-            sources[source] += float(raw_value)
-    return sources
-
-
-proxy_misses = len(re.findall(r"cache MISS", proxy_log))
-proxy_hits = len(re.findall(r"cache HIT", proxy_log))
-if proxy_misses != 2 or proxy_hits != 0:
-    raise SystemExit(
-        "official streaming PD cache semantics changed: "
-        f"misses={proxy_misses}, hits={proxy_hits}"
-    )
-
-prefill_sources = token_sources(prefill_metrics_text)
-decode_sources = token_sources(decode_metrics_text)
-if prefill_sources["local_cache_hit"] < 16:
-    raise SystemExit(
-        "PD Prefill did not reuse a complete local cache block: "
-        f"{prefill_sources}"
-    )
-if prefill_sources["external_kv_transfer"] != 0:
-    raise SystemExit(
-        "PD Prefill unexpectedly received external KV in the official "
-        f"streaming path: {prefill_sources}"
-    )
-if decode_sources["local_cache_hit"] < 16:
-    raise SystemExit(
-        "PD Decode did not reuse a complete local cache block: "
-        f"{decode_sources}"
-    )
-if decode_sources["external_kv_transfer"] < 16:
-    raise SystemExit(
-        "PD Decode did not receive Prefill KV via NIXL: "
-        f"{decode_sources}"
-    )
-
-result = json.loads(path.read_text(encoding="utf-8"))
-cache = result.get("cache_validation") or {}
-if int(cache.get("decode_derived_hit_tokens", 0)) < 16:
-    raise SystemExit(f"PD result has no Decode-derived LCP: {cache}")
-status = "official_streaming_metrics_passed"
-cache["status"] = status
-result["cache_validation"] = cache
-result["pd_reuse_validation"] = {
-    "status": status,
-    "mode": "official_streaming_local_cache_plus_p_to_d",
-    "proxy_cache_misses": proxy_misses,
-    "proxy_cache_hits": proxy_hits,
-    "prefill_prompt_tokens_by_source": prefill_sources,
-    "decode_prompt_tokens_by_source": decode_sources,
-}
-result["validity"] = {
-    "status": "passed",
-    "cache_gate": status,
-}
-temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-temporary.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
-temporary.replace(path)
-PY
+  "${PYTHON_BIN}" "${PD_REUSE_AUDITOR}" \
+    --result "${result_path}" \
+    --proxy-log "${proxy_log}" \
+    --prefill-metrics "${prefill_metrics}" \
+    --decode-metrics "${decode_metrics}"
 }
 
 cd "${ROOT_DIR}"
@@ -207,8 +129,8 @@ GROUP_RUN_ID="${PD_NORTH_STAR_RUN_ID:-$(date +%Y%m%d_%H%M%S)_${GIT_SHORT}_pd_mul
 GROUP_ROOT="${PD_NORTH_STAR_RUN_ROOT:-${RESULTS_ROOT}/runs/${GROUP_RUN_ID}}"
 mkdir -p "${GROUP_ROOT}"
 
-P_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_producer","kv_load_failure_policy":"fail","kv_connector_extra_config":{"bidirectional_kv_xfer":true,"kv_recompute_threshold":64,"decoder_kv_blocks_ttl":480}}'
-D_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_consumer","kv_load_failure_policy":"fail","kv_connector_extra_config":{"bidirectional_kv_xfer":true,"kv_recompute_threshold":64,"decoder_kv_blocks_ttl":480}}'
+P_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_producer","kv_load_failure_policy":"fail"}'
+D_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_consumer","kv_load_failure_policy":"fail"}'
 RESULT_ARGS=()
 
 for (( rep=1; rep<=REPETITIONS; rep++ )); do

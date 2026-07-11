@@ -339,11 +339,12 @@ tokenizer, Bash, vLLM OpenAI-compatible streaming API, NIXL, JSON and Markdown.
   Launch the unchanged official multi-turn proxy and producer/consumer vLLM
   services in scoped process groups. Use the same model/profile/GPUs/FP16 settings,
   run three serial repetitions with full restarts, and audit the frozen official
-  streaming semantics: two proxy D→P handle misses, local cache reuse on P and D,
-  and P→D NIXL transfer from Prometheus token-source counters. The streaming Chat
-  API currently cannot return the Decode handle, so do not modify PD to manufacture
-  a bidirectional hit. Emit a PD reference candidate and never call the
-  reference-write command automatically.
+  streaming one-way semantics: two proxy D→P handle misses, exact local cache
+  boundaries on P and D, per-engine prompt-source conservation, and second-turn
+  P→D NIXL transfer from Prometheus counters. The streaming Chat API currently
+  cannot return the Decode handle, so keep bidirectional transfer disabled and do
+  not modify PD to manufacture a hit. Emit a PD reference candidate and never call
+  the reference-write command automatically.
 
 - [ ] **Step 5: Document exact commands and artifact locations**
 

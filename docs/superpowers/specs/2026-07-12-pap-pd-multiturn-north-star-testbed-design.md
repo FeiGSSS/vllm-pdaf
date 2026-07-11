@@ -83,13 +83,13 @@ PAP，并同时回答两个问题：
 - `NO_PROXY/no_proxy` 必须包含 `127.0.0.1,localhost`；
 - 所有服务和 repetitions 串行运行，禁止并行占用其他 GPU 来制造不可比结果。
 
-PD 使用 1P1D、未修改的官方多轮 proxy 和 NIXL producer/consumer 配置。两端保留官方
-推荐的 `bidirectional_kv_xfer=true`，但当前 Chat Completions 流式响应协议不包含
-`kv_transfer_params`：因此性能路径中 proxy 的两轮均为 D→P handle `MISS`。实际复用
-语义是第二轮 P 命中自己的本地 Prompt KV，D 命中自己的本地 Prompt+Decode KV，并由
-P→D NIXL 补充新后缀。Test bed 将这一定义为
-`official_streaming_local_cache_plus_p_to_d`，用两端 `/metrics` 的 token-source counter
-验证，绝不为得到 proxy `HIT` 而修改官方 PD/API 代码。
+PD 使用 1P1D、未修改的官方多轮 proxy 和 NIXL producer/consumer one-way 配置。当前
+Chat Completions 流式响应协议不包含 `kv_transfer_params`，无法执行 D→P；因此显式保持
+默认 `bidirectional_kv_xfer=false`，避免为不可达路径付出 pinning/TTL 开销。性能路径中
+proxy 的两轮均为 D→P handle `MISS`。实际复用语义是第二轮 P 命中自己的本地 Prompt
+KV，D 命中自己的本地 Prompt+Decode KV，并由 P→D NIXL 补充新后缀。Test bed 将这一定义
+为 `official_streaming_one_way`，用两端 `/metrics` 的 token-source counter 精确验证，
+绝不为得到 proxy `HIT` 而修改官方 PD/API 代码。
 
 PAP 使用 1PA1P、当前已验证的 NIXL-mailbox/CUDA-IPC 数据面、统一 KV 和固定 MPS
 70/30。两条 lane 均使用相同 GPU 编号和公共参数；lane-specific memory utilization
@@ -99,12 +99,14 @@ PAP 使用 1PA1P、当前已验证的 NIXL-mailbox/CUDA-IPC 数据面、统一 K
 
 性能运行不得开启逐 token 的 `PAP_PREFIX_CACHE_AUDIT`，因为它会引入同步日志开销。
 PAP 缓存命中使用现有 Prefill response headers 和只读服务日志确认；PD 只使用官方响应、
-日志和 `/metrics`。PD 每次 repetition 保存 P/D 的 Prometheus 快照，要求 P 的
-`local_cache_hit > 0`、`external_kv_transfer = 0`，D 的 `local_cache_hit > 0` 且
-`external_kv_transfer > 0`，并要求官方 proxy 精确记录两次 `MISS`、零次 `HIT`。
-这些条件共同冻结当前官方 streaming 行为；未来上游行为改变时必须重新定义 profile 并
-bootstrap reference，不能静默混用。任何诊断 trace/profile 必须作为独立运行，不能冒充
-性能结果。
+日志和 `/metrics`。PD 每次 repetition 保存 P/D 的 Prometheus 快照，并按新鲜进程内的
+两轮累计量做精确守恒：P 的本地命中必须等于第一轮 prompt 的 block boundary、external
+必须为零；D 的本地命中必须等于客户端由真实 token IDs 得到的完整 materialized LCP，
+external 累计量必须大于首轮 boundary，从而证明第二轮 P→D 也发生；两端三种 token 来源
+之和必须等于两轮真实 prompt tokens 之和。官方 proxy 同时必须精确记录两次 `MISS`、零次
+`HIT`。这些条件共同冻结当前官方 streaming one-way 行为；未来上游行为改变时必须重新
+定义 profile 并 bootstrap reference，不能静默混用。任何诊断 trace/profile 必须作为
+独立运行，不能冒充性能结果。
 
 ## 4. 组件和职责
 
