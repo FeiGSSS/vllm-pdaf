@@ -50,7 +50,7 @@ PAP benchmark metadata. No runtime code or dependencies are added.
 - Produces: stable anchors, symbolic-root definitions, phase IDs, module IDs,
   and experiment IDs used by every later task.
 
-- [ ] **Step 1: Confirm the branch and evidence roots without mutation**
+- [x] **Step 1: Confirm the branch and evidence roots without mutation**
 
 Run:
 
@@ -68,7 +68,7 @@ find test/baseline/pap/results/runs \
 Expected: branch is `feature/pap`, tracked status is empty, and both result
 roots enumerate existing runs.
 
-- [ ] **Step 2: Create the exact top-level structure**
+- [x] **Step 2: Create the exact top-level structure**
 
 Create the index with these sections in this order:
 
@@ -98,13 +98,13 @@ Create the index with these sections in this order:
 ## 10. 新增实验记录模板
 ```
 
-- [ ] **Step 3: Add navigation and evidence conventions**
+- [x] **Step 3: Add navigation and evidence conventions**
 
 The opening must define the three lookup paths, symbolic roots, storage labels,
 evidence grades, decision vocabulary, and a warning that Git does not preserve
 repo-untracked/external/temporary artifacts.
 
-- [ ] **Step 4: Validate the skeleton**
+- [x] **Step 4: Validate the skeleton**
 
 Run:
 
@@ -126,7 +126,7 @@ present; diff check exits zero.
 - Consumes: phase and module anchors from Task 1.
 - Produces: motivation-to-decision chains referenced by experiment-ledger rows.
 
-- [ ] **Step 1: Add all eight timeline phases**
+- [x] **Step 1: Add all eight timeline phases**
 
 Use stable IDs and dates:
 
@@ -144,7 +144,7 @@ P8  2026-07-11      Exact-token and Chat multi-turn APC reuse
 Each phase includes its question, key commits, accepted conclusion, negative
 branches, evidence grade, and links to owning dossiers.
 
-- [ ] **Step 2: Populate M1-M5**
+- [x] **Step 2: Populate M1-M5**
 
 For each dossier, write the exact schema:
 
@@ -162,14 +162,14 @@ M1-M5 must connect the May prototypes, Projection metadata-only/KV-unaware
 path, Prefill-owned paged KV, unified KV append, decode commit, ACK, lease, and
 release-order fixes.
 
-- [ ] **Step 3: Populate M6-M10**
+- [x] **Step 3: Populate M6-M10**
 
 M6-M10 must connect the PD/PAP workload contract, trace attribution,
 local-fast/doorbell/slot-plan path, arbitrary x:y, central dispatcher,
 same-layer combine/scatter, vectorized route copy, adaptive coalescing,
 active-peer membership, and exact/Chat multi-turn reuse.
 
-- [ ] **Step 4: Check dossier completeness**
+- [x] **Step 4: Check dossier completeness**
 
 Run:
 
@@ -197,7 +197,7 @@ disclosure headings.
 - Produces: stable experiment IDs and decision records used for future
   timeline reconstruction.
 
-- [ ] **Step 1: Add the minimum logical experiment set**
+- [x] **Step 1: Add the minimum logical experiment set**
 
 The ledger must include at least these stable entries:
 
@@ -233,7 +233,7 @@ Each logical entry supplies module, question, baseline/treatment, workload,
 commit/clean state, minimal result, evidence grade, decision, and artifact
 paths. Repetitions remain grouped under one ID.
 
-- [ ] **Step 2: Add first-class negative entries**
+- [x] **Step 2: Add first-class negative entries**
 
 The negative registry must include, where evidence exists:
 
@@ -254,13 +254,13 @@ Qwen3 enable_thinking=false token discontinuity
 
 Each entry links the rejecting evidence and the replacement or current state.
 
-- [ ] **Step 3: Add the append-only maintenance template**
+- [x] **Step 3: Add the append-only maintenance template**
 
 The template contains all ledger fields plus explicit checkboxes for strict
 correctness, routing, decode commit, lease release, session drain, and raw-path
 storage class.
 
-- [ ] **Step 4: Validate experiment and negative coverage**
+- [x] **Step 4: Validate experiment and negative coverage**
 
 Run:
 
@@ -292,7 +292,7 @@ negative decisions are discoverable; diff check exits zero.
 - Produces: a tracked, self-consistent historical entry point and a completed
   implementation checklist.
 
-- [ ] **Step 1: Verify commit references**
+- [x] **Step 1: Verify commit references**
 
 Extract backticked 9-character hexadecimal hashes and verify each object:
 
@@ -305,7 +305,7 @@ done
 
 Expected: every referenced commit resolves.
 
-- [ ] **Step 2: Verify tracked Markdown links**
+- [x] **Step 2: Verify tracked Markdown links**
 
 List relative Markdown targets under `docs/` and confirm each file exists. Fix
 broken links; do not replace them with opaque prose references.
@@ -318,13 +318,13 @@ git diff --check
 
 Expected: every emitted `.md` target resolves relative to the index file.
 
-- [ ] **Step 3: Verify representative artifact roots**
+- [x] **Step 3: Verify representative artifact roots**
 
 Check at least one existing directory for each of prototype/mailbox, TPOT,
 many-to-many, and multi-turn phases. Missing historical references remain in
 the index with a `missing` label.
 
-- [ ] **Step 4: Self-review the index**
+- [x] **Step 4: Self-review the index**
 
 Check:
 
@@ -338,7 +338,7 @@ git diff --check
 Expected: no unresolved placeholder, all required sections are present, and
 formatting is clean.
 
-- [ ] **Step 5: Mark the plan complete and commit**
+- [x] **Step 5: Mark the plan complete and commit**
 
 Stage only the index and this plan, then commit with hooks disabled:
 
@@ -352,7 +352,7 @@ git commit --no-verify -m "Index PAP development and experiment history"
 The full commit message must include the existing Codex co-author and human
 sign-off trailers.
 
-- [ ] **Step 6: Confirm final tracked state**
+- [x] **Step 6: Confirm final tracked state**
 
 ```bash
 git status --porcelain --untracked-files=no
