@@ -336,6 +336,12 @@ class SingleTypeKVCacheManager(ABC):
         """
         num_cached_blocks = self.num_cached_block.get(request.request_id, 0)
         num_full_blocks = num_tokens // self.block_size
+        req_blocks = self.req_to_blocks[request.request_id]
+        if num_full_blocks > len(req_blocks):
+            raise ValueError(
+                f"cannot cache {num_full_blocks} full blocks with only "
+                f"{len(req_blocks)} allocated KV blocks"
+            )
 
         if num_cached_blocks >= num_full_blocks:
             return
@@ -351,7 +357,7 @@ class SingleTypeKVCacheManager(ABC):
         )
         self.block_pool.cache_full_blocks(
             request=request,
-            blocks=self.req_to_blocks[request.request_id],
+            blocks=req_blocks,
             num_cached_blocks=num_cached_blocks,
             num_full_blocks=num_full_blocks,
             block_size=self.block_size,

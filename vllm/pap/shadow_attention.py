@@ -506,7 +506,11 @@ def import_prefill_paged_kv(
         ) from exc
     if unified_kv_mode:
         prefix_len_value = int(seq_len)
-        planned_capacity = int(seq_len) + _pap_unified_kv_decode_capacity_tokens()
+        block_capacity = len(block_ids) * int(block_size)
+        planned_capacity = min(
+            int(seq_len) + _pap_unified_kv_decode_capacity_tokens(),
+            block_capacity,
+        )
         writable_start_token = int(seq_len)
         writable_end_token = planned_capacity
         lease_capacity_tokens = planned_capacity

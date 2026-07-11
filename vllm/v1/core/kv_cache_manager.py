@@ -8,6 +8,10 @@ from typing import Literal, overload
 
 from vllm.distributed.kv_events import BlockStored, KVCacheEvent
 from vllm.logger import init_logger
+from vllm.pap.prefix_cache_audit import (
+    build_prefix_cache_audit_state,
+    pap_prefix_cache_audit_enabled,
+)
 from vllm.v1.core.kv_cache_coordinator import get_kv_cache_coordinator
 from vllm.v1.core.kv_cache_metrics import KVCacheMetricsCollector
 from vllm.v1.core.kv_cache_utils import KVCacheBlock
@@ -238,6 +242,11 @@ class KVCacheManager:
                 num_hits=num_new_computed_tokens,
                 preempted=request.num_preemptions > 0,
             )
+
+        if pap_prefix_cache_audit_enabled():
+            audit_state = build_prefix_cache_audit_state(self, request)
+            audit_state["hit_tokens"] = int(num_new_computed_tokens)
+            logger.info("PAP prefix cache lookup audit %s", audit_state)
 
         return self.create_kv_cache_blocks(computed_blocks), num_new_computed_tokens
 
@@ -662,11 +671,41 @@ class KVCacheManager:
                 "new_token_ids length must match new_seq_len delta: "
                 f"expected {expected_delta}, got {len(delta)}"
             )
-        # Request.append_output_token_ids extends block_hashes automatically.
-        request.append_output_token_ids(delta)
+        existing_count = min(
+            max(request.num_tokens - old_seq_len, 0),
+            expected_delta,
+        )
+        existing_delta = [
+            int(token_id)
+            for token_id in request.all_token_ids[
+                old_seq_len : old_seq_len + existing_count
+            ]
+        ]
+        if existing_delta != delta[:existing_count]:
+            mismatch_offset = next(
+                index
+                for index, (existing_token, commit_token) in enumerate(
+                    zip(existing_delta, delta)
+                )
+                if existing_token != commit_token
+            )
+            raise ValueError(
+                "decode commit does not match existing uncomputed token IDs "
+                f"at offset {mismatch_offset}"
+            )
+        # The Prefill request may already contain its sampled handoff token.
+        # Append only the remote decode tokens missing from the local ledger.
+        missing_delta = delta[existing_count:]
+        if missing_delta:
+            request.append_output_token_ids(missing_delta)
         request.num_computed_tokens = int(new_seq_len)
         if self.enable_caching:
             self.coordinator.cache_blocks(request, int(new_seq_len))
+        if pap_prefix_cache_audit_enabled():
+            logger.info(
+                "PAP prefix cache commit audit %s",
+                build_prefix_cache_audit_state(self, request),
+            )
 
     def create_kv_cache_blocks(
         self, blocks: tuple[list[KVCacheBlock], ...]

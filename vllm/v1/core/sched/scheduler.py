@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import itertools
+import os
 import time
 from collections import defaultdict, deque
 from collections.abc import Iterable
@@ -549,54 +550,22 @@ class Scheduler(SchedulerInterface):
                     if pap_projection_state is not None
                     else True
                 )
+                pap_decode_capacity_tokens = (
+                    self._get_pap_unified_kv_decode_capacity_tokens(request)
+                )
                 while True:
                     new_blocks = self.kv_cache_manager.allocate_slots(
                         request,
                         num_new_tokens,
-                        num_lookahead_tokens=self.num_lookahead_tokens,
+                        num_lookahead_tokens=(
+                            self.num_lookahead_tokens
+                            + pap_decode_capacity_tokens
+                        ),
                         local_computed_token_offset=pap_local_computed_token_offset,
                         allocate_local_slots=allocate_pap_local_slots,
                     )
 
                     if new_blocks is not None:
-                        # PAP unified-KV: optionally pre-reserve decode capacity
-                        # blocks so Attention can write decode suffix into the
-                        # same Prefill-owned paged KV cache.
-                        try:
-                            import os as _pap_os
-
-                            from vllm.pap.kv_lease import (
-                                pap_has_active_lease,
-                            )
-
-                            if (
-                                _pap_os.environ.get("PAP_UNIFIED_KV", "").lower()
-                                in {"1", "true", "yes", "on"}
-                                and not pap_has_active_lease(request.request_id)
-                            ):
-                                raw_cap = _pap_os.environ.get(
-                                    "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "0"
-                                )
-                                try:
-                                    extra_cap = max(0, int(raw_cap))
-                                except ValueError:
-                                    extra_cap = 0
-                                if extra_cap > 0:
-                                    target_total = (
-                                        request.num_tokens + extra_cap
-                                    )
-                                    managers = (
-                                        self.kv_cache_manager.coordinator
-                                        .single_type_managers
-                                    )
-                                    for sm in managers:
-                                        sm.allocate_new_blocks(
-                                            request.request_id,
-                                            target_total,
-                                            target_total,
-                                        )
-                        except Exception:
-                            pass
                         # The request can be scheduled.
                         break
 
@@ -953,6 +922,10 @@ class Scheduler(SchedulerInterface):
                 effective_lookahead_tokens = (
                     0 if limit_lookahead_tokens else self.num_lookahead_tokens
                 )
+                if not load_kv_async:
+                    effective_lookahead_tokens += (
+                        self._get_pap_unified_kv_decode_capacity_tokens(request)
+                    )
 
                 # Determine if we need to allocate cross-attention blocks.
                 num_encoder_tokens = 0
@@ -1256,6 +1229,26 @@ class Scheduler(SchedulerInterface):
                 "PAP KV-unaware Projection prefix length cannot exceed prompt length"
             )
         return prefix_len
+
+    @staticmethod
+    def _get_pap_unified_kv_decode_capacity_tokens(request: Request) -> int:
+        params = request.kv_transfer_params
+        if not params or not params.get("pap_import_prefill_kv_to_attention"):
+            return 0
+        if os.environ.get("PAP_UNIFIED_KV", "").lower() not in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            return 0
+        raw_capacity = os.environ.get(
+            "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "0"
+        )
+        try:
+            return max(0, int(raw_capacity))
+        except ValueError:
+            return 0
 
     @classmethod
     def _get_pap_projection_schedule_state(

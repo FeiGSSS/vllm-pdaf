@@ -453,6 +453,85 @@ def test_apply_decode_commit_advances_tokens():
     assert len(request.block_hashes) > 0  # appended tokens trigger block_hashes update
 
 
+def test_apply_decode_commit_consumes_existing_sampled_token():
+    from vllm.sampling_params import SamplingParams
+    from vllm.v1.core.kv_cache_manager import KVCacheManager
+
+    request = Request(
+        request_id="req-1",
+        prompt_token_ids=[1, 2, 3, 4],
+        sampling_params=SamplingParams(max_tokens=10),
+        pooling_params=None,
+        block_hasher=lambda req: [b"h"],
+    )
+    request.num_computed_tokens = 4
+    request.append_output_token_ids(100)
+    manager = object.__new__(KVCacheManager)
+    manager.enable_caching = False
+
+    manager.apply_decode_commit(
+        request,
+        new_seq_len=5,
+        new_token_ids=[100],
+    )
+
+    assert list(request.all_token_ids) == [1, 2, 3, 4, 100]
+    assert request.num_computed_tokens == 5
+
+
+def test_apply_decode_commit_appends_after_existing_sampled_token():
+    from vllm.sampling_params import SamplingParams
+    from vllm.v1.core.kv_cache_manager import KVCacheManager
+
+    request = Request(
+        request_id="req-1",
+        prompt_token_ids=[1, 2, 3, 4],
+        sampling_params=SamplingParams(max_tokens=10),
+        pooling_params=None,
+        block_hasher=lambda req: [b"h"],
+    )
+    request.num_computed_tokens = 4
+    request.append_output_token_ids(100)
+    manager = object.__new__(KVCacheManager)
+    manager.enable_caching = False
+
+    manager.apply_decode_commit(
+        request,
+        new_seq_len=6,
+        new_token_ids=[100, 101],
+    )
+
+    assert list(request.all_token_ids) == [1, 2, 3, 4, 100, 101]
+    assert request.num_computed_tokens == 6
+
+
+def test_apply_decode_commit_rejects_existing_sampled_token_mismatch():
+    from vllm.sampling_params import SamplingParams
+    from vllm.v1.core.kv_cache_manager import KVCacheManager
+
+    request = Request(
+        request_id="req-1",
+        prompt_token_ids=[1, 2, 3, 4],
+        sampling_params=SamplingParams(max_tokens=10),
+        pooling_params=None,
+        block_hasher=lambda req: [b"h"],
+    )
+    request.num_computed_tokens = 4
+    request.append_output_token_ids(100)
+    manager = object.__new__(KVCacheManager)
+    manager.enable_caching = False
+
+    with pytest.raises(ValueError, match="existing uncomputed token"):
+        manager.apply_decode_commit(
+            request,
+            new_seq_len=5,
+            new_token_ids=[999],
+        )
+
+    assert list(request.all_token_ids) == [1, 2, 3, 4, 100]
+    assert request.num_computed_tokens == 4
+
+
 def test_apply_decode_commit_rejects_token_delta_mismatch():
     from vllm.sampling_params import SamplingParams
     from vllm.v1.core.kv_cache_manager import KVCacheManager
@@ -470,6 +549,125 @@ def test_apply_decode_commit_rejects_token_delta_mismatch():
 
     with pytest.raises(ValueError, match="new_token_ids"):
         manager.apply_decode_commit(request, new_seq_len=6, new_token_ids=[100])
+
+
+def test_prefix_cache_audit_state_reports_safe_block_counts():
+    from types import SimpleNamespace
+
+    from vllm.pap.prefix_cache_audit import build_prefix_cache_audit_state
+
+    request = SimpleNamespace(
+        request_id="req-1",
+        num_tokens=33,
+        num_computed_tokens=32,
+        block_hashes=[bytes.fromhex("11" * 32), bytes.fromhex("22" * 32)],
+    )
+    blocks = [
+        SimpleNamespace(block_hash=bytes.fromhex("aa" * 32) + b"\x00" * 4),
+        SimpleNamespace(block_hash=bytes.fromhex("bb" * 32) + b"\x00" * 4),
+        SimpleNamespace(block_hash=None),
+    ]
+    group = SimpleNamespace(
+        kv_cache_group_id=0,
+        req_to_blocks={"req-1": blocks},
+        num_cached_block={"req-1": 2},
+    )
+    manager = SimpleNamespace(
+        coordinator=SimpleNamespace(single_type_managers=[group])
+    )
+
+    state = build_prefix_cache_audit_state(manager, request)
+
+    assert state == {
+        "request_id": "req-1",
+        "num_tokens": 33,
+        "num_computed_tokens": 32,
+        "request_hash_count": 2,
+        "request_hash_tail": ["1111111111111111", "2222222222222222"],
+        "groups": [
+            {
+                "group_id": 0,
+                "allocated_blocks": 3,
+                "cached_blocks": 2,
+                "hashed_blocks": 2,
+                "allocated_hash_tail": [
+                    "aaaaaaaaaaaaaaaa",
+                    "bbbbbbbbbbbbbbbb",
+                ],
+            }
+        ],
+    }
+
+
+def test_apply_decode_commit_emits_prefix_cache_audit(monkeypatch):
+    from types import SimpleNamespace
+
+    from vllm.sampling_params import SamplingParams
+    from vllm.v1.core.kv_cache_manager import KVCacheManager
+
+    monkeypatch.setenv("PAP_PREFIX_CACHE_AUDIT", "1")
+    request = Request(
+        request_id="req-audit",
+        prompt_token_ids=[1, 2, 3, 4],
+        sampling_params=SamplingParams(max_tokens=10),
+        pooling_params=None,
+        block_hasher=lambda _request: [],
+    )
+    request.num_computed_tokens = 4
+    request.append_output_token_ids(100)
+    manager = object.__new__(KVCacheManager)
+    manager.enable_caching = False
+    manager.coordinator = SimpleNamespace(single_type_managers=[])
+    logs = []
+    monkeypatch.setattr(
+        "vllm.v1.core.kv_cache_manager.logger.info",
+        lambda message, *args: logs.append((message, args)),
+    )
+
+    manager.apply_decode_commit(request, new_seq_len=5, new_token_ids=[100])
+
+    assert logs[0][0] == "PAP prefix cache commit audit %s"
+    assert logs[0][1][0]["request_id"] == "req-audit"
+
+
+def test_prefix_cache_lookup_emits_audit(monkeypatch):
+    from types import SimpleNamespace
+
+    from vllm.v1.core.kv_cache_manager import KVCacheBlocks, KVCacheManager
+
+    class Coordinator:
+        single_type_managers = []
+
+        @staticmethod
+        def find_longest_cache_hit(_block_hashes, _max_length):
+            return ([],), 0
+
+    monkeypatch.setenv("PAP_PREFIX_CACHE_AUDIT", "1")
+    manager = object.__new__(KVCacheManager)
+    manager.enable_caching = True
+    manager.log_stats = False
+    manager.empty_kv_cache_blocks = KVCacheBlocks(((),))
+    manager.coordinator = Coordinator()
+    logs = []
+    monkeypatch.setattr(
+        "vllm.v1.core.kv_cache_manager.logger.info",
+        lambda message, *args: logs.append((message, args)),
+    )
+    request = SimpleNamespace(
+        request_id="req-lookup-audit",
+        skip_reading_prefix_cache=False,
+        block_hashes=[b"request-hash"],
+        num_tokens=17,
+        num_computed_tokens=0,
+        num_preemptions=0,
+    )
+
+    _, hit_tokens = manager.get_computed_blocks(request)
+
+    assert hit_tokens == 0
+    assert logs[0][0] == "PAP prefix cache lookup audit %s"
+    assert logs[0][1][0]["request_id"] == "req-lookup-audit"
+    assert logs[0][1][0]["hit_tokens"] == 0
 
 
 def test_engine_core_pap_apply_decode_commit_uses_scheduler_manager(monkeypatch):

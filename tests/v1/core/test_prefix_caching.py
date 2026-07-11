@@ -126,6 +126,28 @@ def make_kv_cache_config(block_size: int, num_blocks: int) -> KVCacheConfig:
     )
 
 
+def test_cache_blocks_requires_allocated_slots():
+    block_size = 16
+    manager = make_kv_cache_manager(
+        make_kv_cache_config(block_size, num_blocks=32),
+        max_model_len=512,
+        enable_caching=True,
+        hash_block_size=block_size,
+    )
+    request = make_request(
+        "pap-missing-reservation",
+        list(range(9 * block_size)),
+        block_size,
+        sha256,
+    )
+    allocated = manager.allocate_slots(request, num_new_tokens=8 * block_size)
+    assert allocated is not None
+    assert len(manager.get_block_ids(request.request_id)[0]) == 8
+
+    with pytest.raises(ValueError, match="allocated KV blocks"):
+        manager.cache_blocks(request, num_computed_tokens=9 * block_size)
+
+
 def make_kv_cache_config_hybrid_model(
     block_size: int,
     num_blocks: int,

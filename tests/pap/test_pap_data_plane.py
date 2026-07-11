@@ -629,7 +629,7 @@ def test_import_prefill_paged_kv_unified_reuses_active_lease(
 
     reset_global_kv_lease_registry()
     monkeypatch.setenv("PAP_UNIFIED_KV", "1")
-    monkeypatch.setenv("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "3")
+    monkeypatch.setenv("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "10")
     descriptors = []
 
     def fake_reduce_tensor(tensor):
@@ -672,3 +672,4 @@ def test_import_prefill_paged_kv_unified_reuses_active_lease(
     assert descriptors[1]["lease_id"] == descriptors[0]["lease_id"]
     assert descriptors[1]["leased_block_ids"] == [0, 1]
     assert descriptors[1]["lease_capacity_tokens"] == 8
+    assert descriptors[1]["writable_end_token"] == 8
