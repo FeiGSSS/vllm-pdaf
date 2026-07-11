@@ -2,10 +2,10 @@
 
 日期：2026-07-11
 
-状态：Phase 0/1/2 已提交；Phase 3 vectorized route fallback 已实现并完成严格 A/B，
-待提交后 clean 复跑
+状态：Phase 0/1/2/3 已提交；Phase 3 vectorized route fallback 已完成严格 A/B 与
+提交后 clean 三轮复跑
 
-代码基线：`feature/pap @ 12b689d1bcafeda399edad5836d877c28928435e`
+代码基线：`feature/pap @ bdb7a7dc74d429c5efd9de7adf9d2c9e250c60e0`
 
 关联文档：
 
@@ -1244,5 +1244,47 @@ test/baseline/pap/results/runs/
 - Phase 3 聚焦 contract: `70 passed`；
 - Ruff check/format、runner `bash -n`、`git diff --check` 通过；
 - 未运行 pre-commit；
-- 当前 GPU A/B 为 tracked-dirty 实现验证，提交后需用 clean worktree 复跑 2PA2P
-  batched 三轮，才能升级为正式性能基线。
+- tracked-dirty A/B 用于归因；正式基线见下节 `bdb7a7dc7` clean 三轮。
+
+### 22.5 提交后 clean 2PA2P 基线
+
+提交 `bdb7a7dc7` 后，以 `PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE=1`、默认
+`PAP_BATCHED_ROUTE_COPY=1` 重跑三轮 2PA2P full-crossbar：
+
+| rep | mean TTFT | mean TPOT | p99 TPOT | combine 覆盖率 |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | `239.263 ms` | `41.778 ms` | `55.499 ms` | `92.88%` |
+| 2 | `238.637 ms` | `43.750 ms` | `57.223 ms` | `92.91%` |
+| 3 | `235.650 ms` | `39.939 ms` | `56.800 ms` | `91.86%` |
+| 三轮中位数 | `238.637 ms` | `41.778 ms` | `56.800 ms` | `92.88%` |
+
+三轮均为 `128/0`，四个 pair 各 32 个请求；tracked worktree clean；correctness、
+routing、session drain 全部通过；dispatcher failure 为 0。
+
+同 QPS 4 的 PD 三轮参照为：
+
+```text
+/home/fei/research/PD/test/baseline/nixl_disaggregated/results/runs/
+  20260710_pd_qps4_rep{1,2,3}_current
+```
+
+跨轮中位数对比：
+
+| 指标 | PD 1P1D | PAP 2PA2P | PAP / PD |
+| --- | ---: | ---: | ---: |
+| mean TPOT | `24.506 ms` | `41.778 ms` | `1.705x` |
+| median TPOT | `24.482 ms` | `41.430 ms` | `1.692x` |
+| p99 TPOT | `25.756 ms` | `56.800 ms` | `2.205x` |
+| mean TTFT | `176.401 ms` | `238.637 ms` | `1.353x` |
+| request throughput | `3.890 req/s` | `3.817 req/s` | `0.981x` |
+
+mean/median TPOT 已稳定达到 `<2x PD`；p99 TPOT 尚未达到 2x，说明下一阶段不能只追求
+平均 gather/scatter 开销，还要解决 cohort 相位、coalesce timeout 和 queue-wait 的尾部
+波动。
+
+正式 PAP 结果：
+
+```text
+test/baseline/pap/results/runs/
+  20260711_bdb7a7dc7_2pa2p_batched_q4_rep{1,2,3}
+```
