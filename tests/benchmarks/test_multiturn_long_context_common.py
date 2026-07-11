@@ -101,6 +101,18 @@ def test_parse_kv_capacities_rejects_an_empty_log_mapping() -> None:
         parse_kv_capacities({})
 
 
+def test_parse_kv_capacities_rejects_invalid_utf8_even_with_capacity_line(
+    tmp_path: Path,
+) -> None:
+    service_log = tmp_path / "invalid-utf8.log"
+    service_log.write_bytes(
+        b"\xff\nGPU KV cache size: 145,632 tokens\n"
+    )
+
+    with pytest.raises(ValueError, match=str(service_log)):
+        parse_kv_capacities({"service": service_log})
+
+
 def test_capacity_admission_uses_required_service_minimum_at_boundary() -> None:
     admission = decide_capacity_admission(
         capacities={"prefill": 1_000, "decode": 900, "unused": 100},
@@ -208,6 +220,36 @@ def test_capacity_admission_is_frozen() -> None:
 
     with pytest.raises(FrozenInstanceError):
         admission.decision = "admission-limited"  # type: ignore[misc]
+
+
+def test_capacity_admission_capacity_mapping_is_immutable() -> None:
+    admission = decide_capacity_admission(
+        capacities={"prefill": 100},
+        required_services=["prefill"],
+        active_conversations=1,
+        max_rendered_context_tokens=1,
+    )
+    reported_capacities = admission.reported_capacity_tokens_by_service
+
+    with pytest.raises(TypeError):
+        reported_capacities["prefill"] = 1  # type: ignore[index]
+
+
+def test_capacity_admission_defensively_copies_input_capacities() -> None:
+    capacities = {"prefill": 100}
+    admission = decide_capacity_admission(
+        capacities=capacities,
+        required_services=["prefill"],
+        active_conversations=1,
+        max_rendered_context_tokens=1,
+    )
+
+    capacities["prefill"] = 1
+
+    assert admission.reported_capacity_tokens_by_service["prefill"] == 100
+    assert admission.to_dict()["reported_capacity_tokens_by_service"] == {
+        "prefill": 100
+    }
 
 
 def test_validate_token_accounting_accepts_exclusive_partition() -> None:
@@ -415,4 +457,32 @@ def test_capacity_cli_preserves_existing_output_when_parsing_fails(
     )
 
     assert result.returncode != 0
+    assert output.read_text(encoding="utf-8") == "sentinel\n"
+
+
+def test_capacity_cli_preserves_output_when_log_is_invalid_utf8(
+    tmp_path: Path,
+) -> None:
+    service_log = tmp_path / "invalid-utf8.log"
+    output = tmp_path / "capacity.json"
+    service_log.write_bytes(
+        b"\xff\nGPU KV cache size: 900 tokens\n"
+    )
+    output.write_text("sentinel\n", encoding="utf-8")
+
+    result = _run_capacity_cli(
+        "--service-log",
+        f"prefill={service_log}",
+        "--required-service",
+        "prefill",
+        "--active-conversations",
+        "1",
+        "--max-rendered-context-tokens",
+        "1",
+        "--output",
+        str(output),
+    )
+
+    assert result.returncode != 0
+    assert str(service_log) in result.stderr
     assert output.read_text(encoding="utf-8") == "sentinel\n"

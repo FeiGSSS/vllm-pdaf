@@ -12,6 +12,7 @@ import tempfile
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
+from types import MappingProxyType
 from typing import Mapping, Sequence
 
 
@@ -30,7 +31,7 @@ class TokenAccounting:
 
 @dataclass(frozen=True)
 class CapacityAdmission:
-    reported_capacity_tokens_by_service: dict[str, int]
+    reported_capacity_tokens_by_service: Mapping[str, int]
     required_services: tuple[str, ...]
     usable_kv_token_capacity: int
     active_conversations: int
@@ -41,6 +42,13 @@ class CapacityAdmission:
     decision: str
     reason: str
     schema_version: int = field(default=1, init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "reported_capacity_tokens_by_service",
+            MappingProxyType(dict(self.reported_capacity_tokens_by_service)),
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -69,9 +77,12 @@ def parse_kv_capacities(log_paths: Mapping[str, Path]) -> dict[str, int]:
     capacities: dict[str, int] = {}
     for service, log_path in log_paths.items():
         try:
-            log_text = Path(log_path).read_text(
-                encoding="utf-8", errors="replace"
-            )
+            log_text = Path(log_path).read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise ValueError(
+                f"cannot decode KV capacity log for service {service!r} "
+                f"as UTF-8: {log_path}"
+            ) from exc
         except OSError as exc:
             raise ValueError(
                 f"cannot read KV capacity log for service {service!r}: "
