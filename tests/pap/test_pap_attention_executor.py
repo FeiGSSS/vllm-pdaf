@@ -386,6 +386,78 @@ def test_attention_executor_builds_central_combine_dispatcher(
     assert stats["dispatcher_expected_group_size"] == 1
 
 
+def test_attention_executor_tracks_active_projection_membership(monkeypatch) -> None:
+    monkeypatch.setenv("PAP_ATTENTION_DISPATCH_MODE", "central_combine")
+    monkeypatch.setenv("PAP_ATTENTION_ACTIVE_PEER_TRACKING", "1")
+    app = create_app()
+    client = _ASGITestClient(app)
+
+    response = client.post(
+        "/v1/pap/attention/offload-exec-mailbox/activity",
+        json={
+            "source_id": "projection-1-r0",
+            "active": True,
+            "membership_generation": 1,
+        },
+    )
+    assert response.status_code == 200
+    response = client.post(
+        "/v1/pap/attention/offload-exec-mailbox/activity",
+        json={
+            "source_id": "projection-0-r0",
+            "active": True,
+            "membership_generation": 1,
+        },
+    )
+    assert response.status_code == 200
+
+    stats = client.get("/v1/pap/attention/stats").json()
+    assert stats["attention_active_peer_tracking"] is True
+    assert stats["attention_active_source_ids"] == [
+        "projection-0-r0",
+        "projection-1-r0",
+    ]
+    assert stats["attention_membership_generations"] == {
+        "projection-0-r0": 1,
+        "projection-1-r0": 1,
+    }
+    assert stats["dispatcher_expected_group_size"] == 2
+    assert stats["dispatcher_preferred_peer_id"] == "projection-0-r0"
+
+    response = client.post(
+        "/v1/pap/attention/offload-exec-mailbox/activity",
+        json={
+            "source_id": "projection-0-r0",
+            "active": False,
+            "membership_generation": 2,
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["applied"] is True
+
+    stale = client.post(
+        "/v1/pap/attention/offload-exec-mailbox/activity",
+        json={
+            "source_id": "projection-0-r0",
+            "active": True,
+            "membership_generation": 1,
+        },
+    )
+    assert stale.status_code == 200
+    assert stale.json() == {
+        "source_id": "projection-0-r0",
+        "active": False,
+        "membership_generation": 2,
+        "applied": False,
+        "stale": True,
+    }
+
+    stats = client.get("/v1/pap/attention/stats").json()
+    assert stats["attention_active_source_ids"] == ["projection-1-r0"]
+    assert stats["dispatcher_expected_group_size"] == 1
+    assert stats["dispatcher_preferred_peer_id"] == "projection-1-r0"
+
+
 def test_mailbox_bind_sends_stable_projection_source_id(monkeypatch) -> None:
     import json
 
@@ -438,6 +510,63 @@ def test_mailbox_bind_sends_stable_projection_source_id(monkeypatch) -> None:
     request_body = fake_socket.sent.partition(b"\r\n\r\n")[2]
     assert json.loads(request_body)["source_id"] == "projection-0-r0"
     assert result == response_metadata
+
+
+def test_mailbox_activity_sends_membership_generation(monkeypatch) -> None:
+    import json
+
+    from vllm.pap import shadow_attention
+
+    response_body = json.dumps({"applied": True}).encode("utf-8")
+
+    class FakeSocket:
+        def __init__(self) -> None:
+            self.sent = b""
+            self.responses = [
+                b"HTTP/1.1 200 OK\r\nContent-Length: "
+                + str(len(response_body)).encode("ascii")
+                + b"\r\n\r\n"
+                + response_body,
+                b"",
+            ]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def settimeout(self, _timeout):
+            pass
+
+        def sendall(self, payload):
+            self.sent += payload
+
+        def recv(self, _size):
+            return self.responses.pop(0)
+
+    fake_socket = FakeSocket()
+    monkeypatch.setattr(
+        shadow_attention.socket,
+        "create_connection",
+        lambda *_args, **_kwargs: fake_socket,
+    )
+
+    result = shadow_attention.update_offload_exec_mailbox_activity(
+        attention_endpoint="http://127.0.0.1:8300",
+        source_id="projection-0-r0",
+        active=False,
+        membership_generation=7,
+    )
+
+    header, _, request_body = fake_socket.sent.partition(b"\r\n\r\n")
+    assert b"POST /v1/pap/attention/offload-exec-mailbox/activity " in header
+    assert json.loads(request_body) == {
+        "source_id": "projection-0-r0",
+        "active": False,
+        "membership_generation": 7,
+    }
+    assert result == {"applied": True}
 
 
 def test_attention_executor_rejects_nccl_offload_exec_transport(monkeypatch) -> None:
@@ -1275,6 +1404,11 @@ def test_attention_fast_path_stats_endpoint() -> None:
     assert response.status_code == 200
     assert response.json() == {
         "attention_dispatch_mode": "legacy",
+        "attention_active_peer_tracking": False,
+        "attention_active_source_ids": [],
+        "attention_membership_generations": {},
+        "attention_membership_updates": 0,
+        "attention_membership_stale_updates": 0,
         "fast_path_hits": 0,
         "fallbacks": 0,
         "scale_cache_entries": 0,

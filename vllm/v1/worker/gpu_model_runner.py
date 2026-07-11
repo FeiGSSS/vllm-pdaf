@@ -106,6 +106,10 @@ from vllm.multimodal.inputs import (
     PlaceholderRange,
 )
 from vllm.multimodal.utils import get_mm_features_in_window, group_and_batch_mm_kwargs
+from vllm.pap.peer_activity import (
+    PAPProjectionPeerActivity,
+    sync_pap_projection_peer_activity,
+)
 from vllm.platforms import current_platform
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import SamplingType
@@ -856,6 +860,7 @@ class GPUModelRunner(
         self.pap_prefill_kv_handle_by_req_id: dict[str, str] = {}
         self.pap_import_prefill_kv_to_attention_by_req_id: set[str] = set()
         self.pap_attention_kv_installed_by_req_id: set[str] = set()
+        self.pap_offload_exec_activity_tracker: PAPProjectionPeerActivity | None = None
         # N-gram GPU path: async D2H buffer/event for per-request valid draft counts.
         self._num_valid_draft_tokens: torch.Tensor | None = None
         self._num_valid_draft_tokens_cpu: torch.Tensor | None = None
@@ -1688,6 +1693,11 @@ class GPUModelRunner(
         self._may_reorder_batch(scheduler_output)
         # Refresh batch metadata with any pending updates.
         self.input_batch.refresh_metadata()
+        self.pap_offload_exec_activity_tracker = sync_pap_projection_peer_activity(
+            tracker=self.pap_offload_exec_activity_tracker,
+            request_ids=self.input_batch.req_id_to_index.keys(),
+            endpoint_by_request=self.pap_attention_endpoint_by_req_id,
+        )
 
         # Incrementally update ngram_gpu tensors after batch is stable
         if is_ngram_gpu:

@@ -45,6 +45,10 @@ from vllm.model_executor.layers.mamba.ops.ssu_dispatch import (
 )
 from vllm.model_executor.model_loader import get_model_loader
 from vllm.multimodal import MULTIMODAL_REGISTRY
+from vllm.pap.peer_activity import (
+    PAPProjectionPeerActivity,
+    sync_pap_projection_peer_activity,
+)
 from vllm.sequence import IntermediateTensors
 from vllm.tasks import SupportedTask
 from vllm.utils.math_utils import cdiv
@@ -268,6 +272,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self.pap_prefill_kv_handle_by_req_id: dict[str, str] = {}
         self.pap_import_prefill_kv_to_attention_by_req_id: set[str] = set()
         self.pap_attention_kv_installed_by_req_id: set[str] = set()
+        self.pap_offload_exec_activity_tracker: PAPProjectionPeerActivity | None = None
 
         # For transferring state from execute_model to subsequent sample_tokens call.
         self.execute_model_state: ExecuteModelState | None = None
@@ -1453,6 +1458,11 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             self.add_requests(scheduler_output)
             self.update_requests(scheduler_output)
             self.block_tables.apply_staged_writes()
+            self.pap_offload_exec_activity_tracker = sync_pap_projection_peer_activity(
+                tracker=self.pap_offload_exec_activity_tracker,
+                request_ids=scheduler_output.num_scheduled_tokens.keys(),
+                endpoint_by_request=self.pap_attention_endpoint_by_req_id,
+            )
             if scheduler_output.total_num_scheduled_tokens == 0:
                 # No need to run the model.
                 empty_output = self.kv_connector.no_forward(scheduler_output)

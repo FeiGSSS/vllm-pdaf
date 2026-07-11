@@ -319,6 +319,14 @@ class PAPOffloadExecMailboxBindRequest(BaseModel):
     source_id: str | None = None
 
 
+class PAPOffloadExecMailboxActivityRequest(BaseModel):
+    """Projection membership update for Attention coalescing."""
+
+    source_id: str
+    active: bool
+    membership_generation: int = Field(ge=1)
+
+
 class PAPAttentionLayerEventRequest(BaseModel):
     """Shape-only event emitted at Projection's q/k/v -> attention boundary."""
 
@@ -4431,11 +4439,19 @@ def start_attention_tcp_server(
 def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
     registry = registry or PAPAttentionRegistry()
     dispatch_mode = _pap_attention_dispatch_mode()
+    active_peer_tracking = _pap_env_flag(
+        "PAP_ATTENTION_ACTIVE_PEER_TRACKING",
+        False,
+    )
     app = FastAPI(title="PAP Attention Executor")
     app.state.registry = registry
     app.state.offload_exec_transport = None
     app.state.offload_exec_transports = {}
     app.state.offload_exec_source_ids = {}
+    app.state.offload_exec_active_source_ids = set()
+    app.state.offload_exec_membership_generations = {}
+    app.state.offload_exec_membership_updates = 0
+    app.state.offload_exec_membership_stale_updates = 0
     app.state.offload_exec_lock = Lock()
     app.state.offload_exec_mailbox_loop_started = False
     app.state.offload_exec_mailbox_loop_peers = set()
@@ -4470,6 +4486,18 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
     else:
         app.state.offload_exec_dispatcher = None
 
+    def sync_dispatcher_membership() -> None:
+        if dispatch_mode != "central_combine":
+            return
+        dispatcher = app.state.offload_exec_dispatcher
+        assert dispatcher is not None
+        if active_peer_tracking:
+            source_ids = set(app.state.offload_exec_active_source_ids)
+        else:
+            source_ids = set(app.state.offload_exec_source_ids.values())
+        dispatcher.set_expected_group_size(max(1, len(source_ids)))
+        dispatcher.set_preferred_peer_id(min(source_ids) if source_ids else None)
+
     @app.get("/health")
     async def health() -> dict[str, Any]:
         return {
@@ -4481,8 +4509,20 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
 
     @app.get("/v1/pap/attention/stats")
     async def attention_stats() -> dict[str, Any]:
+        with app.state.offload_exec_lock:
+            active_source_ids = sorted(app.state.offload_exec_active_source_ids)
+            membership_generations = dict(
+                sorted(app.state.offload_exec_membership_generations.items())
+            )
+            membership_updates = app.state.offload_exec_membership_updates
+            membership_stale_updates = app.state.offload_exec_membership_stale_updates
         stats = {
             "attention_dispatch_mode": dispatch_mode,
+            "attention_active_peer_tracking": active_peer_tracking,
+            "attention_active_source_ids": active_source_ids,
+            "attention_membership_generations": membership_generations,
+            "attention_membership_updates": membership_updates,
+            "attention_membership_stale_updates": membership_stale_updates,
             **registry.decode_append_fast_path_stats(),
             **registry.offload_exec_dispatch_stats(),
         }
@@ -4537,6 +4577,55 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
             "remote_address": request.remote_address,
         }
 
+    @app.post("/v1/pap/attention/offload-exec-mailbox/activity")
+    async def update_offload_exec_mailbox_activity(
+        request: PAPOffloadExecMailboxActivityRequest,
+    ) -> dict[str, Any]:
+        source_id = str(request.source_id)
+        generation = int(request.membership_generation)
+        active = bool(request.active)
+        with app.state.offload_exec_lock:
+            previous_generation = app.state.offload_exec_membership_generations.get(
+                source_id
+            )
+            previous_active = source_id in app.state.offload_exec_active_source_ids
+            if previous_generation is not None and generation < previous_generation:
+                app.state.offload_exec_membership_stale_updates += 1
+                return {
+                    "source_id": source_id,
+                    "active": previous_active,
+                    "membership_generation": previous_generation,
+                    "applied": False,
+                    "stale": True,
+                }
+            if previous_generation == generation:
+                if previous_active != active:
+                    raise HTTPException(
+                        status_code=409,
+                        detail=("PAP mailbox membership generation changed activity"),
+                    )
+                return {
+                    "source_id": source_id,
+                    "active": active,
+                    "membership_generation": generation,
+                    "applied": False,
+                    "stale": False,
+                }
+            app.state.offload_exec_membership_generations[source_id] = generation
+            if active:
+                app.state.offload_exec_active_source_ids.add(source_id)
+            else:
+                app.state.offload_exec_active_source_ids.discard(source_id)
+            app.state.offload_exec_membership_updates += 1
+            sync_dispatcher_membership()
+        return {
+            "source_id": source_id,
+            "active": active,
+            "membership_generation": generation,
+            "applied": True,
+            "stale": False,
+        }
+
     @app.post("/v1/pap/attention/offload-exec-mailbox/bind")
     async def bind_offload_exec_mailbox(
         request: PAPOffloadExecMailboxBindRequest,
@@ -4586,14 +4675,7 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
                 app.state.offload_exec_transports[peer_key] = transport
             app.state.offload_exec_source_ids[peer_key] = source_id
             if dispatch_mode == "central_combine":
-                dispatcher = app.state.offload_exec_dispatcher
-                assert dispatcher is not None
-                dispatcher.set_expected_group_size(
-                    len(app.state.offload_exec_transports)
-                )
-                dispatcher.set_preferred_peer_id(
-                    min(app.state.offload_exec_source_ids.values())
-                )
+                sync_dispatcher_membership()
             if peer_key not in app.state.offload_exec_mailbox_loop_peers:
                 dispatcher = app.state.offload_exec_dispatcher
                 if dispatch_mode in {"central_fifo", "central_combine"}:

@@ -2,10 +2,11 @@
 
 日期：2026-07-11
 
-状态：Phase 0/1/2/3 与 Phase 4 等待观测已提交；Phase 4 自适应窗口实验已完成严格
-A/B 并因均值、覆盖率退化而回退
+状态：Phase 0/1/2/3 与 Phase 4 等待观测已提交；active-source membership 已完成
+严格 A/B 与 x:y smoke，等待提交后 clean 复跑
 
-代码基线：`feature/pap @ 581387a513e20fcf6c5515774c61ced352653d2b`
+代码基线：`feature/pap @ 8cb6e2022b1ba3dce80a2dbc9a46b2ab3e7d7ab6` 加
+active-source tracked patch
 
 关联文档：
 
@@ -1353,4 +1354,111 @@ test/baseline/pap/results/runs/
   20260711_phase4_ab_fixed_rep{1,2,3}
   20260711_phase4_adaptive500_q4_rep1
   20260711_phase4_ab_adaptive500_rep{2,3}
+```
+
+## 24. 2026-07-11 Phase 4 active-source membership
+
+### 24.1 设计与实现
+
+固定窗口的主要浪费不是“所有兼容任务都晚到”，而是 PA 永久把历史上绑定过的 P 数量
+作为 `expected_group_size`。一个 P 完成最后请求或暂时不再服务该 PA 后，旧 source 仍会
+让每个后续 layer 最多等待 1 ms。
+
+本阶段增加 request-cohort 边界的控制面，不修改每层 QKV/output wire 热路径：
+
+1. 每个 Projection/TP rank 维护当前 scheduler cohort 使用的 Attention endpoint set；
+2. endpoint set 只有在请求加入、结束、preempt 或恢复导致 membership 变化时，才通过
+   HTTP 发布一次 `source_id + active + membership_generation`；
+3. 连续 decode step 使用相同 endpoint set 时不发控制请求；
+4. PA 按 source 保存单调 generation，旧更新只计数、不覆盖新状态，同 generation 的
+   冲突 active 值 fail closed；
+5. PA 用 active source set 原子更新 dispatcher 的 expected group size 和确定性 preferred
+   peer；active set 为空时回到 size 1、preferred `None`；
+6. Projection 最后一个请求结束且本轮没有 model forward 时，也必须发送 inactive。
+
+运行中的服务使用 `vllm/v1/worker/gpu/model_runner.py`。首次 smoke 只接入了旧
+`gpu_model_runner.py`，表现为 `membership_updates=0`、expected size 恒为 1；该 smoke
+被判定为功能未生效。最终公共逻辑放在 `vllm/pap/peer_activity.py`，两套 runner 都只保留
+薄调用。V2 调用点位于：
+
+```text
+finish/free/add/update request state
+-> apply staged block-table writes
+-> sync active-source membership
+-> zero-token early return 或 prepare/model forward
+```
+
+因此最后一个请求结束的 empty scheduler output 也能撤销 source。逻辑同时受
+`PAP_PROJECTION_KV_UNAWARE=1` 和 `PAP_ATTENTION_ACTIVE_PEER_TRACKING=1` 门控，Prefill
+worker 不会上报伪 source。
+
+benchmark runner 在 `central_combine && Projection count > 1` 时默认开启；1P、legacy、
+central_fifo 保持关闭。环境变量仍可显式设为 0，作为同代码回退。
+
+### 24.2 2PA2P 严格 A/B
+
+固定 Qwen3-8B、sonnet i128/o32/prefix50、128 prompts、QPS 4、local-fast、MPS
+70/30、1 ms combine window、full crossbar，按 off/on、on/off、off/on 的服务重启顺序
+各运行三轮。两组使用同一 tracked patch，仅改变
+`PAP_ATTENTION_ACTIVE_PEER_TRACKING=0|1`：
+
+| 指标（三轮中位数） | tracking off | tracking on | 变化 |
+| --- | ---: | ---: | ---: |
+| mean TPOT | `44.442 ms` | `41.476 ms` | `-6.67%` |
+| median TPOT | `43.968 ms` | `41.606 ms` | `-5.37%` |
+| p99 TPOT | `58.158 ms` | `48.312 ms` | `-16.93%` |
+| mean TTFT | `242.533 ms` | `234.766 ms` | `-3.20%` |
+| request throughput | `3.807 req/s` | `3.834 req/s` | `+0.70%` |
+| combine 覆盖率 | `92.91%` | `83.99%` | `-8.92 pp` |
+| coalesce timeout | `4,326` | `649` | `-85.00%` |
+
+三组 mean TPOT 配对变化为 `-3.569/-0.398/-2.966 ms`，三组 p99 TPOT 变化为
+`-9.467/-10.934/-9.846 ms`，方向全部一致。active membership 降低了 source-batch
+combine 覆盖率，但消除了更多不可能等到的 idle-peer timeout，因此均值和 tail 同时改善。
+
+六轮均为 `128/0`，四个 pair 各 32 个请求；correctness、routing、session drain 全部
+通过，dispatcher failure 和 stale membership update 均为 0。tracking-on 每轮两个 PA
+合计 78--82 次 membership update，运行结束 active set 全部为空。
+
+相对同 QPS4 PD 三轮参照，tracking-on 的跨轮中位数为：
+
+| 指标 | PD 1P1D | PAP 2PA2P active-source | PAP / PD |
+| --- | ---: | ---: | ---: |
+| mean TPOT | `24.506 ms` | `41.476 ms` | `1.692x` |
+| median TPOT | `24.482 ms` | `41.606 ms` | `1.699x` |
+| p99 TPOT | `25.756 ms` | `48.312 ms` | `1.876x` |
+| mean TTFT | `176.401 ms` | `234.766 ms` | `1.331x` |
+| request throughput | `3.890 req/s` | `3.834 req/s` | `0.986x` |
+
+mean、median 和 p99 TPOT 三项均达到 `<2x PD`，其中 p99 是本阶段新增达成的门槛。
+
+原始结果：
+
+```text
+/home/fei/research/PD/test/baseline/pap/results/runs/
+  20260711_phase4_active_peer_ab_off_rep{1,2,3}
+  20260711_phase4_active_peer_ab_on_rep{1,2,3}
+```
+
+### 24.3 任意 x:y correctness smoke
+
+所有 smoke 使用 local Qwen3-8B、crossbar routing、active tracking、strict audit，并固定
+70/30 MPS；短输出只验证 contract，不作为性能基线：
+
+| 拓扑 | 请求 | pair 覆盖 | membership | correctness/drain |
+| --- | ---: | --- | --- | --- |
+| 1PA1P | `8/0` | `1/1` | update 4，active 最终空 | passed |
+| 1PA2P | `8/0` | `2/2` | 两 source generation 2，最终空 | passed |
+| 2PA1P | `8/0` | `2/2` | 两 PA 均收到 update，最终空 | passed |
+| 3PA2P | `12/0` | `6/6` | 三 PA、两 source 全覆盖，最终空 | passed |
+
+四组的 routing audit、correctness audit、session drain 全部通过；stale update 和 dispatcher
+failure 都为 0。结果目录：
+
+```text
+/home/fei/research/PD/test/baseline/pap/results/runs/
+  20260711_active_peer_1pa1p_smoke
+  20260711_active_peer_1pa2p_smoke
+  20260711_active_peer_2pa1p_smoke
+  20260711_active_peer_3pa2p_smoke
 ```

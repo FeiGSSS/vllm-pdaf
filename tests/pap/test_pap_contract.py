@@ -55,6 +55,29 @@ def test_gpu_model_runner_passes_pap_request_context() -> None:
     assert '"pap_attention_tcp_endpoint_by_request"' in text
     assert '"pap_finished_request_ids"' in text
     assert "scheduler_output.finished_req_ids" in text
+    assert "PAPProjectionPeerActivity" in text
+    assert "sync_pap_projection_peer_activity" in text
+    state_refresh = text.index("self.input_batch.refresh_metadata()")
+    activity_sync = text.index(
+        "sync_pap_projection_peer_activity(",
+        state_refresh,
+    )
+    assert activity_sync > state_refresh
+
+
+def test_v2_gpu_model_runner_syncs_membership_before_empty_return() -> None:
+    text = (ROOT / "vllm" / "v1" / "worker" / "gpu" / "model_runner.py").read_text()
+
+    state_updated = text.index("self.block_tables.apply_staged_writes()")
+    activity_sync = text.index(
+        "sync_pap_projection_peer_activity(",
+        state_updated,
+    )
+    empty_return = text.index(
+        "if scheduler_output.total_num_scheduled_tokens == 0:",
+        state_updated,
+    )
+    assert state_updated < activity_sync < empty_return
 
 
 def test_v2_model_runner_has_no_pap_runner_microbatch_contexts() -> None:

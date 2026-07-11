@@ -33,6 +33,16 @@ def test_pap_benchmark_runner_captures_attention_fast_path_stats() -> None:
     assert '"batched_route_copy"' in text
     assert '"attention_dispatch_mode"' in text
     assert '"attention_combine_wait_us"' in text
+    assert "DEFAULT_ATTENTION_ACTIVE_PEER_TRACKING=0" in text
+    assert "DEFAULT_ATTENTION_ACTIVE_PEER_TRACKING=1" in text
+    assert (
+        'PAP_ATTENTION_ACTIVE_PEER_TRACKING="'
+        "${PAP_ATTENTION_ACTIVE_PEER_TRACKING:-"
+        '${DEFAULT_ATTENTION_ACTIVE_PEER_TRACKING}}"' in text
+    )
+    assert "export PAP_ATTENTION_ACTIVE_PEER_TRACKING" in text
+    assert "printf 'PAP_ATTENTION_ACTIVE_PEER_TRACKING=%q\\n'" in text
+    assert '"attention_active_peer_tracking"' in text
 
 
 def test_pap_benchmark_runner_supports_arbitrary_xy_topology() -> None:
