@@ -62,6 +62,34 @@ def _pap_prefill_ipc_profile_enabled() -> bool:
     }
 
 
+def _prefill_usage_headers(prefill_response: dict[str, Any]) -> dict[str, str]:
+    usage = prefill_response.get("usage")
+    if not isinstance(usage, dict):
+        return {}
+
+    prompt_tokens = usage.get("prompt_tokens")
+    if not isinstance(prompt_tokens, int) or prompt_tokens < 0:
+        return {}
+
+    headers = {
+        "X-PAP-Prefill-Prompt-Tokens": str(prompt_tokens),
+    }
+    details = usage.get("prompt_tokens_details")
+    if not isinstance(details, dict):
+        return headers
+
+    cached_tokens = details.get("cached_tokens")
+    if not isinstance(cached_tokens, int) or cached_tokens < 0:
+        return headers
+
+    headers["X-PAP-Prefill-Cached-Tokens"] = str(cached_tokens)
+    if cached_tokens <= prompt_tokens:
+        headers["X-PAP-Prefill-Computed-Tokens"] = str(
+            prompt_tokens - cached_tokens
+        )
+    return headers
+
+
 PortSpec = int | tuple[int, ...]
 
 
@@ -576,6 +604,15 @@ async def _handle_openai_request(api_path: str, request: Request):
                 (time.perf_counter() - request_start) * 1000.0,
             )
 
+        response_headers = {
+            "X-PAP-Prefill-Ms": str(prefill_ms),
+            "X-PAP-Group": str(group_index),
+            "X-PAP-Projection": str(projection.port),
+            "X-PAP-Projection-Index": str(projection_index),
+            "X-PAP-Pair": pair_name,
+        }
+        response_headers.update(_prefill_usage_headers(prefill_resp))
+
         if client_stream:
             handed_off_stream_cleanup = True
             return StreamingResponse(
@@ -587,13 +624,7 @@ async def _handle_openai_request(api_path: str, request: Request):
                     attention_clients,
                 ),
                 media_type="text/event-stream",
-                headers={
-                    "X-PAP-Prefill-Ms": str(prefill_ms),
-                    "X-PAP-Group": str(group_index),
-                    "X-PAP-Projection": str(projection.port),
-                    "X-PAP-Projection-Index": str(projection_index),
-                    "X-PAP-Pair": pair_name,
-                },
+                headers=response_headers,
             )
 
         projection_resp = await _post_json(
@@ -604,13 +635,7 @@ async def _handle_openai_request(api_path: str, request: Request):
         )
         return JSONResponse(
             projection_resp,
-            headers={
-                "X-PAP-Prefill-Ms": str(prefill_ms),
-                "X-PAP-Group": str(group_index),
-                "X-PAP-Projection": str(projection.port),
-                "X-PAP-Projection-Index": str(projection_index),
-                "X-PAP-Pair": pair_name,
-            },
+            headers=response_headers,
         )
     finally:
         if attention_sessions is not None and not handed_off_stream_cleanup:

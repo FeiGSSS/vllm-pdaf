@@ -109,6 +109,7 @@ PAP_LEASE_RELEASE_MAX_ATTEMPTS="${PAP_LEASE_RELEASE_MAX_ATTEMPTS:-5}"
 PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS="${PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS:-0.05}"
 PAP_LEASE_RELEASE_RETRY_MAX_SECONDS="${PAP_LEASE_RELEASE_RETRY_MAX_SECONDS:-0.5}"
 PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS:-300}"
+PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS:-0}"
 export PAP_DECODE_COMMIT_TIMEOUT PAP_DECODE_COMMIT_QUEUE_SIZE
 export PAP_DECODE_COMMIT_MAX_ATTEMPTS PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS
 export PAP_DECODE_COMMIT_RETRY_MAX_SECONDS PAP_DECODE_COMMIT_FLUSH_TIMEOUT
@@ -144,9 +145,21 @@ mkdir -p "$LOG_DIR"
 
 vllm_scheduler_args=()
 vllm_tp_args=()
+vllm_prefill_observability_args=()
 if [[ -n "$MAX_NUM_BATCHED_TOKENS" ]]; then
     vllm_scheduler_args+=("--max-num-batched-tokens" "$MAX_NUM_BATCHED_TOKENS")
 fi
+case "$PAP_ENABLE_PROMPT_TOKENS_DETAILS" in
+    1 | true | True | TRUE | yes | Yes | YES)
+        vllm_prefill_observability_args+=("--enable-prompt-tokens-details")
+        ;;
+    0 | false | False | FALSE | no | No | NO)
+        ;;
+    *)
+        echo "PAP_ENABLE_PROMPT_TOKENS_DETAILS must be 0 or 1" >&2
+        exit 1
+        ;;
+esac
 case "$PAP_DISABLE_CUSTOM_ALL_REDUCE" in
     auto)
         if (( PAP_TP_SIZE > 1 )); then
@@ -510,6 +523,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
             --max-model-len "$MAX_MODEL_LEN" \
             --max-num-seqs "$MAX_NUM_SEQS" \
             "${vllm_scheduler_args[@]}" \
+            "${vllm_prefill_observability_args[@]}" \
             --tensor-parallel-size "$PAP_TP_SIZE" \
             --gpu-memory-utilization "$PREFILL_GPU_MEMORY_UTILIZATION" \
             "${vllm_tp_args[@]}" \
@@ -533,6 +547,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
             --max-model-len "$MAX_MODEL_LEN" \
             --max-num-seqs "$MAX_NUM_SEQS" \
             "${vllm_scheduler_args[@]}" \
+            "${vllm_prefill_observability_args[@]}" \
             --tensor-parallel-size "$PAP_TP_SIZE" \
             --gpu-memory-utilization "$PREFILL_GPU_MEMORY_UTILIZATION" \
             "${vllm_tp_args[@]}" \

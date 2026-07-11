@@ -68,6 +68,26 @@ def test_pap_benchmark_runner_supports_arbitrary_xy_topology() -> None:
     assert 'PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-round_robin}"' in text
 
 
+def test_pap_benchmark_runner_supports_two_turn_prefix_cache_audit() -> None:
+    runner = (
+        ROOT
+        / ".claude"
+        / "skills"
+        / "vllm-pap-benchmark"
+        / "scripts"
+        / "run_pap_same_pd_workload.sh"
+    )
+    text = runner.read_text()
+
+    assert 'PAP_BENCH_CLIENT_MODE="${PAP_BENCH_CLIENT_MODE:-canonical}"' in text
+    assert "multiturn_prefix_cache" in text
+    assert "pap_multiturn_prefix_cache.py" in text
+    assert "--enable-prompt-tokens-details" in text
+    assert "multiturn_prefix_cache.json" in text
+    assert 'PAP_PREFIX_CACHE_AUDIT="${PAP_PREFIX_CACHE_AUDIT:-0}"' in text
+    assert 'PAP_PREFIX_CACHE_AUDIT="${PAP_PREFIX_CACHE_AUDIT}"' in text
+
+
 def test_pd_benchmark_runner_is_self_contained_and_scoped() -> None:
     skill_dir = ROOT / ".claude" / "skills" / "vllm-pap-benchmark"
     runner = skill_dir / "scripts" / "run_pd_same_workload.sh"
@@ -213,6 +233,18 @@ def test_pap_launch_exports_unified_kv_control_endpoints() -> None:
     assert 'PAP_LEASE_RELEASE_ENDPOINT="$lease_release_endpoint"' in text
     assert "PREFILL_PORT_BASE + idx" in text
     assert 'PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS:-300}"' in text
+
+
+def test_pap_launch_can_expose_prefill_cached_token_usage() -> None:
+    script = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
+    text = script.read_text()
+
+    assert (
+        'PAP_ENABLE_PROMPT_TOKENS_DETAILS="'
+        '${PAP_ENABLE_PROMPT_TOKENS_DETAILS:-0}"'
+    ) in text
+    assert 'vllm_prefill_observability_args+=("--enable-prompt-tokens-details")' in text
+    assert '"${vllm_prefill_observability_args[@]}"' in text
 
 
 def test_pap_launch_assigns_unique_projection_mailbox_actor_ids() -> None:

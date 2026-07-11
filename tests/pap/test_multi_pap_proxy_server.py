@@ -6,6 +6,7 @@ from pathlib import Path
 from examples.pap.multi_pap_proxy_server import (
     PAPGroup,
     ProjectionInstance,
+    _prefill_usage_headers,
     build_projection_payload_for_group,
     parse_pap_groups,
     parse_projection_instances,
@@ -86,6 +87,30 @@ def test_multi_proxy_logs_ranked_attention_port_as_string() -> None:
 
     assert "attention=%s:%s projection=%s:%d" in text
     assert "attention=%s:%d projection=%s:%d" not in text
+
+
+def test_prefill_usage_headers_expose_local_cache_tokens() -> None:
+    headers = _prefill_usage_headers(
+        {
+            "usage": {
+                "prompt_tokens": 193,
+                "prompt_tokens_details": {"cached_tokens": 176},
+            }
+        }
+    )
+
+    assert headers == {
+        "X-PAP-Prefill-Prompt-Tokens": "193",
+        "X-PAP-Prefill-Cached-Tokens": "176",
+        "X-PAP-Prefill-Computed-Tokens": "17",
+    }
+
+
+def test_prefill_usage_headers_ignore_missing_details() -> None:
+    assert _prefill_usage_headers({"usage": {"prompt_tokens": 193}}) == {
+        "X-PAP-Prefill-Prompt-Tokens": "193"
+    }
+    assert _prefill_usage_headers({}) == {}
 
 
 def test_parse_projection_instances_from_compact_spec() -> None:

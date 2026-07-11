@@ -10,6 +10,14 @@ PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 VLLM_BIN="${VLLM_BIN:-${ROOT_DIR}/.venv/bin/vllm}"
 PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE="${PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE:-0}"
 PAP_BENCH_STRICT_CORRECTNESS_AUDIT="${PAP_BENCH_STRICT_CORRECTNESS_AUDIT:-1}"
+PAP_BENCH_CLIENT_MODE="${PAP_BENCH_CLIENT_MODE:-canonical}"
+case "${PAP_BENCH_CLIENT_MODE}" in
+  canonical | multiturn_prefix_cache) ;;
+  *)
+    echo "ERROR: unsupported PAP_BENCH_CLIENT_MODE=${PAP_BENCH_CLIENT_MODE}" >&2
+    exit 2
+    ;;
+esac
 
 GIT_COMMIT=""
 GIT_COMMIT_SHORT=""
@@ -25,6 +33,9 @@ OUTPUT_LEN="${OUTPUT_LEN:-32}"
 PREFIX_LEN="${PREFIX_LEN:-50}"
 QPS="${QPS:-16}"
 NUM_PROMPTS="${NUM_PROMPTS:-128}"
+if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_prefix_cache" ]]; then
+  NUM_PROMPTS=3
+fi
 BENCH_NUM_WARMUPS="${BENCH_NUM_WARMUPS:-0}"
 BENCH_TIMEOUT="${BENCH_TIMEOUT:-900}"
 SERVER_START_TIMEOUT="${SERVER_START_TIMEOUT:-900}"
@@ -124,7 +135,18 @@ PAP_LOCAL_FAST_SLEEP_AFTER_US="${PAP_LOCAL_FAST_SLEEP_AFTER_US:-50}"
 PAP_REMOTE_ATTENTION_PARALLELISM="${PAP_REMOTE_ATTENTION_PARALLELISM:-16}"
 PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-round_robin}"
 PAP_UNIFIED_KV="${PAP_UNIFIED_KV:-1}"
-PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-32}"
+DEFAULT_DECODE_CAPACITY_TOKENS=32
+DEFAULT_PROMPT_TOKENS_DETAILS=0
+if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_prefix_cache" ]]; then
+  DEFAULT_DECODE_CAPACITY_TOKENS=64
+  DEFAULT_PROMPT_TOKENS_DETAILS=1
+fi
+PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-${DEFAULT_DECODE_CAPACITY_TOKENS}}"
+PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS:-${DEFAULT_PROMPT_TOKENS_DETAILS}}"
+PAP_PREFIX_CACHE_AUDIT="${PAP_PREFIX_CACHE_AUDIT:-0}"
+PAP_MULTITURN_FIRST_OUTPUT_TOKENS="${PAP_MULTITURN_FIRST_OUTPUT_TOKENS:-48}"
+PAP_MULTITURN_BLOCK_SIZE="${PAP_MULTITURN_BLOCK_SIZE:-16}"
+PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS="${PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS:-1}"
 PAP_DECODE_COMMIT_ENDPOINT="${PAP_DECODE_COMMIT_ENDPOINT:-}"
 PAP_LEASE_RELEASE_ENDPOINT="${PAP_LEASE_RELEASE_ENDPOINT:-}"
 PAP_DECODE_COMMIT_FAIL_CLOSED="${PAP_DECODE_COMMIT_FAIL_CLOSED:-1}"
@@ -190,6 +212,19 @@ append_no_proxy() {
 
 append_no_proxy NO_PROXY
 append_no_proxy no_proxy
+
+PREFILL_OBSERVABILITY_ARGS=()
+case "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" in
+  1 | true | True | TRUE | yes | Yes | YES)
+    PREFILL_OBSERVABILITY_ARGS+=("--enable-prompt-tokens-details")
+    ;;
+  0 | false | False | FALSE | no | No | NO)
+    ;;
+  *)
+    echo "ERROR: PAP_ENABLE_PROMPT_TOKENS_DETAILS must be 0 or 1" >&2
+    exit 2
+    ;;
+esac
 
 PIDS=()
 PREFILL_GPUS=()
@@ -448,6 +483,7 @@ capture_git_state() {
 write_effective_config() {
   {
     printf 'MODE=%q\n' "pap"
+    printf 'PAP_BENCH_CLIENT_MODE=%q\n' "${PAP_BENCH_CLIENT_MODE}"
     printf 'TOPOLOGY=%q\n' "${TOPOLOGY}"
     printf 'PA_COUNT=%q\n' "${PA_COUNT}"
     printf 'PROJECTION_COUNT=%q\n' "${PROJECTION_COUNT}"
@@ -457,6 +493,11 @@ write_effective_config() {
     printf 'BENCH_DIR=%q\n' "${BENCH_DIR}"
     printf 'PREFIX_LEN=%q\n' "${PREFIX_LEN}"
     printf 'NUM_PROMPTS=%q\n' "${NUM_PROMPTS}"
+    printf 'PAP_ENABLE_PROMPT_TOKENS_DETAILS=%q\n' "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}"
+    printf 'PAP_PREFIX_CACHE_AUDIT=%q\n' "${PAP_PREFIX_CACHE_AUDIT}"
+    printf 'PAP_MULTITURN_FIRST_OUTPUT_TOKENS=%q\n' "${PAP_MULTITURN_FIRST_OUTPUT_TOKENS}"
+    printf 'PAP_MULTITURN_BLOCK_SIZE=%q\n' "${PAP_MULTITURN_BLOCK_SIZE}"
+    printf 'PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS=%q\n' "${PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS}"
     printf 'INPUT_LENS_CSV=%q\n' "${INPUT_LEN}"
     printf 'OUTPUT_LENS_CSV=%q\n' "${OUTPUT_LEN}"
     printf 'QPS_CSV=%q\n' "${QPS}"
@@ -606,6 +647,7 @@ PY
 
 write_run_metadata() {
   RUN_ROOT="${RUN_ROOT}" \
+  PAP_BENCH_CLIENT_MODE="${PAP_BENCH_CLIENT_MODE}" \
   INPUT_LEN="${INPUT_LEN}" \
   OUTPUT_LEN="${OUTPUT_LEN}" \
   QPS="${QPS}" \
@@ -624,6 +666,7 @@ write_run_metadata() {
   PAP_ATTENTION_DISPATCH_MODE="${PAP_ATTENTION_DISPATCH_MODE}" \
   PAP_ATTENTION_COMBINE_WAIT_US="${PAP_ATTENTION_COMBINE_WAIT_US}" \
   PAP_ATTENTION_ACTIVE_PEER_TRACKING="${PAP_ATTENTION_ACTIVE_PEER_TRACKING}" \
+  PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" \
   GIT_COMMIT="${GIT_COMMIT}" \
   GIT_COMMIT_SHORT="${GIT_COMMIT_SHORT}" \
   GIT_TRACKED_WORKTREE_DIRTY="${GIT_TRACKED_WORKTREE_DIRTY}" \
@@ -640,6 +683,7 @@ from datetime import datetime
 
 metadata = {
     "mode": "pap",
+    "client_mode": os.environ["PAP_BENCH_CLIENT_MODE"],
     "topology": os.environ["TOPOLOGY"],
     "pa_count": int(os.environ["PA_COUNT"]),
     "projection_count": int(os.environ["PROJECTION_COUNT"]),
@@ -672,6 +716,9 @@ metadata = {
     ),
     "attention_active_peer_tracking": (
         os.environ["PAP_ATTENTION_ACTIVE_PEER_TRACKING"] == "1"
+    ),
+    "prompt_tokens_details": (
+        os.environ["PAP_ENABLE_PROMPT_TOKENS_DETAILS"] == "1"
     ),
     "git_commit": os.environ["GIT_COMMIT"],
     "git_commit_short": os.environ["GIT_COMMIT_SHORT"],
@@ -883,6 +930,16 @@ cd "${ROOT_DIR}"
 (( PA_COUNT >= 1 && PROJECTION_COUNT >= 1 )) \
   || die "PAP topology must contain at least one PA and one Projection"
 [[ "${PAP_TP_SIZE}" == "1" ]] || die "This runner is intentionally fixed to PAP_TP_SIZE=1"
+if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_prefix_cache" ]]; then
+  [[ "${PA_COUNT}" == "1" && "${PROJECTION_COUNT}" == "1" ]] \
+    || die "multiturn_prefix_cache mode requires PAP_TOPOLOGY=1pa1p"
+  [[ "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" == "1" ]] \
+    || die "multiturn_prefix_cache mode requires prompt token details"
+  [[ "${PAP_MULTITURN_FIRST_OUTPUT_TOKENS}" =~ ^[1-9][0-9]*$ ]] \
+    || die "PAP_MULTITURN_FIRST_OUTPUT_TOKENS must be positive"
+  (( PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS >= PAP_MULTITURN_FIRST_OUTPUT_TOKENS )) \
+    || die "PAP unified KV decode capacity is too small for first turn"
+fi
 [[ -x "${PYTHON_BIN}" ]] || die "PYTHON_BIN is not executable: ${PYTHON_BIN}"
 [[ -x "${VLLM_BIN}" ]] || die "VLLM_BIN is not executable: ${VLLM_BIN}"
 [[ -d "${MODEL_PATH}" ]] || die "Model path does not exist: ${MODEL_PATH}"
@@ -1024,6 +1081,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
     PAP_UNIFIED_KV="${PAP_UNIFIED_KV}" \
     PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}" \
+    PAP_PREFIX_CACHE_AUDIT="${PAP_PREFIX_CACHE_AUDIT}" \
     PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS}" \
     VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
     VLLM_NIXL_SIDE_CHANNEL_PORT="${prefill_nixl_port}" \
@@ -1033,6 +1091,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       --enforce-eager \
       --generation-config vllm \
       --enable-request-id-headers \
+      "${PREFILL_OBSERVABILITY_ARGS[@]}" \
       --max-model-len "${MAX_MODEL_LEN}" \
       --max-num-seqs "${MAX_NUM_SEQS}" \
       --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
@@ -1115,26 +1174,43 @@ write_effective_config
 write_topology_manifest
 write_run_metadata
 
-TAG="${TOPOLOGY_TAG}_i${INPUT_LEN}_o${OUTPUT_LEN}_q${QPS}"
-echo "=== Running ${TAG} on port ${PAP_PROXY_PORT} ==="
-timeout "${BENCH_TIMEOUT}" "${VLLM_BIN}" bench serve \
-  --backend vllm \
-  --model "${MODEL_PATH}" \
-  --dataset-name "${DATASET_NAME}" \
-  --dataset-path "${DATASET_PATH}" \
-  --sonnet-input-len "${INPUT_LEN}" \
-  --sonnet-output-len "${OUTPUT_LEN}" \
-  --sonnet-prefix-len "${PREFIX_LEN}" \
-  --num-prompts "${NUM_PROMPTS}" \
-  --port "${PAP_PROXY_PORT}" \
-  --save-result \
-  --result-dir "${RUN_ROOT}" \
-  --result-filename "${TAG}.json" \
-  --request-rate "${QPS}" \
-  --num-warmups "${BENCH_NUM_WARMUPS}" \
-  2>&1 | tee "${RUN_ROOT}/${TAG}.log"
+if [[ "${PAP_BENCH_CLIENT_MODE}" == "canonical" ]]; then
+  TAG="${TOPOLOGY_TAG}_i${INPUT_LEN}_o${OUTPUT_LEN}_q${QPS}"
+  echo "=== Running ${TAG} on port ${PAP_PROXY_PORT} ==="
+  timeout "${BENCH_TIMEOUT}" "${VLLM_BIN}" bench serve \
+    --backend vllm \
+    --model "${MODEL_PATH}" \
+    --dataset-name "${DATASET_NAME}" \
+    --dataset-path "${DATASET_PATH}" \
+    --sonnet-input-len "${INPUT_LEN}" \
+    --sonnet-output-len "${OUTPUT_LEN}" \
+    --sonnet-prefix-len "${PREFIX_LEN}" \
+    --num-prompts "${NUM_PROMPTS}" \
+    --port "${PAP_PROXY_PORT}" \
+    --save-result \
+    --result-dir "${RUN_ROOT}" \
+    --result-filename "${TAG}.json" \
+    --request-rate "${QPS}" \
+    --num-warmups "${BENCH_NUM_WARMUPS}" \
+    2>&1 | tee "${RUN_ROOT}/${TAG}.log"
 
-validate_benchmark_result "${RUN_ROOT}/${TAG}.json"
+  validate_benchmark_result "${RUN_ROOT}/${TAG}.json"
+else
+  TAG="${TOPOLOGY_TAG}_multiturn_prefix_cache"
+  echo "=== Running ${TAG} on port ${PAP_PROXY_PORT} ==="
+  timeout "${BENCH_TIMEOUT}" "${PYTHON_BIN}" \
+    examples/pap/pap_multiturn_prefix_cache.py \
+    --base-url "http://127.0.0.1:${PAP_PROXY_PORT}" \
+    --model "${MODEL_PATH}" \
+    --result-path "${RUN_ROOT}/multiturn_prefix_cache.json" \
+    --prompt-tokens "${INPUT_LEN}" \
+    --first-output-tokens "${PAP_MULTITURN_FIRST_OUTPUT_TOKENS}" \
+    --second-output-tokens "${OUTPUT_LEN}" \
+    --block-size "${PAP_MULTITURN_BLOCK_SIZE}" \
+    --min-decode-hit-blocks "${PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS}" \
+    2>&1 | tee "${RUN_ROOT}/${TAG}.log"
+fi
+
 wait_attention_sessions_drained
 capture_proxy_topology_stats
 capture_attention_fast_path_stats
