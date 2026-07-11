@@ -1,5 +1,11 @@
 # PAP/PD Multi-turn Long-context Benchmark Implementation Plan
 
+> **Status: superseded — do not execute.** On 2026-07-12 the project boundary was
+> corrected: PD, NIXL, and the official PD proxy remain unmodified; official logs
+> and `/metrics` are the only PD observation surfaces. The token-accounting API,
+> PD proxy, and standalone OOM-admission implementation were reverted by
+> `9fde5ff6d`. This file is retained only for development-history traceability.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Build and validate an OOM-safe, reproducible benchmark that compares
