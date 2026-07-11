@@ -240,7 +240,7 @@ are zero; service-log error scan is empty.
 Record commit/run directory, prompt/output/LCP/hit counts, warm/cold Prefill
 times, correctness, routing, and drain status. Do not copy content or raw IDs.
 
-- [ ] **Step 4: Run final verification**
+- [x] **Step 4: Run final verification**
 
 ```bash
 .venv/bin/python -m pytest tests/pap -q
