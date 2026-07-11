@@ -1,7 +1,7 @@
 # PAP 多轮原生 Prefix Cache 复用设计
 
 日期：2026-07-11
-状态：已确认设计，进入 1PA1P 实现与实验
+状态：1PA1P exact-token 与 Chat Completions 已验证
 基线提交：d8bce2e6c
 
 ## 1. 目标
@@ -281,3 +281,78 @@ e6c499c78 及其未提交 Proxy WIP 已从 feature/pap 分支移除。
 当未来需要保证 partial tail 永久驻留、跨轮单写者语义或完全不允许 eviction
 时，可以重新评估 resident owner；它不是当前 1PA1P 原生 prefix-cache 复用的
 前置条件。
+
+## 14. 实施与实验结果
+
+### 14.1 核心实现
+
+本阶段实现拆分为以下提交：
+
+- `c71ccc9df`：通过 Scheduler 正式预留 unified-KV decode slots，修复 handoff
+  token ledger，增加安全 prefix-cache audit 和已分配块不变量；
+- `043339691`：增加 exact-token 两轮 warm/cold 审计和 Prefill cached-token
+  可观测性；
+- `558db3cdd`：Projection KV-unaware 请求跳过本地 cache registration；
+- `d5ea82ca3`：增加真实 Chat Completions 两轮审计模式；
+- `848f321ab`：使用可保持跨轮 token 连续性的 Qwen3 thinking chat template。
+
+核心缺陷是 Prefill 的一次性请求从 Scheduler waiting 分支完成，旧代码只在
+running 分支私自追加 decode blocks。其结果是 request hash 和 cached-block 计数
+可以增长，但 model-runner block table 仍只有 prompt blocks。修复后，decode
+capacity 作为 `num_lookahead_tokens` 进入统一 slot allocation，block ownership、
+Scheduler output 和 model-runner block table 保持一致。
+
+### 14.2 Exact-token clean 实验
+
+最终 clean run：
+
+`/home/fei/research/PD/test/baseline/pap/results/runs/20260711_558db3cdd_multiturn_clean_rep2`
+
+- 第一轮 prompt/output：128/48 token；
+- 第二轮 prompt：183 token；已物化历史 175 token；
+- expected/actual prefix hit：160/160 token；
+- decode-derived hit：32 token；cold hit：0；
+- Warm/Cold 第二轮 Prefill：45/58 ms；
+- Warm/Cold 第二轮输出 token 完全一致；
+- strict correctness、三请求路由和 session drain 全部通过；
+- 109 次 decode commit 和 3 次 lease release 全部返回 200；
+- 服务日志无错误匹配。
+
+首次 clean run 在 Projection 端触发“0 个本地块却缓存 8 个块”的 fail-closed
+检查。Projection KV-unaware 本来就不拥有本地 KV，因此 `558db3cdd` 将其从本地
+cache registration 中明确排除，同时保留 Prefill 侧的已分配块不变量。
+
+### 14.3 Chat Completions clean 实验
+
+最终 clean run：
+
+`/home/fei/research/PD/test/baseline/pap/results/runs/20260711_848f321ab_chat_multiturn_clean_rep2`
+
+- Qwen3 chat template：`enable_thinking=true`；
+- 第一轮 prompt/output：142/48 token；
+- 第二轮 prompt：207 token；已物化历史和真实 LCP 均为 189 token；
+- 第一轮 prompt 完整块边界：128 token；
+- expected/actual prefix hit：176/176 token；
+- decode-derived hit：48 token；cold hit：0；
+- Warm/Cold 第二轮 Prefill：46/70 ms；
+- Warm/Cold 第二轮输出 token 完全一致；
+- 本地 tokenizer 与服务端 chat-template token IDs 完全一致；
+- strict correctness、三请求路由和 session drain 全部通过；
+- 109 次 decode commit 和 3 次 lease release 全部返回 200；
+- 服务日志无错误匹配。
+
+`enable_thinking=false` 是一个重要负对照：Qwen3 模板会在第一轮 generation
+prompt 中插入空的 `<think>...</think>` scaffold，但普通 assistant content 不会把
+该 scaffold 带回第二轮历史。clean rep1 因而观测到 decode-derived hit 为 0。
+这不是 PAP KV 数据面丢失，而是第二轮 token 前缀本身发生变化。thinking 模式
+不会插入该不可回传 scaffold，clean rep2 的 LCP 覆盖全部已物化历史并命中 3 个
+decode-derived blocks。
+
+### 14.4 回归结果
+
+最终实现工作树上：
+
+- `tests/pap`：383 passed，3 skipped；
+- `tests/v1/core/test_prefix_caching.py`：83 passed；
+- Runner Bash 语法、Python 编译和 `git diff --check` 均通过；
+- 测试和实验均只使用本地模型，未访问 Hugging Face，未运行 pre-commit。

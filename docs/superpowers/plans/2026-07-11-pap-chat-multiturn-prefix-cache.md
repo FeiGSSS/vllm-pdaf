@@ -48,7 +48,7 @@ Transformers tokenizer, vLLM OpenAI Chat Completions, Bash, and pytest.
   `chat_prefix_metrics(...) -> dict[str, int]`, and a CLI that writes
   `multiturn_chat_prefix_cache.json`.
 
-- [ ] **Step 1: Write the failing pure-function tests**
+- [x] **Step 1: Write the failing pure-function tests**
 
 ```python
 def test_build_second_turn_messages_preserves_assistant_text():
@@ -76,7 +76,7 @@ def test_chat_prefix_metrics_use_true_retokenized_lcp():
     }
 ```
 
-- [ ] **Step 2: Run the tests and verify red**
+- [x] **Step 2: Run the tests and verify red**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -85,7 +85,7 @@ def test_chat_prefix_metrics_use_true_retokenized_lcp():
 
 Expected: collection fails because the Chat audit module does not exist.
 
-- [ ] **Step 3: Implement the pure functions**
+- [x] **Step 3: Implement the pure functions**
 
 ```python
 def build_second_turn_messages(first_messages, assistant_content,
@@ -117,7 +117,7 @@ def chat_prefix_metrics(first_prompt_token_ids, first_output_token_ids,
     }
 ```
 
-- [ ] **Step 4: Implement deterministic local prompt sizing and HTTP parsing**
+- [x] **Step 4: Implement deterministic local prompt sizing and HTTP parsing**
 
 Load the tokenizer with `local_files_only=True` and
 `trust_remote_code=False`. Repeat the first user text until
@@ -144,14 +144,14 @@ Parse `prompt_token_ids` from the response root; parse `token_ids`,
 prompt/cached/computed counts from the PAP headers. Reject missing IDs, empty
 assistant content, non-`length` finishes, and unexpected generated-token counts.
 
-- [ ] **Step 5: Implement strict warm/cold checks and safe JSON**
+- [x] **Step 5: Implement strict warm/cold checks and safe JSON**
 
 Use the same unique salt for turn 1 and warm turn 2, and a different salt for
 cold turn 2. Require identical warm/cold prompt and output IDs, exact
 LCP-derived warm hit, cold hit zero, and at least one decode-derived block.
 Write only timings, counts, finish reasons, booleans, and token digests.
 
-- [ ] **Step 6: Verify the client**
+- [x] **Step 6: Verify the client**
 
 ```bash
 .venv/bin/python -m pytest \
@@ -174,7 +174,7 @@ Expected: all tests pass and `py_compile` exits zero.
 - Produces: `PAP_BENCH_CLIENT_MODE=multiturn_chat_prefix_cache` and
   `${RUN_ROOT}/multiturn_chat_prefix_cache.json`.
 
-- [ ] **Step 1: Extend the static runner test and verify red**
+- [x] **Step 1: Extend the static runner test and verify red**
 
 ```python
 assert "canonical | multiturn_prefix_cache | multiturn_chat_prefix_cache" in text
@@ -184,7 +184,7 @@ assert "multiturn_chat_prefix_cache.json" in text
 
 Run the focused launch-file test. Expected: failure before runner changes.
 
-- [ ] **Step 2: Add the third mode without changing canonical defaults**
+- [x] **Step 2: Add the third mode without changing canonical defaults**
 
 Treat both multi-turn modes as three-request 1PA1P audits with prompt-token
 details and 64 decode-capacity tokens. Dispatch Chat mode with:
@@ -202,7 +202,7 @@ timeout "${BENCH_TIMEOUT}" "${PYTHON_BIN}" \
   --min-decode-hit-blocks "${PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS}"
 ```
 
-- [ ] **Step 3: Run focused and full PAP checks**
+- [x] **Step 3: Run focused and full PAP checks**
 
 ```bash
 bash -n .claude/skills/vllm-pap-benchmark/scripts/run_pap_same_pd_workload.sh
@@ -219,12 +219,12 @@ Expected: syntax and diff checks exit zero; PAP tests pass with existing skips.
 - Generate outside git:
   `/home/fei/research/PD/test/baseline/pap/results/runs/<RUN_ID>/`
 
-- [ ] **Step 1: Commit implementation with hooks disabled**
+- [x] **Step 1: Commit implementation with hooks disabled**
 
 Stage only the two client/test files and two runner/test files, then use
 `git commit --no-verify -m "Add PAP chat multi-turn cache audit"`.
 
-- [ ] **Step 2: Run a clean 1PA1P Chat audit**
+- [x] **Step 2: Run a clean 1PA1P Chat audit**
 
 Use client mode `multiturn_chat_prefix_cache`, GPU1/2, MPS 70/30, unified-KV
 decode capacity 64, clean tracked-worktree enforcement, strict correctness,
@@ -235,7 +235,7 @@ decode-derived hit is at least 16; cold hit is zero; warm/cold outputs match;
 strict correctness has zero matches; all routes use `pa0:p0`; active sessions
 are zero; service-log error scan is empty.
 
-- [ ] **Step 3: Record and commit the result summary**
+- [x] **Step 3: Record and commit the result summary**
 
 Record commit/run directory, prompt/output/LCP/hit counts, warm/cold Prefill
 times, correctness, routing, and drain status. Do not copy content or raw IDs.
