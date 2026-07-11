@@ -84,6 +84,12 @@ def test_pap_benchmark_runner_supports_two_turn_prefix_cache_audit() -> None:
     assert "pap_multiturn_prefix_cache.py" in text
     assert "--enable-prompt-tokens-details" in text
     assert "multiturn_prefix_cache.json" in text
+    assert (
+        "canonical | multiturn_prefix_cache | multiturn_chat_prefix_cache"
+        in text
+    )
+    assert "pap_multiturn_chat_prefix_cache.py" in text
+    assert "multiturn_chat_prefix_cache.json" in text
     assert 'PAP_PREFIX_CACHE_AUDIT="${PAP_PREFIX_CACHE_AUDIT:-0}"' in text
     assert 'PAP_PREFIX_CACHE_AUDIT="${PAP_PREFIX_CACHE_AUDIT}"' in text
 
