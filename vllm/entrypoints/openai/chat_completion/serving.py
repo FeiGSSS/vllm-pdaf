@@ -89,14 +89,23 @@ def _make_prompt_tokens_details(
     enable_prompt_tokens_details: bool,
     num_cached_tokens: int | None,
     mm_token_counts: dict[str, int] | None,
+    num_local_cached_tokens: int | None = None,
+    num_external_cached_tokens: int | None = None,
 ) -> PromptTokenUsageInfo | None:
     """Build ``prompt_tokens_details`` from cached + multimodal token counts."""
     if not enable_prompt_tokens_details:
         return None
-    if num_cached_tokens is None and not mm_token_counts:
+    if (
+        num_cached_tokens is None
+        and num_local_cached_tokens is None
+        and num_external_cached_tokens is None
+        and not mm_token_counts
+    ):
         return None
     return PromptTokenUsageInfo(
         cached_tokens=num_cached_tokens,
+        local_cached_tokens=num_local_cached_tokens,
+        external_cached_tokens=num_external_cached_tokens,
         multimodal_tokens=mm_token_counts or None,
     )
 
@@ -423,6 +432,8 @@ class OpenAIServingChat(OpenAIServing):
         finish_reason_sent = [False] * num_choices
         num_prompt_tokens = 0
         num_cached_tokens = None
+        num_local_cached_tokens = None
+        num_external_cached_tokens = None
         tools_streamed = [False] * num_choices
 
         if isinstance(request.tool_choice, ChatCompletionNamedToolChoiceParam):
@@ -473,6 +484,8 @@ class OpenAIServingChat(OpenAIServing):
                 # response (by the try...catch).
                 if first_iteration:
                     num_cached_tokens = res.num_cached_tokens
+                    num_local_cached_tokens = res.num_local_cached_tokens
+                    num_external_cached_tokens = res.num_external_cached_tokens
                     # Send first response for each request.n (index) with
                     # the role
                     role = self.get_chat_request_role(request)
@@ -750,6 +763,8 @@ class OpenAIServingChat(OpenAIServing):
                     self.enable_prompt_tokens_details,
                     num_cached_tokens,
                     mm_token_counts,
+                    num_local_cached_tokens,
+                    num_external_cached_tokens,
                 )
 
                 final_usage_chunk = ChatCompletionStreamResponse(
@@ -999,6 +1014,8 @@ class OpenAIServingChat(OpenAIServing):
             self.enable_prompt_tokens_details,
             final_res.num_cached_tokens,
             mm_token_counts,
+            final_res.num_local_cached_tokens,
+            final_res.num_external_cached_tokens,
         )
 
         request_metadata.final_usage_info = usage

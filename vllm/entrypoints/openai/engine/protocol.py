@@ -100,12 +100,32 @@ class ModelList(OpenAIBaseModel):
 
 
 class PromptTokenUsageInfo(OpenAIBaseModel):
-    cached_tokens: int | None = None
+    cached_tokens: int | None = Field(default=None, ge=0)
+    local_cached_tokens: int | None = Field(default=None, ge=0)
+    external_cached_tokens: int | None = Field(default=None, ge=0)
     multimodal_tokens: dict[str, int] | None = None
     """Prompt tokens contributed by each input modality, keyed by modality name
     (e.g. `image`, `audio`, `video`). A breakdown of the multimodal
     placeholder tokens already counted in `prompt_tokens`; `None` when the
     request has no multimodal input."""
+
+    @model_validator(mode="after")
+    def validate_cached_token_counts(self) -> "PromptTokenUsageInfo":
+        local = self.local_cached_tokens
+        external = self.external_cached_tokens
+        if local is None and external is None:
+            return self
+        if local is None or external is None or self.cached_tokens is None:
+            raise ValueError(
+                "local_cached_tokens and external_cached_tokens require "
+                "cached_tokens"
+            )
+        if local + external != self.cached_tokens:
+            raise ValueError(
+                "local_cached_tokens + external_cached_tokens must equal "
+                "cached_tokens"
+            )
+        return self
 
 
 class UsageInfo(OpenAIBaseModel):

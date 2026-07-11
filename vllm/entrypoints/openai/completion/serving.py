@@ -293,6 +293,8 @@ class OpenAIServingCompletion(OpenAIServing):
         has_echoed = [False] * num_choices * num_prompts
         num_prompt_tokens = [0] * num_prompts
         num_cached_tokens = None
+        num_local_cached_tokens = None
+        num_external_cached_tokens = None
         first_iteration = True
 
         stream_options = request.stream_options
@@ -307,6 +309,8 @@ class OpenAIServingCompletion(OpenAIServing):
 
                 if first_iteration:
                     num_cached_tokens = res.num_cached_tokens
+                    num_local_cached_tokens = res.num_local_cached_tokens
+                    num_external_cached_tokens = res.num_external_cached_tokens
                     first_iteration = False
 
                 prompt_text = res.prompt
@@ -444,7 +448,9 @@ class OpenAIServingCompletion(OpenAIServing):
 
             if self.enable_prompt_tokens_details and num_cached_tokens is not None:
                 final_usage_info.prompt_tokens_details = PromptTokenUsageInfo(
-                    cached_tokens=num_cached_tokens
+                    cached_tokens=num_cached_tokens,
+                    local_cached_tokens=num_local_cached_tokens,
+                    external_cached_tokens=num_external_cached_tokens,
                 )
 
             if include_usage:
@@ -585,7 +591,9 @@ class OpenAIServingCompletion(OpenAIServing):
             and last_final_res.num_cached_tokens is not None
         ):
             usage.prompt_tokens_details = PromptTokenUsageInfo(
-                cached_tokens=last_final_res.num_cached_tokens
+                cached_tokens=last_final_res.num_cached_tokens,
+                local_cached_tokens=last_final_res.num_local_cached_tokens,
+                external_cached_tokens=last_final_res.num_external_cached_tokens,
             )
 
         request_metadata.final_usage_info = usage
