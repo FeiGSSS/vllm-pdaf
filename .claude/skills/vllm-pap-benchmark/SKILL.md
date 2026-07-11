@@ -198,6 +198,24 @@ Override `PD_PREFILL_GPU` and `PD_DECODE_GPU` only after checking occupancy. It
 records effective configuration, Git state, completeness, and a correctness
 log audit. Its cleanup is scoped to process groups created by that run.
 
+## Fixed Multi-turn North-star
+
+For 1P1D PD versus 1PA1P PAP multi-turn TTFT/TPOT work, use the frozen
+`qwen3_8b_chat_16k_2turn_o256_c1_v1` profile documented in
+`test/baseline/pap/README.md`. Run PAP candidates with:
+
+```bash
+bash .claude/skills/vllm-pap-benchmark/scripts/run_multiturn_north_star.sh quick
+bash .claude/skills/vllm-pap-benchmark/scripts/run_multiturn_north_star.sh formal
+```
+
+Refresh PD only through `bootstrap_pd_multiturn_reference.sh`. That script uses
+the unchanged official streaming proxy and validates the current effective
+semantics from P/D token-source metrics: local cache reuse on both engines and
+P-to-D NIXL transfer. Streaming chat currently does not return the Decode KV
+handle, so proxy-level D-to-P lookup remains a miss; do not patch PD for this
+benchmark. Reference writes are always explicit.
+
 ## Result Comparison
 
 Compare a PAP result against the canonical PD baseline with:

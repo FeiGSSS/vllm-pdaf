@@ -190,7 +190,12 @@ def test_pd_multiturn_reference_bootstrap_uses_unchanged_official_proxy() -> Non
     assert '"kv_role":"kv_producer"' in text
     assert '"kv_role":"kv_consumer"' in text
     assert '"bidirectional_kv_xfer":true' in text
-    assert "cache HIT" in text
+    assert "prefill_metrics.prom" in text
+    assert "decode_metrics.prom" in text
+    assert "official_streaming_metrics_passed" in text
+    assert "local_cache_hit" in text
+    assert "external_kv_transfer" in text
+    assert "cache MISS" in text
     assert "/tmp/pap_pd_multiturn_reference_candidate.json" in text
     assert "write-reference" not in text
     assert "pkill" not in text

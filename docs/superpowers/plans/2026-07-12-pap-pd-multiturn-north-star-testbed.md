@@ -338,8 +338,11 @@ tokenizer, Bash, vLLM OpenAI-compatible streaming API, NIXL, JSON and Markdown.
 
   Launch the unchanged official multi-turn proxy and producer/consumer vLLM
   services in scoped process groups. Use the same model/profile/GPUs/FP16 settings,
-  run three serial repetitions with full restarts, audit official logs/metrics for
-  bidirectional cache reuse, then emit a PD reference candidate. Never call the
+  run three serial repetitions with full restarts, and audit the frozen official
+  streaming semantics: two proxy D→P handle misses, local cache reuse on P and D,
+  and P→D NIXL transfer from Prometheus token-source counters. The streaming Chat
+  API currently cannot return the Decode handle, so do not modify PD to manufacture
+  a bidirectional hit. Emit a PD reference candidate and never call the
   reference-write command automatically.
 
 - [ ] **Step 5: Document exact commands and artifact locations**
@@ -403,7 +406,8 @@ tokenizer, Bash, vLLM OpenAI-compatible streaming API, NIXL, JSON and Markdown.
   bash .claude/skills/vllm-pap-benchmark/scripts/bootstrap_pd_multiturn_reference.sh
   ```
 
-  Expected: three valid results, bidirectional reuse evidence, no fatal logs.
+  Expected: three valid results, official-streaming local/P→D reuse evidence, no
+  fatal logs.
 
 - [ ] **Step 4: Explicitly write the PD reference**
 

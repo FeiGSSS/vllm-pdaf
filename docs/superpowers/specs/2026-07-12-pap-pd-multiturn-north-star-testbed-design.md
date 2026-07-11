@@ -83,15 +83,28 @@ PAP，并同时回答两个问题：
 - `NO_PROXY/no_proxy` 必须包含 `127.0.0.1,localhost`；
 - 所有服务和 repetitions 串行运行，禁止并行占用其他 GPU 来制造不可比结果。
 
-PD 使用 1P1D、官方多轮 proxy 和 NIXL 双向复用配置。PAP 使用 1PA1P、当前已验证的
-NIXL-mailbox/CUDA-IPC 数据面、统一 KV 和固定 MPS 70/30。两条 lane 均使用相同 GPU
-编号和公共参数；lane-specific memory utilization 保持已验证值并写入 artifact。
+PD 使用 1P1D、未修改的官方多轮 proxy 和 NIXL producer/consumer 配置。两端保留官方
+推荐的 `bidirectional_kv_xfer=true`，但当前 Chat Completions 流式响应协议不包含
+`kv_transfer_params`：因此性能路径中 proxy 的两轮均为 D→P handle `MISS`。实际复用
+语义是第二轮 P 命中自己的本地 Prompt KV，D 命中自己的本地 Prompt+Decode KV，并由
+P→D NIXL 补充新后缀。Test bed 将这一定义为
+`official_streaming_local_cache_plus_p_to_d`，用两端 `/metrics` 的 token-source counter
+验证，绝不为得到 proxy `HIT` 而修改官方 PD/API 代码。
+
+PAP 使用 1PA1P、当前已验证的 NIXL-mailbox/CUDA-IPC 数据面、统一 KV 和固定 MPS
+70/30。两条 lane 均使用相同 GPU 编号和公共参数；lane-specific memory utilization
+保持已验证值并写入 artifact。
 
 ### 3.3 性能期间的观测边界
 
 性能运行不得开启逐 token 的 `PAP_PREFIX_CACHE_AUDIT`，因为它会引入同步日志开销。
 PAP 缓存命中使用现有 Prefill response headers 和只读服务日志确认；PD 只使用官方响应、
-日志和 `/metrics`。任何诊断 trace/profile 必须作为独立运行，不能冒充性能结果。
+日志和 `/metrics`。PD 每次 repetition 保存 P/D 的 Prometheus 快照，要求 P 的
+`local_cache_hit > 0`、`external_kv_transfer = 0`，D 的 `local_cache_hit > 0` 且
+`external_kv_transfer > 0`，并要求官方 proxy 精确记录两次 `MISS`、零次 `HIT`。
+这些条件共同冻结当前官方 streaming 行为；未来上游行为改变时必须重新定义 profile 并
+bootstrap reference，不能静默混用。任何诊断 trace/profile 必须作为独立运行，不能冒充
+性能结果。
 
 ## 4. 组件和职责
 
@@ -159,8 +172,9 @@ workload 和结果验证，不复制 PAP 启停逻辑。它必须：
 文件：`.claude/skills/vllm-pap-benchmark/scripts/bootstrap_pd_multiturn_reference.sh`
 
 该脚本只编排官方、未修改的 PD/NIXL 服务和多轮 proxy，串行运行 3 次同一客户端，完成
-Gate 后生成 reference candidate。将 candidate 晋升为 tracked reference 需要显式命令。
-日常 test bed 不调用此脚本。
+客户端 LCP Gate、proxy streaming 语义 Gate 和 P/D token-source metrics Gate 后生成
+reference candidate。将 candidate 晋升为 tracked reference 需要显式命令。日常 test
+bed 不调用此脚本。
 
 ## 5. Artifact 和 reference 合同
 
@@ -187,6 +201,7 @@ test/baseline/pap/results/runs/<run-id>/
 - `run_metadata.json`；
 - `git_status.txt` 和 `tracked_worktree.patch`；
 - `correctness_audit.env`；
+- PD repetition 的 `prefill_metrics.prom` 和 `decode_metrics.prom`；
 - `session_drain.env`；
 - `service_logs/`。
 
@@ -206,8 +221,9 @@ fingerprint 不一致时比较器必须拒绝给出优化结论。
 2. 每轮 completion tokens 均为 256，`finish_reason=length`；
 3. 每轮都有非空首 token，TTFT、TPOT、latency 均为有限正数；
 4. 第二轮 prompt 比第一轮长，并有可验证的 prefix-cache hit；
-5. 根据两轮真实 token IDs 计算出的 Decode-derived LCP 至少包含一个完整 16-token block，
-   且 PAP 第二轮实际 cached tokens 等于该 LCP 的完整 block 边界；
+5. 根据两轮真实 token IDs 计算出的 Decode-derived LCP 至少包含一个完整 16-token block；
+   PAP 第二轮实际 cached tokens 必须等于该 LCP 的完整 block 边界；PD 必须满足冻结的
+   official-streaming proxy 与 P/D token-source metrics Gate；
 6. 没有 OOM、Traceback、EngineDeadError、transfer/commit/release consistency error；
 7. 所有请求结束后 Attention `active_sessions=0`；
 8. formal reference/candidate 的 tracked worktree 为 clean；quick 允许 dirty，但报告必须标红；

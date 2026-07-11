@@ -31,7 +31,11 @@ def make_repetition(
     fingerprint: str = "profile-fingerprint",
     hardware: str = "NVIDIA-L20x2",
 ) -> dict[str, object]:
-    cache_status = "passed" if architecture == "pap" else "official_log_passed"
+    cache_status = (
+        "passed"
+        if architecture == "pap"
+        else "official_streaming_metrics_passed"
+    )
     topology = (
         {
             "name": "1pa1p",
@@ -105,6 +109,10 @@ def make_repetition(
 
 def test_validate_repetition_accepts_complete_result() -> None:
     validate_repetition(make_repetition())
+
+
+def test_validate_repetition_accepts_official_streaming_pd_metrics() -> None:
+    validate_repetition(make_repetition(architecture="pd"))
 
 
 @pytest.mark.parametrize(
