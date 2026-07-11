@@ -966,6 +966,47 @@ def test_kv_lease_sweeps_replaced_expired_lease(monkeypatch):
     assert registry.active_lease_id("r") == new_lease
 
 
+def test_scheduler_stashes_leased_blocks_tail_first(monkeypatch):
+    from vllm.pap import kv_lease
+    from vllm.v1.core.sched.scheduler import Scheduler
+
+    captured = {}
+
+    monkeypatch.setattr(kv_lease, "pap_has_active_lease", lambda _request_id: True)
+    monkeypatch.setattr(
+        kv_lease,
+        "pap_active_lease_id",
+        lambda _request_id: "lease-1",
+    )
+
+    def capture_stash(*, lease_id, blocks, free_callback):
+        captured["lease_id"] = lease_id
+        captured["blocks"] = list(blocks)
+        captured["free_callback"] = free_callback
+
+    monkeypatch.setattr(kv_lease, "pap_stash_deferred_blocks", capture_stash)
+
+    class StubBlockPool:
+        def free_blocks(self, _blocks):
+            raise AssertionError("lease release must own deferred block freeing")
+
+    class StubKVCacheManager:
+        def __init__(self):
+            self.block_pool = StubBlockPool()
+
+        def pop_blocks_for_free(self, _request):
+            return ["prefix", "middle", "tail"]
+
+    scheduler = object.__new__(Scheduler)
+    scheduler.kv_cache_manager = StubKVCacheManager()
+    request = type("StubRequest", (), {"request_id": "req-1"})()
+
+    scheduler._free_request_blocks(request)
+
+    assert captured["lease_id"] == "lease-1"
+    assert captured["blocks"] == ["tail", "middle", "prefix"]
+
+
 # --- Descriptor integration tests ---------------------------------------------
 
 

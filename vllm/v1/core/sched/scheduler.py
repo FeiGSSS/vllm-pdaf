@@ -563,10 +563,12 @@ class Scheduler(SchedulerInterface):
                         # blocks so Attention can write decode suffix into the
                         # same Prefill-owned paged KV cache.
                         try:
+                            import os as _pap_os
+
                             from vllm.pap.kv_lease import (
                                 pap_has_active_lease,
                             )
-                            import os as _pap_os
+
                             if (
                                 _pap_os.environ.get("PAP_UNIFIED_KV", "").lower()
                                 in {"1", "true", "yes", "on"}
@@ -583,7 +585,11 @@ class Scheduler(SchedulerInterface):
                                     target_total = (
                                         request.num_tokens + extra_cap
                                     )
-                                    for sm in self.kv_cache_manager.coordinator.single_type_managers:
+                                    managers = (
+                                        self.kv_cache_manager.coordinator
+                                        .single_type_managers
+                                    )
+                                    for sm in managers:
                                         sm.allocate_new_blocks(
                                             request.request_id,
                                             target_total,
@@ -2277,6 +2283,7 @@ class Scheduler(SchedulerInterface):
             )
             blocks = self.kv_cache_manager.pop_blocks_for_free(request)
             if lease_id is not None and pap_stash_deferred_blocks is not None:
+                blocks.reverse()
                 pap_stash_deferred_blocks(
                     lease_id=lease_id,
                     blocks=blocks,
