@@ -2,7 +2,8 @@
 
 日期：2026-07-12
 
-状态：Stage A/B/C 均已完成 clean formal；当前 PAP reference 为 `0727ed946`
+状态：Stage A/B/C 已完成 clean formal，Stage D v1 诊断已完成；当前 PAP reference
+仍为 `0727ed946`
 
 ## 1. 目的
 
@@ -334,16 +335,73 @@ Conversation latency 为 `21,228.436 ms`，相对 Stage B 降 `0.18%`，为 PD �
 重复扫描并修复真实并发 LRU race，因此保留为默认并晋升 reference；不能把它表述为
 显著性能突破。
 
-## 11. 当前决策与后续
+## 11. Stage D v1：Attention 进程低扰动 GPU critical-chain trace
+
+提交：`ad95c8c12`。诊断原始目录：
+
+```text
+test/baseline/pap/results/runs/
+  20260712_stagec_deferred_gpu_trace_v1/
+```
+
+旧 trace 在每层调用 CUDA event `synchronize()`，会把第二轮 TPOT 从约 `30.45 ms`
+扰动到 `37.13 ms`，约增加 22%，只能说明顺序，不能可靠分账剩余 gap。Stage D v1
+增加默认关闭的 deferred CUDA-event collector：热路径只 record/query/reuse event，不做
+同步；只有所有 Attention session drain 后的 stats capture 才允许 blocking flush。collector
+按线程隔离、内部加锁，event pair 用 FIFO deque 摊销回收。
+
+当前 scope 明确限定为 `attention_process_critical_chain`，只记录同一 Attention 进程可完整
+导出的四段，不声称覆盖 Projection：
+
+1. QKV receiver 上的 stream-ordered ready wait；
+2. `reshape_and_cache_flash` KV append；
+3. paged FlashAttention；
+4. Attention sender 上的 output P2P copy。
+
+finalizer 在开关启用时逐 Attention 实例 fail closed：要求 collector 存在，pending/drop/error
+均为 0，四个 span 均存在，并分别精确匹配 peer batch、实际 append 和 compute counter。
+其中首轮每层有一次无需追加 KV 的合法 compute，故 KV append 合同是
+`fast_path_hits + fallbacks`，不是全部 compute calls。
+
+单次 diagnostic quick 的 cache、routing、session、strict log 和输出 digest Gate 全部通过。
+四段计数精确为 `18432 / 18360 / 18432 / 18432`，pending/drop/error 均为 0。相对当前
+clean PAP reference 的扰动如下：
+
+| Round | clean PAP TPOT | deferred trace TPOT | 相对扰动 |
+| --- | ---: | ---: | ---: |
+| 1 | 30.196 ms | 30.836 ms | +2.12% |
+| 2 | 30.449 ms | 30.987 ms | +1.77% |
+
+每层 GPU duration 分布为：
+
+| Attention 进程区段 | mean | p50 | p90 | p99 |
+| --- | ---: | ---: | ---: | ---: |
+| QKV ready wait | 0.545 ms | 0.567 ms | 0.572 ms | 0.577 ms |
+| KV append | 0.009 ms | 0.008 ms | 0.012 ms | 0.017 ms |
+| paged FlashAttention | 0.192 ms | 0.191 ms | 0.191 ms | 0.218 ms |
+| output P2P copy | 0.007 ms | 0.007 ms | 0.010 ms | 0.011 ms |
+
+结论是 KV append、FA kernel 和 output raw P2P copy 都不能解释剩余约
+`5.27 ms/token`；最大可见区段已经收敛到 Projection→Attention 的 QKV ready chain。
+但 `0.567 ms/layer` 不能直接称为通信开销：doorbell 在 Projection enqueue copy/signal
+后即可到达，Attention stream wait 还会包含源 QKV projection、norm/RoPE、源 tensor
+readiness 和 MPS/CUDA 调度尾部，而这些计算的一部分在 PD 中同样存在。
+
+因此下一步不是直接改 copy API，而是用同一种 deferred event 方法从 Projection 进程导出
+`pre-attention compute`、QKV P2P copy 和 output ready wait，再把 QKV ready chain 拆成
+“PD 也必须支付的计算”与“PAP 新增的 handoff/scheduling”。只有后者才是下一轮优化预算。
+
+## 12. 当前决策与后续
 
 1. north-star PAP runner 显式固定 `local_fast`，避免依赖手工环境变量；
 2. v2 PD reference 保持 `7e81e2d10`；当前 PAP 默认实现和 reference 为 Stage C
    `0727ed946`；
 3. Stage A bulk metadata、Stage B generation-aware slot-plan 和 Stage C topology-token
    fast key 均已完成 clean formal；
-4. 下一步重新 profile Stage C 后约 `5.0–5.3 ms/token` 的剩余 gap，只接受可分账的
-   单变量 A/B；优先检查逐层 GPU/doorbell/append submit-wait 串行链；
-5. 不做 MPS、ring slot 或 copy API 扫描；只有 profiler 再次证明 CPU timeline 主导时，
-   才进入更大规模的 GPU-only timeline 或同进程双 GPU executor；
+4. Stage D v1 已排除 KV append、FA 本体和 output raw P2P copy；下一步只拆解
+   Projection→Attention QKV ready chain，并区分必要 Projection 计算与 PAP 新增等待；
+5. 不做 MPS、ring slot 或 copy API 扫描；若 QKV source compute/copy 之外仍有稳定
+   stream-wait residual，再做 source-stream handoff 单变量 A/B；若 residual 很小，则剩余
+   gap 是 C1 下的逐层 stage bubble，应转向 cohort/pipeline 而不是继续微调通信；
 6. async prefill import 的 descriptor/epoch/readiness 修复单列为正确性工作，不与同步
    north-star 性能优化混跑。

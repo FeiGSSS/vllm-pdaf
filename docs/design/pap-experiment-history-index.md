@@ -56,7 +56,7 @@
 | 任意 x:y correctness | 1PA1P、1PA2P、2PA1P、3PA2P active-peer smoke | pair、membership、routing、correctness、drain 全部通过 |
 | 多轮 exact-token | expected/actual hit `160/160`，decode-derived `32`，cold `0` | 第一轮 decode KV 可被第二轮原生 APC 命中 |
 | 多轮 Qwen3 Chat | expected/actual hit `176/176`，decode-derived `48`，cold `0` | thinking 模板下真实 messages 保持完整 materialized LCP |
-| 1PA1P 16K 两轮北极星 | Round2 PD/PAP TTFT `267.27/224.49 ms`，TPOT `25.18/30.45 ms` | Stage C PAP/PD TPOT `1.209x`；fast-key 全扫描减少 `36x`，三次 exact cache/audit 通过 |
+| 1PA1P 16K 两轮北极星 | Round2 PD/PAP TTFT `267.27/224.49 ms`，TPOT `25.18/30.45 ms` | Stage C PAP/PD TPOT `1.209x`；Stage D 低扰动 trace 将剩余热点收敛到 QKV ready chain |
 
 以上各数字的工作负载和原始证据分别记录在 `M6`、`M9`、`M10` 和实验账本中，
 不能脱离 workload 直接互相比较。
@@ -461,6 +461,7 @@ baseline 混报。
 - `1ff0acee8` Document clean PAP route-copy baseline；
 - `d8bce2e6c` Document clean active-peer PAP baseline；
 - `043339691` Add strict multi-turn cache audit。
+- `ad95c8c12` Add deferred PAP CUDA critical-path tracing。
 
 #### 关键实验与证据
 
@@ -469,6 +470,8 @@ baseline 混报。
 - `PAP-20260710-QPS4-PD-AB`：降低 QPS 后区分 fixed TPOT 与 queue-driven TTFT；
 - `PAP-20260711-ACTIVE-PEER`：clean 多轮 + strict routing/correctness/drain；
 - `PAP-20260711-MULTITURN-EXACT/CHAT`：warm/cold cache salt 和 token-ID 等价性。
+- `PAP-20260712-DEFERRED-GPU-TRACE`：session drain 后统一回收 CUDA events，trace
+  TPOT 扰动约 2%，并对 span/counter 完整性 fail closed。
 
 #### 负结果与被替代方案
 
@@ -526,6 +529,7 @@ CPU copy、无 per-row temporary tensor、无隐式全局同步。
 - `6bc383dab` Vectorize PAP paged attention metadata；
 - `c134bc3d9` Make PAP slot plans generation aware；
 - `0727ed946` Use topology tokens for PAP metadata cache。
+- `ad95c8c12` Add deferred Attention critical-chain CUDA timing。
 
 #### 关键实验与证据
 
@@ -544,6 +548,10 @@ CPU copy、无 per-row temporary tensor、无隐式全局同步。
 - `PAP-20260712-METADATA-FAST-KEY`：三对交替 OFF/ON 的 Round2 TPOT
   paired 变化为 `-1.39%/-1.33%/-1.41%`；完整 block-ID 扫描减少 `36x`，clean
   formal Round1/Round2 TPOT 为 `30.196/30.449 ms`。
+- `PAP-20260712-DEFERRED-GPU-TRACE`：相对 clean reference 的 Round1/Round2 TPOT
+  扰动仅 `+2.12%/+1.77%`；每层 p50 为 QKV ready `0.567 ms`、KV append
+  `0.008 ms`、paged FA `0.191 ms`、output P2P copy `0.007 ms`，四段计数完整且无
+  pending/drop/error。
 
 #### 负结果与被替代方案
 
@@ -557,9 +565,11 @@ CPU copy、无 per-row temporary tensor、无隐式全局同步。
 #### 当前结论与边界
 
 same-node 固定开销已把短上下文 QPS4 TPOT 收敛到 PD 的约 `1.15x`；16K 两轮 Stage C
-把 Round1/Round2 TPOT 收敛到约 `1.20x/1.21x`。下一步用新 profiler 分解剩余约
-`5.0–5.3 ms/token`，再判断是否值得投入 cross-layer GPU-only timeline 或同进程双 GPU
-executor；当前没有实现跨 layer 混合 Attention batch。
+把 Round1/Round2 TPOT 收敛到约 `1.20x/1.21x`。Stage D 已排除 KV append、paged FA
+本体和 output raw P2P copy，剩余最大可见区段是每层约 `0.567 ms` 的 QKV ready wait。
+该值仍混合了 Projection 端必要 QKV 计算和 PAP handoff；下一步必须先从 Projection 进程
+导出 source compute/copy timing，不能直接把全部 wait 记为通信开销。当前没有实现跨
+layer 混合 Attention batch。
 
 #### 深入阅读与原始证据
 
@@ -811,6 +821,7 @@ APC longest-prefix lookup 就能重挂这些 blocks。最后 sampled token 和 p
 | `PAP-20260712-METADATA-BULK` | M6/M7/M10 | paged-FA miss 的逐元素 CUDA metadata 写 → bulk tensor build；同一 16K/2-turn/C1 PAP formal | `6bc383dab`；clean 三轮 | Round2 TTFT `235.39 -> 218.26 ms`、TPOT `39.128 -> 30.585 ms`（`-21.83%`），PAP/PD TPOT `1.215x`；三轮 exact cache/output/audit 稳定；**接受并晋升 PAP reference** | [北极星记录](pap-pd-multiturn-north-star-20260712.md)；`$PAP_REPO_RESULTS/20260712_171755_6bc383dab_pap_multiturn_formal` |
 | `PAP-20260712-TOPOLOGY-GENERATION` | M6/M7/M10 | request 级永久 topology latch → prefix activation + session epoch + generation/topology ID；同一 16K/2-turn/C1 PAP formal | `c134bc3d9`；clean 三轮 | slot `hits/misses/mismatch 8925/255/1 -> 17850/510/0`；Round1 TPOT `35.593 -> 30.521 ms`（-14.25%），Round2 `30.780 ms`（+0.64%，neutral）；conversation -5.91%；**接受为默认并晋升当前 reference** | [北极星记录](pap-pd-multiturn-north-star-20260712.md)；`$PAP_REPO_RESULTS/20260712_181613_c134bc3d9_pap_multiturn_formal` |
 | `PAP-20260712-METADATA-FAST-KEY` | M6/M7/M10 | cache hit 每层扫描完整 block table → process-unique topology token + seq-len key；同代码 OFF/ON 三对与 clean formal | `0727ed946`；controlled 六轮 + clean 三轮 | OFF/ON Round2 TPOT `30.848 -> 30.419 ms`（-1.39%），三对均改善；block IDs scanned `18994176 -> 527616`（`36x`）；clean TPOT R1/R2 `30.196/30.449 ms`，为 PD `1.203x/1.209x`；比较器仍为 neutral；**接受默认并晋升当前 reference，不宣称显著收益** | [北极星记录](pap-pd-multiturn-north-star-20260712.md)；`$PAP_REPO_RESULTS/20260712_stagec_{off,on}{1,2,3}`；`$PAP_REPO_RESULTS/20260712_201947_0727ed946_pap_multiturn_formal` |
+| `PAP-20260712-DEFERRED-GPU-TRACE` | M6/M7 | 每层同步 CUDA trace → deferred event record/query + drain 后 flush；16K/2-turn/C1 quick | `ad95c8c12`；dirty diagnostic | trace TPOT 扰动 R1/R2 `+2.12%/+1.77%`；QKV ready p50 `0.567 ms/layer`，FA `0.191`、append `0.008`、output copy `0.007`；四段 count 精确、drop/error 为 0；**接受诊断工具，下一步只拆 Projection→Attention QKV chain** | [北极星记录](pap-pd-multiturn-north-star-20260712.md)；`$PAP_REPO_RESULTS/20260712_stagec_deferred_gpu_trace_v1` |
 
 ## 7. 负结果、回滚与被替代路线
 
@@ -848,14 +859,14 @@ APC longest-prefix lookup 就能重挂这些 blocks。最后 sampled token 和 p
 | P6 / 07-10 | `86a7c1273` reliable ACK；`72b0c1598` strict benchmark checks；`87bb1061f` same-node data path | 正确性 fail-closed 后，以 slot-plan 把 1PA1P TPOT 收敛到 PD `1.146x`（QPS4） | M5/M6/M7；账本 P6 |
 | P7 / 07-10..11 | `45c302bb3` arbitrary x:y；`d654f6011` central dispatcher；`12b689d1b` combine；`bdb7a7dc7` route copy；`581387a51` wait metrics；`54bd1a59c` active peer；`d8bce2e6c` clean baseline | 从“能连接多 peer”升级到真正 combine/scatter，并用 active cohort 去除 idle-peer barrier | M8/M9；账本 P7 |
 | P8 / 07-11 | `6a7094c3b` native APC design；`fd723d2e2` eviction order；`c71ccc9df` decode reuse；`043339691` exact audit；`558db3cdd` Projection boundary；`848f321ab` Chat continuity；`ba4d41c5b` validation note | 证明无需 resident session/KV 回传即可命中第一轮 decode blocks | M10；账本 P8 |
-| P9 / 07-12 | `7e81e2d10` v2 timing/gates；`7d0fd13cb` formal references；`6bc383dab` bulk metadata；`c134bc3d9` generation-aware slot-plan；`0727ed946` topology-token fast key | 把 16K 两轮 PD/PAP 固化为可审计 test bed，移除 metadata miss 标量写、chunk topology false mismatch 和 cache-hit 全 block 扫描，并修复 metadata LRU 并发 race | M6/M7/M10；账本 P9 |
+| P9 / 07-12 | `7e81e2d10` v2 timing/gates；`7d0fd13cb` formal references；`6bc383dab` bulk metadata；`c134bc3d9` generation-aware slot-plan；`0727ed946` topology-token fast key；`ad95c8c12` deferred GPU trace | 把 16K 两轮 PD/PAP 固化为可审计 test bed，移除 metadata miss 标量写、chunk topology false mismatch 和 cache-hit 全 block 扫描，并用低扰动 GPU timing 将剩余热点收敛到 QKV ready chain | M6/M7/M10；账本 P9 |
 
 ## 9. 未完成问题与外部依赖
 
 - 多 PA 多轮 cache-aware routing 由未来 Dynamo 等外部路由框架负责；
 - arbitrary x:y 的连接/控制面已支持，但除 2PA2P 外主要是 correctness smoke；
-- cross-layer Attention batch、GPU-only cross-process timeline 和同进程双 GPU executor
-  尚未通过 profiler gate；
+- cross-layer Attention batch 和同进程双 GPU executor 尚未通过 profiler gate；Attention
+  进程 GPU timeline 已闭合，Projection source compute/copy 的跨进程导出尚未完成；
 - 同步 chunked Prefill 的 topology generation 已闭环；异步 import 尚缺 unified descriptor
   字段透传、readiness failed 标记和 session-epoch queue guard，当前默认关闭；
 - 2PA2P 已达到 `2x PD`，但更高拓扑、不同模型和高 QPS 的普适性仍需实验；

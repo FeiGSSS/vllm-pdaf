@@ -108,6 +108,17 @@ hit/miss split. Relative to Stage B formal, round-one/round-two TPOT improved
 so it is promoted as the current correct default and reference, not described
 as a statistically large performance win.
 
+Stage D diagnostic commit `ad95c8c12` adds deferred CUDA-event timing without
+changing the default path. The quick run at
+`results/runs/20260712_stagec_deferred_gpu_trace_v1` increased round-one and
+round-two TPOT by only `2.12%/1.77%`, versus roughly 22% for the old
+per-layer-synchronize trace. It recorded exact span counts with zero pending,
+drop, or error records. Per-layer p50 durations were `0.567 ms` for QKV ready
+wait, `0.008 ms` for KV append, `0.191 ms` for paged FlashAttention, and
+`0.007 ms` for output P2P copy. This is diagnostic evidence only and does not
+replace `pap_reference.json`; the next trace must split Projection-side QKV
+compute/readiness from actual handoff overhead.
+
 Exact-token signatures are also tracked. All three repetitions within each
 architecture are deterministic, all prompt digests match, and round-one PD/PAP
 outputs match exactly. Round-two PAP is deterministic but its output digest
