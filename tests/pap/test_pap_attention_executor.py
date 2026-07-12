@@ -69,6 +69,28 @@ class _ASGITestClient:
         return self.request("DELETE", url, **kwargs)
 
 
+def _make_unified_state(
+    torch_module: Any,
+    *,
+    block_ids: tuple[int, ...],
+    seq_len: int,
+    lease_id: str,
+) -> PAPUnifiedPagedKVState:
+    return PAPUnifiedPagedKVState(
+        kv_cache=torch_module.zeros((1, 2, 1, 1, 1)),
+        block_ids=block_ids,
+        prefix_len=seq_len,
+        seq_len=seq_len,
+        capacity_tokens=seq_len + 1,
+        writable_start_token=seq_len,
+        writable_end_token=seq_len + 1,
+        lease_id=lease_id,
+        block_size=16,
+        num_kv_heads=1,
+        layout="NHD",
+    )
+
+
 def test_offload_exec_batch_rows_uses_template_without_items() -> None:
     descriptor = PAPOffloadExecBatchDescriptor(
         layer_name="layer0",
@@ -164,6 +186,162 @@ def test_unified_paged_flash_metadata_reuses_identical_decode_signature(
     assert second.block_table.data_ptr() == first.block_table.data_ptr()
     assert second.seq_lens.data_ptr() == first.seq_lens.data_ptr()
     assert second.cu_seqlens_q.data_ptr() == first.cu_seqlens_q.data_ptr()
+
+
+def test_unified_paged_flash_metadata_avoids_scalar_tensor_writes_on_miss(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import torch
+    from torch.utils._python_dispatch import TorchDispatchMode
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    class ScalarCopyCounter(TorchDispatchMode):
+        def __init__(self) -> None:
+            super().__init__()
+            self.scalar_tensor_writes = 0
+
+        def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+            if kwargs is None:
+                kwargs = {}
+            if func is torch.ops.aten.copy_.default and args[0].ndim == 0:
+                self.scalar_tensor_writes += 1
+            return func(*args, **kwargs)
+
+    monkeypatch.setenv("PAP_UNIFIED_MD_CACHE_LIMIT", "0")
+    executor_module.reset_unified_paged_flash_metadata_cache()
+    block_ids = tuple(range(1024))
+    state = _make_unified_state(
+        torch,
+        block_ids=block_ids,
+        seq_len=16384,
+        lease_id="lease-long",
+    )
+    counter = ScalarCopyCounter()
+
+    with counter:
+        metadata = build_unified_paged_flash_metadata(
+            states=[state],
+            device=torch.device("cpu"),
+        )
+
+    assert counter.scalar_tensor_writes == 0
+    assert metadata.block_table.shape == (1, 1024)
+    assert metadata.block_table.dtype == torch.int32
+    assert metadata.seq_lens.dtype == torch.int32
+    assert metadata.cu_seqlens_q.dtype == torch.int32
+    assert metadata.block_table.device == torch.device("cpu")
+    assert metadata.block_table.is_contiguous()
+    assert metadata.block_table.tolist() == [list(block_ids)]
+    assert metadata.seq_lens.tolist() == [16384]
+    assert metadata.max_seq_len == 16384
+
+
+def test_unified_paged_flash_metadata_pads_ragged_rows() -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    executor_module.reset_unified_paged_flash_metadata_cache()
+    states = [
+        _make_unified_state(
+            torch,
+            block_ids=block_ids,
+            seq_len=seq_len,
+            lease_id=f"lease-{index}",
+        )
+        for index, (block_ids, seq_len) in enumerate(
+            (
+                ((3, 5, 7), 40),
+                ((11,), 11),
+                ((13, 17), 25),
+            )
+        )
+    ]
+
+    metadata = build_unified_paged_flash_metadata(
+        states=states,
+        device=torch.device("cpu"),
+    )
+
+    assert metadata.block_table.tolist() == [
+        [3, 5, 7],
+        [11, 11, 11],
+        [13, 17, 17],
+    ]
+    assert metadata.seq_lens.tolist() == [40, 11, 25]
+    assert metadata.cu_seqlens_q.tolist() == [0, 1, 2, 3]
+    assert metadata.max_seq_len == 40
+
+
+def test_unified_paged_flash_metadata_key_uses_unpadded_rows() -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    executor_module.reset_unified_paged_flash_metadata_cache()
+
+    def build(rows: tuple[tuple[int, ...], ...]):
+        states = [
+            _make_unified_state(
+                torch,
+                block_ids=row,
+                seq_len=8,
+                lease_id=f"lease-{index}",
+            )
+            for index, row in enumerate(rows)
+        ]
+        return build_unified_paged_flash_metadata(
+            states=states,
+            device=torch.device("cpu"),
+        )
+
+    first = build(((7,), (10, 11)))
+    second = build(((7, 7), (10, 11)))
+
+    assert torch.equal(first.block_table, second.block_table)
+    assert executor_module.unified_paged_flash_metadata_cache_stats() == {
+        "hits": 0,
+        "misses": 2,
+        "entries": 2,
+    }
+    assert first.block_table.data_ptr() != second.block_table.data_ptr()
+
+
+def test_unified_paged_flash_metadata_preserves_lru_recency(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    monkeypatch.setenv("PAP_UNIFIED_MD_CACHE_LIMIT", "2")
+    executor_module.reset_unified_paged_flash_metadata_cache()
+
+    def build(block_id: int):
+        state = _make_unified_state(
+            torch,
+            block_ids=(block_id,),
+            seq_len=8,
+            lease_id=f"lease-{block_id}",
+        )
+        return build_unified_paged_flash_metadata(
+            states=[state],
+            device=torch.device("cpu"),
+        )
+
+    build(1)
+    first_b = build(2)
+    build(1)
+    build(3)
+    second_b = build(2)
+
+    assert executor_module.unified_paged_flash_metadata_cache_stats() == {
+        "hits": 1,
+        "misses": 4,
+        "entries": 2,
+    }
+    assert first_b.block_table.data_ptr() != second_b.block_table.data_ptr()
 
 
 def test_attention_executor_declares_offload_exec_zmq_port() -> None:

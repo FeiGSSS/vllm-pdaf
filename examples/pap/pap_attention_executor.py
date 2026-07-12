@@ -635,20 +635,20 @@ def build_unified_paged_flash_metadata(
         return cached
 
     _UNIFIED_MD_CACHE_MISSES += 1
-    block_table = torch.empty(
-        (batch_size, max_blocks),
+    padded_block_rows = [
+        block_row + (block_row[-1],) * (max_blocks - len(block_row))
+        for block_row in block_rows
+    ]
+    block_table = torch.tensor(
+        padded_block_rows,
         dtype=torch.int32,
         device=device,
     )
-    seq_lens = torch.empty((batch_size,), dtype=torch.int32, device=device)
-    for row_index, block_row in enumerate(block_rows):
-        last_block = int(block_row[-1])
-        for column_index in range(max_blocks):
-            if column_index < len(block_row):
-                block_table[row_index, column_index] = block_row[column_index]
-            else:
-                block_table[row_index, column_index] = last_block
-        seq_lens[row_index] = seq_lens_list[row_index]
+    seq_lens = torch.tensor(
+        seq_lens_list,
+        dtype=torch.int32,
+        device=device,
+    )
     metadata = PAPPagedFlashMetadata(
         block_table=block_table,
         seq_lens=seq_lens,
