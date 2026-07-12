@@ -46,7 +46,7 @@ The formal medians are:
 
 ```text
 test/baseline/pap/results/runs/
-  20260712_181613_c134bc3d9_pap_multiturn_formal/
+  20260712_201947_0727ed946_pap_multiturn_formal/
 ```
 
 All three repetitions hit the exact `16272`-token second-turn cache boundary,
@@ -55,12 +55,12 @@ passed the strict service-log audit. The formal medians are:
 
 | Round | TTFT (ms) | TPOT (ms) | PAP/PD TTFT | PAP/PD TPOT |
 | --- | ---: | ---: | ---: | ---: |
-| 1 | 5451.346 | 30.521 | 0.643x | 1.216x |
-| 2 | 224.747 | 30.780 | 0.841x | 1.222x |
+| 1 | 5460.711 | 30.196 | 0.644x | 1.203x |
+| 2 | 224.491 | 30.449 | 0.840x | 1.209x |
 
 The round-two north-star boundary is `< 50.366 ms/token`; PAP is
-`19.586 ms/token` below it. The remaining absolute PAP/PD gap is
-`5.597 ms/token`. Round-two TPOT was `30.780 / 30.455 / 30.781 ms` across
+`19.917 ms/token` below it. The remaining absolute PAP/PD gap is
+`5.266 ms/token`. Round-two TPOT was `30.449 / 30.385 / 30.474 ms` across
 the three repetitions; the output signatures and exact `16272`-token hit were
 identical in all three.
 
@@ -90,7 +90,23 @@ to Stage A, round-one TPOT improved `14.25%`, round-two TPOT changed only
 `+0.64%`, and two-turn conversation latency improved `5.91%` to `0.985x` PD.
 The comparator classified this as neutral because its primary round-two TPOT
 change stayed inside the 3% noise band; it is promoted as the clean baseline
-for the accepted default implementation, not claimed as a round-two win.
+for that accepted implementation, not claimed as a round-two win.
+
+Stage C commit `0727ed946` replaces metadata cache-hit block-table scans with
+process-unique topology tokens. Unknown or mixed state still falls back to the
+exact full key. It also serializes the process-global metadata LRU to remove a
+real peer-thread `get -> move_to_end` eviction race, while keeping tensor
+construction outside the lock. In the alternating three-pair controlled A/B,
+round-two TPOT improved `1.39%` and conversation latency improved `1.03%`;
+all three paired TPOT deltas were between `-1.33%` and `-1.41%`.
+
+Each clean formal repetition recorded `17920` fast-key hits and only `512`
+full scans. Block IDs examined fell from `18994176` in the disabled control to
+`527616`, exactly `36x` fewer, without changing the `17920/512` metadata
+hit/miss split. Relative to Stage B formal, round-one/round-two TPOT improved
+`1.06%/1.08%`. This remains below the comparison policy's 3% improvement band,
+so it is promoted as the current correct default and reference, not described
+as a statistically large performance win.
 
 Exact-token signatures are also tracked. All three repetitions within each
 architecture are deterministic, all prompt digests match, and round-one PD/PAP

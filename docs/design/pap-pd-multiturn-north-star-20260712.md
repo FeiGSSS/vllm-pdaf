@@ -2,7 +2,7 @@
 
 日期：2026-07-12
 
-状态：Stage A/B 均已完成 clean formal；generation-aware slot-plan 已闭环
+状态：Stage A/B/C 均已完成 clean formal；当前 PAP reference 为 `0727ed946`
 
 ## 1. 目的
 
@@ -266,13 +266,83 @@ topology 冲突仍只计数一次并锁存，只有进入新 activation 才能�
 import；在 descriptor unified 字段透传、readiness failed 标记和 queue session-epoch guard
 补齐前，不应宣称异步 import 已 ABA-safe。
 
-## 10. 当前决策与后续
+## 10. Stage C：topology-token metadata fast key
+
+提交：`0727ed946`。正式原始目录：
+
+```text
+test/baseline/pap/results/runs/
+  20260712_201947_0727ed946_pap_multiturn_formal/
+```
+
+Stage A 消除了 metadata cache miss 上约 1,025 次逐元素 CUDA 写，但 Stage B 的 cache-hit
+路径仍在每一层把约 1,024 个 block IDs 转成 Python tuple，再参与完整 key 查询。CPU
+microbenchmark 中，该 hit 路径每层约 `0.059461 ms`。Stage C 为每个已确认 topology 分配
+进程级单调、不复用的 `slot_topology_id`，并用以下轻量 key 查询稳定 activation：
+
+```text
+(device, ordered[(slot_topology_id, seq_len)])
+```
+
+只有所有 request state 都持有有效 token 时才走 fast key；unknown/mixed state 继续使用完整
+block-table key，保持 fail-closed。`seq_len` 和 row order 仍属于 key，避免不同 decode
+snapshot 或 batch 排列误命中。开关 `PAP_UNIFIED_MD_FAST_KEY` 默认为 1，可在严格 A/B 中
+关闭。
+
+实现审计还发现 metadata `OrderedDict` 是进程全局对象，而多个 peer worker 会并发执行未
+加锁的 `get -> move_to_end`。另一个线程在两步之间淘汰 entry 时可触发 `KeyError`。Stage C
+同时为 metadata/CU cache、LRU 和统计加锁；tensor 构造仍在锁外，写回时重新检查并复用
+并发创建的 entry。topology ID 分配器使用独立锁，metadata cache reset 不会重置它，因而
+release/re-register 后不能 ABA 命中旧 resident entry。
+
+### 10.1 同代码严格 A/B
+
+六次 dirty controlled runs 按 `OFF1/ON1/OFF2/ON2/OFF3/ON3` 交替执行，唯一主变量为
+`PAP_UNIFIED_MD_FAST_KEY`。原始目录为
+`test/baseline/pap/results/runs/20260712_stagec_{off,on}{1,2,3}`。三对结果都通过 exact
+cache、routing、session、fatal-log 和输出 digest Gate。
+
+| 指标 | OFF 中位数 | ON 中位数 | ON 相对 OFF | 三组 paired 变化 |
+| --- | ---: | ---: | ---: | --- |
+| R1 TTFT | 5,470.512 ms | 5,441.417 ms | -0.53% | -0.56%、-1.68%、+0.41% |
+| R1 TPOT | 30.425 ms | 30.193 ms | -0.76% | -0.76%、-0.12%、-1.45% |
+| R2 TTFT | 224.007 ms | 216.548 ms | -3.33% | -3.49%、-3.36%、-1.85% |
+| R2 TPOT | 30.848 ms | 30.419 ms | -1.39% | -1.39%、-1.33%、-1.41% |
+| Conversation | 21,387.490 ms | 21,167.134 ms | -1.03% | -1.08%、-1.03%、-1.14% |
+
+OFF 每次完整扫描 `18,432` 次、共读取 `18,994,176` 个 block IDs；ON 每次只有 `512`
+次完整扫描、读取 `527,616` 个 block IDs，精确减少 `36x`。fast-key lookup/hit 为
+`18,432/17,920`，metadata hit/miss 仍为 `17,920/512`，说明只改变查找成本，没有改变
+cache 语义。CPU hit microbenchmark 降至约 `0.001138 ms/layer`，约 `52x`。
+
+### 10.2 clean formal 与结论
+
+三次正式运行均绑定 clean commit、effective config 和 fast-key runtime counters；输出
+digest、第二轮 `16,272` cached / `146` computed tokens、slot-plan
+`17,850/510/0` 与 Stage B 完全一致。
+
+| Round | 指标 | PD | Stage B | Stage C | Stage C/PD | 相对 Stage B |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | TTFT | 8,483.474 ms | 5,451.346 ms | 5,460.711 ms | 0.644x | +0.17% |
+| 1 | TPOT | 25.101 ms | 30.521 ms | 30.196 ms | 1.203x | -1.06% |
+| 2 | TTFT | 267.273 ms | 224.747 ms | 224.491 ms | 0.840x | -0.11% |
+| 2 | TPOT | 25.183 ms | 30.780 ms | 30.449 ms | 1.209x | -1.08% |
+
+Conversation latency 为 `21,228.436 ms`，相对 Stage B 降 `0.18%`，为 PD 的
+`0.984x`。正式变化小于比较器 3% 阈值，因此分类仍是 `neutral`。它没有达到最初期望的
+3% TPOT 收益，但严格 paired A/B 的 R2 TPOT 三次均稳定改善约 1.4%，同时删除了 36 倍
+重复扫描并修复真实并发 LRU race，因此保留为默认并晋升 reference；不能把它表述为
+显著性能突破。
+
+## 11. 当前决策与后续
 
 1. north-star PAP runner 显式固定 `local_fast`，避免依赖手工环境变量；
-2. v2 PD reference 保持 `7e81e2d10`；当前 PAP 默认实现为 Stage B `c134bc3d9`；
-3. Stage A bulk metadata 与 Stage B generation-aware slot-plan 均已完成 clean formal；
-4. 下一步重新 profile Stage B 后约 `5.6 ms/token` 的剩余 gap，只接受可分账的单变量
-   A/B；优先检查 `prepare_step`、workspace/metadata reuse 和逐层 CPU submit/wait；
+2. v2 PD reference 保持 `7e81e2d10`；当前 PAP 默认实现和 reference 为 Stage C
+   `0727ed946`；
+3. Stage A bulk metadata、Stage B generation-aware slot-plan 和 Stage C topology-token
+   fast key 均已完成 clean formal；
+4. 下一步重新 profile Stage C 后约 `5.0–5.3 ms/token` 的剩余 gap，只接受可分账的
+   单变量 A/B；优先检查逐层 GPU/doorbell/append submit-wait 串行链；
 5. 不做 MPS、ring slot 或 copy API 扫描；只有 profiler 再次证明 CPU timeline 主导时，
    才进入更大规模的 GPU-only timeline 或同进程双 GPU executor；
 6. async prefill import 的 descriptor/epoch/readiness 修复单列为正确性工作，不与同步

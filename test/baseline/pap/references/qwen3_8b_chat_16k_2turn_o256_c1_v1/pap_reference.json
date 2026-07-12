@@ -35,19 +35,20 @@
     "pd_decode_count": 0
   },
   "hardware_signature": "NVIDIA L20x2",
-  "git_commit": "c134bc3d98c3f03597811a493450c58284be3f04",
+  "git_commit": "0727ed946d35a589b828df943c5b0e6fcc1024c7",
   "git_tracked_worktree_dirty": false,
   "implementation": {
     "offload_exec_transport": "local_fast",
-    "direct_mailbox_output": true
+    "direct_mailbox_output": true,
+    "unified_md_fast_key": true
   },
-  "implementation_fingerprint": "2dbbd5559f8eec0aba27dc8c776429a4ecb342a4dae538292df3f12eecb0242b",
+  "implementation_fingerprint": "f287462edeed852a5e096cbd5b3591d19e477ae77263ef3925adb06c42dff3a7",
   "mode": "formal",
   "repetition_count": 3,
   "repetition_ids": [
-    "65afc81168c994a01bdde7f68fb70415415730832ccb8dc34a5806010b9af606",
-    "4808a2bd6e05e3eecdd5ab06e4749f9b1670920c46fda982596430b5c5f877bf",
-    "eeecda205afcdc5269df17f98cff9adf0d0a616146e11f98156e77ac466d4613"
+    "b4bf384e2d251e543216d0cae9a8a98c39d0bc02fb0574b556fc3ec3b4906a8b",
+    "6630caf934890e173d4f91a676305082bbd5e747b4cfd043913286411ac64400",
+    "4447bf55c3a4d2b32807ed083f84f5003d5385bab225acf7121273d8d6dcdc2a"
   ],
   "validity": {
     "status": "passed"
@@ -72,19 +73,23 @@
         "artifacts": {
           "attention_stats": {
             "path": "attention_fast_path_stats.json",
-            "sha256": "c6a98302417686c8ded4ac17fd5e607186d72ff60f6bacad43667fe21df5381d"
+            "sha256": "91f2d3f34714cf16e21e32809ae48ef6c4067afbbc41d02e519295cfe0a55660"
           },
           "correctness_logs": {
             "path": "correctness_audit.env",
             "sha256": "f9a3034cd98003be7d986a25059ba66e605c06c6ea3563409b324384d6c1911a"
           },
+          "effective_config": {
+            "path": "effective_config.env",
+            "sha256": "f67098b12048bbd0b48cff80115444b441635160a79cac452a08ca0624f64db0"
+          },
           "routing": {
             "path": "routing_audit.json",
-            "sha256": "e86a389faebf73d6a51ce9b3aa54cf6eeecd4cb28274dfda95600e28b5f49cf8"
+            "sha256": "a74297aa2a078f1cb86b5e6720c5cb2ed163e175e18d0fceed1079b46d56483d"
           },
           "run_metadata": {
             "path": "run_metadata.json",
-            "sha256": "33487e2d1d13657a6ad961d98b307593172036c99e4a5d75f2ace57a833e989a"
+            "sha256": "41a25beb23aef8ceb03d7d4a08e30af70af7b3c15733cd8b150d765912d54370"
           },
           "session_drain": {
             "path": "session_drain.env",
@@ -111,11 +116,15 @@
         "artifacts": {
           "attention_stats": {
             "path": "attention_fast_path_stats.json",
-            "sha256": "3bd4116206791a23e00f8ba056189f1088b774cb1ef68442dad157044e9076b2"
+            "sha256": "b0754a4f7cb4e883f50cd676ef9557526d403bf26e48e12f1005844b8f2f635b"
           },
           "correctness_logs": {
             "path": "correctness_audit.env",
             "sha256": "f9a3034cd98003be7d986a25059ba66e605c06c6ea3563409b324384d6c1911a"
+          },
+          "effective_config": {
+            "path": "effective_config.env",
+            "sha256": "ac5150d528e25eb91d3663ffa21f9546d2eed04c243225d060343b9ded17eb71"
           },
           "routing": {
             "path": "routing_audit.json",
@@ -123,7 +132,7 @@
           },
           "run_metadata": {
             "path": "run_metadata.json",
-            "sha256": "7d7149b9af4509390d57d3d0aa6d28bf21cd5e157aa7168a0fb1f5794cf9c4e0"
+            "sha256": "c6c923e25e659ed8ea50b926cb2a5b7dd5a3b6e7d84b087f06a4177f96b9055a"
           },
           "session_drain": {
             "path": "session_drain.env",
@@ -150,19 +159,23 @@
         "artifacts": {
           "attention_stats": {
             "path": "attention_fast_path_stats.json",
-            "sha256": "c17a35b608324b30ba8a9e787e0da9d36a629673c5002d70a385368c9122eee2"
+            "sha256": "aee3f416478899b2288f7bff62adfacfff051b8bf04a76d1b7ee880d0acb4a5f"
           },
           "correctness_logs": {
             "path": "correctness_audit.env",
             "sha256": "f9a3034cd98003be7d986a25059ba66e605c06c6ea3563409b324384d6c1911a"
           },
+          "effective_config": {
+            "path": "effective_config.env",
+            "sha256": "794dc31ac07fe76df6d54ac0f5c0b38ee375832376501a65f356fd79814db873"
+          },
           "routing": {
             "path": "routing_audit.json",
-            "sha256": "f9c3072182c351f65a31e12a4038a3b483c9186ed6ae0dbbbfa524510b4a7357"
+            "sha256": "049554dac5413ebd7c9678db538618807c947cb49ad1b71cc0151b48ac7fa5f1"
           },
           "run_metadata": {
             "path": "run_metadata.json",
-            "sha256": "3822067346b537910d5b381951235b7397f968bae85866905182a51d354af093"
+            "sha256": "8819f4df6cb90b0b09739d840c80aa2c7ae3411ee310c0c65e48ed6f86cc32d7"
           },
           "session_drain": {
             "path": "session_drain.env",
@@ -182,86 +195,86 @@
   },
   "metrics": {
     "round_1": {
-      "ttft_ms": 5451.345891924575,
-      "tpot_ms": 30.520774184397478,
-      "latency_ms": 13234.143308945931,
-      "eof_latency_ms": 13270.80328494776,
-      "post_token_stream_ms": 37.58939204271883
+      "ttft_ms": 5460.710856947117,
+      "tpot_ms": 30.19608653734858,
+      "latency_ms": 13172.597624012269,
+      "eof_latency_ms": 13247.90741095785,
+      "post_token_stream_ms": 68.78117902670056
     },
     "round_2": {
-      "ttft_ms": 224.74731598049402,
-      "tpot_ms": 30.780405948833362,
-      "latency_ms": 8065.703316009603,
-      "eof_latency_ms": 8105.545338941738,
-      "post_token_stream_ms": 39.84202293213457
+      "ttft_ms": 224.49057607445866,
+      "tpot_ms": 30.44891291772764,
+      "latency_ms": 7980.52873602137,
+      "eof_latency_ms": 8063.654416007921,
+      "post_token_stream_ms": 87.9867309704423
     },
-    "conversation_latency_ms": 21267.626337939873,
-    "conversation_eof_latency_ms": 21304.229719913565
+    "conversation_latency_ms": 21228.43614697922,
+    "conversation_eof_latency_ms": 21284.155678004026
   },
   "raw_metrics": {
     "round_1": {
       "ttft_ms": [
-        5482.340784976259,
-        5451.345891924575,
-        5381.938113947399
+        5460.710856947117,
+        5454.831492039375,
+        5472.595556988381
       ],
       "tpot_ms": [
-        30.541813200084018,
-        30.520774184397478,
-        30.4135683020029
+        30.393105631639415,
+        30.183876827176586,
+        30.19608653734858
       ],
       "latency_ms": [
-        13270.503150997683,
-        13234.143308945931,
-        13137.398030958138
+        13210.952793015167,
+        13151.720082969405,
+        13172.597624012269
       ],
       "eof_latency_ms": [
-        13363.924253964797,
-        13270.80328494776,
-        13174.987423000857
+        13247.90741095785,
+        13220.501261996105,
+        13256.669234950095
       ],
       "post_token_stream_ms": [
-        93.42110296711326,
-        36.65997600182891,
-        37.58939204271883
+        36.9546179426834,
+        68.78117902670056,
+        84.07161093782634
       ]
     },
     "round_2": {
       "ttft_ms": [
-        224.74731598049402,
-        230.73995695449412,
-        216.5640479652211
+        216.05594200082123,
+        227.5642870226875,
+        224.49057607445866
       ],
       "tpot_ms": [
-        30.780405948833362,
-        30.455227827598506,
-        30.780938306056402
+        30.44891291772764,
+        30.384719207901142,
+        30.474300580281838
       ],
       "latency_ms": [
-        8073.750832933001,
-        7996.823052992113,
-        8065.703316009603
+        7980.52873602137,
+        7975.667685037479,
+        7995.437224046327
       ],
       "eof_latency_ms": [
-        8170.746003976092,
-        8033.426434965804,
-        8105.545338941738
+        8018.892474938184,
+        8063.654416007921,
+        8091.355804004706
       ],
       "post_token_stream_ms": [
-        96.99517104309052,
-        36.603381973691285,
-        39.84202293213457
+        38.36373891681433,
+        87.9867309704423,
+        95.91857995837927
       ]
     },
     "conversation_latency_ms": [
-      21437.675086897798,
-      21267.626337939873,
-      21240.69073901046
+      21228.43614697922,
+      21196.168947033584,
+      21252.106458996423
     ],
     "conversation_eof_latency_ms": [
-      21534.67025794089,
-      21304.229719913565,
-      21280.532761942595
+      21266.799885896035,
+      21284.155678004026,
+      21348.025038954802
     ]
   },
   "correctness_signatures": {
@@ -277,10 +290,10 @@
     }
   },
   "source_results": [
-    "test/baseline/pap/results/runs/20260712_181613_c134bc3d9_pap_multiturn_formal/rep1/result.json",
-    "test/baseline/pap/results/runs/20260712_181613_c134bc3d9_pap_multiturn_formal/rep2/result.json",
-    "test/baseline/pap/results/runs/20260712_181613_c134bc3d9_pap_multiturn_formal/rep3/result.json"
+    "test/baseline/pap/results/runs/20260712_201947_0727ed946_pap_multiturn_formal/rep1/result.json",
+    "test/baseline/pap/results/runs/20260712_201947_0727ed946_pap_multiturn_formal/rep2/result.json",
+    "test/baseline/pap/results/runs/20260712_201947_0727ed946_pap_multiturn_formal/rep3/result.json"
   ],
   "reference_architecture": "pap",
-  "created_at": "2026-07-12T18:25:29+08:00"
+  "created_at": "2026-07-12T20:25:15+08:00"
 }
