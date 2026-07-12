@@ -2,8 +2,9 @@
 
 日期：2026-07-13
 
-状态：根因已定位；官方 push 路径已完成 16K 诊断验证；5 轮并发 testbed 已实现，
-正式矩阵结果待本文后续追加。
+状态：根因已定位并校正；官方 push 路径、C1/C2 canary 和 C4 三次交错正式矩阵均已
+完成。完整性能解释见
+[PD Push 校正与 PAP 五轮长上下文性能报告](pd-pap-five-turn-load-results-20260713.md)。
 
 ## 1. 结论
 
@@ -156,11 +157,53 @@ bash .claude/skills/vllm-pap-benchmark/scripts/run_pd_pap_multiturn_load.sh form
 `comparison.json`、`report.md` 和 `testbed.env`；raw service logs、metrics、Git patch
 及每个 request 的结果保留在各 repetition 子目录。
 
-## 5. 仍需回答的问题
+## 5. 已完成矩阵与当前结论
 
-1. 在 C4 下，PD push 的 Prefill compute、KV push 与 Decode 是否形成新的排队瓶颈；
-2. PAP 的 R1 TTFT 是否因 PA 上 70% MPS 的长 prefill 明显慢于独占 GPU 的 PD Prefill；
-3. R2–R5 TPOT 的约 `1.2x` 差距在多会话 cohort 下会扩大还是由更大 Projection batch
-   抵消；
-4. V1 cross-layer runner 相对旧 V2 的约 6%–7% TPOT 代价能否在不破坏单 descriptor
-   CUDA IPC push 的前提下消除。
+### 5.1 Quick 容量阶梯
+
+代码基线均为 `a646ae032`，每个请求 16K 首轮、5 轮、每轮 o256：
+
+| 并发 | R1 TTFT PAP/PD | R1 TPOT PAP/PD | R2–R5 TTFT PAP/PD | R2–R5 TPOT PAP/PD | 状态 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| C1 | 1.729x | 1.141x | 1.024x | 1.136x | 5/5 两侧完成，Gate 通过 |
+| C2 | 1.453x | 1.150x | 0.865x | 1.161x | 10/10 两侧完成，Gate 通过 |
+| C4 | 1.368x | 1.105x | 0.796x | 1.214x | 20/20 两侧完成，Gate 通过 |
+
+原始目录：
+
+```text
+test/baseline/pap/results/runs/
+  20260713_025857_a646ae032_pd_pap_load_c1_quick/
+  20260713_025358_a646ae032_pd_pap_load_c2_quick/
+  20260713_030234_a646ae032_pd_pap_load_c4_quick/
+```
+
+### 5.2 C4 formal
+
+三次完整重启按 `PD, PAP, PAP, PD, PD, PAP` 交错执行。每侧共 60 个请求，实际
+HTTP/decode peak concurrency 均为 4，所有 correctness、cache、routing、NIXL、session
+drain 和 fatal-log Gate 通过，无 OOM。
+
+| Scope | 指标 | PD median | PAP median | PAP/PD |
+| --- | --- | ---: | ---: | ---: |
+| R1 | TTFT | 8140.702 ms | 11108.313 ms | 1.365x |
+| R1 | TPOT | 35.456 ms | 39.218 ms | 1.106x |
+| R2–R5 | TTFT | 306.166 ms | 248.321 ms | 0.811x |
+| R2–R5 | TPOT | 42.115 ms | 51.375 ms | 1.220x |
+
+每次 PD repetition 都有 20 次成功 push、9360 MiB、24 descriptors、0 failure，官方
+累计吞吐为 `4095.6–4137.1 MiB/s`。这比单流 `24.5 GiB/s` 低，是四个首轮 2.2 GiB
+请求在两个到达窗口内竞争链路和注册/调度资源的真实并发结果；后续小增量仍达到约
+`12.4–21.9 GiB/s`，没有回到 TCP emulation。
+
+正式目录：
+
+```text
+test/baseline/pap/results/runs/
+  20260713_031215_a646ae032_pd_pap_load_c4_formal/
+```
+
+当前结论是：校正 PD 后，PAP 不再具有旧 pull 基线制造的首轮 TTFT 优势；PAP 的真实
+多轮收益是稳态 TTFT，因为 PA 原地保留 decode KV。PAP 稳态 TPOT 则稳定为 PD 的
+约 `1.22x`，下一阶段应继续分析 Projection→Attention QKV ready chain 和 cohort/MPS
+竞争，而不是继续调整 PD 传输配置。

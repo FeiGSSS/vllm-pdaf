@@ -5,6 +5,12 @@
 状态：Stage A/B/C 已完成 clean formal，Stage D v1 诊断已完成；当前 PAP reference
 仍为 `0727ed946`
 
+> **2026-07-13 基线校正：** 本文的 PAP 内部 Stage A/B/C/D A/B 和绝对耗时仍是有效
+> 历史证据，但本文使用的 PD pull connector 后续确认走 UCX TCP software emulation，
+> 因而本文中的跨架构 PAP/PD 比值已被 corrected-push 基线替代。当前五轮、C4 正式
+> 比较见
+> [PD Push 校正与 PAP 五轮长上下文性能报告](pd-pap-five-turn-load-results-20260713.md)。
+
 ## 1. 目的
 
 本记录固定一个可重复、可审计的 1P1D PD 与 1PA1P PAP 多轮性能比较，并把它作为后续
