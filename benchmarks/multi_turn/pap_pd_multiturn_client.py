@@ -326,6 +326,19 @@ def consume_sse_lines(
         for choice in choices:
             if not isinstance(choice, Mapping):
                 raise ValueError("SSE choice must be an object")
+            raw_choice_prompt_ids = choice.get("prompt_token_ids")
+            if raw_choice_prompt_ids is not None:
+                if not isinstance(raw_choice_prompt_ids, list):
+                    raise ValueError("choice prompt_token_ids must be a list")
+                current_prompt_ids = [
+                    int(token_id) for token_id in raw_choice_prompt_ids
+                ]
+                if (
+                    prompt_token_ids is not None
+                    and current_prompt_ids != prompt_token_ids
+                ):
+                    raise ValueError("conflicting prompt_token_ids chunks")
+                prompt_token_ids = current_prompt_ids
             raw_token_ids = choice.get("token_ids") or []
             if not isinstance(raw_token_ids, list):
                 raise ValueError("choice token_ids must be a list")

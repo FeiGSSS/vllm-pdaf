@@ -218,10 +218,10 @@ def test_consume_sse_lines_reads_completion_text() -> None:
     lines = [
         _data(
             {
-                "prompt_token_ids": [1],
                 "choices": [
                     {
                         "text": "A",
+                        "prompt_token_ids": [1],
                         "token_ids": [7],
                         "finish_reason": "length",
                     }
