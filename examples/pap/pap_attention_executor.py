@@ -501,6 +501,26 @@ class PAPUnifiedPagedKVState:
     block_size: int
     num_kv_heads: int
     layout: str
+    slot_generation: int = 0
+    slot_topology_id: int = 0
+
+
+PAPUnifiedSlotTopology = tuple[tuple[int, ...], int, str]
+
+
+@dataclass
+class PAPUnifiedSlotActivation:
+    """Generation-bound topology observations for one unified-KV session."""
+
+    prefix_len: int
+    generation: int
+    canonical_topology: PAPUnifiedSlotTopology
+    canonical_topology_id: int
+    topology_ids: dict[PAPUnifiedSlotTopology, int]
+    layer_observations: dict[str, int]
+    expected_layers: frozenset[str] | None = None
+    conflict_latched: bool = False
+    complete: bool = True
 
 
 @dataclass(frozen=True)
@@ -687,8 +707,8 @@ class PAPAttentionRegistry:
         self._unified_paged_kv: dict[str, dict[str, PAPUnifiedPagedKVState]] = {}
         self._session_epochs: dict[str, int] = {}
         self._next_session_epoch = 1
-        self._unified_slot_topologies: dict[str, tuple[tuple[int, ...], int, str]] = {}
-        self._unified_slot_topology_uniform: dict[str, bool] = {}
+        self._unified_slot_activations: dict[str, PAPUnifiedSlotActivation] = {}
+        self._next_slot_topology_id = 1
         self._decode_slot_plan_cache: OrderedDict[tuple[Any, ...], torch.Tensor] = (
             OrderedDict()
         )
@@ -785,6 +805,7 @@ class PAPAttentionRegistry:
         self,
         *,
         session_request_id: str,
+        layer_name: str,
         state: PAPUnifiedPagedKVState,
     ) -> None:
         topology = (
@@ -792,37 +813,130 @@ class PAPAttentionRegistry:
             int(state.block_size),
             str(state.kv_cache.device),
         )
-        existing = self._unified_slot_topologies.get(session_request_id)
-        if existing is None:
-            self._unified_slot_topologies[session_request_id] = topology
-            self._unified_slot_topology_uniform[session_request_id] = True
+        prefix_len = int(state.prefix_len)
+        activation = self._unified_slot_activations.get(session_request_id)
+        if activation is None:
+            topology_id = self._next_slot_topology_id
+            self._next_slot_topology_id += 1
+            activation = PAPUnifiedSlotActivation(
+                prefix_len=prefix_len,
+                generation=1,
+                canonical_topology=topology,
+                canonical_topology_id=topology_id,
+                topology_ids={topology: topology_id},
+                layer_observations={layer_name: topology_id},
+            )
+            self._unified_slot_activations[session_request_id] = activation
+            state.slot_generation = activation.generation
+            state.slot_topology_id = topology_id
             return
-        if existing == topology:
+
+        if prefix_len < activation.prefix_len:
+            raise RuntimeError(
+                "PAP unified KV stale slot activation "
+                f"request_id={session_request_id} layer={layer_name} "
+                f"prefix_len={prefix_len} current={activation.prefix_len}"
+            )
+
+        if prefix_len > activation.prefix_len:
+            expected_layers = activation.expected_layers
+            if expected_layers is None:
+                expected_layers = frozenset(activation.layer_observations)
+            elif not activation.complete:
+                raise RuntimeError(
+                    "PAP unified KV slot activation advanced before all layers "
+                    f"request_id={session_request_id} "
+                    f"prefix_len={activation.prefix_len} next={prefix_len}"
+                )
+            if expected_layers and layer_name not in expected_layers:
+                raise RuntimeError(
+                    "PAP unified KV slot activation contains unexpected layer "
+                    f"request_id={session_request_id} layer={layer_name}"
+                )
+            topology_id = self._next_slot_topology_id
+            self._next_slot_topology_id += 1
+            activation = PAPUnifiedSlotActivation(
+                prefix_len=prefix_len,
+                generation=activation.generation + 1,
+                canonical_topology=topology,
+                canonical_topology_id=topology_id,
+                topology_ids={topology: topology_id},
+                layer_observations={layer_name: topology_id},
+                expected_layers=expected_layers,
+                complete=not expected_layers or expected_layers == {layer_name},
+            )
+            self._unified_slot_activations[session_request_id] = activation
+            state.slot_generation = activation.generation
+            state.slot_topology_id = topology_id
             return
-        if self._unified_slot_topology_uniform.get(session_request_id, False):
+
+        if activation.expected_layers and layer_name not in activation.expected_layers:
+            raise RuntimeError(
+                "PAP unified KV slot activation contains unexpected layer "
+                f"request_id={session_request_id} layer={layer_name}"
+            )
+        topology_id = activation.topology_ids.get(topology)
+        if topology_id is None:
+            topology_id = self._next_slot_topology_id
+            self._next_slot_topology_id += 1
+            activation.topology_ids[topology] = topology_id
+        previous_topology_id = activation.layer_observations.get(layer_name)
+        has_conflict = (
+            topology_id != activation.canonical_topology_id
+            or previous_topology_id not in (None, topology_id)
+        )
+        if has_conflict and not activation.conflict_latched:
             self._decode_slot_topology_mismatches += 1
             logger.warning(
-                "PAP unified KV slot topology differs across layers; "
+                "PAP unified KV slot topology conflicts within one activation; "
                 "disabling cross-layer slot-plan cache request_id=%s",
                 session_request_id,
             )
-        self._unified_slot_topology_uniform[session_request_id] = False
+        activation.conflict_latched = activation.conflict_latched or has_conflict
+        activation.layer_observations[layer_name] = topology_id
+        if activation.expected_layers:
+            activation.complete = activation.expected_layers.issubset(
+                activation.layer_observations
+            )
+        state.slot_generation = activation.generation
+        state.slot_topology_id = topology_id
 
     def _decode_slot_plan_key_locked(
         self,
         *,
         session_request_ids: Sequence[str],
+        layer_name: str,
         decode_seq_lens: Sequence[int],
         device: torch.device,
     ) -> tuple[Any, ...] | None:
-        session_generations: list[tuple[str, int]] = []
+        session_generations: list[tuple[str, int, int, int, int]] = []
         for session_request_id in session_request_ids:
-            if not self._unified_slot_topology_uniform.get(session_request_id, False):
+            activation = self._unified_slot_activations.get(session_request_id)
+            if (
+                activation is None
+                or activation.conflict_latched
+                or not activation.complete
+            ):
                 return None
             epoch = self._session_epochs.get(session_request_id)
             if epoch is None:
                 return None
-            session_generations.append((session_request_id, int(epoch)))
+            state = self._unified_paged_kv.get(session_request_id, {}).get(layer_name)
+            if (
+                state is None
+                or state.slot_generation != activation.generation
+                or state.slot_topology_id != activation.canonical_topology_id
+            ):
+                return None
+            session_generations.append(
+                (
+                    session_request_id,
+                    int(epoch),
+                    activation.prefix_len,
+                    activation.generation,
+                    activation.canonical_topology_id,
+                )
+            )
         return (
             tuple(session_generations),
             tuple(int(seq_len) for seq_len in decode_seq_lens),
@@ -855,8 +969,7 @@ class PAPAttentionRegistry:
         self._prefill_readiness.pop(request_id, None)
         self._unified_paged_kv.pop(request_id, None)
         self._session_epochs.pop(request_id, None)
-        self._unified_slot_topologies.pop(request_id, None)
-        self._unified_slot_topology_uniform.pop(request_id, None)
+        self._unified_slot_activations.pop(request_id, None)
         self._drop_offload_exec_session_entry_cache_locked(request_id)
         lease_id = self._session_lease_ids.pop(request_id, None)
         leased_blocks = self._session_leased_block_ids.pop(request_id, None)
@@ -893,8 +1006,7 @@ class PAPAttentionRegistry:
         self._prefill_readiness.pop(request_id, None)
         self._unified_paged_kv.pop(request_id, None)
         self._session_epochs.pop(request_id, None)
-        self._unified_slot_topologies.pop(request_id, None)
-        self._unified_slot_topology_uniform.pop(request_id, None)
+        self._unified_slot_activations.pop(request_id, None)
         self._drop_offload_exec_session_entry_cache_locked(request_id)
         lease_id = self._session_lease_ids.pop(request_id, None)
         self._session_leased_block_ids.pop(request_id, None)
@@ -1020,6 +1132,7 @@ class PAPAttentionRegistry:
             if all_rows_active:
                 slot_plan_key = self._decode_slot_plan_key_locked(
                     session_request_ids=session_request_ids,
+                    layer_name=layer_name,
                     decode_seq_lens=decode_seq_lens,
                     device=base_v_cache.device,
                 )
@@ -1779,6 +1892,7 @@ class PAPAttentionRegistry:
                 )
                 self._record_unified_slot_topology_locked(
                     session_request_id=session_request_id,
+                    layer_name=layer_name,
                     state=unified_state,
                 )
                 self._unified_paged_kv.setdefault(session_request_id, {})[
