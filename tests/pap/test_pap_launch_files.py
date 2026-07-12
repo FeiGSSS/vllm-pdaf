@@ -124,6 +124,9 @@ def test_pap_runner_supports_multiturn_north_star() -> None:
     assert '--git-tracked-worktree-dirty "${GIT_TRACKED_WORKTREE_DIRTY}"' in text
     assert '--offload-exec-transport "${PAP_OFFLOAD_EXEC_TRANSPORT}"' in text
     assert '--direct-mailbox-output "${PAP_DIRECT_MAILBOX_OUTPUT}"' in text
+    assert '--unified-md-fast-key "${PAP_UNIFIED_MD_FAST_KEY}"' in text
+    assert 'PAP_UNIFIED_MD_FAST_KEY="${PAP_UNIFIED_MD_FAST_KEY:-1}"' in text
+    assert "PAP_UNIFIED_MD_FAST_KEY=%q" in text
     assert '--result "${RUN_ROOT}/result.json"' in text
     assert "validate_north_star_result" in text
     assert "finalize_pap_pd_multiturn.py" in text
@@ -202,6 +205,7 @@ def test_pd_multiturn_reference_bootstrap_uses_unchanged_official_proxy() -> Non
     assert "pap_pd_multiturn_client.py" in text
     assert '--architecture "pd"' in text
     assert '--topology "1p1d"' in text
+    assert "--unified-md-fast-key 0" in text
     assert "CUDA_VISIBLE_DEVICES=1" in text
     assert "CUDA_VISIBLE_DEVICES=2" in text
     assert '"kv_role":"kv_producer"' in text

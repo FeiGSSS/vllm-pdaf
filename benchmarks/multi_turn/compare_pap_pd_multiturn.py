@@ -1117,11 +1117,13 @@ def render_markdown(comparison: Mapping[str, object]) -> str:
         )
         lines.append(
             "- `{label}`: commit `{commit}`, transport `{transport}`, "
-            "direct output `{direct}`, tracked dirty `{dirty}`".format(
+            "direct output `{direct}`, metadata fast key `{fast_key}`, "
+            "tracked dirty `{dirty}`".format(
                 label=label,
                 commit=provenance.get("git_commit"),
                 transport=implementation.get("offload_exec_transport"),
                 direct=implementation.get("direct_mailbox_output"),
+                fast_key=implementation.get("unified_md_fast_key"),
                 dirty=provenance.get("git_tracked_worktree_dirty"),
             )
         )

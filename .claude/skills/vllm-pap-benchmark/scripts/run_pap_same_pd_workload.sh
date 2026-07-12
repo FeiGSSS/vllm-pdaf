@@ -107,6 +107,7 @@ PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT_OUTPUT="${PAP_OFFLOAD_EXEC_DIRECT_QKV_SE
 PAP_NIXL_MAILBOX_INLINE_PUBLISH="${PAP_NIXL_MAILBOX_INLINE_PUBLISH:-1}"
 PAP_NIXL_MAILBOX_BATCH_PLAN="${PAP_NIXL_MAILBOX_BATCH_PLAN:-1}"
 PAP_UNIFIED_MD_CACHE_LIMIT="${PAP_UNIFIED_MD_CACHE_LIMIT:-256}"
+PAP_UNIFIED_MD_FAST_KEY="${PAP_UNIFIED_MD_FAST_KEY:-1}"
 PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT:-256}"
 PAP_ATTENTION_DISPATCH_MODE="${PAP_ATTENTION_DISPATCH_MODE:-legacy}"
 PAP_ATTENTION_DISPATCH_QUEUE_SIZE="${PAP_ATTENTION_DISPATCH_QUEUE_SIZE:-0}"
@@ -178,6 +179,7 @@ export PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT_OUTPUT
 export PAP_NIXL_MAILBOX_INLINE_PUBLISH
 export PAP_NIXL_MAILBOX_BATCH_PLAN
 export PAP_UNIFIED_MD_CACHE_LIMIT
+export PAP_UNIFIED_MD_FAST_KEY
 export PAP_DECODE_SLOT_PLAN_CACHE_LIMIT
 export PAP_ATTENTION_DISPATCH_MODE
 export PAP_ATTENTION_DISPATCH_QUEUE_SIZE
@@ -544,6 +546,7 @@ write_effective_config() {
     printf 'PAP_NIXL_MAILBOX_INLINE_PUBLISH=%q\n' "${PAP_NIXL_MAILBOX_INLINE_PUBLISH}"
     printf 'PAP_NIXL_MAILBOX_BATCH_PLAN=%q\n' "${PAP_NIXL_MAILBOX_BATCH_PLAN}"
     printf 'PAP_UNIFIED_MD_CACHE_LIMIT=%q\n' "${PAP_UNIFIED_MD_CACHE_LIMIT}"
+    printf 'PAP_UNIFIED_MD_FAST_KEY=%q\n' "${PAP_UNIFIED_MD_FAST_KEY}"
     printf 'PAP_DECODE_SLOT_PLAN_CACHE_LIMIT=%q\n' "${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}"
     printf 'PAP_ATTENTION_DISPATCH_MODE=%q\n' "${PAP_ATTENTION_DISPATCH_MODE}"
     printf 'PAP_ATTENTION_DISPATCH_QUEUE_SIZE=%q\n' \
@@ -721,6 +724,7 @@ metadata = {
     "offload_kv_transport": os.environ["PAP_OFFLOAD_KV_TRANSPORT"],
     "batched_route_copy": os.environ["PAP_BATCHED_ROUTE_COPY"] == "1",
     "direct_mailbox_output": os.environ["PAP_DIRECT_MAILBOX_OUTPUT"] == "1",
+    "unified_md_fast_key": os.environ["PAP_UNIFIED_MD_FAST_KEY"] == "1",
     "local_fast_stream_ordered": (
         os.environ["PAP_LOCAL_FAST_STREAM_ORDERED"] == "1"
     ),
@@ -1344,6 +1348,7 @@ case "${PAP_BENCH_CLIENT_MODE}" in
       --git-tracked-worktree-dirty "${GIT_TRACKED_WORKTREE_DIRTY}" \
       --offload-exec-transport "${PAP_OFFLOAD_EXEC_TRANSPORT}" \
       --direct-mailbox-output "${PAP_DIRECT_MAILBOX_OUTPUT}" \
+      --unified-md-fast-key "${PAP_UNIFIED_MD_FAST_KEY}" \
       --document-tokens "${INPUT_LEN}" \
       --append-tokens 120 \
       --output-tokens "${OUTPUT_LEN}" \
@@ -1376,6 +1381,7 @@ if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" ]]; then
     --artifact "routing=${RUN_ROOT}/routing_audit.json" \
     --artifact "correctness_logs=${RUN_ROOT}/correctness_audit.env" \
     --artifact "run_metadata=${RUN_ROOT}/run_metadata.json" \
+    --artifact "effective_config=${RUN_ROOT}/effective_config.env" \
     --artifact \
       "tracked_worktree_patch=${RUN_ROOT}/tracked_worktree.patch" \
     --artifact "tracked_index_patch=${RUN_ROOT}/tracked_index.patch" \

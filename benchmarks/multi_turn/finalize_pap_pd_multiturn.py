@@ -34,6 +34,7 @@ REQUIRED_ARTIFACTS = {
             "correctness_logs",
             "attention_stats",
             "run_metadata",
+            "effective_config",
             "tracked_worktree_patch",
             "tracked_index_patch",
         }
@@ -75,6 +76,33 @@ def _json_mapping(path: Path, name: str) -> Mapping[str, Any]:
     if not isinstance(payload, Mapping):
         raise ValueError(f"{name} artifact must contain a JSON object")
     return payload
+
+
+def _attention_stat_total(
+    attention: Mapping[str, Any],
+    key: str,
+) -> float:
+    instances = attention.get("instances")
+    if instances is None:
+        payloads: Sequence[object] = (attention,)
+    elif isinstance(instances, Sequence) and not isinstance(instances, (str, bytes)):
+        payloads = instances
+    else:
+        raise ValueError("attention stats instances must be a sequence")
+    values: list[float] = []
+    for index, payload in enumerate(payloads):
+        if not isinstance(payload, Mapping):
+            raise ValueError(f"attention stats instance {index} is invalid")
+        stats = payload.get("stats", payload)
+        if not isinstance(stats, Mapping):
+            raise ValueError(f"attention stats instance {index} has no stats")
+        value = stats.get(key)
+        if not isinstance(value, (int, float)):
+            raise ValueError(f"attention stats do not contain numeric {key}")
+        values.append(float(value))
+    if not values:
+        raise ValueError("attention stats contain no instances")
+    return sum(values)
 
 
 def _validate_clean_state(
@@ -119,14 +147,43 @@ def _validate_pap_evidence(
         require_strict=True,
     )
     attention = _json_mapping(artifacts["attention_stats"], "attention stats")
-    compute_calls = attention.get("offload_exec_compute_calls")
-    if not isinstance(compute_calls, (int, float)) or compute_calls <= 0:
+    compute_calls = _attention_stat_total(attention, "offload_exec_compute_calls")
+    if compute_calls <= 0:
         raise ValueError("Attention stats do not contain positive compute calls")
 
     metadata = _json_mapping(artifacts["run_metadata"], "run metadata")
     implementation = result.get("implementation")
     if not isinstance(implementation, Mapping):
         raise ValueError("result implementation is missing")
+    fast_key_enabled = implementation.get("unified_md_fast_key")
+    if not isinstance(fast_key_enabled, bool):
+        raise ValueError("implementation unified_md_fast_key must be boolean")
+    fast_key_lookups = _attention_stat_total(
+        attention,
+        "unified_md_fast_key_lookups",
+    )
+    fast_key_hits = _attention_stat_total(
+        attention,
+        "unified_md_fast_key_hits",
+    )
+    full_key_scans = _attention_stat_total(
+        attention,
+        "unified_md_full_key_scans",
+    )
+    if fast_key_enabled and (fast_key_lookups <= 0 or fast_key_hits <= 0):
+        raise ValueError("metadata fast key has no runtime hit evidence")
+    if not fast_key_enabled and (fast_key_lookups != 0 or fast_key_hits != 0):
+        raise ValueError("disabled metadata fast key recorded runtime lookups")
+    if full_key_scans <= 0:
+        raise ValueError("metadata cache recorded no full-key scans")
+    effective_config = _env_values(artifacts["effective_config"])
+    expected_fast_key = "1" if fast_key_enabled else "0"
+    if effective_config.get("PAP_UNIFIED_MD_FAST_KEY") != expected_fast_key:
+        raise ValueError(
+            "metadata fast-key effective config mismatch: "
+            f"{effective_config.get('PAP_UNIFIED_MD_FAST_KEY')} "
+            f"!= {expected_fast_key}"
+        )
     expected = {
         "git_commit": result.get("git_commit"),
         "git_tracked_worktree_dirty": result.get(
@@ -138,6 +195,7 @@ def _validate_pap_evidence(
         "direct_mailbox_output": implementation.get(
             "direct_mailbox_output"
         ),
+        "unified_md_fast_key": implementation.get("unified_md_fast_key"),
     }
     actual = {key: metadata.get(key) for key in expected}
     if actual != expected:

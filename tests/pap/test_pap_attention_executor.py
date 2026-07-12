@@ -210,11 +210,274 @@ def test_unified_paged_flash_metadata_reuses_identical_decode_signature(
         device=torch.device("cpu"),
     )
 
-    assert cache_stats() == {"hits": 1, "misses": 1, "entries": 1}
+    assert cache_stats() == {
+        "hits": 1,
+        "misses": 1,
+        "entries": 1,
+        "fast_key_lookups": 0,
+        "fast_key_hits": 0,
+        "full_key_scans": 2,
+        "block_ids_scanned": 8,
+    }
     assert arange_calls == 1
     assert second.block_table.data_ptr() == first.block_table.data_ptr()
     assert second.seq_lens.data_ptr() == first.seq_lens.data_ptr()
     assert second.cu_seqlens_q.data_ptr() == first.cu_seqlens_q.data_ptr()
+
+
+def test_unified_paged_flash_metadata_fast_key_avoids_hit_block_scan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    executor_module.reset_unified_paged_flash_metadata_cache()
+    state = _make_unified_state(
+        torch,
+        block_ids=tuple(range(1024)),
+        seq_len=16384,
+        lease_id="lease-long",
+    )
+    state.slot_generation = 3
+    state.slot_topology_id = 41
+    coerce_calls = 0
+    real_coerce = executor_module._coerce_block_id
+
+    def counted_coerce(value: Any) -> int:
+        nonlocal coerce_calls
+        coerce_calls += 1
+        return real_coerce(value)
+
+    monkeypatch.setattr(executor_module, "_coerce_block_id", counted_coerce)
+    first = build_unified_paged_flash_metadata(
+        states=[state],
+        device=torch.device("cpu"),
+    )
+    second = build_unified_paged_flash_metadata(
+        states=[state],
+        device=torch.device("cpu"),
+    )
+
+    assert second.block_table.data_ptr() == first.block_table.data_ptr()
+    assert coerce_calls == 1024
+    assert executor_module.unified_paged_flash_metadata_cache_stats() == {
+        "hits": 1,
+        "misses": 1,
+        "entries": 1,
+        "fast_key_lookups": 2,
+        "fast_key_hits": 1,
+        "full_key_scans": 1,
+        "block_ids_scanned": 1024,
+    }
+
+
+def test_unified_paged_flash_metadata_fast_key_can_be_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    monkeypatch.setenv("PAP_UNIFIED_MD_FAST_KEY", "0")
+    executor_module.reset_unified_paged_flash_metadata_cache()
+    state = _make_unified_state(
+        torch,
+        block_ids=tuple(range(32)),
+        seq_len=512,
+        lease_id="lease-toggle",
+    )
+    state.slot_generation = 1
+    state.slot_topology_id = 7
+    coerce_calls = 0
+    real_coerce = executor_module._coerce_block_id
+
+    def counted_coerce(value: Any) -> int:
+        nonlocal coerce_calls
+        coerce_calls += 1
+        return real_coerce(value)
+
+    monkeypatch.setattr(executor_module, "_coerce_block_id", counted_coerce)
+    build_unified_paged_flash_metadata(
+        states=[state],
+        device=torch.device("cpu"),
+    )
+    build_unified_paged_flash_metadata(
+        states=[state],
+        device=torch.device("cpu"),
+    )
+
+    assert coerce_calls == 64
+    stats = executor_module.unified_paged_flash_metadata_cache_stats()
+    assert stats["hits"] == 1
+    assert stats["misses"] == 1
+    assert stats["fast_key_lookups"] == 0
+    assert stats["full_key_scans"] == 2
+    assert stats["block_ids_scanned"] == 64
+
+
+def test_unified_paged_flash_metadata_fast_key_snapshots_sequence_length() -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    executor_module.reset_unified_paged_flash_metadata_cache()
+    state = _make_unified_state(
+        torch,
+        block_ids=(3, 5),
+        seq_len=17,
+        lease_id="lease-seq",
+    )
+    state.slot_generation = 2
+    state.slot_topology_id = 99
+
+    first = build_unified_paged_flash_metadata(
+        states=[state],
+        device=torch.device("cpu"),
+    )
+    state.seq_len = 18
+    second = build_unified_paged_flash_metadata(
+        states=[state],
+        device=torch.device("cpu"),
+    )
+    state.seq_len = 17
+    first_again = build_unified_paged_flash_metadata(
+        states=[state],
+        device=torch.device("cpu"),
+    )
+
+    assert first.seq_lens.tolist() == [17]
+    assert second.seq_lens.tolist() == [18]
+    assert second.seq_lens.data_ptr() != first.seq_lens.data_ptr()
+    assert first_again.seq_lens.data_ptr() == first.seq_lens.data_ptr()
+    stats = executor_module.unified_paged_flash_metadata_cache_stats()
+    assert stats["hits"] == 1
+    assert stats["misses"] == 2
+    assert stats["fast_key_lookups"] == 3
+    assert stats["full_key_scans"] == 2
+    assert stats["block_ids_scanned"] == 4
+
+
+def test_unified_paged_flash_metadata_fast_key_preserves_row_order() -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    executor_module.reset_unified_paged_flash_metadata_cache()
+    first_state = _make_unified_state(
+        torch,
+        block_ids=(3,),
+        seq_len=8,
+        lease_id="lease-a",
+    )
+    first_state.slot_generation = 1
+    first_state.slot_topology_id = 101
+    second_state = _make_unified_state(
+        torch,
+        block_ids=(7,),
+        seq_len=8,
+        lease_id="lease-b",
+    )
+    second_state.slot_generation = 1
+    second_state.slot_topology_id = 102
+
+    forward = build_unified_paged_flash_metadata(
+        states=[first_state, second_state],
+        device=torch.device("cpu"),
+    )
+    reverse = build_unified_paged_flash_metadata(
+        states=[second_state, first_state],
+        device=torch.device("cpu"),
+    )
+
+    assert forward.block_table.tolist() == [[3], [7]]
+    assert reverse.block_table.tolist() == [[7], [3]]
+    assert forward.block_table.data_ptr() != reverse.block_table.data_ptr()
+
+
+def test_unified_paged_flash_metadata_lru_hit_is_atomic_with_eviction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import torch
+    from collections import OrderedDict
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    monkeypatch.setenv("PAP_UNIFIED_MD_CACHE_LIMIT", "1")
+    executor_module.reset_unified_paged_flash_metadata_cache()
+    first_state = _make_unified_state(
+        torch,
+        block_ids=(3,),
+        seq_len=8,
+        lease_id="lease-a",
+    )
+    first_state.slot_generation = 1
+    first_state.slot_topology_id = 201
+    second_state = _make_unified_state(
+        torch,
+        block_ids=(7,),
+        seq_len=8,
+        lease_id="lease-b",
+    )
+    second_state.slot_generation = 1
+    second_state.slot_topology_id = 202
+    build_unified_paged_flash_metadata(
+        states=[first_state],
+        device=torch.device("cpu"),
+    )
+    first_key = next(iter(executor_module._UNIFIED_MD_CACHE))
+    hit_read = Event()
+    first_evicted = Event()
+
+    class CoordinatedCache(OrderedDict):
+        def __init__(self, items):
+            super().__init__(items)
+            self.wait_once = True
+
+        def get(self, key, default=None):
+            value = super().get(key, default)
+            if key == first_key and value is not None and self.wait_once:
+                self.wait_once = False
+                hit_read.set()
+                first_evicted.wait(timeout=0.2)
+            return value
+
+        def popitem(self, last=True):
+            item = super().popitem(last=last)
+            if item[0] == first_key:
+                first_evicted.set()
+            return item
+
+    coordinated_cache = CoordinatedCache(executor_module._UNIFIED_MD_CACHE.items())
+    monkeypatch.setattr(executor_module, "_UNIFIED_MD_CACHE", coordinated_cache)
+    errors: list[BaseException] = []
+
+    def hit_first() -> None:
+        try:
+            build_unified_paged_flash_metadata(
+                states=[first_state],
+                device=torch.device("cpu"),
+            )
+        except BaseException as error:
+            errors.append(error)
+
+    def evict_first() -> None:
+        assert hit_read.wait(timeout=1.0)
+        build_unified_paged_flash_metadata(
+            states=[second_state],
+            device=torch.device("cpu"),
+        )
+
+    hit_thread = Thread(target=hit_first)
+    evict_thread = Thread(target=evict_first)
+    hit_thread.start()
+    evict_thread.start()
+    hit_thread.join(timeout=2.0)
+    evict_thread.join(timeout=2.0)
+
+    assert not hit_thread.is_alive()
+    assert not evict_thread.is_alive()
+    assert errors == []
 
 
 def test_unified_paged_flash_metadata_avoids_scalar_tensor_writes_on_miss(
@@ -333,6 +596,10 @@ def test_unified_paged_flash_metadata_key_uses_unpadded_rows() -> None:
         "hits": 0,
         "misses": 2,
         "entries": 2,
+        "fast_key_lookups": 0,
+        "fast_key_hits": 0,
+        "full_key_scans": 2,
+        "block_ids_scanned": 7,
     }
     assert first.block_table.data_ptr() != second.block_table.data_ptr()
 
@@ -369,6 +636,10 @@ def test_unified_paged_flash_metadata_preserves_lru_recency(
         "hits": 1,
         "misses": 4,
         "entries": 2,
+        "fast_key_lookups": 0,
+        "fast_key_hits": 0,
+        "full_key_scans": 5,
+        "block_ids_scanned": 5,
     }
     assert first_b.block_table.data_ptr() != second_b.block_table.data_ptr()
 
@@ -1793,6 +2064,120 @@ def test_unified_slot_generation_rejects_new_layer_after_freeze() -> None:
     assert "layer2" not in registry._unified_paged_kv["req-a"]
 
 
+def test_unified_slot_topology_ids_are_unique_across_registries() -> None:
+    import torch
+
+    topology_ids = []
+    for index in range(2):
+        registry = PAPAttentionRegistry(storage_device="cpu")
+        request_id = f"req-{index}"
+        registry.register_prefill_kv(
+            PAPAttentionRegistration(
+                request_id=request_id,
+                conversation_id="conv",
+                prefill_endpoint="http://localhost:8100",
+            )
+        )
+        _install_unified_activation(
+            registry,
+            request_id=request_id,
+            layer_names=("layer0",),
+            kv_cache=torch.zeros((1, 2, 4, 1, 2)),
+            block_ids=(0,),
+            seq_len=1,
+        )
+        topology_ids.append(
+            registry._unified_paged_kv[request_id]["layer0"].slot_topology_id
+        )
+
+    assert topology_ids[0] > 0
+    assert topology_ids[1] > topology_ids[0]
+
+
+def test_unified_metadata_fast_key_rejects_reused_request_aba() -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    executor_module.reset_unified_paged_flash_metadata_cache()
+    registry = PAPAttentionRegistry(storage_device="cpu")
+
+    def install(block_id: int) -> PAPUnifiedPagedKVState:
+        registry.register_prefill_kv(
+            PAPAttentionRegistration(
+                request_id="req-a",
+                conversation_id="conv",
+                prefill_endpoint="http://localhost:8100",
+            )
+        )
+        _install_unified_activation(
+            registry,
+            request_id="req-a",
+            layer_names=("layer0",),
+            kv_cache=torch.zeros((2, 2, 4, 1, 2)),
+            block_ids=(block_id,),
+            seq_len=1,
+        )
+        return registry._unified_paged_kv["req-a"]["layer0"]
+
+    first_state = install(0)
+    first = build_unified_paged_flash_metadata(
+        states=[first_state],
+        device=torch.device("cpu"),
+    )
+    with registry._lock:
+        registry._release_session_locked("req-a")
+    second_state = install(1)
+    second = build_unified_paged_flash_metadata(
+        states=[second_state],
+        device=torch.device("cpu"),
+    )
+
+    assert second_state.slot_topology_id > first_state.slot_topology_id
+    assert first.block_table.tolist() == [[0]]
+    assert second.block_table.tolist() == [[1]]
+    assert second.block_table.data_ptr() != first.block_table.data_ptr()
+
+
+def test_unified_metadata_fast_key_mixed_unknown_batch_falls_back() -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    executor_module.reset_unified_paged_flash_metadata_cache()
+    states = [
+        _make_unified_state(
+            torch,
+            block_ids=(3,),
+            seq_len=8,
+            lease_id="lease-a",
+        ),
+        _make_unified_state(
+            torch,
+            block_ids=(7,),
+            seq_len=8,
+            lease_id="lease-b",
+        ),
+    ]
+    states[0].slot_generation = 1
+    states[0].slot_topology_id = 301
+
+    first = build_unified_paged_flash_metadata(
+        states=states,
+        device=torch.device("cpu"),
+    )
+    second = build_unified_paged_flash_metadata(
+        states=states,
+        device=torch.device("cpu"),
+    )
+
+    assert second.block_table.data_ptr() == first.block_table.data_ptr()
+    stats = executor_module.unified_paged_flash_metadata_cache_stats()
+    assert stats["fast_key_lookups"] == 0
+    assert stats["full_key_scans"] == 2
+    assert stats["block_ids_scanned"] == 4
+
+
 def test_unified_decode_append_disables_slot_plan_for_mixed_topology(
     monkeypatch,
 ) -> None:
@@ -2024,6 +2409,9 @@ def test_attention_registry_reports_active_session_count() -> None:
 
 
 def test_attention_fast_path_stats_endpoint() -> None:
+    from examples.pap import pap_attention_executor as executor_module
+
+    executor_module.reset_unified_paged_flash_metadata_cache()
     registry = PAPAttentionRegistry(storage_device="cpu")
     client = _ASGITestClient(create_app(registry=registry))
 
@@ -2044,6 +2432,13 @@ def test_attention_fast_path_stats_endpoint() -> None:
         "slot_plan_misses": 0,
         "slot_plan_entries": 0,
         "slot_topology_mismatches": 0,
+        "unified_md_hits": 0,
+        "unified_md_misses": 0,
+        "unified_md_entries": 0,
+        "unified_md_fast_key_lookups": 0,
+        "unified_md_fast_key_hits": 0,
+        "unified_md_full_key_scans": 0,
+        "unified_md_block_ids_scanned": 0,
         "offload_exec_peer_batches": 0,
         "offload_exec_peer_rows": 0,
         "offload_exec_compute_calls": 0,

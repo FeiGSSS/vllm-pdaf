@@ -460,6 +460,7 @@ def test_execute_two_turn_uses_one_conversation_and_validates_pap_cache() -> Non
         git_tracked_worktree_dirty=False,
         offload_exec_transport="local_fast",
         direct_mailbox_output=True,
+        unified_md_fast_key=True,
         document_tokens=4,
         append_tokens=2,
         output_tokens=3,
@@ -482,6 +483,7 @@ def test_execute_two_turn_uses_one_conversation_and_validates_pap_cache() -> Non
     assert result["implementation"] == {
         "offload_exec_transport": "local_fast",
         "direct_mailbox_output": True,
+        "unified_md_fast_key": True,
     }
     assert len(result["implementation_fingerprint"]) == 64
     assert len(result["rounds"]) == 2

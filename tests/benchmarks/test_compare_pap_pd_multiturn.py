@@ -690,6 +690,7 @@ def test_render_markdown_contains_primary_metrics_and_verdict() -> None:
     assert "PAP/PD" in report
     assert "diagnostic" in report
     assert "Post-token stream tail" in report
+    assert "metadata fast key" in report
 
 
 def test_make_reference_requires_formal_valid_aggregate() -> None:

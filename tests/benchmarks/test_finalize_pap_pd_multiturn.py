@@ -17,6 +17,7 @@ def _client_result(architecture: str = "pap") -> dict[str, object]:
         "implementation": {
             "offload_exec_transport": "local_fast",
             "direct_mailbox_output": True,
+            "unified_md_fast_key": True,
         },
         "validity": {"status": "passed", "cache_gate": "passed"},
         "cache_validation": {"status": "passed"},
@@ -60,6 +61,7 @@ def _pap_artifacts(tmp_path: Path) -> dict[str, Path]:
         "correctness_logs": tmp_path / "correctness_audit.env",
         "attention_stats": tmp_path / "attention_stats.json",
         "run_metadata": tmp_path / "run_metadata.json",
+        "effective_config": tmp_path / "effective_config.env",
         "tracked_worktree_patch": tmp_path / "tracked_worktree.patch",
         "tracked_index_patch": tmp_path / "tracked_index.patch",
     }
@@ -76,7 +78,15 @@ def _pap_artifacts(tmp_path: Path) -> dict[str, Path]:
         encoding="utf-8",
     )
     artifacts["attention_stats"].write_text(
-        json.dumps({"offload_exec_compute_calls": 72}),
+        json.dumps(
+            {
+                "offload_exec_compute_calls": 72,
+                "unified_md_hits": 70,
+                "unified_md_fast_key_lookups": 72,
+                "unified_md_fast_key_hits": 70,
+                "unified_md_full_key_scans": 2,
+            }
+        ),
         encoding="utf-8",
     )
     artifacts["run_metadata"].write_text(
@@ -86,12 +96,17 @@ def _pap_artifacts(tmp_path: Path) -> dict[str, Path]:
                 "git_tracked_worktree_dirty": False,
                 "offload_exec_transport": "local_fast",
                 "direct_mailbox_output": True,
+                "unified_md_fast_key": True,
             }
         ),
         encoding="utf-8",
     )
     artifacts["tracked_worktree_patch"].write_bytes(b"")
     artifacts["tracked_index_patch"].write_bytes(b"")
+    artifacts["effective_config"].write_text(
+        "PAP_UNIFIED_MD_FAST_KEY=1\n",
+        encoding="utf-8",
+    )
     return artifacts
 
 
@@ -130,6 +145,139 @@ def test_finalize_result_fails_closed_on_missing_gate() -> None:
             passed_gates=("session_drain",),
             artifacts={},
         )
+
+
+def test_finalize_result_rejects_metadata_fast_key_mismatch(
+    tmp_path: Path,
+) -> None:
+    artifacts = _pap_artifacts(tmp_path)
+    metadata = json.loads(artifacts["run_metadata"].read_text())
+    metadata["unified_md_fast_key"] = False
+    artifacts["run_metadata"].write_text(json.dumps(metadata))
+
+    with pytest.raises(ValueError, match="run metadata mismatch"):
+        finalize_result(
+            _client_result(),
+            architecture="pap",
+            passed_gates=(
+                "session_drain",
+                "routing",
+                "correctness_logs",
+                "attention_stats_capture",
+            ),
+            artifacts=artifacts,
+        )
+
+
+def test_finalize_result_rejects_fast_key_without_runtime_evidence(
+    tmp_path: Path,
+) -> None:
+    artifacts = _pap_artifacts(tmp_path)
+    stats = json.loads(artifacts["attention_stats"].read_text())
+    stats["unified_md_hits"] = 0
+    stats["unified_md_fast_key_lookups"] = 0
+    stats["unified_md_fast_key_hits"] = 0
+    artifacts["attention_stats"].write_text(json.dumps(stats))
+
+    with pytest.raises(ValueError, match="metadata fast key"):
+        finalize_result(
+            _client_result(),
+            architecture="pap",
+            passed_gates=(
+                "session_drain",
+                "routing",
+                "correctness_logs",
+                "attention_stats_capture",
+            ),
+            artifacts=artifacts,
+        )
+
+
+def test_finalize_result_rejects_metadata_fast_key_config_mismatch(
+    tmp_path: Path,
+) -> None:
+    artifacts = _pap_artifacts(tmp_path)
+    artifacts["effective_config"].write_text(
+        "PAP_UNIFIED_MD_FAST_KEY=0\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="effective config"):
+        finalize_result(
+            _client_result(),
+            architecture="pap",
+            passed_gates=(
+                "session_drain",
+                "routing",
+                "correctness_logs",
+                "attention_stats_capture",
+            ),
+            artifacts=artifacts,
+        )
+
+
+def test_finalize_result_accepts_disabled_metadata_fast_key(
+    tmp_path: Path,
+) -> None:
+    artifacts = _pap_artifacts(tmp_path)
+    result = _client_result()
+    result["implementation"]["unified_md_fast_key"] = False
+    metadata = json.loads(artifacts["run_metadata"].read_text())
+    metadata["unified_md_fast_key"] = False
+    artifacts["run_metadata"].write_text(json.dumps(metadata))
+    stats = json.loads(artifacts["attention_stats"].read_text())
+    stats["unified_md_fast_key_lookups"] = 0
+    stats["unified_md_fast_key_hits"] = 0
+    artifacts["attention_stats"].write_text(json.dumps(stats))
+    artifacts["effective_config"].write_text(
+        "PAP_UNIFIED_MD_FAST_KEY=0\n",
+        encoding="utf-8",
+    )
+
+    finalized = finalize_result(
+        result,
+        architecture="pap",
+        passed_gates=(
+            "session_drain",
+            "routing",
+            "correctness_logs",
+            "attention_stats_capture",
+        ),
+        artifacts=artifacts,
+    )
+
+    assert finalized["external_validation"]["status"] == "passed"
+
+
+def test_finalize_result_aggregates_multi_instance_attention_stats(
+    tmp_path: Path,
+) -> None:
+    artifacts = _pap_artifacts(tmp_path)
+    stats = json.loads(artifacts["attention_stats"].read_text())
+    artifacts["attention_stats"].write_text(
+        json.dumps(
+            {
+                "instances": [
+                    {"attention_index": 0, "stats": stats},
+                    {"attention_index": 1, "stats": stats},
+                ]
+            }
+        )
+    )
+
+    finalized = finalize_result(
+        _client_result(),
+        architecture="pap",
+        passed_gates=(
+            "session_drain",
+            "routing",
+            "correctness_logs",
+            "attention_stats_capture",
+        ),
+        artifacts=artifacts,
+    )
+
+    assert finalized["external_validation"]["status"] == "passed"
 
 
 def test_finalize_result_requires_matching_architecture() -> None:
