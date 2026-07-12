@@ -14,6 +14,8 @@ DATASET_PATH="${DATASET_PATH:-/home/fei/research/PD/refer_codes/vllm/benchmarks/
 RESULTS_ROOT="${RESULTS_ROOT:-${ROOT_DIR}/test/baseline/pap/results}"
 REPETITIONS="${PD_NORTH_STAR_REPETITIONS:-3}"
 ENABLE_CROSS_LAYERS_BLOCKS="${PD_ENABLE_CROSS_LAYERS_BLOCKS:-1}"
+PREFILL_CUDA_VISIBLE_DEVICES="${PD_PREFILL_CUDA_VISIBLE_DEVICES:-1}"
+DECODE_CUDA_VISIBLE_DEVICES="${PD_DECODE_CUDA_VISIBLE_DEVICES:-2}"
 
 case "${REPETITIONS}" in
   ''|*[!0-9]*)
@@ -59,6 +61,7 @@ done
 
 export VLLM_USE_FLASHINFER_SAMPLER=0
 export VLLM_USE_V1=1
+export VLLM_USE_V2_MODEL_RUNNER="${VLLM_USE_V2_MODEL_RUNNER:-0}"
 export UCX_TLS="${UCX_TLS:-cuda_ipc,cuda_copy,tcp}"
 export UCX_NET_DEVICES="${UCX_NET_DEVICES:-all}"
 export UCX_RCACHE_MAX_UNRELEASED="${UCX_RCACHE_MAX_UNRELEASED:-1024}"
@@ -199,17 +202,25 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
     printf 'MODEL_PATH=%q\n' "${MODEL_PATH}"
     printf 'DATASET_PATH=%q\n' "${DATASET_PATH}"
     printf 'PREFILL_GPU=1\nDECODE_GPU=2\n'
+    printf 'PREFILL_CUDA_VISIBLE_DEVICES=%q\n' \
+      "${PREFILL_CUDA_VISIBLE_DEVICES}"
+    printf 'DECODE_CUDA_VISIBLE_DEVICES=%q\n' \
+      "${DECODE_CUDA_VISIBLE_DEVICES}"
     printf 'DTYPE=float16\nMAX_MODEL_LEN=20000\n'
     printf 'MAX_NUM_BATCHED_TOKENS=4096\nMAX_NUM_SEQS=2\n'
     printf 'REPETITIONS=%q\n' "${REPETITIONS}"
     printf 'ENABLE_CROSS_LAYERS_BLOCKS=%q\n' \
       "${ENABLE_CROSS_LAYERS_BLOCKS}"
+    printf 'VLLM_USE_V2_MODEL_RUNNER=%q\n' \
+      "${VLLM_USE_V2_MODEL_RUNNER}"
     printf 'UCX_TLS=%q\n' "${UCX_TLS}"
     printf 'UCX_NET_DEVICES=%q\n' "${UCX_NET_DEVICES}"
     printf 'UCX_RCACHE_MAX_UNRELEASED=%q\n' \
       "${UCX_RCACHE_MAX_UNRELEASED}"
     printf 'UCX_PROTO_INFO=%q\n' "${UCX_PROTO_INFO:-}"
     printf 'UCX_LOG_LEVEL=%q\n' "${UCX_LOG_LEVEL:-}"
+    printf 'UCX_PROTO_EMULATION_ENABLE=%q\n' \
+      "${UCX_PROTO_EMULATION_ENABLE:-}"
     printf 'NIXL_VERSION=%q\n' "${NIXL_VERSION}"
     printf 'PREFILL_KV_TRANSFER_CONFIG=%q\n' "${P_CONFIG}"
     printf 'DECODE_KV_TRANSFER_CONFIG=%q\n' "${D_CONFIG}"
@@ -219,7 +230,7 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
 
   echo "Starting official PD Prefill rep ${rep} on GPU 1"
   setsid env \
-    CUDA_VISIBLE_DEVICES=1 \
+    CUDA_VISIBLE_DEVICES="${PREFILL_CUDA_VISIBLE_DEVICES}" \
     UCX_TLS="${UCX_TLS}" \
     UCX_NET_DEVICES="${UCX_NET_DEVICES}" \
     UCX_RCACHE_MAX_UNRELEASED="${UCX_RCACHE_MAX_UNRELEASED}" \
@@ -248,7 +259,7 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
 
   echo "Starting official PD Decode rep ${rep} on GPU 2"
   setsid env \
-    CUDA_VISIBLE_DEVICES=2 \
+    CUDA_VISIBLE_DEVICES="${DECODE_CUDA_VISIBLE_DEVICES}" \
     UCX_TLS="${UCX_TLS}" \
     UCX_NET_DEVICES="${UCX_NET_DEVICES}" \
     UCX_RCACHE_MAX_UNRELEASED="${UCX_RCACHE_MAX_UNRELEASED}" \
