@@ -13,6 +13,10 @@ from typing import Any
 from benchmarks.multi_turn.pd_multiturn_reuse_metrics import (
     validate_official_streaming_one_way,
 )
+from benchmarks.multi_turn.pd_multiturn_load_reuse_metrics import (
+    STATUS as PD_LOAD_REUSE_STATUS,
+    validate_pd_multiturn_load_reuse,
+)
 
 
 REQUIRED_GATES = {
@@ -314,18 +318,35 @@ def _validate_pd_evidence(
     artifacts: Mapping[str, Path],
 ) -> None:
     reuse = result.get("pd_reuse_validation")
-    if not isinstance(reuse, Mapping) or reuse.get("status") != PD_REUSE_STATUS:
+    if not isinstance(reuse, Mapping):
         raise ValueError(f"PD reuse validation did not pass: {reuse}")
-    fresh_reuse = validate_official_streaming_one_way(
-        result,
-        proxy_log=artifacts["proxy_log"].read_text(encoding="utf-8"),
-        prefill_metrics=artifacts["prefill_metrics"].read_text(
-            encoding="utf-8"
-        ),
-        decode_metrics=artifacts["decode_metrics"].read_text(
-            encoding="utf-8"
-        ),
-    )
+    reuse_status = reuse.get("status")
+    if reuse_status == PD_REUSE_STATUS:
+        fresh_reuse = validate_official_streaming_one_way(
+            result,
+            proxy_log=artifacts["proxy_log"].read_text(encoding="utf-8"),
+            prefill_metrics=artifacts["prefill_metrics"].read_text(
+                encoding="utf-8"
+            ),
+            decode_metrics=artifacts["decode_metrics"].read_text(
+                encoding="utf-8"
+            ),
+        )
+    elif reuse_status == PD_LOAD_REUSE_STATUS:
+        fresh_reuse = validate_pd_multiturn_load_reuse(
+            result,
+            prefill_metrics=artifacts["prefill_metrics"].read_text(
+                encoding="utf-8"
+            ),
+            decode_metrics=artifacts["decode_metrics"].read_text(
+                encoding="utf-8"
+            ),
+            effective_config=artifacts["effective_config"].read_text(
+                encoding="utf-8"
+            ),
+        )
+    else:
+        raise ValueError(f"PD reuse validation did not pass: {reuse}")
     if dict(reuse) != fresh_reuse:
         raise ValueError("stored PD reuse evidence differs from fresh validation")
     _validate_correctness_artifact(

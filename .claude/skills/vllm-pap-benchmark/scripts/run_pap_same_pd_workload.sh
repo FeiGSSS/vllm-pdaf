@@ -14,7 +14,7 @@ PAP_BENCH_STRICT_CORRECTNESS_AUDIT="${PAP_BENCH_STRICT_CORRECTNESS_AUDIT:-1}"
 PAP_BENCH_CLIENT_MODE="${PAP_BENCH_CLIENT_MODE:-canonical}"
 case "${PAP_BENCH_CLIENT_MODE}" in
   canonical | multiturn_prefix_cache | multiturn_chat_prefix_cache \
-    | multiturn_north_star) ;;
+    | multiturn_north_star | multiturn_load) ;;
   *)
     echo "ERROR: unsupported PAP_BENCH_CLIENT_MODE=${PAP_BENCH_CLIENT_MODE}" >&2
     exit 2
@@ -35,7 +35,19 @@ OUTPUT_LEN="${OUTPUT_LEN:-32}"
 PREFIX_LEN="${PREFIX_LEN:-50}"
 QPS="${QPS:-16}"
 NUM_PROMPTS="${NUM_PROMPTS:-128}"
-if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" ]]; then
+PAP_MULTITURN_LOAD_ROUNDS="${PAP_MULTITURN_LOAD_ROUNDS:-5}"
+PAP_MULTITURN_LOAD_CONVERSATIONS="${PAP_MULTITURN_LOAD_CONVERSATIONS:-4}"
+PAP_MULTITURN_LOAD_REQUEST_RATE="${PAP_MULTITURN_LOAD_REQUEST_RATE:-2}"
+if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" ]]; then
+  if ! [[ "${PAP_MULTITURN_LOAD_ROUNDS}" =~ ^[1-9][0-9]*$ \
+    && "${PAP_MULTITURN_LOAD_CONVERSATIONS}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: multi-turn load rounds/conversations must be positive" >&2
+    exit 2
+  fi
+  NUM_PROMPTS=$((
+    PAP_MULTITURN_LOAD_ROUNDS * PAP_MULTITURN_LOAD_CONVERSATIONS
+  ))
+elif [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" ]]; then
   NUM_PROMPTS=2
 elif [[ "${PAP_BENCH_CLIENT_MODE}" != "canonical" ]]; then
   NUM_PROMPTS=3
@@ -530,6 +542,12 @@ write_effective_config() {
     printf 'PAP_MULTITURN_FIRST_OUTPUT_TOKENS=%q\n' "${PAP_MULTITURN_FIRST_OUTPUT_TOKENS}"
     printf 'PAP_MULTITURN_BLOCK_SIZE=%q\n' "${PAP_MULTITURN_BLOCK_SIZE}"
     printf 'PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS=%q\n' "${PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS}"
+    printf 'PAP_MULTITURN_LOAD_ROUNDS=%q\n' \
+      "${PAP_MULTITURN_LOAD_ROUNDS}"
+    printf 'PAP_MULTITURN_LOAD_CONVERSATIONS=%q\n' \
+      "${PAP_MULTITURN_LOAD_CONVERSATIONS}"
+    printf 'PAP_MULTITURN_LOAD_REQUEST_RATE=%q\n' \
+      "${PAP_MULTITURN_LOAD_REQUEST_RATE}"
     printf 'INPUT_LENS_CSV=%q\n' "${INPUT_LEN}"
     printf 'OUTPUT_LENS_CSV=%q\n' "${OUTPUT_LEN}"
     printf 'QPS_CSV=%q\n' "${QPS}"
@@ -710,6 +728,9 @@ write_run_metadata() {
   PAP_ATTENTION_COMBINE_WAIT_US="${PAP_ATTENTION_COMBINE_WAIT_US}" \
   PAP_ATTENTION_ACTIVE_PEER_TRACKING="${PAP_ATTENTION_ACTIVE_PEER_TRACKING}" \
   PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" \
+  PAP_MULTITURN_LOAD_ROUNDS="${PAP_MULTITURN_LOAD_ROUNDS}" \
+  PAP_MULTITURN_LOAD_CONVERSATIONS="${PAP_MULTITURN_LOAD_CONVERSATIONS}" \
+  PAP_MULTITURN_LOAD_REQUEST_RATE="${PAP_MULTITURN_LOAD_REQUEST_RATE}" \
   PAP_VLLM_DTYPE="${PAP_VLLM_DTYPE}" \
   GIT_COMMIT="${GIT_COMMIT}" \
   GIT_COMMIT_SHORT="${GIT_COMMIT_SHORT}" \
@@ -764,6 +785,13 @@ metadata = {
     ),
     "prompt_tokens_details": (
         os.environ["PAP_ENABLE_PROMPT_TOKENS_DETAILS"] == "1"
+    ),
+    "multiturn_load_rounds": int(os.environ["PAP_MULTITURN_LOAD_ROUNDS"]),
+    "multiturn_load_conversations": int(
+        os.environ["PAP_MULTITURN_LOAD_CONVERSATIONS"]
+    ),
+    "multiturn_load_request_rate": float(
+        os.environ["PAP_MULTITURN_LOAD_REQUEST_RATE"]
     ),
     "dtype": os.environ["PAP_VLLM_DTYPE"],
     "git_commit": os.environ["GIT_COMMIT"],
@@ -846,6 +874,48 @@ if not result.get("profile_fingerprint"):
     raise SystemExit("north-star profile fingerprint is missing")
 if not result.get("implementation_fingerprint"):
     raise SystemExit("north-star implementation fingerprint is missing")
+PY
+}
+
+validate_multiturn_load_result() {
+  local result_path="$1"
+  PAP_MULTITURN_LOAD_ROUNDS="${PAP_MULTITURN_LOAD_ROUNDS}" \
+  PAP_MULTITURN_LOAD_CONVERSATIONS="${PAP_MULTITURN_LOAD_CONVERSATIONS}" \
+  "${PYTHON_BIN}" - "${result_path}" <<'PY'
+import json
+import math
+import os
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as file_obj:
+    result = json.load(file_obj)
+
+rounds = int(os.environ["PAP_MULTITURN_LOAD_ROUNDS"])
+conversations = int(os.environ["PAP_MULTITURN_LOAD_CONVERSATIONS"])
+if result.get("architecture") != "pap":
+    raise SystemExit("multi-turn load architecture is not pap")
+validity = result.get("validity") or {}
+if validity.get("status") != "passed":
+    raise SystemExit(f"multi-turn load validity failed: {validity}")
+cache = result.get("cache_validation") or {}
+if cache.get("status") != "passed":
+    raise SystemExit(f"multi-turn load cache validation failed: {cache}")
+requests = result.get("requests") or []
+expected = rounds * conversations
+if len(requests) != expected:
+    raise SystemExit(
+        f"multi-turn load request count mismatch: {len(requests)} != {expected}"
+    )
+for request in requests:
+    if request.get("completion_tokens") != 256:
+        raise SystemExit("multi-turn load request did not return 256 tokens")
+    if request.get("finish_reason") != "length":
+        raise SystemExit("multi-turn load request did not finish by length")
+    for metric in ("ttft_ms", "tpot_ms", "latency_ms", "eof_latency_ms"):
+        value = request.get(metric)
+        if not isinstance(value, (int, float)) or not math.isfinite(value) \
+            or value <= 0:
+            raise SystemExit(f"multi-turn load has invalid {metric}: {value}")
 PY
 }
 
@@ -1048,6 +1118,32 @@ if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" ]]; then
     || die "multiturn_north_star requires PAP MPS 70/30"
   (( PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS >= OUTPUT_LEN )) \
     || die "PAP unified KV decode capacity is too small for north-star output"
+elif [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" ]]; then
+  [[ "${TOPOLOGY}" == "1pa1p" ]] \
+    || die "multiturn_load requires PAP_TOPOLOGY=1pa1p"
+  [[ "${INPUT_LEN}" == "16000" && "${OUTPUT_LEN}" == "256" ]] \
+    || die "multiturn_load requires INPUT_LEN=16000 and OUTPUT_LEN=256"
+  [[ "${MAX_MODEL_LEN}" == "20000" ]] \
+    || die "multiturn_load requires MAX_MODEL_LEN=20000"
+  [[ "${MAX_NUM_BATCHED_TOKENS}" == "4096" ]] \
+    || die "multiturn_load requires MAX_NUM_BATCHED_TOKENS=4096"
+  [[ "${MAX_NUM_SEQS}" == "4" ]] \
+    || die "multiturn_load requires MAX_NUM_SEQS=4"
+  [[ "${PAP_VLLM_DTYPE}" == "float16" ]] \
+    || die "multiturn_load requires PAP_VLLM_DTYPE=float16"
+  [[ "${PAP_PREFIX_CACHE_AUDIT}" == "0" \
+    && "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" == "1" ]] \
+    || die "multiturn_load requires prompt details and forbids cache audit"
+  [[ "${PAP_ENABLE_MPS}" == "1" \
+    && "${PAP_PREFILL_MPS_PERCENT}" == "70" \
+    && "${PAP_ATTENTION_MPS_PERCENT}" == "30" ]] \
+    || die "multiturn_load requires fixed PAP MPS 70/30"
+  (( PAP_MULTITURN_LOAD_ROUNDS >= 4 )) \
+    || die "multiturn_load requires at least four rounds"
+  (( PAP_MULTITURN_LOAD_CONVERSATIONS <= MAX_NUM_SEQS )) \
+    || die "active conversations exceed MAX_NUM_SEQS"
+  (( PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS >= OUTPUT_LEN )) \
+    || die "PAP unified KV decode capacity is too small for load output"
 elif [[ "${PAP_BENCH_CLIENT_MODE}" != "canonical" ]]; then
   [[ "${PA_COUNT}" == "1" && "${PROJECTION_COUNT}" == "1" ]] \
     || die "multi-turn prefix-cache modes require PAP_TOPOLOGY=1pa1p"
@@ -1384,6 +1480,40 @@ case "${PAP_BENCH_CLIENT_MODE}" in
       2>&1 | tee "${RUN_ROOT}/${TAG}.log"
     validate_north_star_result "${RUN_ROOT}/result.json"
     ;;
+  multiturn_load)
+    TAG="${TOPOLOGY_TAG}_multiturn_load"
+    echo "=== Running ${TAG} on port ${PAP_PROXY_PORT} ==="
+    timeout "${BENCH_TIMEOUT}" "${PYTHON_BIN}" \
+      benchmarks/multi_turn/pap_pd_multiturn_load_client.py \
+      --base-url "http://127.0.0.1:${PAP_PROXY_PORT}" \
+      --model "${MODEL_PATH}" \
+      --corpus "${DATASET_PATH}" \
+      --result "${RUN_ROOT}/result.json" \
+      --architecture pap \
+      --topology "${TOPOLOGY}" \
+      --conversation-id-prefix "${PAP_NORTH_STAR_CONVERSATION_ID}" \
+      --cache-salt-prefix "${PAP_NORTH_STAR_CACHE_SALT}" \
+      --hardware-signature "${PAP_NORTH_STAR_HARDWARE_SIGNATURE}" \
+      --git-commit "${GIT_COMMIT}" \
+      --git-tracked-worktree-dirty "${GIT_TRACKED_WORKTREE_DIRTY}" \
+      --offload-exec-transport "${PAP_OFFLOAD_EXEC_TRANSPORT}" \
+      --direct-mailbox-output "${PAP_DIRECT_MAILBOX_OUTPUT}" \
+      --unified-md-fast-key "${PAP_UNIFIED_MD_FAST_KEY}" \
+      --document-tokens "${INPUT_LEN}" \
+      --append-tokens 120 \
+      --output-tokens "${OUTPUT_LEN}" \
+      --rounds "${PAP_MULTITURN_LOAD_ROUNDS}" \
+      --active-conversations "${PAP_MULTITURN_LOAD_CONVERSATIONS}" \
+      --request-rate "${PAP_MULTITURN_LOAD_REQUEST_RATE}" \
+      --block-size "${PAP_MULTITURN_BLOCK_SIZE}" \
+      --dtype "${PAP_VLLM_DTYPE}" \
+      --tensor-parallel-size "${PAP_TP_SIZE}" \
+      --max-model-len "${MAX_MODEL_LEN}" \
+      --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
+      --max-num-seqs "${MAX_NUM_SEQS}" \
+      2>&1 | tee "${RUN_ROOT}/${TAG}.log"
+    validate_multiturn_load_result "${RUN_ROOT}/result.json"
+    ;;
 esac
 
 wait_attention_sessions_drained
@@ -1392,7 +1522,8 @@ capture_attention_fast_path_stats
 audit_xy_routes
 audit_correctness_logs
 
-if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" ]]; then
+if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" \
+  || "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" ]]; then
   "${PYTHON_BIN}" "${NORTH_STAR_FINALIZER}" \
     --result "${RUN_ROOT}/result.json" \
     --architecture pap \
