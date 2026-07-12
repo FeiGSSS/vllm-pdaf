@@ -325,57 +325,17 @@ class NixlBaseConnectorWorker:
         num_threads = vllm_config.kv_transfer_config.get_from_extra_config(
             "num_threads", 4
         )
-        ucx_error_handling_mode = (
-            vllm_config.kv_transfer_config.get_from_extra_config(
-                "ucx_error_handling_mode", None
-            )
-        )
-        if ucx_error_handling_mode is not None:
-            if not isinstance(ucx_error_handling_mode, str):
-                raise ValueError("ucx_error_handling_mode must be a string")
-            ucx_error_handling_mode = ucx_error_handling_mode.lower()
-            if ucx_error_handling_mode not in ("none", "peer"):
-                raise ValueError(
-                    "ucx_error_handling_mode must be either 'none' or 'peer'"
-                )
-            if self.nixl_backends != ["UCX"]:
-                raise ValueError(
-                    "ucx_error_handling_mode requires backends=['UCX']"
-                )
-            if nixl_agent_config is None:
-                raise RuntimeError(
-                    "ucx_error_handling_mode requires NIXL agent config support"
-                )
         if nixl_agent_config is None:
             config = None
         else:
             # Enable telemetry by default for NIXL 0.7.1 and above.
-            if ucx_error_handling_mode is not None:
-                config = nixl_agent_config(backends=[], capture_telemetry=True)
-            else:
-                config = (
-                    nixl_agent_config(
-                        backends=self.nixl_backends, capture_telemetry=True
-                    )
-                    if len(non_ucx_backends) > 0
-                    else nixl_agent_config(
-                        num_threads=num_threads, capture_telemetry=True
-                    )
-                )
+            config = (
+                nixl_agent_config(backends=self.nixl_backends, capture_telemetry=True)
+                if len(non_ucx_backends) > 0
+                else nixl_agent_config(num_threads=num_threads, capture_telemetry=True)
+            )
 
         self.nixl_wrapper = nixl_wrapper_cls(str(uuid.uuid4()), config)
-        if ucx_error_handling_mode is not None:
-            self.nixl_wrapper.create_backend(
-                "UCX",
-                {
-                    "num_threads": str(num_threads),
-                    "ucx_error_handling_mode": ucx_error_handling_mode,
-                },
-            )
-            logger.info(
-                "Created NIXL UCX backend with error handling mode %s",
-                ucx_error_handling_mode,
-            )
         # Map of engine_id -> {rank0: agent_name0, rank1: agent_name1..}.
         self._remote_agents: dict[EngineId, dict[int, str]] = defaultdict(dict)
 

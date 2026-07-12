@@ -137,10 +137,6 @@ class FakeNixlWrapper:
     def __init__(self, agent_name: str, *args, **kwargs):
         self._cycles_before_xfer_done = 0
         self._check_xfer_state_cycles: defaultdict[int, int] = defaultdict(lambda: 0)
-        self.created_backends: list[tuple[str, dict[str, str]]] = []
-
-    def create_backend(self, backend: str, init_params: dict[str, str]) -> None:
-        self.created_backends.append((backend, init_params))
 
     def get_reg_descs(self, caches_data, memory_type: str) -> list:
         return [str(uuid.uuid4()) for _ in caches_data]
@@ -466,45 +462,6 @@ def test_kv_transfer_handshake(dist_init):
 
         # Need to shutdown the background thread to release NIXL side channel port
         scheduler_connector.shutdown()
-
-
-@patch(
-    "vllm.distributed.kv_transfer.kv_connector.v1.nixl.base_worker.NixlWrapper",
-    FakeNixlWrapper,
-)
-def test_ucx_error_handling_mode(default_vllm_config, dist_init):
-    vllm_config = create_vllm_config(
-        kv_connector_extra_config={"ucx_error_handling_mode": "none"}
-    )
-    kv_cache_config = make_kv_cache_config(block_size=16, num_blocks=2)
-
-    connector = NixlConnector(
-        vllm_config, KVConnectorRole.WORKER, kv_cache_config
-    )
-
-    assert connector.connector_worker.nixl_wrapper.created_backends == [
-        (
-            "UCX",
-            {"num_threads": "4", "ucx_error_handling_mode": "none"},
-        )
-    ]
-
-
-@pytest.mark.parametrize("mode", ["invalid", 1])
-@patch(
-    "vllm.distributed.kv_transfer.kv_connector.v1.nixl.base_worker.NixlWrapper",
-    FakeNixlWrapper,
-)
-def test_invalid_ucx_error_handling_mode(
-    default_vllm_config, dist_init, mode
-):
-    vllm_config = create_vllm_config(
-        kv_connector_extra_config={"ucx_error_handling_mode": mode}
-    )
-    kv_cache_config = make_kv_cache_config(block_size=16, num_blocks=2)
-
-    with pytest.raises(ValueError, match="ucx_error_handling_mode"):
-        NixlConnector(vllm_config, KVConnectorRole.WORKER, kv_cache_config)
 
 
 class FakeNixlConnectorWorker(NixlConnectorWorker):
