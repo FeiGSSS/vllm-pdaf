@@ -12,7 +12,32 @@ OFFICIAL_PROXY="${ROOT_DIR}/examples/disaggregated/disaggregated_serving/disagg_
 MODEL_PATH="${MODEL_PATH:-/data/ssd1/llm-models/Qwen3-8B}"
 DATASET_PATH="${DATASET_PATH:-/home/fei/research/PD/refer_codes/vllm/benchmarks/sonnet_4x.txt}"
 RESULTS_ROOT="${RESULTS_ROOT:-${ROOT_DIR}/test/baseline/pap/results}"
-REPETITIONS=3
+REPETITIONS="${PD_NORTH_STAR_REPETITIONS:-3}"
+ENABLE_CROSS_LAYERS_BLOCKS="${PD_ENABLE_CROSS_LAYERS_BLOCKS:-1}"
+
+case "${REPETITIONS}" in
+  ''|*[!0-9]*)
+    echo "PD_NORTH_STAR_REPETITIONS must be a positive integer" >&2
+    exit 2
+    ;;
+esac
+if (( REPETITIONS < 1 )); then
+  echo "PD_NORTH_STAR_REPETITIONS must be a positive integer" >&2
+  exit 2
+fi
+
+case "${ENABLE_CROSS_LAYERS_BLOCKS,,}" in
+  1|true|yes|on)
+    ENABLE_CROSS_LAYERS_BLOCKS=True
+    ;;
+  0|false|no|off)
+    ENABLE_CROSS_LAYERS_BLOCKS=False
+    ;;
+  *)
+    echo "PD_ENABLE_CROSS_LAYERS_BLOCKS must be true or false" >&2
+    exit 2
+    ;;
+esac
 
 for required in "${PYTHON_BIN}" "${VLLM_BIN}"; do
   [[ -x "${required}" ]] || {
@@ -34,6 +59,9 @@ done
 
 export VLLM_USE_FLASHINFER_SAMPLER=0
 export VLLM_USE_V1=1
+export UCX_TLS="${UCX_TLS:-cuda_ipc,cuda_copy,tcp}"
+export UCX_NET_DEVICES="${UCX_NET_DEVICES:-all}"
+export UCX_RCACHE_MAX_UNRELEASED="${UCX_RCACHE_MAX_UNRELEASED:-1024}"
 export NO_PROXY="${NO_PROXY:+${NO_PROXY},}127.0.0.1,localhost"
 export no_proxy="${no_proxy:+${no_proxy},}127.0.0.1,localhost"
 
@@ -132,8 +160,20 @@ GROUP_RUN_ID="${PD_NORTH_STAR_RUN_ID:-$(date +%Y%m%d_%H%M%S)_${GIT_SHORT}_pd_mul
 GROUP_ROOT="${PD_NORTH_STAR_RUN_ROOT:-${RESULTS_ROOT}/runs/${GROUP_RUN_ID}}"
 mkdir -p "${GROUP_ROOT}"
 
-P_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_producer","kv_load_failure_policy":"fail","kv_connector_extra_config":{"bidirectional_kv_xfer":false}}'
-D_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_consumer","kv_load_failure_policy":"fail","kv_connector_extra_config":{"bidirectional_kv_xfer":false}}'
+P_CONFIG="$(printf '%s' \
+  '{"kv_connector":"NixlConnector","kv_role":"kv_producer",' \
+  '"kv_load_failure_policy":"fail","kv_connector_extra_config":{' \
+  '"bidirectional_kv_xfer":false,"enable_cross_layers_blocks":"' \
+  "${ENABLE_CROSS_LAYERS_BLOCKS}" '"}}')"
+D_CONFIG="$(printf '%s' \
+  '{"kv_connector":"NixlConnector","kv_role":"kv_consumer",' \
+  '"kv_load_failure_policy":"fail","kv_connector_extra_config":{' \
+  '"bidirectional_kv_xfer":false,"enable_cross_layers_blocks":"' \
+  "${ENABLE_CROSS_LAYERS_BLOCKS}" '"}}')"
+NIXL_VERSION="$(
+  "${PYTHON_BIN}" -c \
+    'import importlib.metadata as m; print(m.version("nixl"))'
+)"
 RESULT_ARGS=()
 
 for (( rep=1; rep<=REPETITIONS; rep++ )); do
@@ -161,6 +201,16 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
     printf 'PREFILL_GPU=1\nDECODE_GPU=2\n'
     printf 'DTYPE=float16\nMAX_MODEL_LEN=20000\n'
     printf 'MAX_NUM_BATCHED_TOKENS=4096\nMAX_NUM_SEQS=2\n'
+    printf 'REPETITIONS=%q\n' "${REPETITIONS}"
+    printf 'ENABLE_CROSS_LAYERS_BLOCKS=%q\n' \
+      "${ENABLE_CROSS_LAYERS_BLOCKS}"
+    printf 'UCX_TLS=%q\n' "${UCX_TLS}"
+    printf 'UCX_NET_DEVICES=%q\n' "${UCX_NET_DEVICES}"
+    printf 'UCX_RCACHE_MAX_UNRELEASED=%q\n' \
+      "${UCX_RCACHE_MAX_UNRELEASED}"
+    printf 'UCX_PROTO_INFO=%q\n' "${UCX_PROTO_INFO:-}"
+    printf 'UCX_LOG_LEVEL=%q\n' "${UCX_LOG_LEVEL:-}"
+    printf 'NIXL_VERSION=%q\n' "${NIXL_VERSION}"
     printf 'PREFILL_KV_TRANSFER_CONFIG=%q\n' "${P_CONFIG}"
     printf 'DECODE_KV_TRANSFER_CONFIG=%q\n' "${D_CONFIG}"
     printf 'GIT_COMMIT=%q\n' "${GIT_COMMIT}"
@@ -170,7 +220,9 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
   echo "Starting official PD Prefill rep ${rep} on GPU 1"
   setsid env \
     CUDA_VISIBLE_DEVICES=1 \
-    UCX_NET_DEVICES=all \
+    UCX_TLS="${UCX_TLS}" \
+    UCX_NET_DEVICES="${UCX_NET_DEVICES}" \
+    UCX_RCACHE_MAX_UNRELEASED="${UCX_RCACHE_MAX_UNRELEASED}" \
     VLLM_PORT="${VLLM_PREFILL_PORT}" \
     VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
     VLLM_NIXL_SIDE_CHANNEL_PORT="${PREFILL_SIDE_PORT}" \
@@ -197,7 +249,9 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
   echo "Starting official PD Decode rep ${rep} on GPU 2"
   setsid env \
     CUDA_VISIBLE_DEVICES=2 \
-    UCX_NET_DEVICES=all \
+    UCX_TLS="${UCX_TLS}" \
+    UCX_NET_DEVICES="${UCX_NET_DEVICES}" \
+    UCX_RCACHE_MAX_UNRELEASED="${UCX_RCACHE_MAX_UNRELEASED}" \
     VLLM_PORT="${VLLM_DECODE_PORT}" \
     VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
     VLLM_NIXL_SIDE_CHANNEL_PORT="${DECODE_SIDE_PORT}" \
