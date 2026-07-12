@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
-  "metric_definition": "http_stream_eof_v1",
+  "schema_version": 2,
   "kind": "reference",
+  "metric_definition": "last_output_token_v2",
   "profile": {
     "profile_id": "qwen3_8b_chat_16k_2turn_o256_c1_v1",
     "model": "/data/ssd1/llm-models/Qwen3-8B",
@@ -35,63 +35,225 @@
     "pd_decode_count": 1
   },
   "hardware_signature": "NVIDIA L20x2",
+  "git_commit": "7e81e2d10b1207099f04923e014a67e695dcf6b8",
+  "git_tracked_worktree_dirty": false,
+  "implementation": {
+    "offload_exec_transport": "nixl",
+    "direct_mailbox_output": false
+  },
+  "implementation_fingerprint": "8e7cce332520dd206414ad30397d77f4fce422640fa2ca405cdfd35c5e4eca37",
   "mode": "formal",
   "repetition_count": 3,
+  "repetition_ids": [
+    "6f49152e39eb7ff006702c4cce2958bc8429da01c71a215577cb9ab915ca7e50",
+    "2f1bca20a38efca8056b26f7bb4ba794c3ec2ab815d3ee7c7e0b6ad8a8006db8",
+    "a05c12c84a1ab2a52edabb82db5a6b6f73c5035ff788781bd520e1e91c59001f"
+  ],
   "validity": {
     "status": "passed"
   },
+  "external_validation": {
+    "status": "passed",
+    "gates": {
+      "correctness_logs": "passed",
+      "pd_reuse_metrics": "passed"
+    },
+    "repetition_evidence": [
+      {
+        "status": "passed",
+        "gates": {
+          "correctness_logs": "passed",
+          "pd_reuse_metrics": "passed"
+        },
+        "artifacts": {
+          "correctness_logs": {
+            "path": "correctness_audit.env",
+            "sha256": "e71c4c65443b19cb86883b7efea462de3c72c374bb830c556d944c228e7eaf9c"
+          },
+          "decode_metrics": {
+            "path": "decode_metrics.prom",
+            "sha256": "159cd0edc1721ec8426ffa2cae5a425a0b541c1a82745c8dc13dfc403f709daa"
+          },
+          "effective_config": {
+            "path": "effective_config.env",
+            "sha256": "04fee59caedafa6c9900dddbe831cd4048f654ab715e26152f14ca5a6085a66b"
+          },
+          "prefill_metrics": {
+            "path": "prefill_metrics.prom",
+            "sha256": "afe3e92390fc1ba68b5631424f937b53c82611ec9098654a9c7fd813b2084986"
+          },
+          "proxy_log": {
+            "path": "service_logs/proxy.log",
+            "sha256": "76450f52466a718f38ea57fbf9b9b634a19ea0b50730708e47766a082c3eeca3"
+          },
+          "tracked_index_patch": {
+            "path": "tracked_index.patch",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "tracked_worktree_patch": {
+            "path": "tracked_worktree.patch",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      },
+      {
+        "status": "passed",
+        "gates": {
+          "correctness_logs": "passed",
+          "pd_reuse_metrics": "passed"
+        },
+        "artifacts": {
+          "correctness_logs": {
+            "path": "correctness_audit.env",
+            "sha256": "e71c4c65443b19cb86883b7efea462de3c72c374bb830c556d944c228e7eaf9c"
+          },
+          "decode_metrics": {
+            "path": "decode_metrics.prom",
+            "sha256": "16fd37af32312d9dc71215ecb1f131d08eddc85a78d2dedb3b17c7a97e7033a3"
+          },
+          "effective_config": {
+            "path": "effective_config.env",
+            "sha256": "04fee59caedafa6c9900dddbe831cd4048f654ab715e26152f14ca5a6085a66b"
+          },
+          "prefill_metrics": {
+            "path": "prefill_metrics.prom",
+            "sha256": "2680df9522ffada31499eb3032c36397c003392c134219340ce45cbc8c7c40ba"
+          },
+          "proxy_log": {
+            "path": "service_logs/proxy.log",
+            "sha256": "1ff05a86d655ea5a0b6ee61ed183b9fd55c056b5c378f0ee73bfd387d2eee1ae"
+          },
+          "tracked_index_patch": {
+            "path": "tracked_index.patch",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "tracked_worktree_patch": {
+            "path": "tracked_worktree.patch",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      },
+      {
+        "status": "passed",
+        "gates": {
+          "correctness_logs": "passed",
+          "pd_reuse_metrics": "passed"
+        },
+        "artifacts": {
+          "correctness_logs": {
+            "path": "correctness_audit.env",
+            "sha256": "e71c4c65443b19cb86883b7efea462de3c72c374bb830c556d944c228e7eaf9c"
+          },
+          "decode_metrics": {
+            "path": "decode_metrics.prom",
+            "sha256": "3408f449f647e26251767102a80d1b9b4f8e7d09e0353a64c8affdf56a64b8b4"
+          },
+          "effective_config": {
+            "path": "effective_config.env",
+            "sha256": "04fee59caedafa6c9900dddbe831cd4048f654ab715e26152f14ca5a6085a66b"
+          },
+          "prefill_metrics": {
+            "path": "prefill_metrics.prom",
+            "sha256": "a95a417d59e3d7fc721cea4e2e6701ed81021cfd7a1365c520b3a5b37dc04899"
+          },
+          "proxy_log": {
+            "path": "service_logs/proxy.log",
+            "sha256": "ac1cc7162028dc4b1c42482c883e8706d48c806cf032e93709096b514739c8ac"
+          },
+          "tracked_index_patch": {
+            "path": "tracked_index.patch",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "tracked_worktree_patch": {
+            "path": "tracked_worktree.patch",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      }
+    ]
+  },
   "metrics": {
     "round_1": {
-      "ttft_ms": 8250.232386984862,
-      "tpot_ms": 25.083065188179415,
-      "latency_ms": 14646.414009970613
+      "ttft_ms": 8483.473670086823,
+      "tpot_ms": 25.10096043503533,
+      "latency_ms": 14888.5485510109,
+      "eof_latency_ms": 14888.759266003035,
+      "post_token_stream_ms": 0.32044993713498116
     },
     "round_2": {
-      "ttft_ms": 269.0130219561979,
-      "tpot_ms": 25.1633433177702,
-      "latency_ms": 6685.235460055992
+      "ttft_ms": 267.27345201652497,
+      "tpot_ms": 25.1831457178638,
+      "latency_ms": 6688.975610071793,
+      "eof_latency_ms": 6689.194858074188,
+      "post_token_stream_ms": 0.18801202531903982
     },
-    "conversation_latency_ms": 21338.239624048583
+    "conversation_latency_ms": 21581.358277006075,
+    "conversation_eof_latency_ms": 21581.46927296184
   },
   "raw_metrics": {
     "round_1": {
       "ttft_ms": [
-        8250.232386984862,
-        8287.96505893115,
-        8090.292924083769
+        8587.898021098226,
+        8483.473670086823,
+        8348.061740049161
       ],
       "tpot_ms": [
-        25.083065188179415,
-        25.07794087469651,
-        25.090158623460606
+        25.10096043503533,
+        25.11794070950618,
+        25.092840945238578
       ],
       "latency_ms": [
-        14646.414009970613,
-        14682.83998197876,
-        14488.283373066224
+        14988.642932032235,
+        14888.5485510109,
+        14746.736181084998
+      ],
+      "eof_latency_ms": [
+        14988.971093087457,
+        14888.759266003035,
+        14747.056631022133
+      ],
+      "post_token_stream_ms": [
+        0.32816105522215366,
+        0.21071499213576317,
+        0.32044993713498116
       ]
     },
     "round_2": {
       "ttft_ms": [
-        275.1730680465698,
-        269.0130219561979,
-        267.0658070128411
+        267.27345201652497,
+        265.8007750287652,
+        268.77891703043133
       ],
       "tpot_ms": [
-        25.1633433177702,
-        25.16051879992672,
-        25.169292757031965
+        25.1831457178638,
+        25.20313033715402,
+        25.16923236852402
       ],
       "latency_ms": [
-        6691.82561407797,
-        6684.945315937512,
-        6685.235460055992
+        6688.975610071793,
+        6692.59901100304,
+        6686.933171004057
+      ],
+      "eof_latency_ms": [
+        6689.194858074188,
+        6692.710006958805,
+        6687.121183029376
+      ],
+      "post_token_stream_ms": [
+        0.21924800239503384,
+        0.11099595576524734,
+        0.18801202531903982
       ]
     },
     "conversation_latency_ms": [
-      21338.239624048583,
-      21367.78529791627,
-      21173.518833122216
+      21677.94670315925,
+      21581.358277006075,
+      21433.98980202619
+    ],
+    "conversation_eof_latency_ms": [
+      21678.165951161645,
+      21581.46927296184,
+      21434.17781405151
     ]
   },
   "correctness_signatures": {
@@ -107,10 +269,10 @@
     }
   },
   "source_results": [
-    "test/baseline/pap/results/runs/20260712_031855_d341f7e3e_pd_multiturn_formal/rep1/result.json",
-    "test/baseline/pap/results/runs/20260712_031855_d341f7e3e_pd_multiturn_formal/rep2/result.json",
-    "test/baseline/pap/results/runs/20260712_031855_d341f7e3e_pd_multiturn_formal/rep3/result.json"
+    "test/baseline/pap/results/runs/20260712_161402_7e81e2d10_pd_multiturn_formal/rep1/result.json",
+    "test/baseline/pap/results/runs/20260712_161402_7e81e2d10_pd_multiturn_formal/rep2/result.json",
+    "test/baseline/pap/results/runs/20260712_161402_7e81e2d10_pd_multiturn_formal/rep3/result.json"
   ],
   "reference_architecture": "pd",
-  "created_at": "2026-07-12T03:22:08+08:00"
+  "created_at": "2026-07-12T16:28:33+08:00"
 }

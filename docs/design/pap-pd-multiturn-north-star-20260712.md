@@ -2,7 +2,7 @@
 
 日期：2026-07-12
 
-状态：发现并修正旧 TPOT 的 HTTP EOF 口径；v2 formal reference 待重建
+状态：`last_output_token_v2` PD/PAP formal reference 已建立；进入 metadata 优化
 
 ## 1. 目的
 
@@ -132,7 +132,41 @@ MPS 70/30、KV ownership 和 correctness Gate 不变。
 审计均通过。单次 quick 已跨过旧口径的 `<2x PD` 目标，但不能替代三次 formal；修正
 计时口径后，PD 和 PAP 都必须重新跑 clean 三重复才能形成正式结论。
 
-## 6. Exact-token 正确性边界
+## 6. v2 formal 基线：PD vs local-fast PAP
+
+代码基线：`feature/pap @ 7e81e2d10`，tracked worktree clean。原始目录：
+
+```text
+test/baseline/pap/results/runs/
+  20260712_161402_7e81e2d10_pd_multiturn_formal/
+  20260712_162130_7e81e2d10_pap_multiturn_formal/
+```
+
+两边均为三次串行重启后的中位数，全部通过 artifact-backed Gate。PD 三次精确满足
+Prefill `compute/cache/external=16420/16016/0`、Decode
+`0/16272/16164`；PAP 三次第二轮均精确命中 `16272` tokens，只计算 146 个新增 tokens。
+
+| Round | 指标 | PD | PAP | PAP/PD |
+| --- | --- | ---: | ---: | ---: |
+| 1 | TTFT | 8,483.474 ms | 5,397.499 ms | 0.636x |
+| 1 | TPOT | 25.101 ms | 42.923 ms | 1.710x |
+| 2 | TTFT | 267.273 ms | 235.388 ms | 0.881x |
+| 2 | TPOT | 25.183 ms | 39.128 ms | 1.554x |
+
+第二轮 PAP TPOT 三次为 `39.159 / 38.310 / 39.128 ms`，稳定低于
+`2 * PD = 50.366 ms`，余量 `11.239 ms/token`。TTFT 已优于 PD，当前北极星缺口明确是
+TPOT：PAP 仍比 PD 多 `13.944 ms/token`。
+
+v2 还证明旧 EOF 口径不是主要性能差距：PD 每轮 post-token tail 约 `0.1–0.3 ms`，PAP
+约 `35–41 ms/turn`，折算到 255 个 token 间隔仅约 `0.15 ms/token`。真正的 TPOT 差距仍在
+decode forward 热路径，而不是 HTTP cleanup。
+
+三次 PAP 均记录 `slot_plan_hits=8925`、`misses=255`、
+`slot_topology_mismatches=1`。该 mismatch 来自首轮合法 chunked Prefill
+`4096 -> 8192 -> 12288 -> 16018` 被永久误判，导致首轮完全禁用 cross-layer slot plan；
+第二轮稳定 topology 才获得 255 次 layer-0 miss 和 8,925 次跨层 hit。
+
+## 7. Exact-token 正确性边界
 
 - 每个架构内部三次输出稳定；
 - 两轮 prompt digest 在 PD/PAP 间完全一致；
@@ -144,12 +178,13 @@ MPS 70/30、KV ownership 和 correctness Gate 不变。
 比较器将第二轮差异作为显式 warning。它不隐藏差异，也不把稳定、同 workload 的 timing
 作废；跨架构 exact-token parity 作为独立正确性/数值路径问题继续调查。
 
-## 7. 当前决策与后续
+## 8. 当前决策与后续
 
 1. north-star PAP runner 显式固定 `local_fast`，避免依赖手工环境变量；
-2. 从 clean commit 按 `last_output_token_v2` 分别重建 PD/PAP 三次 formal，确认
-   `<2x PD` 是否有稳定余量；
-3. formal 通过后晋升 PAP reference，并保留初始 mailbox reference 数据和本记录；
-4. 再用 local_fast trace 分解剩余约 `13.44 ms/token` 的 PAP/PD 差距；
-5. 不做 MPS 扫描；优先分析 16K Attention compute、MPS 硬配额和跨进程逐层同步的剩余
-   下限。
+2. v2 PD/PAP clean formal 与 tracked reference 已完成，`<2x PD` 稳定通过；
+3. P0 严格 A/B：只把 paged-FA metadata cache miss 的逐元素 CUDA 写改为 bulk tensor
+   构造，保留原 key/LRU；目标先消除 layer-0 约 `7.7 ms`；
+4. P1 在 P0 归因后实现 ABA-safe `session_epoch + topology_generation` O(1) key，并让
+   chunked Prefill 的 transient generation transition 恢复 slot-plan；
+5. 不做 MPS、ring slot 或 copy API 扫描；只有 metadata 路线收益耗尽后，才继续
+   `prepare_step`、workspace 复用和 GPU-only timeline。
