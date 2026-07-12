@@ -2,7 +2,7 @@
 
 日期：2026-07-12
 
-状态：`last_output_token_v2` PD/PAP formal reference 已建立；进入 metadata 优化
+状态：metadata bulk-build Stage A 已完成 clean formal 并晋升 PAP reference；准备 Stage B
 
 ## 1. 目的
 
@@ -178,13 +178,48 @@ decode forward 热路径，而不是 HTTP cleanup。
 比较器将第二轮差异作为显式 warning。它不隐藏差异，也不把稳定、同 workload 的 timing
 作废；跨架构 exact-token parity 作为独立正确性/数值路径问题继续调查。
 
-## 8. 当前决策与后续
+## 8. Stage A：paged-FA metadata bulk build
+
+提交：`6bc383dab`。正式原始目录：
+
+```text
+test/baseline/pap/results/runs/
+  20260712_171755_6bc383dab_pap_multiturn_formal/
+```
+
+该优化只改变 paged FlashAttention metadata cache miss 的构造方式：把约 1,025 次
+逐元素 CUDA tensor 写，替换为一次 padded rows 和一次 `seq_lens` 的 bulk tensor
+构造；unpadded cache key、LRU、last-block padding、dtype/device 和 cache-hit 路径均不变。
+CPU 单测另用 200 组随机 ragged 输入逐值对照旧实现；GPU1 microbenchmark 的 1,024-block
+miss 从约 `7.31 ms` 降到 `0.104 ms`，约 70 倍。
+
+三次 clean formal 均通过 exact cache、routing、session drain、fatal-log 和 artifact hash
+Gate，输出 digest 与旧 PAP reference 完全一致。正式中位数如下：
+
+| Round | 指标 | PD | 旧 PAP | Stage A PAP | Stage A/PD | 相对旧 PAP |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | TTFT | 8,483.474 ms | 5,397.499 ms | 5,405.125 ms | 0.637x | +0.14% |
+| 1 | TPOT | 25.101 ms | 42.923 ms | 35.593 ms | 1.418x | -17.08% |
+| 2 | TTFT | 267.273 ms | 235.388 ms | 218.263 ms | 0.817x | -7.28% |
+| 2 | TPOT | 25.183 ms | 39.128 ms | 30.585 ms | 1.215x | -21.83% |
+
+第二轮 TPOT 三次为 `30.749 / 30.585 / 30.428 ms`，极差约 1.05%。绝对 PAP/PD
+TPOT gap 从 `13.944` 降到 `5.402 ms/token`；两轮 conversation latency 从
+`26,602.711` 降到 `22,604.784 ms`，距 PD 仅 `1.047x`。第三次第二轮的 HTTP
+post-token tail 为 `105.4 ms`，但 last-token TPOT 和主 latency 仍稳定；该尾部继续作为
+诊断项，不混入 v2 TPOT。
+
+slot-plan 计数仍为每次 `hits=8925`、`misses=255`、
+`slot_topology_mismatches=1`。因此 Stage A 精确消除了 metadata miss 中的标量写开销，
+但未掩盖首轮 chunked-Prefill topology false mismatch；后者仍是独立 Stage B。
+
+## 9. 当前决策与后续
 
 1. north-star PAP runner 显式固定 `local_fast`，避免依赖手工环境变量；
-2. v2 PD/PAP clean formal 与 tracked reference 已完成，`<2x PD` 稳定通过；
-3. P0 严格 A/B：只把 paged-FA metadata cache miss 的逐元素 CUDA 写改为 bulk tensor
-   构造，保留原 key/LRU；目标先消除 layer-0 约 `7.7 ms`；
-4. P1 在 P0 归因后实现 ABA-safe `session_epoch + topology_generation` O(1) key，并让
-   chunked Prefill 的 transient generation transition 恢复 slot-plan；
+2. v2 PD reference 保持 `7e81e2d10`，Stage A PAP reference 已晋升到 `6bc383dab`；
+3. Stage A bulk metadata 已完成，第二轮 PAP/PD TPOT 为 `1.215x`；
+4. Stage B 实现 ABA-safe `session_epoch + activation/topology generation` O(1) key，并让
+   chunked Prefill 的 transient generation transition 恢复 slot-plan，同时保留同代冲突的
+   fail-closed 检查；
 5. 不做 MPS、ring slot 或 copy API 扫描；只有 metadata 路线收益耗尽后，才继续
    `prepare_step`、workspace 复用和 GPU-only timeline。

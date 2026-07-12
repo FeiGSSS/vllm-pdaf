@@ -35,7 +35,7 @@
     "pd_decode_count": 0
   },
   "hardware_signature": "NVIDIA L20x2",
-  "git_commit": "7e81e2d10b1207099f04923e014a67e695dcf6b8",
+  "git_commit": "6bc383dab752eb912a4efdb04b7807edc95266af",
   "git_tracked_worktree_dirty": false,
   "implementation": {
     "offload_exec_transport": "local_fast",
@@ -45,9 +45,9 @@
   "mode": "formal",
   "repetition_count": 3,
   "repetition_ids": [
-    "33f149dcd03e02e57c4a1bb6c80a25f9e37b5ae8a8430053bebd6e7ac43f2a67",
-    "560c483a51d42a66f964eaf41ab4343f944fcbcd68a2c1362d22260e905bde0a",
-    "e24aa3ff1d207605eb1822d372b46f034f0b3df3f33ea3e21b502c9af3db69c0"
+    "d4991828d179b1253d1fb8db9d8f1962ac5115ddc3ce2bc47b9225e9ff628d35",
+    "0d39419ad9d2e7dd5bfed7ee4d767cd4e5c15c981c94c3bddd4badd8d2bdc9c8",
+    "859b8ec12a26e259507dceb3f05fef1c6e7d8164887929dc17c47319c6cae548"
   ],
   "validity": {
     "status": "passed"
@@ -72,7 +72,7 @@
         "artifacts": {
           "attention_stats": {
             "path": "attention_fast_path_stats.json",
-            "sha256": "c4777e778b0665fb754f3e163ef80c3d2dc852325e1d94712ca040c89f3a8807"
+            "sha256": "93f696369df5914c3c106d48f9aa9ae0ee6452770f4d93cb792e964534539733"
           },
           "correctness_logs": {
             "path": "correctness_audit.env",
@@ -80,11 +80,11 @@
           },
           "routing": {
             "path": "routing_audit.json",
-            "sha256": "d38481a9ece58291d1f4bdc34c997fd19e5b1922c67a4c11cce80d05e9449ef0"
+            "sha256": "ae46ef2abc8acfc977e293787c7387710d4e140b77409bc1d6db8b7c64a17918"
           },
           "run_metadata": {
             "path": "run_metadata.json",
-            "sha256": "8072083025af7de71fe38f28180eb2aed55927b1736ebd54b869f7c568f5591e"
+            "sha256": "21720dbdbd61e0a2814cf7c80469ad583b849cb9fdfb3c63daa99d373fdbce34"
           },
           "session_drain": {
             "path": "session_drain.env",
@@ -111,7 +111,7 @@
         "artifacts": {
           "attention_stats": {
             "path": "attention_fast_path_stats.json",
-            "sha256": "795801355a2bf9dce38d9dec0a771e0133ac7d5c001fdd8f151a7ec86530d9ab"
+            "sha256": "1bbadd1aac6dc3b417e48c0c958534e66b6fc51fb7b33664e42804585764f70a"
           },
           "correctness_logs": {
             "path": "correctness_audit.env",
@@ -123,7 +123,7 @@
           },
           "run_metadata": {
             "path": "run_metadata.json",
-            "sha256": "9f0351811582c5796b7539e8cafbb1eb8b020bf7ac2380feb87f4c4e850caace"
+            "sha256": "7f38f792035f9baac92f6d74901121dc5cf6fe6460c3ae184225d87de0513c49"
           },
           "session_drain": {
             "path": "session_drain.env",
@@ -150,7 +150,7 @@
         "artifacts": {
           "attention_stats": {
             "path": "attention_fast_path_stats.json",
-            "sha256": "4c765b557b2a8cd22399c7902a38c6f86159fd9a1aa04c7822d7c782ea7c9902"
+            "sha256": "4bfe039496867391a1fa8585dfeda396646d1fff42fc6fe537946211cd4a70bf"
           },
           "correctness_logs": {
             "path": "correctness_audit.env",
@@ -158,11 +158,11 @@
           },
           "routing": {
             "path": "routing_audit.json",
-            "sha256": "bf07e5c949498edb8200614d969cf9cd79cbc8e16e84a792cd7d94a20f2a4dc8"
+            "sha256": "cd3aa34adff4fdb6d26ef18c355d6b5d42f8fddd75dcca1bf669b948a7f33663"
           },
           "run_metadata": {
             "path": "run_metadata.json",
-            "sha256": "cb0ee3ec1e942249147813686a6cd55cec2d9135183d61b65c459ac64e8b9666"
+            "sha256": "f93a760ea6e04cf106edf06c0c5b72d1028a57dc6d69d6e5687c79d642ca6fc4"
           },
           "session_drain": {
             "path": "session_drain.env",
@@ -182,86 +182,86 @@
   },
   "metrics": {
     "round_1": {
-      "ttft_ms": 5397.499446989968,
-      "tpot_ms": 42.92308263909802,
-      "latency_ms": 16342.885519959964,
-      "eof_latency_ms": 16382.929896004498,
-      "post_token_stream_ms": 38.91881706658751
+      "ttft_ms": 5405.124559998512,
+      "tpot_ms": 35.593190509825945,
+      "latency_ms": 14532.705215038732,
+      "eof_latency_ms": 14571.141117019579,
+      "post_token_stream_ms": 38.24050503317267
     },
     "round_2": {
-      "ttft_ms": 235.38846604060382,
-      "tpot_ms": 39.12763904287096,
-      "latency_ms": 10218.630591058172,
-      "eof_latency_ms": 10257.232879986987,
-      "post_token_stream_ms": 39.12023699376732
+      "ttft_ms": 218.2627449510619,
+      "tpot_ms": 30.58531471738117,
+      "latency_ms": 8014.973741024733,
+      "eof_latency_ms": 8097.034101025201,
+      "post_token_stream_ms": 59.02299203444272
     },
-    "conversation_latency_ms": 26602.71111491602,
-    "conversation_eof_latency_ms": 26643.934175022878
+    "conversation_latency_ms": 22604.783563991077,
+    "conversation_eof_latency_ms": 22676.15594295785
   },
   "raw_metrics": {
     "round_1": {
       "ttft_ms": [
-        5406.420713989064,
-        5391.477055032738,
-        5397.499446989968
+        5394.833327038214,
+        5405.124559998512,
+        5498.65687196143
       ],
       "tpot_ms": [
-        42.92564325482019,
-        42.6741820235061,
-        42.92308263909802
+        35.83479171764909,
+        35.39490570980763,
+        35.593190509825945
       ],
       "latency_ms": [
-        16352.459743968211,
-        16273.393471026793,
-        16342.885519959964
+        14532.705215038732,
+        14430.825515999459,
+        14574.920451967046
       ],
       "eof_latency_ms": [
-        16391.3785610348,
-        16308.690523961559,
-        16382.929896004498
+        14571.141117019579,
+        14466.322056949139,
+        14613.160957000218
       ],
       "post_token_stream_ms": [
-        38.91881706658751,
-        35.297052934765816,
-        40.04437604453415
+        38.43590198084712,
+        35.49654094967991,
+        38.24050503317267
       ]
     },
     "round_2": {
       "ttft_ms": [
-        233.13547507859766,
-        235.38846604060382,
-        242.2332629794255
+        218.2627449510619,
+        215.71848809253424,
+        232.55046003032476
       ],
       "tpot_ms": [
-        39.15880437639049,
-        38.3098174667205,
-        39.12763904287096
+        30.749054709632023,
+        30.58531471738117,
+        30.427733909649152
       ],
       "latency_ms": [
-        10218.630591058172,
-        10004.391920054331,
-        10219.781218911521
+        8059.271695907228,
+        8014.973741024733,
+        7991.622606990859
       ],
       "eof_latency_ms": [
-        10257.232879986987,
-        10043.512157048099,
-        10261.00427901838
+        8105.0148259382695,
+        8073.996733059175,
+        8097.034101025201
       ],
       "post_token_stream_ms": [
-        38.60228892881423,
-        39.12023699376732,
-        41.22306010685861
+        45.7431300310418,
+        59.02299203444272,
+        105.41149403434247
       ]
     },
     "conversation_latency_ms": [
-      26610.00915209297,
-      26313.08244401589,
-      26602.71111491602
+      22630.412812926807,
+      22481.29579797387,
+      22604.783563991077
     ],
     "conversation_eof_latency_ms": [
-      26648.611441021785,
-      26352.202681009658,
-      26643.934175022878
+      22676.15594295785,
+      22540.318790008314,
+      22710.19505802542
     ]
   },
   "correctness_signatures": {
@@ -277,10 +277,10 @@
     }
   },
   "source_results": [
-    "test/baseline/pap/results/runs/20260712_162130_7e81e2d10_pap_multiturn_formal/rep1/result.json",
-    "test/baseline/pap/results/runs/20260712_162130_7e81e2d10_pap_multiturn_formal/rep2/result.json",
-    "test/baseline/pap/results/runs/20260712_162130_7e81e2d10_pap_multiturn_formal/rep3/result.json"
+    "test/baseline/pap/results/runs/20260712_171755_6bc383dab_pap_multiturn_formal/rep1/result.json",
+    "test/baseline/pap/results/runs/20260712_171755_6bc383dab_pap_multiturn_formal/rep2/result.json",
+    "test/baseline/pap/results/runs/20260712_171755_6bc383dab_pap_multiturn_formal/rep3/result.json"
   ],
   "reference_architecture": "pap",
-  "created_at": "2026-07-12T16:28:33+08:00"
+  "created_at": "2026-07-12T17:30:01+08:00"
 }

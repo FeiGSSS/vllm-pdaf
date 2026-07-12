@@ -46,7 +46,7 @@ The formal medians are:
 
 ```text
 test/baseline/pap/results/runs/
-  20260712_162130_7e81e2d10_pap_multiturn_formal/
+  20260712_171755_6bc383dab_pap_multiturn_formal/
 ```
 
 All three repetitions hit the exact `16272`-token second-turn cache boundary,
@@ -55,13 +55,14 @@ passed the strict service-log audit. The formal medians are:
 
 | Round | TTFT (ms) | TPOT (ms) | PAP/PD TTFT | PAP/PD TPOT |
 | --- | ---: | ---: | ---: | ---: |
-| 1 | 5397.499 | 42.923 | 0.636x | 1.710x |
-| 2 | 235.388 | 39.128 | 0.881x | 1.554x |
+| 1 | 5405.125 | 35.593 | 0.637x | 1.418x |
+| 2 | 218.263 | 30.585 | 0.817x | 1.215x |
 
 The round-two north-star boundary is `< 50.366 ms/token`; PAP is
-`11.239 ms/token` below it. The remaining absolute PAP/PD gap is
-`13.944 ms/token`; this local-fast result is the starting control for
-subsequent PAP-only optimizations.
+`19.781 ms/token` below it. The remaining absolute PAP/PD gap is
+`5.402 ms/token`. Round-two TPOT was `30.749 / 30.585 / 30.428 ms` across
+the three repetitions; the output signatures and exact `16272`-token hit were
+identical in all three.
 
 The first controlled quick A/B at
 `results/runs/20260712_north_star_local_fast_quick` changed the PAP
@@ -71,6 +72,14 @@ round-two TTFT/TPOT from `278.483/55.967 ms` to `246.587/38.603 ms`, preserved
 the exact `16272`-token cache hit and PAP output digests, and passed lifecycle
 gates. The runner now fixes `local_fast`; promotion still requires a clean
 three-repetition formal result. The v2 formal above completes that promotion.
+
+The original v2 local-fast control at commit `7e81e2d10` remains archived at
+`results/runs/20260712_162130_7e81e2d10_pap_multiturn_formal`. It measured
+round-two TTFT/TPOT `235.388/39.128 ms`. Stage A commit `6bc383dab` replaced
+per-element CUDA writes on paged-FA metadata misses with bulk construction,
+preserving key/LRU/padding semantics. The promoted reference improves
+round-two TTFT by `7.28%` and TPOT by `21.83%`; conversation latency is now
+`1.047x` PD.
 
 Each run also reproduced one topology mismatch during first-turn chunked
 Prefill; the current implementation treats the legal

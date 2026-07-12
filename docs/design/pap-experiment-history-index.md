@@ -1,10 +1,10 @@
 # PAP 开发与实验历史索引
 
-更新日期：2026-07-11
+更新日期：2026-07-12
 
 覆盖分支：`feature/pap`
 
-覆盖时间：2026-05-22 至 2026-07-11
+覆盖时间：2026-05-22 至 2026-07-12
 
 用途：从时间、模块或指标出发，逐层回溯 PAP 的设计动机、实现、实验和决策。
 
@@ -56,6 +56,7 @@
 | 任意 x:y correctness | 1PA1P、1PA2P、2PA1P、3PA2P active-peer smoke | pair、membership、routing、correctness、drain 全部通过 |
 | 多轮 exact-token | expected/actual hit `160/160`，decode-derived `32`，cold `0` | 第一轮 decode KV 可被第二轮原生 APC 命中 |
 | 多轮 Qwen3 Chat | expected/actual hit `176/176`，decode-derived `48`，cold `0` | thinking 模板下真实 messages 保持完整 materialized LCP |
+| 1PA1P 16K 两轮北极星 | Round2 PD/PAP TTFT `267.27/218.26 ms`，TPOT `25.18/30.59 ms` | Stage A PAP/PD TPOT `1.215x`，三次 exact cache/audit 通过 |
 
 以上各数字的工作负载和原始证据分别记录在 `M6`、`M9`、`M10` 和实验账本中，
 不能脱离 workload 直接互相比较。
@@ -116,6 +117,7 @@
 | `P6` 正确性加固与 TPOT 收敛 | 07-10 | ACK、lease、async send 正确性闭合后，same-node 热路径能否把 TPOT 降到 `2x PD` 内？ | `86a7c1273`、`72b0c1598`、`87bb1061f` | slot-plan/doorbell/metadata 复用使 QPS16 median TPOT 到 `33.21 ms`；QPS4 PAP/PD 为 `28.06/24.48 ms` | `formal-clean/controlled`，见 M5/M6/M7 |
 | `P7` 任意 x:y 与多对多执行 | 07-10 至 07-11 | 连接层任意 x:y 能否升级为 2PA2P full-crossbar 的真正 combine/scatter 执行？ | `45c302bb3`、`d654f6011`、`12b689d1b`、`bdb7a7dc7`、`54bd1a59c`、`d8bce2e6c` | central dispatcher、same-layer combine、vectorized route copy 和 active peer 闭合；2PA2P clean median/p99 TPOT 都低于 `2x PD` | `formal-clean/controlled/smoke`，见 M8/M9 |
 | `P8` 多轮原生 APC | 07-11 | 第二轮能否在同一 PA 直接命中第一轮 prompt 和 decode KV，而不做 KV 回传？ | `6a7094c3b`、`fd723d2e2`、`c71ccc9df`、`043339691`、`558db3cdd`、`848f321ab` | exact-token 命中 2 个 decode blocks，真实 Chat 命中 3 个；pair 每轮解散，APC LRU 保存完整 hashed blocks | `formal-clean`，见 M10 |
+| `P9` 多轮北极星与 metadata | 07-12 | 固定 16K 多轮后，paged-FA metadata miss 是否是稳定 TPOT 瓶颈？ | `7e81e2d10`、`7d0fd13cb`、`6bc383dab` | schema-v2 PD/PAP reference 建立；bulk build 将 Round2 PAP TPOT `39.13 -> 30.59 ms`，PAP/PD 到 `1.215x` | `formal-clean`，见 M6/M7/M10 |
 
 时间线不是 commit 全表。更细的里程碑见[第 8 节](#8-关键提交时间线)，完整 patch 以
 Git 历史为准。
@@ -520,7 +522,8 @@ CPU copy、无 per-row temporary tensor、无隐式全局同步。
 - `169066c78` Carry metadata and typed tensors in local-fast；
 - `a6010cce6` Add adaptive spin, async doorbell, and metadata cache；
 - `960d3ab7d` Batch unified-KV slot mapping；
-- `87bb1061f` Optimize same-node decode data path。
+- `87bb1061f` Optimize same-node decode data path；
+- `6bc383dab` Vectorize PAP paged attention metadata。
 
 #### 关键实验与证据
 
@@ -529,7 +532,10 @@ CPU copy、无 per-row temporary tensor、无隐式全局同步。
 - `PAP-20260703-SLOTMAPPING`：batched slot mapping 相对 per-row TPOT 降低约 29%；
 - `PAP-20260710-SLOTPLAN`：QPS16 三轮 median TPOT `33.21/32.99/34.37 ms`，
   跨轮中位数 `33.21 ms`；cache-off 回到 `42.12 ms`；
-- `PAP-20260710-QPS4-PD-AB`：PAP/PD median TPOT `28.06/24.48 ms`。
+- `PAP-20260710-QPS4-PD-AB`：PAP/PD median TPOT `28.06/24.48 ms`；
+- `PAP-20260712-METADATA-BULK`：1,024-block metadata miss GPU microbenchmark
+  `7.31 -> 0.104 ms`；16K 两轮 clean formal Round2 TPOT
+  `39.128 -> 30.585 ms`，PAP/PD `1.215x`。
 
 #### 负结果与被替代方案
 
@@ -542,9 +548,10 @@ CPU copy、无 per-row temporary tensor、无隐式全局同步。
 
 #### 当前结论与边界
 
-same-node 固定开销已经把 1PA1P 非饱和 TPOT 收敛到 PD 的约 `1.15x`。下一等级的
-cross-layer GPU-only timeline 或同进程双 GPU executor 只有在新 profiler 仍证明 CPU
-submit/poll 是主瓶颈时才值得投入；当前没有实现跨 layer 混合 Attention batch。
+same-node 固定开销已把短上下文 QPS4 TPOT 收敛到 PD 的约 `1.15x`；16K 两轮 Stage A
+也把 Round2 TPOT 收敛到 `1.215x`。下一步先修复 chunked-Prefill topology generation 的
+false mismatch，再用相同 north-star 判断是否值得投入 cross-layer GPU-only timeline 或
+同进程双 GPU executor；当前没有实现跨 layer 混合 Attention batch。
 
 #### 深入阅读与原始证据
 
@@ -793,6 +800,7 @@ APC longest-prefix lookup 就能重挂这些 blocks。最后 sampled token 和 p
 | `PAP-20260711-MULTITURN-EXACT` | M3/M4/M5/M10 | cold salt vs 同 PA warm；round1 `128+48`、round2 materialized prompt `183` | `558db3cdd`；clean rep2 | expected/actual hit `160/160`，decode-derived `32`，cold `0`；`formal-clean`；**接受 native APC** | [多轮设计](pap-xpayp-multiturn-kv-affinity-20260710.md)；`$PAP_RESULTS/20260711_558db3cdd_multiturn_clean_rep2` |
 | `PAP-20260711-MULTITURN-CHAT` | M5/M6/M10 | Qwen3 non-thinking discontinuous history → thinking 模板连续 history；真实两轮 messages warm/cold | `848f321ab`；clean rep2 | expected/actual hit `176/176`，decode-derived `48`，cold `0`；`formal-clean`；**接受 token-continuous Chat lane** | [多轮设计](pap-xpayp-multiturn-kv-affinity-20260710.md)；`$PAP_RESULTS/20260711_848f321ab_chat_multiturn_clean_rep2` |
 | `PAP-20260712-MULTITURN-NORTHSTAR` | M6/M7/M10 | 临时多轮 smoke → 固定 16K/2-turn/C1 PD/PAP test bed；NIXL mailbox → same-node local-fast；HTTP EOF 计时 → last-output-token v2 | `7e81e2d10`；clean PD/PAP formal | v2 round2 PD/PAP TTFT `267.27/235.39 ms`、TPOT `25.18/39.13 ms`，PAP 为 PD `0.881x/1.554x`，三轮 exact cache/audit 通过；每轮复现一个 chunk-generation topology false mismatch；**接受 v2 reference，P0 转向 metadata bulk build** | [北极星记录](pap-pd-multiturn-north-star-20260712.md)；`$PAP_RESULTS/20260712_{161402,162130}_*`；legacy `20260712_{031855,032326}_*` |
+| `PAP-20260712-METADATA-BULK` | M6/M7/M10 | paged-FA miss 的逐元素 CUDA metadata 写 → bulk tensor build；同一 16K/2-turn/C1 PAP formal | `6bc383dab`；clean 三轮 | Round2 TTFT `235.39 -> 218.26 ms`、TPOT `39.128 -> 30.585 ms`（`-21.83%`），PAP/PD TPOT `1.215x`；三轮 exact cache/output/audit 稳定；**接受并晋升 PAP reference** | [北极星记录](pap-pd-multiturn-north-star-20260712.md)；`$PAP_REPO_RESULTS/20260712_171755_6bc383dab_pap_multiturn_formal` |
 
 ## 7. 负结果、回滚与被替代路线
 
@@ -830,6 +838,7 @@ APC longest-prefix lookup 就能重挂这些 blocks。最后 sampled token 和 p
 | P6 / 07-10 | `86a7c1273` reliable ACK；`72b0c1598` strict benchmark checks；`87bb1061f` same-node data path | 正确性 fail-closed 后，以 slot-plan 把 1PA1P TPOT 收敛到 PD `1.146x`（QPS4） | M5/M6/M7；账本 P6 |
 | P7 / 07-10..11 | `45c302bb3` arbitrary x:y；`d654f6011` central dispatcher；`12b689d1b` combine；`bdb7a7dc7` route copy；`581387a51` wait metrics；`54bd1a59c` active peer；`d8bce2e6c` clean baseline | 从“能连接多 peer”升级到真正 combine/scatter，并用 active cohort 去除 idle-peer barrier | M8/M9；账本 P7 |
 | P8 / 07-11 | `6a7094c3b` native APC design；`fd723d2e2` eviction order；`c71ccc9df` decode reuse；`043339691` exact audit；`558db3cdd` Projection boundary；`848f321ab` Chat continuity；`ba4d41c5b` validation note | 证明无需 resident session/KV 回传即可命中第一轮 decode blocks | M10；账本 P8 |
+| P9 / 07-12 | `7e81e2d10` v2 timing/gates；`7d0fd13cb` formal references；`6bc383dab` bulk metadata | 把 16K 两轮 PD/PAP 固化为可审计 test bed，并将 metadata miss 从主 TPOT 瓶颈中移除 | M6/M7/M10；账本 P9 |
 
 ## 9. 未完成问题与外部依赖
 
@@ -837,6 +846,8 @@ APC longest-prefix lookup 就能重挂这些 blocks。最后 sampled token 和 p
 - arbitrary x:y 的连接/控制面已支持，但除 2PA2P 外主要是 correctness smoke；
 - cross-layer Attention batch、GPU-only cross-process timeline 和同进程双 GPU executor
   尚未通过 profiler gate；
+- chunked Prefill 的合法 topology generation 变化仍被记录为一次 false mismatch，Stage B
+  需要恢复首轮 slot-plan，并保留真正同代冲突的 fail-closed 语义；
 - 2PA2P 已达到 `2x PD`，但更高拓扑、不同模型和高 QPS 的普适性仍需实验；
 - raw results、profiles 和 `/tmp` handoff 需要独立归档策略，Git 只追踪本索引和摘要。
 
