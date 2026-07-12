@@ -16,6 +16,7 @@ REPETITIONS="${PD_NORTH_STAR_REPETITIONS:-3}"
 ENABLE_CROSS_LAYERS_BLOCKS="${PD_ENABLE_CROSS_LAYERS_BLOCKS:-1}"
 PREFILL_CUDA_VISIBLE_DEVICES="${PD_PREFILL_CUDA_VISIBLE_DEVICES:-1}"
 DECODE_CUDA_VISIBLE_DEVICES="${PD_DECODE_CUDA_VISIBLE_DEVICES:-2}"
+UCX_ERROR_HANDLING_MODE="${PD_UCX_ERROR_HANDLING_MODE:-}"
 
 case "${REPETITIONS}" in
   ''|*[!0-9]*)
@@ -163,16 +164,34 @@ GROUP_RUN_ID="${PD_NORTH_STAR_RUN_ID:-$(date +%Y%m%d_%H%M%S)_${GIT_SHORT}_pd_mul
 GROUP_ROOT="${PD_NORTH_STAR_RUN_ROOT:-${RESULTS_ROOT}/runs/${GROUP_RUN_ID}}"
 mkdir -p "${GROUP_ROOT}"
 
+if [[ -n "${UCX_ERROR_HANDLING_MODE}" ]]; then
+  case "${UCX_ERROR_HANDLING_MODE,,}" in
+    none|peer)
+      UCX_ERROR_HANDLING_MODE="${UCX_ERROR_HANDLING_MODE,,}"
+      ;;
+    *)
+      echo "PD_UCX_ERROR_HANDLING_MODE must be none, peer, or empty" >&2
+      exit 2
+      ;;
+  esac
+  UCX_ERROR_HANDLING_JSON="$(printf \
+    ',\"ucx_error_handling_mode\":\"%s\"' \
+    "${UCX_ERROR_HANDLING_MODE}")"
+else
+  UCX_ERROR_HANDLING_JSON=""
+fi
 P_CONFIG="$(printf '%s' \
   '{"kv_connector":"NixlConnector","kv_role":"kv_producer",' \
   '"kv_load_failure_policy":"fail","kv_connector_extra_config":{' \
   '"bidirectional_kv_xfer":false,"enable_cross_layers_blocks":"' \
-  "${ENABLE_CROSS_LAYERS_BLOCKS}" '"}}')"
+  "${ENABLE_CROSS_LAYERS_BLOCKS}" '"' \
+  "${UCX_ERROR_HANDLING_JSON}" '}}')"
 D_CONFIG="$(printf '%s' \
   '{"kv_connector":"NixlConnector","kv_role":"kv_consumer",' \
   '"kv_load_failure_policy":"fail","kv_connector_extra_config":{' \
   '"bidirectional_kv_xfer":false,"enable_cross_layers_blocks":"' \
-  "${ENABLE_CROSS_LAYERS_BLOCKS}" '"}}')"
+  "${ENABLE_CROSS_LAYERS_BLOCKS}" '"' \
+  "${UCX_ERROR_HANDLING_JSON}" '}}')"
 NIXL_VERSION="$(
   "${PYTHON_BIN}" -c \
     'import importlib.metadata as m; print(m.version("nixl"))'
@@ -221,6 +240,8 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
     printf 'UCX_LOG_LEVEL=%q\n' "${UCX_LOG_LEVEL:-}"
     printf 'UCX_PROTO_EMULATION_ENABLE=%q\n' \
       "${UCX_PROTO_EMULATION_ENABLE:-}"
+    printf 'UCX_ERROR_HANDLING_MODE=%q\n' \
+      "${UCX_ERROR_HANDLING_MODE}"
     printf 'NIXL_VERSION=%q\n' "${NIXL_VERSION}"
     printf 'PREFILL_KV_TRANSFER_CONFIG=%q\n' "${P_CONFIG}"
     printf 'DECODE_KV_TRANSFER_CONFIG=%q\n' "${D_CONFIG}"
