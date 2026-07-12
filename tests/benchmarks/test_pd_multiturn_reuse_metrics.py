@@ -60,7 +60,7 @@ def test_validate_official_streaming_one_way_checks_exact_reuse() -> None:
         _result(),
         proxy_log="cache MISS\ncache MISS\n",
         prefill_metrics=_metrics(compute=16420, local=16016, external=0),
-        decode_metrics=_metrics(compute=4, local=16272, external=16160),
+        decode_metrics=_metrics(compute=0, local=16272, external=16164),
     )
 
     assert evidence["status"] == "official_streaming_one_way_metrics_passed"
@@ -79,12 +79,22 @@ def test_validate_rejects_decode_hit_without_decode_derived_tokens() -> None:
 
 
 def test_validate_rejects_missing_second_prefill_to_decode_transfer() -> None:
-    with pytest.raises(ValueError, match="second-turn Prefill-to-Decode"):
+    with pytest.raises(ValueError, match="local compute"):
         validate_official_streaming_one_way(
             _result(),
             proxy_log="cache MISS\ncache MISS\n",
             prefill_metrics=_metrics(compute=16420, local=16016, external=0),
             decode_metrics=_metrics(compute=148, local=16272, external=16016),
+        )
+
+
+def test_validate_rejects_partial_decode_recompute() -> None:
+    with pytest.raises(ValueError, match="local compute"):
+        validate_official_streaming_one_way(
+            _result(),
+            proxy_log="cache MISS\ncache MISS\n",
+            prefill_metrics=_metrics(compute=16420, local=16016, external=0),
+            decode_metrics=_metrics(compute=4, local=16272, external=16160),
         )
 
 
@@ -106,7 +116,7 @@ def test_validate_does_not_mutate_result() -> None:
         result,
         proxy_log="cache MISS\ncache MISS\n",
         prefill_metrics=_metrics(compute=16420, local=16016, external=0),
-        decode_metrics=_metrics(compute=4, local=16272, external=16160),
+        decode_metrics=_metrics(compute=0, local=16272, external=16164),
     )
 
     assert result == original

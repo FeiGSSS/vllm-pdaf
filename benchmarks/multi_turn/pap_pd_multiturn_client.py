@@ -35,6 +35,10 @@ class NorthStarConfig:
     conversation_id: str
     cache_salt: str
     hardware_signature: str
+    git_commit: str
+    git_tracked_worktree_dirty: bool
+    offload_exec_transport: str
+    direct_mailbox_output: bool
     document_tokens: int = DEFAULT_DOCUMENT_TOKENS
     append_tokens: int = DEFAULT_APPEND_TOKENS
     output_tokens: int = DEFAULT_OUTPUT_TOKENS
@@ -284,6 +288,7 @@ def consume_sse_lines(
     completion_tokens: int | None = None
     finish_reason: str | None = None
     first_token_at: float | None = None
+    last_token_at: float | None = None
     saw_done = False
 
     for line in lines:
@@ -323,8 +328,11 @@ def consume_sse_lines(
             raw_token_ids = choice.get("token_ids") or []
             if not isinstance(raw_token_ids, list):
                 raise ValueError("choice token_ids must be a list")
-            if raw_token_ids and first_token_at is None:
-                first_token_at = clock()
+            if raw_token_ids:
+                token_at = clock()
+                if first_token_at is None:
+                    first_token_at = token_at
+                last_token_at = token_at
             output_token_ids.extend(int(token_id) for token_id in raw_token_ids)
 
             delta = choice.get("delta") or {}
@@ -336,12 +344,12 @@ def consume_sse_lines(
             if current_finish is not None:
                 finish_reason = str(current_finish)
 
-    finished_at = clock()
+    eof_at = clock()
     if not saw_done:
         raise ValueError("stream ended without [DONE]")
     if prompt_token_ids is None:
         raise ValueError("stream did not return prompt_token_ids")
-    if first_token_at is None or not output_token_ids:
+    if first_token_at is None or last_token_at is None or not output_token_ids:
         raise ValueError("stream did not return output token IDs")
     if prompt_tokens is None or completion_tokens is None:
         raise ValueError("stream did not return final usage")
@@ -357,7 +365,13 @@ def consume_sse_lines(
         )
 
     ttft_ms = (first_token_at - started_at) * 1000.0
-    latency_ms = (finished_at - started_at) * 1000.0
+    latency_ms = (last_token_at - started_at) * 1000.0
+    eof_latency_ms = (eof_at - started_at) * 1000.0
+    post_token_stream_ms = (eof_at - last_token_at) * 1000.0
+    if post_token_stream_ms < 0:
+        raise ValueError(
+            "HTTP stream EOF preceded the final output token timestamp"
+        )
     return {
         "prompt_token_ids": prompt_token_ids,
         "output_token_ids": output_token_ids,
@@ -368,6 +382,8 @@ def consume_sse_lines(
         "saw_done": saw_done,
         "ttft_ms": ttft_ms,
         "latency_ms": latency_ms,
+        "eof_latency_ms": eof_latency_ms,
+        "post_token_stream_ms": post_token_stream_ms,
         "tpot_ms": calculate_tpot_ms(
             latency_ms,
             ttft_ms,
@@ -522,6 +538,8 @@ def _round_summary(
         "ttft_ms": observation["ttft_ms"],
         "tpot_ms": observation["tpot_ms"],
         "latency_ms": observation["latency_ms"],
+        "eof_latency_ms": observation["eof_latency_ms"],
+        "post_token_stream_ms": observation["post_token_stream_ms"],
         "finish_reason": observation["finish_reason"],
         "saw_done": observation["saw_done"],
         "prompt_token_digest": _token_digest(prompt_ids),
@@ -607,17 +625,30 @@ def execute_two_turn(
         _round_summary(1, first, first_prefill),
         _round_summary(2, second, second_prefill),
     ]
+    implementation = {
+        "offload_exec_transport": config.offload_exec_transport,
+        "direct_mailbox_output": config.direct_mailbox_output,
+    }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
+        "metric_definition": "last_output_token_v2",
         "profile": profile,
         "profile_fingerprint": profile_fingerprint(profile),
         "architecture": config.architecture,
         "topology": _topology_metadata(config.architecture, config.topology),
         "hardware_signature": config.hardware_signature,
+        "git_commit": config.git_commit,
+        "git_tracked_worktree_dirty": config.git_tracked_worktree_dirty,
+        "implementation": implementation,
+        "implementation_fingerprint": profile_fingerprint(implementation),
         "conversation_id_digest": _text_digest(config.conversation_id),
         "rounds": rounds,
-        "conversation_latency_ms": sum(
-            float(round_result["latency_ms"]) for round_result in rounds
+        "conversation_latency_ms": (
+            float(rounds[0]["eof_latency_ms"])
+            + float(rounds[1]["latency_ms"])
+        ),
+        "conversation_eof_latency_ms": sum(
+            float(round_result["eof_latency_ms"]) for round_result in rounds
         ),
         "cache_validation": cache_validation,
         "validity": {"status": "passed", "cache_gate": cache_gate},
@@ -668,6 +699,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--conversation-id", required=True)
     parser.add_argument("--cache-salt", required=True)
     parser.add_argument("--hardware-signature", required=True)
+    parser.add_argument("--git-commit", required=True)
+    parser.add_argument(
+        "--git-tracked-worktree-dirty",
+        choices=("0", "1"),
+        required=True,
+    )
+    parser.add_argument("--offload-exec-transport", required=True)
+    parser.add_argument(
+        "--direct-mailbox-output",
+        choices=("0", "1"),
+        required=True,
+    )
     parser.add_argument("--document-tokens", type=int, default=16000)
     parser.add_argument("--append-tokens", type=int, default=120)
     parser.add_argument("--output-tokens", type=int, default=256)
@@ -691,6 +734,10 @@ def _config_from_args(args: argparse.Namespace) -> NorthStarConfig:
         conversation_id=args.conversation_id,
         cache_salt=args.cache_salt,
         hardware_signature=args.hardware_signature,
+        git_commit=args.git_commit,
+        git_tracked_worktree_dirty=args.git_tracked_worktree_dirty == "1",
+        offload_exec_transport=args.offload_exec_transport,
+        direct_mailbox_output=args.direct_mailbox_output == "1",
         document_tokens=args.document_tokens,
         append_tokens=args.append_tokens,
         output_tokens=args.output_tokens,
@@ -713,8 +760,17 @@ def main() -> None:
         _atomic_write_json(
             result_path,
             {
-                "schema_version": 1,
+                "schema_version": 2,
+                "metric_definition": "last_output_token_v2",
                 "architecture": config.architecture,
+                "git_commit": config.git_commit,
+                "git_tracked_worktree_dirty": (
+                    config.git_tracked_worktree_dirty
+                ),
+                "implementation": {
+                    "offload_exec_transport": config.offload_exec_transport,
+                    "direct_mailbox_output": config.direct_mailbox_output,
+                },
                 "validity": {"status": "failed"},
                 "error": f"{type(exc).__name__}: {exc}",
             },

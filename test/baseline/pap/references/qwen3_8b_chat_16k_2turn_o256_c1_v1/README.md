@@ -9,6 +9,12 @@ the cross-run median of three serial repetitions with a full service restart.
 The primary optimization metric is round-two TPOT; TTFT and round-one metrics
 remain independent regression signals.
 
+The numbers below were captured with the original `http_stream_eof_v1`
+definition, where TPOT included time between the final token and HTTP EOF. A
+review found this unfairly mixes PAP lifecycle cleanup into its decode metric.
+They are retained as legacy evidence while clean `last_output_token_v2`
+references are rebuilt; schema-v2 comparison rejects these legacy payloads.
+
 ## PD reference
 
 `pd_reference.json` was created from:
@@ -56,6 +62,29 @@ passed the strict service-log audit. The formal medians are:
 The round-two north-star boundary is `< 50.327 ms/token`; the initial PAP
 reference is `5.640 ms/token` above it. This is the starting control for all
 subsequent PAP-only optimizations.
+
+The first controlled quick A/B at
+`results/runs/20260712_north_star_local_fast_quick` changed the PAP
+OFFLOAD_EXEC bundle from NIXL mailbox/direct-output-off to same-node
+`local_fast`/direct-output-on. It reduced
+round-two TTFT/TPOT from `278.483/55.967 ms` to `246.587/38.603 ms`, preserved
+the exact `16272`-token cache hit and PAP output digests, and passed lifecycle
+gates. The runner now fixes `local_fast`; promotion still requires a clean
+three-repetition formal result.
+
+Exact-token signatures are also tracked. All three repetitions within each
+architecture are deterministic, all prompt digests match, and round-one PD/PAP
+outputs match exactly. Round-two PAP is deterministic but its output digest
+differs from PD. The comparator reports this as a correctness warning rather
+than hiding it or invalidating timing; performance promotion requires stable
+PAP output, while cross-architecture numerical parity remains a separate item
+to investigate.
+
+Schema-v2 results additionally bind every repetition to its Git commit,
+transport/direct-output implementation fingerprint, and architecture-specific
+external gates. Candidate output-token and assistant-text signatures must
+match the PAP reference exactly; a stable PD/PAP numerical-path difference is
+reported separately as a warning.
 
 ## Reference policy
 

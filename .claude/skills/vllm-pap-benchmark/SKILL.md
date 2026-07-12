@@ -202,12 +202,18 @@ log audit. Its cleanup is scoped to process groups created by that run.
 
 For 1P1D PD versus 1PA1P PAP multi-turn TTFT/TPOT work, use the frozen
 `qwen3_8b_chat_16k_2turn_o256_c1_v1` profile documented in
-`test/baseline/pap/README.md`. Run PAP candidates with:
+`test/baseline/pap/README.md`. The runner explicitly uses the same-node
+`local_fast` CUDA-IPC/P2P ring for PAP OFFLOAD_EXEC. Run PAP candidates with:
 
 ```bash
 bash .claude/skills/vllm-pap-benchmark/scripts/run_multiturn_north_star.sh quick
 bash .claude/skills/vllm-pap-benchmark/scripts/run_multiturn_north_star.sh formal
 ```
+
+The north-star uses last-output-token TTFT/TPOT timing and records HTTP EOF
+cleanup separately. Formal repetitions must share one clean Git commit and
+implementation fingerprint, and the aggregate requires embedded cache,
+routing, lifecycle, and fatal-log gates.
 
 Refresh PD only through `bootstrap_pd_multiturn_reference.sh`. That script uses
 the unchanged official streaming proxy and validates the current effective

@@ -9,6 +9,8 @@ MODEL_PATH="${MODEL_PATH:-/data/ssd1/llm-models/Qwen3-8B}"
 DATASET_PATH="${DATASET_PATH:-/home/fei/research/PD/refer_codes/vllm/benchmarks/sonnet_4x.txt}"
 PROFILE_ID="qwen3_8b_chat_16k_2turn_o256_c1_v1"
 REFERENCE_DIR="${PAP_NORTH_STAR_REFERENCE_DIR:-${ROOT_DIR}/test/baseline/pap/references/${PROFILE_ID}}"
+PD_REFERENCE="${REFERENCE_DIR}/pd_reference.json"
+PAP_REFERENCE="${REFERENCE_DIR}/pap_reference.json"
 RESULTS_ROOT="${RESULTS_ROOT:-${ROOT_DIR}/test/baseline/pap/results}"
 MODE="${1:-quick}"
 
@@ -39,6 +41,17 @@ esac
   echo "missing comparer: ${COMPARER}" >&2
   exit 1
 }
+
+REFERENCES_READY=0
+if [[ -f "${PD_REFERENCE}" && -f "${PAP_REFERENCE}" ]] \
+  && "${PYTHON_BIN}" "${COMPARER}" validate-references \
+    --pd-reference "${PD_REFERENCE}" \
+    --pap-reference "${PAP_REFERENCE}"
+then
+  REFERENCES_READY=1
+else
+  echo "North-star v2 references are unavailable; comparison will be skipped."
+fi
 
 ensure_gpu_idle() {
   local gpu pid_output
@@ -88,6 +101,16 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
   PAP_PREFILL_GPUS=1 \
   PAP_PROJECTION_GPUS=2 \
   PAP_VLLM_DTYPE=float16 \
+  PAP_OFFLOAD_EXEC_TRANSPORT=local_fast \
+  PAP_OFFLOAD_KV_TRANSPORT=cuda_ipc \
+  PAP_DIRECT_MAILBOX_OUTPUT=1 \
+  PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND=1 \
+  PAP_BATCHED_ROUTE_COPY=1 \
+  PAP_LOCAL_FAST_STREAM_ORDERED=1 \
+  PAP_LOCAL_FAST_SLOT_COUNT=2 \
+  PAP_LOCAL_FAST_BATCH_PLAN=1 \
+  PAP_ATTENTION_DISPATCH_MODE=legacy \
+  PAP_ATTENTION_COMBINE_WAIT_US=0 \
   PAP_PREFIX_CACHE_AUDIT=0 \
   PAP_ENABLE_PROMPT_TOKENS_DETAILS=1 \
   PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS=256 \
@@ -135,9 +158,7 @@ if [[ "${MODE}" == "formal" ]]; then
   cp "${AGGREGATE_PATH}" /tmp/pap_multiturn_reference_candidate.json
 fi
 
-PD_REFERENCE="${REFERENCE_DIR}/pd_reference.json"
-PAP_REFERENCE="${REFERENCE_DIR}/pap_reference.json"
-if [[ -f "${PD_REFERENCE}" && -f "${PAP_REFERENCE}" ]]; then
+if [[ "${REFERENCES_READY}" == "1" ]]; then
   "${PYTHON_BIN}" "${COMPARER}" compare \
     --candidate "${AGGREGATE_PATH}" \
     --pd-reference "${PD_REFERENCE}" \

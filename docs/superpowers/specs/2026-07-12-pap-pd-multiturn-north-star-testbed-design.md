@@ -91,22 +91,38 @@ KV，D 命中自己的本地 Prompt+Decode KV，并由 P→D NIXL 补充新后�
 为 `official_streaming_one_way`，用两端 `/metrics` 的 token-source counter 精确验证，
 绝不为得到 proxy `HIT` 而修改官方 PD/API 代码。
 
-PAP 使用 1PA1P、当前已验证的 NIXL-mailbox/CUDA-IPC 数据面、统一 KV 和固定 MPS
-70/30。两条 lane 均使用相同 GPU 编号和公共参数；lane-specific memory utilization
-保持已验证值并写入 artifact。
+PAP 使用 1PA1P、统一 KV 和固定 MPS 70/30。初始 PAP reference 冻结在当时的
+NIXL-mailbox/CUDA-IPC 执行数据面；优化 candidate 必须记录实际 transport，允许在保持
+同一 workload/profile fingerprint 的前提下切换 PAP 内部实现。2026-07-12 的第一轮 A/B
+证明同节点 `local_fast` CUDA-IPC/P2P ring 同时改善 TTFT 与 TPOT，因此 north-star runner
+随后显式固定为 `PAP_OFFLOAD_EXEC_TRANSPORT=local_fast`。PD lane 不随 PAP 内部优化改变。
+两条 lane 均使用相同 GPU 编号和公共参数；lane-specific memory utilization 保持已验证值
+并写入 artifact。
 
 ### 3.3 性能期间的观测边界
+
+主指标使用 `last_output_token_v2`：TTFT 以首个 output token 到达为终点，TPOT 只覆盖
+首 token 到最后一个 output token；客户端仍完整消费 `[DONE]` 和 HTTP EOF，并将尾部记录
+为 `eof_latency_ms`/`post_token_stream_ms`。这样 PAP 特有的 session DELETE/stream cleanup
+不会混入 TPOT，但仍作为独立生命周期诊断信号保留。
+
+每次结果必须携带 Git commit、transport、direct-output 与 implementation fingerprint；
+formal 三次必须完全一致。PAP 的 session drain、routing、Attention stats capture、fatal-log
+audit，以及 PD 的精确 token-source/reuse 与 fatal-log audit，都必须在 aggregate 前写回
+result。staged 或 unstaged tracked diff 均禁止生成 formal reference。
+Finalizer 必须重新解析实际 artifact，不能相信调用方传入的 `passed` 标签；artifact 以
+run-root 相对路径和 SHA-256 写入 result/reference。
 
 性能运行不得开启逐 token 的 `PAP_PREFIX_CACHE_AUDIT`，因为它会引入同步日志开销。
 PAP 缓存命中使用现有 Prefill response headers 和只读服务日志确认；PD 只使用官方响应、
 日志和 `/metrics`。PD 每次 repetition 保存 P/D 的 Prometheus 快照，并按新鲜进程内的
 两轮累计量做精确守恒：P 的本地命中必须等于第一轮 prompt 的 block boundary、external
 必须为零；D 的本地命中必须等于客户端由真实 token IDs 得到的完整 materialized LCP，
-external 累计量必须大于首轮 boundary，从而证明第二轮 P→D 也发生；两端三种 token 来源
-之和必须等于两轮真实 prompt tokens 之和。官方 proxy 同时必须精确记录两次 `MISS`、零次
-`HIT`。这些条件共同冻结当前官方 streaming one-way 行为；未来上游行为改变时必须重新
-定义 profile 并 bootstrap reference，不能静默混用。任何诊断 trace/profile 必须作为
-独立运行，不能冒充性能结果。
+D 的 local compute 必须为零，external 必须精确等于总 prompt tokens 减去 D local hit；
+两端三种 token 来源之和必须等于两轮真实 prompt tokens 之和。官方 proxy 同时必须精确
+记录两次 `MISS`、零次 `HIT`。这些条件共同冻结当前官方 streaming one-way 行为；未来
+上游行为改变时必须重新定义 profile 并 bootstrap reference，不能静默混用。任何诊断
+trace/profile 必须作为独立运行，不能冒充性能结果。
 
 ## 4. 组件和职责
 
@@ -118,7 +134,7 @@ external 累计量必须大于首轮 boundary，从而证明第二轮 P→D 也�
 
 - 纯本地构造固定两轮消息；
 - 以同一 payload 驱动 PD 或 PAP；
-- 从 SSE 记录 TTFT、完成时间和 token usage；
+- 从 SSE 分别记录 TTFT、最后 output-token 时间、HTTP EOF 和 token usage；
 - 从 streaming `prompt_token_ids` / `token_ids` 记录真实 token 序列；
 - 按 `(latency - TTFT) / max(completion_tokens - 1, 1)` 计算 TPOT；
 - 记录响应头中的 Prefill token 证据（存在时）；

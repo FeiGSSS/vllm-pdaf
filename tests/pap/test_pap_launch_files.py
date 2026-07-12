@@ -120,8 +120,16 @@ def test_pap_runner_supports_multiturn_north_star() -> None:
     assert '--architecture "pap"' in text
     assert '--topology "${TOPOLOGY}"' in text
     assert '--hardware-signature "${PAP_NORTH_STAR_HARDWARE_SIGNATURE}"' in text
+    assert '--git-commit "${GIT_COMMIT}"' in text
+    assert '--git-tracked-worktree-dirty "${GIT_TRACKED_WORKTREE_DIRTY}"' in text
+    assert '--offload-exec-transport "${PAP_OFFLOAD_EXEC_TRANSPORT}"' in text
+    assert '--direct-mailbox-output "${PAP_DIRECT_MAILBOX_OUTPUT}"' in text
     assert '--result "${RUN_ROOT}/result.json"' in text
     assert "validate_north_star_result" in text
+    assert "finalize_pap_pd_multiturn.py" in text
+    assert "git diff --cached --binary" in text
+    assert "CUDA out of memory" in text
+    assert "EngineDeadError" in text
     assert text.index("validate_north_star_result") < text.rindex(
         "wait_attention_sessions_drained"
     )
@@ -154,6 +162,11 @@ def test_multiturn_north_star_orchestrator_is_fixed_and_serial() -> None:
     assert "MAX_NUM_BATCHED_TOKENS=4096" in text
     assert "MAX_NUM_SEQS=2" in text
     assert "PAP_VLLM_DTYPE=float16" in text
+    assert "PAP_OFFLOAD_EXEC_TRANSPORT=local_fast" in text
+    assert "PAP_DIRECT_MAILBOX_OUTPUT=1" in text
+    assert "PAP_OFFLOAD_KV_TRANSPORT=cuda_ipc" in text
+    assert "PAP_LOCAL_FAST_STREAM_ORDERED=1" in text
+    assert "PAP_LOCAL_FAST_SLOT_COUNT=2" in text
     assert "PAP_PREFIX_CACHE_AUDIT=0" in text
     assert "PAP_ENABLE_PROMPT_TOKENS_DETAILS=1" in text
     assert "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS=256" in text
@@ -162,6 +175,8 @@ def test_multiturn_north_star_orchestrator_is_fixed_and_serial() -> None:
     assert "compare_pap_pd_multiturn.py" in text
     assert " aggregate " in text
     assert " compare " in text
+    assert "REFERENCES_READY" in text
+    assert "validate-references" in text
     assert "write-reference" not in text
     assert "pkill" not in text
     assert "python3" not in text
@@ -192,6 +207,11 @@ def test_pd_multiturn_reference_bootstrap_uses_unchanged_official_proxy() -> Non
     assert '"kv_role":"kv_producer"' in text
     assert '"kv_role":"kv_consumer"' in text
     assert '"bidirectional_kv_xfer":true' not in text
+    assert '"bidirectional_kv_xfer":false' in text
+    assert "git diff --cached --quiet" in text
+    assert "git diff --cached --binary" in text
+    assert "finalize_pap_pd_multiturn.py" in text
+    assert "--passed-gate pd_reuse_metrics" in text
     assert "prefill_metrics.prom" in text
     assert "decode_metrics.prom" in text
     assert "official_streaming_one_way_metrics_passed" in audit_text

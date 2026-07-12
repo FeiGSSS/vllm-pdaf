@@ -34,7 +34,15 @@ baseline directories.
 The fixed profile `qwen3_8b_chat_16k_2turn_o256_c1_v1` compares official
 1P1D PD/NIXL with 1PA1P PAP on GPUs 1/2. It uses one two-turn conversation,
 a 16K first-turn document, a 120-token second-turn append, and 256 output
-tokens per turn. TTFT and TPOT are reported separately.
+tokens per turn. TTFT and TPOT are reported separately. The PAP north-star
+runner uses the same-node `local_fast` CUDA-IPC/P2P ring; the effective
+transport is always recorded in each run artifact.
+
+Timing uses `last_output_token_v2`: TTFT ends at the first output-token chunk,
+and TPOT spans the first through final output token. The client still consumes
+the stream through `[DONE]` and HTTP EOF, but records that tail separately as
+`eof_latency_ms` and `post_token_stream_ms`; architecture-specific cleanup is
+therefore observable without contaminating TPOT.
 
 Run one diagnostic PAP repetition:
 
@@ -79,6 +87,16 @@ Verdicts have the following meanings:
 - `neutral`: formal round-two TPOT is within 3% of PAP reference.
 - `regressed`: formal round-two TPOT is at least 3% above PAP reference.
 - `invalid`: request, cache, log, profile, hardware, or lifecycle Gate failed.
+
+Formal aggregation also requires one identical Git commit and implementation
+fingerprint across all repetitions. PAP session drain, routing, Attention stats
+capture, and fatal-log audit evidence are embedded in each result. PD embeds
+its exact one-way NIXL token-source evidence and fatal-log audit. Staged and
+unstaged tracked changes both make a formal run fail closed.
+The finalizer parses the underlying artifacts again, records their run-relative
+paths and SHA-256 digests, and refuses labels that disagree with the evidence.
+Reference promotion additionally requires three distinct conversation IDs and
+source files, then recomputes every median from the three raw measurements.
 
 Every report also states whether `PAP round-two TPOT < 2 * PD TPOT`. TTFT,
 round-one TPOT, and conversation latency are retained as independent regression

@@ -157,10 +157,17 @@ def validate_official_streaming_one_way(
             "Decode local cache did not cover the exact materialized LCP: "
             f"{decode_sources['local_cache_hit']} != {expected_cached}"
         )
-    if decode_sources["external_kv_transfer"] <= first_boundary:
+    if decode_sources["local_compute"] != 0:
         raise ValueError(
-            "Decode metrics do not prove a second-turn Prefill-to-Decode "
-            f"transfer: {decode_sources}"
+            "Decode performed unexpected local compute: "
+            f"{decode_sources['local_compute']} != 0"
+        )
+    expected_external = total_prompt_tokens - expected_cached
+    if decode_sources["external_kv_transfer"] != expected_external:
+        raise ValueError(
+            "Decode external transfer did not cover the exact non-local "
+            f"prompt tokens: {decode_sources['external_kv_transfer']} != "
+            f"{expected_external}"
         )
 
     return {

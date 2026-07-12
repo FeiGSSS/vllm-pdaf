@@ -7,6 +7,7 @@ VLLM_BIN="${VLLM_BIN:-${ROOT_DIR}/.venv/bin/vllm}"
 CLIENT="${ROOT_DIR}/benchmarks/multi_turn/pap_pd_multiturn_client.py"
 COMPARER="${ROOT_DIR}/benchmarks/multi_turn/compare_pap_pd_multiturn.py"
 PD_REUSE_AUDITOR="${ROOT_DIR}/benchmarks/multi_turn/pd_multiturn_reuse_metrics.py"
+NORTH_STAR_FINALIZER="${ROOT_DIR}/benchmarks/multi_turn/finalize_pap_pd_multiturn.py"
 OFFICIAL_PROXY="${ROOT_DIR}/examples/disaggregated/disaggregated_serving/disagg_proxy_multiturn.py"
 MODEL_PATH="${MODEL_PATH:-/data/ssd1/llm-models/Qwen3-8B}"
 DATASET_PATH="${DATASET_PATH:-/home/fei/research/PD/refer_codes/vllm/benchmarks/sonnet_4x.txt}"
@@ -23,6 +24,7 @@ for required in \
   "${CLIENT}" \
   "${COMPARER}" \
   "${PD_REUSE_AUDITOR}" \
+  "${NORTH_STAR_FINALIZER}" \
   "${OFFICIAL_PROXY}"; do
   [[ -f "${required}" ]] || {
     echo "required file is missing: ${required}" >&2
@@ -118,19 +120,20 @@ audit_and_close_pd_result() {
 }
 
 cd "${ROOT_DIR}"
-git diff --quiet || {
+if ! git diff --quiet || ! git diff --cached --quiet; then
   echo "PD reference bootstrap requires a clean tracked worktree" >&2
   exit 1
-}
+fi
 ensure_gpu_idle
 HARDWARE_SIGNATURE="$(hardware_signature)"
+GIT_COMMIT="$(git rev-parse HEAD)"
 GIT_SHORT="$(git rev-parse --short HEAD)"
 GROUP_RUN_ID="${PD_NORTH_STAR_RUN_ID:-$(date +%Y%m%d_%H%M%S)_${GIT_SHORT}_pd_multiturn_formal}"
 GROUP_ROOT="${PD_NORTH_STAR_RUN_ROOT:-${RESULTS_ROOT}/runs/${GROUP_RUN_ID}}"
 mkdir -p "${GROUP_ROOT}"
 
-P_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_producer","kv_load_failure_policy":"fail"}'
-D_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_consumer","kv_load_failure_policy":"fail"}'
+P_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_producer","kv_load_failure_policy":"fail","kv_connector_extra_config":{"bidirectional_kv_xfer":false}}'
+D_CONFIG='{"kv_connector":"NixlConnector","kv_role":"kv_consumer","kv_load_failure_policy":"fail","kv_connector_extra_config":{"bidirectional_kv_xfer":false}}'
 RESULT_ARGS=()
 
 for (( rep=1; rep<=REPETITIONS; rep++ )); do
@@ -149,6 +152,7 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
 
   git status --short > "${REP_ROOT}/git_status.txt"
   git diff --binary > "${REP_ROOT}/tracked_worktree.patch"
+  git diff --cached --binary > "${REP_ROOT}/tracked_index.patch"
   {
     printf 'MODE=pd\n'
     printf 'TOPOLOGY=1p1d\n'
@@ -157,7 +161,9 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
     printf 'PREFILL_GPU=1\nDECODE_GPU=2\n'
     printf 'DTYPE=float16\nMAX_MODEL_LEN=20000\n'
     printf 'MAX_NUM_BATCHED_TOKENS=4096\nMAX_NUM_SEQS=2\n'
-    printf 'GIT_COMMIT=%q\n' "$(git rev-parse HEAD)"
+    printf 'PREFILL_KV_TRANSFER_CONFIG=%q\n' "${P_CONFIG}"
+    printf 'DECODE_KV_TRANSFER_CONFIG=%q\n' "${D_CONFIG}"
+    printf 'GIT_COMMIT=%q\n' "${GIT_COMMIT}"
     printf 'HARDWARE_SIGNATURE=%q\n' "${HARDWARE_SIGNATURE}"
   } > "${REP_ROOT}/effective_config.env"
 
@@ -242,6 +248,10 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
     --conversation-id "${GROUP_RUN_ID}-rep${rep}-conversation-0" \
     --cache-salt "${GROUP_RUN_ID}-rep${rep}-cache-salt" \
     --hardware-signature "${HARDWARE_SIGNATURE}" \
+    --git-commit "${GIT_COMMIT}" \
+    --git-tracked-worktree-dirty 0 \
+    --offload-exec-transport nixl \
+    --direct-mailbox-output 0 \
     --document-tokens 16000 \
     --append-tokens 120 \
     --output-tokens 256 \
@@ -271,6 +281,19 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
   : > "${REP_ROOT}/correctness_audit_matches.log"
   printf 'STATUS=passed\nMATCH_COUNT=0\n' \
     > "${REP_ROOT}/correctness_audit.env"
+  "${PYTHON_BIN}" "${NORTH_STAR_FINALIZER}" \
+    --result "${REP_ROOT}/result.json" \
+    --architecture pd \
+    --passed-gate pd_reuse_metrics \
+    --passed-gate correctness_logs \
+    --artifact "proxy_log=${LOG_ROOT}/proxy.log" \
+    --artifact "prefill_metrics=${REP_ROOT}/prefill_metrics.prom" \
+    --artifact "decode_metrics=${REP_ROOT}/decode_metrics.prom" \
+    --artifact "effective_config=${REP_ROOT}/effective_config.env" \
+    --artifact "correctness_logs=${REP_ROOT}/correctness_audit.env" \
+    --artifact \
+      "tracked_worktree_patch=${REP_ROOT}/tracked_worktree.patch" \
+    --artifact "tracked_index_patch=${REP_ROOT}/tracked_index.patch"
   RESULT_ARGS+=(--result "${REP_ROOT}/result.json")
   cleanup_current
 done

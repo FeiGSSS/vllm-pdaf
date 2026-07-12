@@ -8,6 +8,7 @@ set -euo pipefail
 ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 VLLM_BIN="${VLLM_BIN:-${ROOT_DIR}/.venv/bin/vllm}"
+NORTH_STAR_FINALIZER="${ROOT_DIR}/benchmarks/multi_turn/finalize_pap_pd_multiturn.py"
 PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE="${PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE:-0}"
 PAP_BENCH_STRICT_CORRECTNESS_AUDIT="${PAP_BENCH_STRICT_CORRECTNESS_AUDIT:-1}"
 PAP_BENCH_CLIENT_MODE="${PAP_BENCH_CLIENT_MODE:-canonical}"
@@ -478,7 +479,9 @@ capture_git_state() {
   GIT_COMMIT_SHORT="$(git rev-parse --short HEAD)"
   git status --short > "${RUN_ROOT}/git_status.txt"
   git diff --binary > "${RUN_ROOT}/tracked_worktree.patch"
-  if [[ -s "${RUN_ROOT}/tracked_worktree.patch" ]]; then
+  git diff --cached --binary > "${RUN_ROOT}/tracked_index.patch"
+  if [[ -s "${RUN_ROOT}/tracked_worktree.patch" \
+    || -s "${RUN_ROOT}/tracked_index.patch" ]]; then
     GIT_TRACKED_WORKTREE_DIRTY=1
   fi
   if [[ "${PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE}" == "1" \
@@ -783,6 +786,12 @@ import sys
 with open(sys.argv[1], encoding="utf-8") as file_obj:
     result = json.load(file_obj)
 
+if result.get("schema_version") != 2:
+    raise SystemExit(f"north-star schema mismatch: {result.get('schema_version')}")
+if result.get("metric_definition") != "last_output_token_v2":
+    raise SystemExit(
+        f"north-star metric definition mismatch: {result.get('metric_definition')}"
+    )
 if result.get("validity") != {"status": "passed", "cache_gate": "passed"}:
     raise SystemExit(f"north-star validity failed: {result.get('validity')}")
 if result.get("architecture") != "pap":
@@ -797,7 +806,7 @@ for index, round_result in enumerate(rounds, start=1):
         raise SystemExit(f"round {index} did not return 256 tokens")
     if round_result.get("finish_reason") != "length":
         raise SystemExit(f"round {index} did not finish by length")
-    for metric in ("ttft_ms", "tpot_ms", "latency_ms"):
+    for metric in ("ttft_ms", "tpot_ms", "latency_ms", "eof_latency_ms"):
         value = round_result.get(metric)
         if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise SystemExit(f"round {index} has invalid {metric}: {value}")
@@ -808,6 +817,8 @@ if int(cache.get("decode_derived_hit_tokens", 0)) < 16:
     raise SystemExit("north-star second turn has no Decode-derived cache block")
 if not result.get("profile_fingerprint"):
     raise SystemExit("north-star profile fingerprint is missing")
+if not result.get("implementation_fingerprint"):
+    raise SystemExit("north-star implementation fingerprint is missing")
 PY
 }
 
@@ -815,7 +826,7 @@ audit_correctness_logs() {
   local matches_path="${RUN_ROOT}/correctness_audit_matches.log"
   local summary_path="${RUN_ROOT}/correctness_audit.env"
   local pattern
-  pattern='PAP decode commit failed|new_token_ids length must match new_seq_len delta|PAP decode commit flush timed out|PAP decode commit queue full|PAP lease release failed|PAP unified KV append out of range|PAP unified KV state missing|PAP unified paged FlashAttention failed'
+  pattern='CUDA out of memory|EngineDeadError|Traceback|NIXL.*failed|PAP local fast.*failed|PAP decode commit failed|new_token_ids length must match new_seq_len delta|PAP decode commit flush timed out|PAP decode commit queue full|PAP lease release failed|PAP unified KV append out of range|PAP unified KV state missing|PAP unified paged FlashAttention failed'
 
   if rg -n --no-heading "${pattern}" "${RUN_LOG_DIR}" > "${matches_path}"; then
     {
@@ -1022,6 +1033,8 @@ elif [[ "${PAP_BENCH_CLIENT_MODE}" != "canonical" ]]; then
 fi
 [[ -x "${PYTHON_BIN}" ]] || die "PYTHON_BIN is not executable: ${PYTHON_BIN}"
 [[ -x "${VLLM_BIN}" ]] || die "VLLM_BIN is not executable: ${VLLM_BIN}"
+[[ -f "${NORTH_STAR_FINALIZER}" ]] \
+  || die "Missing north-star finalizer: ${NORTH_STAR_FINALIZER}"
 [[ -d "${MODEL_PATH}" ]] || die "Model path does not exist: ${MODEL_PATH}"
 
 "${PYTHON_BIN}" -c 'import nixl' >/dev/null 2>&1 \
@@ -1327,6 +1340,10 @@ case "${PAP_BENCH_CLIENT_MODE}" in
       --conversation-id "${PAP_NORTH_STAR_CONVERSATION_ID}" \
       --cache-salt "${PAP_NORTH_STAR_CACHE_SALT}" \
       --hardware-signature "${PAP_NORTH_STAR_HARDWARE_SIGNATURE}" \
+      --git-commit "${GIT_COMMIT}" \
+      --git-tracked-worktree-dirty "${GIT_TRACKED_WORKTREE_DIRTY}" \
+      --offload-exec-transport "${PAP_OFFLOAD_EXEC_TRANSPORT}" \
+      --direct-mailbox-output "${PAP_DIRECT_MAILBOX_OUTPUT}" \
       --document-tokens "${INPUT_LEN}" \
       --append-tokens 120 \
       --output-tokens "${OUTPUT_LEN}" \
@@ -1346,5 +1363,24 @@ capture_proxy_topology_stats
 capture_attention_fast_path_stats
 audit_xy_routes
 audit_correctness_logs
+
+if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" ]]; then
+  "${PYTHON_BIN}" "${NORTH_STAR_FINALIZER}" \
+    --result "${RUN_ROOT}/result.json" \
+    --architecture pap \
+    --passed-gate session_drain \
+    --passed-gate routing \
+    --passed-gate correctness_logs \
+    --passed-gate attention_stats_capture \
+    --artifact "session_drain=${RUN_ROOT}/session_drain.env" \
+    --artifact "routing=${RUN_ROOT}/routing_audit.json" \
+    --artifact "correctness_logs=${RUN_ROOT}/correctness_audit.env" \
+    --artifact "run_metadata=${RUN_ROOT}/run_metadata.json" \
+    --artifact \
+      "tracked_worktree_patch=${RUN_ROOT}/tracked_worktree.patch" \
+    --artifact "tracked_index_patch=${RUN_ROOT}/tracked_index.patch" \
+    --artifact \
+      "attention_stats=${RUN_ROOT}/attention_fast_path_stats.json"
+fi
 
 echo "RUN_ROOT=${RUN_ROOT}"

@@ -173,11 +173,12 @@ def test_consume_sse_lines_reads_token_ids_usage_and_eof() -> None:
             sentinel,
         ]
     )
-    times = iter([0.010, 0.030])
+    times = iter([0.010, 0.020, 0.030])
 
     result = consume_sse_lines(lines, started_at=0.0, clock=lambda: next(times))
 
     assert lines.consumed[-1] == sentinel
+    assert result.pop("post_token_stream_ms") == pytest.approx(10.0)
     assert result == {
         "prompt_token_ids": [1, 2, 3],
         "output_token_ids": [7, 8],
@@ -187,8 +188,9 @@ def test_consume_sse_lines_reads_token_ids_usage_and_eof() -> None:
         "finish_reason": "length",
         "saw_done": True,
         "ttft_ms": 10.0,
-        "latency_ms": 30.0,
-        "tpot_ms": 20.0,
+        "latency_ms": 20.0,
+        "eof_latency_ms": 30.0,
+        "tpot_ms": 10.0,
     }
 
 
@@ -454,6 +456,10 @@ def test_execute_two_turn_uses_one_conversation_and_validates_pap_cache() -> Non
         conversation_id="conversation-1",
         cache_salt="cache-salt-1",
         hardware_signature="NVIDIA L20x2",
+        git_commit="a" * 40,
+        git_tracked_worktree_dirty=False,
+        offload_exec_transport="local_fast",
+        direct_mailbox_output=True,
         document_tokens=4,
         append_tokens=2,
         output_tokens=3,
@@ -471,6 +477,13 @@ def test_execute_two_turn_uses_one_conversation_and_validates_pap_cache() -> Non
     assert result["validity"] == {"status": "passed", "cache_gate": "passed"}
     assert result["cache_validation"]["decode_derived_hit_tokens"] == 2
     assert result["cache_validation"]["actual_cached_tokens"] == 6
+    assert result["git_commit"] == "a" * 40
+    assert result["git_tracked_worktree_dirty"] is False
+    assert result["implementation"] == {
+        "offload_exec_transport": "local_fast",
+        "direct_mailbox_output": True,
+    }
+    assert len(result["implementation_fingerprint"]) == 64
     assert len(result["rounds"]) == 2
     assert "prompt_token_ids" not in result["rounds"][0]
     assert client.payloads[0]["conversation_id"] == "conversation-1"
