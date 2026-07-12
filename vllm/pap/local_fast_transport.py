@@ -69,6 +69,11 @@ from vllm.pap.data_plane import (
     _offload_exec_batch_plan_payload,
     _offload_exec_batch_descriptor_to_metadata,
 )
+from vllm.pap.deferred_cuda_trace import (
+    begin_deferred_cuda_span,
+    deferred_cuda_trace_enabled,
+    end_deferred_cuda_span,
+)
 
 # ---------------------------------------------------------------------------
 # Constants / layout
@@ -578,6 +583,7 @@ class PAPLocalFastTransport:
         self._started = False
         self._bound = False
         self._trace = _env_bool("PAP_OFFLOAD_EXEC_TRACE", False)
+        self._deferred_cuda_trace = deferred_cuda_trace_enabled()
         self._async_doorbell = _env_bool("PAP_LOCAL_FAST_ASYNC_DOORBELL", False)
         self._batch_plan_enabled = _env_bool("PAP_LOCAL_FAST_BATCH_PLAN", True)
         self._step_plan_cache_limit = int(
@@ -1046,7 +1052,17 @@ class PAPLocalFastTransport:
                     stream,
                 )
             t_memcpy_start = time.perf_counter()
-            dst_bytes.copy_(src_bytes, non_blocking=True)
+            if self._deferred_cuda_trace and direction == DIR_OUTPUT:
+                copy_trace = begin_deferred_cuda_span(
+                    "output_p2p_copy_gpu_ms",
+                    stream,
+                )
+                try:
+                    dst_bytes.copy_(src_bytes, non_blocking=True)
+                finally:
+                    end_deferred_cuda_span(copy_trace)
+            else:
+                dst_bytes.copy_(src_bytes, non_blocking=True)
             t_sync_start = time.perf_counter()
 
             if self._stream_ordered:
@@ -1210,17 +1226,38 @@ class PAPLocalFastTransport:
             )
         _doorbell_ack(mm, record_offset, seq)
         if self._stream_ordered:
-            stream_wait_value32(
-                self._signal_buffer,
-                _signal_index(
-                    direction,
-                    slot_id,
-                    self._slot_count,
-                    release=False,
-                ),
-                seq,
-                torch.cuda.current_stream(self.device),
-            )
+            stream = torch.cuda.current_stream(self.device)
+            if self._deferred_cuda_trace and direction == DIR_QKV:
+                ready_trace = begin_deferred_cuda_span(
+                    "qkv_ready_wait_gpu_ms",
+                    stream,
+                )
+                try:
+                    stream_wait_value32(
+                        self._signal_buffer,
+                        _signal_index(
+                            direction,
+                            slot_id,
+                            self._slot_count,
+                            release=False,
+                        ),
+                        seq,
+                        stream,
+                    )
+                finally:
+                    end_deferred_cuda_span(ready_trace)
+            else:
+                stream_wait_value32(
+                    self._signal_buffer,
+                    _signal_index(
+                        direction,
+                        slot_id,
+                        self._slot_count,
+                        release=False,
+                    ),
+                    seq,
+                    stream,
+                )
         # Bump our expectation for the next round.
         if direction == DIR_QKV:
             peer.expected_qkv_seq = expected + 1

@@ -8,6 +8,13 @@ import pytest
 
 from benchmarks.multi_turn.finalize_pap_pd_multiturn import finalize_result
 
+_DEFERRED_TRACE_SPANS = (
+    "qkv_ready_wait_gpu_ms",
+    "kv_append_gpu_ms",
+    "paged_fa_gpu_ms",
+    "output_p2p_copy_gpu_ms",
+)
+
 
 def _client_result(architecture: str = "pap") -> dict[str, object]:
     result: dict[str, object] = {
@@ -108,6 +115,42 @@ def _pap_artifacts(tmp_path: Path) -> dict[str, Path]:
         encoding="utf-8",
     )
     return artifacts
+
+
+def _enable_deferred_trace(artifacts: dict[str, Path]) -> None:
+    attention = json.loads(artifacts["attention_stats"].read_text())
+    instances = attention.get("instances")
+    payloads = [attention] if instances is None else instances
+    for payload in payloads:
+        stats = payload.get("stats", payload)
+        compute_calls = stats["offload_exec_compute_calls"]
+        stats["offload_exec_peer_batches"] = compute_calls
+        stats["fast_path_hits"] = compute_calls - 3
+        stats["fallbacks"] = 1
+        stats["deferred_cuda_trace"] = {
+            "enabled": True,
+            "scope": "attention_process_critical_chain",
+            "collector_count": 1,
+            "pending_records": 0,
+            "dropped_records": 0,
+            "error_records": 0,
+            "spans": {
+                name: {
+                    "count": (
+                        compute_calls - 2
+                        if name == "kv_append_gpu_ms"
+                        else compute_calls
+                    )
+                }
+                for name in _DEFERRED_TRACE_SPANS
+            },
+        }
+    artifacts["attention_stats"].write_text(json.dumps(attention))
+    with artifacts["effective_config"].open("a", encoding="utf-8") as file_obj:
+        file_obj.write(
+            "PAP_DEFERRED_CUDA_TRACE=1\n"
+            "PAP_OFFLOAD_EXEC_TRACE=0\n"
+        )
 
 
 def test_finalize_result_records_required_gates_and_artifact_hash(
@@ -264,6 +307,7 @@ def test_finalize_result_aggregates_multi_instance_attention_stats(
             }
         )
     )
+    _enable_deferred_trace(artifacts)
 
     finalized = finalize_result(
         _client_result(),
@@ -278,6 +322,102 @@ def test_finalize_result_aggregates_multi_instance_attention_stats(
     )
 
     assert finalized["external_validation"]["status"] == "passed"
+
+
+def test_finalize_result_accepts_complete_deferred_cuda_trace(
+    tmp_path: Path,
+) -> None:
+    artifacts = _pap_artifacts(tmp_path)
+    _enable_deferred_trace(artifacts)
+
+    finalized = finalize_result(
+        _client_result(),
+        architecture="pap",
+        passed_gates=(
+            "session_drain",
+            "routing",
+            "correctness_logs",
+            "attention_stats_capture",
+        ),
+        artifacts=artifacts,
+    )
+
+    assert finalized["external_validation"]["status"] == "passed"
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("pending_records", "dropped_records", "error_records"),
+)
+def test_finalize_result_rejects_incomplete_deferred_cuda_trace(
+    tmp_path: Path,
+    field: str,
+) -> None:
+    artifacts = _pap_artifacts(tmp_path)
+    _enable_deferred_trace(artifacts)
+    stats = json.loads(artifacts["attention_stats"].read_text())
+    stats["deferred_cuda_trace"][field] = 1
+    artifacts["attention_stats"].write_text(json.dumps(stats))
+
+    with pytest.raises(ValueError, match=field):
+        finalize_result(
+            _client_result(),
+            architecture="pap",
+            passed_gates=(
+                "session_drain",
+                "routing",
+                "correctness_logs",
+                "attention_stats_capture",
+            ),
+            artifacts=artifacts,
+        )
+
+
+def test_finalize_result_rejects_missing_deferred_cuda_span(
+    tmp_path: Path,
+) -> None:
+    artifacts = _pap_artifacts(tmp_path)
+    _enable_deferred_trace(artifacts)
+    stats = json.loads(artifacts["attention_stats"].read_text())
+    del stats["deferred_cuda_trace"]["spans"]["paged_fa_gpu_ms"]
+    artifacts["attention_stats"].write_text(json.dumps(stats))
+
+    with pytest.raises(ValueError, match="missing paged_fa_gpu_ms"):
+        finalize_result(
+            _client_result(),
+            architecture="pap",
+            passed_gates=(
+                "session_drain",
+                "routing",
+                "correctness_logs",
+                "attention_stats_capture",
+            ),
+            artifacts=artifacts,
+        )
+
+
+def test_finalize_result_rejects_deferred_cuda_span_count_mismatch(
+    tmp_path: Path,
+) -> None:
+    artifacts = _pap_artifacts(tmp_path)
+    _enable_deferred_trace(artifacts)
+    stats = json.loads(artifacts["attention_stats"].read_text())
+    spans = stats["deferred_cuda_trace"]["spans"]
+    spans["output_p2p_copy_gpu_ms"]["count"] -= 1
+    artifacts["attention_stats"].write_text(json.dumps(stats))
+
+    with pytest.raises(ValueError, match="count mismatch"):
+        finalize_result(
+            _client_result(),
+            architecture="pap",
+            passed_gates=(
+                "session_drain",
+                "routing",
+                "correctness_logs",
+                "attention_stats_capture",
+            ),
+            artifacts=artifacts,
+        )
 
 
 def test_finalize_result_requires_matching_architecture() -> None:

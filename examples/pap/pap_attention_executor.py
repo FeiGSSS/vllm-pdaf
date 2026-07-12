@@ -46,6 +46,12 @@ from vllm.pap.data_plane import (
     pap_offload_exec_trace_id,
 )
 from vllm.pap.decode_commit_client import DecodeCommitClient as _DecodeCommitClient
+from vllm.pap.deferred_cuda_trace import (
+    begin_deferred_cuda_span,
+    deferred_cuda_trace_enabled,
+    deferred_cuda_trace_snapshot,
+    end_deferred_cuda_span,
+)
 from vllm.pap.lease_release_client import LeaseReleaseClient as _LeaseReleaseClient
 
 logging.basicConfig(
@@ -56,6 +62,7 @@ logger = logging.getLogger("pap_attention")
 
 _commit_client: _DecodeCommitClient | None = None
 _lease_release_client: _LeaseReleaseClient | None = None
+_DEFERRED_CUDA_TRACE_ENABLED = deferred_cuda_trace_enabled()
 
 _DECODE_COMMIT_PATH = "/v1/pap/prefill/decode-commit"
 _LEASE_RELEASE_PATH = "/v1/pap/prefill/lease-release"
@@ -1278,16 +1285,39 @@ class PAPAttentionRegistry:
                 self._reshape_cache_scales[scale_key] = scales
             k_scale, v_scale = scales
             key_cache, value_cache = base_v_cache.unbind(1)
-            torch.ops._C_cache_ops.reshape_and_cache_flash(
-                kb,
-                vb,
-                key_cache,
-                value_cache,
-                slot_tensor,
-                "auto",
-                k_scale,
-                v_scale,
-            )
+            if (
+                _DEFERRED_CUDA_TRACE_ENABLED
+                and base_v_cache.is_cuda
+                and torch.cuda.is_available()
+            ):
+                append_trace = begin_deferred_cuda_span(
+                    "kv_append_gpu_ms",
+                    torch.cuda.current_stream(base_v_cache.device),
+                )
+                try:
+                    torch.ops._C_cache_ops.reshape_and_cache_flash(
+                        kb,
+                        vb,
+                        key_cache,
+                        value_cache,
+                        slot_tensor,
+                        "auto",
+                        k_scale,
+                        v_scale,
+                    )
+                finally:
+                    end_deferred_cuda_span(append_trace)
+            else:
+                torch.ops._C_cache_ops.reshape_and_cache_flash(
+                    kb,
+                    vb,
+                    key_cache,
+                    value_cache,
+                    slot_tensor,
+                    "auto",
+                    k_scale,
+                    v_scale,
+                )
 
             # Pass 2: seq_len update
             written = 0
@@ -3309,23 +3339,54 @@ def _compute_unified_paged_flash_batch(
         layout=states[0].layout,
     )
     paged_start = time.perf_counter() if trace_stats is not None else 0.0
+    use_deferred_flash_trace = (
+        _DEFERRED_CUDA_TRACE_ENABLED
+        and query_batch.is_cuda
+        and torch.cuda.is_available()
+    )
+    if use_deferred_flash_trace:
+        deferred_flash_trace = begin_deferred_cuda_span(
+            "paged_fa_gpu_ms",
+            torch.cuda.current_stream(query_batch.device),
+        )
     start_event = end_event = None
-    if trace_stats is not None and query_batch.is_cuda and torch.cuda.is_available():
+    if (
+        trace_stats is not None
+        and not use_deferred_flash_trace
+        and query_batch.is_cuda
+        and torch.cuda.is_available()
+    ):
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
         stream = torch.cuda.current_stream(query_batch.device)
         start_event.record(stream)
-    result = _run_paged_flash_varlen(
-        flash_attn_varlen_func=flash_attn_varlen_func,
-        fa_version=fa_version,
-        query=query_batch,
-        key_cache=key_cache,
-        value_cache=value_cache,
-        metadata=metadata,
-        scale=float(scale),
-        causal=True,
-        return_softmax_lse=False,
-    )
+    if use_deferred_flash_trace:
+        try:
+            result = _run_paged_flash_varlen(
+                flash_attn_varlen_func=flash_attn_varlen_func,
+                fa_version=fa_version,
+                query=query_batch,
+                key_cache=key_cache,
+                value_cache=value_cache,
+                metadata=metadata,
+                scale=float(scale),
+                causal=True,
+                return_softmax_lse=False,
+            )
+        finally:
+            end_deferred_cuda_span(deferred_flash_trace)
+    else:
+        result = _run_paged_flash_varlen(
+            flash_attn_varlen_func=flash_attn_varlen_func,
+            fa_version=fa_version,
+            query=query_batch,
+            key_cache=key_cache,
+            value_cache=value_cache,
+            metadata=metadata,
+            scale=float(scale),
+            causal=True,
+            return_softmax_lse=False,
+        )
     if end_event is not None:
         end_event.record(torch.cuda.current_stream(query_batch.device))
         end_event.synchronize()
@@ -3333,11 +3394,12 @@ def _compute_unified_paged_flash_batch(
     if trace_stats is not None:
         paged_done_ns = time.perf_counter_ns()
         paged_wall_ms = (time.perf_counter() - paged_start) * 1000.0
-        paged_kernel_ms = (
-            start_event.elapsed_time(end_event)
-            if start_event is not None and end_event is not None
-            else paged_wall_ms
-        )
+        if use_deferred_flash_trace:
+            paged_kernel_ms = 0.0
+        elif start_event is not None and end_event is not None:
+            paged_kernel_ms = start_event.elapsed_time(end_event)
+        else:
+            paged_kernel_ms = paged_wall_ms
         trace_stats["paged_flash_ms"] = (
             trace_stats.get("paged_flash_ms", 0.0) + paged_wall_ms
         )
@@ -4742,6 +4804,19 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
         dispatcher = app.state.offload_exec_dispatcher
         if dispatcher is not None:
             stats.update(dispatcher.stats())
+        if _DEFERRED_CUDA_TRACE_ENABLED:
+            active_sessions = registry.size()
+            if active_sessions == 0:
+                trace_snapshot = deferred_cuda_trace_snapshot(blocking=True)
+                trace_snapshot["scope"] = "attention_process_critical_chain"
+                stats["deferred_cuda_trace"] = trace_snapshot
+            else:
+                stats["deferred_cuda_trace"] = {
+                    "enabled": True,
+                    "scope": "attention_process_critical_chain",
+                    "status": "waiting_for_session_drain",
+                    "active_sessions": active_sessions,
+                }
         return stats
 
     @app.post("/v1/pap/attention/register")

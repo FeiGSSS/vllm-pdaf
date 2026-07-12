@@ -52,6 +52,14 @@ REQUIRED_ARTIFACTS = {
     ),
 }
 PD_REUSE_STATUS = "official_streaming_one_way_metrics_passed"
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_DEFERRED_TRACE_SCOPE = "attention_process_critical_chain"
+_DEFERRED_TRACE_SPAN_COUNTERS = {
+    "qkv_ready_wait_gpu_ms": ("offload_exec_peer_batches",),
+    "kv_append_gpu_ms": ("fast_path_hits", "fallbacks"),
+    "paged_fa_gpu_ms": ("offload_exec_compute_calls",),
+    "output_p2p_copy_gpu_ms": ("offload_exec_peer_batches",),
+}
 
 
 def _sha256(path: Path) -> str:
@@ -78,10 +86,9 @@ def _json_mapping(path: Path, name: str) -> Mapping[str, Any]:
     return payload
 
 
-def _attention_stat_total(
+def _attention_stat_payloads(
     attention: Mapping[str, Any],
-    key: str,
-) -> float:
+) -> tuple[Mapping[str, Any], ...]:
     instances = attention.get("instances")
     if instances is None:
         payloads: Sequence[object] = (attention,)
@@ -89,20 +96,103 @@ def _attention_stat_total(
         payloads = instances
     else:
         raise ValueError("attention stats instances must be a sequence")
-    values: list[float] = []
+    stats_payloads: list[Mapping[str, Any]] = []
     for index, payload in enumerate(payloads):
         if not isinstance(payload, Mapping):
             raise ValueError(f"attention stats instance {index} is invalid")
         stats = payload.get("stats", payload)
         if not isinstance(stats, Mapping):
             raise ValueError(f"attention stats instance {index} has no stats")
+        stats_payloads.append(stats)
+    if not stats_payloads:
+        raise ValueError("attention stats contain no instances")
+    return tuple(stats_payloads)
+
+
+def _attention_stat_total(
+    attention: Mapping[str, Any],
+    key: str,
+) -> float:
+    values: list[float] = []
+    for stats in _attention_stat_payloads(attention):
         value = stats.get(key)
         if not isinstance(value, (int, float)):
             raise ValueError(f"attention stats do not contain numeric {key}")
         values.append(float(value))
-    if not values:
-        raise ValueError("attention stats contain no instances")
     return sum(values)
+
+
+def _trace_count(value: object, *, field: str, instance: int) -> int:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < 0
+    ):
+        raise ValueError(
+            f"deferred CUDA trace instance {instance} has invalid {field}"
+        )
+    return value
+
+
+def _validate_deferred_cuda_trace(
+    attention: Mapping[str, Any],
+) -> None:
+    for instance, stats in enumerate(_attention_stat_payloads(attention)):
+        trace = stats.get("deferred_cuda_trace")
+        if not isinstance(trace, Mapping) or trace.get("enabled") is not True:
+            raise ValueError(
+                f"deferred CUDA trace instance {instance} is not enabled"
+            )
+        if trace.get("scope") != _DEFERRED_TRACE_SCOPE:
+            raise ValueError(
+                f"deferred CUDA trace instance {instance} has invalid scope"
+            )
+        for field in ("pending_records", "dropped_records", "error_records"):
+            if _trace_count(
+                trace.get(field), field=field, instance=instance
+            ) != 0:
+                raise ValueError(
+                    f"deferred CUDA trace instance {instance} has nonzero {field}"
+                )
+        if _trace_count(
+            trace.get("collector_count"),
+            field="collector_count",
+            instance=instance,
+        ) <= 0:
+            raise ValueError(
+                f"deferred CUDA trace instance {instance} has no collectors"
+            )
+        spans = trace.get("spans")
+        if not isinstance(spans, Mapping):
+            raise ValueError(
+                f"deferred CUDA trace instance {instance} has no spans"
+            )
+        for span_name, counter_names in _DEFERRED_TRACE_SPAN_COUNTERS.items():
+            span = spans.get(span_name)
+            if not isinstance(span, Mapping):
+                raise ValueError(
+                    "deferred CUDA trace instance "
+                    f"{instance} is missing {span_name}"
+                )
+            span_count = _trace_count(
+                span.get("count"),
+                field=f"{span_name}.count",
+                instance=instance,
+            )
+            expected_count = sum(
+                _trace_count(
+                    stats.get(counter_name),
+                    field=counter_name,
+                    instance=instance,
+                )
+                for counter_name in counter_names
+            )
+            if span_count <= 0 or span_count != expected_count:
+                raise ValueError(
+                    "deferred CUDA trace count mismatch for instance "
+                    f"{instance} {span_name}: {span_count} != "
+                    f"{'+'.join(counter_names)}={expected_count}"
+                )
 
 
 def _validate_clean_state(
@@ -184,6 +274,22 @@ def _validate_pap_evidence(
             f"{effective_config.get('PAP_UNIFIED_MD_FAST_KEY')} "
             f"!= {expected_fast_key}"
         )
+    deferred_trace_enabled = (
+        effective_config.get("PAP_DEFERRED_CUDA_TRACE", "0").lower()
+        in _TRUE_VALUES
+    )
+    if deferred_trace_enabled:
+        synchronous_trace = effective_config.get("PAP_OFFLOAD_EXEC_TRACE")
+        if synchronous_trace is None or synchronous_trace.lower() not in {
+            "0",
+            "false",
+            "no",
+            "off",
+        }:
+            raise ValueError(
+                "deferred CUDA trace requires synchronous trace to be disabled"
+            )
+        _validate_deferred_cuda_trace(attention)
     expected = {
         "git_commit": result.get("git_commit"),
         "git_tracked_worktree_dirty": result.get(
