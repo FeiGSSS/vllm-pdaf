@@ -35,7 +35,7 @@
     "pd_decode_count": 0
   },
   "hardware_signature": "NVIDIA L20x2",
-  "git_commit": "6bc383dab752eb912a4efdb04b7807edc95266af",
+  "git_commit": "c134bc3d98c3f03597811a493450c58284be3f04",
   "git_tracked_worktree_dirty": false,
   "implementation": {
     "offload_exec_transport": "local_fast",
@@ -45,9 +45,9 @@
   "mode": "formal",
   "repetition_count": 3,
   "repetition_ids": [
-    "d4991828d179b1253d1fb8db9d8f1962ac5115ddc3ce2bc47b9225e9ff628d35",
-    "0d39419ad9d2e7dd5bfed7ee4d767cd4e5c15c981c94c3bddd4badd8d2bdc9c8",
-    "859b8ec12a26e259507dceb3f05fef1c6e7d8164887929dc17c47319c6cae548"
+    "65afc81168c994a01bdde7f68fb70415415730832ccb8dc34a5806010b9af606",
+    "4808a2bd6e05e3eecdd5ab06e4749f9b1670920c46fda982596430b5c5f877bf",
+    "eeecda205afcdc5269df17f98cff9adf0d0a616146e11f98156e77ac466d4613"
   ],
   "validity": {
     "status": "passed"
@@ -72,7 +72,7 @@
         "artifacts": {
           "attention_stats": {
             "path": "attention_fast_path_stats.json",
-            "sha256": "93f696369df5914c3c106d48f9aa9ae0ee6452770f4d93cb792e964534539733"
+            "sha256": "c6a98302417686c8ded4ac17fd5e607186d72ff60f6bacad43667fe21df5381d"
           },
           "correctness_logs": {
             "path": "correctness_audit.env",
@@ -80,11 +80,11 @@
           },
           "routing": {
             "path": "routing_audit.json",
-            "sha256": "ae46ef2abc8acfc977e293787c7387710d4e140b77409bc1d6db8b7c64a17918"
+            "sha256": "e86a389faebf73d6a51ce9b3aa54cf6eeecd4cb28274dfda95600e28b5f49cf8"
           },
           "run_metadata": {
             "path": "run_metadata.json",
-            "sha256": "21720dbdbd61e0a2814cf7c80469ad583b849cb9fdfb3c63daa99d373fdbce34"
+            "sha256": "33487e2d1d13657a6ad961d98b307593172036c99e4a5d75f2ace57a833e989a"
           },
           "session_drain": {
             "path": "session_drain.env",
@@ -111,7 +111,7 @@
         "artifacts": {
           "attention_stats": {
             "path": "attention_fast_path_stats.json",
-            "sha256": "1bbadd1aac6dc3b417e48c0c958534e66b6fc51fb7b33664e42804585764f70a"
+            "sha256": "3bd4116206791a23e00f8ba056189f1088b774cb1ef68442dad157044e9076b2"
           },
           "correctness_logs": {
             "path": "correctness_audit.env",
@@ -119,11 +119,11 @@
           },
           "routing": {
             "path": "routing_audit.json",
-            "sha256": "7e1f10f8648de04c6bc6035ef6a1a44f145a4d0c0f01e5f5ad465a58aa7383b9"
+            "sha256": "d3232e843d0fa9303923b0b863c4c8f7f87ec1af510796a13a730fc72d7ec386"
           },
           "run_metadata": {
             "path": "run_metadata.json",
-            "sha256": "7f38f792035f9baac92f6d74901121dc5cf6fe6460c3ae184225d87de0513c49"
+            "sha256": "7d7149b9af4509390d57d3d0aa6d28bf21cd5e157aa7168a0fb1f5794cf9c4e0"
           },
           "session_drain": {
             "path": "session_drain.env",
@@ -150,7 +150,7 @@
         "artifacts": {
           "attention_stats": {
             "path": "attention_fast_path_stats.json",
-            "sha256": "4bfe039496867391a1fa8585dfeda396646d1fff42fc6fe537946211cd4a70bf"
+            "sha256": "c17a35b608324b30ba8a9e787e0da9d36a629673c5002d70a385368c9122eee2"
           },
           "correctness_logs": {
             "path": "correctness_audit.env",
@@ -158,11 +158,11 @@
           },
           "routing": {
             "path": "routing_audit.json",
-            "sha256": "cd3aa34adff4fdb6d26ef18c355d6b5d42f8fddd75dcca1bf669b948a7f33663"
+            "sha256": "f9c3072182c351f65a31e12a4038a3b483c9186ed6ae0dbbbfa524510b4a7357"
           },
           "run_metadata": {
             "path": "run_metadata.json",
-            "sha256": "f93a760ea6e04cf106edf06c0c5b72d1028a57dc6d69d6e5687c79d642ca6fc4"
+            "sha256": "3822067346b537910d5b381951235b7397f968bae85866905182a51d354af093"
           },
           "session_drain": {
             "path": "session_drain.env",
@@ -182,86 +182,86 @@
   },
   "metrics": {
     "round_1": {
-      "ttft_ms": 5405.124559998512,
-      "tpot_ms": 35.593190509825945,
-      "latency_ms": 14532.705215038732,
-      "eof_latency_ms": 14571.141117019579,
-      "post_token_stream_ms": 38.24050503317267
+      "ttft_ms": 5451.345891924575,
+      "tpot_ms": 30.520774184397478,
+      "latency_ms": 13234.143308945931,
+      "eof_latency_ms": 13270.80328494776,
+      "post_token_stream_ms": 37.58939204271883
     },
     "round_2": {
-      "ttft_ms": 218.2627449510619,
-      "tpot_ms": 30.58531471738117,
-      "latency_ms": 8014.973741024733,
-      "eof_latency_ms": 8097.034101025201,
-      "post_token_stream_ms": 59.02299203444272
+      "ttft_ms": 224.74731598049402,
+      "tpot_ms": 30.780405948833362,
+      "latency_ms": 8065.703316009603,
+      "eof_latency_ms": 8105.545338941738,
+      "post_token_stream_ms": 39.84202293213457
     },
-    "conversation_latency_ms": 22604.783563991077,
-    "conversation_eof_latency_ms": 22676.15594295785
+    "conversation_latency_ms": 21267.626337939873,
+    "conversation_eof_latency_ms": 21304.229719913565
   },
   "raw_metrics": {
     "round_1": {
       "ttft_ms": [
-        5394.833327038214,
-        5405.124559998512,
-        5498.65687196143
+        5482.340784976259,
+        5451.345891924575,
+        5381.938113947399
       ],
       "tpot_ms": [
-        35.83479171764909,
-        35.39490570980763,
-        35.593190509825945
+        30.541813200084018,
+        30.520774184397478,
+        30.4135683020029
       ],
       "latency_ms": [
-        14532.705215038732,
-        14430.825515999459,
-        14574.920451967046
+        13270.503150997683,
+        13234.143308945931,
+        13137.398030958138
       ],
       "eof_latency_ms": [
-        14571.141117019579,
-        14466.322056949139,
-        14613.160957000218
+        13363.924253964797,
+        13270.80328494776,
+        13174.987423000857
       ],
       "post_token_stream_ms": [
-        38.43590198084712,
-        35.49654094967991,
-        38.24050503317267
+        93.42110296711326,
+        36.65997600182891,
+        37.58939204271883
       ]
     },
     "round_2": {
       "ttft_ms": [
-        218.2627449510619,
-        215.71848809253424,
-        232.55046003032476
+        224.74731598049402,
+        230.73995695449412,
+        216.5640479652211
       ],
       "tpot_ms": [
-        30.749054709632023,
-        30.58531471738117,
-        30.427733909649152
+        30.780405948833362,
+        30.455227827598506,
+        30.780938306056402
       ],
       "latency_ms": [
-        8059.271695907228,
-        8014.973741024733,
-        7991.622606990859
+        8073.750832933001,
+        7996.823052992113,
+        8065.703316009603
       ],
       "eof_latency_ms": [
-        8105.0148259382695,
-        8073.996733059175,
-        8097.034101025201
+        8170.746003976092,
+        8033.426434965804,
+        8105.545338941738
       ],
       "post_token_stream_ms": [
-        45.7431300310418,
-        59.02299203444272,
-        105.41149403434247
+        96.99517104309052,
+        36.603381973691285,
+        39.84202293213457
       ]
     },
     "conversation_latency_ms": [
-      22630.412812926807,
-      22481.29579797387,
-      22604.783563991077
+      21437.675086897798,
+      21267.626337939873,
+      21240.69073901046
     ],
     "conversation_eof_latency_ms": [
-      22676.15594295785,
-      22540.318790008314,
-      22710.19505802542
+      21534.67025794089,
+      21304.229719913565,
+      21280.532761942595
     ]
   },
   "correctness_signatures": {
@@ -277,10 +277,10 @@
     }
   },
   "source_results": [
-    "test/baseline/pap/results/runs/20260712_171755_6bc383dab_pap_multiturn_formal/rep1/result.json",
-    "test/baseline/pap/results/runs/20260712_171755_6bc383dab_pap_multiturn_formal/rep2/result.json",
-    "test/baseline/pap/results/runs/20260712_171755_6bc383dab_pap_multiturn_formal/rep3/result.json"
+    "test/baseline/pap/results/runs/20260712_181613_c134bc3d9_pap_multiturn_formal/rep1/result.json",
+    "test/baseline/pap/results/runs/20260712_181613_c134bc3d9_pap_multiturn_formal/rep2/result.json",
+    "test/baseline/pap/results/runs/20260712_181613_c134bc3d9_pap_multiturn_formal/rep3/result.json"
   ],
   "reference_architecture": "pap",
-  "created_at": "2026-07-12T17:30:01+08:00"
+  "created_at": "2026-07-12T18:25:29+08:00"
 }

@@ -2,7 +2,7 @@
 
 日期：2026-07-12
 
-状态：metadata bulk-build Stage A 已完成 clean formal 并晋升 PAP reference；准备 Stage B
+状态：Stage A/B 均已完成 clean formal；generation-aware slot-plan 已闭环
 
 ## 1. 目的
 
@@ -213,13 +213,67 @@ slot-plan 计数仍为每次 `hits=8925`、`misses=255`、
 `slot_topology_mismatches=1`。因此 Stage A 精确消除了 metadata miss 中的标量写开销，
 但未掩盖首轮 chunked-Prefill topology false mismatch；后者仍是独立 Stage B。
 
-## 9. 当前决策与后续
+## 9. Stage B：generation-aware slot-plan
+
+提交：`c134bc3d9`。正式原始目录：
+
+```text
+test/baseline/pap/results/runs/
+  20260712_181613_c134bc3d9_pap_multiturn_formal/
+```
+
+Stage B 不改 descriptor、doorbell、P2P ring 或 Projection，只修正 Attention Registry 的
+slot-plan 生命周期。旧实现把 request 的第一份 block topology 永久设为 canonical，导致
+合法的 `4096 -> 8192 -> 12288 -> 16018` chunked Prefill 在第二个 chunk 的 layer 0
+被误判为跨层冲突，直到 session 结束都不能恢复。
+
+新状态机以 `prefix_len` 定义 activation，每个 session 维护单调 generation，并在首个
+activation 后冻结 36 层 expected set。slot-plan key 绑定：
+
+```text
+request_id + session_epoch + prefix_len + activation_generation
+  + exact-topology-id + decode_seq_lens snapshot + device
+```
+
+因此 request ID 复用、activation 推进和 topology A→B→A 都不能 ABA 命中旧 slot tensor。
+新 generation 未覆盖全部 expected layers 时保守禁用；更小 prefix 的迟到 import、冻结后
+出现新 layer、未完成 generation 继续推进都会 fail closed。同一 generation 内的真实
+topology 冲突仍只计数一次并锁存，只有进入新 activation 才能清除。
+
+正式中位数如下：
+
+| Round | 指标 | PD | Stage A | Stage B | Stage B/PD | 相对 Stage A |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 1 | TTFT | 8,483.474 ms | 5,405.125 ms | 5,451.346 ms | 0.643x | +0.86% |
+| 1 | TPOT | 25.101 ms | 35.593 ms | 30.521 ms | 1.216x | -14.25% |
+| 2 | TTFT | 267.273 ms | 218.263 ms | 224.747 ms | 0.841x | +2.97% |
+| 2 | TPOT | 25.183 ms | 30.585 ms | 30.780 ms | 1.222x | +0.64% |
+
+第一轮 TPOT 三次为 `30.542 / 30.521 / 30.414 ms`，第二轮为
+`30.780 / 30.455 / 30.781 ms`。Stage B 把原本只覆盖第二轮的 slot-plan 扩展到两轮，
+三次计数均精确从 `hits/misses/mismatch=8925/255/1` 变为
+`17850/510/0`，且 `fallback=0`。第一轮获得预期的 14.25% TPOT 收益；第二轮变化
+`+0.64%`，在约 1.06% 的三次极差内，比较器因此将整体分类为 `neutral` 而非
+`improved`。
+
+两轮 conversation latency 从 Stage A 的 `22,604.784 ms` 降到
+`21,267.626 ms`（-5.91%），为 PD 的 `0.985x`。当前两轮 TPOT 均约为 PD 的
+`1.22x`，剩余绝对 gap 约 `5.4–5.6 ms/token`。
+
+正确性方面，三次均精确命中第二轮 `16,272` tokens、只计算 146 tokens，输出 digest
+与 Stage A reference 完全一致，routing、session drain、fatal-log 和 artifact Gate 全部
+通过。`PAP_PREFILL_KV_ASYNC=1` 不属于本阶段保证范围：当前 north-star 默认关闭异步
+import；在 descriptor unified 字段透传、readiness failed 标记和 queue session-epoch guard
+补齐前，不应宣称异步 import 已 ABA-safe。
+
+## 10. 当前决策与后续
 
 1. north-star PAP runner 显式固定 `local_fast`，避免依赖手工环境变量；
-2. v2 PD reference 保持 `7e81e2d10`，Stage A PAP reference 已晋升到 `6bc383dab`；
-3. Stage A bulk metadata 已完成，第二轮 PAP/PD TPOT 为 `1.215x`；
-4. Stage B 实现 ABA-safe `session_epoch + activation/topology generation` O(1) key，并让
-   chunked Prefill 的 transient generation transition 恢复 slot-plan，同时保留同代冲突的
-   fail-closed 检查；
-5. 不做 MPS、ring slot 或 copy API 扫描；只有 metadata 路线收益耗尽后，才继续
-   `prepare_step`、workspace 复用和 GPU-only timeline。
+2. v2 PD reference 保持 `7e81e2d10`；当前 PAP 默认实现为 Stage B `c134bc3d9`；
+3. Stage A bulk metadata 与 Stage B generation-aware slot-plan 均已完成 clean formal；
+4. 下一步重新 profile Stage B 后约 `5.6 ms/token` 的剩余 gap，只接受可分账的单变量
+   A/B；优先检查 `prepare_step`、workspace/metadata reuse 和逐层 CPU submit/wait；
+5. 不做 MPS、ring slot 或 copy API 扫描；只有 profiler 再次证明 CPU timeline 主导时，
+   才进入更大规模的 GPU-only timeline 或同进程双 GPU executor；
+6. async prefill import 的 descriptor/epoch/readiness 修复单列为正确性工作，不与同步
+   north-star 性能优化混跑。

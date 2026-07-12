@@ -46,7 +46,7 @@ The formal medians are:
 
 ```text
 test/baseline/pap/results/runs/
-  20260712_171755_6bc383dab_pap_multiturn_formal/
+  20260712_181613_c134bc3d9_pap_multiturn_formal/
 ```
 
 All three repetitions hit the exact `16272`-token second-turn cache boundary,
@@ -55,12 +55,12 @@ passed the strict service-log audit. The formal medians are:
 
 | Round | TTFT (ms) | TPOT (ms) | PAP/PD TTFT | PAP/PD TPOT |
 | --- | ---: | ---: | ---: | ---: |
-| 1 | 5405.125 | 35.593 | 0.637x | 1.418x |
-| 2 | 218.263 | 30.585 | 0.817x | 1.215x |
+| 1 | 5451.346 | 30.521 | 0.643x | 1.216x |
+| 2 | 224.747 | 30.780 | 0.841x | 1.222x |
 
 The round-two north-star boundary is `< 50.366 ms/token`; PAP is
-`19.781 ms/token` below it. The remaining absolute PAP/PD gap is
-`5.402 ms/token`. Round-two TPOT was `30.749 / 30.585 / 30.428 ms` across
+`19.586 ms/token` below it. The remaining absolute PAP/PD gap is
+`5.597 ms/token`. Round-two TPOT was `30.780 / 30.455 / 30.781 ms` across
 the three repetitions; the output signatures and exact `16272`-token hit were
 identical in all three.
 
@@ -77,15 +77,20 @@ The original v2 local-fast control at commit `7e81e2d10` remains archived at
 `results/runs/20260712_162130_7e81e2d10_pap_multiturn_formal`. It measured
 round-two TTFT/TPOT `235.388/39.128 ms`. Stage A commit `6bc383dab` replaced
 per-element CUDA writes on paged-FA metadata misses with bulk construction,
-preserving key/LRU/padding semantics. The promoted reference improves
-round-two TTFT by `7.28%` and TPOT by `21.83%`; conversation latency is now
-`1.047x` PD.
+preserving key/LRU/padding semantics. Its clean formal result remains archived
+at `results/runs/20260712_171755_6bc383dab_pap_multiturn_formal`; it improved
+round-two TTFT by `7.28%` and TPOT by `21.83%` over the original v2 control.
 
-Each run also reproduced one topology mismatch during first-turn chunked
-Prefill; the current implementation treats the legal
-`4096 -> 8192 -> 12288 -> 16018` transition as permanent, disabling the
-cross-layer slot plan for that turn. This is tracked as the next
-generation-aware scheduling fix, not hidden from the baseline.
+Stage B commit `c134bc3d9` made slot-plan keys generation-aware. Legal
+`4096 -> 8192 -> 12288 -> 16018` chunked-Prefill growth now completes four
+separate activations, while same-activation topology conflicts remain
+fail-closed. Every formal repetition changed the exact slot-plan counters from
+`hits/misses/mismatch=8925/255/1` to `17850/510/0`, with zero fallback. Relative
+to Stage A, round-one TPOT improved `14.25%`, round-two TPOT changed only
+`+0.64%`, and two-turn conversation latency improved `5.91%` to `0.985x` PD.
+The comparator classified this as neutral because its primary round-two TPOT
+change stayed inside the 3% noise band; it is promoted as the clean baseline
+for the accepted default implementation, not claimed as a round-two win.
 
 Exact-token signatures are also tracked. All three repetitions within each
 architecture are deterministic, all prompt digests match, and round-one PD/PAP
