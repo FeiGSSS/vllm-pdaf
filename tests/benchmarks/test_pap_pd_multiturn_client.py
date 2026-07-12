@@ -214,6 +214,43 @@ def test_consume_sse_lines_requires_done_and_usage() -> None:
         consume_sse_lines(lines, started_at=0.0, clock=lambda: 0.01)
 
 
+def test_consume_sse_lines_reads_completion_text() -> None:
+    lines = [
+        _data(
+            {
+                "prompt_token_ids": [1],
+                "choices": [
+                    {
+                        "text": "A",
+                        "token_ids": [7],
+                        "finish_reason": "length",
+                    }
+                ],
+            }
+        ),
+        _data(
+            {
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 1,
+                },
+            }
+        ),
+        "data: [DONE]",
+    ]
+    times = iter([0.01, 0.02])
+
+    result = consume_sse_lines(
+        lines,
+        started_at=0.0,
+        clock=lambda: next(times),
+    )
+
+    assert result["assistant_text"] == "A"
+    assert result["output_token_ids"] == [7]
+
+
 class FakeTokenizer:
     @staticmethod
     def encode(text: str, *, add_special_tokens: bool) -> list[int]:

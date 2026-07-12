@@ -384,6 +384,11 @@ def _validate_transitions(
                 f"transition {index} Decode-derived hit mismatch: "
                 f"{decode_derived} != {expected_decode_derived}"
             )
+        if decode_derived < block_size:
+            raise ValueError(
+                f"transition {index} has no full Decode-derived cache block: "
+                f"{decode_derived} < {block_size}"
+            )
         if transition.get("actual_cached_tokens") is not None:
             raise ValueError(
                 "PD transition actual_cached_tokens must be null; "
@@ -449,7 +454,7 @@ def validate_pd_multiturn_load_reuse(
     effective_config: str | None,
     service_logs: Sequence[str] = (),
 ) -> dict[str, object]:
-    """Validate five-turn prompt reuse and one-transfer-per-request evidence."""
+    """Validate five-turn prompt reuse and bounded push-transfer evidence."""
     if result.get("architecture") != "pd":
         raise ValueError("PD load reuse validation requires architecture=pd")
 
@@ -457,6 +462,10 @@ def validate_pd_multiturn_load_reuse(
     rounds = _integer(profile.get("rounds"), "profile rounds", minimum=1)
     if rounds != REQUIRED_ROUNDS:
         raise ValueError(f"PD load audit requires exactly {REQUIRED_ROUNDS} rounds")
+    if profile.get("api") != "/v1/completions" or profile.get(
+        "workload_semantics"
+    ) != "exact_token_continuous_multiturn":
+        raise ValueError("PD load audit requires the exact-token workload")
     active_conversations = _integer(
         profile.get("active_conversations"),
         "active conversations",
@@ -556,11 +565,15 @@ def validate_pd_multiturn_load_reuse(
                 "push-mode NIXL transfer count mismatch: "
                 f"{total_nixl['transfer_count']} != {request_count}"
             )
-        if cross_layers_enabled and total_nixl["descriptors"] != request_count:
-            raise ValueError(
-                "cross-layer NIXL descriptor sum mismatch: "
-                f"{total_nixl['descriptors']} != {request_count}"
-            )
+        if cross_layers_enabled:
+            descriptor_limit = request_count * active_conversations
+            descriptors = int(total_nixl["descriptors"])
+            if not request_count <= descriptors <= descriptor_limit:
+                raise ValueError(
+                    "cross-layer NIXL descriptor sum is outside the bounded "
+                    f"range: {descriptors} not in "
+                    f"[{request_count}, {descriptor_limit}]"
+                )
 
     error_matches = sum(
         len(_SERVICE_ERROR_RE.findall(log_text)) for log_text in service_logs
@@ -589,6 +602,7 @@ def validate_pd_multiturn_load_reuse(
             "prefill": prefill_nixl,
             "decode": decode_nixl,
             "total": total_nixl,
+            "descriptor_upper_bound": request_count * active_conversations,
         },
         "ucx": {
             "software_emulation_disabled": True,

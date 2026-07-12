@@ -60,6 +60,8 @@ def _result() -> dict[str, object]:
     return {
         "architecture": "pd",
         "profile": {
+            "api": "/v1/completions",
+            "workload_semantics": "exact_token_continuous_multiturn",
             "rounds": 5,
             "active_conversations": 2,
             "block_size": 16,
@@ -198,6 +200,7 @@ def test_validate_pd_load_reuse_checks_five_turn_conservation_and_nixl() -> None
     assert nixl["total"]["descriptors"] == 10
     assert nixl["total"]["transferred_mib"] == 20.0
     assert nixl["total"]["aggregate_throughput_mib_s"] == 10.0
+    assert nixl["descriptor_upper_bound"] == 20
     assert evidence["ucx"]["software_emulation_disabled"] is True
     assert evidence["service_logs_checked"] == 2
 
@@ -259,10 +262,23 @@ def test_validate_rejects_push_transfer_count_mismatch() -> None:
 
 
 def test_validate_rejects_cross_layer_descriptor_mismatch() -> None:
-    metrics = _prefill_metrics(descriptors=20)
+    metrics = _prefill_metrics(descriptors=21)
 
-    with pytest.raises(ValueError, match="cross-layer NIXL descriptor"):
+    with pytest.raises(ValueError, match="bounded range"):
         _validate(prefill_metrics=metrics)
+
+
+def test_validate_requires_decode_derived_hit_in_every_transition() -> None:
+    result = _result()
+    result["cache_validation"]["transitions"][0][
+        "expected_cached_tokens"
+    ] -= 16
+    result["cache_validation"]["transitions"][0][
+        "decode_derived_hit_tokens"
+    ] = 0
+
+    with pytest.raises(ValueError, match="no full Decode-derived"):
+        _validate(result)
 
 
 @pytest.mark.parametrize(

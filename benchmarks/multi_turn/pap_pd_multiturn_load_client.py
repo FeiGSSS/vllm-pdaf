@@ -19,7 +19,6 @@ from typing import Any
 
 from benchmarks.multi_turn.pap_pd_multiturn_client import (
     block_aligned_prefix_metrics,
-    build_chat_payload,
     consume_sse_lines,
     parse_prefill_headers,
     profile_fingerprint,
@@ -32,7 +31,17 @@ DEFAULT_ROUNDS = 5
 DEFAULT_ACTIVE_CONVERSATIONS = 4
 DEFAULT_REQUEST_RATE = 2.0
 DEFAULT_BLOCK_SIZE = 16
-PROFILE_VERSION = 1
+PROFILE_VERSION = 2
+
+_INITIAL_INSTRUCTION = (
+    "Read the following document and summarize its main argument.\n\n"
+)
+_INITIAL_GENERATION_MARKER = "\n\nAssistant:"
+_LATER_USER_MARKER = (
+    "\n\nUser: Using this additional passage, refine the summary and "
+    "identify one changed conclusion.\n\n"
+)
+_LATER_GENERATION_MARKER = "\n\nAssistant:"
 
 
 @dataclass(frozen=True)
@@ -78,7 +87,7 @@ class ConversationIdentity:
 
 
 TurnExecutor = Callable[
-    [Any, LoadConfig, ConversationIdentity, Sequence[Mapping[str, str]], int],
+    [Any, LoadConfig, ConversationIdentity, Sequence[int], int],
     Awaitable[tuple[dict[str, object], dict[str, int | None]]],
 ]
 
@@ -91,7 +100,7 @@ def build_profile_id(config: LoadConfig) -> str:
     else:
         document_shape = str(config.document_tokens)
     return (
-        f"qwen3_8b_chat_{document_shape}_{config.rounds}turn_"
+        f"qwen3_8b_token_{document_shape}_{config.rounds}turn_"
         f"o{config.output_tokens}_c{config.active_conversations}_v{PROFILE_VERSION}"
     )
 
@@ -129,8 +138,8 @@ def build_load_workload(
     document_tokens: int = DEFAULT_DOCUMENT_TOKENS,
     append_tokens: int = DEFAULT_APPEND_TOKENS,
     rounds: int = DEFAULT_ROUNDS,
-) -> tuple[list[dict[str, str]], tuple[str, ...]]:
-    """Build the first prompt and non-overlapping append slice per later round."""
+) -> tuple[list[int], tuple[tuple[int, ...], ...]]:
+    """Build an exact token-continuous prompt and later-turn suffixes."""
 
     if document_tokens <= 0 or append_tokens <= 0 or rounds < 2:
         raise ValueError("invalid multi-turn workload shape")
@@ -141,26 +150,70 @@ def build_load_workload(
             "corpus is too short for multi-turn load: "
             f"{len(corpus_token_ids)} < {required_tokens}"
         )
-    document = tokenizer.decode(corpus_token_ids[:document_tokens])
-    append_texts = tuple(
-        tokenizer.decode(
-            corpus_token_ids[
-                document_tokens + index * append_tokens :
-                document_tokens + (index + 1) * append_tokens
-            ]
+    instruction_ids = tokenizer.encode(
+        _INITIAL_INSTRUCTION,
+        add_special_tokens=False,
+    )
+    initial_generation_ids = tokenizer.encode(
+        _INITIAL_GENERATION_MARKER,
+        add_special_tokens=False,
+    )
+    later_user_ids = tokenizer.encode(
+        _LATER_USER_MARKER,
+        add_special_tokens=False,
+    )
+    later_generation_ids = tokenizer.encode(
+        _LATER_GENERATION_MARKER,
+        add_special_tokens=False,
+    )
+    initial_prompt_ids = [
+        *(int(token_id) for token_id in instruction_ids),
+        *(int(token_id) for token_id in corpus_token_ids[:document_tokens]),
+        *(int(token_id) for token_id in initial_generation_ids),
+    ]
+    append_suffixes = tuple(
+        (
+            *(int(token_id) for token_id in later_user_ids),
+            *(
+                int(token_id)
+                for token_id in corpus_token_ids[
+                    document_tokens + index * append_tokens :
+                    document_tokens + (index + 1) * append_tokens
+                ]
+            ),
+            *(int(token_id) for token_id in later_generation_ids),
         )
         for index in range(rounds - 1)
     )
-    first_messages = [
-        {
-            "role": "user",
-            "content": (
-                "Read the following document and summarize its main argument.\n\n"
-                f"{document}"
-            ),
-        }
-    ]
-    return first_messages, append_texts
+    return initial_prompt_ids, append_suffixes
+
+
+def build_completion_payload(
+    *,
+    config: LoadConfig,
+    identity: ConversationIdentity,
+    prompt_token_ids: Sequence[int],
+) -> dict[str, object]:
+    """Build one exact-token OpenAI Completions request."""
+
+    if not prompt_token_ids:
+        raise ValueError("prompt_token_ids must not be empty")
+    payload: dict[str, object] = {
+        "model": config.model,
+        "prompt": [int(token_id) for token_id in prompt_token_ids],
+        "add_special_tokens": False,
+        "cache_salt": identity.cache_salt,
+        "max_tokens": config.output_tokens,
+        "temperature": 0,
+        "seed": 0,
+        "ignore_eos": True,
+        "stream": True,
+        "stream_options": {"include_usage": True},
+        "return_token_ids": True,
+    }
+    if config.architecture == "pap":
+        payload["conversation_id"] = identity.conversation_id
+    return payload
 
 
 def build_conversation_identities(
@@ -300,8 +353,6 @@ def _validate_turn(
             "load completion length mismatch: "
             f"{observation.get('completion_tokens')} != {expected_output_tokens}"
         )
-    if not observation.get("assistant_text"):
-        raise ValueError("load assistant text is empty")
     prompt_tokens = int(observation["prompt_tokens"])
     if prompt_tokens + expected_output_tokens > max_model_len:
         raise ValueError(
@@ -314,23 +365,21 @@ def _run_stream_turn_sync(
     client: Any,
     config: LoadConfig,
     identity: ConversationIdentity,
-    messages: Sequence[Mapping[str, str]],
+    prompt_token_ids: Sequence[int],
     round_index: int,
     *,
     clock: Callable[[], float] = time.perf_counter,
 ) -> tuple[dict[str, object], dict[str, int | None]]:
     request_id = f"{identity.conversation_id}-turn-{round_index}"
-    payload = build_chat_payload(
-        model=config.model,
-        messages=messages,
-        conversation_id=identity.conversation_id,
-        cache_salt=identity.cache_salt,
-        output_tokens=config.output_tokens,
+    payload = build_completion_payload(
+        config=config,
+        identity=identity,
+        prompt_token_ids=prompt_token_ids,
     )
     request_started_at = clock()
     with client.stream(
         "POST",
-        f"{config.base_url.rstrip('/')}/v1/chat/completions",
+        f"{config.base_url.rstrip('/')}/v1/completions",
         json=payload,
         headers={"X-Request-Id": request_id},
     ) as response:
@@ -341,6 +390,9 @@ def _run_stream_turn_sync(
             started_at=request_started_at,
             clock=clock,
         )
+    returned_prompt_ids = observation.get("prompt_token_ids")
+    if returned_prompt_ids != [int(token_id) for token_id in prompt_token_ids]:
+        raise ValueError("server prompt token IDs differ from submitted token IDs")
     _validate_turn(
         observation,
         expected_output_tokens=config.output_tokens,
@@ -374,7 +426,7 @@ async def _default_turn_executor(
     client: Any,
     config: LoadConfig,
     identity: ConversationIdentity,
-    messages: Sequence[Mapping[str, str]],
+    prompt_token_ids: Sequence[int],
     round_index: int,
 ) -> tuple[dict[str, object], dict[str, int | None]]:
     return await asyncio.to_thread(
@@ -382,7 +434,7 @@ async def _default_turn_executor(
         client,
         config,
         identity,
-        messages,
+        prompt_token_ids,
         round_index,
     )
 
@@ -509,7 +561,10 @@ def _profile(config: LoadConfig, corpus: str) -> dict[str, object]:
         "model": config.model,
         "corpus_path": config.corpus_path,
         "corpus_sha256": hashlib.sha256(corpus.encode()).hexdigest(),
-        "api": "/v1/chat/completions",
+        "api": "/v1/completions",
+        "workload_semantics": "exact_token_continuous_multiturn",
+        "prompt_input": "token_ids",
+        "history_rule": "previous_prompt_plus_full_output_plus_suffix",
         "document_tokens": config.document_tokens,
         "append_tokens_per_later_round": config.append_tokens,
         "output_tokens_per_round": config.output_tokens,
@@ -521,7 +576,6 @@ def _profile(config: LoadConfig, corpus: str) -> dict[str, object]:
             "mode": "fixed_rate_round_barrier_closed_loop",
             "request_rate_per_round": config.request_rate,
         },
-        "enable_thinking": True,
         "temperature": 0,
         "seed": 0,
         "ignore_eos": True,
@@ -608,7 +662,7 @@ async def execute_load(
             "one HTTP client is required per active conversation: "
             f"{len(clients)} != {config.active_conversations}"
         )
-    first_messages, append_texts = build_load_workload(
+    initial_prompt_ids, append_suffixes = build_load_workload(
         tokenizer,
         corpus,
         document_tokens=config.document_tokens,
@@ -616,8 +670,8 @@ async def execute_load(
         rounds=config.rounds,
     )
     identities = build_conversation_identities(config)
-    messages_by_conversation = [
-        [dict(message) for message in first_messages]
+    prompt_ids_by_conversation = [
+        list(initial_prompt_ids)
         for _ in range(config.active_conversations)
     ]
     previous_prompt_ids: list[list[int] | None] = [
@@ -654,7 +708,7 @@ async def execute_load(
                 clients[identity.index],
                 config,
                 identity,
-                tuple(messages_by_conversation[identity.index]),
+                tuple(prompt_ids_by_conversation[identity.index]),
                 round_index,
             )
             _validate_turn(
@@ -704,19 +758,11 @@ async def execute_load(
             previous_prompt_ids[identity.index] = list(current_prompt_ids)
             previous_output_ids[identity.index] = list(current_output_ids)
             if round_index < config.rounds:
-                messages_by_conversation[identity.index].extend(
-                    [
-                        {"role": "assistant", "content": assistant_text},
-                        {
-                            "role": "user",
-                            "content": (
-                                "Using this additional passage, refine the summary "
-                                "and identify one changed conclusion.\n\n"
-                                f"{append_texts[round_index - 1]}"
-                            ),
-                        },
-                    ]
-                )
+                prompt_ids_by_conversation[identity.index] = [
+                    *current_prompt_ids,
+                    *current_output_ids,
+                    *append_suffixes[round_index - 1],
+                ]
         round_observations.append(current_round)
 
     observations = [record[2] for record in all_records]

@@ -89,7 +89,7 @@ TTFT；V1 cross-layer model runner 的 TPOT 比旧 V2 runner 高约 6%–7%，�
 | 对话轮数 | 5 |
 | 并发档 | C1 控制、C2 canary、C4 主实验 |
 | 到达 | 每轮固定 2 request/s；轮内并发，轮间 barrier |
-| 历史 | 下一轮包含真实的上一轮 assistant 输出 |
+| 历史 | exact token continuation；下一轮包含上一轮全部 output token IDs |
 | 上限 | `max_model_len=20000`、`max_num_batched_tokens=4096`、`max_num_seqs=4` |
 | GPU | 只使用 GPU1/GPU2 |
 
@@ -110,20 +110,25 @@ OOM、调度和证据链 canary；任何 OOM、EngineDead、请求失败或实�
 
 ### 3.3 正确性与 provenance
 
-客户端保留 request-level token digest、prompt/completion tokens、实际到达/首 token/
+负载通过 `/v1/completions` 直接提交 token IDs，下一轮 prompt 固定为“上一轮完整
+prompt + 全部 output + 新增 user suffix”。这样避免 assistant 文本 decode 后再 tokenize
+破坏 BPE 边界；上一轮最后一个 sampled token 仍保留在新 prompt 中，但因为它没有 KV，
+会作为 suffix 正常重算。客户端保留 request-level token digest、prompt/completion
+tokens、实际到达/首 token/
 末 token/EOF 时间及 prefix reuse transition。外部 finalizer 只有在以下证据同时通过时
 才把 repetition 标记为可比较：
 
 - 所有请求完成 256 tokens；
 - prompt 形状和各轮请求数完整；
-- PD 的 P/D cache-source 守恒、push 次数和 descriptor 计数匹配；
+- PD 的 P/D cache-source 守恒、push 次数匹配，cross-layer descriptor 保持在由实际
+  并发数决定的有界区间；
 - PAP session drain、routing、decode commit/lease 与 Attention runtime stats 通过；
 - 服务日志没有 OOM、EngineDead、Traceback 或 NIXL failure；
 - Git commit、tracked dirty state、effective config 和 artifact hash 可追溯。
 
-由于 PD 与 PAP 从 R2 起可能生成不同的 assistant tokens，比较器要求每轮 prompt token
-数量形状严格相同，并把 digest 差异显式列为 warning；若 tokenizer 后长度发生分叉，
-该组不能被静默宣称为 exact same-workload。
+由于 PD 与 PAP 从 R2 起可能生成不同的 output token IDs，比较器要求每轮 prompt token
+数量形状严格相同，并把 digest 差异显式列为 warning。固定输出和 suffix 长度保证形状
+一致，但报告不会把 digest 已分叉的 R2–R5 描述为逐 token 相同的请求内容。
 
 ## 4. 标准运行入口
 

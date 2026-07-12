@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Awaitable, Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -10,6 +10,7 @@ import pytest
 from benchmarks.multi_turn.pap_pd_multiturn_load_client import (
     ConversationIdentity,
     LoadConfig,
+    build_completion_payload,
     build_conversation_identities,
     build_load_workload,
     build_profile_id,
@@ -45,8 +46,8 @@ def test_profile_id_versions_c1_and_c4_lanes() -> None:
     c4 = _config()
     c1 = replace(c4, active_conversations=1)
 
-    assert build_profile_id(c1) == "qwen3_8b_chat_16k_5turn_o256_c1_v1"
-    assert build_profile_id(c4) == "qwen3_8b_chat_16k_5turn_o256_c4_v1"
+    assert build_profile_id(c1) == "qwen3_8b_token_16k_5turn_o256_c1_v2"
+    assert build_profile_id(c4) == "qwen3_8b_token_16k_5turn_o256_c4_v2"
 
 
 def test_config_requires_engine_capacity_for_active_conversations() -> None:
@@ -57,23 +58,26 @@ def test_config_requires_engine_capacity_for_active_conversations() -> None:
 class SliceTokenizer:
     def __init__(self, token_count: int = 32) -> None:
         self.token_count = token_count
-        self.decoded_ranges: list[tuple[int, int]] = []
+        self.encoded_texts: list[str] = []
 
     def encode(self, text: str, *, add_special_tokens: bool) -> list[int]:
-        assert text == "local corpus"
         assert add_special_tokens is False
-        return list(range(self.token_count))
+        self.encoded_texts.append(text)
+        if text == "local corpus":
+            return list(range(self.token_count))
+        if text.startswith("Read the following document"):
+            return [100, 101]
+        if text.startswith("\n\nUser:"):
+            return [103, 104]
+        if text == "\n\nAssistant:":
+            return [102]
+        raise AssertionError(f"unexpected text: {text!r}")
 
-    def decode(self, token_ids: Sequence[int]) -> str:
-        values = list(token_ids)
-        self.decoded_ranges.append((values[0], values[-1]))
-        return f"decoded:{values[0]}-{values[-1]}"
 
-
-def test_workload_uses_one_nonoverlapping_slice_per_later_round() -> None:
+def test_workload_uses_exact_nonoverlapping_token_slices() -> None:
     tokenizer = SliceTokenizer()
 
-    first_messages, append_texts = build_load_workload(
+    initial_prompt, append_suffixes = build_load_workload(
         tokenizer,
         "local corpus",
         document_tokens=4,
@@ -81,13 +85,32 @@ def test_workload_uses_one_nonoverlapping_slice_per_later_round() -> None:
         rounds=4,
     )
 
-    assert first_messages[0]["content"].endswith("decoded:0-3")
-    assert append_texts == (
-        "decoded:4-6",
-        "decoded:7-9",
-        "decoded:10-12",
+    assert initial_prompt == [100, 101, 0, 1, 2, 3, 102]
+    assert append_suffixes == (
+        (103, 104, 4, 5, 6, 102),
+        (103, 104, 7, 8, 9, 102),
+        (103, 104, 10, 11, 12, 102),
     )
-    assert tokenizer.decoded_ranges == [(0, 3), (4, 6), (7, 9), (10, 12)]
+
+
+def test_completion_payload_uses_exact_tokens_and_pap_identity() -> None:
+    identity = ConversationIdentity(0, "conversation", "cache-salt")
+
+    pap = build_completion_payload(
+        config=_config(),
+        identity=identity,
+        prompt_token_ids=[1, 2, 3],
+    )
+    pd = build_completion_payload(
+        config=_config(architecture="pd", topology="1p1d"),
+        identity=identity,
+        prompt_token_ids=[1, 2, 3],
+    )
+
+    assert pap["prompt"] == [1, 2, 3]
+    assert pap["add_special_tokens"] is False
+    assert pap["conversation_id"] == "conversation"
+    assert "conversation_id" not in pd
 
 
 def test_conversation_ids_and_cache_salts_are_unique() -> None:
@@ -131,31 +154,21 @@ class FakeLoadExecutor:
         self.architecture = architecture
         self.previous_prompts: dict[int, list[int]] = {}
         self.previous_outputs: dict[int, list[int]] = {}
-        self.calls: list[tuple[int, int, tuple[dict[str, str], ...]]] = []
+        self.calls: list[tuple[int, int, tuple[int, ...]]] = []
 
     async def __call__(
         self,
         client: Any,
         config: LoadConfig,
         identity: ConversationIdentity,
-        messages: Sequence[Mapping[str, str]],
+        prompt_token_ids: Sequence[int],
         round_index: int,
     ) -> tuple[dict[str, object], dict[str, int | None]]:
         assert client == f"client-{identity.index}"
-        copied_messages = tuple(dict(message) for message in messages)
-        self.calls.append((round_index, identity.index, copied_messages))
+        prompt_ids = [int(token_id) for token_id in prompt_token_ids]
+        self.calls.append((round_index, identity.index, tuple(prompt_ids)))
         previous_prompt = self.previous_prompts.get(identity.index)
         previous_output = self.previous_outputs.get(identity.index)
-        if previous_prompt is None or previous_output is None:
-            prompt_ids = [
-                100 + identity.index * 10 + offset for offset in range(4)
-            ]
-        else:
-            prompt_ids = [
-                *previous_prompt,
-                *previous_output[:-1],
-                900 + round_index,
-            ]
         output_ids = [
             1000 + identity.index * 100 + round_index * 10 + offset
             for offset in range(config.output_tokens)
@@ -249,7 +262,7 @@ def _execute_fake_load(architecture: str) -> tuple[dict[str, object], FakeLoadEx
     return result, executor
 
 
-def test_execute_load_enforces_barriers_and_real_assistant_history() -> None:
+def test_execute_load_enforces_barriers_and_exact_token_history() -> None:
     result, executor = _execute_fake_load("pap")
 
     assert [(round_index, index) for round_index, index, _ in executor.calls] == [
@@ -260,18 +273,16 @@ def test_execute_load_enforces_barriers_and_real_assistant_history() -> None:
         (3, 0),
         (3, 1),
     ]
-    round_two_messages = executor.calls[2][2]
-    round_three_messages = executor.calls[4][2]
-    assert round_two_messages[-2] == {
-        "role": "assistant",
-        "content": "answer-0-1",
-    }
-    assert round_two_messages[-1]["content"].endswith("decoded:4-5")
-    assert round_three_messages[-2] == {
-        "role": "assistant",
-        "content": "answer-0-2",
-    }
-    assert round_three_messages[-1]["content"].endswith("decoded:6-7")
+    round_one_prompt = executor.calls[0][2]
+    round_two_prompt = executor.calls[2][2]
+    round_three_prompt = executor.calls[4][2]
+    assert round_one_prompt == (100, 101, 0, 1, 2, 3, 102)
+    assert round_two_prompt[: len(round_one_prompt)] == round_one_prompt
+    assert round_two_prompt[len(round_one_prompt) :][:3] == (1010, 1011, 1012)
+    assert round_two_prompt[-5:] == (103, 104, 4, 5, 102)
+    assert round_three_prompt[: len(round_two_prompt)] == round_two_prompt
+    assert round_three_prompt[len(round_two_prompt) :][:3] == (1020, 1021, 1022)
+    assert round_three_prompt[-5:] == (103, 104, 6, 7, 102)
 
     assert result["validity"] == {"status": "passed", "cache_gate": "passed"}
     assert result["overall"]["completed_requests"] == 6
@@ -327,8 +338,8 @@ def test_pd_load_requires_external_cache_validation() -> None:
         "conversation_index": 0,
         "from_round": 1,
         "to_round": 2,
-        "previous_prompt_tokens": 4,
-        "expected_cached_tokens": 6,
+        "previous_prompt_tokens": 7,
+        "expected_cached_tokens": 8,
         "decode_derived_hit_tokens": 2,
         "actual_cached_tokens": None,
     }

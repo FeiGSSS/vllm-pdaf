@@ -341,6 +341,9 @@ def consume_sse_lines(
                 content = delta.get("content")
                 if isinstance(content, str) and content:
                     assistant_parts.append(content)
+            completion_text = choice.get("text")
+            if isinstance(completion_text, str) and completion_text:
+                assistant_parts.append(completion_text)
             current_finish = choice.get("finish_reason")
             if current_finish is not None:
                 finish_reason = str(current_finish)
