@@ -58,6 +58,7 @@
 | 多轮 Qwen3 Chat | expected/actual hit `176/176`，decode-derived `48`，cold `0` | thinking 模板下真实 messages 保持完整 materialized LCP |
 | 1PA1P 16K 两轮历史优化 reference | Round2 old-pull PD/PAP TTFT `267.27/224.49 ms`，TPOT `25.18/30.45 ms` | PAP Stage C/D 内部优化证据保留；旧 PD pull 已被 P10 校正，不再作公平 PD 基线 |
 | 1PA1P 16K 五轮 C4 正式矩阵 | corrected-push PD/PAP 稳态 TTFT `306.17/248.32 ms`，TPOT `42.12/51.38 ms` | PAP 稳态 TTFT 为 PD `0.811x`，TPOT 为 `1.220x`；两侧各三次、实际并发 4、严格 Gate 全通过 |
+| UCX 1.22 三路 C4 quick | PD-oneway/PD-twoway/PAP 稳态 TTFT `279.21/247.08/252.79 ms`，TPOT `42.17/42.16/51.26 ms` | 双向降低 PD steady TTFT 约 11.5%、不增加 TPOT；PAP/PD-twoway 为 TTFT `1.023x`、TPOT `1.216x`；dirty controlled，formal 待提交后执行 |
 
 以上各数字的工作负载和原始证据分别记录在 `M6`、`M9`、`M10`、P10 和实验账本中，
 不能脱离 workload 直接互相比较。
@@ -125,6 +126,7 @@ PAP Stage A–D 内部 A/B，旧 PD pull 数字不再作为公平比较基线。
 | `P8` 多轮原生 APC | 07-11 | 第二轮能否在同一 PA 直接命中第一轮 prompt 和 decode KV，而不做 KV 回传？ | `6a7094c3b`、`fd723d2e2`、`c71ccc9df`、`043339691`、`558db3cdd`、`848f321ab` | exact-token 命中 2 个 decode blocks，真实 Chat 命中 3 个；pair 每轮解散，APC LRU 保存完整 hashed blocks | `formal-clean`，见 M10 |
 | `P9` 多轮北极星与 metadata | 07-12 | 固定 16K 多轮后，metadata 构造、chunk generation 和 cache-hit block 扫描如何影响 TPOT？ | `7e81e2d10`、`7d0fd13cb`、`6bc383dab`、`c134bc3d9`、`0727ed946` | bulk build 将 Round2 TPOT `39.13 -> 30.59 ms`；generation-aware slot-plan 将 Round1 降到 `30.52 ms`；topology-token fast key 将全扫描减少 `36x`，两轮约 `1.21x PD` | `formal-clean/controlled`，见 M6/M7/M10 |
 | `P10` PD push 校正与五轮负载 | 07-13 | 同机 PD 为何只有约 0.42 GiB/s；校正后长上下文、多轮、C4 下 PAP/PD 的真实差距是多少？ | `131e1dfa2`、`e8ab4ab23`、`340c11abc`、`a646ae032` | 旧 pull GET 命中 TCP emulation；官方 push PUT 单流约 24.5 GiB/s；C4 formal 稳态 PAP/PD TTFT `0.811x`、TPOT `1.220x` | `diagnostic/formal-clean`，见 M6/M10 和 P10 报告 |
+| `P11` UCX 1.22 双向 PD 与三路 test bed | 07-13 | 能否在不换 connector 的情况下恢复 NIXL GET，并公平比较 PD 单向、PD 双向和 PAP？ | 当前 tracked WIP，UCX 1.22.0/NIXL 1.3.0 | UCX 1.22 strict 单流 P→D `22.2 GiB/s`；C4 quick 双向 PD steady TTFT `279.21 → 247.08 ms`，TPOT不变；PAP/双向 PD steady TTFT/TPOT `1.023x/1.216x` | `diagnostic/controlled`；[三路结果](pd-oneway-twoway-pap-five-turn-results-20260713.md) |
 
 时间线不是 commit 全表。更细的里程碑见[第 8 节](#8-关键提交时间线)，完整 patch 以
 Git 历史为准。
@@ -851,6 +853,9 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
 | `PAP-20260712-DEFERRED-GPU-TRACE` | M6/M7 | 每层同步 CUDA trace → deferred event record/query + drain 后 flush；16K/2-turn/C1 quick | `ad95c8c12`；dirty diagnostic | trace TPOT 扰动 R1/R2 `+2.12%/+1.77%`；QKV ready p50 `0.567 ms/layer`，FA `0.191`、append `0.008`、output copy `0.007`；四段 count 精确、drop/error 为 0；**接受诊断工具，下一步只拆 Projection→Attention QKV chain** | [北极星记录](pap-pd-multiturn-north-star-20260712.md)；`$PAP_REPO_RESULTS/20260712_stagec_deferred_gpu_trace_v1` |
 | `PAP-20260713-PD-PUSH-ROOTCAUSE` | M6 | 旧 V2 pull → V1 cross-layer pull → emulation fail-closed → 官方 push；16K/C1 同机 GPU1/2 | `131e1dfa2` 后恢复上游源码；diagnostic | pull GET 为 TCP emulation，`2254.5 MiB / 5.34 s / 422 MiB/s / 72144 descriptors`；push PUT 为 CUDA IPC，`91.984 ms / 24509.697 MiB/s / 1 descriptor`；**废止旧 pull 公平基线，接受官方 push** | [根因报告](pd-same-node-nixl-transfer-root-cause-20260713.md)；`$PAP_REPO_RESULTS/20260713_pd_*` |
 | `PAP-20260713-FIVE-TURN-C4` | M6/M7/M10 | 两轮 C1 → exact-token 16K/5-turn/C1,C2,C4；corrected-push PD vs local-fast PAP | `e8ab4ab23`、`340c11abc`、`a646ae032`；clean C4 三轮 | C4 steady TTFT `306.166/248.321 ms`（PAP/PD `0.811x`），TPOT `42.115/51.375 ms`（`1.220x`）；两侧各 60/60、peak concurrency 4、无 OOM/fatal；**接受为当前多轮并发北极星** | [阶段汇报](pap-1pa1p-five-turn-stage-report-20260713.md)；[五轮报告](pd-pap-five-turn-load-results-20260713.md)；`$PAP_REPO_RESULTS/20260713_031215_a646ae032_pd_pap_load_c4_formal` |
+| `PAP-20260713-UCX122-GET-AB` | M6 | UCX 1.21 默认 → UCX 1.22 strict；同一 16K 两轮双向 `NixlConnector` | 当前 tracked WIP；diagnostic | UCX 1.21 D→P/P→D `500.1/507.3 MiB/s`；UCX 1.22 `5957.9/22206.0 MiB/s`，digest 一致，协议为 `cuda_ipc/cuda`；**接受 UCX 1.22，废止“GET 必须改 Push”的最终结论** | [根因报告](pd-same-node-nixl-transfer-root-cause-20260713.md)；`/tmp/ucx122_get_ab/{bidirectional_ucx121_default,bidirectional_fixed_strict}/rep1`（temporary） |
+| `PAP-20260713-PD-THREE-LANE-C2` | M6/M10 | PD-oneway vs PD-twoway vs PAP；16K/5-turn/C2/o256/q2 | 当前 tracked WIP；dirty quick/controlled | steady TTFT `223.907/197.052/210.789 ms`，TPOT `33.102/33.106/38.538 ms`；two-way `2 MISS + 8 HIT`，三路 digest 一致；**接受功能和方向，不冻结 formal 数字** | [三路结果](pd-oneway-twoway-pap-five-turn-results-20260713.md)；`$PAP_REPO_RESULTS/20260713_112725_a634b5bf8_pd_three_lane_c2_quick` |
+| `PAP-20260713-PD-THREE-LANE-C4` | M6/M10 | PD-oneway vs PD-twoway vs PAP；16K/5-turn/C4/o256/q2 | 当前 tracked WIP；dirty quick/controlled | steady TTFT `279.207/247.077/252.793 ms`，TPOT `42.165/42.163/51.261 ms`；two-way `4 MISS + 16 HIT`，PAP/two-way `1.023x/1.216x`；**晋升为 formal 候选，提交后重跑** | [三路结果](pd-oneway-twoway-pap-five-turn-results-20260713.md)；`$PAP_REPO_RESULTS/20260713_114402_a634b5bf8_pd_three_lane_c4_quick` |
 
 ## 7. 负结果、回滚与被替代路线
 
@@ -890,6 +895,7 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
 | P8 / 07-11 | `6a7094c3b` native APC design；`fd723d2e2` eviction order；`c71ccc9df` decode reuse；`043339691` exact audit；`558db3cdd` Projection boundary；`848f321ab` Chat continuity；`ba4d41c5b` validation note | 证明无需 resident session/KV 回传即可命中第一轮 decode blocks | M10；账本 P8 |
 | P9 / 07-12 | `7e81e2d10` v2 timing/gates；`7d0fd13cb` formal references；`6bc383dab` bulk metadata；`c134bc3d9` generation-aware slot-plan；`0727ed946` topology-token fast key；`ad95c8c12` deferred GPU trace | 把 16K 两轮 PD/PAP 固化为可审计 test bed，移除 metadata miss 标量写、chunk topology false mismatch 和 cache-hit 全 block 扫描，并用低扰动 GPU timing 将剩余热点收敛到 QKV ready chain | M6/M7/M10；账本 P9 |
 | P10 / 07-13 | `131e1dfa2` revert diagnostic UCX override；`e8ab4ab23` five-turn testbed；`340c11abc` exact-token continuity；`a646ae032` completion token parsing | 证明旧 PD pull 走 TCP emulation，以官方 push CUDA IPC 重建同机基线，并把比较升级到 16K/5-turn/C4/三次交错正式矩阵 | M6/M10；账本 P10；[五轮报告](pd-pap-five-turn-load-results-20260713.md) |
+| P11 / 07-13 | 当前 tracked WIP：repo-local UCX 1.22、Completion/Chat streaming KV metadata、单/双向 auditor、三路 comparer/Latin-square runner | 用 UCX 1.22 恢复官方 `NixlConnector` GET，把北极星升级为 PD-oneway/PD-twoway/PAP；C2/C4 quick 通过，formal 待提交后执行 | M6/M10；账本 P11；[三路报告](pd-oneway-twoway-pap-five-turn-results-20260713.md) |
 
 ## 9. 未完成问题与外部依赖
 
@@ -899,8 +905,9 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
   进程 GPU timeline 已闭合，Projection source compute/copy 的跨进程导出尚未完成；
 - 同步 chunked Prefill 的 topology generation 已闭环；异步 import 尚缺 unified descriptor
   字段透传、readiness failed 标记和 session-epoch queue guard，当前默认关闭；
-- 旧 pull PD 已被 corrected-push 基线替代；历史 PAP 内部 A/B 仍有效，但旧 PAP/PD 比值
-  不应继续用于公平结论；
+- UCX 1.21 默认 pull 和 corrected-push 都保留为诊断历史；当前候选基线是 UCX 1.22
+  下官方 `NixlConnector` 的 PD-oneway/PD-twoway。历史 PAP 内部 A/B 仍有效，但旧
+  PAP/PD 比值不应继续用于当前公平结论；
 - `P0-CORRECTNESS-DIVERGENCE`：C4 中 PD 有一次相同 R4 prompt 的内部轨迹分叉；
   PD/PAP 则在相同 R2 prompt 下稳定分叉。需要依次补齐 raw token/top-k margin、PD
   batch-invariant A/B、teacher-forced cold/warm R2、QKV transport/KV slot checksum 和

@@ -8,7 +8,8 @@ CLIENT="${ROOT_DIR}/benchmarks/multi_turn/pap_pd_multiturn_load_client.py"
 AUDITOR="${ROOT_DIR}/benchmarks/multi_turn/pd_multiturn_load_reuse_metrics.py"
 FINALIZER="${ROOT_DIR}/benchmarks/multi_turn/finalize_pap_pd_multiturn.py"
 COMPARER="${ROOT_DIR}/benchmarks/multi_turn/compare_pap_pd_multiturn_load.py"
-PROXY="${ROOT_DIR}/examples/disaggregated/disaggregated_serving/disagg_proxy_pushconnector_demo.py"
+PROXY="${ROOT_DIR}/examples/disaggregated/disaggregated_serving/disagg_proxy_multiturn.py"
+UCX_RUNTIME="${ROOT_DIR}/.claude/skills/vllm-pap-benchmark/scripts/ucx122_runtime_env.sh"
 MODEL_PATH="${MODEL_PATH:-/data/ssd1/llm-models/Qwen3-8B}"
 DATASET_PATH="${DATASET_PATH:-/home/fei/research/PD/refer_codes/vllm/benchmarks/sonnet_4x.txt}"
 RESULTS_ROOT="${RESULTS_ROOT:-${ROOT_DIR}/test/baseline/pap/results}"
@@ -19,6 +20,24 @@ REQUEST_RATE="${PD_LOAD_REQUEST_RATE:-2}"
 REQUIRE_CLEAN="${PD_LOAD_REQUIRE_CLEAN_TRACKED_WORKTREE:-0}"
 PREFILL_CUDA_VISIBLE_DEVICES="${PD_PREFILL_CUDA_VISIBLE_DEVICES:-1}"
 DECODE_CUDA_VISIBLE_DEVICES="${PD_DECODE_CUDA_VISIBLE_DEVICES:-2}"
+TRANSFER_MODE="${1:-${PD_LOAD_TRANSFER_MODE:-oneway}}"
+
+case "${TRANSFER_MODE}" in
+  oneway)
+    BIDIRECTIONAL_KV_XFER=false
+    KV_RECOMPUTE_THRESHOLD=""
+    DECODER_KV_BLOCKS_TTL=""
+    ;;
+  twoway)
+    BIDIRECTIONAL_KV_XFER=true
+    KV_RECOMPUTE_THRESHOLD=0
+    DECODER_KV_BLOCKS_TTL=480
+    ;;
+  *)
+    echo "usage: $0 [oneway|twoway]" >&2
+    exit 2
+    ;;
+esac
 
 for name in REPETITIONS ROUNDS CONVERSATIONS; do
   value="${!name}"
@@ -50,20 +69,23 @@ for required in "${PYTHON_BIN}" "${VLLM_BIN}"; do
   }
 done
 for required in "${CLIENT}" "${AUDITOR}" "${FINALIZER}" "${COMPARER}" \
-  "${PROXY}" "${DATASET_PATH}"; do
+  "${PROXY}" "${UCX_RUNTIME}" "${DATASET_PATH}"; do
   [[ -f "${required}" ]] || {
     echo "required file is missing: ${required}" >&2
     exit 1
   }
 done
 
+source "${UCX_RUNTIME}"
+configure_ucx122_runtime
+verify_ucx122_runtime
+
 export VLLM_USE_FLASHINFER_SAMPLER=0
 export VLLM_USE_V1=1
 export VLLM_USE_V2_MODEL_RUNNER=0
-export UCX_TLS="${UCX_TLS:-cuda_ipc,cuda_copy,tcp}"
 export UCX_NET_DEVICES="${UCX_NET_DEVICES:-all}"
 export UCX_RCACHE_MAX_UNRELEASED="${UCX_RCACHE_MAX_UNRELEASED:-1024}"
-export UCX_PROTO_EMULATION_ENABLE=n
+export UCX_PROTO_INFO="${UCX_PROTO_INFO:-y}"
 export NO_PROXY="${NO_PROXY:+${NO_PROXY},}127.0.0.1,localhost"
 export no_proxy="${no_proxy:+${no_proxy},}127.0.0.1,localhost"
 
@@ -152,7 +174,7 @@ GIT_TRACKED_WORKTREE_DIRTY=0
 if ! git diff --quiet || ! git diff --cached --quiet; then
   GIT_TRACKED_WORKTREE_DIRTY=1
 fi
-GROUP_RUN_ID="${PD_LOAD_RUN_ID:-$(date +%Y%m%d_%H%M%S)_${GIT_SHORT}_pd_push_load_c${CONVERSATIONS}}"
+GROUP_RUN_ID="${PD_LOAD_RUN_ID:-$(date +%Y%m%d_%H%M%S)_${GIT_SHORT}_pd_${TRANSFER_MODE}_load_c${CONVERSATIONS}}"
 GROUP_ROOT="${PD_LOAD_RUN_ROOT:-${RESULTS_ROOT}/runs/${GROUP_RUN_ID}}"
 mkdir -p "${GROUP_ROOT}"
 NIXL_VERSION="$(
@@ -177,22 +199,31 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
   PREFILL_ENGINE_ID="${GROUP_RUN_ID}-rep${rep}-prefill"
   DECODE_ENGINE_ID="${GROUP_RUN_ID}-rep${rep}-decode"
 
+  if [[ "${TRANSFER_MODE}" == "twoway" ]]; then
+    EXTRA_CONFIG='"bidirectional_kv_xfer":true,"kv_recompute_threshold":0,"decoder_kv_blocks_ttl":480,"enable_cross_layers_blocks":"True"'
+  else
+    EXTRA_CONFIG='"bidirectional_kv_xfer":false,"enable_cross_layers_blocks":"True"'
+  fi
   P_CONFIG="$(printf '%s' \
-    '{"kv_connector":"NixlPushConnector","engine_id":"' \
+    '{"kv_connector":"NixlConnector","engine_id":"' \
     "${PREFILL_ENGINE_ID}" '","kv_role":"kv_producer",' \
     '"kv_load_failure_policy":"fail","kv_connector_extra_config":{' \
-    '"bidirectional_kv_xfer":false,"enable_cross_layers_blocks":"True"}}')"
+    "${EXTRA_CONFIG}" '}}')"
   D_CONFIG="$(printf '%s' \
-    '{"kv_connector":"NixlPushConnector","engine_id":"' \
+    '{"kv_connector":"NixlConnector","engine_id":"' \
     "${DECODE_ENGINE_ID}" '","kv_role":"kv_consumer",' \
     '"kv_load_failure_policy":"fail","kv_connector_extra_config":{' \
-    '"bidirectional_kv_xfer":false,"enable_cross_layers_blocks":"True"}}')"
+    "${EXTRA_CONFIG}" '}}')"
 
   git status --short > "${REP_ROOT}/git_status.txt"
   git diff --binary > "${REP_ROOT}/tracked_worktree.patch"
   git diff --cached --binary > "${REP_ROOT}/tracked_index.patch"
   {
-    printf 'MODE=pd\nPD_TRANSFER_MODE=push\nTOPOLOGY=1p1d\n'
+    printf 'MODE=pd\nPD_TRANSFER_MODE=%q\nTOPOLOGY=1p1d\n' \
+      "${TRANSFER_MODE}"
+    printf 'BIDIRECTIONAL_KV_XFER=%q\n' "${BIDIRECTIONAL_KV_XFER}"
+    printf 'KV_RECOMPUTE_THRESHOLD=%q\n' "${KV_RECOMPUTE_THRESHOLD}"
+    printf 'DECODER_KV_BLOCKS_TTL=%q\n' "${DECODER_KV_BLOCKS_TTL}"
     printf 'MODEL_PATH=%q\nDATASET_PATH=%q\n' \
       "${MODEL_PATH}" "${DATASET_PATH}"
     printf 'ROUNDS=%q\nACTIVE_CONVERSATIONS=%q\nREQUEST_RATE=%q\n' \
@@ -216,6 +247,10 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
       "${UCX_PROTO_EMULATION_ENABLE}"
     printf 'UCX_PROTO_INFO=%q\nUCX_LOG_LEVEL=%q\n' \
       "${UCX_PROTO_INFO:-}" "${UCX_LOG_LEVEL:-}"
+    printf 'PAP_UCX122_ROOT=%q\nPAP_NIXL_UCX122_ROOT=%q\n' \
+      "${PAP_UCX122_ROOT}" "${PAP_NIXL_UCX122_ROOT}"
+    printf 'UCX_MODULE_DIR=%q\nNIXL_PLUGIN_DIR=%q\n' \
+      "${UCX_MODULE_DIR}" "${NIXL_PLUGIN_DIR}"
     printf 'NIXL_VERSION=%q\n' "${NIXL_VERSION}"
     printf 'PREFILL_KV_TRANSFER_CONFIG=%q\n' "${P_CONFIG}"
     printf 'DECODE_KV_TRANSFER_CONFIG=%q\n' "${D_CONFIG}"
@@ -224,7 +259,7 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
     printf 'HARDWARE_SIGNATURE=%q\n' "${HARDWARE_SIGNATURE}"
   } > "${REP_ROOT}/effective_config.env"
 
-  echo "Starting PD push Prefill rep ${rep} on GPU 1"
+  echo "Starting PD ${TRANSFER_MODE} Prefill rep ${rep} on GPU 1"
   setsid env \
     CUDA_VISIBLE_DEVICES="${PREFILL_CUDA_VISIBLE_DEVICES}" \
     VLLM_PORT="${VLLM_PREFILL_PORT}" \
@@ -242,7 +277,7 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
   PIDS+=("$!")
   PGIDS+=("$!")
 
-  echo "Starting PD push Decode rep ${rep} on GPU 2"
+  echo "Starting PD ${TRANSFER_MODE} Decode rep ${rep} on GPU 2"
   setsid env \
     CUDA_VISIBLE_DEVICES="${DECODE_CUDA_VISIBLE_DEVICES}" \
     VLLM_PORT="${VLLM_DECODE_PORT}" \
@@ -263,19 +298,15 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
   wait_for_http "http://127.0.0.1:${PREFILL_PORT}/health" "PD Prefill"
   wait_for_http "http://127.0.0.1:${DECODE_PORT}/health" "PD Decode"
 
-  echo "Starting official NIXL push proxy rep ${rep}"
+  echo "Starting official NIXL multi-turn proxy rep ${rep}"
   setsid "${PYTHON_BIN}" "${PROXY}" \
-    --model "${MODEL_PATH}" \
-    --prefill "127.0.0.1:${PREFILL_PORT}" \
-    --decode "127.0.0.1:${DECODE_PORT}" \
-    --prefill-engine-id "${PREFILL_ENGINE_ID}" \
-    --prefill-kv-host 127.0.0.1 \
-    --prefill-side-channel-port "${PREFILL_SIDE_PORT}" \
-    --prefill-tp-size 1 --port "${PROXY_PORT}" \
+    --host 127.0.0.1 --port "${PROXY_PORT}" \
+    --prefiller-host 127.0.0.1 --prefiller-port "${PREFILL_PORT}" \
+    --decoder-host 127.0.0.1 --decoder-port "${DECODE_PORT}" \
     > "${LOG_ROOT}/proxy.log" 2>&1 &
   PIDS+=("$!")
   PGIDS+=("$!")
-  wait_for_http "http://127.0.0.1:${PROXY_PORT}/status" "PD push proxy"
+  wait_for_http "http://127.0.0.1:${PROXY_PORT}/health" "PD proxy"
   sleep 5
 
   "${PYTHON_BIN}" "${CLIENT}" \
@@ -288,7 +319,7 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
     --hardware-signature "${HARDWARE_SIGNATURE}" \
     --git-commit "${GIT_COMMIT}" \
     --git-tracked-worktree-dirty "${GIT_TRACKED_WORKTREE_DIRTY}" \
-    --offload-exec-transport nixl-push \
+    --offload-exec-transport "nixl-${TRANSFER_MODE}" \
     --direct-mailbox-output 0 --unified-md-fast-key 0 \
     --document-tokens 16000 --append-tokens 120 --output-tokens 256 \
     --rounds "${ROUNDS}" --active-conversations "${CONVERSATIONS}" \
@@ -306,7 +337,10 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
     --result "${REP_ROOT}/result.json" \
     --prefill-metrics "${REP_ROOT}/prefill_metrics.prom" \
     --decode-metrics "${REP_ROOT}/decode_metrics.prom" \
-    --effective-config "${REP_ROOT}/effective_config.env"
+    --effective-config "${REP_ROOT}/effective_config.env" \
+    --proxy-log "${LOG_ROOT}/proxy.log" \
+    --service-log "${LOG_ROOT}/prefill.log" \
+    --service-log "${LOG_ROOT}/decode.log"
 
   if rg -n -i \
     'CUDA out of memory|EngineDeadError|Traceback|NIXL.*failed|NIXL_ERR' \
@@ -323,6 +357,8 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
     --result "${REP_ROOT}/result.json" --architecture pd \
     --passed-gate pd_reuse_metrics --passed-gate correctness_logs \
     --artifact "proxy_log=${LOG_ROOT}/proxy.log" \
+    --artifact "prefill_log=${LOG_ROOT}/prefill.log" \
+    --artifact "decode_log=${LOG_ROOT}/decode.log" \
     --artifact "prefill_metrics=${REP_ROOT}/prefill_metrics.prom" \
     --artifact "decode_metrics=${REP_ROOT}/decode_metrics.prom" \
     --artifact "effective_config=${REP_ROOT}/effective_config.env" \

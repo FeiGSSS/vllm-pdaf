@@ -333,6 +333,11 @@ def _validate_pd_evidence(
             ),
         )
     elif reuse_status == PD_LOAD_REUSE_STATUS:
+        service_logs = tuple(
+            artifacts[name].read_text(encoding="utf-8")
+            for name in ("prefill_log", "decode_log")
+            if name in artifacts
+        )
         fresh_reuse = validate_pd_multiturn_load_reuse(
             result,
             prefill_metrics=artifacts["prefill_metrics"].read_text(
@@ -344,6 +349,8 @@ def _validate_pd_evidence(
             effective_config=artifacts["effective_config"].read_text(
                 encoding="utf-8"
             ),
+            proxy_log=artifacts["proxy_log"].read_text(encoding="utf-8"),
+            service_logs=service_logs,
         )
     else:
         raise ValueError(f"PD reuse validation did not pass: {reuse}")

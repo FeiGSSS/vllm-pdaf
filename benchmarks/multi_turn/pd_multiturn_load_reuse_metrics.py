@@ -15,6 +15,7 @@ from typing import Any
 STATUS = "pd_multiturn_load_reuse_metrics_passed"
 MODE = "pd_multiturn_load"
 REQUIRED_ROUNDS = 5
+MAX_CROSS_LAYER_DESCRIPTORS_PER_TRANSFER = 64
 SOURCES = (
     "local_compute",
     "local_cache_hit",
@@ -24,13 +25,14 @@ _NUMBER = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
 _SOURCE_RE = re.compile(r'(?:^|,)source="(?P<source>[^"]+)"(?:,|$)')
 _FALSE_VALUES = frozenset({"0", "false", "n", "no", "off"})
 _TRUE_VALUES = frozenset({"1", "true", "y", "yes", "on"})
-_PUSH_MODES = frozenset(
-    {"push", "nixl_push", "nixl-push", "nixlpushconnector"}
-)
+_PD_TRANSFER_MODES = frozenset({"oneway", "twoway"})
 _SERVICE_ERROR_RE = re.compile(
     r"NIXL (?:transfer|notification) (?:failure|failed)",
     re.IGNORECASE,
 )
+_PROXY_MISS_RE = re.compile(r"\bcache MISS\b")
+_PROXY_HIT_RE = re.compile(r"\bcache HIT\b")
+_PROXY_SEND_RE = re.compile(r"sending D's cached blocks to P")
 
 
 def _mapping(value: object, name: str) -> Mapping[str, Any]:
@@ -227,6 +229,16 @@ def _config_bool(config: Mapping[str, str], key: str) -> bool:
     raise ValueError(f"effective config has invalid {key}: {config[key]!r}")
 
 
+def _proxy_cache_counts(proxy_log: str | None) -> dict[str, int]:
+    if proxy_log is None:
+        raise ValueError("proxy log is required to prove PD cache behavior")
+    return {
+        "misses": len(_PROXY_MISS_RE.findall(proxy_log)),
+        "hits": len(_PROXY_HIT_RE.findall(proxy_log)),
+        "sends": len(_PROXY_SEND_RE.findall(proxy_log)),
+    }
+
+
 def _validate_requests(
     result: Mapping[str, object],
     *,
@@ -297,7 +309,7 @@ def _validate_transitions(
     rounds: int,
     active_conversations: int,
     block_size: int,
-) -> tuple[int, int, int]:
+) -> tuple[int, int, int, int]:
     raw_transitions = cache_validation.get("transitions")
     if not isinstance(raw_transitions, list):
         raise ValueError("cache_validation.transitions must be a list")
@@ -312,6 +324,7 @@ def _validate_transitions(
     prefill_local_hits = 0
     decode_local_hits = 0
     decode_derived_hits = 0
+    materialized_remote_hits = 0
     for index, raw_transition in enumerate(raw_transitions):
         transition = _mapping(raw_transition, f"transition {index}")
         conversation = _integer(
@@ -374,6 +387,17 @@ def _validate_transitions(
                 f"transition {index} cached-token boundary is invalid: "
                 f"{previous_boundary} <= {expected_cached} < {target_prompt}"
             )
+        materialized_history = _integer(
+            transition.get("materialized_history_tokens"),
+            f"transition {index} materialized_history_tokens",
+            minimum=1,
+        )
+        if not expected_cached <= materialized_history <= target_prompt:
+            raise ValueError(
+                f"transition {index} materialized history is invalid: "
+                f"{expected_cached} <= {materialized_history} <= "
+                f"{target_prompt}"
+            )
         decode_derived = _integer(
             transition.get("decode_derived_hit_tokens"),
             f"transition {index} decode_derived_hit_tokens",
@@ -398,6 +422,7 @@ def _validate_transitions(
         prefill_local_hits += previous_boundary
         decode_local_hits += expected_cached
         decode_derived_hits += decode_derived
+        materialized_remote_hits += materialized_history - previous_boundary
 
     expected_keys = {
         (conversation, round_index, round_index + 1)
@@ -406,7 +431,12 @@ def _validate_transitions(
     }
     if transition_keys != expected_keys:
         raise ValueError("transitions do not cover every adjacent round")
-    return prefill_local_hits, decode_local_hits, decode_derived_hits
+    return (
+        prefill_local_hits,
+        decode_local_hits,
+        decode_derived_hits,
+        materialized_remote_hits,
+    )
 
 
 def _nixl_total(
@@ -452,9 +482,10 @@ def validate_pd_multiturn_load_reuse(
     prefill_metrics: str,
     decode_metrics: str,
     effective_config: str | None,
+    proxy_log: str | None = None,
     service_logs: Sequence[str] = (),
 ) -> dict[str, object]:
-    """Validate five-turn prompt reuse and bounded push-transfer evidence."""
+    """Validate five-turn prompt reuse and directional NIXL evidence."""
     if result.get("architecture") != "pd":
         raise ValueError("PD load reuse validation requires architecture=pd")
 
@@ -473,12 +504,35 @@ def validate_pd_multiturn_load_reuse(
     )
     block_size = _integer(profile.get("block_size"), "block size", minimum=1)
     implementation = _mapping(result.get("implementation"), "implementation")
-    transfer_mode_raw = implementation.get("offload_exec_transport")
-    if not isinstance(transfer_mode_raw, str) or not transfer_mode_raw.strip():
+    transport_raw = implementation.get("offload_exec_transport")
+    if not isinstance(transport_raw, str) or not transport_raw.strip():
         raise ValueError("profile transfer_mode must be a non-empty string")
-    transfer_mode = transfer_mode_raw.strip().lower()
     if "arrival" not in profile:
         raise ValueError("profile is missing arrival evidence")
+
+    config = _parse_effective_config(effective_config)
+    transfer_mode = config.get("PD_TRANSFER_MODE", "").lower()
+    if transfer_mode not in _PD_TRANSFER_MODES:
+        raise ValueError(
+            "effective config PD_TRANSFER_MODE must be oneway or twoway"
+        )
+    expected_transport = f"nixl-{transfer_mode}"
+    if transport_raw.strip().lower() != expected_transport:
+        raise ValueError(
+            "result transport disagrees with PD transfer mode: "
+            f"{transport_raw!r} != {expected_transport!r}"
+        )
+    bidirectional = _config_bool(config, "BIDIRECTIONAL_KV_XFER")
+    if bidirectional != (transfer_mode == "twoway"):
+        raise ValueError(
+            "bidirectional_kv_xfer contradicts PD_TRANSFER_MODE: "
+            f"{bidirectional} for {transfer_mode}"
+        )
+    if transfer_mode == "twoway":
+        if config.get("KV_RECOMPUTE_THRESHOLD") != "0":
+            raise ValueError("twoway requires KV_RECOMPUTE_THRESHOLD=0")
+        if config.get("DECODER_KV_BLOCKS_TTL") != "480":
+            raise ValueError("twoway requires DECODER_KV_BLOCKS_TTL=480")
 
     requests, total_prompt_tokens = _validate_requests(
         result,
@@ -493,6 +547,7 @@ def validate_pd_multiturn_load_reuse(
         expected_prefill_hits,
         expected_decode_hits,
         decode_derived_hits,
+        materialized_remote_hits,
     ) = _validate_transitions(
         cache_validation,
         requests=requests,
@@ -510,9 +565,23 @@ def validate_pd_multiturn_load_reuse(
             "Prefill local cache hit mismatch: "
             f"{prefill_sources['local_cache_hit']} != {expected_prefill_hits}"
         )
-    if prefill_sources["external_kv_transfer"] != 0:
-        raise ValueError("PD Prefill unexpectedly received external KV")
-    expected_prefill_compute = total_prompt_tokens - expected_prefill_hits
+    transition_count = active_conversations * (rounds - 1)
+    expected_prefill_external = (
+        materialized_remote_hits
+        if transfer_mode == "twoway"
+        else 0
+    )
+    if prefill_sources["external_kv_transfer"] != expected_prefill_external:
+        raise ValueError(
+            "Prefill external transfer mismatch: "
+            f"{prefill_sources['external_kv_transfer']} != "
+            f"{expected_prefill_external}"
+        )
+    expected_prefill_compute = (
+        total_prompt_tokens
+        - expected_prefill_hits
+        - expected_prefill_external
+    )
     if prefill_sources["local_compute"] != expected_prefill_compute:
         raise ValueError(
             "Prefill local compute mismatch: "
@@ -536,7 +605,6 @@ def validate_pd_multiturn_load_reuse(
             f"{expected_decode_external}"
         )
 
-    config = _parse_effective_config(effective_config)
     if _config_bool(config, "UCX_PROTO_EMULATION_ENABLE"):
         raise ValueError("UCX software protocol emulation must be disabled")
     cross_layers_enabled = _config_bool(
@@ -559,21 +627,54 @@ def validate_pd_multiturn_load_reuse(
             raise ValueError(f"{node} recorded expired NIXL requests")
 
     request_count = rounds * active_conversations
-    if transfer_mode in _PUSH_MODES:
-        if total_nixl["transfer_count"] != request_count:
-            raise ValueError(
-                "push-mode NIXL transfer count mismatch: "
-                f"{total_nixl['transfer_count']} != {request_count}"
+    expected_d_to_p = transition_count if transfer_mode == "twoway" else 0
+    if decode_nixl["transfer_count"] != request_count:
+        raise ValueError(
+            "P-to-D NIXL transfer count mismatch: "
+            f"{decode_nixl['transfer_count']} != {request_count}"
+        )
+    if prefill_nixl["transfer_count"] != expected_d_to_p:
+        raise ValueError(
+            "D-to-P NIXL transfer count mismatch: "
+            f"{prefill_nixl['transfer_count']} != {expected_d_to_p}"
+        )
+    if cross_layers_enabled:
+        for direction, metrics in (
+            ("D-to-P", prefill_nixl),
+            ("P-to-D", decode_nixl),
+        ):
+            descriptor_count = int(metrics["descriptors"])
+            transfer_count = int(metrics["transfer_count"])
+            descriptor_limit = (
+                transfer_count * MAX_CROSS_LAYER_DESCRIPTORS_PER_TRANSFER
             )
-        if cross_layers_enabled:
-            descriptor_limit = request_count * active_conversations
-            descriptors = int(total_nixl["descriptors"])
-            if not request_count <= descriptors <= descriptor_limit:
+            if not transfer_count <= descriptor_count <= descriptor_limit:
                 raise ValueError(
                     "cross-layer NIXL descriptor sum is outside the bounded "
-                    f"range: {descriptors} not in "
-                    f"[{request_count}, {descriptor_limit}]"
+                    f"range for {direction}: {descriptor_count} not in "
+                    f"[{transfer_count}, {descriptor_limit}]"
                 )
+
+    proxy_cache = _proxy_cache_counts(proxy_log)
+    expected_misses = (
+        active_conversations if transfer_mode == "twoway" else request_count
+    )
+    expected_hits = transition_count if transfer_mode == "twoway" else 0
+    if proxy_cache["misses"] != expected_misses:
+        raise ValueError(
+            "proxy cache MISS count mismatch: "
+            f"{proxy_cache['misses']} != {expected_misses}"
+        )
+    if proxy_cache["hits"] != expected_hits:
+        raise ValueError(
+            "proxy cache HIT count mismatch: "
+            f"{proxy_cache['hits']} != {expected_hits}"
+        )
+    if proxy_cache["sends"] != expected_hits:
+        raise ValueError(
+            "proxy D-to-P send count mismatch: "
+            f"{proxy_cache['sends']} != {expected_hits}"
+        )
 
     error_matches = sum(
         len(_SERVICE_ERROR_RE.findall(log_text)) for log_text in service_logs
@@ -586,24 +687,35 @@ def validate_pd_multiturn_load_reuse(
     return {
         "status": STATUS,
         "mode": MODE,
+        "pd_transfer_mode": transfer_mode,
+        "bidirectional_kv_xfer": bidirectional,
         "rounds": rounds,
         "active_conversations": active_conversations,
         "request_count": request_count,
-        "transition_count": active_conversations * (rounds - 1),
+        "transition_count": transition_count,
         "total_prompt_tokens": total_prompt_tokens,
         "expected_prefill_local_cache_hit_tokens": expected_prefill_hits,
         "expected_decode_local_cache_hit_tokens": expected_decode_hits,
         "decode_derived_hit_tokens": decode_derived_hits,
+        "materialized_remote_hit_tokens": materialized_remote_hits,
         "prefill_prompt_tokens_by_source": prefill_sources,
         "decode_prompt_tokens_by_source": decode_sources,
         "nixl": {
-            "transfer_mode": transfer_mode_raw,
+            "transfer_mode": transport_raw,
             "cross_layers_enabled": cross_layers_enabled,
             "prefill": prefill_nixl,
             "decode": decode_nixl,
             "total": total_nixl,
-            "descriptor_upper_bound": request_count * active_conversations,
+            "descriptor_upper_bound": (
+                request_count + expected_d_to_p
+            )
+            * MAX_CROSS_LAYER_DESCRIPTORS_PER_TRANSFER,
         },
+        "nixl_transfers": {
+            "d_to_p": prefill_nixl,
+            "p_to_d": decode_nixl,
+        },
+        "proxy_cache": proxy_cache,
         "ucx": {
             "software_emulation_disabled": True,
             "proto_emulation_value": config["UCX_PROTO_EMULATION_ENABLE"],
@@ -631,6 +743,7 @@ def main() -> None:
     parser.add_argument("--prefill-metrics", type=Path, required=True)
     parser.add_argument("--decode-metrics", type=Path, required=True)
     parser.add_argument("--effective-config", type=Path)
+    parser.add_argument("--proxy-log", type=Path, required=True)
     parser.add_argument("--service-log", type=Path, action="append", default=[])
     args = parser.parse_args()
 
@@ -647,6 +760,7 @@ def main() -> None:
         prefill_metrics=args.prefill_metrics.read_text(encoding="utf-8"),
         decode_metrics=args.decode_metrics.read_text(encoding="utf-8"),
         effective_config=effective_config,
+        proxy_log=args.proxy_log.read_text(encoding="utf-8"),
         service_logs=tuple(
             path.read_text(encoding="utf-8") for path in args.service_log
         ),

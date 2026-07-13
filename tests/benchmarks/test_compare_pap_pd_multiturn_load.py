@@ -10,8 +10,10 @@ import pytest
 from benchmarks.multi_turn.compare_pap_pd_multiturn_load import (
     aggregate_repetitions,
     compare_aggregates,
+    compare_three_aggregates,
     main,
     render_markdown,
+    render_three_lane_markdown,
     validate_repetition,
 )
 
@@ -37,6 +39,7 @@ def make_repetition(
     metric_scale: float = 1.0,
     dirty: bool = False,
     hardware: str = "NVIDIA-L20x2-same-node",
+    pd_mode: str = "oneway",
 ) -> dict[str, object]:
     profile: dict[str, object] = {
         "profile_id": "qwen3_8b_chat_16k_5round_o256_c2_q2_v1",
@@ -87,7 +90,12 @@ def make_repetition(
         "hardware_signature": hardware,
         "git_commit": "a" * 40,
         "git_tracked_worktree_dirty": dirty,
-        "repetition_id": f"{architecture}-rep-{repetition}",
+        "repetition_id": f"{architecture}-{pd_mode}-rep-{repetition}",
+        "implementation": {
+            "offload_exec_transport": (
+                f"nixl-{pd_mode}" if architecture == "pd" else "local_fast"
+            )
+        },
         "validity": {"status": "passed"},
         "external_validation": {
             "status": "passed",
@@ -368,6 +376,102 @@ def test_markdown_contains_all_summary_statistics_and_warnings() -> None:
     assert "| R1 | TTFT | median |" in markdown
     assert "| R5 | Latency | max |" in markdown
     assert "assistant_text_digest differs between PD and PAP" in markdown
+
+
+def test_compare_three_builds_absolute_matrix_and_requested_ratios() -> None:
+    oneway = aggregate_repetitions(
+        [make_repetition(architecture="pd", pd_mode="oneway")]
+    )
+    twoway = aggregate_repetitions(
+        [
+            make_repetition(
+                architecture="pd",
+                pd_mode="twoway",
+                metric_scale=0.8,
+            )
+        ]
+    )
+    pap = aggregate_repetitions(
+        [make_repetition(architecture="pap", metric_scale=1.2)]
+    )
+
+    matrix = compare_three_aggregates(oneway, twoway, pap)
+
+    assert matrix["status"] == "valid"
+    assert matrix["ratios"]["pd_twoway_over_pd_oneway"]["round_1"][
+        "ttft_ms"
+    ]["median"] == pytest.approx(0.8)
+    assert matrix["ratios"]["pap_over_pd_oneway"]["round_1"]["tpot_ms"][
+        "median"
+    ] == pytest.approx(1.2)
+    assert matrix["ratios"]["pap_over_pd_twoway"][
+        "steady_rounds_2_5"
+    ]["latency_ms"]["p90"] == pytest.approx(1.5)
+    assert matrix["metrics"]["round_1"]["ttft_ms"]["pd_oneway"][
+        "median"
+    ] == 106.0
+
+    markdown = render_three_lane_markdown(matrix)
+    assert "# PD-oneway / PD-twoway / PAP" in markdown
+    assert "PAP/PD-twoway" in markdown
+
+
+def test_compare_three_rejects_lane_identity_and_prompt_digest_mismatch() -> None:
+    oneway = aggregate_repetitions(
+        [make_repetition(architecture="pd", pd_mode="oneway")]
+    )
+    wrong_twoway = aggregate_repetitions(
+        [make_repetition(architecture="pd", pd_mode="oneway", repetition=2)]
+    )
+    pap_result = make_repetition(architecture="pap")
+    pap = aggregate_repetitions([pap_result])
+
+    with pytest.raises(ValueError, match="PD-twoway.*transport"):
+        compare_three_aggregates(oneway, wrong_twoway, pap)
+
+    twoway = aggregate_repetitions(
+        [make_repetition(architecture="pd", pd_mode="twoway")]
+    )
+    _request(pap_result, 1, 3)["prompt_token_digest"] = _digest("different")
+    pap = aggregate_repetitions([pap_result])
+    with pytest.raises(ValueError, match="prompt token digest mismatch"):
+        compare_three_aggregates(oneway, twoway, pap)
+
+
+def test_compare_three_cli_writes_json_and_markdown(tmp_path: Path) -> None:
+    aggregate_paths = {}
+    for name, result in {
+        "pd_oneway": make_repetition(architecture="pd", pd_mode="oneway"),
+        "pd_twoway": make_repetition(architecture="pd", pd_mode="twoway"),
+        "pap": make_repetition(architecture="pap"),
+    }.items():
+        aggregate = aggregate_repetitions([result])
+        path = tmp_path / f"{name}.json"
+        path.write_text(json.dumps(aggregate), encoding="utf-8")
+        aggregate_paths[name] = path
+
+    output_json = tmp_path / "comparison.json"
+    output_markdown = tmp_path / "report.md"
+    main(
+        [
+            "compare-three",
+            "--pd-oneway",
+            str(aggregate_paths["pd_oneway"]),
+            "--pd-twoway",
+            str(aggregate_paths["pd_twoway"]),
+            "--pap",
+            str(aggregate_paths["pap"]),
+            "--output-json",
+            str(output_json),
+            "--output-markdown",
+            str(output_markdown),
+        ]
+    )
+
+    assert json.loads(output_json.read_text())["status"] == "valid"
+    assert output_markdown.read_text().startswith(
+        "# PD-oneway / PD-twoway / PAP"
+    )
 
 
 def test_cli_writes_aggregate_comparison_json_and_markdown(

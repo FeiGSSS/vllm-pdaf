@@ -14,12 +14,16 @@ case "${MODE}" in
   quick)
     REPETITIONS=1
     REQUIRE_CLEAN=0
-    ORDER=(pd pap)
+    ORDER=(pd_oneway pd_twoway pap)
     ;;
   formal)
     REPETITIONS=3
     REQUIRE_CLEAN=1
-    ORDER=(pd pap pap pd pd pap)
+    ORDER=(
+      pd_oneway pd_twoway pap
+      pd_twoway pap pd_oneway
+      pap pd_oneway pd_twoway
+    )
     ;;
   *)
     echo "usage: $0 [quick|formal] [c1|c2|c4]" >&2
@@ -55,28 +59,45 @@ if [[ "${REQUIRE_CLEAN}" == "1" ]] \
 fi
 
 GIT_SHORT="$(git rev-parse --short HEAD)"
-GROUP_RUN_ID="${PD_PAP_LOAD_RUN_ID:-$(date +%Y%m%d_%H%M%S)_${GIT_SHORT}_pd_pap_load_${LOAD_SHAPE}_${MODE}}"
+GROUP_RUN_ID="${PD_PAP_LOAD_RUN_ID:-$(date +%Y%m%d_%H%M%S)_${GIT_SHORT}_pd_three_lane_${LOAD_SHAPE}_${MODE}}"
 GROUP_ROOT="${PD_PAP_LOAD_RUN_ROOT:-${RESULTS_ROOT}/runs/${GROUP_RUN_ID}}"
-mkdir -p "${GROUP_ROOT}/pd" "${GROUP_ROOT}/pap"
-PD_RESULT_ARGS=()
+mkdir -p \
+  "${GROUP_ROOT}/pd-oneway" \
+  "${GROUP_ROOT}/pd-twoway" \
+  "${GROUP_ROOT}/pap"
+PD_ONEWAY_RESULT_ARGS=()
+PD_TWOWAY_RESULT_ARGS=()
 PAP_RESULT_ARGS=()
-PD_INDEX=0
+PD_ONEWAY_INDEX=0
+PD_TWOWAY_INDEX=0
 PAP_INDEX=0
 
-for architecture in "${ORDER[@]}"; do
-  if [[ "${architecture}" == "pd" ]]; then
-    PD_INDEX=$((PD_INDEX + 1))
-    RUN_ROOT="${GROUP_ROOT}/pd/run${PD_INDEX}"
+for lane in "${ORDER[@]}"; do
+  if [[ "${lane}" == "pd_oneway" ]]; then
+    PD_ONEWAY_INDEX=$((PD_ONEWAY_INDEX + 1))
+    RUN_ROOT="${GROUP_ROOT}/pd-oneway/run${PD_ONEWAY_INDEX}"
     PD_LOAD_REPETITIONS=1 \
     PD_LOAD_ROUNDS=5 \
     PD_LOAD_CONVERSATIONS="${CONVERSATIONS}" \
     PD_LOAD_REQUEST_RATE=2 \
     PD_LOAD_REQUIRE_CLEAN_TRACKED_WORKTREE="${REQUIRE_CLEAN}" \
-    PD_LOAD_RUN_ID="${GROUP_RUN_ID}_pd${PD_INDEX}" \
+    PD_LOAD_RUN_ID="${GROUP_RUN_ID}_pd_oneway${PD_ONEWAY_INDEX}" \
     PD_LOAD_RUN_ROOT="${RUN_ROOT}" \
-    bash "${PD_RUNNER}"
-    PD_RESULT_ARGS+=(--result "${RUN_ROOT}/rep1/result.json")
-  else
+    bash "${PD_RUNNER}" oneway
+    PD_ONEWAY_RESULT_ARGS+=(--result "${RUN_ROOT}/rep1/result.json")
+  elif [[ "${lane}" == "pd_twoway" ]]; then
+    PD_TWOWAY_INDEX=$((PD_TWOWAY_INDEX + 1))
+    RUN_ROOT="${GROUP_ROOT}/pd-twoway/run${PD_TWOWAY_INDEX}"
+    PD_LOAD_REPETITIONS=1 \
+    PD_LOAD_ROUNDS=5 \
+    PD_LOAD_CONVERSATIONS="${CONVERSATIONS}" \
+    PD_LOAD_REQUEST_RATE=2 \
+    PD_LOAD_REQUIRE_CLEAN_TRACKED_WORKTREE="${REQUIRE_CLEAN}" \
+    PD_LOAD_RUN_ID="${GROUP_RUN_ID}_pd_twoway${PD_TWOWAY_INDEX}" \
+    PD_LOAD_RUN_ROOT="${RUN_ROOT}" \
+    bash "${PD_RUNNER}" twoway
+    PD_TWOWAY_RESULT_ARGS+=(--result "${RUN_ROOT}/rep1/result.json")
+  elif [[ "${lane}" == "pap" ]]; then
     PAP_INDEX=$((PAP_INDEX + 1))
     RUN_ROOT="${GROUP_ROOT}/pap/run${PAP_INDEX}"
     PAP_LOAD_REPETITIONS=1 \
@@ -85,21 +106,30 @@ for architecture in "${ORDER[@]}"; do
     PAP_LOAD_RUN_ROOT="${RUN_ROOT}" \
     bash "${PAP_RUNNER}" quick "${LOAD_SHAPE}"
     PAP_RESULT_ARGS+=(--result "${RUN_ROOT}/rep1/result.json")
+  else
+    echo "unknown test-bed lane: ${lane}" >&2
+    exit 1
   fi
 done
 
-[[ "${PD_INDEX}" == "${REPETITIONS}" \
+[[ "${PD_ONEWAY_INDEX}" == "${REPETITIONS}" \
+  && "${PD_TWOWAY_INDEX}" == "${REPETITIONS}" \
   && "${PAP_INDEX}" == "${REPETITIONS}" ]] || {
   echo "internal repetition accounting mismatch" >&2
   exit 1
 }
 
 "${PYTHON_BIN}" "${COMPARER}" aggregate \
-  "${PD_RESULT_ARGS[@]}" --output "${GROUP_ROOT}/pd_aggregate.json"
+  "${PD_ONEWAY_RESULT_ARGS[@]}" \
+  --output "${GROUP_ROOT}/pd_oneway_aggregate.json"
+"${PYTHON_BIN}" "${COMPARER}" aggregate \
+  "${PD_TWOWAY_RESULT_ARGS[@]}" \
+  --output "${GROUP_ROOT}/pd_twoway_aggregate.json"
 "${PYTHON_BIN}" "${COMPARER}" aggregate \
   "${PAP_RESULT_ARGS[@]}" --output "${GROUP_ROOT}/pap_aggregate.json"
-"${PYTHON_BIN}" "${COMPARER}" compare \
-  --pd "${GROUP_ROOT}/pd_aggregate.json" \
+"${PYTHON_BIN}" "${COMPARER}" compare-three \
+  --pd-oneway "${GROUP_ROOT}/pd_oneway_aggregate.json" \
+  --pd-twoway "${GROUP_ROOT}/pd_twoway_aggregate.json" \
   --pap "${GROUP_ROOT}/pap_aggregate.json" \
   --output-json "${GROUP_ROOT}/comparison.json" \
   --output-markdown "${GROUP_ROOT}/report.md"
@@ -110,7 +140,9 @@ done
   printf 'ROUNDS=5\nACTIVE_CONVERSATIONS=%q\nREQUEST_RATE=2\n' \
     "${CONVERSATIONS}"
   printf 'DOCUMENT_TOKENS=16000\nAPPEND_TOKENS=120\nOUTPUT_TOKENS=256\n'
-  printf 'PD_TRANSFER_MODE=nixl-push\nPAP_TRANSFER_MODE=local-fast\n'
+  printf 'PD_ONEWAY_TRANSFER_MODE=nixl-oneway\n'
+  printf 'PD_TWOWAY_TRANSFER_MODE=nixl-twoway\n'
+  printf 'PAP_TRANSFER_MODE=local_fast\n'
   printf 'REPETITIONS_PER_ARCHITECTURE=%q\n' "${REPETITIONS}"
 } > "${GROUP_ROOT}/testbed.env"
 echo "PD_PAP_LOAD_RUN_ROOT=${GROUP_ROOT}"

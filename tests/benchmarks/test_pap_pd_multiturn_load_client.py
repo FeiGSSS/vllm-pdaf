@@ -93,7 +93,7 @@ def test_workload_uses_exact_nonoverlapping_token_slices() -> None:
     )
 
 
-def test_completion_payload_uses_exact_tokens_and_pap_identity() -> None:
+def test_completion_payload_uses_exact_tokens_and_conversation_identity() -> None:
     identity = ConversationIdentity(0, "conversation", "cache-salt")
 
     pap = build_completion_payload(
@@ -110,7 +110,7 @@ def test_completion_payload_uses_exact_tokens_and_pap_identity() -> None:
     assert pap["prompt"] == [1, 2, 3]
     assert pap["add_special_tokens"] is False
     assert pap["conversation_id"] == "conversation"
-    assert "conversation_id" not in pd
+    assert pd["conversation_id"] == "conversation"
 
 
 def test_conversation_ids_and_cache_salts_are_unique() -> None:
@@ -337,9 +337,10 @@ def test_pd_load_requires_external_cache_validation() -> None:
     assert cache_validation["transitions"][0] == {
         "conversation_index": 0,
         "from_round": 1,
-        "to_round": 2,
-        "previous_prompt_tokens": 7,
-        "expected_cached_tokens": 8,
+            "to_round": 2,
+            "previous_prompt_tokens": 7,
+            "materialized_history_tokens": 9,
+            "expected_cached_tokens": 8,
         "decode_derived_hit_tokens": 2,
         "actual_cached_tokens": None,
     }

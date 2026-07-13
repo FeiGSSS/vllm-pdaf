@@ -21,7 +21,7 @@ PROMPTS = (
 )
 
 
-def _result() -> dict[str, object]:
+def _result(mode: str = "oneway") -> dict[str, object]:
     requests = []
     transitions = []
     for conversation, prompts in enumerate(PROMPTS):
@@ -52,6 +52,7 @@ def _result() -> dict[str, object]:
                     "from_round": from_round,
                     "to_round": from_round + 1,
                     "previous_prompt_tokens": previous_prompt,
+                    "materialized_history_tokens": previous_boundary + 17,
                     "expected_cached_tokens": previous_boundary + 16,
                     "decode_derived_hit_tokens": 16,
                     "actual_cached_tokens": None,
@@ -67,7 +68,7 @@ def _result() -> dict[str, object]:
             "block_size": 16,
             "arrival": {"mode": "staggered", "interval_ms": 25},
         },
-        "implementation": {"offload_exec_transport": "nixl-push"},
+        "implementation": {"offload_exec_transport": f"nixl-{mode}"},
         "requests": requests,
         "cache_validation": {
             "status": "requires_pd_metrics",
@@ -124,10 +125,10 @@ def _prefill_metrics(**overrides: object) -> str:
         "compute": 572,
         "local": 1248,
         "external": 0,
-        "transfers": 10,
-        "transfer_seconds": 2.0,
-        "transferred_bytes": 20 * MIB,
-        "descriptors": 10,
+        "transfers": 0,
+        "transfer_seconds": 0.0,
+        "transferred_bytes": 0,
+        "descriptors": 0,
     }
     values.update(overrides)
     return _metrics(**values)  # type: ignore[arg-type]
@@ -138,19 +139,41 @@ def _decode_metrics(**overrides: object) -> str:
         "compute": 0,
         "local": 1376,
         "external": 444,
-        "transfers": 0,
-        "transfer_seconds": 0.0,
-        "transferred_bytes": 0,
-        "descriptors": 0,
+        "transfers": 10,
+        "transfer_seconds": 2.0,
+        "transferred_bytes": 20 * MIB,
+        "descriptors": 10,
     }
     values.update(overrides)
     return _metrics(**values)  # type: ignore[arg-type]
 
 
-def _effective_config(*, emulation: str = "n", cross_layers: str = "True") -> str:
+def _effective_config(
+    *,
+    mode: str = "oneway",
+    emulation: str = "n",
+    cross_layers: str = "True",
+    bidirectional: str | None = None,
+) -> str:
+    if bidirectional is None:
+        bidirectional = "true" if mode == "twoway" else "false"
     return (
+        f"PD_TRANSFER_MODE={mode}\n"
+        f"BIDIRECTIONAL_KV_XFER={bidirectional}\n"
+        f"KV_RECOMPUTE_THRESHOLD={'0' if mode == 'twoway' else ''}\n"
+        f"DECODER_KV_BLOCKS_TTL={'480' if mode == 'twoway' else ''}\n"
         f"UCX_PROTO_EMULATION_ENABLE={emulation}\n"
         f"ENABLE_CROSS_LAYERS_BLOCKS={cross_layers}\n"
+    )
+
+
+def _proxy_log(mode: str, conversations: int = 2) -> str:
+    misses = 10 if mode == "oneway" else conversations
+    hits = 0 if mode == "oneway" else conversations * 4
+    return "\n".join(
+        ["conv=x: cache MISS"] * misses
+        + ["conv=x: cache HIT"] * hits
+        + ["sending D's cached blocks to P"] * hits
     )
 
 
@@ -160,17 +183,22 @@ def _validate(
     prefill_metrics: str | None = None,
     decode_metrics: str | None = None,
     effective_config: str | None = None,
+    proxy_log: str | None = None,
     service_logs: tuple[str, ...] = (),
 ) -> dict[str, object]:
+    payload = result or _result()
+    implementation = payload["implementation"]
+    mode = str(implementation["offload_exec_transport"]).removeprefix("nixl-")
     return validate_pd_multiturn_load_reuse(
-        result or _result(),
+        payload,
         prefill_metrics=prefill_metrics or _prefill_metrics(),
         decode_metrics=decode_metrics or _decode_metrics(),
         effective_config=(
-            _effective_config()
+            _effective_config(mode=mode)
             if effective_config is None
             else effective_config
         ),
+        proxy_log=_proxy_log(mode) if proxy_log is None else proxy_log,
         service_logs=service_logs,
     )
 
@@ -185,6 +213,7 @@ def test_validate_pd_load_reuse_checks_five_turn_conservation_and_nixl() -> None
     assert evidence["expected_prefill_local_cache_hit_tokens"] == 1248
     assert evidence["expected_decode_local_cache_hit_tokens"] == 1376
     assert evidence["decode_derived_hit_tokens"] == 128
+    assert evidence["materialized_remote_hit_tokens"] == 136
     assert evidence["prefill_prompt_tokens_by_source"] == {
         "local_compute": 572,
         "local_cache_hit": 1248,
@@ -200,9 +229,58 @@ def test_validate_pd_load_reuse_checks_five_turn_conservation_and_nixl() -> None
     assert nixl["total"]["descriptors"] == 10
     assert nixl["total"]["transferred_mib"] == 20.0
     assert nixl["total"]["aggregate_throughput_mib_s"] == 10.0
-    assert nixl["descriptor_upper_bound"] == 20
+    assert nixl["descriptor_upper_bound"] == 640
     assert evidence["ucx"]["software_emulation_disabled"] is True
     assert evidence["service_logs_checked"] == 2
+    assert evidence["pd_transfer_mode"] == "oneway"
+    assert evidence["proxy_cache"] == {"misses": 10, "hits": 0, "sends": 0}
+    assert evidence["nixl_transfers"]["d_to_p"]["transfer_count"] == 0
+    assert evidence["nixl_transfers"]["p_to_d"]["transfer_count"] == 10
+
+
+def test_validate_twoway_requires_cross_turn_d_to_p_reuse() -> None:
+    result = _result("twoway")
+    evidence = _validate(
+        result,
+        prefill_metrics=_prefill_metrics(
+            compute=436,
+            external=136,
+            transfers=8,
+            transfer_seconds=0.4,
+            transferred_bytes=8 * MIB,
+            descriptors=8,
+        ),
+        effective_config=_effective_config(mode="twoway"),
+    )
+
+    assert evidence["pd_transfer_mode"] == "twoway"
+    assert evidence["proxy_cache"] == {"misses": 2, "hits": 8, "sends": 8}
+    assert evidence["nixl_transfers"]["d_to_p"]["transfer_count"] == 8
+    assert evidence["nixl_transfers"]["p_to_d"]["transfer_count"] == 10
+
+
+def test_validate_rejects_twoway_without_proxy_hits() -> None:
+    result = _result("twoway")
+
+    with pytest.raises(ValueError, match="proxy cache HIT"):
+        _validate(
+            result,
+            prefill_metrics=_prefill_metrics(
+                compute=436,
+                external=136,
+                transfers=8,
+                transfer_seconds=0.4,
+                transferred_bytes=8 * MIB,
+                descriptors=8,
+            ),
+            effective_config=_effective_config(mode="twoway"),
+            proxy_log="\n".join(["conv=x: cache MISS"] * 2),
+        )
+
+
+def test_validate_rejects_mode_and_bidirectional_config_mismatch() -> None:
+    with pytest.raises(ValueError, match="bidirectional"):
+        _validate(effective_config=_effective_config(bidirectional="true"))
 
 
 def test_parse_nixl_metrics_rejects_histogram_count_disagreement() -> None:
@@ -249,23 +327,23 @@ def test_validate_rejects_decode_local_compute() -> None:
         _validate(decode_metrics=metrics)
 
 
-def test_validate_rejects_push_transfer_count_mismatch() -> None:
-    metrics = _prefill_metrics(
+def test_validate_rejects_p_to_d_transfer_count_mismatch() -> None:
+    metrics = _decode_metrics(
         transfers=9,
         transfer_seconds=1.8,
         transferred_bytes=18 * MIB,
         descriptors=9,
     )
 
-    with pytest.raises(ValueError, match="push-mode NIXL transfer count"):
-        _validate(prefill_metrics=metrics)
+    with pytest.raises(ValueError, match="P.to.D NIXL transfer count"):
+        _validate(decode_metrics=metrics)
 
 
 def test_validate_rejects_cross_layer_descriptor_mismatch() -> None:
-    metrics = _prefill_metrics(descriptors=21)
+    metrics = _decode_metrics(descriptors=641)
 
     with pytest.raises(ValueError, match="bounded range"):
-        _validate(prefill_metrics=metrics)
+        _validate(decode_metrics=metrics)
 
 
 def test_validate_requires_decode_derived_hit_in_every_transition() -> None:
@@ -327,10 +405,12 @@ def test_main_writes_audit_evidence_back_into_result(
     prefill_path = tmp_path / "prefill.prom"
     decode_path = tmp_path / "decode.prom"
     config_path = tmp_path / "effective_config.env"
+    proxy_path = tmp_path / "proxy.log"
     result_path.write_text(json.dumps(_result()), encoding="utf-8")
     prefill_path.write_text(_prefill_metrics(), encoding="utf-8")
     decode_path.write_text(_decode_metrics(), encoding="utf-8")
     config_path.write_text(_effective_config(), encoding="utf-8")
+    proxy_path.write_text(_proxy_log("oneway"), encoding="utf-8")
     monkeypatch.setattr(
         sys,
         "argv",
@@ -344,6 +424,8 @@ def test_main_writes_audit_evidence_back_into_result(
             str(decode_path),
             "--effective-config",
             str(config_path),
+            "--proxy-log",
+            str(proxy_path),
         ],
     )
 

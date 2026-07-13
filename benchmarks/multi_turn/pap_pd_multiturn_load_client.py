@@ -211,8 +211,7 @@ def build_completion_payload(
         "stream_options": {"include_usage": True},
         "return_token_ids": True,
     }
-    if config.architecture == "pap":
-        payload["conversation_id"] = identity.conversation_id
+    payload["conversation_id"] = identity.conversation_id
     return payload
 
 
@@ -831,6 +830,9 @@ async def execute_load(
                 "from_round": round_index - 1,
                 "to_round": round_index,
                 "previous_prompt_tokens": previous["prompt_tokens"],
+                "materialized_history_tokens": cache.get(
+                    "materialized_history_tokens"
+                ),
                 "expected_cached_tokens": cache["expected_cached_tokens"],
                 "decode_derived_hit_tokens": cache[
                     "decode_derived_hit_tokens"

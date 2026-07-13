@@ -2,26 +2,27 @@
 
 日期：2026-07-13
 
-状态：根因已定位并校正；官方 push 路径、C1/C2 canary 和 C4 三次交错正式矩阵均已
-完成。完整性能解释见
-[PD Push 校正与 PAP 五轮长上下文性能报告](pd-pap-five-turn-load-results-20260713.md)。
+状态：根因已定位并二次校正。旧结论用 Push 绕开 GET；新证据证明 UCX 1.22 已修复
+官方 `NixlConnector` 的同机 GET 路径，因此默认基线已升级为同一 connector 下的单向、
+双向 PD。新三路结果见
+[PD 单向/双向与 PAP 五轮结果](pd-oneway-twoway-pap-five-turn-results-20260713.md)。
 
 ## 1. 结论
 
-原 1P1D 基线中约 `0.42 GiB/s` 的 KV 传输不是 GPU1/GPU2 的物理 PCIe 上限，
-而是当前 NIXL/UCX 组合在执行 GPU-to-GPU `GET/READ` 时选择了 TCP software
-emulation。GPU1/GPU2 虽然没有 NVLink，但 CUDA P2P microbenchmark 可达到约
-`24.51 GiB/s`。
+原 1P1D 基线约 `0.42 GiB/s` 不是 PCIe 上限，而是 UCX 1.21 在无 NVLink 的 L20
+拓扑上把 CUDA IPC 的直接 GET 判为不可用，随后用 TCP/Active Message 在 CPU 侧模拟
+GET。`nvidia_peermem` 与该问题无关：它服务 GPUDirect RDMA/verbs，本机路径使用
+CUDA IPC，不经过 RDMA 网卡。
 
-校正方案不是修改 vLLM 的 PD 实现，而是采用上游已经合入的官方
-`NixlPushConnector`：由 Prefill 端对 Decode 注册的显存执行 `PUT/WRITE`。
-在同一 16K 请求上，它把 `2254.5 MiB` 的传输从约 `5.34 s` 降到
-`91.984 ms`，NIXL 日志吞吐从约 `422 MiB/s` 提升到 `24509.697 MiB/s`，
-descriptor 数从 `72144` 降到 `1`。
+第一阶段用官方 `NixlPushConnector` 把方向改成 PUT，证明硬件和 CUDA IPC 正常；第二
+阶段升级到 UCX 1.22。UCX 1.22 的 RMA rendezvous 允许“请求方发起 GET，数据拥有方用
+CUDA IPC zero-copy WRITE 回填”，所以官方 `NixlConnector` 不再需要换成 Push connector。
+双向 A/B 中，UCX 1.21 默认约 `500 MiB/s`，UCX 1.22 分别达到 D→P
+`5957.944 MiB/s`、P→D `22205.968 MiB/s`，输出 digest 完全一致。
 
-因此：历史 pull 结果仍可用于复盘，但不再作为同机 PD/PAP 的公平性能基线；
-后续同机基线固定使用官方 push connector，并设置
-`UCX_PROTO_EMULATION_ENABLE=n` 使错误路径 fail closed。
+当前默认固定为仓库内 UCX `1.22.0` + NIXL `1.3.0`，两条 PD lane 都使用官方
+`NixlConnector`；`UCX_PROTO_EMULATION_ENABLE=n` 继续 fail closed。旧 Push 结果保留
+为诊断里程碑，但不再是最终统一基线。
 
 ## 2. 诊断证据链
 
@@ -77,6 +78,36 @@ TTFT；V1 cross-layer model runner 的 TPOT 比旧 V2 runner 高约 6%–7%，�
 - [vLLM PR #35264：NIXL-based Push KV Connector](https://github.com/vllm-project/vllm/pull/35264)
 - [NVIDIA Dynamo NIXL](https://github.com/ai-dynamo/nixl)
 
+### 2.4 UCX 1.22 GET 修复与严格 A/B
+
+后续 A/B 保持模型、NIXL、请求和双向 connector 配置不变，只替换 UCX。每组均设置
+`UCX_TLS=cuda_ipc,cuda_copy,tcp`；严格组额外设置
+`UCX_PROTO_EMULATION_ENABLE=n`，若 GPU 数据面不能原生执行就直接失败。
+
+| 运行时 | 方向 | KV | 时间 | 吞吐 | 结论 |
+| --- | --- | ---: | ---: | ---: | --- |
+| UCX 1.21 默认 | D→P | 38.25 MiB | 76.490 ms | 500.065 MiB/s | TCP software emulation |
+| UCX 1.21 默认 | P→D | 2277 MiB | 4488.042 ms | 507.348 MiB/s | TCP software emulation |
+| UCX 1.22 strict | D→P | 38.25 MiB | 6.420 ms | 5957.944 MiB/s | CUDA IPC rendezvous |
+| UCX 1.22 strict | P→D | 2277 MiB | 102.540 ms | 22205.968 MiB/s | CUDA IPC rendezvous |
+
+UCX 1.21/1.22 的 R1/R2 output digest 完全一致。UCX 1.21 强制
+`UCX_CUDA_IPC_ENABLE_GET_ZCOPY=y` 也曾达到 `23601 MiB/s`，但它覆盖了无 NVLink
+拓扑下的自动策略，因此只保留为诊断对照，不作为默认。UCX 1.22 协议日志明确包含
+`rendezvous data send from cuda/GPU0 to cuda/dev[0]` 和
+`zero-copy flushed write to remote | cuda_ipc/cuda`。
+
+仓库内默认运行时位于 `.local/`（不进入 Git），版本和构建方式由以下脚本固定：
+
+```bash
+bash .claude/skills/vllm-pap-benchmark/scripts/setup_ucx122_nixl.sh install
+bash .claude/skills/vllm-pap-benchmark/scripts/setup_ucx122_nixl.sh verify
+```
+
+UCX 必须显式使用 `--enable-mt`。漏掉该项时 NIXL 会报
+`UCX library does not support multi-threading` 并拒绝创建 engine；验证脚本会同时检查
+版本、multi-thread 配置、plugin 动态链接目标和真实 NIXL agent 实例化。
+
 ## 3. 固定的 5 轮长上下文 testbed
 
 ### 3.1 Workload contract
@@ -99,13 +130,18 @@ C4 最后一轮预计驻留约 `71552` 个 KV tokens，Qwen3-8B FP16 按约
 OOM、调度和证据链 canary；任何 OOM、EngineDead、请求失败或实际并发不足都会使结果
 失效，不能用降低统计口径掩盖。
 
-### 3.2 两侧固定实现
+### 3.2 三条固定实现
 
-- PD：官方 `NixlPushConnector`、V1 model runner、cross-layer blocks、
+- PD-oneway：官方 `NixlConnector`、`bidirectional_kv_xfer=false`；五轮均由 P 重新补齐
+  Decode history，proxy 必须全 MISS；
+- PD-twoway：同一 `NixlConnector`、`bidirectional_kv_xfer=true`、
+  `kv_recompute_threshold=0`、`decoder_kv_blocks_ttl=480`；首轮 MISS，后四轮由 D→P
+  拉取 materialized history；
+- 两条 PD：同一 repo-local UCX 1.22/NIXL 1.3、V1 model runner、cross-layer blocks、
   `UCX_PROTO_EMULATION_ENABLE=n`；
 - PAP：1PA1P、same-node `local_fast + cuda_ipc`、MPS 70/30、固定 slot-plan 与
   metadata fast key；不做 MPS 扫描；
-- 两侧：相同 prompt 构造、到达时刻、长度、GPU 型号、模型配置和完成 token 数；
+- 三侧：相同 prompt 构造、到达时刻、长度、GPU 型号、模型配置和完成 token 数；
 - 主要指标：各轮与稳态 R2–R5 的 TTFT/TPOT median、p90、max；同时保留 latency、
   EOF delay 和实际 HTTP/decode concurrency。
 
@@ -146,18 +182,29 @@ bash .claude/skills/vllm-pap-benchmark/scripts/run_pd_pap_multiturn_load.sh quic
 bash .claude/skills/vllm-pap-benchmark/scripts/run_pd_pap_multiturn_load.sh quick c4
 ```
 
-正式结果每侧三次、要求 tracked clean，并按
-`PD, PAP, PAP, PD, PD, PAP` 交错执行以减小时间漂移：
+正式结果每侧三次、要求 tracked clean，并按三阶拉丁方交错执行以减小时间漂移：
+
+```text
+PD-oneway, PD-twoway, PAP
+PD-twoway, PAP, PD-oneway
+PAP, PD-oneway, PD-twoway
+```
 
 ```bash
 bash .claude/skills/vllm-pap-benchmark/scripts/run_pd_pap_multiturn_load.sh formal c4
 ```
 
-每个 group root 内固定生成 `pd_aggregate.json`、`pap_aggregate.json`、
+每个 group root 内固定生成 `pd_oneway_aggregate.json`、
+`pd_twoway_aggregate.json`、`pap_aggregate.json`、
 `comparison.json`、`report.md` 和 `testbed.env`；raw service logs、metrics、Git patch
 及每个 request 的结果保留在各 repetition 子目录。
 
-## 5. 已完成矩阵与当前结论
+## 5. 历史 Push 矩阵
+
+本节保留第一阶段 `NixlPushConnector` 校正结果，证明硬件路径并建立过渡基线。它没有
+被删除，但已由 UCX 1.22 下同一 `NixlConnector` 的单向/双向三路 test bed 替代；当前
+结果和结论以
+[新三路报告](pd-oneway-twoway-pap-five-turn-results-20260713.md)为准。
 
 ### 5.1 Quick 容量阶梯
 

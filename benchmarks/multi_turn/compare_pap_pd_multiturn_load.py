@@ -555,6 +555,11 @@ def aggregate_repetitions(
         "profile fingerprint",
     )
     architecture = _same_value(results, "architecture", "architecture")
+    implementation = _same_value(
+        results,
+        "implementation",
+        "implementation",
+    )
     hardware = _same_value(results, "hardware_signature", "hardware signature")
     formal = len(results) == 3
     dirty_states = [bool(result["git_tracked_worktree_dirty"]) for result in results]
@@ -610,6 +615,8 @@ def aggregate_repetitions(
         "profile": profile,
         "profile_fingerprint": profile_fingerprint,
         "architecture": architecture,
+        "implementation": implementation,
+        "implementation_fingerprint": _canonical_fingerprint(implementation),
         "hardware_signature": hardware,
         "mode": "formal" if formal else "quick",
         "repetition_count": len(results),
@@ -1022,6 +1029,287 @@ def compare_aggregates(
     }
 
 
+def _aggregate_transport(
+    aggregate: Mapping[str, object],
+    lane_name: str,
+) -> str:
+    implementation = _mapping(
+        aggregate.get("implementation"),
+        f"{lane_name} implementation",
+    )
+    transport = implementation.get("offload_exec_transport")
+    if not isinstance(transport, str) or not transport:
+        raise ValueError(f"{lane_name} aggregate transport is invalid")
+    return transport
+
+
+def compare_three_aggregates(
+    pd_oneway: Mapping[str, object],
+    pd_twoway: Mapping[str, object],
+    pap: Mapping[str, object],
+) -> dict[str, object]:
+    """Compare PD-oneway, PD-twoway, and PAP at an identical load shape."""
+    lanes = {
+        "pd_oneway": pd_oneway,
+        "pd_twoway": pd_twoway,
+        "pap": pap,
+    }
+    for lane_name, aggregate in lanes.items():
+        try:
+            _validate_aggregate(aggregate)
+        except ValueError as exc:
+            raise ValueError(f"invalid {lane_name} aggregate: {exc}") from exc
+
+    expected_identity = {
+        "pd_oneway": ("pd", "nixl-oneway"),
+        "pd_twoway": ("pd", "nixl-twoway"),
+        "pap": ("pap", "local_fast"),
+    }
+    for lane_name, aggregate in lanes.items():
+        expected_architecture, expected_transport = expected_identity[lane_name]
+        if aggregate.get("architecture") != expected_architecture:
+            raise ValueError(
+                f"{lane_name} architecture must be {expected_architecture}"
+            )
+        transport = _aggregate_transport(aggregate, lane_name)
+        if transport != expected_transport:
+            display_name = lane_name.replace("pd_", "PD-").replace("pap", "PAP")
+            raise ValueError(
+                f"{display_name} aggregate transport must be "
+                f"{expected_transport}, got {transport}"
+            )
+
+    reference = pd_oneway
+    reference_profile = reference.get("profile_fingerprint")
+    reference_hardware = reference.get("hardware_signature")
+    reference_mode = (
+        reference.get("mode"),
+        reference.get("repetition_count"),
+    )
+    reference_shape = _parse_shape(reference)
+    for lane_name, aggregate in lanes.items():
+        if aggregate.get("profile_fingerprint") != reference_profile:
+            raise ValueError(f"{lane_name} profile fingerprint mismatch")
+        if aggregate.get("hardware_signature") != reference_hardware:
+            raise ValueError(f"{lane_name} hardware signature mismatch")
+        mode = (aggregate.get("mode"), aggregate.get("repetition_count"))
+        if mode != reference_mode:
+            raise ValueError(
+                f"{lane_name} repetition mode mismatch: {mode} != "
+                f"{reference_mode}"
+            )
+        shape = _parse_shape(aggregate)
+        if shape != reference_shape:
+            raise ValueError(
+                f"{lane_name} prompt token shape mismatch: "
+                + _shape_mismatch(reference_shape, shape)
+            )
+
+    prompt_maps = {
+        lane_name: _digest_map(aggregate, "prompt_token_digest")
+        for lane_name, aggregate in lanes.items()
+    }
+    for key in sorted(prompt_maps["pd_oneway"]):
+        values = {mapping[key] for mapping in prompt_maps.values()}
+        if len(values) != 1:
+            raise ValueError(
+                "prompt token digest mismatch at conversation "
+                f"{key[0]} round {key[1]}"
+            )
+
+    warnings = [
+        f"{lane_name}: {warning}"
+        for lane_name, aggregate in lanes.items()
+        for warning in aggregate.get("warnings", [])
+    ]
+    digest_checks: dict[str, object] = {}
+    for digest_name in ("output_token_digest", "assistant_text_digest"):
+        maps = {
+            lane_name: _digest_map(aggregate, digest_name)
+            for lane_name, aggregate in lanes.items()
+        }
+        mismatches = []
+        for key in sorted(maps["pd_oneway"]):
+            values = {
+                lane_name: list(mapping[key])
+                for lane_name, mapping in maps.items()
+            }
+            if len({tuple(value) for value in values.values()}) == 1:
+                continue
+            mismatches.append(
+                {
+                    "conversation_index": key[0],
+                    "round": key[1],
+                    "digests": values,
+                }
+            )
+            warnings.append(
+                f"conversation {key[0]} round {key[1]} {digest_name} "
+                "differs across the three lanes"
+            )
+        digest_checks[digest_name] = {
+            "status": "warning" if mismatches else "matched",
+            "mismatches": mismatches,
+        }
+
+    lane_metrics = {
+        lane_name: _mapping(aggregate.get("metrics"), f"{lane_name} metrics")
+        for lane_name, aggregate in lanes.items()
+    }
+    ratio_lanes = {
+        "pd_twoway_over_pd_oneway": ("pd_twoway", "pd_oneway"),
+        "pap_over_pd_oneway": ("pap", "pd_oneway"),
+        "pap_over_pd_twoway": ("pap", "pd_twoway"),
+    }
+    ratios: dict[str, dict[str, object]] = {
+        ratio_name: {} for ratio_name in ratio_lanes
+    }
+    metrics: dict[str, object] = {}
+    for scope in ALL_SCOPES:
+        metrics[scope] = {}
+        for metric in PRIMARY_METRICS:
+            summaries = {
+                lane_name: deepcopy(
+                    dict(
+                        _mapping(
+                            _mapping(values.get(scope), f"{lane_name} {scope}").get(
+                                metric
+                            ),
+                            f"{lane_name} {scope} {metric}",
+                        )
+                    )
+                )
+                for lane_name, values in lane_metrics.items()
+            }
+            metric_ratios = {}
+            for ratio_name, (numerator, denominator) in ratio_lanes.items():
+                values = {
+                    statistic: float(summaries[numerator][statistic])
+                    / float(summaries[denominator][statistic])
+                    for statistic in ("median", "p90", "max")
+                }
+                metric_ratios[ratio_name] = values
+                ratios[ratio_name].setdefault(scope, {})[metric] = values
+            metrics[scope][metric] = {
+                **summaries,
+                "ratios": metric_ratios,
+            }
+
+    return {
+        "schema_version": 1,
+        "kind": "multiturn_load_three_lane_comparison",
+        "status": "valid",
+        "profile_id": _mapping(reference.get("profile"), "profile").get(
+            "profile_id"
+        ),
+        "profile_fingerprint": reference_profile,
+        "hardware_signature": reference_hardware,
+        "mode": reference_mode[0],
+        "repetition_count": reference_mode[1],
+        "shape_parity": {
+            "status": "passed",
+            "fingerprint": _mapping(
+                reference.get("request_shape"),
+                "request shape",
+            ).get("fingerprint"),
+            "conversation_count": len(
+                {entry["conversation_index"] for entry in reference_shape}
+            ),
+            "requests_per_repetition": len(reference_shape),
+            "completion_tokens": EXPECTED_COMPLETION_TOKENS,
+        },
+        "lane_transports": {
+            lane_name: _aggregate_transport(aggregate, lane_name)
+            for lane_name, aggregate in lanes.items()
+        },
+        "metrics": metrics,
+        "ratios": ratios,
+        "digest_checks": digest_checks,
+        "warnings": list(dict.fromkeys(warnings)),
+    }
+
+
+def render_three_lane_markdown(comparison: Mapping[str, object]) -> str:
+    """Render the three-lane multi-turn load matrix as Markdown."""
+    if comparison.get("kind") != "multiturn_load_three_lane_comparison":
+        raise ValueError("payload is not a three-lane load comparison")
+    metrics = _mapping(comparison.get("metrics"), "comparison metrics")
+    shape = _mapping(comparison.get("shape_parity"), "shape parity")
+    lines = [
+        "# PD-oneway / PD-twoway / PAP Multi-turn Load Comparison",
+        "",
+        f"- Profile: `{comparison.get('profile_id')}`",
+        f"- Hardware: `{comparison.get('hardware_signature')}`",
+        f"- Mode/repetitions: `{comparison.get('mode')}` / "
+        f"`{comparison.get('repetition_count')}`",
+        "- Shape parity: `passed` "
+        f"({shape.get('conversation_count')} conversations, "
+        f"{shape.get('requests_per_repetition')} requests/repetition)",
+        "",
+        "| Scope | Metric | Statistic | PD-oneway (ms) | "
+        "PD-twoway (ms) | PAP (ms) | PD-twoway/PD-oneway | "
+        "PAP/PD-oneway | PAP/PD-twoway |",
+        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    scope_labels = {
+        **{f"round_{index}": f"R{index}" for index in EXPECTED_ROUNDS},
+        STEADY_SCOPE: "R2-R5 steady",
+    }
+    metric_labels = {
+        "ttft_ms": "TTFT",
+        "tpot_ms": "TPOT",
+        "latency_ms": "Latency",
+    }
+    for scope in ALL_SCOPES:
+        scope_metrics = _mapping(metrics.get(scope), scope)
+        for metric in PRIMARY_METRICS:
+            values = _mapping(scope_metrics.get(metric), f"{scope} {metric}")
+            one = _mapping(values.get("pd_oneway"), "PD-oneway summary")
+            two = _mapping(values.get("pd_twoway"), "PD-twoway summary")
+            pap = _mapping(values.get("pap"), "PAP summary")
+            ratio_values = _mapping(values.get("ratios"), "ratios")
+            for statistic in ("median", "p90", "max"):
+                lines.append(
+                    "| {scope} | {metric} | {statistic} | {one:.3f} | "
+                    "{two:.3f} | {pap:.3f} | {two_one:.3f}x | "
+                    "{pap_one:.3f}x | {pap_two:.3f}x |".format(
+                        scope=scope_labels[scope],
+                        metric=metric_labels[metric],
+                        statistic=statistic,
+                        one=float(one[statistic]),
+                        two=float(two[statistic]),
+                        pap=float(pap[statistic]),
+                        two_one=float(
+                            _mapping(
+                                ratio_values.get(
+                                    "pd_twoway_over_pd_oneway"
+                                ),
+                                "PD-twoway/PD-oneway",
+                            )[statistic]
+                        ),
+                        pap_one=float(
+                            _mapping(
+                                ratio_values.get("pap_over_pd_oneway"),
+                                "PAP/PD-oneway",
+                            )[statistic]
+                        ),
+                        pap_two=float(
+                            _mapping(
+                                ratio_values.get("pap_over_pd_twoway"),
+                                "PAP/PD-twoway",
+                            )[statistic]
+                        ),
+                    )
+                )
+    warnings = comparison.get("warnings")
+    if warnings:
+        lines.extend(["", "## Warnings", ""])
+        lines.extend(f"- {warning}" for warning in warnings)
+    else:
+        lines.extend(["", "No digest or provenance warnings."])
+    return "\n".join(lines) + "\n"
+
+
 def render_markdown(comparison: Mapping[str, object]) -> str:
     """Render a request-level PD/PAP load comparison as Markdown."""
     if comparison.get("kind") != "multiturn_load_comparison":
@@ -1128,6 +1416,17 @@ def _build_parser() -> argparse.ArgumentParser:
     compare_parser.add_argument("--pap", type=Path, required=True)
     compare_parser.add_argument("--output-json", type=Path, required=True)
     compare_parser.add_argument("--output-markdown", type=Path, required=True)
+
+    compare_three_parser = subparsers.add_parser("compare-three")
+    compare_three_parser.add_argument("--pd-oneway", type=Path, required=True)
+    compare_three_parser.add_argument("--pd-twoway", type=Path, required=True)
+    compare_three_parser.add_argument("--pap", type=Path, required=True)
+    compare_three_parser.add_argument("--output-json", type=Path, required=True)
+    compare_three_parser.add_argument(
+        "--output-markdown",
+        type=Path,
+        required=True,
+    )
     return parser
 
 
@@ -1151,12 +1450,21 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(json.dumps(aggregate, indent=2))
         return
 
-    comparison = compare_aggregates(
-        _load_json(args.pd),
-        _load_json(args.pap),
-    )
+    if args.command == "compare-three":
+        comparison = compare_three_aggregates(
+            _load_json(args.pd_oneway),
+            _load_json(args.pd_twoway),
+            _load_json(args.pap),
+        )
+        markdown = render_three_lane_markdown(comparison)
+    else:
+        comparison = compare_aggregates(
+            _load_json(args.pd),
+            _load_json(args.pap),
+        )
+        markdown = render_markdown(comparison)
     _write_json(args.output_json, comparison)
-    _write_text(args.output_markdown, render_markdown(comparison))
+    _write_text(args.output_markdown, markdown)
     print(json.dumps(comparison, indent=2))
 
 

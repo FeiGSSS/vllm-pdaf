@@ -160,6 +160,8 @@ class ChatCompletionStreamResponse(OpenAIBaseModel):
     # Rendered prompt text from chat templating (only set when
     # ``return_prompt_text=True`` on the request); only sent on the first chunk.
     prompt_text: str | None = None
+    # Set only on a terminal chunk for disaggregated serving metadata.
+    kv_transfer_params: dict[str, Any] | None = None
 
 
 class ChatCompletionToolsParam(OpenAIBaseModel):
