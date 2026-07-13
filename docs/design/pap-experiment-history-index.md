@@ -856,6 +856,7 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
 | `PAP-20260713-UCX122-GET-AB` | M6 | UCX 1.21 默认 -> UCX 1.22 strict；同一 16K 两轮双向 `NixlConnector` | `03d8da336`；diagnostic | UCX 1.21 D->P/P->D `500.1/507.3 MiB/s`；UCX 1.22 `5957.9/22206.0 MiB/s`，digest 一致，协议为 `cuda_ipc/cuda`；**接受 UCX 1.22，废止“GET 必须改 Push”的最终结论** | [根因报告](pd-same-node-nixl-transfer-root-cause-20260713.md)；`/tmp/ucx122_get_ab/{bidirectional_ucx121_default,bidirectional_fixed_strict}/rep1`（temporary） |
 | `PAP-20260713-PD-THREE-LANE-C2` | M6/M10 | PD-oneway vs PD-twoway vs PAP；16K/5-turn/C2/o256/q2 | `03d8da336` 前 dirty quick/controlled | steady TTFT `223.907/197.052/210.789 ms`，TPOT `33.102/33.106/38.538 ms`；two-way `2 MISS + 8 HIT`，三路 digest 一致；**接受功能和方向，不冻结 formal 数字** | [三路结果](pd-oneway-twoway-pap-five-turn-results-20260713.md)；`$PAP_REPO_RESULTS/20260713_112725_a634b5bf8_pd_three_lane_c2_quick` |
 | `PAP-20260713-PD-THREE-LANE-C4` | M6/M10 | PD-oneway vs PD-twoway vs PAP；16K/5-turn/C4/o256/q2；三阶拉丁方 | `03d8da336`；clean formal 三次 | steady TTFT `280.867/251.716/249.030 ms`，TPOT `42.176/42.155/51.148 ms`；two-way 每次 `4 MISS + 16 HIT`，PAP/two-way `0.989x/1.213x`，九个 cell 全部 strict passed、digest 一致；**冻结为当前 1:1 多轮并发北极星** | [三路结果](pd-oneway-twoway-pap-five-turn-results-20260713.md)；`$PAP_REPO_RESULTS/20260713_131649_03d8da336_pd_three_lane_c4_formal`；quick 候选 `$PAP_REPO_RESULTS/20260713_114402_a634b5bf8_pd_three_lane_c4_quick` |
+| `PAP-20260713-MPS-80-20-DIAG` | M6/M7 | PAP Prefill/Attention 70:30 -> 80:20；同一 16K/5-turn/C4/o256/q2 | `ba17ea18c`；clean quick 一次 | R1 TTFT `11077.283 -> 9887.638 ms`（`-10.74%`），但 R1/steady TPOT `+24.26%/+24.09%`；strict/cache/routing/drain 全过；`diagnostic`；**拒绝静态 80:20 默认，TPOT 继续以 70:30 优化** | [80:20 诊断](pap-mps-80-20-diagnostic-results-20260713.md)；`$PAP_REPO_RESULTS/20260713_ba17ea18c_pap_mps_80_20_c4_quick` |
 
 ## 7. 负结果、回滚与被替代路线
 
@@ -877,6 +878,7 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
 | `NEG-RESIDENT-MULTITURN` | ConversationDirectory、stable backend session、resident snapshot、detach/attach | 需要长期绑定和新状态机；现有 APC 已能挂回 refcount-0 hashed blocks | **被替代**；每轮 pair 解散，下一轮由 cache-aware router 回同 PA | M10；`6a7094c3b`；[多轮设计](pap-xpayp-multiturn-kv-affinity-20260710.md) |
 | `NEG-PROJECTION-ZEROBLOCK` | 通用 cache registration 对 Projection 0 local blocks fail closed | exact clean rep1 返回 500：“0 个本地块却缓存 8 个块” | **修复边界而非放宽检查**；Projection 跳过本地 cache registration | M3/M10；`558db3cdd`；`$PAP_RESULTS/20260711_043339691_multiturn_clean_rep1` |
 | `NEG-QWEN3-NONTHINK` | `enable_thinking=false` 的 Chat 多轮 token 历史 | 空 reasoning scaffold 不随 assistant content 回传，clean rep1 decode-derived hit `0` | **拒绝用于连续 token 复用验收**；thinking 模式保留完整 materialized LCP | M10；`848f321ab`；`$PAP_RESULTS/20260711_d5ea82ca3_chat_multiturn_clean_rep1` |
+| `NEG-MPS-STATIC-80-20` | 静态 Prefill/Attention MPS 80:20 | R1 Prefill median `-10.79%`、TTFT `-10.74%`，但 R1/steady TPOT `+24.26%/+24.09%`，steady TTFT `+8.22%` | **拒绝默认和继续扫描**；后续 TPOT 固定回 70:30 | `PAP-20260713-MPS-80-20-DIAG`；[诊断结果](pap-mps-80-20-diagnostic-results-20260713.md) |
 
 ## 8. 关键提交时间线
 

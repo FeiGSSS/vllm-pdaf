@@ -29,7 +29,7 @@
 - Consumes: `PAP_LOAD_MPS_PROFILE` with default `baseline_70_30`.
 - Produces: exact `PAP_BENCH_MPS_PROFILE`, `PAP_PREFILL_MPS_PERCENT`, and `PAP_ATTENTION_MPS_PERCENT` values in the child runner and `effective_config.env`.
 
-- [ ] **Step 1: Write a failing contract test**
+- [x] **Step 1: Write a failing contract test**
 
 ```python
 def test_pap_only_runner_has_explicit_80_20_diagnostic_profile() -> None:
@@ -42,20 +42,20 @@ def test_pap_only_runner_has_explicit_80_20_diagnostic_profile() -> None:
     assert 'PAP_BENCH_MPS_PROFILE=%q' in runner
 ```
 
-- [ ] **Step 2: Verify the test fails because the profile is absent**
+- [x] **Step 2: Verify the test fails because the profile is absent**
 
 Run: `.venv/bin/python -m pytest tests/benchmarks/test_pap_multiturn_mps_contract.py -v`
 
 Expected: one failed assertion for the missing profile contract.
 
-- [ ] **Step 3: Implement the two exact profile mappings**
+- [x] **Step 3: Implement the two exact profile mappings**
 
 In the wrapper, map `baseline_70_30` to `70/30` and
 `diagnostic_80_20` to `80/20`, reject all other values, and pass the selected
 name and percentages to the child. In the child runner, validate those two
 exact tuples for `multiturn_load` and record the name in `effective_config.env`.
 
-- [ ] **Step 4: Verify tests and shell syntax**
+- [x] **Step 4: Verify tests and shell syntax**
 
 Run:
 
@@ -78,12 +78,12 @@ Expected: all tests pass and both syntax checks exit 0.
 - Consumes: `PAP_LOAD_MPS_PROFILE=diagnostic_80_20` and the frozen C4 workload.
 - Produces: strict-audited PAP result JSON, aggregate JSON, and a comparison table against frozen metrics.
 
-- [ ] **Step 1: Check GPUs, processes, proxy environment, and UCX runtime**
+- [x] **Step 1: Check GPUs, processes, proxy environment, and UCX runtime**
 
 Run the repository skill's required read-only preflight checks. Do not kill
 unrelated processes.
 
-- [ ] **Step 2: Run one C4 quick diagnostic**
+- [x] **Step 2: Run one C4 quick diagnostic**
 
 Run:
 
@@ -96,13 +96,13 @@ bash .claude/skills/vllm-pap-benchmark/scripts/run_pap_multiturn_load.sh quick c
 Expected: 20 completed requests, no failures, strict audit passed, and zero
 active sessions after drain.
 
-- [ ] **Step 3: Decide whether repetition is warranted**
+- [x] **Step 3: Decide whether repetition is warranted**
 
 Compare the quick result with the three frozen PAP 70:30 cells. If the apparent
 R1 TTFT or TPOT change exceeds their spread, run the PAP-only `formal c4` entry
 with the same profile; otherwise record that the change is within noise.
 
-- [ ] **Step 4: Verify and report**
+- [x] **Step 4: Verify and report**
 
 Read the result, aggregate, effective configuration, correctness audit, routing
 audit, and session-drain artifacts. Report all four latency scopes and ratios,
