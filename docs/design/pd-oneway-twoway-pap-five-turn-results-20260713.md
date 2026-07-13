@@ -2,9 +2,9 @@
 
 日期：2026-07-13
 
-状态：C2 quick 与 C4 quick 已完成；三路均通过严格 Gate。结果来自 tracked-dirty
-开发状态，证据等级为 `controlled/quick`，不冒充 `formal-clean`。正式三次拉丁方矩阵
-必须在本次代码提交、tracked worktree clean 后执行。
+状态：C2 quick、C4 quick 与 C4 formal 均已完成。正式结果绑定 commit `03d8da336`，
+三路各重复三次并通过三阶拉丁方、strict audit 与 tracked-clean Gate；本文件第 7 节的
+C4 formal 结果已冻结为当前三路多轮北极星。
 
 ## 1. 这次解决了什么
 
@@ -147,23 +147,103 @@ Proxy 证据：one-way `20 MISS / 0 HIT / 0 send`；two-way
 `4 MISS / 16 HIT / 16 send`。吞吐低于单流 A/B 是 C4 多请求竞争 GPU/PCIe、注册和调度
 资源后的聚合服务指标，但仍显著高于 UCX 1.21 的约 500 MiB/s 软件模拟路径。
 
-## 7. 当前结论与证据边界
+## 7. C4 formal 冻结结果
+
+结果目录：
+
+```text
+/home/fei/research/PD/vllm-pap/test/baseline/pap/results/runs/
+  20260713_131649_03d8da336_pd_three_lane_c4_formal/
+```
+
+该组绑定 Git commit `03d8da336dfe177d878372adb41a487ffe898dd7`。三阶拉丁方顺序为：
+
+```text
+PD-oneway -> PD-twoway -> PAP
+PD-twoway -> PAP -> PD-oneway
+PAP -> PD-oneway -> PD-twoway
+```
+
+每个 cell 都是服务完全重启后的独立 C4 五轮运行。三条 lane 各聚合 3 个 cell、60 个
+请求；全部请求完成，失败数为 0。
+
+### 7.1 正式聚合
+
+| Scope | 指标 | PD-oneway | PD-twoway | PAP | two/one | PAP/one | PAP/two |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| R1 | TTFT | 8112.026 | 8128.513 | 11077.283 | 1.002x | 1.366x | 1.363x |
+| R1 | TPOT | 35.516 | 35.477 | 39.121 | 0.999x | 1.102x | 1.103x |
+| R2-R5 | TTFT | 280.867 | 251.716 | 249.030 | 0.896x | 0.887x | 0.989x |
+| R2-R5 | TPOT | 42.176 | 42.155 | 51.148 | 1.000x | 1.213x | 1.213x |
+
+表中为 pooled request-level median。双向 PD 把 steady TTFT 从 `280.867 ms` 降到
+`251.716 ms`（`-10.4%`），TPOT 不变。PAP steady TTFT 为双向 PD 的 `0.989x`，已在
+本负载下持平；PAP steady TPOT 为 `1.213x`，仍慢 `21.3%`。Round 1 没有 D->P 复用，
+两条 PD lane 符合预期地相同；PAP Round 1 TTFT/TPOT 分别为双向 PD 的
+`1.363x/1.103x`。
+
+### 7.2 三次重复稳定性
+
+| Lane | Cell | R1 TTFT | R1 TPOT | R2-R5 TTFT | R2-R5 TPOT |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| PD-oneway | 1 | 8082.570 | 35.531 | 278.611 | 42.174 |
+| PD-oneway | 2 | 8137.437 | 35.505 | 279.775 | 42.174 |
+| PD-oneway | 3 | 8141.741 | 35.514 | 282.534 | 42.184 |
+| PD-twoway | 1 | 8109.318 | 35.487 | 239.868 | 42.175 |
+| PD-twoway | 2 | 8149.667 | 35.464 | 253.758 | 42.155 |
+| PD-twoway | 3 | 8125.989 | 35.493 | 237.500 | 42.155 |
+| PAP | 1 | 11023.575 | 39.023 | 250.079 | 51.100 |
+| PAP | 2 | 11107.234 | 39.155 | 254.649 | 51.341 |
+| PAP | 3 | 11068.515 | 39.008 | 245.693 | 50.940 |
+
+### 7.3 正确性、复用与传输 Gate
+
+- 9 个 cell 均记录同一 commit、`git_tracked_worktree_dirty=false`，tracked index 与
+  worktree patch 均为空；
+- PD-oneway 三次均为 `20 MISS / 0 HIT / 0 send`、D->P 0 次、P->D 20 次；
+- PD-twoway 三次均为 `4 MISS / 16 HIT / 16 send`、D->P 16 次、P->D 20 次；
+- PD-oneway P->D 每次 9360 MiB，吞吐 `2303.817-2309.516 MiB/s`；
+- PD-twoway D->P 每次 603 MiB，吞吐 `3473.062-4676.630 MiB/s`、257-258 个
+  descriptors；P->D 每次 9360 MiB，吞吐 `2288.021-2309.044 MiB/s`；
+- 所有 NIXL failed transfer、failed notification、expired request 均为 0，且
+  `UCX_PROTO_EMULATION_ENABLE=n`；
+- PAP 三次的 routing、Attention stats、correctness 和 session drain 均通过，最终
+  `ACTIVE_SESSIONS=0`；
+- 三条 lane 的 prompt shape/digest、output token digest 和 assistant text digest 全部
+  一致，统一 `comparison.json` 为 `status=valid`、warnings 为空。
+
+原始统一报告位于同目录的 `report.md`，机器可读结果为 `comparison.json`、
+`pd_oneway_aggregate.json`、`pd_twoway_aggregate.json` 和 `pap_aggregate.json`。
+
+为防止未跟踪的大体积原始目录被静默替换，冻结时记录核心 artifact SHA256：
+
+| Artifact | SHA256 |
+| --- | --- |
+| `comparison.json` | `69a1fe051c53e4ac9b60b3bf21f436abbd2cec00f69d8159bf1f393b8456062e` |
+| `pd_oneway_aggregate.json` | `7db536acd1229a6fb34922d3c3b1c73964878323c82304e0e27b0778a37ba789` |
+| `pd_twoway_aggregate.json` | `7724350bab386dd7d7a5a6ad4c9b6bdf6ee44873176d234fccd891b375fe2443` |
+| `pap_aggregate.json` | `6d7f360583e01d11c59d625630cd9f0248fdc84c9e85ad4918c80561be59c286` |
+| `report.md` | `f95173835bd662016fd78cffa127b1d53e7ba3031812cd06014f902da235ec1f` |
+
+## 8. 当前结论与证据边界
 
 1. UCX 1.22 已让官方 `NixlConnector` 的同机双向 GET 可用，不是硬件缺少
    `nvidia_peermem`；
-2. D→P 复用在 C2/C4 均稳定降低后续轮 TTFT 约 12%，没有增加 TPOT；
-3. PAP 对单向 PD 的 steady TTFT 优势仍成立；与双向 PD 比较后，C4 steady TTFT 已接近
-   持平，PAP 的主要剩余差距是 TPOT（约 1.216 倍）；
+2. D→P 复用在 C2/C4 quick 和 C4 formal 中都降低后续轮 TTFT，formal 降幅为
+   `10.4%`，没有增加 TPOT；
+3. PAP 对单向 PD 的 steady TTFT 优势仍成立；与双向 PD 比较后，formal steady TTFT
+   为 `0.989x`，已经持平，主要剩余差距是 TPOT（`1.213x`）；
 4. Round 1 不发生 D→P，所以 PD-oneway/PD-twoway 应相同，实测也基本相同；PAP R1
    TTFT 仍明显更高，是下一阶段需要分析的 prefill/调度问题；
-5. C2/C4 quick 都是 dirty controlled 结果。`UCX_PROTO_INFO=y` 用于保留数据面选择证据，
-   因此不把它们升级为正式发布数字；formal-clean 仍是必要的冻结步骤。
+5. C2/C4 quick 仍只作为开发与方向证据；当前可发布北极星仅指 commit `03d8da336`
+   上的 C4 formal 三次拉丁方结果。该结论只覆盖 1:1、C4、16K 五轮固定负载，不能
+   外推为任意 x:y 或其他到达分布的性能结论。
 
-## 8. 下一步
+## 9. 下一步
 
-- 用户允许提交后，先提交当前实现，使 tracked worktree clean；
-- 运行 `formal c4`，按三阶拉丁方对每条 lane 做三次完整重启；
-- 以 formal 结果冻结新的北极星，并把 PAP 优化目标更新为：steady TTFT 不差于
-  PD-twoway，steady TPOT 继续从约 `1.216x` 向 `1.0x` 收敛；
+- 以本次 formal 结果作为后续优化判断基线：保持 steady TTFT 不差于 PD-twoway，
+  把 PAP steady TPOT 从 `1.213x` 继续向 `1.0x` 收敛；
+- 单独分析 PAP Round 1 TTFT `1.363x` 的 Prefill/调度瓶颈，避免以牺牲 steady TPOT
+  的方式换取第一轮改善；
 - 输出分叉诊断继续作为独立待办。本次 quick 的三个 digest 均一致，但不能替代更广泛
   的 batch-invariance/teacher-forced 正确性实验。

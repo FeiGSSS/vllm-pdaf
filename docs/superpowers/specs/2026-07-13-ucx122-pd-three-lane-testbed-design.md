@@ -2,7 +2,7 @@
 
 日期：2026-07-13
 
-状态：方案 B 已实施；C2/C4 quick 通过，formal-clean 待提交后执行
+状态：方案 B 已实施；C2/C4 quick 与 commit `03d8da336` 上的 C4 formal-clean 均通过
 
 目标分支：`feature/pap`
 
@@ -286,4 +286,4 @@ quick，最后 C4 formal。
 - C2 quick、C4 quick 和 C4 formal 均通过全部有效性 Gate；
 - UCX 根因、修复和新实验结果进入 Git 可追踪文档；
 - 本任务所有新增单元测试通过，`git diff --check` 通过；
-- 未运行 pre-commit，未提交代码。
+- 未运行 pre-commit；按用户批准提交实现，并在该 clean commit 上冻结正式结果。

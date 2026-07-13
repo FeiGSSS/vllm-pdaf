@@ -334,7 +334,7 @@ Require all three lanes valid before continuing.
 bash .claude/skills/vllm-pap-benchmark/scripts/run_pd_pap_multiturn_load.sh quick c4
 ```
 
-- [ ] **Step 4: Run C4 formal**
+- [x] **Step 4: Run C4 formal**
 
 ```bash
 bash .claude/skills/vllm-pap-benchmark/scripts/run_pd_pap_multiturn_load.sh formal c4
@@ -347,7 +347,7 @@ throughput and protocol evidence. The experiment report must list every result
 root, effective config, validity gate, repetition value, aggregate median, ratio,
 and output-digest warning. The history index must link both documents.
 
-- [ ] **Step 6: Run final verification without pre-commit**
+- [x] **Step 6: Run final verification without pre-commit**
 
 ```bash
 .venv/bin/python -m pytest \
