@@ -59,6 +59,7 @@
 | 1PA1P 16K 两轮历史优化 reference | Round2 old-pull PD/PAP TTFT `267.27/224.49 ms`，TPOT `25.18/30.45 ms` | PAP Stage C/D 内部优化证据保留；旧 PD pull 已被 P10 校正，不再作公平 PD 基线 |
 | 1PA1P 16K 五轮 C4 正式矩阵 | corrected-push PD/PAP 稳态 TTFT `306.17/248.32 ms`，TPOT `42.12/51.38 ms` | PAP 稳态 TTFT 为 PD `0.811x`，TPOT 为 `1.220x`；两侧各三次、实际并发 4、严格 Gate 全通过 |
 | UCX 1.22 三路 C4 formal | PD-oneway/PD-twoway/PAP 稳态 TTFT `280.87/251.72/249.03 ms`，TPOT `42.18/42.16/51.15 ms` | 双向降低 PD steady TTFT `10.4%`、不增加 TPOT；PAP/PD-twoway 为 TTFT `0.989x`、TPOT `1.213x`；commit `03d8da336`、三次拉丁方、strict clean |
+| 双侧 deferred trace C4 | trace-off PD-twoway/PAP 稳态 TPOT `42.179/51.098 ms`；PAP/PD `1.211x` | QKV 数学只差 `0.264%`，raw 双向 copy 约 `0.583 ms/forward`；PAP FA 慢 `28.7%`，并发现 token-boundary D2H 强制 stream barrier；commit `e115fc86f`、四组 diagnostic 全通过 |
 
 以上各数字的工作负载和原始证据分别记录在 `M6`、`M9`、`M10`、P10 和实验账本中，
 不能脱离 workload 直接互相比较。
@@ -127,6 +128,7 @@ PAP Stage A–D 内部 A/B，旧 PD pull 数字不再作为公平比较基线。
 | `P9` 多轮北极星与 metadata | 07-12 | 固定 16K 多轮后，metadata 构造、chunk generation 和 cache-hit block 扫描如何影响 TPOT？ | `7e81e2d10`、`7d0fd13cb`、`6bc383dab`、`c134bc3d9`、`0727ed946` | bulk build 将 Round2 TPOT `39.13 -> 30.59 ms`；generation-aware slot-plan 将 Round1 降到 `30.52 ms`；topology-token fast key 将全扫描减少 `36x`，两轮约 `1.21x PD` | `formal-clean/controlled`，见 M6/M7/M10 |
 | `P10` PD push 校正与五轮负载 | 07-13 | 同机 PD 为何只有约 0.42 GiB/s；校正后长上下文、多轮、C4 下 PAP/PD 的真实差距是多少？ | `131e1dfa2`、`e8ab4ab23`、`340c11abc`、`a646ae032` | 旧 pull GET 命中 TCP emulation；官方 push PUT 单流约 24.5 GiB/s；C4 formal 稳态 PAP/PD TTFT `0.811x`、TPOT `1.220x` | `diagnostic/formal-clean`，见 M6/M10 和 P10 报告 |
 | `P11` UCX 1.22 双向 PD 与三路 test bed | 07-13 | 能否在不换 connector 的情况下恢复 NIXL GET，并公平比较 PD 单向、PD 双向和 PAP？ | `03d8da336`，UCX 1.22.0/NIXL 1.3.0 | UCX 1.22 strict 单流 P→D `22.2 GiB/s`；C4 formal 双向 PD steady TTFT `280.87 -> 251.72 ms`，TPOT不变；PAP/双向 PD steady TTFT/TPOT `0.989x/1.213x` | `diagnostic/formal-clean`；[三路结果](pd-oneway-twoway-pap-five-turn-results-20260713.md) |
+| `P12` 双侧 critical-chain 分账 | 07-13 | PAP 的约 1.21x steady TPOT 还差在哪里：Projection compute、P2P、Attention 还是 host barrier？ | `bdfb09550`、`e115fc86f` | 同边界 QKV PAP/PD 只差 `0.264%`；raw copy 非主因；PAP FA 约多 `4.485 ms/forward`；token-boundary D2H 暴露强制 stream barrier | `diagnostic`；[双侧 trace 结果](pap-bilateral-deferred-trace-c4-results-20260713.md) |
 
 时间线不是 commit 全表。更细的里程碑见[第 8 节](#8-关键提交时间线)，完整 patch 以
 Git 历史为准。
@@ -473,7 +475,8 @@ baseline 混报。
 - `ad95c8c12` Add deferred PAP CUDA critical-path tracing；
 - `e8ab4ab23` Add five-turn PD/PAP load testbed；
 - `340c11abc` Make multi-turn load token continuous；
-- `a646ae032` Parse completion prompt token IDs。
+- `a646ae032` Parse completion prompt token IDs；
+- `e115fc86f` Add bilateral deferred PAP and PD tracing。
 
 #### 关键实验与证据
 
@@ -488,6 +491,8 @@ baseline 混报。
   test 和官方 push connector 形成完整证据链；旧 pull `0.42 GiB/s` 被判定为无效基线；
 - `PAP-20260713-FIVE-TURN-C4`：16K/5-turn/C4、每侧三次交错重启，实际 HTTP/decode
   peak concurrency 4，60/60 请求和所有 artifact-backed Gate 通过。
+- `PAP-20260713-BILATERAL-TRACE-C4`：同一 70:30 C4 上完成 PAP/PD trace-off/on，
+  将 Projection QKV/copy/output wait/token barrier 与 PD QKV/FA 放到同一边界。
 
 #### 负结果与被替代方案
 
@@ -510,6 +515,8 @@ provenance 和严格审计；关键 baseline 还需要 clean 多轮。当前索�
 - [同机 PD/NIXL 根因与校正](pd-same-node-nixl-transfer-root-cause-20260713.md)
   （`tracked`）；
 - [PD Push 与 PAP 五轮 C4 报告](pd-pap-five-turn-load-results-20260713.md)
+  （`tracked`）；
+- [PAP/PD 双侧 Deferred Trace C4 结果](pap-bilateral-deferred-trace-c4-results-20260713.md)
   （`tracked`）；
 - [Remote Attention 优化规格](../superpowers/specs/2026-07-02-pap-remote-attention-optimization-design.md)
   （`tracked`）；
@@ -548,8 +555,9 @@ CPU copy、无 per-row temporary tensor、无隐式全局同步。
 - `87bb1061f` Optimize same-node decode data path；
 - `6bc383dab` Vectorize PAP paged attention metadata；
 - `c134bc3d9` Make PAP slot plans generation aware；
-- `0727ed946` Use topology tokens for PAP metadata cache。
-- `ad95c8c12` Add deferred Attention critical-chain CUDA timing。
+- `0727ed946` Use topology tokens for PAP metadata cache；
+- `ad95c8c12` Add deferred Attention critical-chain CUDA timing；
+- `e115fc86f` Add bilateral Projection/PD deferred critical-chain timing。
 
 #### 关键实验与证据
 
@@ -572,6 +580,10 @@ CPU copy、无 per-row temporary tensor、无隐式全局同步。
   扰动仅 `+2.12%/+1.77%`；每层 p50 为 QKV ready `0.567 ms`、KV append
   `0.008 ms`、paged FA `0.191 ms`、output P2P copy `0.007 ms`，四段计数完整且无
   pending/drop/error。
+- `PAP-20260713-BILATERAL-TRACE-C4`：PAP/PD QKV mean
+  `0.082849/0.082631 ms/layer`，PAP FA 比 PD 慢 `28.7%`；QKV/output raw copy
+  合计约 `0.583 ms/forward`；token-boundary D2H 平均 `25.254 ms/forward`，确认
+  下一步应先解耦 decode-token commit 与逐 step Projection enqueue。
 
 #### 负结果与被替代方案
 
@@ -857,6 +869,7 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
 | `PAP-20260713-PD-THREE-LANE-C2` | M6/M10 | PD-oneway vs PD-twoway vs PAP；16K/5-turn/C2/o256/q2 | `03d8da336` 前 dirty quick/controlled | steady TTFT `223.907/197.052/210.789 ms`，TPOT `33.102/33.106/38.538 ms`；two-way `2 MISS + 8 HIT`，三路 digest 一致；**接受功能和方向，不冻结 formal 数字** | [三路结果](pd-oneway-twoway-pap-five-turn-results-20260713.md)；`$PAP_REPO_RESULTS/20260713_112725_a634b5bf8_pd_three_lane_c2_quick` |
 | `PAP-20260713-PD-THREE-LANE-C4` | M6/M10 | PD-oneway vs PD-twoway vs PAP；16K/5-turn/C4/o256/q2；三阶拉丁方 | `03d8da336`；clean formal 三次 | steady TTFT `280.867/251.716/249.030 ms`，TPOT `42.176/42.155/51.148 ms`；two-way 每次 `4 MISS + 16 HIT`，PAP/two-way `0.989x/1.213x`，九个 cell 全部 strict passed、digest 一致；**冻结为当前 1:1 多轮并发北极星** | [三路结果](pd-oneway-twoway-pap-five-turn-results-20260713.md)；`$PAP_REPO_RESULTS/20260713_131649_03d8da336_pd_three_lane_c4_formal`；quick 候选 `$PAP_REPO_RESULTS/20260713_114402_a634b5bf8_pd_three_lane_c4_quick` |
 | `PAP-20260713-MPS-80-20-DIAG` | M6/M7 | PAP Prefill/Attention 70:30 -> 80:20；同一 16K/5-turn/C4/o256/q2 | `ba17ea18c`；clean quick 一次 | R1 TTFT `11077.283 -> 9887.638 ms`（`-10.74%`），但 R1/steady TPOT `+24.26%/+24.09%`；strict/cache/routing/drain 全过；`diagnostic`；**拒绝静态 80:20 默认，TPOT 继续以 70:30 优化** | [80:20 诊断](pap-mps-80-20-diagnostic-results-20260713.md)；`$PAP_REPO_RESULTS/20260713_ba17ea18c_pap_mps_80_20_c4_quick` |
+| `PAP-20260713-BILATERAL-TRACE-C4` | M6/M7 | PAP/PD-twoway 各自 trace-off/on；同一 16K/5-turn/C4/o256/q2，PAP 固定 70:30 | `e115fc86f`；clean diagnostic 各一次 | trace-off steady TPOT PD/PAP `42.179/51.098 ms`（`1.211x`）；QKV 只差 `0.264%`，PAP FA 慢 `28.7%`，raw copy 约 `0.583 ms/forward`，token D2H 暴露强制 stream barrier；PAP/PD trace 扰动 `+2.29%/+0.90%`；四组 strict/digest/count 全通过；**接受诊断工具，优先 deferred decode-token commit A/B** | [双侧 trace 结果](pap-bilateral-deferred-trace-c4-results-20260713.md)；`$PAP_REPO_RESULTS/20260713_e115fc86f_{pap,pd_twoway}_bilateral_trace_{off,on}_c4` |
 
 ## 7. 负结果、回滚与被替代路线
 
@@ -898,13 +911,15 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
 | P9 / 07-12 | `7e81e2d10` v2 timing/gates；`7d0fd13cb` formal references；`6bc383dab` bulk metadata；`c134bc3d9` generation-aware slot-plan；`0727ed946` topology-token fast key；`ad95c8c12` deferred GPU trace | 把 16K 两轮 PD/PAP 固化为可审计 test bed，移除 metadata miss 标量写、chunk topology false mismatch 和 cache-hit 全 block 扫描，并用低扰动 GPU timing 将剩余热点收敛到 QKV ready chain | M6/M7/M10；账本 P9 |
 | P10 / 07-13 | `131e1dfa2` revert diagnostic UCX override；`e8ab4ab23` five-turn testbed；`340c11abc` exact-token continuity；`a646ae032` completion token parsing | 证明旧 PD pull 走 TCP emulation，以官方 push CUDA IPC 重建同机基线，并把比较升级到 16K/5-turn/C4/三次交错正式矩阵 | M6/M10；账本 P10；[五轮报告](pd-pap-five-turn-load-results-20260713.md) |
 | P11 / 07-13 | `03d8da336`：repo-local UCX 1.22、Completion/Chat streaming KV metadata、单/双向 auditor、三路 comparer/Latin-square runner | 用 UCX 1.22 恢复官方 `NixlConnector` GET，把北极星升级为 PD-oneway/PD-twoway/PAP；C2/C4 quick 和 C4 formal 三次拉丁方均通过 | M6/M10；账本 P11；[三路报告](pd-oneway-twoway-pap-five-turn-results-20260713.md) |
+| P12 / 07-13 | `bdfb09550` bilateral trace design；`e115fc86f` Projection/PD deferred trace、validator 与 C4 runners | 用同边界 QKV/FA 和 Projection source/output/token wait 把 steady TPOT 差距从“通信总开销”收敛为 token-boundary stream barrier 与 Attention FA 两条主线 | M6/M7；账本 P12；[双侧 trace 结果](pap-bilateral-deferred-trace-c4-results-20260713.md) |
 
 ## 9. 未完成问题与外部依赖
 
 - 多 PA 多轮 cache-aware routing 由未来 Dynamo 等外部路由框架负责；
 - arbitrary x:y 的连接/控制面已支持，但除 2PA2P 外主要是 correctness smoke；
-- cross-layer Attention batch 和同进程双 GPU executor 尚未通过 profiler gate；Attention
-  进程 GPU timeline 已闭合，Projection source compute/copy 的跨进程导出尚未完成；
+- cross-layer Attention batch 和同进程双 GPU executor 尚未通过 profiler gate；双侧
+  Projection/Attention/PD timeline 已闭合，下一步是移除 token-boundary D2H 并把
+  decode-token commit 从逐 step 计算元数据中解耦；
 - 同步 chunked Prefill 的 topology generation 已闭环；异步 import 尚缺 unified descriptor
   字段透传、readiness failed 标记和 session-epoch queue guard，当前默认关闭；
 - UCX 1.21 默认 pull 和 corrected-push 都保留为诊断历史；当前候选基线是 UCX 1.22
