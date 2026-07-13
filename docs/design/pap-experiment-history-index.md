@@ -62,8 +62,10 @@
 以上各数字的工作负载和原始证据分别记录在 `M6`、`M9`、`M10`、P10 和实验账本中，
 不能脱离 workload 直接互相比较。
 
-面向阶段汇报的聚合结论见
-[PAP 1:1 多轮性能优化阶段总结](pap-1pa1p-multiturn-stage-report-20260712.md)。
+面向阶段汇报的当前聚合结论见
+[PAP 1PA1P 五轮长上下文阶段总结与汇报](pap-1pa1p-five-turn-stage-report-20260713.md)。
+7 月 12 日的[两轮优化阶段记录](pap-1pa1p-multiturn-stage-report-20260712.md)仅用于回溯
+PAP Stage A–D 内部 A/B，旧 PD pull 数字不再作为公平比较基线。
 
 ### 1.3 证据边界
 
@@ -848,7 +850,7 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
 | `PAP-20260712-METADATA-FAST-KEY` | M6/M7/M10 | cache hit 每层扫描完整 block table → process-unique topology token + seq-len key；同代码 OFF/ON 三对与 clean formal | `0727ed946`；controlled 六轮 + clean 三轮 | OFF/ON Round2 TPOT `30.848 -> 30.419 ms`（-1.39%），三对均改善；block IDs scanned `18994176 -> 527616`（`36x`）；clean TPOT R1/R2 `30.196/30.449 ms`，为 PD `1.203x/1.209x`；比较器仍为 neutral；**接受默认并晋升当前 reference，不宣称显著收益** | [北极星记录](pap-pd-multiturn-north-star-20260712.md)；`$PAP_REPO_RESULTS/20260712_stagec_{off,on}{1,2,3}`；`$PAP_REPO_RESULTS/20260712_201947_0727ed946_pap_multiturn_formal` |
 | `PAP-20260712-DEFERRED-GPU-TRACE` | M6/M7 | 每层同步 CUDA trace → deferred event record/query + drain 后 flush；16K/2-turn/C1 quick | `ad95c8c12`；dirty diagnostic | trace TPOT 扰动 R1/R2 `+2.12%/+1.77%`；QKV ready p50 `0.567 ms/layer`，FA `0.191`、append `0.008`、output copy `0.007`；四段 count 精确、drop/error 为 0；**接受诊断工具，下一步只拆 Projection→Attention QKV chain** | [北极星记录](pap-pd-multiturn-north-star-20260712.md)；`$PAP_REPO_RESULTS/20260712_stagec_deferred_gpu_trace_v1` |
 | `PAP-20260713-PD-PUSH-ROOTCAUSE` | M6 | 旧 V2 pull → V1 cross-layer pull → emulation fail-closed → 官方 push；16K/C1 同机 GPU1/2 | `131e1dfa2` 后恢复上游源码；diagnostic | pull GET 为 TCP emulation，`2254.5 MiB / 5.34 s / 422 MiB/s / 72144 descriptors`；push PUT 为 CUDA IPC，`91.984 ms / 24509.697 MiB/s / 1 descriptor`；**废止旧 pull 公平基线，接受官方 push** | [根因报告](pd-same-node-nixl-transfer-root-cause-20260713.md)；`$PAP_REPO_RESULTS/20260713_pd_*` |
-| `PAP-20260713-FIVE-TURN-C4` | M6/M7/M10 | 两轮 C1 → exact-token 16K/5-turn/C1,C2,C4；corrected-push PD vs local-fast PAP | `e8ab4ab23`、`340c11abc`、`a646ae032`；clean C4 三轮 | C4 steady TTFT `306.166/248.321 ms`（PAP/PD `0.811x`），TPOT `42.115/51.375 ms`（`1.220x`）；两侧各 60/60、peak concurrency 4、无 OOM/fatal；**接受为当前多轮并发北极星** | [五轮报告](pd-pap-five-turn-load-results-20260713.md)；`$PAP_REPO_RESULTS/20260713_031215_a646ae032_pd_pap_load_c4_formal` |
+| `PAP-20260713-FIVE-TURN-C4` | M6/M7/M10 | 两轮 C1 → exact-token 16K/5-turn/C1,C2,C4；corrected-push PD vs local-fast PAP | `e8ab4ab23`、`340c11abc`、`a646ae032`；clean C4 三轮 | C4 steady TTFT `306.166/248.321 ms`（PAP/PD `0.811x`），TPOT `42.115/51.375 ms`（`1.220x`）；两侧各 60/60、peak concurrency 4、无 OOM/fatal；**接受为当前多轮并发北极星** | [阶段汇报](pap-1pa1p-five-turn-stage-report-20260713.md)；[五轮报告](pd-pap-five-turn-load-results-20260713.md)；`$PAP_REPO_RESULTS/20260713_031215_a646ae032_pd_pap_load_c4_formal` |
 
 ## 7. 负结果、回滚与被替代路线
 

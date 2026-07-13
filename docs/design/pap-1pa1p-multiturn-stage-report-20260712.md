@@ -1,5 +1,10 @@
 # PAP 1:1 多轮性能优化阶段总结
 
+> **历史口径说明（2026-07-13）**：本文保留 7 月 12 日 PAP Stage A–D 的内部优化
+> 演进证据，但其中 PD 使用了后来确认发生 TCP emulation 的旧 NIXL pull 路径，不再作为
+> 当前公平 PAP/PD 性能基线。校正后的正式阶段结论见
+> [PAP 1PA1P 五轮长上下文阶段总结与汇报](pap-1pa1p-five-turn-stage-report-20260713.md)。
+
 日期：2026-07-12
 
 分支：`feature/pap`
