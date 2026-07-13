@@ -899,8 +899,11 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
   字段透传、readiness failed 标记和 session-epoch queue guard，当前默认关闭；
 - 旧 pull PD 已被 corrected-push 基线替代；历史 PAP 内部 A/B 仍有效，但旧 PAP/PD 比值
   不应继续用于公平结论；
-- C4 五轮后 R2 output 已在 PD/PAP 间分叉；如需逐 token 相同输入的严格算子 A/B，需
-  增加 teacher-forced/shared-transcript lane；
+- `P0-CORRECTNESS-DIVERGENCE`：C4 中 PD 有一次相同 R4 prompt 的内部轨迹分叉；
+  PD/PAP 则在相同 R2 prompt 下稳定分叉。需要依次补齐 raw token/top-k margin、PD
+  batch-invariant A/B、teacher-forced cold/warm R2、QKV transport/KV slot checksum 和
+  逐层 Attention/hidden/logits 对比；关闭前不宣称逐 token 数值等价。详细 Gate 见
+  [五轮报告的 P0 待办](pd-pap-five-turn-load-results-20260713.md#61-p0-待办输出分叉的诊断与修复)；
 - 2PA2P 已达到旧 `2x PD` 目标，但需在 corrected-push PD、五轮负载下重验；更高拓扑、
   不同模型和更高并发的普适性仍需实验；
 - raw results、profiles 和 `/tmp` handoff 需要独立归档策略，Git 只追踪本索引和摘要。

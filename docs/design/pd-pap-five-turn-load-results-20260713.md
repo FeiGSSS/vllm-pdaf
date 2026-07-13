@@ -180,6 +180,41 @@ R3–R5 是逐 token 相同输入。若后续要做严格的算子级跨架构 A
 teacher-forced/shared-transcript lane，使两侧每轮都接收同一组预生成 token IDs；当前
 warning 被保留，未被正确性审计静默忽略。
 
+### 6.1 P0 待办：输出分叉的诊断与修复
+
+状态：`open`。该问题不否定当前相同 shape、真实多轮轨迹的性能数据，但在关闭前，
+不得宣称 PD 与 PAP 逐 token 数值等价，也不得把 R3–R5 描述为完全相同输入。
+
+已知边界：
+
+- 当前 C4 中，PD 三次重复的 R1–R3 全部一致；第二次 PD 的 conversation 1 在相同
+  R4 prompt 下首次分叉，R5 继承不同历史；
+- PAP 三次、4 条会话、5 轮内部均稳定；
+- PD/PAP 的 R1 prompt 和 output 一致；R2 prompt 仍一致，但 output 稳定分叉；
+- 历史 C1、PD/PAP 均使用 V2 model runner 时也在 R2 分叉，因此当前 V1/V2 差异和
+  C4 并发都不是唯一原因；
+- 当前 token/block/routing/commit/slot/session 审计通过，但尚未比较 KV 数值和 logits。
+
+按以下顺序诊断：
+
+1. 在诊断产物中保留完整 output token IDs、每步 top-k logits/logprobs、top-1/top-2
+   margin，并定位第一个不同 token；
+2. 对 PD 做 C1/C4 与 `VLLM_BATCH_INVARIANT=0/1` A/B，确认同输入的偶发分叉是否来自
+   默认 batch-dependent kernels；
+3. 使用 shared transcript/teacher-forced token IDs，对同一个 R2 prompt 分别运行 cold
+   full recompute 与 warm KV reuse，区分计算图差异和 KV provenance/reuse；
+4. 对首次分叉 token 逐层记录 Projection 发送前/PA 接收后的 Q/K/V checksum、KV slot
+   写入前后 checksum、Attention output、hidden state 和最终 logits 误差；
+5. 单独对齐 PD/PAP 的 model runner，并让 PAP 手工 paged FlashAttention 路径在
+   batch-invariant 诊断模式下固定 reduction/split 策略；
+6. 若 transport 或 KV slot checksum 不一致，按 correctness bug 修复；若 checksum 一致
+   且差异始于浮点算子，则记录误差和 logit margin，决定启用 batch-invariant 路径或定义
+   可接受的数值容差，最后重跑 C1/C4 五轮矩阵。
+
+关闭条件：PD 诊断重复轨迹稳定；P2P 与 KV slot value contract 有证据；PD/PAP 首个
+分叉 token 和首个数值分叉 layer 可解释；修复或容差决策经过 cold/warm、C1/C4 回归，
+比较器不再只以 digest warning 结束。
+
 ## 7. 产物与复现
 
 设计、根因和标准入口：
