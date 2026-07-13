@@ -106,6 +106,7 @@ MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8192}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
 PAP_PREFILL_GPU_MEMORY_UTILIZATION="${PAP_PREFILL_GPU_MEMORY_UTILIZATION:-0.76}"
 PAP_PROJECTION_GPU_MEMORY_UTILIZATION="${PAP_PROJECTION_GPU_MEMORY_UTILIZATION:-0.76}"
+PAP_BENCH_MPS_PROFILE="${PAP_BENCH_MPS_PROFILE:-baseline_70_30}"
 PAP_PREFILL_MPS_PERCENT="${PAP_PREFILL_MPS_PERCENT:-70}"
 PAP_ATTENTION_MPS_PERCENT="${PAP_ATTENTION_MPS_PERCENT:-30}"
 PAP_ENABLE_MPS="${PAP_ENABLE_MPS:-1}"
@@ -571,6 +572,7 @@ write_effective_config() {
     printf 'PAP_PROXY_PORT=%q\n' "${PAP_PROXY_PORT}"
     printf 'PAP_PREFILL_GPU_MEMORY_UTILIZATION=%q\n' "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}"
     printf 'PAP_PROJECTION_GPU_MEMORY_UTILIZATION=%q\n' "${PAP_PROJECTION_GPU_MEMORY_UTILIZATION}"
+    printf 'PAP_BENCH_MPS_PROFILE=%q\n' "${PAP_BENCH_MPS_PROFILE}"
     printf 'PAP_PREFILL_MPS_PERCENT=%q\n' "${PAP_PREFILL_MPS_PERCENT}"
     printf 'PAP_ATTENTION_MPS_PERCENT=%q\n' "${PAP_ATTENTION_MPS_PERCENT}"
     printf 'PAP_ENABLE_MPS=%q\n' "${PAP_ENABLE_MPS}"
@@ -1134,10 +1136,23 @@ elif [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" ]]; then
   [[ "${PAP_PREFIX_CACHE_AUDIT}" == "0" \
     && "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" == "1" ]] \
     || die "multiturn_load requires prompt details and forbids cache audit"
-  [[ "${PAP_ENABLE_MPS}" == "1" \
-    && "${PAP_PREFILL_MPS_PERCENT}" == "70" \
-    && "${PAP_ATTENTION_MPS_PERCENT}" == "30" ]] \
-    || die "multiturn_load requires fixed PAP MPS 70/30"
+  [[ "${PAP_ENABLE_MPS}" == "1" ]] \
+    || die "multiturn_load requires PAP MPS"
+  case "${PAP_BENCH_MPS_PROFILE}" in
+    baseline_70_30)
+      [[ "${PAP_PREFILL_MPS_PERCENT}" == "70" \
+        && "${PAP_ATTENTION_MPS_PERCENT}" == "30" ]] \
+        || die "baseline_70_30 requires PAP MPS 70/30"
+      ;;
+    diagnostic_80_20)
+      [[ "${PAP_PREFILL_MPS_PERCENT}" == "80" \
+        && "${PAP_ATTENTION_MPS_PERCENT}" == "20" ]] \
+        || die "diagnostic_80_20 requires PAP MPS 80/20"
+      ;;
+    *)
+      die "unknown PAP_BENCH_MPS_PROFILE: ${PAP_BENCH_MPS_PROFILE}"
+      ;;
+  esac
   (( PAP_MULTITURN_LOAD_ROUNDS >= 4 )) \
     || die "multiturn_load requires at least four rounds"
   (( PAP_MULTITURN_LOAD_CONVERSATIONS <= MAX_NUM_SEQS )) \
