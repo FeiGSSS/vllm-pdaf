@@ -8,6 +8,7 @@ CLIENT="${ROOT_DIR}/benchmarks/multi_turn/pap_pd_multiturn_load_client.py"
 AUDITOR="${ROOT_DIR}/benchmarks/multi_turn/pd_multiturn_load_reuse_metrics.py"
 FINALIZER="${ROOT_DIR}/benchmarks/multi_turn/finalize_pap_pd_multiturn.py"
 COMPARER="${ROOT_DIR}/benchmarks/multi_turn/compare_pap_pd_multiturn_load.py"
+DEFERRED_TRACE_VALIDATOR="${ROOT_DIR}/benchmarks/multi_turn/validate_deferred_trace.py"
 PROXY="${ROOT_DIR}/examples/disaggregated/disaggregated_serving/disagg_proxy_multiturn.py"
 UCX_RUNTIME="${ROOT_DIR}/.claude/skills/vllm-pap-benchmark/scripts/ucx122_runtime_env.sh"
 MODEL_PATH="${MODEL_PATH:-/data/ssd1/llm-models/Qwen3-8B}"
@@ -21,6 +22,9 @@ REQUIRE_CLEAN="${PD_LOAD_REQUIRE_CLEAN_TRACKED_WORKTREE:-0}"
 PREFILL_CUDA_VISIBLE_DEVICES="${PD_PREFILL_CUDA_VISIBLE_DEVICES:-1}"
 DECODE_CUDA_VISIBLE_DEVICES="${PD_DECODE_CUDA_VISIBLE_DEVICES:-2}"
 TRANSFER_MODE="${1:-${PD_LOAD_TRANSFER_MODE:-oneway}}"
+PAP_DEFERRED_CUDA_TRACE="${PAP_DEFERRED_CUDA_TRACE:-0}"
+PAP_DEFERRED_CUDA_TRACE_MAX_PENDING="${PAP_DEFERRED_CUDA_TRACE_MAX_PENDING:-1024}"
+PAP_DEFERRED_TRACE_FLUSH_TIMEOUT="${PAP_DEFERRED_TRACE_FLUSH_TIMEOUT:-30}"
 
 case "${TRANSFER_MODE}" in
   oneway)
@@ -61,6 +65,21 @@ if [[ "${REQUEST_RATE}" != "2" && "${REQUEST_RATE}" != "2.0" ]]; then
   echo "PD load is fixed to two requests/s: ${REQUEST_RATE}" >&2
   exit 2
 fi
+case "${PAP_DEFERRED_CUDA_TRACE,,}" in
+  0|false|no|off|1|true|yes|on) ;;
+  *)
+    echo "PAP_DEFERRED_CUDA_TRACE must be boolean" >&2
+    exit 2
+    ;;
+esac
+for name in PAP_DEFERRED_CUDA_TRACE_MAX_PENDING \
+  PAP_DEFERRED_TRACE_FLUSH_TIMEOUT; do
+  value="${!name}"
+  if ! [[ "${value}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "${name} must be a positive integer: ${value}" >&2
+    exit 2
+  fi
+done
 
 for required in "${PYTHON_BIN}" "${VLLM_BIN}"; do
   [[ -x "${required}" ]] || {
@@ -69,7 +88,8 @@ for required in "${PYTHON_BIN}" "${VLLM_BIN}"; do
   }
 done
 for required in "${CLIENT}" "${AUDITOR}" "${FINALIZER}" "${COMPARER}" \
-  "${PROXY}" "${UCX_RUNTIME}" "${DATASET_PATH}"; do
+  "${DEFERRED_TRACE_VALIDATOR}" "${PROXY}" "${UCX_RUNTIME}" \
+  "${DATASET_PATH}"; do
   [[ -f "${required}" ]] || {
     echo "required file is missing: ${required}" >&2
     exit 1
@@ -160,6 +180,38 @@ wait_for_http() {
   echo "${name} is ready at ${url}"
 }
 
+deferred_trace_enabled() {
+  case "${PAP_DEFERRED_CUDA_TRACE,,}" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+capture_pd_decode_deferred_trace() {
+  deferred_trace_enabled || return 0
+  local output_path="$1"
+  local decode_pid="$2"
+  local deadline=$((SECONDS + PAP_DEFERRED_TRACE_FLUSH_TIMEOUT))
+  [[ ! -e "${output_path}" ]] \
+    || { echo "PD deferred trace already exists: ${output_path}" >&2; return 1; }
+  [[ ! -e "${output_path}.flush" ]] \
+    || { echo "PD deferred trace trigger exists: ${output_path}.flush" >&2; return 1; }
+  : > "${output_path}.flush"
+  until [[ -s "${output_path}" ]]; do
+    kill -0 "${decode_pid}" >/dev/null 2>&1 \
+      || { echo "PD Decode exited before deferred trace flush" >&2; return 1; }
+    if (( SECONDS >= deadline )); then
+      echo "Timed out waiting for PD Decode deferred trace: ${output_path}" >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+  "${PYTHON_BIN}" "${DEFERRED_TRACE_VALIDATOR}" \
+    --trace "${output_path}" \
+    --scope pd_decode_process_critical_chain \
+    --num-layers 36
+}
+
 cd "${ROOT_DIR}"
 if [[ "${REQUIRE_CLEAN}" == "1" ]] \
   && { ! git diff --quiet || ! git diff --cached --quiet; }; then
@@ -238,6 +290,12 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
       "${DECODE_CUDA_VISIBLE_DEVICES}"
     printf 'VLLM_USE_V2_MODEL_RUNNER=%q\n' \
       "${VLLM_USE_V2_MODEL_RUNNER}"
+    printf 'PAP_DEFERRED_CUDA_TRACE=%q\n' \
+      "${PAP_DEFERRED_CUDA_TRACE}"
+    printf 'PAP_DEFERRED_CUDA_TRACE_MAX_PENDING=%q\n' \
+      "${PAP_DEFERRED_CUDA_TRACE_MAX_PENDING}"
+    printf 'PAP_DEFERRED_TRACE_FLUSH_TIMEOUT=%q\n' \
+      "${PAP_DEFERRED_TRACE_FLUSH_TIMEOUT}"
     printf 'ENABLE_CROSS_LAYERS_BLOCKS=True\n'
     printf 'UCX_TLS=%q\nUCX_NET_DEVICES=%q\n' \
       "${UCX_TLS}" "${UCX_NET_DEVICES}"
@@ -262,6 +320,9 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
   echo "Starting PD ${TRANSFER_MODE} Prefill rep ${rep} on GPU 1"
   setsid env \
     CUDA_VISIBLE_DEVICES="${PREFILL_CUDA_VISIBLE_DEVICES}" \
+    PAP_DEFERRED_CUDA_TRACE=0 \
+    PAP_DEFERRED_TRACE_ROLE= \
+    PAP_DEFERRED_TRACE_OUTPUT= \
     VLLM_PORT="${VLLM_PREFILL_PORT}" \
     VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
     VLLM_NIXL_SIDE_CHANNEL_PORT="${PREFILL_SIDE_PORT}" \
@@ -280,6 +341,10 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
   echo "Starting PD ${TRANSFER_MODE} Decode rep ${rep} on GPU 2"
   setsid env \
     CUDA_VISIBLE_DEVICES="${DECODE_CUDA_VISIBLE_DEVICES}" \
+    PAP_DEFERRED_CUDA_TRACE="${PAP_DEFERRED_CUDA_TRACE}" \
+    PAP_DEFERRED_CUDA_TRACE_MAX_PENDING="${PAP_DEFERRED_CUDA_TRACE_MAX_PENDING}" \
+    PAP_DEFERRED_TRACE_ROLE=pd_decode \
+    PAP_DEFERRED_TRACE_OUTPUT="${REP_ROOT}/pd_decode_deferred_trace.json" \
     VLLM_PORT="${VLLM_DECODE_PORT}" \
     VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
     VLLM_NIXL_SIDE_CHANNEL_PORT="${DECODE_SIDE_PORT}" \
@@ -292,8 +357,9 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
       --block-size 16 --gpu-memory-utilization 0.80 \
       --kv-transfer-config "${D_CONFIG}" \
       > "${LOG_ROOT}/decode.log" 2>&1 &
-  PIDS+=("$!")
-  PGIDS+=("$!")
+  DECODE_PID="$!"
+  PIDS+=("${DECODE_PID}")
+  PGIDS+=("${DECODE_PID}")
 
   wait_for_http "http://127.0.0.1:${PREFILL_PORT}/health" "PD Prefill"
   wait_for_http "http://127.0.0.1:${DECODE_PORT}/health" "PD Decode"
@@ -353,6 +419,18 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
   printf 'STATUS=passed\nMATCH_COUNT=0\n' \
     > "${REP_ROOT}/correctness_audit.env"
 
+  capture_pd_decode_deferred_trace \
+    "${REP_ROOT}/pd_decode_deferred_trace.json" \
+    "${DECODE_PID}"
+
+  deferred_trace_artifact_args=()
+  if deferred_trace_enabled; then
+    deferred_trace_artifact_args+=(
+      --artifact \
+      "pd_decode_deferred_trace=${REP_ROOT}/pd_decode_deferred_trace.json"
+    )
+  fi
+
   "${PYTHON_BIN}" "${FINALIZER}" \
     --result "${REP_ROOT}/result.json" --architecture pd \
     --passed-gate pd_reuse_metrics --passed-gate correctness_logs \
@@ -364,7 +442,8 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
     --artifact "effective_config=${REP_ROOT}/effective_config.env" \
     --artifact "correctness_logs=${REP_ROOT}/correctness_audit.env" \
     --artifact "tracked_worktree_patch=${REP_ROOT}/tracked_worktree.patch" \
-    --artifact "tracked_index_patch=${REP_ROOT}/tracked_index.patch"
+    --artifact "tracked_index_patch=${REP_ROOT}/tracked_index.patch" \
+    "${deferred_trace_artifact_args[@]}"
   RESULT_ARGS+=(--result "${REP_ROOT}/result.json")
   cleanup_current
 done

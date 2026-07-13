@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import json
 import threading
+import time
+from pathlib import Path
 from typing import Any
 
-from vllm.pap.deferred_cuda_trace import DeferredCudaTraceCollector
+from vllm.pap.deferred_cuda_trace import (
+    DeferredCudaTraceCollector,
+    DeferredTraceFileExporter,
+)
 
 
 class _FakeEvent:
@@ -41,6 +47,57 @@ class _FakeEventFactory:
         event = _FakeEvent()
         self.events.append(event)
         return event
+
+
+def _wait_until(predicate: Any, timeout_s: float = 1.0) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return predicate()
+
+
+def test_deferred_trace_records_host_duration_without_cuda_event() -> None:
+    collector = DeferredCudaTraceCollector(event_factory=lambda: None)
+
+    collector.record_duration(
+        "token_boundary_input_ids_d2h_wall_ms",
+        0.25,
+    )
+
+    assert collector.raw_snapshot(blocking=False)["durations"] == {
+        "token_boundary_input_ids_d2h_wall_ms": [0.25]
+    }
+
+
+def test_deferred_trace_exporter_flushes_on_trigger(tmp_path: Path) -> None:
+    output = tmp_path / "trace.json"
+    exporter = DeferredTraceFileExporter(
+        output_path=str(output),
+        scope="projection_process_critical_chain",
+        role="projection",
+        snapshot_fn=lambda *, blocking: {
+            "enabled": blocking,
+            "collector_count": 1,
+            "pending_records": 0,
+            "dropped_records": 0,
+            "error_records": 0,
+            "spans": {},
+        },
+        poll_interval_s=0.005,
+    )
+
+    exporter.start()
+    Path(f"{output}.flush").touch()
+    assert _wait_until(output.exists)
+    exporter.stop()
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["scope"] == "projection_process_critical_chain"
+    assert payload["role"] == "projection"
+    assert payload["enabled"] is True
+    assert not Path(f"{output}.flush").exists()
 
 
 def test_deferred_cuda_trace_nonblocking_collection_reuses_events() -> None:

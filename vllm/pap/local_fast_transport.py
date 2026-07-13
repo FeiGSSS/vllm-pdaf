@@ -73,6 +73,7 @@ from vllm.pap.deferred_cuda_trace import (
     begin_deferred_cuda_span,
     deferred_cuda_trace_enabled,
     end_deferred_cuda_span,
+    record_deferred_host_duration,
 )
 
 # ---------------------------------------------------------------------------
@@ -1052,9 +1053,16 @@ class PAPLocalFastTransport:
                     stream,
                 )
             t_memcpy_start = time.perf_counter()
-            if self._deferred_cuda_trace and direction == DIR_OUTPUT:
+            copy_span_name = None
+            if self._deferred_cuda_trace:
+                copy_span_name = (
+                    "qkv_p2p_copy_gpu_ms"
+                    if direction == DIR_QKV
+                    else "output_p2p_copy_gpu_ms"
+                )
+            if copy_span_name is not None:
                 copy_trace = begin_deferred_cuda_span(
-                    "output_p2p_copy_gpu_ms",
+                    copy_span_name,
                     stream,
                 )
                 try:
@@ -1200,6 +1208,12 @@ class PAPLocalFastTransport:
                 time.sleep(max(SPIN_SLEEP_US, 0) / 1_000_000.0)
             else:
                 _sched_yield()
+        t_doorbell_seen = time.perf_counter()
+        if self._deferred_cuda_trace and direction == DIR_OUTPUT:
+            record_deferred_host_duration(
+                "output_doorbell_wait_wall_ms",
+                (t_doorbell_seen - t_start) * 1000.0,
+            )
         nbytes = record.nbytes
         offset = record.offset
         metadata = _doorbell_read_metadata(
@@ -1227,9 +1241,16 @@ class PAPLocalFastTransport:
         _doorbell_ack(mm, record_offset, seq)
         if self._stream_ordered:
             stream = torch.cuda.current_stream(self.device)
-            if self._deferred_cuda_trace and direction == DIR_QKV:
+            ready_span_name = None
+            if self._deferred_cuda_trace:
+                ready_span_name = (
+                    "qkv_ready_wait_gpu_ms"
+                    if direction == DIR_QKV
+                    else "output_ready_wait_gpu_ms"
+                )
+            if ready_span_name is not None:
                 ready_trace = begin_deferred_cuda_span(
-                    "qkv_ready_wait_gpu_ms",
+                    ready_span_name,
                     stream,
                 )
                 try:

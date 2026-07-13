@@ -10,6 +10,12 @@ import numpy as np
 import torch
 
 from vllm.model_executor.layers.attention import Attention
+from vllm.pap.deferred_cuda_trace import (
+    begin_deferred_cuda_span,
+    deferred_cuda_trace_enabled,
+    deferred_trace_role,
+    end_deferred_cuda_span,
+)
 from vllm.platforms import current_platform
 from vllm.utils.torch_utils import (
     canonicalize_singleton_dim_strides,
@@ -911,32 +917,45 @@ class FlashAttentionImpl(AttentionImpl):
                     )
                     causal = not has_window
 
-                flash_attn_varlen_func(
-                    q=query[:num_actual_tokens],
-                    k=key_cache,
-                    v=value_cache,
-                    out=output[:num_actual_tokens],
-                    cu_seqlens_q=cu_seqlens_q,
-                    max_seqlen_q=max_seqlen_q,
-                    seqused_k=seqused_k,
-                    max_seqlen_k=max_seqlen_k,
-                    softmax_scale=self.scale,
-                    causal=causal,
-                    alibi_slopes=self.alibi_slopes,
-                    window_size=sliding_window_size,
-                    block_table=block_table,
-                    softcap=self.logits_soft_cap,
-                    scheduler_metadata=scheduler_metadata,
-                    fa_version=self.vllm_flash_attn_version,
-                    q_descale=q_descale,
-                    k_descale=k_descale,
-                    v_descale=v_descale,
-                    dynamic_causal=dynamic_causal,
-                    num_splits=attn_metadata.max_num_splits,
-                    s_aux=self.sinks,
-                    mask_mod=rswa_mask_mod_fn or mm_mask_mod,
-                    aux_tensors=rswa_aux or mm_aux,
-                )
+                pd_fa_trace = None
+                if (
+                    deferred_cuda_trace_enabled()
+                    and deferred_trace_role() == "pd_decode"
+                    and int(attn_metadata.max_query_len) == 1
+                ):
+                    pd_fa_trace = begin_deferred_cuda_span(
+                        "pd_paged_fa_gpu_ms",
+                        torch.cuda.current_stream(query.device),
+                    )
+                try:
+                    flash_attn_varlen_func(
+                        q=query[:num_actual_tokens],
+                        k=key_cache,
+                        v=value_cache,
+                        out=output[:num_actual_tokens],
+                        cu_seqlens_q=cu_seqlens_q,
+                        max_seqlen_q=max_seqlen_q,
+                        seqused_k=seqused_k,
+                        max_seqlen_k=max_seqlen_k,
+                        softmax_scale=self.scale,
+                        causal=causal,
+                        alibi_slopes=self.alibi_slopes,
+                        window_size=sliding_window_size,
+                        block_table=block_table,
+                        softcap=self.logits_soft_cap,
+                        scheduler_metadata=scheduler_metadata,
+                        fa_version=self.vllm_flash_attn_version,
+                        q_descale=q_descale,
+                        k_descale=k_descale,
+                        v_descale=v_descale,
+                        dynamic_causal=dynamic_causal,
+                        num_splits=attn_metadata.max_num_splits,
+                        s_aux=self.sinks,
+                        mask_mod=rswa_mask_mod_fn or mm_mask_mod,
+                        aux_tensors=rswa_aux or mm_aux,
+                    )
+                finally:
+                    end_deferred_cuda_span(pd_fa_trace)
                 return output
 
         # Cascade attention (rare case).

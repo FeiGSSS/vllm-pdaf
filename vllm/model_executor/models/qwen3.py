@@ -60,6 +60,12 @@ from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.rotary_embedding import get_rope
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
+from vllm.pap.deferred_cuda_trace import (
+    begin_deferred_cuda_span,
+    deferred_cuda_trace_enabled,
+    deferred_trace_role,
+    end_deferred_cuda_span,
+)
 from vllm.pap.mode import is_pap_request_id, pap_request_ids_are_routable
 from vllm.sequence import IntermediateTensors
 from vllm.transformers_utils.config import set_default_rope_theta
@@ -176,6 +182,25 @@ def _qwen3_profile_attn_metadata(layer_name: str) -> Any | None:
     if isinstance(metadata, list) and metadata:
         return metadata[0].get(layer_name)
     return None
+
+
+def _qwen3_deferred_qkv_trace_selected_role(
+    *,
+    trace_role: str,
+    pap_attention_enabled: bool,
+    max_query_len: int,
+) -> str:
+    """Select a bilateral QKV trace role for one real decode layer."""
+
+    if trace_role == "projection" and pap_attention_enabled:
+        return trace_role
+    if (
+        trace_role == "pd_decode"
+        and not pap_attention_enabled
+        and max_query_len == 1
+    ):
+        return trace_role
+    return ""
 
 
 def _qwen3_profile_decode_key(
@@ -979,34 +1004,56 @@ class Qwen3Attention(nn.Module):
 
         layer_name = self.attn.layer_name
         pap_attention_enabled = self._should_use_pap_attention()
+        deferred_qkv_role = ""
+        if deferred_cuda_trace_enabled():
+            deferred_metadata = _qwen3_profile_attn_metadata(layer_name)
+            deferred_qkv_role = _qwen3_deferred_qkv_trace_selected_role(
+                trace_role=deferred_trace_role(),
+                pap_attention_enabled=pap_attention_enabled,
+                max_query_len=int(
+                    getattr(deferred_metadata, "max_query_len", 0)
+                ),
+            )
+        qkv_trace = None
+        if deferred_qkv_role:
+            qkv_trace = begin_deferred_cuda_span(
+                "qkv_norm_rope_gpu_ms",
+                torch.cuda.current_stream(hidden_states.device),
+            )
         trace_offload_exec = _pap_env_enabled("PAP_OFFLOAD_EXEC_TRACE")
         trace_pre_attn_start = time.perf_counter() if trace_offload_exec else 0.0
         trace_pre_attn_start_ns = time.perf_counter_ns() if trace_offload_exec else 0
-        with _qwen3_profile_context(
-            layer_name=layer_name,
-            layer_index=self.layer_index,
-            stage="qkv_proj",
-            hidden_states=hidden_states,
-        ):
-            qkv, _ = self.qkv_proj(hidden_states)
-        q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
-        with _qwen3_profile_context(
-            layer_name=layer_name,
-            layer_index=self.layer_index,
-            stage="qk_norm_rope",
-            hidden_states=hidden_states,
-        ):
-            q_by_head = q.view(
-                *q.shape[:-1], q.shape[-1] // self.head_dim, self.head_dim
+        try:
+            with _qwen3_profile_context(
+                layer_name=layer_name,
+                layer_index=self.layer_index,
+                stage="qkv_proj",
+                hidden_states=hidden_states,
+            ):
+                qkv, _ = self.qkv_proj(hidden_states)
+            q, k, v = qkv.split(
+                [self.q_size, self.kv_size, self.kv_size],
+                dim=-1,
             )
-            q_by_head = self.q_norm(q_by_head)
-            q = q_by_head.view(q.shape)
-            k_by_head = k.view(
-                *k.shape[:-1], k.shape[-1] // self.head_dim, self.head_dim
-            )
-            k_by_head = self.k_norm(k_by_head)
-            k = k_by_head.view(k.shape)
-            q, k = self.rotary_emb(positions, q, k)
+            with _qwen3_profile_context(
+                layer_name=layer_name,
+                layer_index=self.layer_index,
+                stage="qk_norm_rope",
+                hidden_states=hidden_states,
+            ):
+                q_by_head = q.view(
+                    *q.shape[:-1], q.shape[-1] // self.head_dim, self.head_dim
+                )
+                q_by_head = self.q_norm(q_by_head)
+                q = q_by_head.view(q.shape)
+                k_by_head = k.view(
+                    *k.shape[:-1], k.shape[-1] // self.head_dim, self.head_dim
+                )
+                k_by_head = self.k_norm(k_by_head)
+                k = k_by_head.view(k.shape)
+                q, k = self.rotary_emb(positions, q, k)
+        finally:
+            end_deferred_cuda_span(qkv_trace)
         direct_qkv_send_buffer: torch.Tensor | None = None
         if (
             pap_attention_enabled
@@ -1014,10 +1061,21 @@ class Qwen3Attention(nn.Module):
             and qkv.ndim == 2
             and qkv.is_contiguous()
         ):
-            qkv[:, : self.q_size].copy_(q.reshape(qkv.shape[0], self.q_size))
-            qkv[:, self.q_size : self.q_size + self.kv_size].copy_(
-                k.reshape(qkv.shape[0], self.kv_size)
-            )
+            repack_trace = None
+            if deferred_qkv_role == "projection":
+                repack_trace = begin_deferred_cuda_span(
+                    "projection_qk_repack_gpu_ms",
+                    torch.cuda.current_stream(hidden_states.device),
+                )
+            try:
+                qkv[:, : self.q_size].copy_(
+                    q.reshape(qkv.shape[0], self.q_size)
+                )
+                qkv[:, self.q_size : self.q_size + self.kv_size].copy_(
+                    k.reshape(qkv.shape[0], self.kv_size)
+                )
+            finally:
+                end_deferred_cuda_span(repack_trace)
             direct_qkv_send_buffer = qkv
         trace_pre_attn_done_ns = time.perf_counter_ns() if trace_offload_exec else 0
         trace_pre_attn_compute_ms = (

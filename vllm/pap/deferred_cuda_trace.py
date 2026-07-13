@@ -4,12 +4,14 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import statistics
 import threading
 from collections import defaultdict, deque
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 import torch
@@ -22,6 +24,12 @@ _MAX_PENDING = max(
     1,
     int(os.environ.get("PAP_DEFERRED_CUDA_TRACE_MAX_PENDING", "1024")),
 )
+_TRACE_ROLE = os.environ.get("PAP_DEFERRED_TRACE_ROLE", "").strip()
+_TRACE_OUTPUT = os.environ.get("PAP_DEFERRED_TRACE_OUTPUT", "").strip()
+_TRACE_SCOPES = {
+    "projection": "projection_process_critical_chain",
+    "pd_decode": "pd_decode_process_critical_chain",
+}
 
 
 @dataclass
@@ -135,6 +143,17 @@ class DeferredCudaTraceCollector:
                 return
             self._pending.append(span)
 
+    def record_duration(self, name: str, duration_ms: float) -> None:
+        """Record an already measured host duration."""
+
+        value = float(duration_ms)
+        if not math.isfinite(value) or value < 0:
+            with self._lock:
+                self.error_records += 1
+            return
+        with self._lock:
+            self._durations[str(name)].append(value)
+
     def flush(self, *, blocking: bool) -> None:
         """Collect completed spans, optionally waiting during post-run drain."""
 
@@ -172,15 +191,118 @@ class DeferredCudaTraceCollector:
             }
 
 
+class DeferredTraceFileExporter:
+    """Flush one process-local trace after a post-workload trigger."""
+
+    def __init__(
+        self,
+        *,
+        output_path: str,
+        scope: str,
+        role: str,
+        snapshot_fn: Callable[..., dict[str, Any]],
+        poll_interval_s: float = 0.05,
+    ) -> None:
+        self.output_path = Path(output_path)
+        self.trigger_path = Path(f"{self.output_path}.flush")
+        self.scope = str(scope)
+        self.role = str(role)
+        self.snapshot_fn = snapshot_fn
+        self.poll_interval_s = max(0.001, float(poll_interval_s))
+        self._stop_event = threading.Event()
+        self._thread: threading.Thread | None = None
+        self.last_error: BaseException | None = None
+
+    def start(self) -> None:
+        """Start the daemon poller once."""
+
+        if self._thread is not None:
+            return
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"deferred-trace-exporter-{self.role}",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def stop(self) -> None:
+        """Stop the poller without forcing a trace flush."""
+
+        self._stop_event.set()
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=max(1.0, self.poll_interval_s * 4))
+
+    def _run(self) -> None:
+        while not self._stop_event.wait(self.poll_interval_s):
+            if not self.trigger_path.exists():
+                continue
+            try:
+                self._export()
+            except BaseException as error:
+                self.last_error = error
+                return
+            return
+
+    def _export(self) -> None:
+        payload = dict(self.snapshot_fn(blocking=True))
+        payload.update(
+            {
+                "scope": self.scope,
+                "role": self.role,
+                "pid": os.getpid(),
+            }
+        )
+        self.output_path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = self.output_path.with_name(
+            f".{self.output_path.name}.{os.getpid()}.tmp"
+        )
+        temporary_path.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        os.replace(temporary_path, self.output_path)
+        self.trigger_path.unlink(missing_ok=True)
+
+
 _thread_local = threading.local()
 _registry_lock = threading.Lock()
 _collectors: list[DeferredCudaTraceCollector] = []
+_exporter_lock = threading.Lock()
+_file_exporter: DeferredTraceFileExporter | None = None
 
 
 def deferred_cuda_trace_enabled() -> bool:
     """Return whether the diagnostic-only deferred event lane is enabled."""
 
     return _TRACE_ENABLED
+
+
+def deferred_trace_role() -> str:
+    """Return the process role selected for deferred diagnostics."""
+
+    return _TRACE_ROLE
+
+
+def ensure_deferred_trace_file_exporter() -> None:
+    """Lazily start the diagnostic exporter for supported process roles."""
+
+    global _file_exporter
+    if not _TRACE_ENABLED or not _TRACE_OUTPUT:
+        return
+    scope = _TRACE_SCOPES.get(_TRACE_ROLE)
+    if scope is None:
+        return
+    with _exporter_lock:
+        if _file_exporter is not None:
+            return
+        _file_exporter = DeferredTraceFileExporter(
+            output_path=_TRACE_OUTPUT,
+            scope=scope,
+            role=_TRACE_ROLE,
+            snapshot_fn=deferred_cuda_trace_snapshot,
+        )
+        _file_exporter.start()
 
 
 def _thread_collector() -> DeferredCudaTraceCollector:
@@ -191,6 +313,7 @@ def _thread_collector() -> DeferredCudaTraceCollector:
     _thread_local.pap_deferred_cuda_trace = collector
     with _registry_lock:
         _collectors.append(collector)
+    ensure_deferred_trace_file_exporter()
     return collector
 
 
@@ -218,6 +341,14 @@ def end_deferred_cuda_span(
         return
     collector, span = handle
     collector.end(span)
+
+
+def record_deferred_host_duration(name: str, duration_ms: float) -> None:
+    """Record a host-side duration only when deferred tracing is enabled."""
+
+    if not _TRACE_ENABLED:
+        return
+    _thread_collector().record_duration(name, duration_ms)
 
 
 def _percentile(sorted_values: list[float], percentile: float) -> float:

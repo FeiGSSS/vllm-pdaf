@@ -45,6 +45,11 @@ from vllm.model_executor.layers.mamba.ops.ssu_dispatch import (
 )
 from vllm.model_executor.model_loader import get_model_loader
 from vllm.multimodal import MULTIMODAL_REGISTRY
+from vllm.pap.deferred_cuda_trace import (
+    deferred_cuda_trace_enabled,
+    deferred_trace_role,
+    record_deferred_host_duration,
+)
 from vllm.pap.peer_activity import (
     PAPProjectionPeerActivity,
     sync_pap_projection_peer_activity,
@@ -993,6 +998,27 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         input_batch: InputBatch,
         finished_request_ids: Iterable[str] = (),
     ) -> dict[str, Any]:
+        pap_enabled = self._pap_enabled_for_batch(input_batch)
+        trace_token_boundary = (
+            deferred_cuda_trace_enabled()
+            and deferred_trace_role() == "projection"
+            and pap_enabled
+        )
+        token_boundary_start = (
+            time.perf_counter() if trace_token_boundary else 0.0
+        )
+        pap_input_token_ids = tuple(
+            int(token_id)
+            for token_id in input_batch.input_ids.detach()
+            .reshape(-1)[: int(input_batch.num_tokens)]
+            .to(device="cpu", dtype=torch.long)
+            .tolist()
+        )
+        if trace_token_boundary:
+            record_deferred_host_duration(
+                "token_boundary_input_ids_d2h_wall_ms",
+                (time.perf_counter() - token_boundary_start) * 1000.0,
+            )
         return {
             "pap_request_ids": tuple(input_batch.req_ids),
             "pap_num_scheduled_tokens": tuple(
@@ -1004,14 +1030,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             "pap_num_reqs": input_batch.num_reqs,
             "pap_num_actual_tokens": input_batch.num_tokens,
             "pap_positions": input_batch.positions,
-            "pap_input_token_ids": tuple(
-                int(token_id)
-                for token_id in input_batch.input_ids.detach()
-                .reshape(-1)[: int(input_batch.num_tokens)]
-                .to(device="cpu", dtype=torch.long)
-                .tolist()
-            ),
-            "pap_enabled": self._pap_enabled_for_batch(input_batch),
+            "pap_input_token_ids": pap_input_token_ids,
+            "pap_enabled": pap_enabled,
             "pap_attention_tcp_endpoint": (
                 self.vllm_config.kv_transfer_config.get_from_extra_config(
                     "pap_attention_tcp_endpoint", None

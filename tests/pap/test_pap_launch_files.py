@@ -45,6 +45,29 @@ def test_pap_benchmark_runner_captures_attention_fast_path_stats() -> None:
     assert '"attention_active_peer_tracking"' in text
 
 
+def test_pap_runner_captures_projection_deferred_trace_after_drain() -> None:
+    runner = (
+        ROOT
+        / ".claude"
+        / "skills"
+        / "vllm-pap-benchmark"
+        / "scripts"
+        / "run_pap_same_pd_workload.sh"
+    )
+    text = runner.read_text(encoding="utf-8")
+
+    assert 'PAP_DEFERRED_CUDA_TRACE="${PAP_DEFERRED_CUDA_TRACE:-0}"' in text
+    assert "PAP_DEFERRED_TRACE_ROLE=projection" in text
+    assert "PAP_DEFERRED_TRACE_OUTPUT=" in text
+    assert "capture_projection_deferred_traces" in text
+    assert "validate_deferred_trace.py" in text
+    assert "projection_deferred_trace.json" in text
+    assert '"${output_path}.flush"' in text
+    assert text.rindex("wait_attention_sessions_drained") < text.rindex(
+        "capture_projection_deferred_traces"
+    )
+
+
 def test_pap_benchmark_runner_supports_arbitrary_xy_topology() -> None:
     runner = (
         ROOT

@@ -9,6 +9,7 @@ ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 VLLM_BIN="${VLLM_BIN:-${ROOT_DIR}/.venv/bin/vllm}"
 NORTH_STAR_FINALIZER="${ROOT_DIR}/benchmarks/multi_turn/finalize_pap_pd_multiturn.py"
+DEFERRED_TRACE_VALIDATOR="${ROOT_DIR}/benchmarks/multi_turn/validate_deferred_trace.py"
 PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE="${PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE:-0}"
 PAP_BENCH_STRICT_CORRECTNESS_AUDIT="${PAP_BENCH_STRICT_CORRECTNESS_AUDIT:-1}"
 PAP_BENCH_CLIENT_MODE="${PAP_BENCH_CLIENT_MODE:-canonical}"
@@ -57,6 +58,7 @@ BENCH_TIMEOUT="${BENCH_TIMEOUT:-900}"
 SERVER_START_TIMEOUT="${SERVER_START_TIMEOUT:-900}"
 CLUSTER_READY_WAIT_SECONDS="${CLUSTER_READY_WAIT_SECONDS:-30}"
 PAP_BENCH_SESSION_DRAIN_TIMEOUT="${PAP_BENCH_SESSION_DRAIN_TIMEOUT:-15}"
+PAP_DEFERRED_TRACE_FLUSH_TIMEOUT="${PAP_DEFERRED_TRACE_FLUSH_TIMEOUT:-30}"
 
 TOPOLOGY="${PAP_TOPOLOGY:-1pa1p}"
 if [[ ! "${TOPOLOGY}" =~ ^([0-9]+)pa([0-9]+)p$ ]]; then
@@ -199,6 +201,10 @@ case "${PAP_DEFERRED_CUDA_TRACE,,}" in
 esac
 if ! [[ "${PAP_DEFERRED_CUDA_TRACE_MAX_PENDING}" =~ ^[1-9][0-9]*$ ]]; then
   echo "PAP_DEFERRED_CUDA_TRACE_MAX_PENDING must be a positive integer" >&2
+  exit 2
+fi
+if ! [[ "${PAP_DEFERRED_TRACE_FLUSH_TIMEOUT}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "PAP_DEFERRED_TRACE_FLUSH_TIMEOUT must be a positive integer" >&2
   exit 2
 fi
 
@@ -468,6 +474,69 @@ with open(output_path, "w", encoding="utf-8") as output:
 PY
 }
 
+deferred_trace_enabled() {
+  case "${PAP_DEFERRED_CUDA_TRACE,,}" in
+    1|true|yes|on) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+capture_projection_deferred_traces() {
+  deferred_trace_enabled || return 0
+  local idx output_path deadline
+  local -a trace_paths=()
+  local -a validator_args=()
+  for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
+    output_path="${RUN_ROOT}/projection_deferred_trace_${idx}.json"
+    [[ ! -e "${output_path}" ]] \
+      || die "Projection deferred trace already exists: ${output_path}"
+    [[ ! -e "${output_path}.flush" ]] \
+      || die "Projection deferred trace trigger exists: ${output_path}.flush"
+    : > "${output_path}.flush"
+    trace_paths+=("${output_path}")
+  done
+  for output_path in "${trace_paths[@]}"; do
+    deadline=$((SECONDS + PAP_DEFERRED_TRACE_FLUSH_TIMEOUT))
+    until [[ -s "${output_path}" ]]; do
+      check_children_alive
+      if (( SECONDS >= deadline )); then
+        die "Timed out waiting for Projection deferred trace: ${output_path}"
+      fi
+      sleep 0.1
+    done
+    validator_args=(
+      --trace "${output_path}"
+      --scope projection_process_critical_chain
+      --num-layers 36
+    )
+    if (( PROJECTION_COUNT == 1 )); then
+      validator_args+=(
+        --attention-stats "${RUN_ROOT}/attention_fast_path_stats.json"
+      )
+    fi
+    "${PYTHON_BIN}" "${DEFERRED_TRACE_VALIDATOR}" \
+      "${validator_args[@]}"
+  done
+  if (( PROJECTION_COUNT == 1 )); then
+    cp "${trace_paths[0]}" "${RUN_ROOT}/projection_deferred_trace.json"
+    return
+  fi
+  "${PYTHON_BIN}" - "${RUN_ROOT}/projection_deferred_trace.json" \
+    "${trace_paths[@]}" <<'PY'
+import json
+import sys
+
+output_path = sys.argv[1]
+instances = []
+for index, path in enumerate(sys.argv[2:]):
+    with open(path, encoding="utf-8") as source:
+        instances.append({"projection_index": index, "trace": json.load(source)})
+with open(output_path, "w", encoding="utf-8") as output:
+    json.dump({"instances": instances}, output, indent=2)
+    output.write("\n")
+PY
+}
+
 capture_proxy_topology_stats() {
   curl -fsS \
     "http://127.0.0.1:${PAP_PROXY_PORT}/v1/pap/topology/stats" \
@@ -641,6 +710,8 @@ write_effective_config() {
     printf 'MAX_NUM_SEQS=%q\n' "${MAX_NUM_SEQS}"
     printf 'CLUSTER_READY_WAIT_SECONDS=%q\n' "${CLUSTER_READY_WAIT_SECONDS}"
     printf 'PAP_BENCH_SESSION_DRAIN_TIMEOUT=%q\n' "${PAP_BENCH_SESSION_DRAIN_TIMEOUT}"
+    printf 'PAP_DEFERRED_TRACE_FLUSH_TIMEOUT=%q\n' \
+      "${PAP_DEFERRED_TRACE_FLUSH_TIMEOUT}"
   } > "${RUN_ROOT}/effective_config.env"
 }
 
@@ -1173,6 +1244,8 @@ fi
 [[ -x "${VLLM_BIN}" ]] || die "VLLM_BIN is not executable: ${VLLM_BIN}"
 [[ -f "${NORTH_STAR_FINALIZER}" ]] \
   || die "Missing north-star finalizer: ${NORTH_STAR_FINALIZER}"
+[[ -f "${DEFERRED_TRACE_VALIDATOR}" ]] \
+  || die "Missing deferred trace validator: ${DEFERRED_TRACE_VALIDATOR}"
 [[ -d "${MODEL_PATH}" ]] || die "Model path does not exist: ${MODEL_PATH}"
 
 "${PYTHON_BIN}" -c 'import nixl' >/dev/null 2>&1 \
@@ -1270,6 +1343,9 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_ATTENTION_DISPATCH_MODE="${PAP_ATTENTION_DISPATCH_MODE}" \
     PAP_ATTENTION_DISPATCH_QUEUE_SIZE="${PAP_ATTENTION_DISPATCH_QUEUE_SIZE}" \
     PAP_ATTENTION_COMBINE_WAIT_US="${PAP_ATTENTION_COMBINE_WAIT_US}" \
+    PAP_DEFERRED_CUDA_TRACE="${PAP_DEFERRED_CUDA_TRACE}" \
+    PAP_DEFERRED_TRACE_ROLE=attention \
+    PAP_DEFERRED_TRACE_OUTPUT= \
     PAP_OFFLOAD_EXEC_LOCAL_RANK=0 \
     PAP_OFFLOAD_EXEC_Q_SIZE="${PAP_OFFLOAD_EXEC_Q_SIZE}" \
     PAP_OFFLOAD_EXEC_KV_SIZE="${PAP_OFFLOAD_EXEC_KV_SIZE}" \
@@ -1309,6 +1385,9 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
   env \
     "${prefill_env[@]}" \
     VLLM_PORT="$((VLLM_PREFILL_PORT_BASE + idx * 20))" \
+    PAP_DEFERRED_CUDA_TRACE=0 \
+    PAP_DEFERRED_TRACE_ROLE= \
+    PAP_DEFERRED_TRACE_OUTPUT= \
     PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
     PAP_UNIFIED_KV="${PAP_UNIFIED_KV}" \
     PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}" \
@@ -1345,6 +1424,9 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     CUDA_VISIBLE_DEVICES="${PROJECTION_GPUS[idx]}" \
     VLLM_PORT="$((VLLM_PROJECTION_PORT_BASE + idx * 20))" \
     PAP_NIXL_MAILBOX_ACTOR_ID="projection-${idx}" \
+    PAP_DEFERRED_CUDA_TRACE="${PAP_DEFERRED_CUDA_TRACE}" \
+    PAP_DEFERRED_TRACE_ROLE=projection \
+    PAP_DEFERRED_TRACE_OUTPUT="${RUN_ROOT}/projection_deferred_trace_${idx}.json" \
     PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT}" \
     PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
     PAP_DIRECT_MAILBOX_OUTPUT="${PAP_DIRECT_MAILBOX_OUTPUT}" \
@@ -1534,11 +1616,19 @@ esac
 wait_attention_sessions_drained
 capture_proxy_topology_stats
 capture_attention_fast_path_stats
+capture_projection_deferred_traces
 audit_xy_routes
 audit_correctness_logs
 
 if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" \
   || "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" ]]; then
+  deferred_trace_artifact_args=()
+  if deferred_trace_enabled; then
+    deferred_trace_artifact_args+=(
+      --artifact \
+      "projection_deferred_trace=${RUN_ROOT}/projection_deferred_trace.json"
+    )
+  fi
   "${PYTHON_BIN}" "${NORTH_STAR_FINALIZER}" \
     --result "${RUN_ROOT}/result.json" \
     --architecture pap \
@@ -1555,7 +1645,8 @@ if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" \
       "tracked_worktree_patch=${RUN_ROOT}/tracked_worktree.patch" \
     --artifact "tracked_index_patch=${RUN_ROOT}/tracked_index.patch" \
     --artifact \
-      "attention_stats=${RUN_ROOT}/attention_fast_path_stats.json"
+      "attention_stats=${RUN_ROOT}/attention_fast_path_stats.json" \
+    "${deferred_trace_artifact_args[@]}"
 fi
 
 echo "RUN_ROOT=${RUN_ROOT}"

@@ -8,12 +8,48 @@ from vllm.model_executor.models.qwen3 import (
     _pap_nixl_mailbox_offload_exec_transport,
     _pap_offload_exec_session_request_id,
     _pap_offload_exec_step_groups,
+    _qwen3_deferred_qkv_trace_selected_role,
 )
 
 
 def test_pap_endpoint_for_tp_rank_keeps_scalar_endpoint() -> None:
     assert _pap_endpoint_for_tp_rank("127.0.0.1:10300", tp_rank=1) == (
         "127.0.0.1:10300"
+    )
+
+
+def test_bilateral_qkv_trace_selects_only_target_decode_roles() -> None:
+    assert (
+        _qwen3_deferred_qkv_trace_selected_role(
+            trace_role="projection",
+            pap_attention_enabled=True,
+            max_query_len=1,
+        )
+        == "projection"
+    )
+    assert (
+        _qwen3_deferred_qkv_trace_selected_role(
+            trace_role="projection",
+            pap_attention_enabled=False,
+            max_query_len=1,
+        )
+        == ""
+    )
+    assert (
+        _qwen3_deferred_qkv_trace_selected_role(
+            trace_role="pd_decode",
+            pap_attention_enabled=False,
+            max_query_len=1,
+        )
+        == "pd_decode"
+    )
+    assert (
+        _qwen3_deferred_qkv_trace_selected_role(
+            trace_role="pd_decode",
+            pap_attention_enabled=False,
+            max_query_len=2,
+        )
+        == ""
     )
 
 
