@@ -1,5 +1,20 @@
 # PAP Static MPS Benchmark Design
 
+## 2026-07-14 基线化决策
+
+本设计最初只把 static MPS 作为诊断能力。C4 2×2 A/B 完成后确认：static
+64/28 不能消除 async decode-token 路径的 TTFT 退化，但在 async 开启时把
+steady TPOT 从 `50.292 ms` 降到 `49.873 ms`（`-0.419 ms/-0.83%`）。因此接受
+它作为本机后续 PAP 优化 test bed 的默认配置。
+
+正式基线 profile 名称为 `baseline_static_64_28`；历史实验使用的
+`diagnostic_static_64_28` 保留为等价别名。PAP-only 多轮 wrapper 默认选择前者，
+底层通用 runner 仍默认 dynamic，便于在不支持 R595 static partition 的机器上
+使用，也保留 `baseline_70_30` 作为显式回退。
+
+完整 A/B 结果见
+[`pap-async-static-mps-c4-ab-results-20260714.md`](../../design/pap-async-static-mps-c4-ab-results-20260714.md)。
+
 ## 目标
 
 在不修改 PAP 公共启动入口和正式 70:30 北极星默认值的前提下，为
@@ -8,8 +23,8 @@ GPU SM partition 将同一 PA GPU 的 Prefill 与 Attention 静态隔离，用�
 async decode-token 改动造成的 TTFT 退化是否与 dynamic MPS 下的跨进程资源
 竞争有关。
 
-本改动只提供实验能力，不预设 static MPS 一定改善性能，也不把诊断结果自动
-升级成正式基线。
+以下内容记录实验前的原始设计约束；上面的 2026-07-14 决策是实验完成后的
+状态更新。
 
 ## 范围
 
@@ -57,7 +72,7 @@ dynamic 70:30。
 
 1. 用物理 GPU 启动 `nvidia-cuda-mps-control -d -S`。
 2. 读取该 GPU UUID。
-3. 通过 `sm_partition create <chunks> <uuid>` 创建 Prefill 与 Attention
+3. 通过 `sm_partition add <uuid> <chunks>` 创建 Prefill 与 Attention
    partition。
 4. 从 R595 的 `Partition <full-id> created` 输出中保留完整 partition ID；ID
    自身含 `/`，不能按路径分隔符截断。
@@ -66,8 +81,10 @@ dynamic 70:30。
    `CUDA_VISIBLE_DEVICES=0`，并分别设置
    `CUDA_MPS_SM_PARTITION=<full-id>`。static 模式不得再设置
    `CUDA_MPS_ACTIVE_THREAD_PERCENTAGE`。
-7. benchmark 结束后先停止所有 client，再删除两个 partition，最后退出 MPS
-   daemon。
+7. benchmark 结束后先停止所有 client，再用
+   `sm_partition rm <uuid> <partition-suffix>` 删除两个 partition，最后退出
+   MPS daemon。client 使用含 UUID 的完整 ID；删除命令使用精确剥离
+   `<uuid>/` 后的 suffix。
 
 任一创建、解析、可见 SM 校验或 partition 删除失败，都应使运行 fail closed。
 cleanup 在正常退出和异常退出时都执行；只有未完成的 best-effort 清理步骤可以

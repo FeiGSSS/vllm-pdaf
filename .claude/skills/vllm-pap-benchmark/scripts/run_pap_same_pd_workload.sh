@@ -109,9 +109,43 @@ MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
 PAP_PREFILL_GPU_MEMORY_UTILIZATION="${PAP_PREFILL_GPU_MEMORY_UTILIZATION:-0.76}"
 PAP_PROJECTION_GPU_MEMORY_UTILIZATION="${PAP_PROJECTION_GPU_MEMORY_UTILIZATION:-0.76}"
 PAP_BENCH_MPS_PROFILE="${PAP_BENCH_MPS_PROFILE:-baseline_70_30}"
+PAP_MPS_MODE="${PAP_MPS_MODE:-dynamic}"
 PAP_PREFILL_MPS_PERCENT="${PAP_PREFILL_MPS_PERCENT:-70}"
 PAP_ATTENTION_MPS_PERCENT="${PAP_ATTENTION_MPS_PERCENT:-30}"
+PAP_STATIC_PREFILL_CHUNKS="${PAP_STATIC_PREFILL_CHUNKS:-16}"
+PAP_STATIC_ATTENTION_CHUNKS="${PAP_STATIC_ATTENTION_CHUNKS:-7}"
+PAP_STATIC_PREFILL_EXPECTED_SMS=64
+PAP_STATIC_ATTENTION_EXPECTED_SMS=28
 PAP_ENABLE_MPS="${PAP_ENABLE_MPS:-1}"
+case "${PAP_MPS_MODE}" in
+  dynamic | static) ;;
+  *)
+    echo "ERROR: PAP_MPS_MODE must be dynamic or static" >&2
+    exit 2
+    ;;
+esac
+if ! [[ "${PAP_STATIC_PREFILL_CHUNKS}" =~ ^[1-9][0-9]*$ \
+  && "${PAP_STATIC_ATTENTION_CHUNKS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: static MPS chunk counts must be positive integers" >&2
+  exit 2
+fi
+if [[ "${PAP_MPS_MODE}" == "static" ]]; then
+  case "${PAP_BENCH_MPS_PROFILE}" in
+    baseline_static_64_28 | diagnostic_static_64_28) ;;
+    *)
+      echo "ERROR: static MPS requires a static 64/28 profile" >&2
+      exit 2
+      ;;
+  esac
+fi
+if [[ "${PAP_MPS_MODE}" == "dynamic" ]]; then
+  case "${PAP_BENCH_MPS_PROFILE}" in
+    baseline_static_64_28 | diagnostic_static_64_28)
+      echo "ERROR: static 64/28 profiles require static MPS" >&2
+      exit 2
+      ;;
+  esac
+fi
 PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT:-nixl_mailbox}"
 PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT:-cuda_ipc}"
 PAP_OFFLOAD_EXEC_TRACE="${PAP_OFFLOAD_EXEC_TRACE:-0}"
@@ -182,7 +216,14 @@ PAP_DECODE_COMMIT_MAX_ATTEMPTS="${PAP_DECODE_COMMIT_MAX_ATTEMPTS:-8}"
 PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS="${PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS:-0.05}"
 PAP_DECODE_COMMIT_RETRY_MAX_SECONDS="${PAP_DECODE_COMMIT_RETRY_MAX_SECONDS:-0.5}"
 PAP_DECODE_COMMIT_FLUSH_TIMEOUT="${PAP_DECODE_COMMIT_FLUSH_TIMEOUT:-5.0}"
-PAP_LEASE_RELEASE_TIMEOUT="${PAP_LEASE_RELEASE_TIMEOUT:-0.2}"
+PAP_ASYNC_DECODE_TOKEN="${PAP_ASYNC_DECODE_TOKEN:-1}"
+PAP_DECODE_TOKEN_TIMEOUT="${PAP_DECODE_TOKEN_TIMEOUT:-0.2}"
+PAP_DECODE_TOKEN_QUEUE_SIZE="${PAP_DECODE_TOKEN_QUEUE_SIZE:-1024}"
+PAP_DECODE_TOKEN_MAX_ATTEMPTS="${PAP_DECODE_TOKEN_MAX_ATTEMPTS:-8}"
+PAP_DECODE_TOKEN_RETRY_INITIAL_SECONDS="${PAP_DECODE_TOKEN_RETRY_INITIAL_SECONDS:-0.05}"
+PAP_DECODE_TOKEN_RETRY_MAX_SECONDS="${PAP_DECODE_TOKEN_RETRY_MAX_SECONDS:-0.5}"
+PAP_DECODE_TOKEN_FLUSH_TIMEOUT="${PAP_DECODE_TOKEN_FLUSH_TIMEOUT:-5.0}"
+PAP_LEASE_RELEASE_TIMEOUT="${PAP_LEASE_RELEASE_TIMEOUT:-5.0}"
 PAP_LEASE_RELEASE_MAX_ATTEMPTS="${PAP_LEASE_RELEASE_MAX_ATTEMPTS:-5}"
 PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS="${PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS:-0.05}"
 PAP_LEASE_RELEASE_RETRY_MAX_SECONDS="${PAP_LEASE_RELEASE_RETRY_MAX_SECONDS:-0.5}"
@@ -231,6 +272,13 @@ export PAP_DECODE_COMMIT_MAX_ATTEMPTS
 export PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS
 export PAP_DECODE_COMMIT_RETRY_MAX_SECONDS
 export PAP_DECODE_COMMIT_FLUSH_TIMEOUT
+export PAP_ASYNC_DECODE_TOKEN
+export PAP_DECODE_TOKEN_TIMEOUT
+export PAP_DECODE_TOKEN_QUEUE_SIZE
+export PAP_DECODE_TOKEN_MAX_ATTEMPTS
+export PAP_DECODE_TOKEN_RETRY_INITIAL_SECONDS
+export PAP_DECODE_TOKEN_RETRY_MAX_SECONDS
+export PAP_DECODE_TOKEN_FLUSH_TIMEOUT
 export PAP_LEASE_RELEASE_TIMEOUT
 export PAP_LEASE_RELEASE_MAX_ATTEMPTS
 export PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS
@@ -281,6 +329,11 @@ PROJECTION_GPUS=()
 MPS_PIPE_DIRS=()
 MPS_LOG_DIRS=()
 MPS_STARTED_DIRS=()
+MPS_GPU_UUIDS=()
+MPS_PREFILL_PARTITIONS=()
+MPS_ATTENTION_PARTITIONS=()
+MPS_PREFILL_VISIBLE_SMS=()
+MPS_ATTENTION_VISIBLE_SMS=()
 MPS_PIPE_BASE_DIR="${PAP_MPS_PIPE_BASE_DIR:-/tmp/pap-mps-${USER:-user}-${TOPOLOGY}-$$}"
 MPS_LOG_BASE_DIR="${PAP_MPS_LOG_BASE_DIR:-${RUN_LOG_DIR}/mps-log}"
 
@@ -323,25 +376,170 @@ build_projections_spec() {
   join_by_comma "${items[@]}"
 }
 
+mps_control() {
+  local pipe_dir="$1"
+  local command="$2"
+  timeout 10 env \
+    CUDA_MPS_PIPE_DIRECTORY="${pipe_dir}" \
+    nvidia-cuda-mps-control <<< "${command}"
+}
+
+parse_created_partition_id() {
+  local response="$1"
+  local line partition_id
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ "${line}" == Partition\ *\ created ]]; then
+      partition_id="${line#Partition }"
+      partition_id="${partition_id% created}"
+      [[ -n "${partition_id}" ]] || return 1
+      printf '%s\n' "${partition_id}"
+      return 0
+    fi
+  done <<< "${response}"
+  return 1
+}
+
+create_static_partition() {
+  local pipe_dir="$1"
+  local chunks="$2"
+  local gpu_uuid="$3"
+  local response partition_id
+  if ! response="$(
+    mps_control \
+      "${pipe_dir}" "sm_partition add ${gpu_uuid} ${chunks}" 2>&1
+  )"; then
+    echo "static MPS partition creation failed: ${response}" >&2
+    return 1
+  fi
+  if ! partition_id="$(parse_created_partition_id "${response}")"; then
+    echo "unexpected static MPS create response: ${response}" >&2
+    return 1
+  fi
+  printf '%s\n' "${partition_id}"
+}
+
+validate_static_partition_visible_sms() {
+  local idx="$1"
+  local role="$2"
+  local partition_id="$3"
+  local expected_sms="$4"
+  local probe_log="${RUN_LOG_DIR}/mps_static_${idx}_${role}_probe.log"
+  local visible_sms
+  if ! visible_sms="$(
+    env \
+      CUDA_VISIBLE_DEVICES=0 \
+      CUDA_MPS_PIPE_DIRECTORY="${MPS_PIPE_DIRS[idx]}" \
+      CUDA_MPS_LOG_DIRECTORY="${MPS_LOG_DIRS[idx]}" \
+      CUDA_MPS_SM_PARTITION="${partition_id}" \
+      "${PYTHON_BIN}" -c \
+        'import torch; print(torch.cuda.get_device_properties(0).multi_processor_count)' \
+      2> "${probe_log}"
+  )"; then
+    sed -n '1,120p' "${probe_log}" >&2 || true
+    die "static MPS ${role} visibility probe failed for PA ${idx}"
+  fi
+  if [[ "${visible_sms}" != "${expected_sms}" ]]; then
+    die "static MPS ${role} on PA ${idx} exposed ${visible_sms} SMs; expected ${expected_sms}"
+  fi
+  case "${role}" in
+    prefill) MPS_PREFILL_VISIBLE_SMS[idx]="${visible_sms}" ;;
+    attention) MPS_ATTENTION_VISIBLE_SMS[idx]="${visible_sms}" ;;
+    *) die "unknown static MPS role: ${role}" ;;
+  esac
+}
+
+write_static_mps_audit() {
+  local idx="$1"
+  local lspart gpu_uuid prefill_partition_id attention_partition_id
+  if ! lspart="$(mps_control "${MPS_PIPE_DIRS[idx]}" lspart 2>&1)"; then
+    die "static MPS lspart failed for PA ${idx}: ${lspart}"
+  fi
+  gpu_uuid="${MPS_GPU_UUIDS[idx]}"
+  [[ "${MPS_PREFILL_PARTITIONS[idx]}" == "${gpu_uuid}/"* ]] \
+    || die "invalid PA ${idx} Prefill partition ID"
+  [[ "${MPS_ATTENTION_PARTITIONS[idx]}" == "${gpu_uuid}/"* ]] \
+    || die "invalid PA ${idx} Attention partition ID"
+  prefill_partition_id="${MPS_PREFILL_PARTITIONS[idx]#"${gpu_uuid}/"}"
+  attention_partition_id="${MPS_ATTENTION_PARTITIONS[idx]#"${gpu_uuid}/"}"
+  [[ "${lspart}" == *"${prefill_partition_id}"* ]] \
+    || die "static MPS lspart omitted PA ${idx} Prefill partition"
+  [[ "${lspart}" == *"${attention_partition_id}"* ]] \
+    || die "static MPS lspart omitted PA ${idx} Attention partition"
+  {
+    printf 'PAP_MPS_MODE=%q\n' "${PAP_MPS_MODE}"
+    printf 'PHYSICAL_GPU_INDEX=%q\n' "${PREFILL_GPUS[idx]}"
+    printf 'GPU_UUID=%q\n' "${MPS_GPU_UUIDS[idx]}"
+    printf 'PREFILL_PARTITION_ID=%q\n' "${MPS_PREFILL_PARTITIONS[idx]}"
+    printf 'ATTENTION_PARTITION_ID=%q\n' \
+      "${MPS_ATTENTION_PARTITIONS[idx]}"
+    printf 'PREFILL_CHUNKS=%q\n' "${PAP_STATIC_PREFILL_CHUNKS}"
+    printf 'ATTENTION_CHUNKS=%q\n' "${PAP_STATIC_ATTENTION_CHUNKS}"
+    printf 'PREFILL_VISIBLE_SMS=%q\n' "${MPS_PREFILL_VISIBLE_SMS[idx]}"
+    printf 'ATTENTION_VISIBLE_SMS=%q\n' \
+      "${MPS_ATTENTION_VISIBLE_SMS[idx]}"
+    printf 'LSPART_OUTPUT=%q\n' "${lspart}"
+  } > "${RUN_ROOT}/mps_static_audit_pa_${idx}.env"
+}
+
 start_mps_for_pa() {
   local idx="$1"
   local gpu="$2"
   local pipe_dir="${MPS_PIPE_BASE_DIR}/pa-${idx}"
   local log_dir="${MPS_LOG_BASE_DIR}/pa-${idx}"
+  local gpu_uuid prefill_partition attention_partition
   mkdir -p "${pipe_dir}" "${log_dir}"
   MPS_PIPE_DIRS[idx]="${pipe_dir}"
   MPS_LOG_DIRS[idx]="${log_dir}"
-  CUDA_VISIBLE_DEVICES="${gpu}" \
-  CUDA_MPS_PIPE_DIRECTORY="${pipe_dir}" \
-  CUDA_MPS_LOG_DIRECTORY="${log_dir}" \
-  nvidia-cuda-mps-control -d
+  if [[ "${PAP_MPS_MODE}" == "static" ]]; then
+    CUDA_VISIBLE_DEVICES="${gpu}" \
+    CUDA_MPS_PIPE_DIRECTORY="${pipe_dir}" \
+    CUDA_MPS_LOG_DIRECTORY="${log_dir}" \
+    nvidia-cuda-mps-control -d -S
+  else
+    CUDA_VISIBLE_DEVICES="${gpu}" \
+    CUDA_MPS_PIPE_DIRECTORY="${pipe_dir}" \
+    CUDA_MPS_LOG_DIRECTORY="${log_dir}" \
+    nvidia-cuda-mps-control -d
+  fi
   MPS_STARTED_DIRS+=("${pipe_dir}")
+  [[ "${PAP_MPS_MODE}" == "static" ]] || return 0
+
+  if ! gpu_uuid="$(
+    nvidia-smi -i "${gpu}" --query-gpu=uuid --format=csv,noheader
+  )"; then
+    die "failed to resolve UUID for PA ${idx} GPU ${gpu}"
+  fi
+  gpu_uuid="${gpu_uuid//[[:space:]]/}"
+  [[ "${gpu_uuid}" == GPU-* ]] \
+    || die "invalid UUID for PA ${idx} GPU ${gpu}: ${gpu_uuid}"
+  MPS_GPU_UUIDS[idx]="${gpu_uuid}"
+
+  prefill_partition="$(
+    create_static_partition \
+      "${pipe_dir}" "${PAP_STATIC_PREFILL_CHUNKS}" "${gpu_uuid}"
+  )" || die "failed to create PA ${idx} Prefill static MPS partition"
+  MPS_PREFILL_PARTITIONS[idx]="${prefill_partition}"
+  attention_partition="$(
+    create_static_partition \
+      "${pipe_dir}" "${PAP_STATIC_ATTENTION_CHUNKS}" "${gpu_uuid}"
+  )" || die "failed to create PA ${idx} Attention static MPS partition"
+  MPS_ATTENTION_PARTITIONS[idx]="${attention_partition}"
+
+  validate_static_partition_visible_sms \
+    "${idx}" prefill "${prefill_partition}" \
+    "${PAP_STATIC_PREFILL_EXPECTED_SMS}"
+  validate_static_partition_visible_sms \
+    "${idx}" attention "${attention_partition}" \
+    "${PAP_STATIC_ATTENTION_EXPECTED_SMS}"
+  write_static_mps_audit "${idx}"
 }
 
 cleanup() {
   local code=$?
   set +e
-  local pid
+  local pid idx pipe_dir partition_id full_partition_id gpu_uuid cleanup_log
+  local cleanup_failed=0
   for pid in "${PIDS[@]:-}"; do
     kill "${pid}" >/dev/null 2>&1 || true
   done
@@ -352,11 +550,53 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     wait "${pid}" >/dev/null 2>&1 || true
   done
-  local pipe_dir
+  if [[ "${PAP_MPS_MODE}" == "static" ]]; then
+    for (( idx=${#MPS_STARTED_DIRS[@]} - 1; idx>=0; idx-- )); do
+      pipe_dir="${MPS_STARTED_DIRS[idx]}"
+      cleanup_log="${RUN_LOG_DIR}/mps_static_cleanup_pa_${idx}.log"
+      : > "${cleanup_log}"
+      gpu_uuid="${MPS_GPU_UUIDS[idx]:-}"
+      full_partition_id="${MPS_ATTENTION_PARTITIONS[idx]:-}"
+      if [[ -n "${full_partition_id}" ]]; then
+        if [[ "${full_partition_id}" != "${gpu_uuid}/"* ]]; then
+          echo "WARNING: invalid Attention partition ID ${full_partition_id}" >&2
+          cleanup_failed=1
+        else
+          partition_id="${full_partition_id#"${gpu_uuid}/"}"
+          if ! mps_control \
+            "${pipe_dir}" "sm_partition rm ${gpu_uuid} ${partition_id}" \
+            >> "${cleanup_log}" 2>&1; then
+            echo "WARNING: failed to remove Attention partition ${full_partition_id}" >&2
+            cleanup_failed=1
+          fi
+        fi
+      fi
+      full_partition_id="${MPS_PREFILL_PARTITIONS[idx]:-}"
+      if [[ -n "${full_partition_id}" ]]; then
+        if [[ "${full_partition_id}" != "${gpu_uuid}/"* ]]; then
+          echo "WARNING: invalid Prefill partition ID ${full_partition_id}" >&2
+          cleanup_failed=1
+        else
+          partition_id="${full_partition_id#"${gpu_uuid}/"}"
+          if ! mps_control \
+            "${pipe_dir}" "sm_partition rm ${gpu_uuid} ${partition_id}" \
+            >> "${cleanup_log}" 2>&1; then
+            echo "WARNING: failed to remove Prefill partition ${full_partition_id}" >&2
+            cleanup_failed=1
+          fi
+        fi
+      fi
+    done
+  fi
   for pipe_dir in "${MPS_STARTED_DIRS[@]:-}"; do
-    timeout 5 bash -c 'echo quit | CUDA_MPS_PIPE_DIRECTORY="$0" nvidia-cuda-mps-control' \
-      "${pipe_dir}" >/dev/null 2>&1 || true
+    if ! mps_control "${pipe_dir}" quit >/dev/null 2>&1; then
+      echo "WARNING: failed to stop MPS daemon at ${pipe_dir}" >&2
+      [[ "${PAP_MPS_MODE}" == "static" ]] && cleanup_failed=1
+    fi
   done
+  if (( code == 0 && cleanup_failed != 0 )); then
+    code=1
+  fi
   exit "${code}"
 }
 trap cleanup EXIT
@@ -471,6 +711,69 @@ for index, path in enumerate(sys.argv[2:]):
 with open(output_path, "w", encoding="utf-8") as output:
     json.dump({"instances": instances}, output, indent=2)
     output.write("\n")
+PY
+}
+
+audit_decode_token_join() {
+  local stats_path="${RUN_ROOT}/attention_fast_path_stats.json"
+  local summary_path="${RUN_ROOT}/decode_token_join_audit.env"
+  PAP_ASYNC_DECODE_TOKEN="${PAP_ASYNC_DECODE_TOKEN}" \
+    "${PYTHON_BIN}" - "${stats_path}" "${summary_path}" <<'PY'
+import json
+import os
+import sys
+
+stats_path, summary_path = sys.argv[1:]
+with open(stats_path, encoding="utf-8") as source:
+    payload = json.load(source)
+
+if "instances" in payload:
+    instances = [entry["stats"] for entry in payload["instances"]]
+else:
+    instances = [payload]
+
+enabled = os.environ["PAP_ASYNC_DECODE_TOKEN"].lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+zero_fields = (
+    "decode_token_pending_tokens",
+    "decode_token_pending_kv",
+    "decode_token_dispatching",
+    "decode_token_mismatches",
+    "decode_token_dispatch_failures",
+)
+errors = []
+for index, stats in enumerate(instances):
+    missing = [
+        field
+        for field in (*zero_fields, "decode_token_received", "decode_token_matched")
+        if field not in stats
+    ]
+    if missing:
+        errors.append(f"attention[{index}] missing fields: {','.join(missing)}")
+        continue
+    for field in zero_fields:
+        if int(stats[field]) != 0:
+            errors.append(f"attention[{index}] {field}={stats[field]}")
+    if enabled:
+        if int(stats["decode_token_received"]) <= 0:
+            errors.append(f"attention[{index}] received no async decode tokens")
+        if int(stats["decode_token_matched"]) <= 0:
+            errors.append(f"attention[{index}] matched no async decode tokens")
+
+with open(summary_path, "w", encoding="utf-8") as output:
+    output.write(f"STATUS={'failed' if errors else 'passed'}\n")
+    output.write(f"ASYNC_DECODE_TOKEN={int(enabled)}\n")
+    output.write(f"ATTENTION_INSTANCE_COUNT={len(instances)}\n")
+    output.write(f"ERROR_COUNT={len(errors)}\n")
+
+if errors:
+    for error in errors:
+        print(f"PAP decode-token join audit: {error}", file=sys.stderr)
+    raise SystemExit(1)
 PY
 }
 
@@ -642,8 +945,17 @@ write_effective_config() {
     printf 'PAP_PREFILL_GPU_MEMORY_UTILIZATION=%q\n' "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}"
     printf 'PAP_PROJECTION_GPU_MEMORY_UTILIZATION=%q\n' "${PAP_PROJECTION_GPU_MEMORY_UTILIZATION}"
     printf 'PAP_BENCH_MPS_PROFILE=%q\n' "${PAP_BENCH_MPS_PROFILE}"
+    printf 'PAP_MPS_MODE=%q\n' "${PAP_MPS_MODE}"
     printf 'PAP_PREFILL_MPS_PERCENT=%q\n' "${PAP_PREFILL_MPS_PERCENT}"
     printf 'PAP_ATTENTION_MPS_PERCENT=%q\n' "${PAP_ATTENTION_MPS_PERCENT}"
+    printf 'PAP_STATIC_PREFILL_CHUNKS=%q\n' \
+      "${PAP_STATIC_PREFILL_CHUNKS}"
+    printf 'PAP_STATIC_ATTENTION_CHUNKS=%q\n' \
+      "${PAP_STATIC_ATTENTION_CHUNKS}"
+    printf 'PAP_STATIC_PREFILL_EXPECTED_SMS=%q\n' \
+      "${PAP_STATIC_PREFILL_EXPECTED_SMS}"
+    printf 'PAP_STATIC_ATTENTION_EXPECTED_SMS=%q\n' \
+      "${PAP_STATIC_ATTENTION_EXPECTED_SMS}"
     printf 'PAP_ENABLE_MPS=%q\n' "${PAP_ENABLE_MPS}"
     printf 'PAP_OFFLOAD_EXEC_TRANSPORT=%q\n' "${PAP_OFFLOAD_EXEC_TRANSPORT}"
     printf 'PAP_OFFLOAD_KV_TRANSPORT=%q\n' "${PAP_OFFLOAD_KV_TRANSPORT}"
@@ -699,6 +1011,16 @@ write_effective_config() {
     printf 'PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS=%q\n' "${PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS}"
     printf 'PAP_DECODE_COMMIT_RETRY_MAX_SECONDS=%q\n' "${PAP_DECODE_COMMIT_RETRY_MAX_SECONDS}"
     printf 'PAP_DECODE_COMMIT_FLUSH_TIMEOUT=%q\n' "${PAP_DECODE_COMMIT_FLUSH_TIMEOUT}"
+    printf 'PAP_ASYNC_DECODE_TOKEN=%q\n' "${PAP_ASYNC_DECODE_TOKEN}"
+    printf 'PAP_DECODE_TOKEN_TIMEOUT=%q\n' "${PAP_DECODE_TOKEN_TIMEOUT}"
+    printf 'PAP_DECODE_TOKEN_QUEUE_SIZE=%q\n' "${PAP_DECODE_TOKEN_QUEUE_SIZE}"
+    printf 'PAP_DECODE_TOKEN_MAX_ATTEMPTS=%q\n' "${PAP_DECODE_TOKEN_MAX_ATTEMPTS}"
+    printf 'PAP_DECODE_TOKEN_RETRY_INITIAL_SECONDS=%q\n' \
+      "${PAP_DECODE_TOKEN_RETRY_INITIAL_SECONDS}"
+    printf 'PAP_DECODE_TOKEN_RETRY_MAX_SECONDS=%q\n' \
+      "${PAP_DECODE_TOKEN_RETRY_MAX_SECONDS}"
+    printf 'PAP_DECODE_TOKEN_FLUSH_TIMEOUT=%q\n' \
+      "${PAP_DECODE_TOKEN_FLUSH_TIMEOUT}"
     printf 'PAP_LEASE_RELEASE_ENDPOINT=%q\n' "${PAP_LEASE_RELEASE_ENDPOINT}"
     printf 'PAP_LEASE_RELEASE_TIMEOUT=%q\n' "${PAP_LEASE_RELEASE_TIMEOUT}"
     printf 'PAP_LEASE_RELEASE_MAX_ATTEMPTS=%q\n' "${PAP_LEASE_RELEASE_MAX_ATTEMPTS}"
@@ -996,7 +1318,7 @@ audit_correctness_logs() {
   local matches_path="${RUN_ROOT}/correctness_audit_matches.log"
   local summary_path="${RUN_ROOT}/correctness_audit.env"
   local pattern
-  pattern='CUDA out of memory|EngineDeadError|Traceback|NIXL.*failed|PAP local fast.*failed|PAP decode commit failed|new_token_ids length must match new_seq_len delta|PAP decode commit flush timed out|PAP decode commit queue full|PAP lease release failed|PAP unified KV append out of range|PAP unified KV state missing|PAP unified paged FlashAttention failed'
+  pattern='CUDA out of memory|EngineDeadError|Traceback|NIXL.*failed|PAP local fast.*failed|PAP decode commit failed|new_token_ids length must match new_seq_len delta|PAP decode commit flush timed out|PAP decode commit queue full|PAP decode-token delivery failed|PAP decode-token queue is full|PAP decode-token join flush timed out|PAP lease release failed|PAP unified KV append out of range|PAP unified KV state missing|PAP unified paged FlashAttention failed'
 
   if rg -n --no-heading "${pattern}" "${RUN_LOG_DIR}" > "${matches_path}"; then
     {
@@ -1165,6 +1487,10 @@ cd "${ROOT_DIR}"
 (( PA_COUNT >= 1 && PROJECTION_COUNT >= 1 )) \
   || die "PAP topology must contain at least one PA and one Projection"
 [[ "${PAP_TP_SIZE}" == "1" ]] || die "This runner is intentionally fixed to PAP_TP_SIZE=1"
+if [[ "${PAP_MPS_MODE}" == "static" ]]; then
+  [[ "${PAP_ENABLE_MPS}" == "1" ]] \
+    || die "static MPS requires PAP_ENABLE_MPS=1"
+fi
 if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" ]]; then
   [[ "${TOPOLOGY}" == "1pa1p" ]] \
     || die "multiturn_north_star requires PAP_TOPOLOGY=1pa1p"
@@ -1186,6 +1512,8 @@ if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" ]]; then
     || die "multiturn_north_star requires prompt token details"
   [[ "${PAP_ENABLE_MPS}" == "1" ]] \
     || die "multiturn_north_star requires PAP_ENABLE_MPS=1"
+  [[ "${PAP_MPS_MODE}" == "dynamic" ]] \
+    || die "multiturn_north_star requires dynamic MPS"
   [[ "${PAP_PREFILL_MPS_PERCENT}" == "70" \
     && "${PAP_ATTENTION_MPS_PERCENT}" == "30" ]] \
     || die "multiturn_north_star requires PAP MPS 70/30"
@@ -1211,14 +1539,25 @@ elif [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" ]]; then
     || die "multiturn_load requires PAP MPS"
   case "${PAP_BENCH_MPS_PROFILE}" in
     baseline_70_30)
+      [[ "${PAP_MPS_MODE}" == "dynamic" ]] \
+        || die "baseline_70_30 requires dynamic MPS"
       [[ "${PAP_PREFILL_MPS_PERCENT}" == "70" \
         && "${PAP_ATTENTION_MPS_PERCENT}" == "30" ]] \
         || die "baseline_70_30 requires PAP MPS 70/30"
       ;;
     diagnostic_80_20)
+      [[ "${PAP_MPS_MODE}" == "dynamic" ]] \
+        || die "diagnostic_80_20 requires dynamic MPS"
       [[ "${PAP_PREFILL_MPS_PERCENT}" == "80" \
         && "${PAP_ATTENTION_MPS_PERCENT}" == "20" ]] \
         || die "diagnostic_80_20 requires PAP MPS 80/20"
+      ;;
+    baseline_static_64_28 | diagnostic_static_64_28)
+      [[ "${PAP_MPS_MODE}" == "static" ]] \
+        || die "static 64/28 profiles require static MPS"
+      [[ "${PAP_STATIC_PREFILL_CHUNKS}" == "16" \
+        && "${PAP_STATIC_ATTENTION_CHUNKS}" == "7" ]] \
+        || die "static 64/28 profiles require 16/7 chunks"
       ;;
     *)
       die "unknown PAP_BENCH_MPS_PROFILE: ${PAP_BENCH_MPS_PROFILE}"
@@ -1321,8 +1660,16 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       "CUDA_VISIBLE_DEVICES=0"
       "CUDA_MPS_PIPE_DIRECTORY=${MPS_PIPE_DIRS[idx]}"
       "CUDA_MPS_LOG_DIRECTORY=${MPS_LOG_DIRS[idx]}"
-      "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=${PAP_ATTENTION_MPS_PERCENT}"
     )
+    if [[ "${PAP_MPS_MODE}" == "static" ]]; then
+      attention_env+=(
+        "CUDA_MPS_SM_PARTITION=${MPS_ATTENTION_PARTITIONS[idx]}"
+      )
+    else
+      attention_env+=(
+        "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=${PAP_ATTENTION_MPS_PERCENT}"
+      )
+    fi
   fi
   echo "Starting PAP Attention ${idx} on GPU ${PREFILL_GPUS[idx]}"
   env \
@@ -1378,8 +1725,16 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       "CUDA_VISIBLE_DEVICES=0"
       "CUDA_MPS_PIPE_DIRECTORY=${MPS_PIPE_DIRS[idx]}"
       "CUDA_MPS_LOG_DIRECTORY=${MPS_LOG_DIRS[idx]}"
-      "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=${PAP_PREFILL_MPS_PERCENT}"
     )
+    if [[ "${PAP_MPS_MODE}" == "static" ]]; then
+      prefill_env+=(
+        "CUDA_MPS_SM_PARTITION=${MPS_PREFILL_PARTITIONS[idx]}"
+      )
+    else
+      prefill_env+=(
+        "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=${PAP_PREFILL_MPS_PERCENT}"
+      )
+    fi
   fi
   echo "Starting PAP Prefill ${idx} on GPU ${PREFILL_GPUS[idx]}"
   env \
@@ -1616,6 +1971,7 @@ esac
 wait_attention_sessions_drained
 capture_proxy_topology_stats
 capture_attention_fast_path_stats
+audit_decode_token_join
 capture_projection_deferred_traces
 audit_xy_routes
 audit_correctness_logs
@@ -1636,6 +1992,7 @@ if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" \
     --passed-gate routing \
     --passed-gate correctness_logs \
     --passed-gate attention_stats_capture \
+    --passed-gate decode_token_join \
     --artifact "session_drain=${RUN_ROOT}/session_drain.env" \
     --artifact "routing=${RUN_ROOT}/routing_audit.json" \
     --artifact "correctness_logs=${RUN_ROOT}/correctness_audit.env" \
@@ -1646,6 +2003,8 @@ if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" \
     --artifact "tracked_index_patch=${RUN_ROOT}/tracked_index.patch" \
     --artifact \
       "attention_stats=${RUN_ROOT}/attention_fast_path_stats.json" \
+    --artifact \
+      "decode_token_join=${RUN_ROOT}/decode_token_join_audit.env" \
     "${deferred_trace_artifact_args[@]}"
 fi
 

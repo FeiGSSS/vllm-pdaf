@@ -215,6 +215,19 @@ cleanup separately. Formal repetitions must share one clean Git commit and
 implementation fingerprint, and the aggregate requires embedded cache,
 routing, lifecycle, and fatal-log gates.
 
+For the five-turn 16K C4 PAP optimization lane, use
+`run_pap_multiturn_load.sh`. On the local R595/L20 host its accepted development
+default is asynchronous decode-token delivery without the Projection step
+barrier plus static MPS `64/28` SM partitions:
+
+```bash
+bash .claude/skills/vllm-pap-benchmark/scripts/run_pap_multiturn_load.sh quick c4
+```
+
+Set `PAP_ASYNC_DECODE_TOKEN=0` to restore the synchronous descriptor-token
+path, or `PAP_LOAD_MPS_PROFILE=baseline_70_30` to restore dynamic MPS. Static
+MPS is host-specific and must pass the recorded visible-SM and cleanup audits.
+
 Refresh PD only through `bootstrap_pd_multiturn_reference.sh`. That script uses
 the unchanged official streaming proxy and validates the current effective
 semantics from P/D token-source metrics: exact local cache boundaries,

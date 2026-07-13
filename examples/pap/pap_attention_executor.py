@@ -46,6 +46,10 @@ from vllm.pap.data_plane import (
     pap_offload_exec_trace_id,
 )
 from vllm.pap.decode_commit_client import DecodeCommitClient as _DecodeCommitClient
+from vllm.pap.deferred_decode_token import (
+    DeferredDecodeCommit,
+    DeferredDecodeTokenCommitter,
+)
 from vllm.pap.deferred_cuda_trace import (
     begin_deferred_cuda_span,
     deferred_cuda_trace_enabled,
@@ -348,6 +352,20 @@ class PAPAttentionLayerEventRequest(BaseModel):
     num_reqs: int | None = None
     num_actual_tokens: int | None = None
     max_seq_len: int | None = None
+
+
+class PAPDecodeTokenRequest(BaseModel):
+    """One sampled token copied asynchronously by the Projection worker."""
+
+    request_id: str
+    new_seq_len: int = Field(ge=1)
+    token_id: int = Field(ge=0)
+
+
+class PAPDecodeTokenBatchRequest(BaseModel):
+    """Sampled tokens produced by one Projection forward."""
+
+    tokens: list[PAPDecodeTokenRequest] = Field(min_length=1)
 
 
 @dataclass
@@ -835,6 +853,55 @@ class PAPAttentionRegistry:
         self._offload_exec_peer_rows_by_source: Counter[str] = Counter()
         self._offload_exec_compute_calls_by_layer: Counter[str] = Counter()
         self._attention_sessions = AttentionSessionStore()
+        self._decode_token_committer = DeferredDecodeTokenCommitter(
+            self._dispatch_deferred_decode_commit
+        )
+
+    @staticmethod
+    def _dispatch_deferred_decode_commit(commit: DeferredDecodeCommit) -> None:
+        _get_commit_client().commit(
+            request_id=commit.commit_request_id or commit.request_id,
+            new_seq_len=commit.new_seq_len,
+            new_token_ids=commit.token_ids,
+            endpoint=commit.endpoint,
+        )
+
+    def record_decode_token(
+        self,
+        *,
+        request_id: str,
+        new_seq_len: int,
+        token_id: int,
+    ) -> str:
+        session_request_id = self.resolve_session_request_id(request_id)
+        if session_request_id is None:
+            raise KeyError(request_id)
+        return self._decode_token_committer.record_token(
+            request_id=session_request_id,
+            new_seq_len=new_seq_len,
+            token_ids=(token_id,),
+        )
+
+    def record_decode_kv_ready(
+        self,
+        *,
+        request_id: str,
+        new_seq_len: int,
+        endpoint: str,
+    ) -> str:
+        commit_request_id = str(request_id)
+        session_request_id = self.resolve_session_request_id(commit_request_id)
+        if session_request_id is None:
+            raise KeyError(request_id)
+        return self._decode_token_committer.record_kv_ready(
+            request_id=session_request_id,
+            new_seq_len=new_seq_len,
+            endpoint=endpoint,
+            commit_request_id=commit_request_id,
+        )
+
+    def decode_token_stats(self) -> dict[str, int]:
+        return self._decode_token_committer.stats()
 
     @staticmethod
     def _resolve_storage_device(
@@ -1122,6 +1189,19 @@ class PAPAttentionRegistry:
         return lease_id, None
 
     def release_session(self, request_id: str) -> bool:
+        request_id = self.resolve_session_request_id(request_id) or str(request_id)
+        deferred_flushed = self._decode_token_committer.flush_request(
+            request_id,
+            timeout_s=float(
+                os.environ.get("PAP_DECODE_TOKEN_FLUSH_TIMEOUT", "5.0")
+            ),
+        )
+        if not deferred_flushed:
+            logger.warning(
+                "PAP decode-token join flush timed out before session release "
+                "request_id=%s",
+                request_id,
+            )
         with self._lock:
             existed, lease_id, prefill_endpoint = self._release_session_locked(
                 request_id
@@ -1132,6 +1212,7 @@ class PAPAttentionRegistry:
                 "PAP decode commit flush timed out before lease release request_id=%s",
                 request_id,
             )
+            self._decode_token_committer.forget_request(request_id)
             return existed
         if lease_id is not None:
             release_endpoint = (
@@ -1148,6 +1229,7 @@ class PAPAttentionRegistry:
                 endpoint=release_endpoint,
             )
         commit_client.forget_request(request_id)
+        self._decode_token_committer.forget_request(request_id)
         return existed
 
     def append_decode_kv_to_unified_prefill_cache(
@@ -1427,6 +1509,19 @@ class PAPAttentionRegistry:
             q_size=registration.q_size,
             kv_size=registration.kv_size,
         )
+        if self.resolve_session_request_id(registration.request_id) is not None:
+            deferred_flushed = self._decode_token_committer.flush_request(
+                registration.request_id,
+                timeout_s=float(
+                    os.environ.get("PAP_DECODE_TOKEN_FLUSH_TIMEOUT", "5.0")
+                ),
+            )
+            if not deferred_flushed:
+                logger.warning(
+                    "PAP decode-token join flush timed out before replaced "
+                    "session request_id=%s",
+                    registration.request_id,
+                )
         with self._lock:
             replaced_lease_id, replaced_prefill_endpoint = (
                 self._replace_existing_session_locked(registration.request_id)
@@ -1473,6 +1568,7 @@ class PAPAttentionRegistry:
                     lease_id=replaced_lease_id,
                     endpoint=release_endpoint,
                 )
+            self._decode_token_committer.forget_request(registration.request_id)
         logger.info(
             "registered PAP attention session request_id=%s "
             "conversation_id=%s kv_keys=%s",
@@ -3563,15 +3659,23 @@ def compute_offload_exec_batch_output(
             new_seq_len = commit_new_seq_lens[index]
             if new_seq_len is None:
                 continue
-            commit_client.commit(
-                request_id=request_id,
-                new_seq_len=new_seq_len,
-                new_token_ids=token_rows[index],
-                endpoint=_prefill_control_endpoint(
-                    session_entries[index].prefill_endpoint,
-                    _DECODE_COMMIT_PATH,
-                ),
+            endpoint = _prefill_control_endpoint(
+                session_entries[index].prefill_endpoint,
+                _DECODE_COMMIT_PATH,
             )
+            if token_rows[index]:
+                commit_client.commit(
+                    request_id=request_id,
+                    new_seq_len=new_seq_len,
+                    new_token_ids=token_rows[index],
+                    endpoint=endpoint,
+                )
+            else:
+                registry.record_decode_kv_ready(
+                    request_id=request_id,
+                    new_seq_len=new_seq_len,
+                    endpoint=endpoint,
+                )
         return unified_output
 
     raise RuntimeError(
@@ -4793,6 +4897,7 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
             "attention_membership_updates": membership_updates,
             "attention_membership_stale_updates": membership_stale_updates,
             **registry.decode_append_fast_path_stats(),
+            **registry.decode_token_stats(),
             **registry.offload_exec_dispatch_stats(),
         }
         stats.update(
@@ -4824,6 +4929,43 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
         registration: PAPAttentionRegistration,
     ) -> dict[str, Any]:
         return registry.register_prefill_kv(registration).__dict__
+
+    def record_one_decode_token(
+        request: PAPDecodeTokenRequest,
+    ) -> dict[str, Any]:
+        try:
+            status = registry.record_decode_token(
+                request_id=request.request_id,
+                new_seq_len=request.new_seq_len,
+                token_id=request.token_id,
+            )
+        except KeyError as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="unknown PAP request",
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {
+            "status": status,
+            "request_id": request.request_id,
+            "new_seq_len": request.new_seq_len,
+        }
+
+    @app.post("/v1/pap/attention/decode-token")
+    async def record_decode_token(request: PAPDecodeTokenRequest) -> dict[str, Any]:
+        return record_one_decode_token(request)
+
+    @app.post("/v1/pap/attention/decode-tokens")
+    async def record_decode_tokens(
+        request: PAPDecodeTokenBatchRequest,
+    ) -> dict[str, Any]:
+        return {
+            "status": "accepted",
+            "results": [
+                record_one_decode_token(token) for token in request.tokens
+            ],
+        }
 
     @app.get("/v1/pap/attention/sessions/{request_id}")
     async def get_session(request_id: str) -> dict[str, Any]:
@@ -5223,7 +5365,7 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
         }
 
     @app.delete("/v1/pap/attention/sessions/{request_id}")
-    async def release_session(request_id: str) -> dict[str, Any]:
+    def release_session(request_id: str) -> dict[str, Any]:
         return {"released": registry.release_session(request_id)}
 
     return app

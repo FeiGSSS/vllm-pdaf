@@ -22,7 +22,7 @@ class LeaseReleaseClient:
         self.timeout_s = (
             float(timeout_s)
             if timeout_s is not None
-            else float(os.environ.get("PAP_LEASE_RELEASE_TIMEOUT", "0.2"))
+            else float(os.environ.get("PAP_LEASE_RELEASE_TIMEOUT", "5.0"))
         )
         self.max_attempts = max(
             1,

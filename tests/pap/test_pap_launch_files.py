@@ -45,6 +45,42 @@ def test_pap_benchmark_runner_captures_attention_fast_path_stats() -> None:
     assert '"attention_active_peer_tracking"' in text
 
 
+def test_pap_benchmark_runner_audits_async_decode_token_join() -> None:
+    runner = (
+        ROOT
+        / ".claude"
+        / "skills"
+        / "vllm-pap-benchmark"
+        / "scripts"
+        / "run_pap_same_pd_workload.sh"
+    )
+    text = runner.read_text(encoding="utf-8")
+
+    assert 'PAP_ASYNC_DECODE_TOKEN="${PAP_ASYNC_DECODE_TOKEN:-1}"' in text
+    assert "PAP_DECODE_TOKEN_TIMEOUT" in text
+    assert "printf 'PAP_ASYNC_DECODE_TOKEN=%q\\n'" in text
+    assert "audit_decode_token_join" in text
+    assert "decode_token_pending_tokens" in text
+    assert "decode_token_pending_kv" in text
+    assert "decode_token_mismatches" in text
+    assert "decode_token_dispatch_failures" in text
+    assert "PAP decode-token delivery failed" in text
+    assert "PAP decode-token join flush timed out" in text
+    assert '--passed-gate decode_token_join' in text
+    assert 'decode_token_join=${RUN_ROOT}/decode_token_join_audit.env' in text
+    assert 'PAP_LEASE_RELEASE_TIMEOUT="${PAP_LEASE_RELEASE_TIMEOUT:-5.0}"' in text
+
+
+def test_pap_nixl_launcher_defaults_async_decode_token_on() -> None:
+    launcher = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
+    text = launcher.read_text(encoding="utf-8")
+
+    assert 'PAP_ASYNC_DECODE_TOKEN="${PAP_ASYNC_DECODE_TOKEN:-1}"' in text
+    assert "export PAP_ASYNC_DECODE_TOKEN" in text
+    assert "export PAP_DECODE_TOKEN_TIMEOUT PAP_DECODE_TOKEN_QUEUE_SIZE" in text
+    assert 'PAP_LEASE_RELEASE_TIMEOUT="${PAP_LEASE_RELEASE_TIMEOUT:-5.0}"' in text
+
+
 def test_pap_runner_captures_projection_deferred_trace_after_drain() -> None:
     runner = (
         ROOT

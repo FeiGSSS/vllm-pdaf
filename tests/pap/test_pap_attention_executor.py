@@ -1,6 +1,8 @@
 import base64
 import hashlib
+import inspect
 import logging
+import time
 from contextlib import suppress
 from pathlib import Path
 from threading import Event, Thread
@@ -1408,6 +1410,249 @@ def test_unified_offload_exec_commit_uses_descriptor_decode_token_ids(
     ]
 
 
+def test_unified_offload_exec_commit_waits_for_async_decode_token(
+    monkeypatch,
+) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_HEAD_DIM", "2")
+
+    commits = []
+
+    class FakeCommitClient:
+        def commit(self, *, request_id, new_seq_len, new_token_ids, endpoint):
+            commits.append((request_id, new_seq_len, tuple(new_token_ids), endpoint))
+
+    monkeypatch.setattr(
+        executor_module,
+        "_get_commit_client",
+        lambda: FakeCommitClient(),
+    )
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-a",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+            q_size=2,
+            kv_size=2,
+            num_heads=1,
+            num_kv_heads=1,
+            head_dim=2,
+        )
+    )
+    registry._unified_paged_kv["req-a"] = {
+        "layer0": PAPUnifiedPagedKVState(
+            kv_cache=torch.zeros((2, 2, 4, 1, 2)),
+            block_ids=(0,),
+            prefix_len=1,
+            seq_len=1,
+            capacity_tokens=4,
+            writable_start_token=1,
+            writable_end_token=4,
+            lease_id="lease-a",
+            block_size=4,
+            num_kv_heads=1,
+            layout="NHD",
+        )
+    }
+    monkeypatch.setattr(
+        registry,
+        "append_decode_kv_to_unified_prefill_cache",
+        lambda **kwargs: 1,
+    )
+    monkeypatch.setattr(
+        executor_module,
+        "_compute_unified_paged_flash_batch",
+        lambda **kwargs: torch.tensor([[2.0, 0.0]]),
+    )
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="layer0",
+        items=(
+            PAPOffloadExecDescriptor(
+                request_id="cmpl-req-a-0",
+                layer_name="layer0",
+                step=2,
+                scale=1.0,
+                decode_token_ids=(),
+            ),
+        ),
+    )
+
+    compute_offload_exec_batch_output(
+        registry=registry,
+        descriptor=descriptor,
+        qkv_batch=torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]]),
+    )
+
+    assert commits == []
+    assert registry.decode_token_stats()["decode_token_pending_kv"] == 1
+    assert (
+        registry.record_decode_token(
+            request_id="cmpl-req-a-0",
+            new_seq_len=2,
+            token_id=42,
+        )
+        == "matched"
+    )
+    assert commits == [
+        (
+            "cmpl-req-a-0",
+            2,
+            (42,),
+            "http://localhost:8100/v1/pap/prefill/decode-commit",
+        )
+    ]
+
+
+def test_decode_token_http_endpoint_is_idempotent_and_rejects_mismatch() -> None:
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-a",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+        )
+    )
+    client = _ASGITestClient(create_app(registry))
+    payload = {"request_id": "req-a", "new_seq_len": 2, "token_id": 42}
+
+    first = client.post("/v1/pap/attention/decode-token", json=payload)
+    duplicate = client.post("/v1/pap/attention/decode-token", json=payload)
+    mismatch = client.post(
+        "/v1/pap/attention/decode-token",
+        json={**payload, "token_id": 43},
+    )
+
+    assert first.status_code == 200
+    assert first.json()["status"] == "pending"
+    assert duplicate.status_code == 200
+    assert duplicate.json()["status"] == "duplicate"
+    assert mismatch.status_code == 409
+
+
+def test_decode_token_batch_http_endpoint_records_one_forward() -> None:
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    for request_id in ("req-a", "req-b"):
+        registry.register_prefill_kv(
+            PAPAttentionRegistration(
+                request_id=request_id,
+                conversation_id="conv",
+                prefill_endpoint="http://localhost:8100",
+            )
+        )
+    client = _ASGITestClient(create_app(registry))
+
+    response = client.post(
+        "/v1/pap/attention/decode-tokens",
+        json={
+            "tokens": [
+                {"request_id": "req-a", "new_seq_len": 2, "token_id": 42},
+                {"request_id": "req-b", "new_seq_len": 3, "token_id": 43},
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "accepted",
+        "results": [
+            {"request_id": "req-a", "new_seq_len": 2, "status": "pending"},
+            {"request_id": "req-b", "new_seq_len": 3, "status": "pending"},
+        ],
+    }
+
+
+def test_attention_release_waits_for_kv_ready_token_but_not_final_token(
+    monkeypatch,
+) -> None:
+    from examples.pap import pap_attention_executor as executor_module
+
+    commits = []
+
+    class FakeCommitClient:
+        def commit(self, **kwargs):
+            commits.append(kwargs)
+
+        def flush_request(self, request_id):
+            return True
+
+        def forget_request(self, request_id):
+            return None
+
+    monkeypatch.setattr(
+        executor_module,
+        "_get_commit_client",
+        lambda: FakeCommitClient(),
+    )
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-a",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+        )
+    )
+    registry.record_decode_kv_ready(
+        request_id="req-a",
+        new_seq_len=2,
+        endpoint="http://localhost:8100/v1/pap/prefill/decode-commit",
+    )
+
+    released: list[bool] = []
+    release_thread = Thread(
+        target=lambda: released.append(registry.release_session("req-a"))
+    )
+    release_thread.start()
+    time.sleep(0.02)
+    assert release_thread.is_alive()
+
+    registry.record_decode_token(
+        request_id="req-a",
+        new_seq_len=2,
+        token_id=42,
+    )
+    release_thread.join(timeout=1.0)
+    assert released == [True]
+    assert len(commits) == 1
+
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-b",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+        )
+    )
+    registry.record_decode_token(
+        request_id="req-b",
+        new_seq_len=2,
+        token_id=99,
+    )
+    assert registry.release_session("req-b")
+    stats = registry.decode_token_stats()
+    assert stats["decode_token_pending_tokens"] == 0
+    assert stats["decode_token_pending_kv"] == 0
+    assert stats["decode_token_only_dropped"] == 1
+
+
+def test_attention_release_endpoint_runs_in_fastapi_threadpool() -> None:
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    app = create_app(registry)
+    release_endpoint = next(
+        route.endpoint
+        for route in app.routes
+        if getattr(route, "path", "")
+        == "/v1/pap/attention/sessions/{request_id}"
+        and "DELETE" in getattr(route, "methods", set())
+    )
+
+    assert not inspect.iscoroutinefunction(release_endpoint)
+
+
 def test_unified_offload_exec_overlap_step_does_not_commit(
     monkeypatch,
 ) -> None:
@@ -2448,6 +2693,16 @@ def test_attention_fast_path_stats_endpoint() -> None:
         "offload_exec_peer_batches_by_source": {},
         "offload_exec_peer_rows_by_source": {},
         "offload_exec_compute_calls_by_layer": {},
+        "decode_token_received": 0,
+        "decode_kv_ready": 0,
+        "decode_token_matched": 0,
+        "decode_token_duplicates": 0,
+        "decode_token_mismatches": 0,
+        "decode_token_dispatch_failures": 0,
+        "decode_token_pending_tokens": 0,
+        "decode_token_pending_kv": 0,
+        "decode_token_dispatching": 0,
+        "decode_token_only_dropped": 0,
     }
 
 

@@ -67,6 +67,7 @@ def _pap_artifacts(tmp_path: Path) -> dict[str, Path]:
         "routing": tmp_path / "routing_audit.json",
         "correctness_logs": tmp_path / "correctness_audit.env",
         "attention_stats": tmp_path / "attention_stats.json",
+        "decode_token_join": tmp_path / "decode_token_join.env",
         "run_metadata": tmp_path / "run_metadata.json",
         "effective_config": tmp_path / "effective_config.env",
         "tracked_worktree_patch": tmp_path / "tracked_worktree.patch",
@@ -92,8 +93,22 @@ def _pap_artifacts(tmp_path: Path) -> dict[str, Path]:
                 "unified_md_fast_key_lookups": 72,
                 "unified_md_fast_key_hits": 70,
                 "unified_md_full_key_scans": 2,
+                "decode_token_received": 72,
+                "decode_token_matched": 71,
+                "decode_token_pending_tokens": 0,
+                "decode_token_pending_kv": 0,
+                "decode_token_dispatching": 0,
+                "decode_token_mismatches": 0,
+                "decode_token_dispatch_failures": 0,
             }
         ),
+        encoding="utf-8",
+    )
+    artifacts["decode_token_join"].write_text(
+        "STATUS=passed\n"
+        "ASYNC_DECODE_TOKEN=1\n"
+        "ATTENTION_INSTANCE_COUNT=1\n"
+        "ERROR_COUNT=0\n",
         encoding="utf-8",
     )
     artifacts["run_metadata"].write_text(
@@ -111,7 +126,7 @@ def _pap_artifacts(tmp_path: Path) -> dict[str, Path]:
     artifacts["tracked_worktree_patch"].write_bytes(b"")
     artifacts["tracked_index_patch"].write_bytes(b"")
     artifacts["effective_config"].write_text(
-        "PAP_UNIFIED_MD_FAST_KEY=1\n",
+        "PAP_UNIFIED_MD_FAST_KEY=1\nPAP_ASYNC_DECODE_TOKEN=1\n",
         encoding="utf-8",
     )
     return artifacts
@@ -166,6 +181,7 @@ def test_finalize_result_records_required_gates_and_artifact_hash(
             "routing",
             "correctness_logs",
             "attention_stats_capture",
+            "decode_token_join",
         ),
         artifacts=artifacts,
     )
@@ -178,6 +194,76 @@ def test_finalize_result_records_required_gates_and_artifact_hash(
             artifacts["session_drain"].read_bytes()
         ).hexdigest(),
     }
+
+
+def test_finalize_result_accepts_decode_token_join_gate(
+    tmp_path: Path,
+) -> None:
+    artifacts = _pap_artifacts(tmp_path)
+
+    result = finalize_result(
+        _client_result(),
+        architecture="pap",
+        passed_gates=(
+            "session_drain",
+            "routing",
+            "correctness_logs",
+            "attention_stats_capture",
+            "decode_token_join",
+        ),
+        artifacts=artifacts,
+    )
+
+    assert result["external_validation"]["gates"]["decode_token_join"] == (
+        "passed"
+    )
+
+
+def test_finalize_result_rejects_nonzero_decode_token_join_state(
+    tmp_path: Path,
+) -> None:
+    artifacts = _pap_artifacts(tmp_path)
+    stats = json.loads(artifacts["attention_stats"].read_text())
+    stats["decode_token_pending_kv"] = 1
+    artifacts["attention_stats"].write_text(json.dumps(stats))
+
+    with pytest.raises(ValueError, match="decode_token_pending_kv"):
+        finalize_result(
+            _client_result(),
+            architecture="pap",
+            passed_gates=(
+                "session_drain",
+                "routing",
+                "correctness_logs",
+                "attention_stats_capture",
+                "decode_token_join",
+            ),
+            artifacts=artifacts,
+        )
+
+
+def test_finalize_result_rejects_decode_token_join_config_mismatch(
+    tmp_path: Path,
+) -> None:
+    artifacts = _pap_artifacts(tmp_path)
+    artifacts["effective_config"].write_text(
+        "PAP_UNIFIED_MD_FAST_KEY=1\nPAP_ASYNC_DECODE_TOKEN=0\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="decode-token join effective config"):
+        finalize_result(
+            _client_result(),
+            architecture="pap",
+            passed_gates=(
+                "session_drain",
+                "routing",
+                "correctness_logs",
+                "attention_stats_capture",
+                "decode_token_join",
+            ),
+            artifacts=artifacts,
+        )
 
 
 def test_finalize_result_fails_closed_on_missing_gate() -> None:
@@ -207,6 +293,7 @@ def test_finalize_result_rejects_metadata_fast_key_mismatch(
                 "routing",
                 "correctness_logs",
                 "attention_stats_capture",
+                "decode_token_join",
             ),
             artifacts=artifacts,
         )
@@ -231,6 +318,7 @@ def test_finalize_result_rejects_fast_key_without_runtime_evidence(
                 "routing",
                 "correctness_logs",
                 "attention_stats_capture",
+                "decode_token_join",
             ),
             artifacts=artifacts,
         )
@@ -241,7 +329,7 @@ def test_finalize_result_rejects_metadata_fast_key_config_mismatch(
 ) -> None:
     artifacts = _pap_artifacts(tmp_path)
     artifacts["effective_config"].write_text(
-        "PAP_UNIFIED_MD_FAST_KEY=0\n",
+        "PAP_UNIFIED_MD_FAST_KEY=0\nPAP_ASYNC_DECODE_TOKEN=1\n",
         encoding="utf-8",
     )
 
@@ -254,6 +342,7 @@ def test_finalize_result_rejects_metadata_fast_key_config_mismatch(
                 "routing",
                 "correctness_logs",
                 "attention_stats_capture",
+                "decode_token_join",
             ),
             artifacts=artifacts,
         )
@@ -273,7 +362,7 @@ def test_finalize_result_accepts_disabled_metadata_fast_key(
     stats["unified_md_fast_key_hits"] = 0
     artifacts["attention_stats"].write_text(json.dumps(stats))
     artifacts["effective_config"].write_text(
-        "PAP_UNIFIED_MD_FAST_KEY=0\n",
+        "PAP_UNIFIED_MD_FAST_KEY=0\nPAP_ASYNC_DECODE_TOKEN=1\n",
         encoding="utf-8",
     )
 
@@ -285,6 +374,7 @@ def test_finalize_result_accepts_disabled_metadata_fast_key(
             "routing",
             "correctness_logs",
             "attention_stats_capture",
+            "decode_token_join",
         ),
         artifacts=artifacts,
     )
@@ -307,6 +397,13 @@ def test_finalize_result_aggregates_multi_instance_attention_stats(
             }
         )
     )
+    artifacts["decode_token_join"].write_text(
+        "STATUS=passed\n"
+        "ASYNC_DECODE_TOKEN=1\n"
+        "ATTENTION_INSTANCE_COUNT=2\n"
+        "ERROR_COUNT=0\n",
+        encoding="utf-8",
+    )
     _enable_deferred_trace(artifacts)
 
     finalized = finalize_result(
@@ -317,6 +414,7 @@ def test_finalize_result_aggregates_multi_instance_attention_stats(
             "routing",
             "correctness_logs",
             "attention_stats_capture",
+            "decode_token_join",
         ),
         artifacts=artifacts,
     )
@@ -338,6 +436,7 @@ def test_finalize_result_accepts_complete_deferred_cuda_trace(
             "routing",
             "correctness_logs",
             "attention_stats_capture",
+            "decode_token_join",
         ),
         artifacts=artifacts,
     )
@@ -368,6 +467,7 @@ def test_finalize_result_rejects_incomplete_deferred_cuda_trace(
                 "routing",
                 "correctness_logs",
                 "attention_stats_capture",
+                "decode_token_join",
             ),
             artifacts=artifacts,
         )
@@ -391,6 +491,7 @@ def test_finalize_result_rejects_missing_deferred_cuda_span(
                 "routing",
                 "correctness_logs",
                 "attention_stats_capture",
+                "decode_token_join",
             ),
             artifacts=artifacts,
         )
@@ -415,6 +516,7 @@ def test_finalize_result_rejects_deferred_cuda_span_count_mismatch(
                 "routing",
                 "correctness_logs",
                 "attention_stats_capture",
+                "decode_token_join",
             ),
             artifacts=artifacts,
         )
@@ -430,6 +532,7 @@ def test_finalize_result_requires_matching_architecture() -> None:
                 "routing",
                 "correctness_logs",
                 "attention_stats_capture",
+                "decode_token_join",
             ),
             artifacts={},
         )
@@ -453,6 +556,7 @@ def test_finalize_result_rejects_failed_correctness_artifact(
                 "routing",
                 "correctness_logs",
                 "attention_stats_capture",
+                "decode_token_join",
             ),
             artifacts=artifacts,
         )

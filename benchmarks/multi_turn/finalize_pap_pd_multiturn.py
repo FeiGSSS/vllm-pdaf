@@ -26,6 +26,7 @@ REQUIRED_GATES = {
             "routing",
             "correctness_logs",
             "attention_stats_capture",
+            "decode_token_join",
         }
     ),
     "pd": frozenset({"pd_reuse_metrics", "correctness_logs"}),
@@ -37,6 +38,7 @@ REQUIRED_ARTIFACTS = {
             "routing",
             "correctness_logs",
             "attention_stats",
+            "decode_token_join",
             "run_metadata",
             "effective_config",
             "tracked_worktree_patch",
@@ -57,6 +59,14 @@ REQUIRED_ARTIFACTS = {
 }
 PD_REUSE_STATUS = "official_streaming_one_way_metrics_passed"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_FALSE_VALUES = frozenset({"0", "false", "no", "off"})
+_DECODE_TOKEN_JOIN_ZERO_FIELDS = (
+    "decode_token_pending_tokens",
+    "decode_token_pending_kv",
+    "decode_token_dispatching",
+    "decode_token_mismatches",
+    "decode_token_dispatch_failures",
+)
 _DEFERRED_TRACE_SCOPE = "attention_process_critical_chain"
 _DEFERRED_TRACE_SPAN_COUNTERS = {
     "qkv_ready_wait_gpu_ms": ("offload_exec_peer_batches",),
@@ -224,6 +234,70 @@ def _validate_correctness_artifact(path: Path, *, require_strict: bool) -> None:
         raise ValueError(f"correctness log audit was not strict: {values}")
 
 
+def _decode_token_stat(
+    stats: Mapping[str, Any],
+    field: str,
+    *,
+    instance: int,
+) -> int:
+    value = stats.get(field)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(
+            f"decode-token join instance {instance} has invalid {field}"
+        )
+    return value
+
+
+def _validate_decode_token_join(
+    path: Path,
+    *,
+    effective_config: Mapping[str, str],
+    attention: Mapping[str, Any],
+) -> None:
+    values = _env_values(path)
+    if values.get("STATUS") != "passed" or values.get("ERROR_COUNT") != "0":
+        raise ValueError(f"decode-token join audit did not pass: {values}")
+
+    raw_enabled = effective_config.get("PAP_ASYNC_DECODE_TOKEN")
+    if raw_enabled is None:
+        raise ValueError("PAP_ASYNC_DECODE_TOKEN is missing from effective config")
+    normalized = raw_enabled.lower()
+    if normalized in _TRUE_VALUES:
+        enabled = True
+    elif normalized in _FALSE_VALUES:
+        enabled = False
+    else:
+        raise ValueError(
+            f"invalid PAP_ASYNC_DECODE_TOKEN value: {raw_enabled}"
+        )
+    if values.get("ASYNC_DECODE_TOKEN") != str(int(enabled)):
+        raise ValueError("decode-token join effective config mismatch")
+
+    stats_payloads = _attention_stat_payloads(attention)
+    if values.get("ATTENTION_INSTANCE_COUNT") != str(len(stats_payloads)):
+        raise ValueError("decode-token join Attention instance count mismatch")
+    for instance, stats in enumerate(stats_payloads):
+        for field in _DECODE_TOKEN_JOIN_ZERO_FIELDS:
+            if _decode_token_stat(stats, field, instance=instance) != 0:
+                raise ValueError(
+                    f"decode-token join instance {instance} has nonzero {field}"
+                )
+        received = _decode_token_stat(
+            stats,
+            "decode_token_received",
+            instance=instance,
+        )
+        matched = _decode_token_stat(
+            stats,
+            "decode_token_matched",
+            instance=instance,
+        )
+        if enabled and (received <= 0 or matched <= 0):
+            raise ValueError(
+                f"decode-token join instance {instance} has no async matches"
+            )
+
+
 def _validate_pap_evidence(
     result: Mapping[str, object],
     artifacts: Mapping[str, Path],
@@ -271,6 +345,11 @@ def _validate_pap_evidence(
     if full_key_scans <= 0:
         raise ValueError("metadata cache recorded no full-key scans")
     effective_config = _env_values(artifacts["effective_config"])
+    _validate_decode_token_join(
+        artifacts["decode_token_join"],
+        effective_config=effective_config,
+        attention=attention,
+    )
     expected_fast_key = "1" if fast_key_enabled else "0"
     if effective_config.get("PAP_UNIFIED_MD_FAST_KEY") != expected_fast_key:
         raise ValueError(

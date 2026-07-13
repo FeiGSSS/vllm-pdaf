@@ -1041,6 +1041,14 @@ class _LeaseReleaseResponse:
         return self.body
 
 
+def test_lease_release_client_default_timeout_covers_commit_lock_wait(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("PAP_LEASE_RELEASE_TIMEOUT", raising=False)
+
+    assert LeaseReleaseClient().timeout_s == 5.0
+
+
 def test_lease_release_client_retries_until_ack(monkeypatch):
     attempts = []
 

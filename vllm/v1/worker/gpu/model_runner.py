@@ -21,7 +21,7 @@ import functools
 import gc
 import os
 import time
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from copy import deepcopy
 from typing import Any, NamedTuple
 
@@ -49,6 +49,10 @@ from vllm.pap.deferred_cuda_trace import (
     deferred_cuda_trace_enabled,
     deferred_trace_role,
     record_deferred_host_duration,
+)
+from vllm.pap.decode_token_client import (
+    DecodeTokenClient,
+    async_decode_token_enabled,
 )
 from vllm.pap.peer_activity import (
     PAPProjectionPeerActivity,
@@ -137,6 +141,60 @@ def _pap_projection_critical_trace_enabled() -> bool:
         and os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower()
         in ("1", "true", "yes", "on")
     )
+
+
+def _pap_input_token_ids_for_forward(
+    input_ids: torch.Tensor,
+    *,
+    num_actual_tokens: int,
+    pap_enabled: bool,
+) -> tuple[int, ...]:
+    if not pap_enabled or async_decode_token_enabled():
+        return ()
+    return tuple(
+        int(token_id)
+        for token_id in input_ids.detach()
+        .reshape(-1)[: int(num_actual_tokens)]
+        .to(device="cpu", dtype=torch.long)
+        .tolist()
+    )
+
+
+def _publish_pap_sampled_tokens(
+    output: ModelRunnerOutput,
+    *,
+    client: DecodeTokenClient,
+    session_request_id_by_request: dict[str, str],
+    attention_endpoint_by_request: dict[str, str],
+    next_seq_len_by_request: dict[str, int],
+) -> None:
+    notifications: list[dict[str, object]] = []
+    for request_id, token_ids in zip(output.req_ids, output.sampled_token_ids):
+        if not token_ids:
+            continue
+        session_request_id = session_request_id_by_request.get(request_id)
+        attention_endpoint = attention_endpoint_by_request.get(request_id)
+        next_seq_len = next_seq_len_by_request.get(request_id)
+        if (
+            session_request_id is None
+            or attention_endpoint is None
+            or next_seq_len is None
+        ):
+            continue
+        if len(token_ids) != 1:
+            raise RuntimeError(
+                "PAP async decode-token handoff requires one sampled token per "
+                f"request, got {len(token_ids)} for {request_id}"
+            )
+        notifications.append(
+            {
+                "request_id": session_request_id,
+                "new_seq_len": next_seq_len,
+                "token_id": int(token_ids[0]),
+                "endpoint": attention_endpoint,
+            }
+        )
+    client.publish_batch(notifications)
 
 
 class GPUModelRunner(LoRAModelRunnerMixin):
@@ -278,6 +336,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self.pap_import_prefill_kv_to_attention_by_req_id: set[str] = set()
         self.pap_attention_kv_installed_by_req_id: set[str] = set()
         self.pap_offload_exec_activity_tracker: PAPProjectionPeerActivity | None = None
+        self.pap_decode_token_client: DecodeTokenClient | None = None
 
         # For transferring state from execute_model to subsequent sample_tokens call.
         self.execute_model_state: ExecuteModelState | None = None
@@ -1003,16 +1062,15 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             deferred_cuda_trace_enabled()
             and deferred_trace_role() == "projection"
             and pap_enabled
+            and not async_decode_token_enabled()
         )
         token_boundary_start = (
             time.perf_counter() if trace_token_boundary else 0.0
         )
-        pap_input_token_ids = tuple(
-            int(token_id)
-            for token_id in input_batch.input_ids.detach()
-            .reshape(-1)[: int(input_batch.num_tokens)]
-            .to(device="cpu", dtype=torch.long)
-            .tolist()
+        pap_input_token_ids = _pap_input_token_ids_for_forward(
+            input_batch.input_ids,
+            num_actual_tokens=input_batch.num_tokens,
+            pap_enabled=pap_enabled,
         )
         if trace_token_boundary:
             record_deferred_host_duration(
@@ -1068,6 +1126,51 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 str(req_id) for req_id in finished_request_ids
             ),
         }
+
+    def _pap_sampled_token_callback(
+        self,
+        input_batch: InputBatch,
+    ) -> Callable[[ModelRunnerOutput], None] | None:
+        if (
+            not async_decode_token_enabled()
+            or not self._pap_enabled_for_batch(input_batch)
+        ):
+            return None
+        request_ids = tuple(input_batch.req_ids[: input_batch.num_reqs])
+        session_request_id_by_request = {
+            request_id: self.pap_prefill_kv_handle_by_req_id[request_id]
+            for request_id in request_ids
+            if request_id in self.pap_prefill_kv_handle_by_req_id
+        }
+        attention_endpoint_by_request = {
+            request_id: self.pap_attention_endpoint_by_req_id[request_id]
+            for request_id in request_ids
+            if request_id in self.pap_attention_endpoint_by_req_id
+        }
+        next_seq_len_by_request = {
+            request_id: int(seq_len) + 1
+            for request_id, seq_len in zip(
+                request_ids,
+                input_batch.seq_lens_cpu_upper_bound[
+                    : input_batch.num_reqs
+                ].tolist(),
+            )
+        }
+        if not any(
+            request_id in session_request_id_by_request
+            and request_id in attention_endpoint_by_request
+            for request_id in request_ids
+        ):
+            return None
+        if self.pap_decode_token_client is None:
+            self.pap_decode_token_client = DecodeTokenClient()
+        return functools.partial(
+            _publish_pap_sampled_tokens,
+            client=self.pap_decode_token_client,
+            session_request_id_by_request=session_request_id_by_request,
+            attention_endpoint_by_request=attention_endpoint_by_request,
+            next_seq_len_by_request=next_seq_len_by_request,
+        )
 
     def finish_requests(self, scheduler_output: SchedulerOutput) -> None:
         finished_req_ids = scheduler_output.finished_req_ids
@@ -1880,6 +1983,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             num_sampled_tokens=num_sampled,
             main_stream=self.main_stream,
             copy_stream=self.output_copy_stream,
+            output_ready_callback=self._pap_sampled_token_callback(input_batch),
         )
 
         mm_inputs: tuple[list[torch.Tensor], torch.Tensor] | None = None
@@ -2001,6 +2105,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         """Release GPU tensors (model weights, KV caches, workspace) so that
         memory is reclaimable when running in the same process."""
         torch.accelerator.synchronize()
+        if self.pap_decode_token_client is not None:
+            self.pap_decode_token_client.shutdown()
         if hasattr(self, "kv_caches"):
             self.kv_caches.clear()
         if hasattr(self, "attn_groups"):
