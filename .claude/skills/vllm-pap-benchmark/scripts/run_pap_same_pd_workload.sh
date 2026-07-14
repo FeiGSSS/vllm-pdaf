@@ -220,6 +220,7 @@ PAP_ASYNC_DECODE_TOKEN="${PAP_ASYNC_DECODE_TOKEN:-1}"
 PAP_PROJECTION_SYNC_ONLY_BARRIER="${PAP_PROJECTION_SYNC_ONLY_BARRIER:-0}"
 PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC:-1}"
 PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE:-0}"
+PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE:-sealed_manifest}"
 PAP_RUNTIME_CUDA_CONTEXT_AUDIT="${PAP_RUNTIME_CUDA_CONTEXT_AUDIT:-0}"
 PAP_PREFILL_TORCH_PROFILE="${PAP_PREFILL_TORCH_PROFILE:-0}"
 PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS="${PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS:-32}"
@@ -274,6 +275,13 @@ if ! [[ "${PAP_PREFILL_KV_ASYNC}" =~ ^[01]$ \
   echo "PAP Prefill KV async/profile flags must be 0 or 1" >&2
   exit 2
 fi
+case "${PAP_KV_HANDOFF_MODE}" in
+  layer_descriptor | sealed_manifest) ;;
+  *)
+    echo "Unsupported PAP_KV_HANDOFF_MODE=${PAP_KV_HANDOFF_MODE}" >&2
+    exit 2
+    ;;
+esac
 if ! [[ "${PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS}" =~ ^[1-9][0-9]*$ \
   && "${PAP_PREFILL_TORCH_PROFILE_FLUSH_TIMEOUT}" =~ ^[1-9][0-9]*$ ]]; then
   echo "PAP Prefill torch-profile limits must be positive integers" >&2
@@ -311,6 +319,7 @@ export PAP_ASYNC_DECODE_TOKEN
 export PAP_PROJECTION_SYNC_ONLY_BARRIER
 export PAP_PREFILL_KV_ASYNC
 export PAP_PREFILL_IPC_PROFILE
+export PAP_KV_HANDOFF_MODE
 export PAP_RUNTIME_CUDA_CONTEXT_AUDIT
 export PAP_PREFILL_TORCH_PROFILE
 export PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS
@@ -1152,6 +1161,7 @@ write_effective_config() {
       "${PAP_PROJECTION_SYNC_ONLY_BARRIER}"
     printf 'PAP_PREFILL_KV_ASYNC=%q\n' "${PAP_PREFILL_KV_ASYNC}"
     printf 'PAP_PREFILL_IPC_PROFILE=%q\n' "${PAP_PREFILL_IPC_PROFILE}"
+    printf 'PAP_KV_HANDOFF_MODE=%q\n' "${PAP_KV_HANDOFF_MODE}"
     printf 'PAP_RUNTIME_CUDA_CONTEXT_AUDIT=%q\n' \
       "${PAP_RUNTIME_CUDA_CONTEXT_AUDIT}"
     printf 'PAP_PREFILL_TORCH_PROFILE=%q\n' \
@@ -1276,6 +1286,7 @@ write_run_metadata() {
   PAP_LOCAL_FAST_SLOT_COUNT="${PAP_LOCAL_FAST_SLOT_COUNT}" \
   PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC}" \
   PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
+  PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE}" \
   PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}" \
   PAP_ATTENTION_DISPATCH_MODE="${PAP_ATTENTION_DISPATCH_MODE}" \
   PAP_ATTENTION_COMBINE_WAIT_US="${PAP_ATTENTION_COMBINE_WAIT_US}" \
@@ -1328,6 +1339,7 @@ metadata = {
     "local_fast_slot_count": int(os.environ["PAP_LOCAL_FAST_SLOT_COUNT"]),
     "prefill_kv_async": os.environ["PAP_PREFILL_KV_ASYNC"] == "1",
     "prefill_ipc_profile": os.environ["PAP_PREFILL_IPC_PROFILE"] == "1",
+    "kv_handoff_mode": os.environ["PAP_KV_HANDOFF_MODE"],
     "decode_slot_plan_cache_limit": int(
         os.environ["PAP_DECODE_SLOT_PLAN_CACHE_LIMIT"]
     ),
@@ -1848,6 +1860,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_LOCAL_FAST_SLEEP_AFTER_US="${PAP_LOCAL_FAST_SLEEP_AFTER_US}" \
     PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC}" \
     PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
+    PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE}" \
     PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}" \
     PAP_ATTENTION_DISPATCH_MODE="${PAP_ATTENTION_DISPATCH_MODE}" \
     PAP_ATTENTION_DISPATCH_QUEUE_SIZE="${PAP_ATTENTION_DISPATCH_QUEUE_SIZE}" \
@@ -1929,6 +1942,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_UNIFIED_KV="${PAP_UNIFIED_KV}" \
     PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC}" \
     PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
+    PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE}" \
     PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}" \
     PAP_PREFIX_CACHE_AUDIT="${PAP_PREFIX_CACHE_AUDIT}" \
     PAP_RUNTIME_CUDA_CONTEXT_AUDIT_PATH="$(
@@ -2121,6 +2135,7 @@ case "${PAP_BENCH_CLIENT_MODE}" in
       --unified-md-fast-key "${PAP_UNIFIED_MD_FAST_KEY}" \
       --prefill-kv-async "${PAP_PREFILL_KV_ASYNC}" \
       --prefill-ipc-profile "${PAP_PREFILL_IPC_PROFILE}" \
+      --kv-handoff-mode "${PAP_KV_HANDOFF_MODE}" \
       --document-tokens "${INPUT_LEN}" \
       --append-tokens 120 \
       --output-tokens "${OUTPUT_LEN}" \
@@ -2154,6 +2169,7 @@ case "${PAP_BENCH_CLIENT_MODE}" in
       --unified-md-fast-key "${PAP_UNIFIED_MD_FAST_KEY}" \
       --prefill-kv-async "${PAP_PREFILL_KV_ASYNC}" \
       --prefill-ipc-profile "${PAP_PREFILL_IPC_PROFILE}" \
+      --kv-handoff-mode "${PAP_KV_HANDOFF_MODE}" \
       --document-tokens "${INPUT_LEN}" \
       --append-tokens 120 \
       --output-tokens "${OUTPUT_LEN}" \

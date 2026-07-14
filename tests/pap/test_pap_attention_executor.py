@@ -41,6 +41,8 @@ from vllm.pap.data_plane import (
     PAPOffloadExecDescriptor,
     PAPOffloadKVIPCDescriptor,
     PAPOffloadKVPagedIPCDescriptor,
+    PAPPrefillKVCacheCatalogDescriptor,
+    PAPPrefillKVSessionManifest,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -119,6 +121,176 @@ def _install_unified_activation(
             prefix_len=seq_len,
             writable_start_token=seq_len,
             writable_end_token=len(block_ids) * block_size,
+        )
+
+
+def _catalog_descriptor(
+    *,
+    layer_name: str,
+    shape: tuple[int, ...],
+) -> PAPPrefillKVCacheCatalogDescriptor:
+    return PAPPrefillKVCacheCatalogDescriptor(
+        catalog_id="prefill-test",
+        layer_name=layer_name,
+        block_size=4,
+        num_kv_heads=1,
+        layout="NHD",
+        kv_cache=PAPCudaIPCTensorHandle(
+            dtype="float32",
+            shape=shape,
+            ipc_handle={"gpu-test": ("storage",)},
+        ),
+    )
+
+
+def test_sealed_prefill_manifest_installs_all_layers_atomically() -> None:
+    import torch
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-sealed",
+            conversation_id="conv-sealed",
+            prefill_endpoint="http://localhost:8100",
+            block_size=4,
+            max_seq_len=32,
+        )
+    )
+    shape = (8, 2, 4, 1, 2)
+    for layer_name in ("layer0", "layer1"):
+        assert registry.register_prefill_kv_catalog(
+            descriptor=_catalog_descriptor(
+                layer_name=layer_name,
+                shape=shape,
+            ),
+            kv_cache=torch.zeros(shape),
+        )
+
+    manifest = PAPPrefillKVSessionManifest(
+        request_id="req-sealed",
+        catalog_id="prefill-test",
+        prefix_len=5,
+        block_ids=(1, 2, 3),
+        block_size=4,
+        expected_layer_count=2,
+        lease_id="lease-sealed",
+        leased_block_ids=(1, 2, 3),
+        lease_capacity_tokens=9,
+        writable_start_token=5,
+        writable_end_token=9,
+    )
+    assert registry.install_prefill_kv_session_manifest(
+        manifest=manifest,
+        ready_event=None,
+    ) == 5
+
+    states = registry.get_unified_paged_states(
+        session_request_ids=("req-sealed",),
+        layer_name="layer0",
+    )
+    assert states is not None
+    assert states[0].block_ids == (1, 2, 3)
+    assert states[0].seq_len == 5
+    assert states[0].writable_start_token == 5
+    layer1 = registry.get_unified_paged_states(
+        session_request_ids=("req-sealed",),
+        layer_name="layer1",
+    )
+    assert layer1 is not None
+    assert layer1[0].block_ids == states[0].block_ids
+
+
+def test_sealed_prefill_manifest_updates_before_claim_and_freezes_after() -> None:
+    import torch
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-chunked",
+            conversation_id="conv-chunked",
+            prefill_endpoint="http://localhost:8100",
+            block_size=4,
+            max_seq_len=32,
+        )
+    )
+    shape = (8, 2, 4, 1, 2)
+    registry.register_prefill_kv_catalog(
+        descriptor=_catalog_descriptor(layer_name="layer0", shape=shape),
+        kv_cache=torch.zeros(shape),
+    )
+
+    def manifest(prefix_len: int) -> PAPPrefillKVSessionManifest:
+        return PAPPrefillKVSessionManifest(
+            request_id="req-chunked",
+            catalog_id="prefill-test",
+            prefix_len=prefix_len,
+            block_ids=(1, 2, 3),
+            block_size=4,
+            expected_layer_count=1,
+            lease_id="lease-chunked",
+            leased_block_ids=(1, 2, 3),
+            lease_capacity_tokens=10,
+            writable_start_token=prefix_len,
+            writable_end_token=10,
+        )
+
+    registry.install_prefill_kv_session_manifest(
+        manifest=manifest(5),
+        ready_event=None,
+    )
+    registry.install_prefill_kv_session_manifest(
+        manifest=manifest(7),
+        ready_event=None,
+    )
+    states = registry.get_unified_paged_states(
+        session_request_ids=("req-chunked",),
+        layer_name="layer0",
+    )
+    assert states is not None
+    assert states[0].prefix_len == 7
+
+    with pytest.raises(RuntimeError, match="after Decode claimed"):
+        registry.install_prefill_kv_session_manifest(
+            manifest=manifest(8),
+            ready_event=None,
+        )
+
+
+def test_sealed_prefill_manifest_requires_complete_catalog() -> None:
+    import torch
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-incomplete",
+            conversation_id="conv-incomplete",
+            prefill_endpoint="http://localhost:8100",
+            block_size=4,
+        )
+    )
+    shape = (8, 2, 4, 1, 2)
+    registry.register_prefill_kv_catalog(
+        descriptor=_catalog_descriptor(layer_name="layer0", shape=shape),
+        kv_cache=torch.zeros(shape),
+    )
+    manifest = PAPPrefillKVSessionManifest(
+        request_id="req-incomplete",
+        catalog_id="prefill-test",
+        prefix_len=5,
+        block_ids=(1, 2),
+        block_size=4,
+        expected_layer_count=2,
+        lease_id="lease-incomplete",
+        leased_block_ids=(1, 2),
+        lease_capacity_tokens=8,
+        writable_start_token=5,
+        writable_end_token=8,
+    )
+
+    with pytest.raises(RuntimeError, match="layer count mismatch"):
+        registry.install_prefill_kv_session_manifest(
+            manifest=manifest,
+            ready_event=None,
         )
 
 

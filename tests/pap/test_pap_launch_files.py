@@ -137,8 +137,11 @@ def test_pap_runner_defaults_to_safe_async_prefill_kv_import() -> None:
 
     assert 'PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC:-1}"' in text
     assert 'PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE:-0}"' in text
+    assert 'PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE:-sealed_manifest}"' in text
     assert "printf 'PAP_PREFILL_KV_ASYNC=%q\\n'" in text
+    assert "printf 'PAP_KV_HANDOFF_MODE=%q\\n'" in text
     assert text.count('PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC}"') >= 3
+    assert text.count('PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE}"') >= 3
     assert text.count('--prefill-kv-async "${PAP_PREFILL_KV_ASYNC}"') == 2
     assert text.count('--prefill-ipc-profile "${PAP_PREFILL_IPC_PROFILE}"') == 2
 

@@ -38,9 +38,12 @@ from vllm.pap.attention_session import (
     AttentionSessionStore,
 )
 from vllm.pap.data_plane import (
+    PAPCudaIPCTensorHandle,
     PAPOffloadExecBatchDescriptor,
     PAPOffloadKVIPCDescriptor,
     PAPOffloadKVPagedIPCDescriptor,
+    PAPPrefillKVCacheCatalogDescriptor,
+    PAPPrefillKVSessionManifest,
     build_local_fast_offload_exec_transport,
     build_nixl_mailbox_offload_exec_transport,
     pap_offload_exec_trace_id,
@@ -517,6 +520,18 @@ class PAPPrefillPagedKV:
     layout: str
 
 
+@dataclass(frozen=True)
+class PAPPrefillKVCacheCatalogEntry:
+    """Opened process-lifetime Prefill KV-cache backing for one layer."""
+
+    catalog_id: str
+    layer_name: str
+    kv_cache: torch.Tensor
+    block_size: int
+    num_kv_heads: int
+    layout: str
+
+
 @dataclass
 class PAPUnifiedPagedKVState:
     """Unified Prefill-owned KV state for unified-KV mode.
@@ -829,6 +844,12 @@ class PAPAttentionRegistry:
             str, dict[str, list[tuple[torch.Tensor, torch.Tensor]]]
         ] = {}
         self._prefill_paged_kv: dict[str, dict[str, PAPPrefillPagedKV]] = {}
+        self._prefill_kv_catalog_id: str | None = None
+        self._prefill_kv_catalog: dict[str, PAPPrefillKVCacheCatalogEntry] = {}
+        self._session_manifest_prefix_lens: dict[str, int] = {}
+        self._session_manifest_events: dict[str, Any] = {}
+        self._session_manifest_event_waited: set[str] = set()
+        self._session_manifest_claimed: set[str] = set()
         self._prefill_readiness: dict[str, dict[str, PAPPrefillLayerReadiness]] = {}
         self._prefill_async_queue: Queue[PAPPrefillAsyncImport] = Queue()
         self._prefill_async_worker_started = False
@@ -1143,6 +1164,10 @@ class PAPAttentionRegistry:
         self._decode_kv.pop(request_id, None)
         self._prefill_kv.pop(request_id, None)
         self._prefill_paged_kv.pop(request_id, None)
+        self._session_manifest_prefix_lens.pop(request_id, None)
+        self._session_manifest_events.pop(request_id, None)
+        self._session_manifest_event_waited.discard(request_id)
+        self._session_manifest_claimed.discard(request_id)
         self._prefill_readiness.pop(request_id, None)
         self._unified_paged_kv.pop(request_id, None)
         self._session_epochs.pop(request_id, None)
@@ -1180,6 +1205,10 @@ class PAPAttentionRegistry:
         self._decode_kv.pop(request_id, None)
         self._prefill_kv.pop(request_id, None)
         self._prefill_paged_kv.pop(request_id, None)
+        self._session_manifest_prefix_lens.pop(request_id, None)
+        self._session_manifest_events.pop(request_id, None)
+        self._session_manifest_event_waited.discard(request_id)
+        self._session_manifest_claimed.discard(request_id)
         self._prefill_readiness.pop(request_id, None)
         self._unified_paged_kv.pop(request_id, None)
         self._session_epochs.pop(request_id, None)
@@ -1570,6 +1599,7 @@ class PAPAttentionRegistry:
         layer_name: str,
     ) -> list[PAPUnifiedPagedKVState] | None:
         """Return per-row unified states if every row has unified state."""
+        events_to_wait: list[tuple[Any, torch.device]] = []
         with self._lock:
             deadline = time.monotonic() + float(
                 os.environ.get("PAP_ATTENTION_PREFILL_WAIT_TIMEOUT", "5.0")
@@ -1604,7 +1634,20 @@ class PAPAttentionRegistry:
                         break
                     states.append(state)
                 if not pending_request_id:
-                    return states
+                    for session_request_id, state in zip(
+                        session_request_ids,
+                        states,
+                    ):
+                        if session_request_id not in self._session_manifest_prefix_lens:
+                            continue
+                        self._session_manifest_claimed.add(session_request_id)
+                        if session_request_id in self._session_manifest_event_waited:
+                            continue
+                        event = self._session_manifest_events.get(session_request_id)
+                        self._session_manifest_event_waited.add(session_request_id)
+                        if event is not None:
+                            events_to_wait.append((event, state.kv_cache.device))
+                    break
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise RuntimeError(
@@ -1615,6 +1658,182 @@ class PAPAttentionRegistry:
                         f"required_prefix_len={pending_prefix_len}"
                     )
                 self._prefill_condition.wait(timeout=remaining)
+        for event, device in events_to_wait:
+            if device.type != "cuda":
+                continue
+            with torch.cuda.device(device):
+                torch.cuda.current_stream(device).wait_event(event)
+        return states
+
+    def register_prefill_kv_catalog(
+        self,
+        *,
+        descriptor: PAPPrefillKVCacheCatalogDescriptor,
+        kv_cache: torch.Tensor,
+    ) -> bool:
+        """Register one immutable process-lifetime Prefill KV-cache layer."""
+        entry = PAPPrefillKVCacheCatalogEntry(
+            catalog_id=descriptor.catalog_id,
+            layer_name=descriptor.layer_name,
+            kv_cache=kv_cache.detach(),
+            block_size=descriptor.block_size,
+            num_kv_heads=descriptor.num_kv_heads,
+            layout=descriptor.layout,
+        )
+        with self._lock:
+            catalog_id = self._prefill_kv_catalog_id
+            if catalog_id is None:
+                self._prefill_kv_catalog_id = descriptor.catalog_id
+            elif catalog_id != descriptor.catalog_id:
+                raise RuntimeError(
+                    "PAP Prefill KV catalog epoch changed while Attention is "
+                    f"running current={catalog_id} incoming={descriptor.catalog_id}"
+                )
+            existing = self._prefill_kv_catalog.get(descriptor.layer_name)
+            if existing is not None:
+                if (
+                    existing.catalog_id != entry.catalog_id
+                    or existing.block_size != entry.block_size
+                    or existing.num_kv_heads != entry.num_kv_heads
+                    or existing.layout != entry.layout
+                    or tuple(existing.kv_cache.shape) != tuple(entry.kv_cache.shape)
+                    or existing.kv_cache.dtype != entry.kv_cache.dtype
+                ):
+                    raise RuntimeError(
+                        "PAP Prefill KV catalog layer changed after registration "
+                        f"layer={descriptor.layer_name}"
+                    )
+                return False
+            self._prefill_kv_catalog[descriptor.layer_name] = entry
+            self._prefill_condition.notify_all()
+        logger.info(
+            "PAP Prefill KV catalog registered catalog_id=%s layer=%s shape=%s",
+            descriptor.catalog_id,
+            descriptor.layer_name,
+            tuple(kv_cache.shape),
+        )
+        return True
+
+    def install_prefill_kv_session_manifest(
+        self,
+        *,
+        manifest: PAPPrefillKVSessionManifest,
+        ready_event: Any | None,
+    ) -> int:
+        """Atomically publish one complete request-level KV layout snapshot."""
+        with self._lock:
+            session_request_id = self._resolve_session_request_id_locked(
+                manifest.request_id
+            )
+            if session_request_id is None:
+                raise KeyError(manifest.request_id)
+            if self._prefill_kv_catalog_id != manifest.catalog_id:
+                raise RuntimeError(
+                    "PAP Prefill KV manifest catalog mismatch "
+                    f"current={self._prefill_kv_catalog_id} "
+                    f"incoming={manifest.catalog_id}"
+                )
+            if len(self._prefill_kv_catalog) != manifest.expected_layer_count:
+                raise RuntimeError(
+                    "PAP Prefill KV manifest layer count mismatch "
+                    f"catalog={len(self._prefill_kv_catalog)} "
+                    f"expected={manifest.expected_layer_count}"
+                )
+            previous_prefix_len = self._session_manifest_prefix_lens.get(
+                session_request_id
+            )
+            if session_request_id in self._session_manifest_claimed:
+                if previous_prefix_len == manifest.prefix_len:
+                    return manifest.prefix_len
+                raise RuntimeError(
+                    "PAP Prefill KV manifest changed after Decode claimed layout "
+                    f"request_id={session_request_id} "
+                    f"current={previous_prefix_len} incoming={manifest.prefix_len}"
+                )
+            if (
+                previous_prefix_len is not None
+                and manifest.prefix_len < previous_prefix_len
+            ):
+                raise RuntimeError(
+                    "PAP Prefill KV manifest prefix regressed "
+                    f"request_id={session_request_id} "
+                    f"current={previous_prefix_len} incoming={manifest.prefix_len}"
+                )
+            existing_lease = self._session_lease_ids.get(session_request_id)
+            if existing_lease not in (None, manifest.lease_id):
+                raise RuntimeError(
+                    "PAP Prefill KV manifest lease changed "
+                    f"request_id={session_request_id}"
+                )
+            self._session_lease_ids[session_request_id] = manifest.lease_id
+            self._session_leased_block_ids[session_request_id] = (
+                manifest.leased_block_ids
+            )
+            self._session_lease_capacity_tokens[session_request_id] = (
+                manifest.lease_capacity_tokens
+            )
+
+            layer_states: dict[str, PAPUnifiedPagedKVState] = {}
+            for layer_name, entry in sorted(self._prefill_kv_catalog.items()):
+                if entry.block_size != manifest.block_size:
+                    raise RuntimeError(
+                        "PAP Prefill KV manifest block size differs from catalog "
+                        f"layer={layer_name}"
+                    )
+                state = PAPUnifiedPagedKVState(
+                    kv_cache=entry.kv_cache,
+                    block_ids=manifest.block_ids,
+                    prefix_len=manifest.prefix_len,
+                    seq_len=manifest.prefix_len,
+                    capacity_tokens=manifest.lease_capacity_tokens,
+                    writable_start_token=manifest.writable_start_token,
+                    writable_end_token=manifest.writable_end_token,
+                    lease_id=manifest.lease_id,
+                    block_size=entry.block_size,
+                    num_kv_heads=entry.num_kv_heads,
+                    layout=entry.layout,
+                )
+                self._record_unified_slot_topology_locked(
+                    session_request_id=session_request_id,
+                    layer_name=layer_name,
+                    state=state,
+                )
+                layer_states[layer_name] = state
+            activation = self._unified_slot_activations[session_request_id]
+            activation.expected_layers = frozenset(layer_states)
+            activation.complete = True
+            self._unified_paged_kv[session_request_id] = layer_states
+
+            session = self._sessions[session_request_id]
+            session.prefix_len = manifest.prefix_len
+            session.seq_len = max(int(session.seq_len), manifest.prefix_len)
+            session.block_ids = manifest.block_ids
+            readiness_by_layer = self._prefill_readiness.setdefault(
+                session_request_id,
+                {},
+            )
+            readiness_by_layer.clear()
+            for layer_name in layer_states:
+                self._mark_prefill_ready_locked(
+                    session_request_id=session_request_id,
+                    layer_name=layer_name,
+                )
+            self._session_manifest_prefix_lens[session_request_id] = (
+                manifest.prefix_len
+            )
+            self._session_manifest_events[session_request_id] = ready_event
+            self._session_manifest_event_waited.discard(session_request_id)
+            self._prefill_condition.notify_all()
+        logger.info(
+            "PAP Prefill KV manifest installed request_id=%s catalog_id=%s "
+            "prefix_len=%d layers=%d blocks=%d",
+            session_request_id,
+            manifest.catalog_id,
+            manifest.prefix_len,
+            manifest.expected_layer_count,
+            len(manifest.block_ids),
+        )
+        return manifest.prefix_len
 
     def register_prefill_kv(
         self, registration: PAPAttentionRegistration
@@ -2827,20 +3046,38 @@ def open_ipc_paged_kv_cache(
     descriptor: PAPOffloadKVPagedIPCDescriptor,
 ) -> torch.Tensor:
     """Open CUDA IPC paged KV backing tensor described by OFFLOAD_KV metadata."""
+    return open_ipc_tensor_handle(descriptor.kv_cache)
+
+
+def open_ipc_tensor_handle(handle: PAPCudaIPCTensorHandle) -> torch.Tensor:
+    """Open one CUDA IPC tensor handle on the current physical GPU."""
     from torch.multiprocessing.reductions import rebuild_cuda_tensor
 
     device_index = torch.accelerator.current_device_index()
     props = torch.cuda.get_device_properties(device_index)
     physical_gpu_id = str(props.uuid)
-    handle = descriptor.kv_cache.ipc_handle
-    if physical_gpu_id not in handle:
+    ipc_handle = handle.ipc_handle
+    if physical_gpu_id not in ipc_handle:
         raise ValueError(
             f"IPC handle not found for GPU UUID {physical_gpu_id}. "
-            f"Available UUIDs: {list(handle.keys())}"
+            f"Available UUIDs: {list(ipc_handle.keys())}"
         )
-    args = list(handle[physical_gpu_id])
+    args = list(ipc_handle[physical_gpu_id])
     args[6] = device_index
     return rebuild_cuda_tensor(*args)
+
+
+def open_prefill_manifest_event(
+    manifest: PAPPrefillKVSessionManifest,
+) -> Any | None:
+    """Open an interprocess CUDA event carried by a Prefill manifest."""
+    if manifest.ready_event_handle is None:
+        return None
+    device_index = torch.accelerator.current_device_index()
+    return torch.cuda.Event.from_ipc_handle(
+        device_index,
+        manifest.ready_event_handle,
+    )
 
 
 def compute_batch_binary_attention_response(
@@ -3163,6 +3400,38 @@ def compute_binary_attention_response(
                 "request_id": str(metadata["request_id"]),
                 "layer_name": str(metadata["layer_name"]),
                 "seq_len": seq_len,
+            },
+            {},
+        )
+    if metadata.get("command") == "register_prefill_kv_catalog":
+        descriptor = PAPPrefillKVCacheCatalogDescriptor.from_dict(
+            metadata["descriptor"]
+        )
+        kv_cache = open_ipc_tensor_handle(descriptor.kv_cache)
+        installed = registry.register_prefill_kv_catalog(
+            descriptor=descriptor,
+            kv_cache=kv_cache,
+        )
+        return serialize_tensor_bundle(
+            {
+                "status": "registered" if installed else "existing",
+                "catalog_id": descriptor.catalog_id,
+                "layer_name": descriptor.layer_name,
+            },
+            {},
+        )
+    if metadata.get("command") == "publish_prefill_kv_manifest":
+        manifest = PAPPrefillKVSessionManifest.from_dict(metadata["manifest"])
+        prefix_len = registry.install_prefill_kv_session_manifest(
+            manifest=manifest,
+            ready_event=open_prefill_manifest_event(manifest),
+        )
+        return serialize_tensor_bundle(
+            {
+                "status": "ready",
+                "request_id": manifest.request_id,
+                "catalog_id": manifest.catalog_id,
+                "prefix_len": prefix_len,
             },
             {},
         )

@@ -7,6 +7,8 @@ from vllm.pap.data_plane import (
     PAPOffloadExecBatchDescriptor,
     PAPOffloadExecDescriptor,
     PAPOffloadKVPagedIPCDescriptor,
+    PAPPrefillKVCacheCatalogDescriptor,
+    PAPPrefillKVSessionManifest,
     PAPTensorTransport,
     _offload_exec_batch_descriptor_from_metadata,
     _offload_exec_batch_descriptor_to_metadata,
@@ -436,6 +438,57 @@ def test_offload_kv_paged_ipc_descriptor_roundtrip() -> None:
     assert restored.transport is PAPTensorTransport.CUDA_IPC
 
 
+def test_prefill_kv_catalog_descriptor_roundtrip() -> None:
+    descriptor = PAPPrefillKVCacheCatalogDescriptor(
+        catalog_id="prefill-42-r0",
+        layer_name="model.layers.0.self_attn.attn",
+        block_size=16,
+        num_kv_heads=8,
+        layout="NHD",
+        kv_cache=_paged_ipc_handle(),
+    )
+
+    assert PAPPrefillKVCacheCatalogDescriptor.from_dict(
+        descriptor.to_dict()
+    ) == descriptor
+
+
+def test_prefill_kv_session_manifest_roundtrip() -> None:
+    manifest = PAPPrefillKVSessionManifest(
+        request_id="req-1",
+        catalog_id="prefill-42-r0",
+        prefix_len=16,
+        block_ids=(2, 3, 4),
+        block_size=16,
+        expected_layer_count=2,
+        lease_id="lease-1",
+        leased_block_ids=(2, 3, 4),
+        lease_capacity_tokens=48,
+        writable_start_token=16,
+        writable_end_token=48,
+        ready_event_handle=b"cuda-event-handle",
+    )
+
+    assert PAPPrefillKVSessionManifest.from_dict(manifest.to_dict()) == manifest
+
+
+def test_prefill_kv_session_manifest_rejects_shared_writable_prefix() -> None:
+    with pytest.raises(ValueError, match="writable_start_token"):
+        PAPPrefillKVSessionManifest(
+            request_id="req-1",
+            catalog_id="prefill-42-r0",
+            prefix_len=16,
+            block_ids=(2, 3, 4),
+            block_size=16,
+            expected_layer_count=2,
+            lease_id="lease-1",
+            leased_block_ids=(2, 3, 4),
+            lease_capacity_tokens=48,
+            writable_start_token=15,
+            writable_end_token=48,
+        )
+
+
 def _paged_ipc_handle() -> PAPCudaIPCTensorHandle:
     return PAPCudaIPCTensorHandle(
         dtype="float16",
@@ -673,3 +726,91 @@ def test_import_prefill_paged_kv_unified_reuses_active_lease(
     assert descriptors[1]["leased_block_ids"] == [0, 1]
     assert descriptors[1]["lease_capacity_tokens"] == 8
     assert descriptors[1]["writable_end_token"] == 8
+
+
+def test_sealed_prefill_kv_handoff_posts_catalog_and_manifest_without_sync(
+    monkeypatch,
+) -> None:
+    from vllm.pap.kv_lease import reset_global_kv_lease_registry
+    from vllm.pap.remote_attention import (
+        deserialize_tensor_bundle,
+        serialize_tensor_bundle,
+    )
+    from vllm.pap.shadow_attention import (
+        publish_prefill_kv_session_manifest,
+        register_prefill_kv_catalog,
+    )
+
+    reset_global_kv_lease_registry()
+    monkeypatch.setenv("PAP_UNIFIED_KV", "1")
+    monkeypatch.setenv("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "3")
+    posted_metadata = []
+
+    def fake_reduce_tensor(tensor):
+        return object(), ("storage", 1, 2, 3, 4, 5, 0)
+
+    def fail_if_synchronized(*tensors):
+        raise AssertionError("sealed handoff must not synchronize the CUDA stream")
+
+    def fake_post_bytes_tcp(*, endpoint, payload, timeout):
+        assert endpoint == "127.0.0.1:8300"
+        metadata, tensors = deserialize_tensor_bundle(payload)
+        assert tensors == {}
+        posted_metadata.append(metadata)
+        if metadata["command"] == "register_prefill_kv_catalog":
+            return serialize_tensor_bundle({"status": "registered"}, {})
+        assert metadata["command"] == "publish_prefill_kv_manifest"
+        return serialize_tensor_bundle(
+            {"status": "ready", "prefix_len": 5},
+            {},
+        )
+
+    monkeypatch.setattr(
+        "vllm.pap.shadow_attention.reduce_tensor",
+        fake_reduce_tensor,
+    )
+    monkeypatch.setattr(
+        "vllm.pap.shadow_attention._maybe_synchronize_cuda_ipc_tensors",
+        fail_if_synchronized,
+    )
+    monkeypatch.setattr(
+        "vllm.pap.shadow_attention._post_bytes_tcp",
+        fake_post_bytes_tcp,
+    )
+
+    try:
+        kv_cache = torch.zeros(2, 2, 4, 1, 2)
+        assert register_prefill_kv_catalog(
+            catalog_id="prefill-test",
+            layer_name="layer0",
+            kv_cache=kv_cache,
+            block_size=4,
+            num_kv_heads=1,
+            layout="NHD",
+            tcp_endpoint="127.0.0.1:8300",
+        ) == "registered"
+        assert publish_prefill_kv_session_manifest(
+            request_id="cmpl-sealed",
+            catalog_id="prefill-test",
+            block_ids=(0, 1),
+            prefix_len=5,
+            block_size=4,
+            expected_layer_count=1,
+            ready_event_handle=b"event-handle",
+            tcp_endpoint="127.0.0.1:8300",
+        ) == 5
+    finally:
+        reset_global_kv_lease_registry()
+
+    assert [item["command"] for item in posted_metadata] == [
+        "register_prefill_kv_catalog",
+        "publish_prefill_kv_manifest",
+    ]
+    catalog = posted_metadata[0]["descriptor"]
+    assert catalog["catalog_id"] == "prefill-test"
+    assert catalog["layer_name"] == "layer0"
+    manifest = posted_metadata[1]["manifest"]
+    assert manifest["prefix_len"] == 5
+    assert manifest["writable_start_token"] == 5
+    assert manifest["writable_end_token"] == 8
+    assert manifest["ready_event_handle"] is not None

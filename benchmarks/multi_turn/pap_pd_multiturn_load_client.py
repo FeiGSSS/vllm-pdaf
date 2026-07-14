@@ -64,6 +64,7 @@ class LoadConfig:
     unified_md_fast_key: bool
     prefill_kv_async: bool = False
     prefill_ipc_profile: bool = False
+    kv_handoff_mode: str = "layer_descriptor"
     document_tokens: int = DEFAULT_DOCUMENT_TOKENS
     append_tokens: int = DEFAULT_APPEND_TOKENS
     output_tokens: int = DEFAULT_OUTPUT_TOKENS
@@ -112,6 +113,8 @@ def validate_config(config: LoadConfig) -> None:
 
     if config.architecture not in ("pap", "pd"):
         raise ValueError(f"unsupported architecture: {config.architecture}")
+    if config.kv_handoff_mode not in ("layer_descriptor", "sealed_manifest"):
+        raise ValueError(f"unsupported KV handoff mode: {config.kv_handoff_mode}")
     if config.rounds < 2:
         raise ValueError("multi-turn load requires at least two rounds")
     if config.active_conversations <= 0:
@@ -807,6 +810,7 @@ async def execute_load(
         "unified_md_fast_key": config.unified_md_fast_key,
         "prefill_kv_async": config.prefill_kv_async,
         "prefill_ipc_profile": config.prefill_ipc_profile,
+        "kv_handoff_mode": config.kv_handoff_mode,
     }
     starts = [float(observation["request_started_at"]) for observation in observations]
     eof_times = [float(observation["eof_at"]) for observation in observations]
@@ -969,6 +973,11 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--prefill-kv-async", choices=("0", "1"), default="0")
     parser.add_argument("--prefill-ipc-profile", choices=("0", "1"), default="0")
+    parser.add_argument(
+        "--kv-handoff-mode",
+        choices=("layer_descriptor", "sealed_manifest"),
+        default="layer_descriptor",
+    )
     parser.add_argument("--document-tokens", type=int, default=16000)
     parser.add_argument("--append-tokens", type=int, default=120)
     parser.add_argument("--output-tokens", type=int, default=256)
@@ -1003,6 +1012,7 @@ def _config_from_args(args: argparse.Namespace) -> LoadConfig:
         unified_md_fast_key=args.unified_md_fast_key == "1",
         prefill_kv_async=args.prefill_kv_async == "1",
         prefill_ipc_profile=args.prefill_ipc_profile == "1",
+        kv_handoff_mode=args.kv_handoff_mode,
         document_tokens=args.document_tokens,
         append_tokens=args.append_tokens,
         output_tokens=args.output_tokens,

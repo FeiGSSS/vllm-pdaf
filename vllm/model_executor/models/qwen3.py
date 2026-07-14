@@ -115,6 +115,14 @@ def _pap_unified_kv_export_enabled() -> bool:
     return _pap_env_enabled("PAP_UNIFIED_KV")
 
 
+def _pap_kv_handoff_mode() -> str:
+    mode = os.environ.get("PAP_KV_HANDOFF_MODE", "layer_descriptor").lower()
+    mode = mode.replace("-", "_")
+    if mode not in {"layer_descriptor", "sealed_manifest"}:
+        raise ValueError(f"unsupported PAP_KV_HANDOFF_MODE: {mode}")
+    return mode
+
+
 def _pap_unified_kv_export_decode_capacity_tokens() -> int:
     raw = os.environ.get("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "")
     if not raw:
@@ -922,6 +930,8 @@ class Qwen3Attention(nn.Module):
         prefix: str = "",
         attn_type: str = AttentionType.DECODER,
         dual_chunk_attention_config: dict[str, Any] | None = None,
+        is_last_layer: bool = False,
+        num_hidden_layers: int | None = None,
     ) -> None:
         super().__init__()
         self.hidden_size = hidden_size
@@ -992,7 +1002,16 @@ class Qwen3Attention(nn.Module):
         )
         self.q_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
-        self._pap_imported_prefill_kv: set[tuple[str, str, int, str, bool]] = set()
+        self._pap_imported_prefill_kv: set[tuple[Any, ...]] = set()
+        self._pap_is_last_layer = bool(is_last_layer)
+        self._pap_expected_layer_count = int(num_hidden_layers or 0)
+        self._pap_prefill_kv_catalog_id = (
+            os.environ.get("PAP_KV_CATALOG_ID") or f"prefill-{os.getpid()}"
+        )
+        self._pap_registered_kv_catalog_endpoints: set[str] = set()
+        self._pap_manifest_ready_events: dict[
+            tuple[str, int], torch.cuda.Event
+        ] = {}
         self._pap_last_projection_timeline: dict[str, Any] | None = None
 
     def forward(
@@ -1980,10 +1999,21 @@ class Qwen3Attention(nn.Module):
         additional_kwargs = forward_context.additional_kwargs or {}
         if not additional_kwargs.get("pap_enabled"):
             return
+        finished_request_ids = tuple(
+            str(request_id)
+            for request_id in additional_kwargs.get("pap_finished_request_ids") or ()
+        )
         _pap_prune_imported_prefill_kv(
             self._pap_imported_prefill_kv,
-            additional_kwargs.get("pap_finished_request_ids") or (),
+            finished_request_ids,
         )
+        if finished_request_ids and self._pap_manifest_ready_events:
+            finished = set(finished_request_ids)
+            self._pap_manifest_ready_events = {
+                key: event
+                for key, event in self._pap_manifest_ready_events.items()
+                if key[0] not in finished
+            }
 
         request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
         num_reqs = int(additional_kwargs.get("pap_num_reqs") or len(request_ids))
@@ -2048,6 +2078,22 @@ class Qwen3Attention(nn.Module):
         )
         if offload_kv_transport is not PAPTensorTransport.CUDA_IPC:
             raise RuntimeError("PAP paged Prefill KV export requires cuda_ipc")
+        if _pap_kv_handoff_mode() == "sealed_manifest":
+            self._publish_pap_prefill_kv_manifests(
+                request_ids=request_ids,
+                num_reqs=num_reqs,
+                num_scheduled_tokens=num_scheduled_tokens,
+                prefill_kv_handle_by_request=prefill_kv_handle_by_request,
+                import_request_ids=import_prefill_kv_to_attention_by_request,
+                tcp_endpoint_by_request=tcp_endpoint_by_request,
+                default_tcp_endpoint=default_tcp_endpoint,
+                seq_lens=seq_lens,
+                block_table=block_table,
+                kv_cache=kv_cache,
+                block_size=int(block_size),
+                layout=get_kv_cache_layout(),
+            )
+            return
         seq_lens_start = time.perf_counter() if profile_ipc else 0.0
         seq_lens_cpu = seq_lens.detach().to(device="cpu", dtype=torch.long)
         seq_lens_cpu_ms = (
@@ -2153,6 +2199,141 @@ class Qwen3Attention(nn.Module):
                 async_import,
             )
 
+    def _publish_pap_prefill_kv_manifests(
+        self,
+        *,
+        request_ids: tuple[Any, ...],
+        num_reqs: int,
+        num_scheduled_tokens: tuple[int, ...],
+        prefill_kv_handle_by_request: dict[Any, Any],
+        import_request_ids: set[Any],
+        tcp_endpoint_by_request: dict[Any, Any],
+        default_tcp_endpoint: Any,
+        seq_lens: torch.Tensor,
+        block_table: torch.Tensor,
+        kv_cache: torch.Tensor,
+        block_size: int,
+        layout: str,
+    ) -> None:
+        """Register static KV backing and publish request-level layouts."""
+
+        from vllm.pap.shadow_attention import (
+            publish_prefill_kv_session_manifest,
+            register_prefill_kv_catalog,
+            select_attention_endpoint_for_request,
+        )
+
+        eligible: list[tuple[int, str, str, str]] = []
+        for req_index in range(num_reqs):
+            if num_scheduled_tokens[req_index] <= 0:
+                continue
+            request_id = str(request_ids[req_index])
+            if not is_pap_request_id(request_id):
+                continue
+            if request_id not in import_request_ids:
+                continue
+            prefill_kv_handle = prefill_kv_handle_by_request.get(request_id)
+            if not prefill_kv_handle:
+                continue
+            tcp_endpoint = select_attention_endpoint_for_request(
+                request_id,
+                default_endpoint=default_tcp_endpoint,
+                endpoint_by_request=tcp_endpoint_by_request,
+            )
+            tcp_endpoint = str(_pap_endpoint_for_tp_rank(tcp_endpoint))
+            eligible.append(
+                (req_index, request_id, str(prefill_kv_handle), tcp_endpoint)
+            )
+        if not eligible:
+            return
+
+        for tcp_endpoint in dict.fromkeys(item[3] for item in eligible):
+            if tcp_endpoint in self._pap_registered_kv_catalog_endpoints:
+                continue
+            status = register_prefill_kv_catalog(
+                catalog_id=self._pap_prefill_kv_catalog_id,
+                layer_name=self.attn.layer_name,
+                kv_cache=kv_cache,
+                block_size=block_size,
+                num_kv_heads=self.num_kv_heads,
+                layout=layout,
+                tcp_endpoint=tcp_endpoint,
+            )
+            self._pap_registered_kv_catalog_endpoints.add(tcp_endpoint)
+            logger.info(
+                "PAP Prefill KV catalog %s catalog_id=%s layer=%s endpoint=%s",
+                status,
+                self._pap_prefill_kv_catalog_id,
+                self.attn.layer_name,
+                tcp_endpoint,
+            )
+        if not self._pap_is_last_layer:
+            return
+        if self._pap_expected_layer_count <= 0:
+            raise RuntimeError("sealed Prefill KV handoff requires model layer count")
+        if kv_cache.device.type != "cuda":
+            raise RuntimeError("sealed Prefill KV handoff requires CUDA KV cache")
+
+        ready_event = torch.cuda.Event(interprocess=True)
+        ready_event.record(torch.cuda.current_stream(kv_cache.device))
+        ready_event_handle = ready_event.ipc_handle()
+        seq_lens_cpu = seq_lens.detach().to(device="cpu", dtype=torch.long)
+        published = 0
+        for req_index, request_id, prefill_kv_handle, tcp_endpoint in eligible:
+            prefix_len = int(seq_lens_cpu[req_index].item())
+            if prefix_len <= 1:
+                continue
+            import_key = (
+                request_id,
+                "sealed_manifest",
+                prefix_len,
+                prefill_kv_handle,
+                tcp_endpoint,
+            )
+            if import_key in self._pap_imported_prefill_kv:
+                continue
+            block_seq_len = prefix_len
+            unified_capacity_tokens = (
+                _pap_unified_kv_export_decode_capacity_tokens()
+            )
+            if unified_capacity_tokens > 0:
+                block_seq_len += unified_capacity_tokens
+            block_ids = _pap_block_ids_from_block_table(
+                block_table=block_table[req_index : req_index + 1],
+                seq_len=block_seq_len,
+                block_size=block_size,
+            )
+            publish_prefill_kv_session_manifest(
+                request_id=request_id,
+                catalog_id=self._pap_prefill_kv_catalog_id,
+                block_ids=block_ids,
+                prefix_len=prefix_len,
+                block_size=block_size,
+                expected_layer_count=self._pap_expected_layer_count,
+                ready_event_handle=ready_event_handle,
+                tcp_endpoint=tcp_endpoint,
+            )
+            self._pap_imported_prefill_kv.add(import_key)
+            self._pap_manifest_ready_events[(request_id, prefix_len)] = ready_event
+            published += 1
+        if published:
+            logger.info(
+                "PAP Prefill KV manifests published catalog_id=%s requests=%d "
+                "prefix_min=%d prefix_max=%d",
+                self._pap_prefill_kv_catalog_id,
+                published,
+                min(
+                    key[1]
+                    for key in self._pap_manifest_ready_events
+                    if key[0] in {item[1] for item in eligible}
+                ),
+                max(
+                    key[1]
+                    for key in self._pap_manifest_ready_events
+                    if key[0] in {item[1] for item in eligible}
+                ),
+            )
+
 
 class Qwen3DecoderLayer(nn.Module):
     def __init__(
@@ -2193,6 +2374,8 @@ class Qwen3DecoderLayer(nn.Module):
             prefix=f"{prefix}.self_attn",
             attn_type=attn_type,
             dual_chunk_attention_config=dual_chunk_attention_config,
+            is_last_layer=self.layer_index == config.num_hidden_layers - 1,
+            num_hidden_layers=config.num_hidden_layers,
         )
         self.mlp = Qwen3MLP(
             hidden_size=self.hidden_size,
