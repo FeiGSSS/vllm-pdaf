@@ -40,6 +40,8 @@ class NorthStarConfig:
     offload_exec_transport: str
     direct_mailbox_output: bool
     unified_md_fast_key: bool
+    prefill_kv_async: bool = False
+    prefill_ipc_profile: bool = False
     document_tokens: int = DEFAULT_DOCUMENT_TOKENS
     append_tokens: int = DEFAULT_APPEND_TOKENS
     output_tokens: int = DEFAULT_OUTPUT_TOKENS
@@ -646,6 +648,8 @@ def execute_two_turn(
         "offload_exec_transport": config.offload_exec_transport,
         "direct_mailbox_output": config.direct_mailbox_output,
         "unified_md_fast_key": config.unified_md_fast_key,
+        "prefill_kv_async": config.prefill_kv_async,
+        "prefill_ipc_profile": config.prefill_ipc_profile,
     }
     return {
         "schema_version": 2,
@@ -734,6 +738,8 @@ def parse_args() -> argparse.Namespace:
         choices=("0", "1"),
         required=True,
     )
+    parser.add_argument("--prefill-kv-async", choices=("0", "1"), default="0")
+    parser.add_argument("--prefill-ipc-profile", choices=("0", "1"), default="0")
     parser.add_argument("--document-tokens", type=int, default=16000)
     parser.add_argument("--append-tokens", type=int, default=120)
     parser.add_argument("--output-tokens", type=int, default=256)
@@ -762,6 +768,8 @@ def _config_from_args(args: argparse.Namespace) -> NorthStarConfig:
         offload_exec_transport=args.offload_exec_transport,
         direct_mailbox_output=args.direct_mailbox_output == "1",
         unified_md_fast_key=args.unified_md_fast_key == "1",
+        prefill_kv_async=args.prefill_kv_async == "1",
+        prefill_ipc_profile=args.prefill_ipc_profile == "1",
         document_tokens=args.document_tokens,
         append_tokens=args.append_tokens,
         output_tokens=args.output_tokens,
@@ -795,6 +803,8 @@ def main() -> None:
                     "offload_exec_transport": config.offload_exec_transport,
                     "direct_mailbox_output": config.direct_mailbox_output,
                     "unified_md_fast_key": config.unified_md_fast_key,
+                    "prefill_kv_async": config.prefill_kv_async,
+                    "prefill_ipc_profile": config.prefill_ipc_profile,
                 },
                 "validity": {"status": "failed"},
                 "error": f"{type(exc).__name__}: {exc}",

@@ -2,7 +2,16 @@
 
 日期：2026-07-13
 
-状态：`accepted-development-baseline`；TPOT 优化成立，TTFT 副作用待继续优化
+状态：`accepted-development-baseline`；TPOT 优化成立，TTFT 副作用已在后续工作关闭根因
+
+> **2026-07-14 根因校正：** 本文第 6 节关于 sideband control-plane contention 的
+> 初始假设已被后续 causal A/B 排除。进程级正交 A/B 证明，TTFT 回归由 Projection
+> barrier 控制，而不是 Prefill 自身 barrier；最终 Torch trace 证明 Prefill kernel 并未
+> 显著变慢，而是 Attention registry 全局锁把 Decode GPU 数据面与 Prefill 逐层 descriptor
+> 串行化，造成约 `2.81 s` host-unsubmitted gap。更多小 batch 会提高 Decode append 进入
+> 临界区的频率，但不是独立的 GPU 算力/HBM 根因。registry 锁分离与安全异步 Prefill
+> import 已修复该问题。完整证据见
+> [PAP async decode-token TTFT 回归根因](pap-async-decode-token-ttft-root-cause-20260714.md)。
 
 ## 2026-07-14 基线化决策
 
@@ -140,6 +149,9 @@ C2 canary：
 完整 service logs。
 
 ## 6. TTFT 退化与下一步
+
+以下内容保留 2026-07-13 当时的初始假设，已被 2026-07-14 的 sync-only barrier 和
+Projection single-batch A/B **推翻**，不再代表当前结论。
 
 异步路径虽然移除了 Projection 主线程的 CUDA barrier，但新增了一条 CPU control plane：
 Projection 后台 worker → Attention batch HTTP endpoint → token/KV join → 原 decode-commit

@@ -217,6 +217,17 @@ PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS="${PAP_DECODE_COMMIT_RETRY_INITIAL_SECON
 PAP_DECODE_COMMIT_RETRY_MAX_SECONDS="${PAP_DECODE_COMMIT_RETRY_MAX_SECONDS:-0.5}"
 PAP_DECODE_COMMIT_FLUSH_TIMEOUT="${PAP_DECODE_COMMIT_FLUSH_TIMEOUT:-5.0}"
 PAP_ASYNC_DECODE_TOKEN="${PAP_ASYNC_DECODE_TOKEN:-1}"
+PAP_PROJECTION_SYNC_ONLY_BARRIER="${PAP_PROJECTION_SYNC_ONLY_BARRIER:-0}"
+PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC:-1}"
+PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE:-0}"
+PAP_RUNTIME_CUDA_CONTEXT_AUDIT="${PAP_RUNTIME_CUDA_CONTEXT_AUDIT:-0}"
+PAP_PREFILL_TORCH_PROFILE="${PAP_PREFILL_TORCH_PROFILE:-0}"
+PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS="${PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS:-32}"
+PAP_PREFILL_TORCH_PROFILE_FLUSH_TIMEOUT="${PAP_PREFILL_TORCH_PROFILE_FLUSH_TIMEOUT:-120}"
+PAP_DIAG_R1_PROJECTION_GATE_COUNT="${PAP_DIAG_R1_PROJECTION_GATE_COUNT:-0}"
+PAP_DIAG_R1_COMMIT_GATE_COUNT="${PAP_DIAG_R1_COMMIT_GATE_COUNT:-0}"
+PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT="${PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT:-120}"
+PAP_DIAG_DECODE_COMMIT_GATE_FILE="${RUN_ROOT}/decode_commit_gate.released"
 PAP_DECODE_TOKEN_TIMEOUT="${PAP_DECODE_TOKEN_TIMEOUT:-0.2}"
 PAP_DECODE_TOKEN_QUEUE_SIZE="${PAP_DECODE_TOKEN_QUEUE_SIZE:-1024}"
 PAP_DECODE_TOKEN_MAX_ATTEMPTS="${PAP_DECODE_TOKEN_MAX_ATTEMPTS:-8}"
@@ -242,6 +253,30 @@ case "${PAP_DEFERRED_CUDA_TRACE,,}" in
 esac
 if ! [[ "${PAP_DEFERRED_CUDA_TRACE_MAX_PENDING}" =~ ^[1-9][0-9]*$ ]]; then
   echo "PAP_DEFERRED_CUDA_TRACE_MAX_PENDING must be a positive integer" >&2
+  exit 2
+fi
+if ! [[ "${PAP_DIAG_R1_PROJECTION_GATE_COUNT}" =~ ^[0-9]+$ \
+  && "${PAP_DIAG_R1_COMMIT_GATE_COUNT}" =~ ^[0-9]+$ ]]; then
+  echo "PAP diagnostic R1 gate counts must be non-negative integers" >&2
+  exit 2
+fi
+if [[ "${PAP_RUNTIME_CUDA_CONTEXT_AUDIT}" == "1" \
+  && "${PAP_MPS_MODE}" != "static" ]]; then
+  echo "PAP runtime CUDA-context audit currently requires static MPS" >&2
+  exit 2
+fi
+if ! [[ "${PAP_PREFILL_TORCH_PROFILE}" =~ ^[01]$ ]]; then
+  echo "PAP_PREFILL_TORCH_PROFILE must be 0 or 1" >&2
+  exit 2
+fi
+if ! [[ "${PAP_PREFILL_KV_ASYNC}" =~ ^[01]$ \
+  && "${PAP_PREFILL_IPC_PROFILE}" =~ ^[01]$ ]]; then
+  echo "PAP Prefill KV async/profile flags must be 0 or 1" >&2
+  exit 2
+fi
+if ! [[ "${PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS}" =~ ^[1-9][0-9]*$ \
+  && "${PAP_PREFILL_TORCH_PROFILE_FLUSH_TIMEOUT}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "PAP Prefill torch-profile limits must be positive integers" >&2
   exit 2
 fi
 if ! [[ "${PAP_DEFERRED_TRACE_FLUSH_TIMEOUT}" =~ ^[1-9][0-9]*$ ]]; then
@@ -273,6 +308,16 @@ export PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS
 export PAP_DECODE_COMMIT_RETRY_MAX_SECONDS
 export PAP_DECODE_COMMIT_FLUSH_TIMEOUT
 export PAP_ASYNC_DECODE_TOKEN
+export PAP_PROJECTION_SYNC_ONLY_BARRIER
+export PAP_PREFILL_KV_ASYNC
+export PAP_PREFILL_IPC_PROFILE
+export PAP_RUNTIME_CUDA_CONTEXT_AUDIT
+export PAP_PREFILL_TORCH_PROFILE
+export PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS
+export PAP_PREFILL_TORCH_PROFILE_FLUSH_TIMEOUT
+export PAP_DIAG_R1_PROJECTION_GATE_COUNT
+export PAP_DIAG_R1_COMMIT_GATE_COUNT
+export PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT
 export PAP_DECODE_TOKEN_TIMEOUT
 export PAP_DECODE_TOKEN_QUEUE_SIZE
 export PAP_DECODE_TOKEN_MAX_ATTEMPTS
@@ -480,6 +525,48 @@ write_static_mps_audit() {
       "${MPS_ATTENTION_VISIBLE_SMS[idx]}"
     printf 'LSPART_OUTPUT=%q\n' "${lspart}"
   } > "${RUN_ROOT}/mps_static_audit_pa_${idx}.env"
+}
+
+audit_runtime_cuda_contexts() {
+  [[ "${PAP_RUNTIME_CUDA_CONTEXT_AUDIT}" == "1" ]] || return 0
+  local idx role path expected_sms expected_partition actual_sms
+  local actual_partition attempts lspart
+  for (( idx=0; idx<PA_COUNT; idx++ )); do
+    for role in prefill attention; do
+      path="${RUN_ROOT}/runtime_cuda_context_${role}_${idx}.json"
+      attempts=0
+      while [[ ! -s "${path}" ]] && (( attempts < 100 )); do
+        sleep 0.1
+        attempts=$((attempts + 1))
+      done
+      [[ -s "${path}" ]] \
+        || die "missing live ${role} CUDA-context audit for PA ${idx}"
+      if [[ "${role}" == "prefill" ]]; then
+        expected_sms="${PAP_STATIC_PREFILL_EXPECTED_SMS}"
+        expected_partition="${MPS_PREFILL_PARTITIONS[idx]}"
+      else
+        expected_sms="${PAP_STATIC_ATTENTION_EXPECTED_SMS}"
+        expected_partition="${MPS_ATTENTION_PARTITIONS[idx]}"
+      fi
+      actual_sms="$(jq -r '.multiprocessor_count' "${path}")"
+      actual_partition="$(jq -r '.cuda_mps_sm_partition' "${path}")"
+      [[ "${actual_sms}" == "${expected_sms}" ]] \
+        || die "live ${role} context exposed ${actual_sms} SMs; expected ${expected_sms}"
+      [[ "${actual_partition}" == "${expected_partition}" ]] \
+        || die "live ${role} context used unexpected static MPS partition"
+    done
+    lspart="$(mps_control "${MPS_PIPE_DIRS[idx]}" lspart)" \
+      || die "live static MPS lspart failed for PA ${idx}"
+    {
+      printf 'STATUS=passed\n'
+      printf 'PA_INDEX=%q\n' "${idx}"
+      printf 'PREFILL_VISIBLE_SMS=%q\n' \
+        "${PAP_STATIC_PREFILL_EXPECTED_SMS}"
+      printf 'ATTENTION_VISIBLE_SMS=%q\n' \
+        "${PAP_STATIC_ATTENTION_EXPECTED_SMS}"
+      printf 'LSPART_OUTPUT=%q\n' "${lspart}"
+    } > "${RUN_ROOT}/runtime_cuda_context_audit_pa_${idx}.env"
+  done
 }
 
 start_mps_for_pa() {
@@ -840,6 +927,55 @@ with open(output_path, "w", encoding="utf-8") as output:
 PY
 }
 
+start_prefill_torch_profiles() {
+  [[ "${PAP_PREFILL_TORCH_PROFILE}" == "1" ]] || return 0
+  local idx
+  for (( idx=0; idx<PA_COUNT; idx++ )); do
+    curl -fsS -X POST \
+      "http://127.0.0.1:$((PREFILL_PORT_BASE + idx))/start_profile" \
+      >/dev/null \
+      || die "Failed to start Prefill ${idx} torch profiler"
+  done
+}
+
+wait_prefill_torch_profiles() {
+  [[ "${PAP_PREFILL_TORCH_PROFILE}" == "1" ]] || return 0
+  local idx profile_dir deadline
+  local -a trace_files=()
+  : > "${RUN_ROOT}/prefill_torch_profile_audit.env"
+  for (( idx=0; idx<PA_COUNT; idx++ )); do
+    profile_dir="${RUN_ROOT}/prefill_torch_profile_${idx}"
+    deadline=$((SECONDS + PAP_PREFILL_TORCH_PROFILE_FLUSH_TIMEOUT))
+    while true; do
+      shopt -s nullglob
+      trace_files=(
+        "${profile_dir}"/*.trace.json
+        "${profile_dir}"/*.trace.json.gz
+      )
+      shopt -u nullglob
+      if (( ${#trace_files[@]} > 0 )) \
+        && [[ -s "${trace_files[0]}" ]]; then
+        break
+      fi
+      check_children_alive
+      if (( SECONDS >= deadline )); then
+        die "Timed out waiting for Prefill ${idx} torch profile"
+      fi
+      sleep 0.2
+    done
+    {
+      printf 'PREFILL_%d_PROFILE_DIR=%q\n' "${idx}" "${profile_dir}"
+      printf 'PREFILL_%d_TRACE=%q\n' "${idx}" "${trace_files[0]}"
+    } >> "${RUN_ROOT}/prefill_torch_profile_audit.env"
+  done
+  {
+    printf 'STATUS=passed\n'
+    printf 'PREFILL_INSTANCE_COUNT=%q\n' "${PA_COUNT}"
+    printf 'MAX_ITERATIONS=%q\n' \
+      "${PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS}"
+  } >> "${RUN_ROOT}/prefill_torch_profile_audit.env"
+}
+
 capture_proxy_topology_stats() {
   curl -fsS \
     "http://127.0.0.1:${PAP_PROXY_PORT}/v1/pap/topology/stats" \
@@ -1012,6 +1148,26 @@ write_effective_config() {
     printf 'PAP_DECODE_COMMIT_RETRY_MAX_SECONDS=%q\n' "${PAP_DECODE_COMMIT_RETRY_MAX_SECONDS}"
     printf 'PAP_DECODE_COMMIT_FLUSH_TIMEOUT=%q\n' "${PAP_DECODE_COMMIT_FLUSH_TIMEOUT}"
     printf 'PAP_ASYNC_DECODE_TOKEN=%q\n' "${PAP_ASYNC_DECODE_TOKEN}"
+    printf 'PAP_PROJECTION_SYNC_ONLY_BARRIER=%q\n' \
+      "${PAP_PROJECTION_SYNC_ONLY_BARRIER}"
+    printf 'PAP_PREFILL_KV_ASYNC=%q\n' "${PAP_PREFILL_KV_ASYNC}"
+    printf 'PAP_PREFILL_IPC_PROFILE=%q\n' "${PAP_PREFILL_IPC_PROFILE}"
+    printf 'PAP_RUNTIME_CUDA_CONTEXT_AUDIT=%q\n' \
+      "${PAP_RUNTIME_CUDA_CONTEXT_AUDIT}"
+    printf 'PAP_PREFILL_TORCH_PROFILE=%q\n' \
+      "${PAP_PREFILL_TORCH_PROFILE}"
+    printf 'PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS=%q\n' \
+      "${PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS}"
+    printf 'PAP_PREFILL_TORCH_PROFILE_FLUSH_TIMEOUT=%q\n' \
+      "${PAP_PREFILL_TORCH_PROFILE_FLUSH_TIMEOUT}"
+    printf 'PAP_DIAG_R1_PROJECTION_GATE_COUNT=%q\n' \
+      "${PAP_DIAG_R1_PROJECTION_GATE_COUNT}"
+    printf 'PAP_DIAG_R1_COMMIT_GATE_COUNT=%q\n' \
+      "${PAP_DIAG_R1_COMMIT_GATE_COUNT}"
+    printf 'PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT=%q\n' \
+      "${PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT}"
+    printf 'PAP_DIAG_DECODE_COMMIT_GATE_FILE=%q\n' \
+      "${PAP_DIAG_DECODE_COMMIT_GATE_FILE}"
     printf 'PAP_DECODE_TOKEN_TIMEOUT=%q\n' "${PAP_DECODE_TOKEN_TIMEOUT}"
     printf 'PAP_DECODE_TOKEN_QUEUE_SIZE=%q\n' "${PAP_DECODE_TOKEN_QUEUE_SIZE}"
     printf 'PAP_DECODE_TOKEN_MAX_ATTEMPTS=%q\n' "${PAP_DECODE_TOKEN_MAX_ATTEMPTS}"
@@ -1118,6 +1274,8 @@ write_run_metadata() {
   PAP_DIRECT_MAILBOX_OUTPUT="${PAP_DIRECT_MAILBOX_OUTPUT}" \
   PAP_LOCAL_FAST_STREAM_ORDERED="${PAP_LOCAL_FAST_STREAM_ORDERED}" \
   PAP_LOCAL_FAST_SLOT_COUNT="${PAP_LOCAL_FAST_SLOT_COUNT}" \
+  PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC}" \
+  PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
   PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}" \
   PAP_ATTENTION_DISPATCH_MODE="${PAP_ATTENTION_DISPATCH_MODE}" \
   PAP_ATTENTION_COMBINE_WAIT_US="${PAP_ATTENTION_COMBINE_WAIT_US}" \
@@ -1168,6 +1326,8 @@ metadata = {
         os.environ["PAP_LOCAL_FAST_STREAM_ORDERED"] == "1"
     ),
     "local_fast_slot_count": int(os.environ["PAP_LOCAL_FAST_SLOT_COUNT"]),
+    "prefill_kv_async": os.environ["PAP_PREFILL_KV_ASYNC"] == "1",
+    "prefill_ipc_profile": os.environ["PAP_PREFILL_IPC_PROFILE"] == "1",
     "decode_slot_plan_cache_limit": int(
         os.environ["PAP_DECODE_SLOT_PLAN_CACHE_LIMIT"]
     ),
@@ -1318,7 +1478,7 @@ audit_correctness_logs() {
   local matches_path="${RUN_ROOT}/correctness_audit_matches.log"
   local summary_path="${RUN_ROOT}/correctness_audit.env"
   local pattern
-  pattern='CUDA out of memory|EngineDeadError|Traceback|NIXL.*failed|PAP local fast.*failed|PAP decode commit failed|new_token_ids length must match new_seq_len delta|PAP decode commit flush timed out|PAP decode commit queue full|PAP decode-token delivery failed|PAP decode-token queue is full|PAP decode-token join flush timed out|PAP lease release failed|PAP unified KV append out of range|PAP unified KV state missing|PAP unified paged FlashAttention failed'
+  pattern='CUDA out of memory|EngineDeadError|Traceback|NIXL.*failed|PAP local fast.*failed|PAP decode commit failed|new_token_ids length must match new_seq_len delta|PAP decode commit flush timed out|PAP decode commit queue full|PAP decode-token delivery failed|PAP decode-token queue is full|PAP decode-token join flush timed out|PAP lease release failed|PAP unified KV append out of range|PAP unified KV state missing|PAP unified KV state changed during decode append|PAP unified KV seq_len changed during decode append|prefill KV must reach the registered prefix before unified decode attention|PAP unified paged FlashAttention failed'
 
   if rg -n --no-heading "${pattern}" "${RUN_LOG_DIR}" > "${matches_path}"; then
     {
@@ -1686,6 +1846,8 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_LOCAL_FAST_YIELD_ITERS="${PAP_LOCAL_FAST_YIELD_ITERS}" \
     PAP_LOCAL_FAST_SLEEP_US="${PAP_LOCAL_FAST_SLEEP_US}" \
     PAP_LOCAL_FAST_SLEEP_AFTER_US="${PAP_LOCAL_FAST_SLEEP_AFTER_US}" \
+    PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC}" \
+    PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
     PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}" \
     PAP_ATTENTION_DISPATCH_MODE="${PAP_ATTENTION_DISPATCH_MODE}" \
     PAP_ATTENTION_DISPATCH_QUEUE_SIZE="${PAP_ATTENTION_DISPATCH_QUEUE_SIZE}" \
@@ -1700,6 +1862,17 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_OFFLOAD_EXEC_NUM_KV_HEADS="${PAP_OFFLOAD_EXEC_NUM_KV_HEADS}" \
     PAP_OFFLOAD_EXEC_HEAD_DIM="${PAP_OFFLOAD_EXEC_HEAD_DIM}" \
     PAP_DECODE_COMMIT_ENDPOINT="${decode_commit_endpoint}" \
+    PAP_DIAG_DECODE_COMMIT_GATE_FILE="$(
+      if (( PAP_DIAG_R1_COMMIT_GATE_COUNT > 0 )); then
+        printf '%s' "${PAP_DIAG_DECODE_COMMIT_GATE_FILE}"
+      fi
+    )" \
+    PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT="${PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT}" \
+    PAP_RUNTIME_CUDA_CONTEXT_AUDIT_PATH="$(
+      if [[ "${PAP_RUNTIME_CUDA_CONTEXT_AUDIT}" == "1" ]]; then
+        printf '%s' "${RUN_ROOT}/runtime_cuda_context_attention_${idx}.json"
+      fi
+    )" \
     PAP_LEASE_RELEASE_ENDPOINT="${lease_release_endpoint}" \
     "${PYTHON_BIN}" examples/pap/pap_attention_executor.py \
       --host 127.0.0.1 \
@@ -1737,6 +1910,15 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     fi
   fi
   echo "Starting PAP Prefill ${idx} on GPU ${PREFILL_GPUS[idx]}"
+  prefill_profiler_args=()
+  if [[ "${PAP_PREFILL_TORCH_PROFILE}" == "1" ]]; then
+    prefill_profile_dir="${RUN_ROOT}/prefill_torch_profile_${idx}"
+    mkdir -p "${prefill_profile_dir}"
+    prefill_profiler_args=(
+      --profiler-config
+      "{\"profiler\":\"torch\",\"torch_profiler_dir\":\"${prefill_profile_dir}\",\"torch_profiler_with_stack\":false,\"torch_profiler_use_gzip\":false,\"ignore_frontend\":true,\"max_iterations\":${PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS}}"
+    )
+  fi
   env \
     "${prefill_env[@]}" \
     VLLM_PORT="$((VLLM_PREFILL_PORT_BASE + idx * 20))" \
@@ -1745,8 +1927,16 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_DEFERRED_TRACE_OUTPUT= \
     PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
     PAP_UNIFIED_KV="${PAP_UNIFIED_KV}" \
+    PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC}" \
+    PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
     PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}" \
     PAP_PREFIX_CACHE_AUDIT="${PAP_PREFIX_CACHE_AUDIT}" \
+    PAP_RUNTIME_CUDA_CONTEXT_AUDIT_PATH="$(
+      if [[ "${PAP_RUNTIME_CUDA_CONTEXT_AUDIT}" == "1" ]]; then
+        printf '%s' "${RUN_ROOT}/runtime_cuda_context_prefill_${idx}.json"
+      fi
+    )" \
+    PAP_RUNTIME_CUDA_CONTEXT_ROLE=prefill \
     PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS}" \
     VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
     VLLM_NIXL_SIDE_CHANNEL_PORT="${prefill_nixl_port}" \
@@ -1766,6 +1956,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
       --tensor-parallel-size "${PAP_TP_SIZE}" \
       --gpu-memory-utilization "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}" \
+      "${prefill_profiler_args[@]}" \
       --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer"}' \
       > "${RUN_LOG_DIR}/prefill_${idx}.log" 2>&1 &
   PIDS+=("$!")
@@ -1782,6 +1973,7 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     PAP_DEFERRED_CUDA_TRACE="${PAP_DEFERRED_CUDA_TRACE}" \
     PAP_DEFERRED_TRACE_ROLE=projection \
     PAP_DEFERRED_TRACE_OUTPUT="${RUN_ROOT}/projection_deferred_trace_${idx}.json" \
+    PAP_ASYNC_DECODE_TOKEN_SYNC_ONLY_BARRIER="${PAP_PROJECTION_SYNC_ONLY_BARRIER}" \
     PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT}" \
     PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
     PAP_DIRECT_MAILBOX_OUTPUT="${PAP_DIRECT_MAILBOX_OUTPUT}" \
@@ -1828,11 +2020,17 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     "PAP Projection ${idx}"
 done
 
+audit_runtime_cuda_contexts
+
 PAP_GROUPS_SPEC="$(build_pap_groups_spec)"
 PROJECTIONS_SPEC="$(build_projections_spec)"
 
 echo "Starting multi PAP proxy on port ${PAP_PROXY_PORT}"
-"${PYTHON_BIN}" examples/pap/multi_pap_proxy_server.py \
+env \
+  PAP_DIAG_R1_PROJECTION_GATE_COUNT="${PAP_DIAG_R1_PROJECTION_GATE_COUNT}" \
+  PAP_DIAG_R1_COMMIT_GATE_COUNT="${PAP_DIAG_R1_COMMIT_GATE_COUNT}" \
+  PAP_DIAG_DECODE_COMMIT_GATE_FILE="${PAP_DIAG_DECODE_COMMIT_GATE_FILE}" \
+  "${PYTHON_BIN}" examples/pap/multi_pap_proxy_server.py \
   --host 127.0.0.1 \
   --port "${PAP_PROXY_PORT}" \
   --pap-groups "${PAP_GROUPS_SPEC}" \
@@ -1847,6 +2045,7 @@ wait_cluster_stable
 write_effective_config
 write_topology_manifest
 write_run_metadata
+start_prefill_torch_profiles
 
 case "${PAP_BENCH_CLIENT_MODE}" in
   canonical)
@@ -1920,6 +2119,8 @@ case "${PAP_BENCH_CLIENT_MODE}" in
       --offload-exec-transport "${PAP_OFFLOAD_EXEC_TRANSPORT}" \
       --direct-mailbox-output "${PAP_DIRECT_MAILBOX_OUTPUT}" \
       --unified-md-fast-key "${PAP_UNIFIED_MD_FAST_KEY}" \
+      --prefill-kv-async "${PAP_PREFILL_KV_ASYNC}" \
+      --prefill-ipc-profile "${PAP_PREFILL_IPC_PROFILE}" \
       --document-tokens "${INPUT_LEN}" \
       --append-tokens 120 \
       --output-tokens "${OUTPUT_LEN}" \
@@ -1951,6 +2152,8 @@ case "${PAP_BENCH_CLIENT_MODE}" in
       --offload-exec-transport "${PAP_OFFLOAD_EXEC_TRANSPORT}" \
       --direct-mailbox-output "${PAP_DIRECT_MAILBOX_OUTPUT}" \
       --unified-md-fast-key "${PAP_UNIFIED_MD_FAST_KEY}" \
+      --prefill-kv-async "${PAP_PREFILL_KV_ASYNC}" \
+      --prefill-ipc-profile "${PAP_PREFILL_IPC_PROFILE}" \
       --document-tokens "${INPUT_LEN}" \
       --append-tokens 120 \
       --output-tokens "${OUTPUT_LEN}" \
@@ -1968,6 +2171,7 @@ case "${PAP_BENCH_CLIENT_MODE}" in
     ;;
 esac
 
+wait_prefill_torch_profiles
 wait_attention_sessions_drained
 capture_proxy_topology_stats
 capture_attention_fast_path_stats

@@ -104,6 +104,45 @@ def test_pap_runner_captures_projection_deferred_trace_after_drain() -> None:
     )
 
 
+def test_pap_runner_supports_bounded_prefill_torch_profile() -> None:
+    runner = (
+        ROOT
+        / ".claude"
+        / "skills"
+        / "vllm-pap-benchmark"
+        / "scripts"
+        / "run_pap_same_pd_workload.sh"
+    )
+    text = runner.read_text(encoding="utf-8")
+
+    assert 'PAP_PREFILL_TORCH_PROFILE="${PAP_PREFILL_TORCH_PROFILE:-0}"' in text
+    assert "PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS" in text
+    assert '\\"profiler\\":\\"torch\\"' in text
+    assert '\\"ignore_frontend\\":true' in text
+    assert "/start_profile" in text
+    assert "wait_prefill_torch_profiles" in text
+    assert "prefill_torch_profile_audit.env" in text
+
+
+def test_pap_runner_defaults_to_safe_async_prefill_kv_import() -> None:
+    runner = (
+        ROOT
+        / ".claude"
+        / "skills"
+        / "vllm-pap-benchmark"
+        / "scripts"
+        / "run_pap_same_pd_workload.sh"
+    )
+    text = runner.read_text(encoding="utf-8")
+
+    assert 'PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC:-1}"' in text
+    assert 'PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE:-0}"' in text
+    assert "printf 'PAP_PREFILL_KV_ASYNC=%q\\n'" in text
+    assert text.count('PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC}"') >= 3
+    assert text.count('--prefill-kv-async "${PAP_PREFILL_KV_ASYNC}"') == 2
+    assert text.count('--prefill-ipc-profile "${PAP_PREFILL_IPC_PROFILE}"') == 2
+
+
 def test_pap_benchmark_runner_supports_arbitrary_xy_topology() -> None:
     runner = (
         ROOT
@@ -167,7 +206,7 @@ def test_pap_runner_supports_multiturn_north_star() -> None:
     assert "multiturn_north_star" in text
     assert "benchmarks/multi_turn/pap_pd_multiturn_client.py" in text
     assert 'PAP_VLLM_DTYPE="${PAP_VLLM_DTYPE:-auto}"' in text
-    assert text.count('--dtype "${PAP_VLLM_DTYPE}"') == 3
+    assert text.count('--dtype "${PAP_VLLM_DTYPE}"') == 4
     assert '[[ "${TOPOLOGY}" == "1pa1p" ]]' in text
     assert '[[ "${INPUT_LEN}" == "16000" ]]' in text
     assert '[[ "${OUTPUT_LEN}" == "256" ]]' in text
@@ -259,14 +298,22 @@ def test_pd_multiturn_reference_bootstrap_uses_unchanged_official_proxy() -> Non
     auditor = ROOT / "benchmarks" / "multi_turn" / "pd_multiturn_reuse_metrics.py"
     audit_text = auditor.read_text()
 
-    assert "REPETITIONS=3" in text
+    assert 'REPETITIONS="${PD_NORTH_STAR_REPETITIONS:-3}"' in text
     assert "examples/disaggregated/disaggregated_serving/disagg_proxy_multiturn.py" in text
     assert "pap_pd_multiturn_client.py" in text
     assert '--architecture "pd"' in text
     assert '--topology "1p1d"' in text
     assert "--unified-md-fast-key 0" in text
-    assert "CUDA_VISIBLE_DEVICES=1" in text
-    assert "CUDA_VISIBLE_DEVICES=2" in text
+    assert (
+        'PREFILL_CUDA_VISIBLE_DEVICES="${PD_PREFILL_CUDA_VISIBLE_DEVICES:-1}"'
+        in text
+    )
+    assert (
+        'DECODE_CUDA_VISIBLE_DEVICES="${PD_DECODE_CUDA_VISIBLE_DEVICES:-2}"'
+        in text
+    )
+    assert 'CUDA_VISIBLE_DEVICES="${PREFILL_CUDA_VISIBLE_DEVICES}"' in text
+    assert 'CUDA_VISIBLE_DEVICES="${DECODE_CUDA_VISIBLE_DEVICES}"' in text
     assert '"kv_role":"kv_producer"' in text
     assert '"kv_role":"kv_consumer"' in text
     assert '"bidirectional_kv_xfer":true' not in text

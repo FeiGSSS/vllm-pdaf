@@ -149,7 +149,13 @@ def _pap_input_token_ids_for_forward(
     num_actual_tokens: int,
     pap_enabled: bool,
 ) -> tuple[int, ...]:
-    if not pap_enabled or async_decode_token_enabled():
+    if not pap_enabled:
+        return ()
+    if async_decode_token_enabled():
+        if os.environ.get(
+            "PAP_ASYNC_DECODE_TOKEN_SYNC_ONLY_BARRIER", "0"
+        ).lower() in ("1", "true", "yes", "on"):
+            torch.cuda.current_stream(input_ids.device).synchronize()
         return ()
     return tuple(
         int(token_id)

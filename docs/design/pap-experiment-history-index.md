@@ -1,10 +1,10 @@
 # PAP 开发与实验历史索引
 
-更新日期：2026-07-13
+更新日期：2026-07-14
 
 覆盖分支：`feature/pap`
 
-覆盖时间：2026-05-22 至 2026-07-13
+覆盖时间：2026-05-22 至 2026-07-14
 
 用途：从时间、模块或指标出发，逐层回溯 PAP 的设计动机、实现、实验和决策。
 
@@ -39,6 +39,8 @@
 - Projection 采用 KV-unaware 调度，不持有历史 KV；
 - Attention 通过 CUDA IPC 访问 Prefill-owned KV，并把 decode K/V 直接追加到这些
   blocks；
+- Attention registry 已拆分控制面与 decode-append 数据面锁；Prefill descriptor 不再被
+  跨 GPU copy 和 kernel launch 长时间阻塞；
 - Projection 与 Attention 的同机 decode 热路径采用 local-fast/slot-plan 等复用机制；
 - Proxy、连接层和控制面支持任意正整数 `xPAyP`；
 - 执行层已经验证 2PA2P full crossbar、same-layer combine/scatter、vectorized route
@@ -61,6 +63,7 @@
 | UCX 1.22 三路 C4 formal | PD-oneway/PD-twoway/PAP 稳态 TTFT `280.87/251.72/249.03 ms`，TPOT `42.18/42.16/51.15 ms` | 双向降低 PD steady TTFT `10.4%`、不增加 TPOT；PAP/PD-twoway 为 TTFT `0.989x`、TPOT `1.213x`；commit `03d8da336`、三次拉丁方、strict clean |
 | 双侧 deferred trace C4 | trace-off PD-twoway/PAP 稳态 TPOT `42.179/51.098 ms`；PAP/PD `1.211x` | QKV 数学只差 `0.264%`，raw 双向 copy 约 `0.583 ms/forward`；PAP FA 慢 `28.7%`，并发现 token-boundary D2H 强制 stream barrier；commit `e115fc86f`、四组 diagnostic 全通过 |
 | decode-token D2H 异步化 C4 | 两轮 OFF/ON steady TPOT `51.029 -> 50.045 ms`，PAP/PD-twoway `1.210x -> 1.186x` | 移除约 `0.984 ms/token`、关闭 `11.1%` 的 TPOT 剩余差距；但 steady TTFT `245.260 -> 340.698 ms`，接受 TPOT 归因、不冻结当前 control-plane 实现 |
+| async TTFT 根因与修复 C4 | 正常 Decode 相对 pure-Prefill 增加 `2.81 s` host-unsubmitted gap；缩短 registry 临界区后的三次 R1 `prefill_ms` 为 `5025/9017/12812/15424`、`5031/9023/12820/15433`、`5018/8928/12708/15321` | 根因是 Attention registry 全局锁把 Decode GPU 数据面和 Prefill 逐层 descriptor 串行化；锁分离和完整-prefix readiness 后三次 digest/audit 一致、吞吐 `60.15--60.57 token/s`；当前为 controlled dirty，提交后待 formal-clean |
 
 以上各数字的工作负载和原始证据分别记录在 `M6`、`M9`、`M10`、P10 和实验账本中，
 不能脱离 workload 直接互相比较。
@@ -130,7 +133,10 @@ PAP Stage A–D 内部 A/B，旧 PD pull 数字不再作为公平比较基线。
 | `P10` PD push 校正与五轮负载 | 07-13 | 同机 PD 为何只有约 0.42 GiB/s；校正后长上下文、多轮、C4 下 PAP/PD 的真实差距是多少？ | `131e1dfa2`、`e8ab4ab23`、`340c11abc`、`a646ae032` | 旧 pull GET 命中 TCP emulation；官方 push PUT 单流约 24.5 GiB/s；C4 formal 稳态 PAP/PD TTFT `0.811x`、TPOT `1.220x` | `diagnostic/formal-clean`，见 M6/M10 和 P10 报告 |
 | `P11` UCX 1.22 双向 PD 与三路 test bed | 07-13 | 能否在不换 connector 的情况下恢复 NIXL GET，并公平比较 PD 单向、PD 双向和 PAP？ | `03d8da336`，UCX 1.22.0/NIXL 1.3.0 | UCX 1.22 strict 单流 P→D `22.2 GiB/s`；C4 formal 双向 PD steady TTFT `280.87 -> 251.72 ms`，TPOT不变；PAP/双向 PD steady TTFT/TPOT `0.989x/1.213x` | `diagnostic/formal-clean`；[三路结果](pd-oneway-twoway-pap-five-turn-results-20260713.md) |
 | `P12` 双侧 critical-chain 分账 | 07-13 | PAP 的约 1.21x steady TPOT 还差在哪里：Projection compute、P2P、Attention 还是 host barrier？ | `bdfb09550`、`e115fc86f` | 同边界 QKV PAP/PD 只差 `0.264%`；raw copy 非主因；PAP FA 约多 `4.485 ms/forward`；token-boundary D2H 暴露强制 stream barrier | `diagnostic`；[双侧 trace 结果](pap-bilateral-deferred-trace-c4-results-20260713.md) |
-| `P13` decode-token D2H 异步化 | 07-13 | sampled token 是否能复用 AsyncOutput D2H，避免 Projection 在下一 step 前同步等待？ | 当前 dirty controlled patch | 两轮 C4 OFF/ON 将 steady TPOT `51.029 -> 50.045 ms`（`-1.93%`），相对 PD 从 `1.210x -> 1.186x`；sideband HTTP 使 steady TTFT 增加约 `95 ms`，继续优化后再冻结 | `controlled`；[异步 D2H 结果](pap-async-decode-token-d2h-results-20260713.md) |
+| `P13` decode-token D2H 异步化 | 07-13 | sampled token 是否能复用 AsyncOutput D2H，避免 Projection 在下一 step 前同步等待？ | `cbcbfabcb` 前序 A/B | 两轮 C4 OFF/ON 将 steady TPOT `51.029 -> 50.045 ms`（`-1.93%`），相对 PD 从 `1.210x -> 1.186x`；steady TTFT 增加约 `95 ms`；后续 P14 已排除 sideband 主因 | `controlled`；[异步 D2H 结果](pap-async-decode-token-d2h-results-20260713.md) |
+| `P14` async TTFT 因果诊断 | 07-14 | TTFT 回归来自 sideband、token D2H、Prefill 自身 barrier，还是 Projection 排队节奏？ | `cbcbfabcb` + 临时 diagnostic patch，实验后撤销 | Projection/Prefill barrier 正交 A/B 证明只有 Projection 侧恢复 TTFT；steady Prefill model 首尾 GPU span 随 active decode 从约 `108 -> 266 ms`，Projection barrier 后保持 `108–117 ms`；calls/layer `1835 -> 1738`、rows 不变；该阶段只定位触发条件，微观资源归因随后被 P16 修正 | `controlled/diagnostic`；[因果报告](pap-async-decode-token-ttft-root-cause-20260714.md) |
+| `P15` async TTFT 严格隔离 | 07-14 | static MPS 是否真的作用于服务 context；barrier 是否直接影响 Prefill；Decode commit 控制反馈是否是累计回归主因？ | `cbcbfabcb` + 默认关闭 diagnostic patch | 活跃 context 审计确认 Prefill/Attention 为 `64/28` SM；无 Decode 时 barrier on/off 的 R1 Prefill 仅差 `1–16 ms`；只延迟 commit 仅挽回后续请求 `120–146 ms`，仍有 `600/1847/2910 ms` 随真实 Decode 路径存在；该 gate 没有切断 Prefill descriptor 对 Attention registry 锁的依赖 | `controlled/diagnostic`；[因果报告第 7 节](pap-async-decode-token-ttft-root-cause-20260714.md) |
+| `P16` registry 锁根因与安全异步 Prefill import | 07-14 | Prefill kernel 是变慢还是未提交；为何更碎的 Decode 会累计放大 TTFT；怎样修复且保持多轮正确性？ | `cbcbfabcb` 后 tracked-dirty candidate | Torch trace 证明 `2.81 s` 增量为 host-unsubmitted gap；IPC profile 将其对齐到 registry 锁；GPU copy/launch 移出全局锁并加入 session-epoch、完整-prefix readiness 后，三次 C4 digest/audit 一致，R1 第 4 个 Prefill 从 `18007` 降至 `15321--15433 ms`，吞吐从 `58.54` 提至 `60.15--60.57 token/s`；默认配置 C1 五轮 smoke 也全过 | `controlled/diagnostic/smoke`；clean formal 待提交后运行；[最终根因与修复](pap-async-decode-token-ttft-root-cause-20260714.md) |
 
 时间线不是 commit 全表。更细的里程碑见[第 8 节](#8-关键提交时间线)，完整 patch 以
 Git 历史为准。
@@ -874,6 +880,9 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
 | `PAP-20260713-BILATERAL-TRACE-C4` | M6/M7 | PAP/PD-twoway 各自 trace-off/on；同一 16K/5-turn/C4/o256/q2，PAP 固定 70:30 | `e115fc86f`；clean diagnostic 各一次 | trace-off steady TPOT PD/PAP `42.179/51.098 ms`（`1.211x`）；QKV 只差 `0.264%`，PAP FA 慢 `28.7%`，raw copy 约 `0.583 ms/forward`，token D2H 暴露强制 stream barrier；PAP/PD trace 扰动 `+2.29%/+0.90%`；四组 strict/digest/count 全通过；**接受诊断工具，优先 deferred decode-token commit A/B** | [双侧 trace 结果](pap-bilateral-deferred-trace-c4-results-20260713.md)；`$PAP_REPO_RESULTS/20260713_e115fc86f_{pap,pd_twoway}_bilateral_trace_{off,on}_c4` |
 | `PAP-20260713-ASYNC-DECODE-TOKEN-D2H` | M5/M6/M7 | 同一 C4 70:30、trace off；同步 descriptor token D2H vs AsyncOutput callback + Attention token/KV join | `4b30cc643` 后 dirty controlled patch；OFF/ON 各两次 | steady TPOT `51.029 -> 50.045 ms`（`-0.984 ms/-1.93%`），PAP/PD-twoway `1.210x -> 1.186x`；R1 TPOT `-7.17%`；steady TTFT `+95.438 ms/+38.91%`；全部 strict/cache/join/routing/drain passed；初始只接受归因，后由 07-14 2×2 A/B 升级为开发默认 | [实现与结果](pap-async-decode-token-d2h-results-20260713.md)；`$PAP_REPO_RESULTS/20260713_async_d2h_{ab,batch}_c4_{off,on}_rep*` |
 | `PAP-20260714-ASYNC-STATIC-BASELINE` | M5/M6/M7 | C4 2×2：dynamic 70:30/static 64/28 × async off/on；同一 tracked patch | patch SHA-256 `45d4c8fe...f89a`；四格各一次 strict run | static 未解决 async TTFT：R1 async 代价 dynamic/static 为 `+888.6/+883.9 ms`；async static steady TPOT `50.773 -> 49.873 ms`（`-1.77%`），static 相对 dynamic async-on 再降 `0.419 ms/-0.83%`；四格 cache/join/routing/drain 全通过；**接受 async + static 为后续开发默认，TTFT 留作优化项** | [2×2 结果](pap-async-static-mps-c4-ab-results-20260714.md)；[static 设计](../superpowers/specs/2026-07-13-pap-static-mps-benchmark-design.md)；`$PAP_REPO_RESULTS/20260714_async_mps_ab_c4_{dynamic,static}_{off,on}` |
+| `PAP-20260714-ASYNC-TTFT-ROOTCAUSE` | M5/M6/M7 | Projection/Prefill sync-only barrier 2×2；同一 C4 static 64/28、Prefill phase trace | `cbcbfabcb` + 临时 diagnostic patch；四格各一次 strict run，patch 已撤销 | 只有 Projection barrier 把 steady TTFT `335.19 -> 246.51 ms`、Prefill `216 -> 131 ms`、calls/layer `1835 -> 1738`；Prefill-only 基本不变；steady admission queue 小于 `0.1 ms`；**接受 Projection queue-ahead 是触发条件，GPU 首尾 span 不是 kernel busy，最终微观根因由后续 registry-lock 实验关闭** | [因果报告](pap-async-decode-token-ttft-root-cause-20260714.md)；`$PAP_REPO_RESULTS/20260714_prefill_scope_ab_{none,projection_only,prefill_only,both}_c4`；旧 single-batch 证据 `$PAP_REPO_RESULTS/20260714_async_token_projection_single_batch_c4` |
+| `PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION` | M5/M6/M7 | 活跃 CUDA context audit；R1 Projection gate barrier A/B；Decode commit gate vs 正常 async control | `cbcbfabcb` + 默认关闭 diagnostic patch；四个 trace-off strict run | 真实 Prefill/Attention context 为 `64/28` SM 且 `lspart clients=Yes`；无 Decode 时 barrier 对四个 R1 Prefill 仅有 `-1/-7/-14/-16 ms` 差异；commit gate 相对正常只改善 `-1/120/146/142 ms`，但没有切断 descriptor 对 Attention registry 锁的依赖；**排除 MPS 未生效、barrier 直接作用和 decode-commit 反馈主因，不再把剩余量直接归于非 SM GPU 资源** | [因果报告第 7 节](pap-async-decode-token-ttft-root-cause-20260714.md)；`$PAP_REPO_RESULTS/20260714_strict_isolation_{projection_gate_async,projection_gate_sync,commit_gate_async,normal_async}_c4` |
+| `PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC` | M4/M5/M6/M7 | pure-Prefill/正常 Decode bounded Torch trace；sync/async IPC profile；registry 缩锁；完整-prefix readiness；同一 C4 三次 | `cbcbfabcb` 后 tracked-dirty candidate | dominant stream kernel 数相同，GPU busy 仅 `+158 ms`，host-unsubmitted gap `+2809 ms`；descriptor wait 与 gap 同量级；修复后三次 R1 第 4 个 Prefill `15321--15433 ms`（旧 `18007`），吞吐 `60.15--60.57 token/s`（旧 `58.54`）；20/20 requests、16/16 transitions、digest/join/routing/drain 全过；默认 async C1 smoke 5/5、4/4 也全过并记录 implementation fingerprint；**接受根因和开发候选，formal freeze 待提交后执行** | [最终根因与修复](pap-async-decode-token-ttft-root-cause-20260714.md)；`$PAP_REPO_RESULTS/20260714_{prefill_torch_profile_*,prefill_ipc_profile_*,registry_lock_narrow_*,registry_lock_default_async_fingerprint_c1}` |
 
 ## 7. 负结果、回滚与被替代路线
 
@@ -893,6 +902,7 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
 | `NEG-1PA2P-SPLIT-PEER` | 一个 PA 为两个 P 分别提交 Attention 小 batch | clean QPS4 median TPOT `28.19 → 53.67 ms`；总有效 Attention FLOPs 未翻倍 | **被 central combine/scatter 替代** | [多对多设计](pap-many-to-many-cohort-scheduler-20260711.md)；`$PAP_RESULTS/20260711_ab_localfast_q4_*` |
 | `NEG-ADAPTIVE-COALESCE` | 全局二态 fixed/adaptive wait | mean/median TPOT、TTFT、吞吐、coverage 同时不胜 fixed；状态频繁抖动 | **回滚**；保留固定窗口，以 active membership 判断值得等待的 peer | `PAP-20260711-ADAPTIVE-COALESCE` |
 | `NEG-RESIDENT-MULTITURN` | ConversationDirectory、stable backend session、resident snapshot、detach/attach | 需要长期绑定和新状态机；现有 APC 已能挂回 refcount-0 hashed blocks | **被替代**；每轮 pair 解散，下一轮由 cache-aware router 回同 PA | M10；`6a7094c3b`；[多轮设计](pap-xpayp-multiturn-kv-affinity-20260710.md) |
+| `NEG-ASYNC-PREFILL-NO-READINESS` | Prefill descriptor 后台安装，但 Decode 只等待任意部分 layer state 出现 | conversation 0 的 R2--R5 digest 从预期 `5252...` 分叉为 `a0fc...`；Decode 读到了早期 chunk | **拒绝**；异步 import 必须绑定 session epoch，并等待每层 `state.seq_len >= session.prefix_len` | M4/M5；`20260714_registry_lock_narrow_async_c4`；[最终根因与修复](pap-async-decode-token-ttft-root-cause-20260714.md) |
 | `NEG-PROJECTION-ZEROBLOCK` | 通用 cache registration 对 Projection 0 local blocks fail closed | exact clean rep1 返回 500：“0 个本地块却缓存 8 个块” | **修复边界而非放宽检查**；Projection 跳过本地 cache registration | M3/M10；`558db3cdd`；`$PAP_RESULTS/20260711_043339691_multiturn_clean_rep1` |
 | `NEG-QWEN3-NONTHINK` | `enable_thinking=false` 的 Chat 多轮 token 历史 | 空 reasoning scaffold 不随 assistant content 回传，clean rep1 decode-derived hit `0` | **拒绝用于连续 token 复用验收**；thinking 模式保留完整 materialized LCP | M10；`848f321ab`；`$PAP_RESULTS/20260711_d5ea82ca3_chat_multiturn_clean_rep1` |
 | `NEG-MPS-STATIC-80-20` | 静态 Prefill/Attention MPS 80:20 | R1 Prefill median `-10.79%`、TTFT `-10.74%`，但 R1/steady TPOT `+24.26%/+24.09%`，steady TTFT `+8.22%` | **拒绝默认和继续扫描**；后续 TPOT 固定回 70:30 | `PAP-20260713-MPS-80-20-DIAG`；[诊断结果](pap-mps-80-20-diagnostic-results-20260713.md) |

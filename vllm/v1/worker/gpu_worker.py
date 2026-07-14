@@ -58,6 +58,7 @@ from vllm.multimodal.video import (
     PYNVVIDEOCODEC_VIDEO_BACKEND,
 )
 from vllm.platforms import current_platform
+from vllm.pap.runtime_cuda_context_audit import write_runtime_cuda_context_audit
 from vllm.profiler.wrapper import CudaProfilerWrapper, TorchProfilerWrapper
 from vllm.sequence import IntermediateTensors
 from vllm.tasks import SupportedTask
@@ -360,6 +361,9 @@ class Worker(WorkerBase):
                 self.distributed_init_method,
                 self.local_rank,
                 current_platform.dist_backend,
+            )
+            write_runtime_cuda_context_audit(
+                role=os.environ.get("PAP_RUNTIME_CUDA_CONTEXT_ROLE", "vllm_worker")
             )
 
             if self.use_v2_model_runner:

@@ -521,6 +521,8 @@ def test_execute_two_turn_uses_one_conversation_and_validates_pap_cache() -> Non
         "offload_exec_transport": "local_fast",
         "direct_mailbox_output": True,
         "unified_md_fast_key": True,
+        "prefill_kv_async": False,
+        "prefill_ipc_profile": False,
     }
     assert len(result["implementation_fingerprint"]) == 64
     assert len(result["rounds"]) == 2

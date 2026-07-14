@@ -469,6 +469,30 @@ def test_pap_input_token_ids_are_empty_only_for_async_path(
     ) == (11, 22)
 
 
+def test_pap_async_input_token_sync_only_diagnostic_barrier(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import torch
+
+    synchronized_devices: list[torch.device] = []
+
+    class FakeStream:
+        def synchronize(self) -> None:
+            synchronized_devices.append(input_ids.device)
+
+    input_ids = torch.tensor([11, 22], dtype=torch.int32)
+    monkeypatch.setenv("PAP_ASYNC_DECODE_TOKEN", "1")
+    monkeypatch.setenv("PAP_ASYNC_DECODE_TOKEN_SYNC_ONLY_BARRIER", "1")
+    monkeypatch.setattr(torch.cuda, "current_stream", lambda device: FakeStream())
+
+    assert _pap_input_token_ids_for_forward(
+        input_ids,
+        num_actual_tokens=2,
+        pap_enabled=True,
+    ) == ()
+    assert synchronized_devices == [input_ids.device]
+
+
 def test_publish_pap_sampled_tokens_uses_captured_route_and_next_seq_len() -> None:
     published: list[tuple[dict[str, object], ...]] = []
 

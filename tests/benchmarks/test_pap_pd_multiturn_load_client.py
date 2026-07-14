@@ -241,6 +241,7 @@ def _execute_fake_load(architecture: str) -> tuple[dict[str, object], FakeLoadEx
         block_size=2,
         max_model_len=100,
         max_num_seqs=2,
+        prefill_kv_async=architecture == "pap",
     )
     executor = FakeLoadExecutor(architecture=architecture)
     sleep_calls: list[float] = []
@@ -287,6 +288,8 @@ def test_execute_load_enforces_barriers_and_exact_token_history() -> None:
     assert result["validity"] == {"status": "passed", "cache_gate": "passed"}
     assert result["overall"]["completed_requests"] == 6
     assert result["overall"]["failed_requests"] == 0
+    assert result["implementation"]["prefill_kv_async"] is True
+    assert result["implementation"]["prefill_ipc_profile"] is False
     assert len(result["rounds"]) == 3
     assert len(result["requests"]) == 6
     assert result["requests"] == [
@@ -325,6 +328,7 @@ def test_execute_load_enforces_barriers_and_exact_token_history() -> None:
 def test_pd_load_requires_external_cache_validation() -> None:
     result, _executor = _execute_fake_load("pd")
 
+    assert result["implementation"]["prefill_kv_async"] is False
     assert result["validity"] == {
         "status": "passed",
         "cache_gate": "requires_external_validation",

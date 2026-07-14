@@ -894,6 +894,28 @@ def test_commit_client_commit_does_not_block_on_slow_post(monkeypatch):
     assert post_started.wait(timeout=1.0)
 
 
+def test_commit_client_diagnostic_gate_defers_post(monkeypatch, tmp_path):
+    from threading import Event
+
+    gate_file = tmp_path / "commit.released"
+    posted = Event()
+
+    def fake_post(url, json=None, timeout=None):
+        posted.set()
+        return _CommitAckResponse(json["commit_seq"])
+
+    monkeypatch.setenv("PAP_DIAG_DECODE_COMMIT_GATE_FILE", str(gate_file))
+    monkeypatch.setattr("vllm.pap.decode_commit_client.httpx.post", fake_post)
+    client = DecodeCommitClient(endpoint="http://127.0.0.1:9999/commit")
+
+    client.commit(request_id="r", new_seq_len=10, new_token_ids=(1,))
+    assert not posted.wait(timeout=0.05)
+    gate_file.write_text("released\n", encoding="utf-8")
+
+    assert client.flush_request("r", timeout_s=1.0)
+    assert posted.is_set()
+
+
 def test_commit_client_deduplicates_pending_payloads(monkeypatch):
     from threading import Event
 

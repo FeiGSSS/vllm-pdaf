@@ -1819,6 +1819,79 @@ def test_unified_decode_append_all_active_reuses_inputs_and_scales(
     }
 
 
+def test_unified_decode_append_does_not_hold_registry_lock_during_gpu_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor as executor_module
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-lock-scope",
+            conversation_id="conv-lock-scope",
+            prefill_endpoint="http://localhost:8100",
+        )
+    )
+    _install_unified_activation(
+        registry,
+        request_id="req-lock-scope",
+        layer_names=("layer0",),
+        kv_cache=torch.zeros((1, 2, 4, 1, 2)),
+        block_ids=(0,),
+        seq_len=1,
+    )
+    gpu_work_started = Event()
+    allow_gpu_work = Event()
+    append_errors: list[BaseException] = []
+
+    def blocking_reshape_and_cache_flash(*_args: Any) -> None:
+        gpu_work_started.set()
+        assert allow_gpu_work.wait(timeout=5)
+
+    monkeypatch.setattr(
+        executor_module.torch.ops._C_cache_ops,
+        "reshape_and_cache_flash",
+        blocking_reshape_and_cache_flash,
+        raising=False,
+    )
+
+    def append() -> None:
+        try:
+            registry.append_decode_kv_to_unified_prefill_cache(
+                session_request_ids=("req-lock-scope",),
+                layer_name="layer0",
+                key_batch=torch.ones((1, 1, 2)),
+                value_batch=torch.ones((1, 1, 2)),
+                decode_seq_lens=(2,),
+            )
+        except BaseException as exc:
+            append_errors.append(exc)
+
+    append_thread = Thread(target=append)
+    append_thread.start()
+    assert gpu_work_started.wait(timeout=5)
+
+    stats_finished = Event()
+
+    def read_stats() -> None:
+        registry.decode_append_fast_path_stats()
+        stats_finished.set()
+
+    stats_thread = Thread(target=read_stats)
+    stats_thread.start()
+    assert stats_finished.wait(timeout=1)
+
+    allow_gpu_work.set()
+    append_thread.join(timeout=5)
+    stats_thread.join(timeout=5)
+    assert not append_thread.is_alive()
+    assert not stats_thread.is_alive()
+    assert append_errors == []
+    assert registry._unified_paged_kv["req-lock-scope"]["layer0"].seq_len == 2
+
+
 def test_unified_decode_append_reuses_slot_plan_across_layers(
     monkeypatch,
 ) -> None:
@@ -5138,6 +5211,204 @@ def test_attention_executor_paged_ipc_import_keeps_prefill_block_views(
         ),
     )
     assert "model.layers.0.self_attn.attn" in registry._decode_kv[session_id]
+
+
+def test_async_prefill_import_preserves_unified_kv_descriptor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-async-unified",
+            conversation_id="conv-async-unified",
+            prefill_endpoint="http://localhost:8100",
+            prefix_len=5,
+            block_size=4,
+        )
+    )
+    kv_cache = torch.zeros((2, 2, 4, 1, 2))
+    monkeypatch.setattr(
+        pap_attention_executor,
+        "open_ipc_paged_kv_cache",
+        lambda _descriptor: kv_cache,
+    )
+    descriptor = PAPOffloadKVPagedIPCDescriptor(
+        request_id="req-async-unified",
+        layer_name="model.layers.0.self_attn.attn",
+        seq_len=5,
+        block_ids=(0, 1),
+        block_size=4,
+        num_kv_heads=1,
+        layout="NHD",
+        kv_cache=PAPCudaIPCTensorHandle(
+            dtype="float32",
+            shape=tuple(kv_cache.shape),
+            ipc_handle={"GPU-test": ("kv", 1, 2, 3, 4, 5, 0)},
+        ),
+        lease_id="lease-async-unified",
+        leased_block_ids=(0, 1),
+        lease_seq_len=5,
+        lease_capacity_tokens=8,
+        unified_kv_mode=True,
+        prefix_len=5,
+        writable_start_token=5,
+        writable_end_token=8,
+    )
+
+    registry.enqueue_prefill_paged_kv_descriptor(descriptor)
+    registry._prefill_async_queue.join()
+
+    state = registry._unified_paged_kv["req-async-unified"][descriptor.layer_name]
+    assert state.kv_cache.data_ptr() == kv_cache.data_ptr()
+    assert state.lease_id == "lease-async-unified"
+    assert state.block_ids == (0, 1)
+    assert state.prefix_len == 5
+    assert state.capacity_tokens == 8
+    assert state.writable_start_token == 5
+    assert state.writable_end_token == 8
+    assert registry._session_lease_ids["req-async-unified"] == state.lease_id
+    readiness = registry.prefill_layer_readiness(
+        request_id="req-async-unified",
+        layer_name=descriptor.layer_name,
+    )
+    assert readiness is not None
+    assert readiness.ready
+
+
+def test_async_prefill_import_discards_stale_session_epoch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import torch
+
+    from examples.pap import pap_attention_executor
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registration = PAPAttentionRegistration(
+        request_id="req-async-aba",
+        conversation_id="conv-async-aba",
+        prefill_endpoint="http://localhost:8100",
+        prefix_len=5,
+        block_size=4,
+    )
+    registry.register_prefill_kv(registration)
+    kv_cache = torch.zeros((2, 2, 4, 1, 2))
+    open_started = Event()
+    allow_open = Event()
+
+    def delayed_open(_descriptor: Any) -> Any:
+        open_started.set()
+        assert allow_open.wait(timeout=5)
+        return kv_cache
+
+    monkeypatch.setattr(
+        pap_attention_executor,
+        "open_ipc_paged_kv_cache",
+        delayed_open,
+    )
+    descriptor = PAPOffloadKVPagedIPCDescriptor(
+        request_id=registration.request_id,
+        layer_name="model.layers.0.self_attn.attn",
+        seq_len=5,
+        block_ids=(0, 1),
+        block_size=4,
+        num_kv_heads=1,
+        layout="NHD",
+        kv_cache=PAPCudaIPCTensorHandle(
+            dtype="float32",
+            shape=tuple(kv_cache.shape),
+            ipc_handle={"GPU-test": ("kv", 1, 2, 3, 4, 5, 0)},
+        ),
+        lease_id="lease-stale",
+        leased_block_ids=(0, 1),
+        lease_capacity_tokens=8,
+        unified_kv_mode=True,
+        prefix_len=5,
+        writable_start_token=5,
+        writable_end_token=8,
+    )
+
+    registry.enqueue_prefill_paged_kv_descriptor(descriptor)
+    assert open_started.wait(timeout=5)
+    registry.register_prefill_kv(registration)
+    allow_open.set()
+    registry._prefill_async_queue.join()
+
+    assert descriptor.layer_name not in registry._unified_paged_kv.get(
+        registration.request_id,
+        {},
+    )
+    assert registration.request_id not in registry._session_lease_ids
+    assert (
+        registry.prefill_layer_readiness(
+            request_id=registration.request_id,
+            layer_name=descriptor.layer_name,
+        )
+        is None
+    )
+
+
+def test_unified_decode_waits_for_complete_registered_prefix() -> None:
+    import torch
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-async-readiness",
+            conversation_id="conv-async-readiness",
+            prefill_endpoint="http://localhost:8100",
+            prefix_len=5,
+            block_size=4,
+        )
+    )
+    kv_cache = torch.zeros((2, 2, 4, 1, 2))
+    _install_unified_activation(
+        registry,
+        request_id="req-async-readiness",
+        layer_names=("layer0",),
+        kv_cache=kv_cache,
+        block_ids=(0,),
+        seq_len=1,
+    )
+    lookup_finished = Event()
+    lookup_errors: list[BaseException] = []
+    states: list[PAPUnifiedPagedKVState] = []
+
+    def lookup() -> None:
+        try:
+            result = registry.get_unified_paged_states(
+                session_request_ids=("req-async-readiness",),
+                layer_name="layer0",
+            )
+            assert result is not None
+            states.extend(result)
+        except BaseException as exc:
+            lookup_errors.append(exc)
+        finally:
+            lookup_finished.set()
+
+    lookup_thread = Thread(target=lookup)
+    lookup_thread.start()
+    assert not lookup_finished.wait(timeout=0.1)
+
+    _install_unified_activation(
+        registry,
+        request_id="req-async-readiness",
+        layer_names=("layer0",),
+        kv_cache=kv_cache,
+        block_ids=(0, 1),
+        seq_len=5,
+    )
+
+    assert lookup_finished.wait(timeout=5)
+    lookup_thread.join(timeout=5)
+    assert not lookup_thread.is_alive()
+    assert lookup_errors == []
+    assert len(states) == 1
+    assert states[0].seq_len == 5
 
 
 def test_attention_registry_keeps_decode_kv_out_of_prefill_paged_block() -> None:
