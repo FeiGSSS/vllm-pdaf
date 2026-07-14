@@ -37,7 +37,6 @@ P17_PHASE0_ENV = {
     "PAP_STATIC_PREFILL_EXPECTED_SMS": "64",
     "PAP_STATIC_ATTENTION_EXPECTED_SMS": "28",
     "PAP_ENABLE_MPS": "1",
-    "PAP_PREFILL_KV_ASYNC": "1",
     "PAP_KV_HANDOFF_MODE": "sealed_manifest",
     "PAP_UNIFIED_KV": "1",
     "PAP_BATCHED_ROUTE_COPY": "1",
@@ -69,7 +68,7 @@ def test_runtime_config_preserves_python_defaults() -> None:
     assert config.mps.mode is PAPMPSMode.DYNAMIC
     runtime_contract = config.p17_profile_contract()["runtime"]
     assert runtime_contract["decode_token_delivery"] == "async"
-    assert config.features.async_prefill_kv is False
+    assert runtime_contract["prefill_kv_import"] == "async"
     assert config.features.kv_handoff_mode is PAPKVHandoffMode.LAYER_DESCRIPTOR
     assert config.features.unified_kv is False
     assert config.features.batched_route_copy is True
@@ -148,7 +147,7 @@ def test_runtime_config_is_deeply_immutable_for_config_values() -> None:
 def test_retired_flag_registry_reports_remaining_selectable_paths() -> None:
     config = PAPRuntimeConfig.from_env({})
     environment = {
-        "PAP_PREFILL_KV_ASYNC": "0",
+        "PAP_UNIFIED_KV": "0",
         "PAP_KV_HANDOFF_MODE": "sealed-manifest",
         "UNRELATED": "1",
     }
@@ -157,11 +156,11 @@ def test_retired_flag_registry_reports_remaining_selectable_paths() -> None:
 
     assert len({spec.name for spec in PAP_RETIRED_FLAGS}) == len(PAP_RETIRED_FLAGS)
     assert [setting.spec.name for setting in settings] == [
-        "PAP_PREFILL_KV_ASYNC",
         "PAP_KV_HANDOFF_MODE",
+        "PAP_UNIFIED_KV",
     ]
-    assert settings[0].matches_p17 is False
-    assert settings[1].matches_p17 is True
+    assert settings[0].matches_p17 is True
+    assert settings[1].matches_p17 is False
 
 
 @pytest.mark.parametrize(
@@ -170,6 +169,10 @@ def test_retired_flag_registry_reports_remaining_selectable_paths() -> None:
         (
             "PAP_ASYNC_DECODE_TOKEN",
             "PAP-20260713-ASYNC-DECODE-TOKEN-D2H",
+        ),
+        (
+            "PAP_PREFILL_KV_ASYNC",
+            "PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC",
         ),
         (
             "PAP_ASYNC_DECODE_TOKEN_SYNC_ONLY_BARRIER",

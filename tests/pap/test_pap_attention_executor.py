@@ -5291,6 +5291,21 @@ def test_attention_executor_paged_ipc_import_keeps_prefill_block_views(
         },
     )
 
+    retired_selector = client.post(
+        "/v1/pap/attention/import-prefill-kv-binary",
+        content=serialize_tensor_bundle(
+            {
+                "command": "import_prefill_paged_kv_ipc",
+                "descriptor": descriptor.to_dict(),
+                "async": False,
+            },
+            {},
+        ),
+        headers={"Content-Type": "application/octet-stream"},
+    )
+    assert retired_selector.status_code == 400
+    assert "async wire selector was removed" in retired_selector.json()["detail"]
+
     imported = client.post(
         "/v1/pap/attention/import-prefill-kv-binary",
         content=serialize_tensor_bundle(
@@ -5306,8 +5321,10 @@ def test_attention_executor_paged_ipc_import_keeps_prefill_block_views(
     assert imported.status_code == 200
     metadata, tensors = deserialize_tensor_bundle(imported.content)
     assert metadata["seq_len"] == 5
+    assert metadata["status"] == "queued"
     assert tensors == {}
     registry = app.state.registry
+    registry._prefill_async_queue.join()
     session_id = registry.resolve_session_request_id("req-paged-ipc")
     segments, seq_len = registry.append_decode_kv(
         request_id="req-paged-ipc",

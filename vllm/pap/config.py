@@ -232,7 +232,6 @@ class PAPAttentionServiceConfig:
 class PAPRuntimeFeatures:
     """Feature-selectable PAP paths retained until Phase 2 convergence."""
 
-    async_prefill_kv: bool
     kv_handoff_mode: PAPKVHandoffMode
     unified_kv: bool
     batched_route_copy: bool
@@ -303,6 +302,7 @@ PAP_RETIRED_FLAGS = (
         p17_values=_TRUE_VALUES,
         replacement="unconditional safe asynchronous Prefill KV import",
         experiment_id="PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC",
+        removed=True,
     ),
     PAPRetiredFlag(
         name="PAP_KV_HANDOFF_MODE",
@@ -554,7 +554,6 @@ class PAPRuntimeConfig:
         )
 
         features = PAPRuntimeFeatures(
-            async_prefill_kv=_env_bool(env, "PAP_PREFILL_KV_ASYNC", False),
             kv_handoff_mode=_parse_enum(
                 PAPKVHandoffMode,
                 _env_text(env, "PAP_KV_HANDOFF_MODE", "layer_descriptor"),
@@ -863,9 +862,7 @@ class PAPRuntimeConfig:
             },
             "runtime": {
                 "decode_token_delivery": "async",
-                "prefill_kv_import": (
-                    "async" if features.async_prefill_kv else "sync"
-                ),
+                "prefill_kv_import": "async",
                 "kv_handoff": features.kv_handoff_mode.value,
                 "kv_ownership": (
                     "prefill_owned_unified" if features.unified_kv else "legacy_split"
@@ -889,7 +886,7 @@ class PAPRuntimeConfig:
                 ),
                 "phase0_flags": {
                     "pap_async_decode_token": True,
-                    "pap_prefill_kv_async": features.async_prefill_kv,
+                    "pap_prefill_kv_async": True,
                     "pap_kv_handoff_mode": features.kv_handoff_mode.value,
                     "pap_unified_kv": features.unified_kv,
                     "pap_batched_route_copy": features.batched_route_copy,

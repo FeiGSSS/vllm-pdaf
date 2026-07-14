@@ -7,6 +7,7 @@ set -euo pipefail
 
 for removed_flag in \
   PAP_ASYNC_DECODE_TOKEN \
+  PAP_PREFILL_KV_ASYNC \
   PAP_ASYNC_DECODE_TOKEN_SYNC_ONLY_BARRIER \
   PAP_PROJECTION_SYNC_ONLY_BARRIER \
   PAP_PREFILL_SYNC_ONLY_BARRIER \
@@ -19,6 +20,10 @@ for removed_flag in \
       PAP_ASYNC_DECODE_TOKEN)
         replacement="unconditional asynchronous sampled-token delivery"
         experiment_id="PAP-20260713-ASYNC-DECODE-TOKEN-D2H"
+        ;;
+      PAP_PREFILL_KV_ASYNC)
+        replacement="unconditional safe asynchronous Prefill KV import"
+        experiment_id="PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC"
         ;;
       PAP_*_SYNC_ONLY_BARRIER)
         replacement="no Projection or Prefill timing barrier"
@@ -245,7 +250,6 @@ PAP_DECODE_COMMIT_MAX_ATTEMPTS="${PAP_DECODE_COMMIT_MAX_ATTEMPTS:-8}"
 PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS="${PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS:-0.05}"
 PAP_DECODE_COMMIT_RETRY_MAX_SECONDS="${PAP_DECODE_COMMIT_RETRY_MAX_SECONDS:-0.5}"
 PAP_DECODE_COMMIT_FLUSH_TIMEOUT="${PAP_DECODE_COMMIT_FLUSH_TIMEOUT:-5.0}"
-PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC:-1}"
 PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE:-0}"
 PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE:-sealed_manifest}"
 PAP_RUNTIME_CUDA_CONTEXT_AUDIT="${PAP_RUNTIME_CUDA_CONTEXT_AUDIT:-0}"
@@ -288,9 +292,8 @@ if ! [[ "${PAP_PREFILL_TORCH_PROFILE}" =~ ^[01]$ ]]; then
   echo "PAP_PREFILL_TORCH_PROFILE must be 0 or 1" >&2
   exit 2
 fi
-if ! [[ "${PAP_PREFILL_KV_ASYNC}" =~ ^[01]$ \
-  && "${PAP_PREFILL_IPC_PROFILE}" =~ ^[01]$ ]]; then
-  echo "PAP Prefill KV async/profile flags must be 0 or 1" >&2
+if ! [[ "${PAP_PREFILL_IPC_PROFILE}" =~ ^[01]$ ]]; then
+  echo "PAP_PREFILL_IPC_PROFILE must be 0 or 1" >&2
   exit 2
 fi
 case "${PAP_KV_HANDOFF_MODE}" in
@@ -333,7 +336,6 @@ export PAP_DECODE_COMMIT_MAX_ATTEMPTS
 export PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS
 export PAP_DECODE_COMMIT_RETRY_MAX_SECONDS
 export PAP_DECODE_COMMIT_FLUSH_TIMEOUT
-export PAP_PREFILL_KV_ASYNC
 export PAP_PREFILL_IPC_PROFILE
 export PAP_KV_HANDOFF_MODE
 export PAP_RUNTIME_CUDA_CONTEXT_AUDIT
@@ -1162,7 +1164,6 @@ write_effective_config() {
     printf 'PAP_DECODE_COMMIT_RETRY_MAX_SECONDS=%q\n' "${PAP_DECODE_COMMIT_RETRY_MAX_SECONDS}"
     printf 'PAP_DECODE_COMMIT_FLUSH_TIMEOUT=%q\n' "${PAP_DECODE_COMMIT_FLUSH_TIMEOUT}"
     printf 'VLLM_USE_V2_MODEL_RUNNER=%q\n' "${VLLM_USE_V2_MODEL_RUNNER}"
-    printf 'PAP_PREFILL_KV_ASYNC=%q\n' "${PAP_PREFILL_KV_ASYNC}"
     printf 'PAP_PREFILL_IPC_PROFILE=%q\n' "${PAP_PREFILL_IPC_PROFILE}"
     printf 'PAP_KV_HANDOFF_MODE=%q\n' "${PAP_KV_HANDOFF_MODE}"
     printf 'PAP_RUNTIME_CUDA_CONTEXT_AUDIT=%q\n' \
@@ -1279,7 +1280,6 @@ write_run_metadata() {
   PAP_DIRECT_MAILBOX_OUTPUT="${PAP_DIRECT_MAILBOX_OUTPUT}" \
   PAP_LOCAL_FAST_STREAM_ORDERED="${PAP_LOCAL_FAST_STREAM_ORDERED}" \
   PAP_LOCAL_FAST_SLOT_COUNT="${PAP_LOCAL_FAST_SLOT_COUNT}" \
-  PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC}" \
   PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
   PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE}" \
   PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}" \
@@ -1332,7 +1332,7 @@ metadata = {
         os.environ["PAP_LOCAL_FAST_STREAM_ORDERED"] == "1"
     ),
     "local_fast_slot_count": int(os.environ["PAP_LOCAL_FAST_SLOT_COUNT"]),
-    "prefill_kv_async": os.environ["PAP_PREFILL_KV_ASYNC"] == "1",
+    "prefill_kv_async": True,
     "prefill_ipc_profile": os.environ["PAP_PREFILL_IPC_PROFILE"] == "1",
     "kv_handoff_mode": os.environ["PAP_KV_HANDOFF_MODE"],
     "decode_slot_plan_cache_limit": int(
@@ -1853,7 +1853,6 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_LOCAL_FAST_YIELD_ITERS="${PAP_LOCAL_FAST_YIELD_ITERS}" \
     PAP_LOCAL_FAST_SLEEP_US="${PAP_LOCAL_FAST_SLEEP_US}" \
     PAP_LOCAL_FAST_SLEEP_AFTER_US="${PAP_LOCAL_FAST_SLEEP_AFTER_US}" \
-    PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC}" \
     PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
     PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE}" \
     PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}" \
@@ -1929,7 +1928,6 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_DEFERRED_TRACE_OUTPUT= \
     PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
     PAP_UNIFIED_KV="${PAP_UNIFIED_KV}" \
-    PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC}" \
     PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
     PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE}" \
     PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}" \
@@ -2118,7 +2116,6 @@ case "${PAP_BENCH_CLIENT_MODE}" in
       --offload-exec-transport "${PAP_OFFLOAD_EXEC_TRANSPORT}" \
       --direct-mailbox-output "${PAP_DIRECT_MAILBOX_OUTPUT}" \
       --unified-md-fast-key "${PAP_UNIFIED_MD_FAST_KEY}" \
-      --prefill-kv-async "${PAP_PREFILL_KV_ASYNC}" \
       --prefill-ipc-profile "${PAP_PREFILL_IPC_PROFILE}" \
       --kv-handoff-mode "${PAP_KV_HANDOFF_MODE}" \
       --document-tokens "${INPUT_LEN}" \
@@ -2152,7 +2149,6 @@ case "${PAP_BENCH_CLIENT_MODE}" in
       --offload-exec-transport "${PAP_OFFLOAD_EXEC_TRANSPORT}" \
       --direct-mailbox-output "${PAP_DIRECT_MAILBOX_OUTPUT}" \
       --unified-md-fast-key "${PAP_UNIFIED_MD_FAST_KEY}" \
-      --prefill-kv-async "${PAP_PREFILL_KV_ASYNC}" \
       --prefill-ipc-profile "${PAP_PREFILL_IPC_PROFILE}" \
       --kv-handoff-mode "${PAP_KV_HANDOFF_MODE}" \
       --document-tokens "${INPUT_LEN}" \

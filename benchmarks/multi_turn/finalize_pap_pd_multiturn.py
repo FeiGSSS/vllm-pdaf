@@ -314,6 +314,8 @@ def _validate_pap_evidence(
     implementation = result.get("implementation")
     if not isinstance(implementation, Mapping):
         raise ValueError("result implementation is missing")
+    if implementation.get("prefill_kv_async") is not True:
+        raise ValueError("PAP implementation must use async Prefill KV import")
     fast_key_enabled = implementation.get("unified_md_fast_key")
     if not isinstance(fast_key_enabled, bool):
         raise ValueError("implementation unified_md_fast_key must be boolean")
@@ -336,6 +338,10 @@ def _validate_pap_evidence(
     if full_key_scans <= 0:
         raise ValueError("metadata cache recorded no full-key scans")
     effective_config = _env_values(artifacts["effective_config"])
+    if "PAP_PREFILL_KV_ASYNC" in effective_config:
+        raise ValueError(
+            "PAP_PREFILL_KV_ASYNC was removed from the effective config"
+        )
     _validate_decode_token_join(
         artifacts["decode_token_join"],
         effective_config=effective_config,
@@ -376,6 +382,7 @@ def _validate_pap_evidence(
             "direct_mailbox_output"
         ),
         "unified_md_fast_key": implementation.get("unified_md_fast_key"),
+        "prefill_kv_async": True,
     }
     actual = {key: metadata.get(key) for key in expected}
     if actual != expected:

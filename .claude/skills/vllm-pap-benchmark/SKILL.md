@@ -224,8 +224,9 @@ barrier plus static MPS `64/28` SM partitions:
 bash .claude/skills/vllm-pap-benchmark/scripts/run_pap_multiturn_load.sh quick c4
 ```
 
-Sampled-token delivery is unconditionally asynchronous; the retired
-`PAP_ASYNC_DECODE_TOKEN` switch now fails closed. Set
+Sampled-token delivery and Prefill KV import are unconditionally asynchronous;
+the retired `PAP_ASYNC_DECODE_TOKEN` and `PAP_PREFILL_KV_ASYNC` switches now
+fail closed. Set
 `PAP_LOAD_MPS_PROFILE=baseline_70_30` only when reproducing the retained dynamic
 MPS experiment. Static MPS is host-specific and must pass the recorded
 visible-SM and cleanup audits.

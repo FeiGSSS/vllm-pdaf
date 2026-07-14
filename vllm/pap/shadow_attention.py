@@ -40,15 +40,6 @@ def _pap_prefill_ipc_profile_enabled() -> bool:
     }
 
 
-def _pap_prefill_kv_async_enabled() -> bool:
-    return os.environ.get("PAP_PREFILL_KV_ASYNC", "").lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
-
 def _pap_unified_kv_enabled() -> bool:
     return os.environ.get("PAP_UNIFIED_KV", "").lower() in {
         "1",
@@ -538,12 +529,10 @@ def import_prefill_paged_kv(
         (time.perf_counter() - descriptor_start) * 1000.0 if profile else 0.0
     )
     serialize_start = time.perf_counter() if profile else 0.0
-    async_import = _pap_prefill_kv_async_enabled()
     request_body = serialize_tensor_bundle(
         {
             "command": "import_prefill_paged_kv_ipc",
             "descriptor": descriptor.to_dict(),
-            "async": async_import,
         },
         {},
     )
@@ -563,7 +552,7 @@ def import_prefill_paged_kv(
     if profile:
         logger.info(
             "PAP prefill IPC transport profile request_id=%s layer=%s "
-            "seq_len=%d blocks=%d async=%s status=%s sync_ms=%.3f "
+            "seq_len=%d blocks=%d delivery=async status=%s sync_ms=%.3f "
             "descriptor_ms=%.3f serialize_ms=%.3f response_wait_ms=%.3f "
             "deserialize_ms=%.3f total_ms=%.3f request_bytes=%d "
             "response_bytes=%d endpoint=%s lease_id=%s",
@@ -571,7 +560,6 @@ def import_prefill_paged_kv(
             layer_name,
             int(seq_len),
             len(block_ids),
-            async_import,
             str(response_metadata.get("status", "ready")),
             sync_ms,
             descriptor_ms,

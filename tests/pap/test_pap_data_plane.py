@@ -647,6 +647,7 @@ def test_import_prefill_paged_kv_cuda_ipc_posts_descriptor_without_tensors(
     metadata, tensors = deserialize_tensor_bundle(posted_payloads[0])
     assert tensors == {}
     assert metadata["command"] == "import_prefill_paged_kv_ipc"
+    assert "async" not in metadata
     descriptor = metadata["descriptor"]
     assert descriptor["request_id"] == "cmpl-1"
     assert descriptor["layer_name"] == "model.layers.0.self_attn.attn"

@@ -25,6 +25,7 @@ def _client_result(architecture: str = "pap") -> dict[str, object]:
             "offload_exec_transport": "local_fast",
             "direct_mailbox_output": True,
             "unified_md_fast_key": True,
+            "prefill_kv_async": True,
         },
         "validity": {"status": "passed", "cache_gate": "passed"},
         "cache_validation": {"status": "passed"},
@@ -119,6 +120,7 @@ def _pap_artifacts(tmp_path: Path) -> dict[str, Path]:
                 "offload_exec_transport": "local_fast",
                 "direct_mailbox_output": True,
                 "unified_md_fast_key": True,
+                "prefill_kv_async": True,
             }
         ),
         encoding="utf-8",
@@ -252,6 +254,24 @@ def test_finalize_result_rejects_decode_token_join_config_mismatch(
     )
 
     with pytest.raises(ValueError, match="PAP_ASYNC_DECODE_TOKEN was removed"):
+        finalize_result(
+            _client_result(),
+            architecture="pap",
+            passed_gates=(
+                "session_drain",
+                "routing",
+                "correctness_logs",
+                "attention_stats_capture",
+                "decode_token_join",
+            ),
+            artifacts=artifacts,
+        )
+
+    artifacts["effective_config"].write_text(
+        "PAP_UNIFIED_MD_FAST_KEY=1\nPAP_PREFILL_KV_ASYNC=0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="PAP_PREFILL_KV_ASYNC was removed"):
         finalize_result(
             _client_result(),
             architecture="pap",

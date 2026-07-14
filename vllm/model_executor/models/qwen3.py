@@ -107,10 +107,6 @@ def _pap_prefill_ipc_profile_enabled() -> bool:
     return _pap_env_enabled("PAP_PREFILL_IPC_PROFILE")
 
 
-def _pap_prefill_kv_async_enabled() -> bool:
-    return _pap_env_enabled("PAP_PREFILL_KV_ASYNC")
-
-
 def _pap_unified_kv_export_enabled() -> bool:
     return _pap_env_enabled("PAP_UNIFIED_KV")
 
@@ -2064,7 +2060,6 @@ class Qwen3Attention(nn.Module):
         import_count = 0
         block_ids_total_ms = 0.0
         import_total_ms = 0.0
-        async_import = _pap_prefill_kv_async_enabled()
         for req_index in range(num_reqs):
             req_profile_start = time.perf_counter() if profile_ipc else 0.0
             request_id = str(request_ids[req_index])
@@ -2083,7 +2078,6 @@ class Qwen3Attention(nn.Module):
                 self.attn.layer_name,
                 prefix_len,
                 str(prefill_kv_handle),
-                async_import,
             )
             if import_key in self._pap_imported_prefill_kv:
                 continue
@@ -2134,14 +2128,14 @@ class Qwen3Attention(nn.Module):
                 import_total_ms += publish_ms
                 logger.info(
                     "PAP prefill IPC model profile request_id=%s layer=%s "
-                    "prefix_len=%d blocks=%d async=%s seq_lens_cpu_ms=%.3f "
+                    "prefix_len=%d blocks=%d delivery=async "
+                    "seq_lens_cpu_ms=%.3f "
                     "block_ids_ms=%.3f publish_response_wait_ms=%.3f "
                     "total_ms=%.3f",
                     request_id,
                     self.attn.layer_name,
                     prefix_len,
                     len(block_ids),
-                    async_import,
                     seq_lens_cpu_ms,
                     block_ids_ms,
                     publish_ms,
@@ -2151,14 +2145,14 @@ class Qwen3Attention(nn.Module):
             logger.info(
                 "PAP prefill IPC model aggregate layer=%s imports=%d "
                 "seq_lens_cpu_ms=%.3f block_ids_total_ms=%.3f "
-                "publish_response_wait_total_ms=%.3f total_ms=%.3f async=%s",
+                "publish_response_wait_total_ms=%.3f total_ms=%.3f "
+                "delivery=async",
                 self.attn.layer_name,
                 import_count,
                 seq_lens_cpu_ms,
                 block_ids_total_ms,
                 import_total_ms,
                 (time.perf_counter() - profile_total_start) * 1000.0,
-                async_import,
             )
 
     def _publish_pap_prefill_kv_manifests(

@@ -8,6 +8,12 @@ if [[ -v PAP_ASYNC_DECODE_TOKEN ]]; then
 "PAP-20260713-ASYNC-DECODE-TOKEN-D2H." >&2
     exit 2
 fi
+if [[ -v PAP_PREFILL_KV_ASYNC ]]; then
+    echo "PAP_PREFILL_KV_ASYNC was removed; Prefill KV import is "\
+"unconditionally asynchronous. Historical evidence: "\
+"PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC." >&2
+    exit 2
+fi
 
 usage() {
     cat <<'EOF'

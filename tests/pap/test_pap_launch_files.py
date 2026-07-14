@@ -146,16 +146,23 @@ def test_pap_runner_defaults_to_safe_async_prefill_kv_import() -> None:
         / "run_pap_same_pd_workload.sh"
     )
     text = runner.read_text(encoding="utf-8")
+    nixl_text = (ROOT / "examples" / "pap" / "launch_pap_nixl.sh").read_text(
+        encoding="utf-8"
+    )
 
-    assert 'PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC:-1}"' in text
+    assert 'PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC:-1}"' not in text
     assert 'PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE:-0}"' in text
     assert 'PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE:-sealed_manifest}"' in text
-    assert "printf 'PAP_PREFILL_KV_ASYNC=%q\\n'" in text
+    assert "printf 'PAP_PREFILL_KV_ASYNC=%q\\n'" not in text
     assert "printf 'PAP_KV_HANDOFF_MODE=%q\\n'" in text
-    assert text.count('PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC}"') >= 3
+    assert "PAP_PREFILL_KV_ASYNC \\" in text
+    assert "PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC" in text
+    assert '"prefill_kv_async": True' in text
     assert text.count('PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE}"') >= 3
-    assert text.count('--prefill-kv-async "${PAP_PREFILL_KV_ASYNC}"') == 2
+    assert "--prefill-kv-async" not in text
     assert text.count('--prefill-ipc-profile "${PAP_PREFILL_IPC_PROFILE}"') == 2
+    assert "PAP_PREFILL_KV_ASYNC was removed" in nixl_text
+    assert "PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC" in nixl_text
 
 
 def test_pap_benchmark_runner_supports_arbitrary_xy_topology() -> None:

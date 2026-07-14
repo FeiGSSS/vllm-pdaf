@@ -109,10 +109,6 @@ def _pap_attention_pool_profile_enabled() -> bool:
     return _pap_env_flag("PAP_ATTENTION_POOL_PROFILE", False)
 
 
-def _pap_prefill_kv_async_enabled() -> bool:
-    return _pap_env_flag("PAP_PREFILL_KV_ASYNC", False)
-
-
 def _pap_prefill_ipc_profile_enabled() -> bool:
     return _pap_env_flag("PAP_PREFILL_IPC_PROFILE", False)
 
@@ -3464,53 +3460,18 @@ def compute_binary_attention_response(
         )
     if metadata.get("command") == "import_prefill_paged_kv_ipc":
         descriptor = PAPOffloadKVPagedIPCDescriptor.from_dict(metadata["descriptor"])
-        async_import = (
-            bool(metadata.get("async", False)) or _pap_prefill_kv_async_enabled()
-        )
-        if async_import:
-            seq_len = registry.enqueue_prefill_paged_kv_descriptor(descriptor)
-            return serialize_tensor_bundle(
-                {
-                    "request_id": descriptor.request_id,
-                    "layer_name": descriptor.layer_name,
-                    "seq_len": seq_len,
-                    "status": "queued",
-                    "unified_kv_mode": descriptor.unified_kv_mode,
-                },
-                {},
+        if "async" in metadata:
+            raise ValueError(
+                "PAP Prefill KV async wire selector was removed; paged IPC "
+                "import is unconditionally asynchronous"
             )
-        kv_cache = open_ipc_paged_kv_cache(descriptor)
-        seq_len = registry.import_prefill_paged_kv(
-            request_id=descriptor.request_id,
-            layer_name=descriptor.layer_name,
-            kv_cache=kv_cache,
-            block_ids=list(descriptor.block_ids),
-            seq_len=descriptor.seq_len,
-            block_size=descriptor.block_size,
-            num_kv_heads=descriptor.num_kv_heads,
-            layout=descriptor.layout,
-            lease_id=descriptor.lease_id,
-            leased_block_ids=descriptor.leased_block_ids,
-            lease_capacity_tokens=descriptor.lease_capacity_tokens,
-            unified_kv_mode=descriptor.unified_kv_mode,
-            prefix_len=descriptor.prefix_len,
-            writable_start_token=descriptor.writable_start_token,
-            writable_end_token=descriptor.writable_end_token,
-        )
-        logger.info(
-            "PAP prefill paged KV imported via IPC descriptor request_id=%s "
-            "layer=%s seq_len=%s blocks=%s",
-            descriptor.request_id,
-            descriptor.layer_name,
-            seq_len,
-            len(descriptor.block_ids),
-        )
+        seq_len = registry.enqueue_prefill_paged_kv_descriptor(descriptor)
         return serialize_tensor_bundle(
             {
                 "request_id": descriptor.request_id,
                 "layer_name": descriptor.layer_name,
                 "seq_len": seq_len,
-                "status": "ready",
+                "status": "queued",
                 "unified_kv_mode": descriptor.unified_kv_mode,
             },
             {},

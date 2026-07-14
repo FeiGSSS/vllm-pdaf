@@ -241,7 +241,6 @@ def _execute_fake_load(architecture: str) -> tuple[dict[str, object], FakeLoadEx
         block_size=2,
         max_model_len=100,
         max_num_seqs=2,
-        prefill_kv_async=architecture == "pap",
     )
     executor = FakeLoadExecutor(architecture=architecture)
     sleep_calls: list[float] = []
