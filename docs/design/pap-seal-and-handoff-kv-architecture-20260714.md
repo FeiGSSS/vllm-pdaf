@@ -2,7 +2,8 @@
 
 日期：2026-07-14
 
-状态：`implementation-in-progress`
+状态：第一阶段已实现并通过 C1/C2 与 C4 quick；见
+[阶段结果](pap-seal-and-handoff-kv-results-20260714.md)
 
 ## 1. 目标
 
@@ -101,7 +102,7 @@ Prefix KV 对 Decode 可见，而 CPU 不等待 GPU。
 - `layer_descriptor`：当前逐层 descriptor 路径；
 - `sealed_manifest`：static catalog + request manifest 路径。
 
-通用代码初始保持旧模式；固定 PAP test bed 在 C1/C2 正确性通过后再将新模式设为默认。
+通用代码保持旧模式；固定 PAP test bed 已在 C1/C2 正确性通过后将新模式设为默认。
 所有结果必须把 mode 写入 effective config、run metadata 和 implementation fingerprint。
 
 ## 7. 实施和验收顺序
@@ -110,6 +111,10 @@ Prefix KV 对 Decode 可见，而 CPU 不等待 GPU。
 2. Attention 安装 catalog，并原子生成全部 layer state；
 3. Qwen3 新路径发布 catalog/manifest 和 CUDA IPC event；
 4. C1 五轮验证 exact output、APC、join、lease 和 drain；
-5. C2 并发共享 prefix 验证；
+5. C2 并发验证，并用 contract test 验证共享只读 prefix/private tail 布局；
 6. 同一 C4 下与 `bd164d8ff` layer-descriptor 基线做 TTFT/TPOT/吞吐 A/B；
 7. 验证后提交并晋升 test-bed 默认；失败则保留旧模式回退。
+
+第 1--7 项已经在 `25c8723de` 和提交后 C1/C2/C4 quick 中完成。共享只读 prefix/private
+tail 已有 registry contract；C4 三次 formal、同 salt 的 allocator/APC 端到端共享以及
+1PA2P/2PA2P 是下一阶段 Gate。

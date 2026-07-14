@@ -294,6 +294,63 @@ def test_sealed_prefill_manifest_requires_complete_catalog() -> None:
         )
 
 
+def test_sealed_manifests_preserve_shared_prefix_and_private_tails() -> None:
+    import torch
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    for request_id in ("req-shared-a", "req-shared-b"):
+        registry.register_prefill_kv(
+            PAPAttentionRegistration(
+                request_id=request_id,
+                conversation_id=request_id,
+                prefill_endpoint="http://localhost:8100",
+                block_size=4,
+                max_seq_len=32,
+            )
+        )
+    shape = (8, 2, 4, 1, 2)
+    registry.register_prefill_kv_catalog(
+        descriptor=_catalog_descriptor(layer_name="layer0", shape=shape),
+        kv_cache=torch.zeros(shape),
+    )
+
+    for request_id, private_tail in (
+        ("req-shared-a", 3),
+        ("req-shared-b", 4),
+    ):
+        block_ids = (1, 2, private_tail)
+        registry.install_prefill_kv_session_manifest(
+            manifest=PAPPrefillKVSessionManifest(
+                request_id=request_id,
+                catalog_id="prefill-test",
+                prefix_len=8,
+                block_ids=block_ids,
+                block_size=4,
+                expected_layer_count=1,
+                lease_id=f"lease-{request_id}",
+                leased_block_ids=block_ids,
+                lease_capacity_tokens=12,
+                writable_start_token=8,
+                writable_end_token=12,
+            ),
+            ready_event=None,
+        )
+
+    state_a = registry.get_unified_paged_states(
+        session_request_ids=("req-shared-a",),
+        layer_name="layer0",
+    )
+    state_b = registry.get_unified_paged_states(
+        session_request_ids=("req-shared-b",),
+        layer_name="layer0",
+    )
+    assert state_a is not None and state_b is not None
+    assert state_a[0].block_ids[:2] == state_b[0].block_ids[:2] == (1, 2)
+    assert state_a[0].block_ids[2] != state_b[0].block_ids[2]
+    assert state_a[0].writable_start_token == 8
+    assert state_b[0].writable_start_token == 8
+
+
 def test_offload_exec_batch_rows_uses_template_without_items() -> None:
     descriptor = PAPOffloadExecBatchDescriptor(
         layer_name="layer0",
