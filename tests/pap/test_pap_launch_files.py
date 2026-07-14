@@ -367,6 +367,29 @@ def test_pap_readme_documents_projection_as_decode_owner() -> None:
     assert "internal executor" in text
 
 
+def test_pap_attention_runtime_is_packaged() -> None:
+    runtime = ROOT / "vllm" / "pap" / "attention_executor.py"
+    compatibility_launcher = (
+        ROOT / "examples" / "pap" / "pap_attention_executor.py"
+    )
+    launcher = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
+    testbed = (
+        ROOT
+        / ".claude"
+        / "skills"
+        / "vllm-pap-benchmark"
+        / "scripts"
+        / "run_pap_same_pd_workload.sh"
+    )
+
+    assert runtime.is_file()
+    compatibility_text = compatibility_launcher.read_text()
+    assert "from vllm.pap.attention_executor import main" in compatibility_text
+    assert len(compatibility_text.splitlines()) < 20
+    assert "-m vllm.pap.attention_executor" in launcher.read_text()
+    assert "-m vllm.pap.attention_executor" in testbed.read_text()
+
+
 def test_pap_6pa2p_launch_uses_multi_proxy_and_expected_counts() -> None:
     script = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
     text = script.read_text()
@@ -379,7 +402,7 @@ def test_pap_6pa2p_launch_uses_multi_proxy_and_expected_counts() -> None:
     assert 'PROJECTION_COUNT="${PAP_PROJECTION_COUNT:-${BASH_REMATCH[2]}}"' in text
     assert "TOTAL_GPU_COUNT=$(((PA_COUNT + PROJECTION_COUNT) * PAP_TP_SIZE))" in text
     assert "multi_pap_proxy_server.py" in text
-    assert "pap_attention_executor.py" in text
+    assert "-m vllm.pap.attention_executor" in text
     assert 'ATTENTION_TCP_PORT_BASE="${PAP_ATTENTION_TCP_PORT_BASE:-9300}"' in text
     assert 'ATTENTION_ZMQ_PORT_BASE="${PAP_ATTENTION_ZMQ_PORT_BASE:-10300}"' in text
     assert 'PROJECTION_ZMQ_PORT_BASE="${PAP_PROJECTION_ZMQ_PORT_BASE:-11300}"' in text

@@ -1887,7 +1887,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       fi
     )" \
     PAP_LEASE_RELEASE_ENDPOINT="${lease_release_endpoint}" \
-    "${PYTHON_BIN}" examples/pap/pap_attention_executor.py \
+    "${PYTHON_BIN}" -m vllm.pap.attention_executor \
       --host 127.0.0.1 \
       --port "${attention_port}" \
       --tcp-port "${attention_tcp_port}" \

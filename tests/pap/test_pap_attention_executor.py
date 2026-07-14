@@ -12,7 +12,7 @@ import anyio
 import pytest
 from httpx import ASGITransport, AsyncClient, Response
 
-from examples.pap.pap_attention_executor import (
+from vllm.pap.attention_executor import (
     PAPAttentionRegistration,
     PAPAttentionRegistry,
     PAPUnifiedPagedKVState,
@@ -377,7 +377,7 @@ def test_unified_paged_flash_metadata_reuses_identical_decode_signature(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     reset_cache = getattr(
         executor_module,
@@ -461,7 +461,7 @@ def test_unified_paged_flash_metadata_fast_key_avoids_hit_block_scan(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     executor_module.reset_unified_paged_flash_metadata_cache()
     state = _make_unified_state(
@@ -508,7 +508,7 @@ def test_unified_paged_flash_metadata_fast_key_can_be_disabled(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     monkeypatch.setenv("PAP_UNIFIED_MD_FAST_KEY", "0")
     executor_module.reset_unified_paged_flash_metadata_cache()
@@ -550,7 +550,7 @@ def test_unified_paged_flash_metadata_fast_key_can_be_disabled(
 def test_unified_paged_flash_metadata_fast_key_snapshots_sequence_length() -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     executor_module.reset_unified_paged_flash_metadata_cache()
     state = _make_unified_state(
@@ -592,7 +592,7 @@ def test_unified_paged_flash_metadata_fast_key_snapshots_sequence_length() -> No
 def test_unified_paged_flash_metadata_fast_key_preserves_row_order() -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     executor_module.reset_unified_paged_flash_metadata_cache()
     first_state = _make_unified_state(
@@ -632,7 +632,7 @@ def test_unified_paged_flash_metadata_lru_hit_is_atomic_with_eviction(
     import torch
     from collections import OrderedDict
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     monkeypatch.setenv("PAP_UNIFIED_MD_CACHE_LIMIT", "1")
     executor_module.reset_unified_paged_flash_metadata_cache()
@@ -717,7 +717,7 @@ def test_unified_paged_flash_metadata_avoids_scalar_tensor_writes_on_miss(
     import torch
     from torch.utils._python_dispatch import TorchDispatchMode
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     class ScalarCopyCounter(TorchDispatchMode):
         def __init__(self) -> None:
@@ -763,7 +763,7 @@ def test_unified_paged_flash_metadata_avoids_scalar_tensor_writes_on_miss(
 def test_unified_paged_flash_metadata_pads_ragged_rows() -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     executor_module.reset_unified_paged_flash_metadata_cache()
     states = [
@@ -800,7 +800,7 @@ def test_unified_paged_flash_metadata_pads_ragged_rows() -> None:
 def test_unified_paged_flash_metadata_key_uses_unpadded_rows() -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     executor_module.reset_unified_paged_flash_metadata_cache()
 
@@ -840,7 +840,7 @@ def test_unified_paged_flash_metadata_preserves_lru_recency(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     monkeypatch.setenv("PAP_UNIFIED_MD_CACHE_LIMIT", "2")
     executor_module.reset_unified_paged_flash_metadata_cache()
@@ -876,14 +876,14 @@ def test_unified_paged_flash_metadata_preserves_lru_recency(
 
 
 def test_attention_executor_declares_offload_exec_zmq_port() -> None:
-    text = (ROOT / "examples" / "pap" / "pap_attention_executor.py").read_text()
+    text = (ROOT / "vllm" / "pap" / "attention_executor.py").read_text()
 
     assert "--offload-exec-zmq-port" in text
     assert "OFFLOAD_EXEC NIXL mailbox initialized" in text
 
 
 def test_attention_executor_logs_ipc_prefill_import() -> None:
-    text = (ROOT / "examples" / "pap" / "pap_attention_executor.py").read_text()
+    text = (ROOT / "vllm" / "pap" / "attention_executor.py").read_text()
 
     assert "PAP prefill KV imported via IPC descriptor" in text
 
@@ -906,7 +906,7 @@ def test_attention_executor_starts_offload_exec_transport(monkeypatch) -> None:
 
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_LOCAL_RANK", "2")
     monkeypatch.setattr(
-        "examples.pap.pap_attention_executor.build_nixl_mailbox_offload_exec_transport",
+        "vllm.pap.attention_executor.build_nixl_mailbox_offload_exec_transport",
         fake_build_transport,
     )
 
@@ -922,7 +922,7 @@ def test_attention_executor_starts_offload_exec_transport(monkeypatch) -> None:
 def test_attention_executor_binds_each_projection_to_distinct_transport(
     monkeypatch,
 ) -> None:
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     class FakeTransport:
         def __init__(self, actor_id: str, local_rank: int) -> None:
@@ -1002,7 +1002,7 @@ def test_attention_executor_central_mode_shares_one_dispatcher(
     monkeypatch,
     dispatch_mode,
 ) -> None:
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     class FakeTransport:
         def __init__(self, actor_id: str, local_rank: int) -> None:
@@ -1484,7 +1484,7 @@ def test_run_offload_exec_batch_once_uses_batched_compute(monkeypatch) -> None:
         def send_output_batch(self, descriptor, output, *, remote_address):
             self.sent.append((descriptor, output, remote_address))
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     calls = []
 
@@ -1547,7 +1547,7 @@ def test_unified_offload_exec_commit_uses_descriptor_decode_token_ids(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
@@ -1644,7 +1644,7 @@ def test_unified_offload_exec_commit_waits_for_async_decode_token(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
@@ -1799,7 +1799,7 @@ def test_decode_token_batch_http_endpoint_records_one_forward() -> None:
 def test_attention_release_waits_for_kv_ready_token_but_not_final_token(
     monkeypatch,
 ) -> None:
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     commits = []
 
@@ -1887,7 +1887,7 @@ def test_unified_offload_exec_overlap_step_does_not_commit(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
@@ -1976,7 +1976,7 @@ def test_unified_decode_append_all_active_reuses_inputs_and_scales(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     registry = PAPAttentionRegistry(storage_device="cpu")
     kv_cache = torch.zeros((4, 2, 4, 1, 2))
@@ -2053,7 +2053,7 @@ def test_unified_decode_append_does_not_hold_registry_lock_during_gpu_work(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
@@ -2126,7 +2126,7 @@ def test_unified_decode_append_reuses_slot_plan_across_layers(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     registry = PAPAttentionRegistry(storage_device="cpu")
     for request_id in ("req-a", "req-b"):
@@ -2195,7 +2195,7 @@ def test_unified_decode_append_recovers_slot_plan_after_chunk_generations(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
@@ -2253,7 +2253,7 @@ def test_unified_decode_append_latches_same_generation_topology_conflict(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
@@ -2311,7 +2311,7 @@ def test_unified_decode_append_waits_for_complete_new_generation(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
@@ -2367,7 +2367,7 @@ def test_unified_decode_append_batch_falls_back_for_incomplete_generation(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     registry = PAPAttentionRegistry(storage_device="cpu")
     kv_cache = torch.zeros((8, 2, 4, 1, 2))
@@ -2428,7 +2428,7 @@ def test_unified_slot_conflict_clears_only_on_new_activation(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
@@ -2644,7 +2644,7 @@ def test_unified_slot_topology_ids_are_unique_across_registries() -> None:
 def test_unified_metadata_fast_key_rejects_reused_request_aba() -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     executor_module.reset_unified_paged_flash_metadata_cache()
     registry = PAPAttentionRegistry(storage_device="cpu")
@@ -2689,7 +2689,7 @@ def test_unified_metadata_fast_key_rejects_reused_request_aba() -> None:
 def test_unified_metadata_fast_key_mixed_unknown_batch_falls_back() -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     executor_module.reset_unified_paged_flash_metadata_cache()
     states = [
@@ -2730,7 +2730,7 @@ def test_unified_decode_append_disables_slot_plan_for_mixed_topology(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
@@ -2790,7 +2790,7 @@ def test_unified_decode_append_slot_plan_uses_session_generation(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     registry = PAPAttentionRegistry(storage_device="cpu")
 
@@ -2862,7 +2862,7 @@ def test_unified_decode_append_partial_batch_uses_fallback_gather(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     registry = PAPAttentionRegistry(storage_device="cpu")
     kv_cache = torch.zeros((4, 2, 4, 1, 2))
@@ -2956,7 +2956,7 @@ def test_attention_registry_reports_active_session_count() -> None:
 
 
 def test_attention_fast_path_stats_endpoint() -> None:
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     executor_module.reset_unified_paged_flash_metadata_cache()
     registry = PAPAttentionRegistry(storage_device="cpu")
@@ -3011,7 +3011,7 @@ def test_attention_fast_path_stats_endpoint() -> None:
 def test_attention_registry_release_session_notifies_prefill_lease(
     monkeypatch,
 ) -> None:
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     released = []
     events = []
@@ -3074,7 +3074,7 @@ def test_attention_registry_release_session_notifies_prefill_lease(
 def test_attention_registry_does_not_release_lease_before_commit_ack(
     monkeypatch,
 ) -> None:
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     events = []
 
@@ -3120,7 +3120,7 @@ def test_attention_registry_does_not_release_lease_before_commit_ack(
 def test_attention_registry_reregister_releases_replaced_prefill_lease(
     monkeypatch,
 ) -> None:
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     released = []
     events = []
@@ -3365,7 +3365,7 @@ def test_run_offload_exec_batch_once_single_item_avoids_output_cat(
     )
     transport = FakeTransport()
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     def fake_compute_offload_exec_batch_output(**kwargs):
         return torch.tensor([[2.0, 0.0]])
@@ -3448,7 +3448,7 @@ def test_run_offload_exec_mailbox_loop_releases_qkv_message(monkeypatch) -> None
         ),
     )
     transport = FakeTransport(descriptor)
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     monkeypatch.setattr(
         executor_module,
@@ -3480,7 +3480,7 @@ def test_run_offload_exec_mailbox_loop_releases_qkv_message(monkeypatch) -> None
 def test_mailbox_receiver_enqueues_without_computing(monkeypatch) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     released = []
 
@@ -3616,7 +3616,7 @@ def test_mailbox_receiver_waits_for_dispatch_before_busy_spinning_again() -> Non
 def test_central_dispatcher_computes_and_sends_to_each_source(monkeypatch) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     events = []
 
@@ -3715,7 +3715,7 @@ def test_central_combine_executes_once_and_scatters_to_sources(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     class FakeTransport:
         def __init__(self) -> None:
@@ -3811,7 +3811,7 @@ def test_central_combine_executes_once_and_scatters_to_sources(
 def test_central_combine_single_item_reuses_fifo_executor(monkeypatch) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     descriptor = PAPOffloadExecBatchDescriptor(
         layer_name="layer0",
@@ -3883,7 +3883,7 @@ def test_central_combine_compatibility_key_rejects_layer_or_scale() -> None:
 def test_central_dispatcher_preserves_cuda_ready_dependency(monkeypatch) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     events = []
     ready_event = object()
@@ -3981,7 +3981,7 @@ def test_central_dispatcher_preserves_mailbox_trace_contract(
 
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
     from vllm.pap.attention_scheduler import PAPAttentionWorkItem
 
     class FakeTransport:
@@ -4056,7 +4056,7 @@ def test_run_offload_exec_mailbox_loop_prefetches_next_qkv_message(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     events = []
     second_recv_started = Event()
@@ -4172,7 +4172,7 @@ def test_run_offload_exec_mailbox_loop_emits_trace(monkeypatch, caplog) -> None:
         ),
     )
     transport = FakeTransport(descriptor)
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     def fake_compute_offload_exec_batch_output(**kwargs):
         trace_stats = kwargs["trace_stats"]
@@ -4273,7 +4273,7 @@ def test_run_offload_exec_mailbox_loop_emits_recv_breakdown(
         ),
     )
     transport = FakeTransport(descriptor)
-    from examples.pap import pap_attention_executor as executor_module
+    from vllm.pap import attention_executor as executor_module
 
     monkeypatch.setattr(
         executor_module,
@@ -4726,7 +4726,7 @@ def test_attention_registry_matches_wrapped_vllm_request_ids() -> None:
 def test_attention_executor_compute_route_returns_attention_output() -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import create_app
+    from vllm.pap.attention_executor import create_app
     from vllm.pap.remote_attention import deserialize_attention_result, serialize_tensor
 
     app = create_app()
@@ -4756,7 +4756,7 @@ def test_attention_executor_compute_route_returns_attention_output() -> None:
 def test_attention_executor_append_and_compute_keeps_stateful_kv() -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import create_app
+    from vllm.pap.attention_executor import create_app
     from vllm.pap.remote_attention import deserialize_attention_result, serialize_tensor
 
     app = create_app()
@@ -4816,7 +4816,7 @@ def test_attention_executor_append_and_compute_keeps_stateful_kv() -> None:
 def test_attention_executor_binary_append_and_compute_keeps_stateful_kv() -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import create_app
+    from vllm.pap.attention_executor import create_app
     from vllm.pap.remote_attention import (
         deserialize_tensor_bundle,
         serialize_tensor_bundle,
@@ -4861,7 +4861,7 @@ def test_attention_executor_binary_append_and_compute_keeps_stateful_kv() -> Non
 def test_attention_executor_batch_binary_append_and_compute_keeps_stateful_kv() -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import create_app
+    from vllm.pap.attention_executor import create_app
     from vllm.pap.remote_attention import (
         deserialize_tensor_bundle,
         serialize_tensor_bundle,
@@ -4922,7 +4922,7 @@ def test_attention_executor_batch_binary_append_and_compute_keeps_stateful_kv() 
 def test_attention_executor_batch_binary_accepts_packed_qkv(monkeypatch) -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import create_app
+    from vllm.pap.attention_executor import create_app
     from vllm.pap.remote_attention import (
         deserialize_tensor_bundle,
         serialize_tensor_bundle,
@@ -4970,7 +4970,7 @@ def test_attention_executor_batch_binary_accepts_packed_qkv(monkeypatch) -> None
 def test_attention_executor_compact_tcp_payload_keeps_stateful_kv() -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import (
+    from vllm.pap.attention_executor import (
         PAPAttentionRegistration,
         PAPAttentionRegistry,
         compute_binary_attention_response,
@@ -5018,7 +5018,7 @@ def test_attention_executor_compact_tcp_payload_keeps_stateful_kv() -> None:
 def test_attention_executor_rejects_decode_when_prompt_kv_is_missing() -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import create_app
+    from vllm.pap.attention_executor import create_app
     from vllm.pap.remote_attention import serialize_tensor
 
     app = create_app()
@@ -5053,7 +5053,7 @@ def test_attention_executor_rejects_decode_when_prompt_kv_is_missing() -> None:
 def test_attention_executor_imports_prefill_kv_before_stateful_decode() -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import create_app
+    from vllm.pap.attention_executor import create_app
     from vllm.pap.remote_attention import deserialize_attention_result, serialize_tensor
 
     app = create_app()
@@ -5112,7 +5112,7 @@ def test_attention_executor_imports_prefill_kv_before_stateful_decode() -> None:
 def test_attention_executor_binary_imports_prefill_kv_before_decode() -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import create_app
+    from vllm.pap.attention_executor import create_app
     from vllm.pap.remote_attention import (
         deserialize_tensor_bundle,
         serialize_tensor_bundle,
@@ -5191,8 +5191,8 @@ def test_attention_executor_binary_imports_prefill_kv_ipc_descriptor(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor
-    from examples.pap.pap_attention_executor import create_app
+    from vllm.pap import attention_executor as pap_attention_executor
+    from vllm.pap.attention_executor import create_app
     from vllm.pap.remote_attention import (
         deserialize_tensor_bundle,
         serialize_tensor_bundle,
@@ -5266,8 +5266,8 @@ def test_attention_executor_ipc_import_keeps_opened_tensor_views(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor
-    from examples.pap.pap_attention_executor import create_app
+    from vllm.pap import attention_executor as pap_attention_executor
+    from vllm.pap.attention_executor import create_app
     from vllm.pap.remote_attention import (
         deserialize_tensor_bundle,
         serialize_tensor_bundle,
@@ -5344,8 +5344,8 @@ def test_attention_executor_paged_ipc_import_keeps_prefill_block_views(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor
-    from examples.pap.pap_attention_executor import create_app
+    from vllm.pap import attention_executor as pap_attention_executor
+    from vllm.pap.attention_executor import create_app
     from vllm.pap.remote_attention import (
         deserialize_tensor_bundle,
         serialize_tensor_bundle,
@@ -5447,7 +5447,7 @@ def test_async_prefill_import_preserves_unified_kv_descriptor(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor
+    from vllm.pap import attention_executor as pap_attention_executor
 
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
@@ -5513,7 +5513,7 @@ def test_async_prefill_import_discards_stale_session_epoch(
 ) -> None:
     import torch
 
-    from examples.pap import pap_attention_executor
+    from vllm.pap import attention_executor as pap_attention_executor
 
     registry = PAPAttentionRegistry(storage_device="cpu")
     registration = PAPAttentionRegistration(
@@ -5643,7 +5643,7 @@ def test_unified_decode_waits_for_complete_registered_prefix() -> None:
 def test_attention_registry_keeps_decode_kv_out_of_prefill_paged_block() -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import (
+    from vllm.pap.attention_executor import (
         PAPAttentionRegistration,
         PAPAttentionRegistry,
     )
@@ -5710,7 +5710,7 @@ def test_attention_registry_keeps_decode_kv_out_of_prefill_paged_block() -> None
 def test_attention_registry_keeps_in_block_decode_tokens_attention_local() -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import (
+    from vllm.pap.attention_executor import (
         PAPAttentionRegistration,
         PAPAttentionRegistry,
     )
@@ -5766,7 +5766,7 @@ def test_attention_registry_keeps_in_block_decode_tokens_attention_local() -> No
 def test_attention_registry_uses_local_decode_when_prefill_block_full() -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import (
+    from vllm.pap.attention_executor import (
         PAPAttentionRegistration,
         PAPAttentionRegistry,
     )
@@ -5815,7 +5815,7 @@ def test_attention_registry_uses_local_decode_when_prefill_block_full() -> None:
 def test_attention_registry_keeps_new_decode_block_attention_local() -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import (
+    from vllm.pap.attention_executor import (
         PAPAttentionRegistration,
         PAPAttentionRegistry,
     )
@@ -5880,7 +5880,7 @@ def test_attention_registry_keeps_new_decode_block_attention_local() -> None:
 def test_attention_registry_reimport_preserves_local_decode_kv() -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import (
+    from vllm.pap.attention_executor import (
         PAPAttentionRegistration,
         PAPAttentionRegistry,
     )
@@ -5946,7 +5946,7 @@ def test_attention_registry_reimport_preserves_local_decode_kv() -> None:
 def test_attention_executor_compute_existing_prefill_token_does_not_append() -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import create_app
+    from vllm.pap.attention_executor import create_app
     from vllm.pap.remote_attention import deserialize_attention_result, serialize_tensor
 
     app = create_app()
@@ -6008,7 +6008,7 @@ def test_attention_executor_compute_existing_prefill_token_does_not_append() -> 
 def test_attention_executor_tracks_decode_progress_per_layer() -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import create_app
+    from vllm.pap.attention_executor import create_app
     from vllm.pap.remote_attention import serialize_tensor
 
     app = create_app()
@@ -6074,7 +6074,7 @@ def test_attention_executor_tracks_decode_progress_per_layer() -> None:
 def test_attention_executor_records_scheduler_descriptor_state() -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import create_app
+    from vllm.pap.attention_executor import create_app
     from vllm.pap.remote_attention import serialize_tensor
 
     app = create_app()
@@ -6120,7 +6120,7 @@ def test_attention_executor_records_scheduler_descriptor_state() -> None:
 def test_attention_executor_rejects_bad_scheduler_descriptor() -> None:
     import torch
 
-    from examples.pap.pap_attention_executor import create_app
+    from vllm.pap.attention_executor import create_app
     from vllm.pap.remote_attention import serialize_tensor
 
     app = create_app()
