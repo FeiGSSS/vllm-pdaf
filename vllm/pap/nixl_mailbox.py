@@ -2,12 +2,14 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Compatibility imports for the PAP NIXL mailbox transport."""
 
-from vllm.pap.transport.nixl import (
+from vllm.pap.transport.mailbox import (
     InProcessPAPMailboxBackend,
     PAPMailboxActor,
     PAPMailboxBackend,
-    PAPMailboxDirectSendPayload,
     PAPMailboxMessage,
+)
+from vllm.pap.transport.nixl import (
+    PAPMailboxDirectSendPayload,
     PAPNixlMailboxAgentMetadata,
     PAPNixlMailboxEndpoint,
 )

@@ -1,11 +1,6 @@
 import pytest
 import torch
 
-from vllm.pap.protocol.offload_exec import (
-    _offload_exec_batch_descriptor_from_metadata,
-    _offload_exec_batch_descriptor_to_metadata,
-)
-from vllm.pap.transport.nixl_offload import PAPNixlMailboxOffloadExecTransport
 from vllm.pap.protocol import (
     PAPCudaIPCTensorHandle,
     PAPOffloadExecBatchDescriptor,
@@ -14,7 +9,12 @@ from vllm.pap.protocol import (
     PAPPrefillKVSessionManifest,
     PAPTensorTransport,
 )
-from vllm.pap.transport.nixl import PAPMailboxMessage
+from vllm.pap.protocol.offload_exec import (
+    _offload_exec_batch_descriptor_from_metadata,
+    _offload_exec_batch_descriptor_to_metadata,
+)
+from vllm.pap.transport.mailbox import PAPMailboxMessage
+from vllm.pap.transport.nixl_offload import PAPNixlMailboxOffloadExecTransport
 
 
 def test_offload_exec_descriptor_uses_stable_tensor_ids() -> None:

@@ -20,8 +20,10 @@ from vllm.pap.protocol.offload_exec import (
     _offload_exec_batch_descriptor_to_plan_metadata,
     _offload_exec_descriptor_to_metadata,
 )
+from vllm.pap.transport.mailbox import PAPMailboxMessage
 
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
+
 
 def _data_plane_env_bool(name: str, default: bool) -> bool:
     value = os.environ.get(name)
@@ -141,8 +143,6 @@ class PAPNixlMailboxOffloadExecTransport:
         *,
         remote_address: str,
     ) -> None:
-        from vllm.pap.transport.nixl import PAPMailboxMessage
-
         reserve_direct_send_tensor = getattr(
             self.endpoint,
             "reserve_direct_send_tensor",
@@ -263,8 +263,6 @@ class PAPNixlMailboxOffloadExecTransport:
         metadata: dict[str, Any],
         tensor: torch.Tensor,
     ) -> None:
-        from vllm.pap.transport.nixl import PAPMailboxMessage
-
         self.endpoint.send(
             PAPMailboxMessage(
                 msg_id=msg_id,

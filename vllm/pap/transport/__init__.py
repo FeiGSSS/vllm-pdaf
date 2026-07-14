@@ -8,14 +8,11 @@ from vllm.pap.transport.local_fast import (
     PAPLocalFastTransport,
     build_local_fast_offload_exec_transport,
 )
+from vllm.pap.transport.mailbox import PAPMailboxActor, PAPMailboxMessage
+from vllm.pap.transport.nixl import PAPNixlMailboxEndpoint
 from vllm.pap.transport.nixl_offload import (
     PAPNixlMailboxOffloadExecTransport,
     build_nixl_mailbox_offload_exec_transport,
-)
-from vllm.pap.transport.nixl import (
-    PAPMailboxActor,
-    PAPMailboxMessage,
-    PAPNixlMailboxEndpoint,
 )
 
 __all__ = [
