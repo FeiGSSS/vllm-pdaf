@@ -8,6 +8,7 @@ from jsonschema import Draft202012Validator, FormatChecker
 import pytest
 
 from benchmarks.pap.import_legacy_run import (
+    _async_decode_token_setting,
     _validate_output_path,
     import_legacy_run,
 )
@@ -190,3 +191,15 @@ def test_legacy_import_rejects_output_inside_raw_tree(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="outside the raw source tree"):
         _validate_output_path(source, source / "tracked_manifest.json")
+
+
+def test_legacy_import_reads_old_and_unconditional_decode_token_evidence() -> None:
+    assert _async_decode_token_setting(
+        {},
+        {"DECODE_TOKEN_DELIVERY": "async"},
+    ) is True
+    assert _async_decode_token_setting(
+        {"PAP_ASYNC_DECODE_TOKEN": "0"},
+        {},
+    ) is False
+    assert _async_decode_token_setting({}, {}) == "missing"

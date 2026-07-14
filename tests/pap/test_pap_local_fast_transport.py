@@ -120,7 +120,6 @@ def test_local_fast_step_plan_is_built_once_and_output_is_descriptorless() -> No
         "r": ("req-a", "req-b"),
         "s": (7, 8),
         "a": (0.125, 0.125),
-        "t": ((42,), (99,)),
     }
     first = PAPOffloadExecBatchDescriptor(
         layer_name="model.layers.0.self_attn.attn",

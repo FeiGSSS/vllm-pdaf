@@ -19,6 +19,8 @@ EVIDENCE_GRADES = (
     "historical",
     "invalid",
 )
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -36,6 +38,26 @@ def _read_env(path: Path) -> dict[str, str]:
         key, value = line.split("=", maxsplit=1)
         values[key] = value.strip().strip("'").strip('"')
     return values
+
+
+def _async_decode_token_setting(
+    effective: dict[str, str],
+    join_audit: dict[str, str],
+) -> bool | str:
+    raw_value = effective.get("PAP_ASYNC_DECODE_TOKEN")
+    if raw_value is not None:
+        normalized = raw_value.lower()
+        if normalized in _TRUE_VALUES:
+            return True
+        if normalized in _FALSE_VALUES:
+            return False
+        return "missing"
+    if join_audit.get("DECODE_TOKEN_DELIVERY") == "async":
+        return True
+    legacy_value = join_audit.get("ASYNC_DECODE_TOKEN")
+    if legacy_value in {"0", "1"}:
+        return legacy_value == "1"
+    return "missing"
 
 
 def _sha256(path: Path) -> str:
@@ -364,6 +386,10 @@ def import_legacy_run(
         payload["directory"] / "decode_token_join_audit.env"
         for payload in rep_payloads
     ]
+    decode_token_setting = _async_decode_token_setting(
+        effective,
+        _read_env(join_paths[0]),
+    )
     routing_paths = [
         payload["directory"] / "routing_audit.json"
         for payload in rep_payloads
@@ -600,10 +626,7 @@ def import_legacy_run(
                     "kv_handoff_mode",
                     "missing",
                 ),
-                "async_decode_token": effective.get(
-                    "PAP_ASYNC_DECODE_TOKEN"
-                )
-                == "1",
+                "async_decode_token": decode_token_setting,
                 "unified_kv": effective.get("PAP_UNIFIED_KV") == "1",
                 "batched_route_copy": effective.get("PAP_BATCHED_ROUTE_COPY")
                 == "1",

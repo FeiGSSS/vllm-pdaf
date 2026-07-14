@@ -224,9 +224,11 @@ barrier plus static MPS `64/28` SM partitions:
 bash .claude/skills/vllm-pap-benchmark/scripts/run_pap_multiturn_load.sh quick c4
 ```
 
-Set `PAP_ASYNC_DECODE_TOKEN=0` to restore the synchronous descriptor-token
-path, or `PAP_LOAD_MPS_PROFILE=baseline_70_30` to restore dynamic MPS. Static
-MPS is host-specific and must pass the recorded visible-SM and cleanup audits.
+Sampled-token delivery is unconditionally asynchronous; the retired
+`PAP_ASYNC_DECODE_TOKEN` switch now fails closed. Set
+`PAP_LOAD_MPS_PROFILE=baseline_70_30` only when reproducing the retained dynamic
+MPS experiment. Static MPS is host-specific and must pass the recorded
+visible-SM and cleanup audits.
 
 Refresh PD only through `bootstrap_pd_multiturn_reference.sh`. That script uses
 the unchanged official streaming proxy and validates the current effective

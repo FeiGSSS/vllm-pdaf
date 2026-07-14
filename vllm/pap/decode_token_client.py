@@ -13,14 +13,11 @@ from collections.abc import Mapping, Sequence
 
 import httpx
 
+from vllm.pap.config import reject_removed_pap_flags
+
 logger = logging.getLogger(__name__)
 
 _DECODE_TOKEN_BATCH_PATH = "/v1/pap/attention/decode-tokens"
-
-
-def async_decode_token_enabled() -> bool:
-    value = os.environ.get("PAP_ASYNC_DECODE_TOKEN", "1")
-    return value.lower() in {"1", "true", "yes", "on"}
 
 
 class DecodeTokenClient:
@@ -35,6 +32,7 @@ class DecodeTokenClient:
         retry_initial_s: float | None = None,
         retry_max_s: float | None = None,
     ) -> None:
+        reject_removed_pap_flags(os.environ)
         self.timeout_s = (
             float(timeout_s)
             if timeout_s is not None

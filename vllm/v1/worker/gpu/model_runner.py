@@ -46,15 +46,7 @@ from vllm.model_executor.layers.mamba.ops.ssu_dispatch import (
 from vllm.model_executor.model_loader import get_model_loader
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.pap.config import reject_removed_pap_flags
-from vllm.pap.deferred_cuda_trace import (
-    deferred_cuda_trace_enabled,
-    deferred_trace_role,
-    record_deferred_host_duration,
-)
-from vllm.pap.decode_token_client import (
-    DecodeTokenClient,
-    async_decode_token_enabled,
-)
+from vllm.pap.decode_token_client import DecodeTokenClient
 from vllm.pap.peer_activity import (
     PAPProjectionPeerActivity,
     sync_pap_projection_peer_activity,
@@ -144,36 +136,18 @@ def _pap_projection_critical_trace_enabled() -> bool:
     )
 
 
-def _pap_input_token_ids_for_forward(
-    input_ids: torch.Tensor,
-    *,
-    num_actual_tokens: int,
-    pap_enabled: bool,
-) -> tuple[int, ...]:
-    if not pap_enabled:
-        return ()
-    if async_decode_token_enabled():
-        return ()
-    return tuple(
-        int(token_id)
-        for token_id in input_ids.detach()
-        .reshape(-1)[: int(num_actual_tokens)]
-        .to(device="cpu", dtype=torch.long)
-        .tolist()
-    )
-
-
 def _publish_pap_sampled_tokens(
     output: ModelRunnerOutput,
     *,
     client: DecodeTokenClient,
+    pap_request_ids: frozenset[str],
     session_request_id_by_request: dict[str, str],
     attention_endpoint_by_request: dict[str, str],
     next_seq_len_by_request: dict[str, int],
 ) -> None:
     notifications: list[dict[str, object]] = []
     for request_id, token_ids in zip(output.req_ids, output.sampled_token_ids):
-        if not token_ids:
+        if not token_ids or request_id not in pap_request_ids:
             continue
         session_request_id = session_request_id_by_request.get(request_id)
         attention_endpoint = attention_endpoint_by_request.get(request_id)
@@ -183,7 +157,10 @@ def _publish_pap_sampled_tokens(
             or attention_endpoint is None
             or next_seq_len is None
         ):
-            continue
+            raise RuntimeError(
+                "PAP asynchronous decode-token delivery is missing routing "
+                f"metadata for sampled request {request_id}"
+            )
         if len(token_ids) != 1:
             raise RuntimeError(
                 "PAP async decode-token handoff requires one sampled token per "
@@ -855,6 +832,17 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         return cuda_graph_size
 
     def _remove_request(self, req_id: str) -> bool:
+        session_request_id = self.pap_prefill_kv_handle_by_req_id.get(req_id)
+        if (
+            self.pap_decode_token_client is not None
+            and session_request_id is not None
+        ):
+            if not self.pap_decode_token_client.flush_request(session_request_id):
+                raise RuntimeError(
+                    "PAP decode-token delivery failed before request removal: "
+                    f"{session_request_id}"
+                )
+            self.pap_decode_token_client.forget_request(session_request_id)
         self.pap_attention_tcp_endpoint_by_req_id.pop(req_id, None)
         self.pap_attention_endpoint_by_req_id.pop(req_id, None)
         self.pap_offload_exec_zmq_endpoint_by_req_id.pop(req_id, None)
@@ -991,14 +979,18 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             is not None
         }
 
-    def _pap_enabled_for_batch(self, input_batch: InputBatch) -> bool:
+    def _pap_request_ids_for_batch(
+        self,
+        input_batch: InputBatch,
+    ) -> frozenset[str]:
+        request_ids = tuple(input_batch.req_ids[: input_batch.num_reqs])
         ktc = self.vllm_config.kv_transfer_config
         extra = ktc.kv_connector_extra_config if ktc is not None else {}
         pap_enabled = extra.get("pap_enabled", False) if extra else False
         if pap_enabled:
-            return True
-        num_reqs = getattr(input_batch, "num_reqs", 0)
-        for req_id in input_batch.req_ids[:num_reqs]:
+            return frozenset(request_ids)
+        pap_request_ids: set[str] = set()
+        for req_id in request_ids:
             if (
                 req_id in self.pap_attention_endpoint_by_req_id
                 or req_id in self.pap_offload_exec_zmq_endpoint_by_req_id
@@ -1007,8 +999,11 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     "PAP enabled via per-request mailbox endpoint req_id=%s",
                     req_id,
                 )
-                return True
-        return False
+                pap_request_ids.add(req_id)
+        return frozenset(pap_request_ids)
+
+    def _pap_enabled_for_batch(self, input_batch: InputBatch) -> bool:
+        return bool(self._pap_request_ids_for_batch(input_batch))
 
     @staticmethod
     def _pap_filter_mapping_for_request_ids(
@@ -1062,25 +1057,6 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         finished_request_ids: Iterable[str] = (),
     ) -> dict[str, Any]:
         pap_enabled = self._pap_enabled_for_batch(input_batch)
-        trace_token_boundary = (
-            deferred_cuda_trace_enabled()
-            and deferred_trace_role() == "projection"
-            and pap_enabled
-            and not async_decode_token_enabled()
-        )
-        token_boundary_start = (
-            time.perf_counter() if trace_token_boundary else 0.0
-        )
-        pap_input_token_ids = _pap_input_token_ids_for_forward(
-            input_batch.input_ids,
-            num_actual_tokens=input_batch.num_tokens,
-            pap_enabled=pap_enabled,
-        )
-        if trace_token_boundary:
-            record_deferred_host_duration(
-                "token_boundary_input_ids_d2h_wall_ms",
-                (time.perf_counter() - token_boundary_start) * 1000.0,
-            )
         return {
             "pap_request_ids": tuple(input_batch.req_ids),
             "pap_num_scheduled_tokens": tuple(
@@ -1092,7 +1068,6 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             "pap_num_reqs": input_batch.num_reqs,
             "pap_num_actual_tokens": input_batch.num_tokens,
             "pap_positions": input_batch.positions,
-            "pap_input_token_ids": pap_input_token_ids,
             "pap_enabled": pap_enabled,
             "pap_attention_tcp_endpoint": (
                 self.vllm_config.kv_transfer_config.get_from_extra_config(
@@ -1135,10 +1110,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self,
         input_batch: InputBatch,
     ) -> Callable[[ModelRunnerOutput], None] | None:
-        if (
-            not async_decode_token_enabled()
-            or not self._pap_enabled_for_batch(input_batch)
-        ):
+        pap_request_ids = self._pap_request_ids_for_batch(input_batch)
+        if not pap_request_ids:
             return None
         request_ids = tuple(input_batch.req_ids[: input_batch.num_reqs])
         session_request_id_by_request = {
@@ -1160,17 +1133,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 ].tolist(),
             )
         }
-        if not any(
-            request_id in session_request_id_by_request
-            and request_id in attention_endpoint_by_request
-            for request_id in request_ids
-        ):
-            return None
         if self.pap_decode_token_client is None:
             self.pap_decode_token_client = DecodeTokenClient()
         return functools.partial(
             _publish_pap_sampled_tokens,
             client=self.pap_decode_token_client,
+            pap_request_ids=pap_request_ids,
             session_request_id_by_request=session_request_id_by_request,
             attention_endpoint_by_request=attention_endpoint_by_request,
             next_seq_len_by_request=next_seq_len_by_request,

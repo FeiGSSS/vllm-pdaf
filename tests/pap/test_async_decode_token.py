@@ -14,7 +14,6 @@ from vllm.pap.deferred_decode_token import (
 from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.worker.gpu.async_utils import AsyncOutput
 from vllm.v1.worker.gpu.model_runner import (
-    _pap_input_token_ids_for_forward,
     _publish_pap_sampled_tokens,
 )
 
@@ -448,27 +447,6 @@ def test_async_output_callback_receives_trimmed_sampled_tokens() -> None:
     assert order == ["synchronized", "callback:[[42], [43, 44]]"]
 
 
-def test_pap_input_token_ids_are_empty_only_for_async_path(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import torch
-
-    input_ids = torch.tensor([11, 22], dtype=torch.int32)
-    monkeypatch.setenv("PAP_ASYNC_DECODE_TOKEN", "1")
-    assert _pap_input_token_ids_for_forward(
-        input_ids,
-        num_actual_tokens=2,
-        pap_enabled=True,
-    ) == ()
-
-    monkeypatch.setenv("PAP_ASYNC_DECODE_TOKEN", "0")
-    assert _pap_input_token_ids_for_forward(
-        input_ids,
-        num_actual_tokens=2,
-        pap_enabled=True,
-    ) == (11, 22)
-
-
 def test_publish_pap_sampled_tokens_uses_captured_route_and_next_seq_len() -> None:
     published: list[tuple[dict[str, object], ...]] = []
 
@@ -485,6 +463,7 @@ def test_publish_pap_sampled_tokens_uses_captured_route_and_next_seq_len() -> No
     _publish_pap_sampled_tokens(
         output,
         client=FakeClient(),
+        pap_request_ids=frozenset({"projection-a"}),
         session_request_id_by_request={"projection-a": "prefill-a"},
         attention_endpoint_by_request={
             "projection-a": "http://127.0.0.1:8300"
@@ -502,3 +481,15 @@ def test_publish_pap_sampled_tokens_uses_captured_route_and_next_seq_len() -> No
             },
         )
     ]
+
+    with pytest.raises(RuntimeError, match="missing routing metadata"):
+        _publish_pap_sampled_tokens(
+            output,
+            client=FakeClient(),
+            pap_request_ids=frozenset({"projection-a"}),
+            session_request_id_by_request={},
+            attention_endpoint_by_request={
+                "projection-a": "http://127.0.0.1:8300"
+            },
+            next_seq_len_by_request={"projection-a": 17},
+        )

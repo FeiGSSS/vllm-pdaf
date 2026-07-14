@@ -56,10 +56,14 @@ def test_pap_benchmark_runner_audits_async_decode_token_join() -> None:
     )
     text = runner.read_text(encoding="utf-8")
 
-    assert 'PAP_ASYNC_DECODE_TOKEN="${PAP_ASYNC_DECODE_TOKEN:-1}"' in text
+    assert 'PAP_ASYNC_DECODE_TOKEN="${PAP_ASYNC_DECODE_TOKEN:-1}"' not in text
     assert "PAP_DECODE_TOKEN_TIMEOUT" in text
-    assert "printf 'PAP_ASYNC_DECODE_TOKEN=%q\\n'" in text
+    assert "printf 'PAP_ASYNC_DECODE_TOKEN=%q\\n'" not in text
+    assert "PAP_ASYNC_DECODE_TOKEN \\" in text
+    assert "PAP-20260713-ASYNC-DECODE-TOKEN-D2H" in text
+    assert "printf 'VLLM_USE_V2_MODEL_RUNNER=%q\\n'" in text
     assert "audit_decode_token_join" in text
+    assert "DECODE_TOKEN_DELIVERY=async" in text
     assert "decode_token_pending_tokens" in text
     assert "decode_token_pending_kv" in text
     assert "decode_token_mismatches" in text
@@ -80,8 +84,11 @@ def test_pap_nixl_launcher_defaults_async_decode_token_on() -> None:
     launcher = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
     text = launcher.read_text(encoding="utf-8")
 
-    assert 'PAP_ASYNC_DECODE_TOKEN="${PAP_ASYNC_DECODE_TOKEN:-1}"' in text
-    assert "export PAP_ASYNC_DECODE_TOKEN" in text
+    assert 'PAP_ASYNC_DECODE_TOKEN="${PAP_ASYNC_DECODE_TOKEN:-1}"' not in text
+    assert "export PAP_ASYNC_DECODE_TOKEN" not in text
+    assert "PAP_ASYNC_DECODE_TOKEN was removed" in text
+    assert "PAP-20260713-ASYNC-DECODE-TOKEN-D2H" in text
+    assert "export VLLM_USE_V2_MODEL_RUNNER=1" in text
     assert "export PAP_DECODE_TOKEN_TIMEOUT PAP_DECODE_TOKEN_QUEUE_SIZE" in text
     assert 'PAP_LEASE_RELEASE_TIMEOUT="${PAP_LEASE_RELEASE_TIMEOUT:-5.0}"' in text
 

@@ -1272,12 +1272,17 @@ class GPUModelRunner(
         request_ids: Sequence[str],
         num_scheduled_tokens: Sequence[int],
         num_actual_tokens: int,
-        input_ids: torch.Tensor | None,
         positions: torch.Tensor,
         seq_lens_cpu_upper_bound: Sequence[int],
         finished_request_ids: Iterable[str] = (),
     ) -> dict[str, Any]:
         request_ids_tuple = tuple(str(req_id) for req_id in request_ids)
+        pap_enabled = self._pap_enabled_for_request_ids(request_ids_tuple)
+        if pap_enabled:
+            raise RuntimeError(
+                "PAP asynchronous decode-token delivery requires the V2 model "
+                "runner; set VLLM_USE_V2_MODEL_RUNNER=1"
+            )
         return {
             "pap_request_ids": request_ids_tuple,
             "pap_num_scheduled_tokens": tuple(
@@ -1286,18 +1291,7 @@ class GPUModelRunner(
             "pap_num_reqs": len(request_ids_tuple),
             "pap_num_actual_tokens": num_actual_tokens,
             "pap_positions": positions,
-            "pap_input_token_ids": (
-                tuple(
-                    int(token_id)
-                    for token_id in input_ids.detach()
-                    .reshape(-1)[: int(num_actual_tokens)]
-                    .to(device="cpu", dtype=torch.long)
-                    .tolist()
-                )
-                if input_ids is not None
-                else ()
-            ),
-            "pap_enabled": self._pap_enabled_for_request_ids(request_ids_tuple),
+            "pap_enabled": pap_enabled,
             "pap_attention_tcp_endpoint": (
                 self.vllm_config.kv_transfer_config.get_from_extra_config(
                     "pap_attention_tcp_endpoint", None
@@ -4573,7 +4567,6 @@ class GPUModelRunner(
                 req_ids,
                 num_scheduled_tokens_np,
                 num_tokens_unpadded,
-                input_ids,
                 positions,
                 self.optimistic_seq_lens_cpu[:num_reqs].tolist(),
                 pap_finished_req_ids,

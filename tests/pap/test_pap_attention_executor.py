@@ -360,7 +360,6 @@ def test_offload_exec_batch_rows_uses_template_without_items() -> None:
             "r": ("req-a", "req-b"),
             "s": (7, 8),
             "a": (0.125, 0.125),
-            "t": ((42,), (99,)),
         },
     )
 
@@ -368,7 +367,6 @@ def test_offload_exec_batch_rows_uses_template_without_items() -> None:
         ("req-a", "req-b"),
         (7, 8),
         (0.125, 0.125),
-        ((42,), (99,)),
     )
 
 
@@ -1543,103 +1541,6 @@ def test_run_offload_exec_batch_once_uses_batched_compute(monkeypatch) -> None:
     torch.testing.assert_close(output, torch.tensor([[2.0, 0.0], [0.0, 3.0]]))
 
 
-def test_unified_offload_exec_commit_uses_descriptor_decode_token_ids(
-    monkeypatch,
-) -> None:
-    import torch
-
-    from vllm.pap import attention_executor as executor_module
-
-    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
-    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
-    monkeypatch.setenv("PAP_OFFLOAD_EXEC_HEAD_DIM", "2")
-
-    registry = PAPAttentionRegistry(storage_device="cpu")
-    registry.register_prefill_kv(
-        PAPAttentionRegistration(
-            request_id="req-a",
-            conversation_id="conv",
-            prefill_endpoint="http://localhost:8100",
-            q_size=2,
-            kv_size=2,
-            num_heads=1,
-            num_kv_heads=1,
-            head_dim=2,
-        )
-    )
-    registry._unified_paged_kv["req-a"] = {
-        "layer0": PAPUnifiedPagedKVState(
-            kv_cache=torch.zeros((2, 2, 4, 1, 2)),
-            block_ids=(0,),
-            prefix_len=1,
-            seq_len=1,
-            capacity_tokens=4,
-            writable_start_token=1,
-            writable_end_token=4,
-            lease_id="lease-a",
-            block_size=4,
-            num_kv_heads=1,
-            layout="NHD",
-        )
-    }
-
-    def fake_append_decode_kv_to_unified_prefill_cache(**kwargs):
-        return 1
-
-    commits = []
-
-    class FakeCommitClient:
-        enabled = True
-
-        def commit(self, *, request_id, new_seq_len, new_token_ids, endpoint):
-            commits.append((request_id, new_seq_len, tuple(new_token_ids), endpoint))
-
-    monkeypatch.setattr(
-        registry,
-        "append_decode_kv_to_unified_prefill_cache",
-        fake_append_decode_kv_to_unified_prefill_cache,
-    )
-    monkeypatch.setattr(
-        executor_module,
-        "_compute_unified_paged_flash_batch",
-        lambda **kwargs: torch.tensor([[2.0, 0.0]]),
-    )
-    monkeypatch.setattr(
-        executor_module,
-        "_get_commit_client",
-        lambda: FakeCommitClient(),
-    )
-
-    descriptor = PAPOffloadExecBatchDescriptor(
-        layer_name="layer0",
-        items=(
-            PAPOffloadExecDescriptor(
-                request_id="req-a",
-                layer_name="layer0",
-                step=2,
-                scale=1.0,
-                decode_token_ids=(42,),
-            ),
-        ),
-    )
-
-    output = compute_offload_exec_batch_output(
-        registry=registry,
-        descriptor=descriptor,
-        qkv_batch=torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]]),
-    )
-
-    torch.testing.assert_close(output, torch.tensor([[2.0, 0.0]]))
-    assert commits == [
-        (
-            "req-a",
-            2,
-            (42,),
-            "http://localhost:8100/v1/pap/prefill/decode-commit",
-        )
-    ]
-
-
 def test_unified_offload_exec_commit_waits_for_async_decode_token(
     monkeypatch,
 ) -> None:
@@ -1708,7 +1609,6 @@ def test_unified_offload_exec_commit_waits_for_async_decode_token(
                 layer_name="layer0",
                 step=2,
                 scale=1.0,
-                decode_token_ids=(),
             ),
         ),
     )
@@ -1956,7 +1856,6 @@ def test_unified_offload_exec_overlap_step_does_not_commit(
                 layer_name="layer0",
                 step=1,
                 scale=1.0,
-                decode_token_ids=(42,),
             ),
         ),
     )
@@ -3734,7 +3633,6 @@ def test_central_combine_executes_once_and_scatters_to_sources(
                     layer_name="layer0",
                     step=3,
                     scale=0.5,
-                    decode_token_ids=(41,),
                 ),
             ),
         ),
@@ -3746,7 +3644,6 @@ def test_central_combine_executes_once_and_scatters_to_sources(
                 "r": ("req-b",),
                 "s": (7,),
                 "a": (0.5,),
-                "t": ((42,),),
             },
         ),
     ]
@@ -3778,11 +3675,10 @@ def test_central_combine_executes_once_and_scatters_to_sources(
     _execute_offload_exec_work_items(registry=registry, items=items)
 
     assert len(compute_calls) == 1
-    request_ids, steps, scales, token_rows = compute_calls[0][0]
+    request_ids, steps, scales = compute_calls[0][0]
     assert request_ids == ("req-a", "req-b")
     assert steps == (3, 7)
     assert scales == (0.5, 0.5)
-    assert token_rows == ((41,), (42,))
     torch.testing.assert_close(
         compute_calls[0][1],
         torch.tensor(

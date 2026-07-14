@@ -232,7 +232,6 @@ class PAPAttentionServiceConfig:
 class PAPRuntimeFeatures:
     """Feature-selectable PAP paths retained until Phase 2 convergence."""
 
-    async_decode_token: bool
     async_prefill_kv: bool
     kv_handoff_mode: PAPKVHandoffMode
     unified_kv: bool
@@ -275,7 +274,8 @@ PAP_RETIRED_FLAGS = (
         name="PAP_ASYNC_DECODE_TOKEN",
         p17_values=_TRUE_VALUES,
         replacement="unconditional asynchronous sampled-token delivery",
-        experiment_id="PAP-20260714-ASYNC-STATIC-BASELINE",
+        experiment_id="PAP-20260713-ASYNC-DECODE-TOKEN-D2H",
+        removed=True,
     ),
     PAPRetiredFlag(
         name="PAP_ASYNC_DECODE_TOKEN_SYNC_ONLY_BARRIER",
@@ -554,7 +554,6 @@ class PAPRuntimeConfig:
         )
 
         features = PAPRuntimeFeatures(
-            async_decode_token=_env_bool(env, "PAP_ASYNC_DECODE_TOKEN", True),
             async_prefill_kv=_env_bool(env, "PAP_PREFILL_KV_ASYNC", False),
             kv_handoff_mode=_parse_enum(
                 PAPKVHandoffMode,
@@ -863,9 +862,7 @@ class PAPRuntimeConfig:
                 "total_visible_sms": self.mps.total_visible_sms,
             },
             "runtime": {
-                "decode_token_delivery": (
-                    "async" if features.async_decode_token else "sync"
-                ),
+                "decode_token_delivery": "async",
                 "prefill_kv_import": (
                     "async" if features.async_prefill_kv else "sync"
                 ),
@@ -891,7 +888,7 @@ class PAPRuntimeConfig:
                     features.decode_slot_plan_cache_limit
                 ),
                 "phase0_flags": {
-                    "pap_async_decode_token": features.async_decode_token,
+                    "pap_async_decode_token": True,
                     "pap_prefill_kv_async": features.async_prefill_kv,
                     "pap_kv_handoff_mode": features.kv_handoff_mode.value,
                     "pap_unified_kv": features.unified_kv,

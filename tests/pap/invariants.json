@@ -15,7 +15,8 @@
     ],
     "excluded_owner_paths": [
       "tests/pap/test_invariant_registry.py",
-      "tests/pap/contract/test_runtime_config.py"
+      "tests/pap/contract/test_runtime_config.py",
+      "tests/pap/contract/test_vllm_integration.py"
     ],
     "collected_count": 585,
     "passed_count": 582,
@@ -41,7 +42,7 @@
       "task": "2.1",
       "reason": "The sync-only CUDA stream barrier changed Projection timing and is superseded by the barrier-free sampled-token lifecycle.",
       "replacement_node_ids": [
-        "tests/pap/test_async_decode_token.py::test_pap_input_token_ids_are_empty_only_for_async_path"
+        "tests/pap/test_async_decode_token.py::test_async_output_callback_receives_trimmed_sampled_tokens"
       ]
     },
     {
@@ -60,6 +61,60 @@
       "reason": "The proxy isolation gate delayed Projection and commit after Prefill and is superseded by the ungated request lifecycle.",
       "replacement_node_ids": [
         "tests/pap/test_multi_pap_proxy_server.py::test_multi_proxy_has_no_decode_barrier"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_async_decode_token.py::test_pap_input_token_ids_are_empty_only_for_async_path",
+      "removed_at": "2026-07-14",
+      "task": "2.2",
+      "reason": "The synchronous sampled-token D2H arm and its selector were removed; AsyncOutput callback delivery now protects the lifecycle.",
+      "replacement_node_ids": [
+        "tests/pap/test_async_decode_token.py::test_async_output_callback_receives_trimmed_sampled_tokens"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_decode_commit.py::test_offload_exec_descriptor_supports_decode_token_ids",
+      "removed_at": "2026-07-14",
+      "task": "2.2",
+      "reason": "OFFLOAD_EXEC descriptors no longer carry sampled tokens; decode commit remains protected through the acknowledged commit lifecycle.",
+      "replacement_node_ids": [
+        "tests/pap/test_decode_commit.py::test_apply_decode_commit_advances_tokens"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_offload_exec_commit_uses_descriptor_decode_token_ids",
+      "removed_at": "2026-07-14",
+      "task": "2.2",
+      "reason": "Attention no longer commits token-bearing descriptors and always joins KV readiness with the asynchronous sampled-token sideband.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_unified_offload_exec_commit_waits_for_async_decode_token"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_data_plane.py::test_offload_exec_batch_metadata_roundtrips_decode_token_ids",
+      "removed_at": "2026-07-14",
+      "task": "2.2",
+      "reason": "The token-bearing OFFLOAD_EXEC protocol version was retired; compact token-free descriptor round trips remain protected.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_data_plane.py::test_offload_exec_batch_metadata_compact_roundtrip"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_qwen3_tp_routing.py::test_pap_decode_token_rows_for_indices_selects_request_tokens",
+      "removed_at": "2026-07-14",
+      "task": "2.2",
+      "reason": "Qwen3 no longer builds descriptor token rows; TP request identity is preserved by token-free OFFLOAD_EXEC step groups.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_qwen3_tp_routing.py::test_pap_offload_exec_step_groups_are_built_once_per_forward"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_qwen3_tp_routing.py::test_pap_decode_token_rows_for_indices_uses_empty_tuple_when_missing",
+      "removed_at": "2026-07-14",
+      "task": "2.2",
+      "reason": "Missing descriptor token rows are no longer a runtime case because sampled tokens use only the reliable asynchronous sideband.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_qwen3_tp_routing.py::test_pap_offload_exec_step_groups_are_built_once_per_forward"
       ]
     }
   ],
@@ -106,7 +161,7 @@
     },
     {
       "id": "protocol.offload.descriptor",
-      "statement": "Offload descriptors preserve request, layer, routing, tensor, token, and topology identity across supported wire forms.",
+      "statement": "Offload descriptors preserve request, layer, routing, tensor, and topology identity across supported wire forms.",
       "level": "unit",
       "source_owners": [
         "vllm/pap/data_plane.py"
@@ -3025,9 +3080,9 @@
       "invariant_ids": [
         "lifecycle.decode-token.join"
       ],
-      "disposition": "rewrite",
-      "reason": "Protects an accepted outcome through a retired feature switch; rewrite it against unconditional or topology-derived behavior.",
-      "target_path": "tests/pap/contract/test_vllm_integration.py"
+      "disposition": "delete",
+      "reason": "The OFF/ON switch test was merged into the unconditional asynchronous delivery lifecycle and V2 integration contracts.",
+      "target_path": null
     },
     {
       "node_id": "tests/pap/test_async_decode_token.py::test_publish_pap_sampled_tokens_uses_captured_route_and_next_seq_len",
@@ -3584,8 +3639,8 @@
       "invariant_ids": [
         "lifecycle.commit.ack"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "The descriptor sampled-token field belonged only to the removed synchronous delivery path.",
       "target_path": null
     },
     {
@@ -5157,8 +5212,8 @@
       "invariant_ids": [
         "lifecycle.decode-token.join"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Direct descriptor-token commit was removed in favor of the asynchronous token and KV-ready join.",
       "target_path": null
     },
     {
@@ -6405,8 +6460,8 @@
       "invariant_ids": [
         "protocol.offload.descriptor"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Token-bearing OFFLOAD_EXEC metadata was retired with synchronous sampled-token delivery.",
       "target_path": null
     },
     {
@@ -8329,8 +8384,8 @@
       "invariant_ids": [
         "topology.tp.identity"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Qwen3 no longer selects sampled-token rows for OFFLOAD_EXEC descriptors.",
       "target_path": null
     },
     {
@@ -8342,8 +8397,8 @@
       "invariant_ids": [
         "topology.tp.identity"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Missing descriptor token rows ceased to exist when the descriptor token field was removed.",
       "target_path": null
     },
     {
@@ -8844,10 +8899,10 @@
   "audit_summary": {
     "total": 585,
     "by_disposition": {
-      "keep": 308,
+      "keep": 303,
       "merge": 20,
-      "rewrite": 85,
-      "delete": 43,
+      "rewrite": 84,
+      "delete": 49,
       "move": 129
     }
   }

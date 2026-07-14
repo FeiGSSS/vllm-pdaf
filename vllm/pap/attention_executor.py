@@ -3951,28 +3951,20 @@ def _offload_exec_batch_rows(
     tuple[str, ...],
     tuple[int, ...],
     tuple[float, ...],
-    tuple[tuple[int, ...], ...],
 ]:
     template = getattr(descriptor, "metadata_template", None)
     if template is not None:
         request_ids = tuple(str(request_id) for request_id in template["r"])
         steps = tuple(int(step) for step in template["s"])
         scales = tuple(float(scale) for scale in template["a"])
-        token_rows = tuple(
-            tuple(int(token_id) for token_id in row)
-            for row in template.get("t", ((),) * len(request_ids))
-        )
     else:
         items = tuple(descriptor.items)
         request_ids = tuple(str(item.request_id) for item in items)
         steps = tuple(int(item.step) for item in items)
         scales = tuple(float(item.scale) for item in items)
-        token_rows = tuple(
-            tuple(int(token_id) for token_id in item.decode_token_ids) for item in items
-        )
-    if not (len(request_ids) == len(steps) == len(scales) == len(token_rows)):
+    if not (len(request_ids) == len(steps) == len(scales)):
         raise RuntimeError("PAP OFFLOAD_EXEC batch descriptor length mismatch")
-    return request_ids, steps, scales, token_rows
+    return request_ids, steps, scales
 
 
 def compute_offload_exec_batch_output(
@@ -3984,7 +3976,7 @@ def compute_offload_exec_batch_output(
 ) -> torch.Tensor:
     """Compute one OFFLOAD_EXEC attention output batch via paged FlashAttention."""
 
-    request_ids, steps, scales, token_rows = _offload_exec_batch_rows(descriptor)
+    request_ids, steps, scales = _offload_exec_batch_rows(descriptor)
     if int(qkv_batch.shape[0]) != len(request_ids):
         raise RuntimeError(
             "PAP OFFLOAD_EXEC batch QKV row count does not match descriptor"
@@ -4094,7 +4086,6 @@ def compute_offload_exec_batch_output(
                 trace_stats.get("attention_output_reshape_ms", 0.0) + reshape_ms
             )
             trace_stats["post_compute_done_ns"] = float(time.perf_counter_ns())
-        commit_client = _get_commit_client()
         for index, request_id in enumerate(request_ids):
             new_seq_len = commit_new_seq_lens[index]
             if new_seq_len is None:
@@ -4103,19 +4094,11 @@ def compute_offload_exec_batch_output(
                 session_entries[index].prefill_endpoint,
                 _DECODE_COMMIT_PATH,
             )
-            if token_rows[index]:
-                commit_client.commit(
-                    request_id=request_id,
-                    new_seq_len=new_seq_len,
-                    new_token_ids=token_rows[index],
-                    endpoint=endpoint,
-                )
-            else:
-                registry.record_decode_kv_ready(
-                    request_id=request_id,
-                    new_seq_len=new_seq_len,
-                    endpoint=endpoint,
-                )
+            registry.record_decode_kv_ready(
+                request_id=request_id,
+                new_seq_len=new_seq_len,
+                endpoint=endpoint,
+            )
         return unified_output
 
     raise RuntimeError(
@@ -4516,7 +4499,7 @@ def _offload_exec_work_item_compatibility_key(
     """Return the same-layer ABI key used for ready-item combination."""
 
     descriptor = item.descriptor
-    _request_ids, _steps, scales, _token_rows = _offload_exec_batch_rows(descriptor)
+    _request_ids, _steps, scales = _offload_exec_batch_rows(descriptor)
     common_scale: float | tuple[float, ...]
     if scales and all(scale == scales[0] for scale in scales):
         common_scale = scales[0]
@@ -4542,7 +4525,6 @@ def _combine_offload_exec_work_items(
     request_ids: list[str] = []
     steps: list[int] = []
     scales: list[float] = []
-    token_rows: list[tuple[int, ...]] = []
     row_counts: list[int] = []
     qkv_batches: list[torch.Tensor] = []
     for item in items:
@@ -4555,7 +4537,6 @@ def _combine_offload_exec_work_items(
         request_ids.extend(rows[0])
         steps.extend(rows[1])
         scales.extend(rows[2])
-        token_rows.extend(rows[3])
         row_count = int(descriptor.item_count)
         if int(item.qkv_batch.shape[0]) != row_count:
             raise RuntimeError(
@@ -4571,7 +4552,6 @@ def _combine_offload_exec_work_items(
             "r": tuple(request_ids),
             "s": tuple(steps),
             "a": tuple(scales),
-            "t": tuple(token_rows),
         },
     )
     combined_qkv = (

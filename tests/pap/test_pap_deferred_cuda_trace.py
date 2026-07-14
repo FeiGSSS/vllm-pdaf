@@ -62,12 +62,12 @@ def test_deferred_trace_records_host_duration_without_cuda_event() -> None:
     collector = DeferredCudaTraceCollector(event_factory=lambda: None)
 
     collector.record_duration(
-        "token_boundary_input_ids_d2h_wall_ms",
+        "request_dispatch_wall_ms",
         0.25,
     )
 
     assert collector.raw_snapshot(blocking=False)["durations"] == {
-        "token_boundary_input_ids_d2h_wall_ms": [0.25]
+        "request_dispatch_wall_ms": [0.25]
     }
 
 

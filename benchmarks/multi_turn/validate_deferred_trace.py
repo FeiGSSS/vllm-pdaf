@@ -21,7 +21,6 @@ _SCOPES = {
             "output_doorbell_wait_wall_ms",
             "output_ready_wait_gpu_ms",
         ),
-        "forward_span": "token_boundary_input_ids_d2h_wall_ms",
     },
     _PD_SCOPE: {
         "role": "pd_decode",
@@ -29,7 +28,6 @@ _SCOPES = {
             "qkv_norm_rope_gpu_ms",
             "pd_paged_fa_gpu_ms",
         ),
-        "forward_span": None,
     },
 }
 
@@ -115,14 +113,6 @@ def validate_trace(
         )
     decode_forwards = layer_calls // layers
 
-    forward_span = contract["forward_span"]
-    if forward_span is not None:
-        forward_count = _span_count(spans, str(forward_span))
-        if forward_count != decode_forwards:
-            raise ValueError(
-                "token-boundary count mismatch: "
-                f"{forward_count} != {decode_forwards}"
-            )
     if reference_peer_batches is not None:
         reference = _nonnegative_int(
             reference_peer_batches,

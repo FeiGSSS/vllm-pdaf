@@ -149,7 +149,6 @@ class PAPOffloadExecDescriptor:
     layer_name: str
     step: int
     scale: float
-    decode_token_ids: tuple[int, ...] = ()
 
     @property
     def qkv_tensor_id(self) -> str:
@@ -192,15 +191,13 @@ class PAPOffloadExecBatchDescriptor:
                     float(scale) for scale in template["a"]
                 )
             if "t" in template:
-                normalized_template["t"] = tuple(
-                    tuple(int(token_id) for token_id in row)
-                    for row in template["t"]
+                raise ValueError(
+                    "PAP OFFLOAD_EXEC decode-token metadata was removed; "
+                    "use asynchronous decode-token delivery"
                 )
             lengths = {len(request_ids), len(steps)}
             if "a" in normalized_template:
                 lengths.add(len(normalized_template["a"]))
-            if "t" in normalized_template:
-                lengths.add(len(normalized_template["t"]))
             if len(lengths) != 1:
                 raise ValueError(
                     "PAP OFFLOAD_EXEC metadata template length mismatch"
@@ -1057,15 +1054,12 @@ class PAPNixlMailboxOffloadExecTransport:
 def _offload_exec_descriptor_to_metadata(
     descriptor: PAPOffloadExecDescriptor,
 ) -> dict[str, Any]:
-    metadata: dict[str, Any] = {
+    return {
         "request_id": descriptor.request_id,
         "layer_name": descriptor.layer_name,
         "step": descriptor.step,
         "scale": descriptor.scale,
     }
-    if descriptor.decode_token_ids:
-        metadata["decode_token_ids"] = list(descriptor.decode_token_ids)
-    return metadata
 
 
 def _offload_exec_batch_descriptor_to_metadata(
@@ -1078,37 +1072,22 @@ def _offload_exec_batch_descriptor_to_metadata(
             scales = [float(item.scale) for item in descriptor.items]
         request_ids = list(descriptor.metadata_template["r"])
         steps = [int(step) for step in descriptor.metadata_template["s"]]
-        token_rows = [
-            [int(token_id) for token_id in row]
-            for row in descriptor.metadata_template.get("t", ())
-        ]
-        has_tokens = bool(token_rows) and any(token_rows)
         if not (len(request_ids) == len(steps) == len(scales)):
             raise ValueError("compact PAP OFFLOAD_EXEC batch metadata length mismatch")
-        if token_rows and len(token_rows) != len(request_ids):
-            raise ValueError("compact PAP OFFLOAD_EXEC batch metadata length mismatch")
-        metadata = {
-            "v": 3 if has_tokens else 2,
+        return {
+            "v": 2,
             "l": descriptor.layer_name,
             "r": request_ids,
             "s": steps,
             "a": scales,
         }
-        if has_tokens:
-            metadata["t"] = token_rows
-        return metadata
-    token_rows = [list(item.decode_token_ids) for item in descriptor.items]
-    has_tokens = any(token_rows)
-    metadata = {
-        "v": 3 if has_tokens else 2,
+    return {
+        "v": 2,
         "l": descriptor.layer_name,
         "r": [item.request_id for item in descriptor.items],
         "s": [int(item.step) for item in descriptor.items],
         "a": [float(item.scale) for item in descriptor.items],
     }
-    if has_tokens:
-        metadata["t"] = token_rows
-    return metadata
 
 
 def _offload_exec_batch_plan_payload(
@@ -1125,21 +1104,15 @@ def _offload_exec_batch_plan_payload(
         "s": [int(step) for step in metadata["s"]],
         "a": [float(scale) for scale in metadata["a"]],
     }
-    if "t" in metadata:
-        payload["t"] = [
-            [int(token_id) for token_id in row] for row in metadata["t"]
-        ]
     return payload
 
 
 def _offload_exec_batch_plan_id(plan_payload: dict[str, Any]) -> str:
-    token_rows = tuple(tuple(row) for row in plan_payload.get("t", ()))
     key = (
         str(plan_payload["b"]),
         tuple(str(request_id) for request_id in plan_payload["r"]),
         tuple(int(step) for step in plan_payload["s"]),
         tuple(float(scale) for scale in plan_payload["a"]),
-        token_rows,
     )
     return hashlib.sha1(repr(key).encode("utf-8")).hexdigest()[:16]
 
@@ -1172,13 +1145,15 @@ def _offload_exec_batch_descriptor_from_plan_payload(
     *,
     template_only: bool = False,
 ) -> PAPOffloadExecBatchDescriptor:
+    if "t" in plan_payload:
+        raise ValueError(
+            "PAP OFFLOAD_EXEC decode-token metadata was removed; "
+            "use asynchronous decode-token delivery"
+        )
     request_ids = list(plan_payload["r"])
     steps = [int(step) for step in plan_payload["s"]]
     scales = [float(scale) for scale in plan_payload["a"]]
-    token_rows = plan_payload.get("t")
-    if token_rows is None:
-        token_rows = [()] * len(request_ids)
-    if not (len(request_ids) == len(steps) == len(scales) == len(token_rows)):
+    if not (len(request_ids) == len(steps) == len(scales)):
         raise ValueError("compact PAP OFFLOAD_EXEC batch metadata length mismatch")
     if template_only:
         return PAPOffloadExecBatchDescriptor(
@@ -1189,9 +1164,6 @@ def _offload_exec_batch_descriptor_from_plan_payload(
                 "r": tuple(str(request_id) for request_id in request_ids),
                 "s": tuple(steps),
                 "a": tuple(scales),
-                "t": tuple(
-                    tuple(int(t) for t in token_row) for token_row in token_rows
-                ),
             },
         )
     return PAPOffloadExecBatchDescriptor(
@@ -1202,13 +1174,11 @@ def _offload_exec_batch_descriptor_from_plan_payload(
                 layer_name=layer_name,
                 step=int(step),
                 scale=float(scale),
-                decode_token_ids=tuple(int(t) for t in token_row),
             )
-            for request_id, step, scale, token_row in zip(
+            for request_id, step, scale in zip(
                 request_ids,
                 steps,
                 scales,
-                token_rows,
             )
         ),
         batch_id_suffix=str(plan_payload["b"]),
@@ -1222,6 +1192,11 @@ def _offload_exec_batch_descriptor_from_metadata(
     template_only: bool = False,
 ) -> PAPOffloadExecBatchDescriptor:
     if metadata.get("v") == 4:
+        if "t" in metadata:
+            raise ValueError(
+                "PAP OFFLOAD_EXEC decode-token metadata was removed; "
+                "use asynchronous decode-token delivery"
+            )
         layer_name = str(metadata["l"])
         plan_id = str(metadata["p"])
         plan_payload: dict[str, Any] = {
@@ -1230,8 +1205,6 @@ def _offload_exec_batch_descriptor_from_metadata(
             "s": list(metadata["s"]),
             "a": list(metadata["a"]),
         }
-        if "t" in metadata:
-            plan_payload["t"] = list(metadata["t"])
         if plan_cache is not None:
             plan_cache[plan_id] = plan_payload
         return _offload_exec_batch_descriptor_from_plan_payload(
@@ -1255,15 +1228,17 @@ def _offload_exec_batch_descriptor_from_metadata(
             plan_payload,
             template_only=template_only,
         )
-    if metadata.get("v") in {2, 3}:
+    if metadata.get("v") == 3 or "t" in metadata:
+        raise ValueError(
+            "PAP OFFLOAD_EXEC decode-token metadata was removed; "
+            "use asynchronous decode-token delivery"
+        )
+    if metadata.get("v") == 2:
         layer_name = str(metadata["l"])
         request_ids = list(metadata["r"])
         steps = list(metadata["s"])
         scales = list(metadata["a"])
-        token_rows = metadata.get("t")
-        if token_rows is None:
-            token_rows = [()] * len(request_ids)
-        if not (len(request_ids) == len(steps) == len(scales) == len(token_rows)):
+        if not (len(request_ids) == len(steps) == len(scales)):
             raise ValueError("compact PAP OFFLOAD_EXEC batch metadata length mismatch")
         return PAPOffloadExecBatchDescriptor(
             layer_name=layer_name,
@@ -1273,15 +1248,17 @@ def _offload_exec_batch_descriptor_from_metadata(
                     layer_name=layer_name,
                     step=int(step),
                     scale=float(scale),
-                    decode_token_ids=tuple(int(t) for t in token_row),
                 )
-                for request_id, step, scale, token_row in zip(
-                    request_ids, steps, scales, token_rows
-                )
+                for request_id, step, scale in zip(request_ids, steps, scales)
             ),
         )
 
     layer_name = str(metadata["layer_name"])
+    if any("decode_token_ids" in item for item in metadata["items"]):
+        raise ValueError(
+            "PAP OFFLOAD_EXEC decode-token metadata was removed; "
+            "use asynchronous decode-token delivery"
+        )
     return PAPOffloadExecBatchDescriptor(
         layer_name=layer_name,
         items=tuple(
@@ -1290,9 +1267,6 @@ def _offload_exec_batch_descriptor_from_metadata(
                 layer_name=layer_name,
                 step=int(item["step"]),
                 scale=float(item["scale"]),
-                decode_token_ids=tuple(
-                    int(t) for t in item.get("decode_token_ids", ())
-                ),
             )
             for item in metadata["items"]
         ),

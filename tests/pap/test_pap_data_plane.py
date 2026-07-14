@@ -157,7 +157,6 @@ def test_nixl_mailbox_qkv_batch_uses_plan_ref_after_first_layer_by_default() -> 
         "r": ("req-a", "req-b"),
         "s": (7, 8),
         "a": (0.125, 0.125),
-        "t": ((42,), (99,)),
     }
     first = PAPOffloadExecBatchDescriptor(
         layer_name="layer0",
@@ -179,7 +178,7 @@ def test_nixl_mailbox_qkv_batch_uses_plan_ref_after_first_layer_by_default() -> 
     assert endpoint.sent[0].metadata["v"] == 4
     assert endpoint.sent[0].metadata["l"] == "layer0"
     assert endpoint.sent[0].metadata["r"] == ["req-a", "req-b"]
-    assert endpoint.sent[0].metadata["t"] == [[42], [99]]
+    assert "t" not in endpoint.sent[0].metadata
     plan_id = endpoint.sent[0].metadata["p"]
     assert endpoint.sent[1].metadata == {
         "v": 5,
@@ -207,7 +206,6 @@ def test_nixl_mailbox_qkv_batch_plan_ref_roundtrips_on_receiver_by_default() -> 
         "r": ("req-a", "req-b"),
         "s": (7, 8),
         "a": (0.125, 0.125),
-        "t": ((42,), (99,)),
     }
     first = PAPOffloadExecBatchDescriptor(
         layer_name="layer0",
@@ -235,8 +233,6 @@ def test_nixl_mailbox_qkv_batch_plan_ref_roundtrips_on_receiver_by_default() -> 
     assert [item.request_id for item in restored_second.items] == ["req-a", "req-b"]
     assert [item.step for item in restored_second.items] == [7, 8]
     assert [item.scale for item in restored_second.items] == [0.125, 0.125]
-    assert restored_second.items[0].decode_token_ids == (42,)
-    assert restored_second.items[1].decode_token_ids == (99,)
     assert restored_second.output_tensor_id == "layer1#req-a@7,req-b@8#attn_out_batch"
 
 
@@ -250,7 +246,6 @@ def test_batch_plan_ref_can_restore_template_only_descriptor() -> None:
         "r": ["req-a", "req-b"],
         "s": [7, 8],
         "a": [0.125, 0.125],
-        "t": [[42], [99]],
     }
 
     first = _offload_exec_batch_descriptor_from_metadata(
@@ -272,7 +267,6 @@ def test_batch_plan_ref_can_restore_template_only_descriptor() -> None:
         "r": ("req-a", "req-b"),
         "s": (7, 8),
         "a": (0.125, 0.125),
-        "t": ((42,), (99,)),
     }
 
 
@@ -313,28 +307,6 @@ def test_offload_exec_batch_metadata_compact_roundtrip() -> None:
     assert restored == descriptor
 
 
-def test_offload_exec_batch_metadata_roundtrips_decode_token_ids() -> None:
-    descriptor = PAPOffloadExecBatchDescriptor(
-        layer_name="layer0",
-        items=(
-            PAPOffloadExecDescriptor(
-                "req-a", "layer0", 7, 0.125, decode_token_ids=(42,)
-            ),
-            PAPOffloadExecDescriptor(
-                "req-b", "layer0", 8, 0.25, decode_token_ids=(99,)
-            ),
-        ),
-    )
-
-    metadata = _offload_exec_batch_descriptor_to_metadata(descriptor)
-    restored = _offload_exec_batch_descriptor_from_metadata(metadata)
-
-    assert metadata["v"] == 3
-    assert metadata["t"] == [[42], [99]]
-    assert restored.items[0].decode_token_ids == (42,)
-    assert restored.items[1].decode_token_ids == (99,)
-
-
 def test_offload_exec_batch_metadata_v2_remains_backward_compatible() -> None:
     metadata = {
         "v": 2,
@@ -346,7 +318,24 @@ def test_offload_exec_batch_metadata_v2_remains_backward_compatible() -> None:
 
     restored = _offload_exec_batch_descriptor_from_metadata(metadata)
 
-    assert restored.items[0].decode_token_ids == ()
+    assert restored.items[0] == PAPOffloadExecDescriptor(
+        "req-a", "layer0", 7, 0.125
+    )
+    with pytest.raises(ValueError, match="decode-token metadata was removed"):
+        _offload_exec_batch_descriptor_from_metadata(
+            {**metadata, "v": 3, "t": [[42]]}
+        )
+    with pytest.raises(ValueError, match="decode-token metadata was removed"):
+        PAPOffloadExecBatchDescriptor(
+            layer_name="layer0",
+            items=(),
+            metadata_template={
+                "r": ("req-a",),
+                "s": (7,),
+                "a": (0.125,),
+                "t": ((42,),),
+            },
+        )
 
 
 def test_offload_exec_batch_metadata_accepts_legacy_items() -> None:

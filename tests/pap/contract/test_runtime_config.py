@@ -37,7 +37,6 @@ P17_PHASE0_ENV = {
     "PAP_STATIC_PREFILL_EXPECTED_SMS": "64",
     "PAP_STATIC_ATTENTION_EXPECTED_SMS": "28",
     "PAP_ENABLE_MPS": "1",
-    "PAP_ASYNC_DECODE_TOKEN": "1",
     "PAP_PREFILL_KV_ASYNC": "1",
     "PAP_KV_HANDOFF_MODE": "sealed_manifest",
     "PAP_UNIFIED_KV": "1",
@@ -68,7 +67,8 @@ def test_runtime_config_preserves_python_defaults() -> None:
     assert config.offload_kv_transport is PAPOffloadKVTransport.CUDA_IPC
     assert config.same_host is False
     assert config.mps.mode is PAPMPSMode.DYNAMIC
-    assert config.features.async_decode_token is True
+    runtime_contract = config.p17_profile_contract()["runtime"]
+    assert runtime_contract["decode_token_delivery"] == "async"
     assert config.features.async_prefill_kv is False
     assert config.features.kv_handoff_mode is PAPKVHandoffMode.LAYER_DESCRIPTOR
     assert config.features.unified_kv is False
@@ -108,7 +108,6 @@ def test_runtime_config_supports_arbitrary_xpayp_and_tp() -> None:
     [
         ({"PAP_TOPOLOGY": "0pa1p"}, "PAP_TOPOLOGY"),
         ({"PAP_TOPOLOGY": "2pa1p", "PAP_PA_COUNT": "1"}, "disagrees"),
-        ({"PAP_ASYNC_DECODE_TOKEN": "sometimes"}, "must be a boolean"),
         ({"PAP_LOCAL_FAST_SLOT_COUNT": "0"}, "must be at least 1"),
         ({"PAP_OFFLOAD_EXEC_TRANSPORT": "nccl"}, "nixl_mailbox"),
         (
@@ -149,7 +148,7 @@ def test_runtime_config_is_deeply_immutable_for_config_values() -> None:
 def test_retired_flag_registry_reports_remaining_selectable_paths() -> None:
     config = PAPRuntimeConfig.from_env({})
     environment = {
-        "PAP_ASYNC_DECODE_TOKEN": "0",
+        "PAP_PREFILL_KV_ASYNC": "0",
         "PAP_KV_HANDOFF_MODE": "sealed-manifest",
         "UNRELATED": "1",
     }
@@ -158,7 +157,7 @@ def test_retired_flag_registry_reports_remaining_selectable_paths() -> None:
 
     assert len({spec.name for spec in PAP_RETIRED_FLAGS}) == len(PAP_RETIRED_FLAGS)
     assert [setting.spec.name for setting in settings] == [
-        "PAP_ASYNC_DECODE_TOKEN",
+        "PAP_PREFILL_KV_ASYNC",
         "PAP_KV_HANDOFF_MODE",
     ]
     assert settings[0].matches_p17 is False
@@ -168,6 +167,10 @@ def test_retired_flag_registry_reports_remaining_selectable_paths() -> None:
 @pytest.mark.parametrize(
     ("name", "experiment_id"),
     [
+        (
+            "PAP_ASYNC_DECODE_TOKEN",
+            "PAP-20260713-ASYNC-DECODE-TOKEN-D2H",
+        ),
         (
             "PAP_ASYNC_DECODE_TOKEN_SYNC_ONLY_BARRIER",
             "PAP-20260714-ASYNC-TTFT-ROOTCAUSE",
@@ -198,7 +201,7 @@ def test_retired_flag_registry_reports_remaining_selectable_paths() -> None:
         ),
     ],
 )
-def test_removed_timing_control_flags_fail_closed(
+def test_removed_runtime_flags_fail_closed(
     name: str,
     experiment_id: str,
 ) -> None:

@@ -3,7 +3,6 @@
 
 from vllm.model_executor.models.qwen3 import (
     _pap_bind_offload_exec_mailbox_peer,
-    _pap_decode_token_rows_for_indices,
     _pap_endpoint_for_tp_rank,
     _pap_nixl_mailbox_offload_exec_transport,
     _pap_offload_exec_session_request_id,
@@ -131,17 +130,6 @@ def test_pap_mailbox_bind_uses_stable_projection_source_id(monkeypatch) -> None:
     assert calls[1] == ("bind", b"attention-metadata")
 
 
-def test_pap_decode_token_rows_for_indices_selects_request_tokens() -> None:
-    assert _pap_decode_token_rows_for_indices((11, 22, 33), (2, 0)) == (
-        (33,),
-        (11,),
-    )
-
-
-def test_pap_decode_token_rows_for_indices_uses_empty_tuple_when_missing() -> None:
-    assert _pap_decode_token_rows_for_indices((11,), (0, 2)) == ((11,), ())
-
-
 def test_pap_offload_exec_session_request_id_prefers_prefill_handle() -> None:
     assert (
         _pap_offload_exec_session_request_id(
@@ -169,7 +157,6 @@ def test_pap_offload_exec_step_groups_are_built_once_per_forward(
     )
     kwargs = {
         "pap_request_ids": request_ids,
-        "pap_input_token_ids": (11, 22),
         "pap_prefill_kv_handle_by_request": {
             request_ids[0]: "cmpl-prefill-0-cafebabe",
             request_ids[1]: "cmpl-prefill-1-cafebabe",
@@ -206,5 +193,4 @@ def test_pap_offload_exec_step_groups_are_built_once_per_forward(
         ),
         "s": (51, 52),
         "a": (0.125, 0.125),
-        "t": ((11,), (22,)),
     }

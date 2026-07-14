@@ -19,7 +19,6 @@ def _span(count: int) -> dict[str, float | int]:
 def _projection_trace(
     *,
     layer_count: int,
-    token_count: int,
 ) -> dict[str, object]:
     spans = {
         name: _span(layer_count)
@@ -31,7 +30,6 @@ def _projection_trace(
             "output_ready_wait_gpu_ms",
         )
     }
-    spans["token_boundary_input_ids_d2h_wall_ms"] = _span(token_count)
     return {
         "enabled": True,
         "scope": "projection_process_critical_chain",
@@ -61,7 +59,7 @@ def _pd_trace(*, layer_count: int) -> dict[str, object]:
 
 
 def test_projection_trace_requires_matching_layer_and_forward_counts() -> None:
-    payload = _projection_trace(layer_count=72, token_count=2)
+    payload = _projection_trace(layer_count=72)
 
     counts = validate_trace(
         payload,
@@ -74,7 +72,7 @@ def test_projection_trace_requires_matching_layer_and_forward_counts() -> None:
 
 
 def test_projection_trace_rejects_attention_count_mismatch() -> None:
-    payload = _projection_trace(layer_count=72, token_count=2)
+    payload = _projection_trace(layer_count=72)
 
     with pytest.raises(ValueError, match="Attention peer-batch mismatch"):
         validate_trace(
@@ -82,17 +80,6 @@ def test_projection_trace_rejects_attention_count_mismatch() -> None:
             scope="projection_process_critical_chain",
             num_layers=36,
             reference_peer_batches=71,
-        )
-
-
-def test_projection_trace_rejects_token_boundary_mismatch() -> None:
-    payload = _projection_trace(layer_count=72, token_count=1)
-
-    with pytest.raises(ValueError, match="token-boundary count mismatch"):
-        validate_trace(
-            payload,
-            scope="projection_process_critical_chain",
-            num_layers=36,
         )
 
 

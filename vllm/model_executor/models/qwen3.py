@@ -583,27 +583,6 @@ def _pap_req_indices_are_contiguous(req_indices: tuple[int, ...]) -> bool:
     return start >= 0 and req_indices == tuple(range(start, start + len(req_indices)))
 
 
-def _pap_decode_token_ids_for_req_index(
-    input_token_ids: tuple[int, ...],
-    req_index: int,
-) -> tuple[int, ...]:
-    req_index = int(req_index)
-    if 0 <= req_index < len(input_token_ids):
-        return (int(input_token_ids[req_index]),)
-    return ()
-
-
-def _pap_decode_token_rows_for_indices(
-    input_token_ids: Iterable[int],
-    req_indices: Iterable[int],
-) -> tuple[tuple[int, ...], ...]:
-    token_ids = tuple(int(token_id) for token_id in input_token_ids)
-    return tuple(
-        _pap_decode_token_ids_for_req_index(token_ids, int(req_index))
-        for req_index in req_indices
-    )
-
-
 def _pap_offload_exec_transport_kind() -> str:
     return os.environ.get("PAP_OFFLOAD_EXEC_TRANSPORT", "nixl_mailbox").lower()
 
@@ -682,10 +661,6 @@ def _pap_offload_exec_step_groups(
     prefill_kv_handle_by_request = (
         additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
     )
-    input_token_ids = tuple(
-        int(token_id) for token_id in additional_kwargs.get("pap_input_token_ids") or ()
-    )
-
     step_groups: list[_PAPOffloadExecStepGroup] = []
     routed_req_indices: set[int] = set()
     for route_group in route_groups:
@@ -753,10 +728,6 @@ def _pap_offload_exec_step_groups(
                     "r": tuple(session_request_ids),
                     "s": group_steps,
                     "a": (float(scaling),) * len(group_steps),
-                    "t": _pap_decode_token_rows_for_indices(
-                        input_token_ids,
-                        req_indices,
-                    ),
                 },
             )
         )
@@ -1408,11 +1379,6 @@ class Qwen3Attention(nn.Module):
         prefill_kv_handle_by_request = (
             additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
         )
-        input_token_ids = tuple(
-            int(token_id)
-            for token_id in additional_kwargs.get("pap_input_token_ids") or ()
-        )
-
         query = q.view(-1, self.num_heads, self.head_dim)
         key = k.view(-1, self.num_kv_heads, self.head_dim)
         value = v.view(-1, self.num_kv_heads, self.head_dim)
@@ -1474,10 +1440,6 @@ class Qwen3Attention(nn.Module):
                 layer_name=self.attn.layer_name,
                 step=seq_len,
                 scale=float(self.scaling),
-                decode_token_ids=_pap_decode_token_ids_for_req_index(
-                    input_token_ids,
-                    req_index,
-                ),
             )
             offload_exec_groups.setdefault(
                 (tcp_endpoint, attention_endpoint, offload_exec_zmq_endpoint),

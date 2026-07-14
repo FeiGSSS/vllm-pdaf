@@ -18,7 +18,7 @@ def test_projection_trace_contains_all_critical_chain_spans() -> None:
     assert '"qkv_p2p_copy_gpu_ms"' in local_fast
     assert '"output_doorbell_wait_wall_ms"' in local_fast
     assert '"output_ready_wait_gpu_ms"' in local_fast
-    assert '"token_boundary_input_ids_d2h_wall_ms"' in model_runner
+    assert '"token_boundary_input_ids_d2h_wall_ms"' not in model_runner
 
 
 def test_pd_trace_uses_same_qkv_span_and_main_paged_fa_boundary() -> None:

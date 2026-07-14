@@ -1211,30 +1211,3 @@ def test_scheduler_stashes_leased_blocks_tail_first(monkeypatch):
 
     assert captured["lease_id"] == "lease-1"
     assert captured["blocks"] == ["tail", "middle", "prefix"]
-
-
-# --- Descriptor integration tests ---------------------------------------------
-
-
-def test_offload_exec_descriptor_supports_decode_token_ids():
-    """PAPOffloadExecDescriptor carries optional decode_token_ids."""
-    from vllm.pap.data_plane import PAPOffloadExecDescriptor
-
-    # Default: empty tuple, backward-compatible
-    desc = PAPOffloadExecDescriptor(
-        request_id="r",
-        layer_name="l",
-        step=10,
-        scale=0.5,
-    )
-    assert desc.decode_token_ids == ()
-
-    # With token IDs
-    desc2 = PAPOffloadExecDescriptor(
-        request_id="r",
-        layer_name="l",
-        step=10,
-        scale=0.5,
-        decode_token_ids=(42, 7),
-    )
-    assert desc2.decode_token_ids == (42, 7)

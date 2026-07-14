@@ -106,7 +106,7 @@ def _pap_artifacts(tmp_path: Path) -> dict[str, Path]:
     )
     artifacts["decode_token_join"].write_text(
         "STATUS=passed\n"
-        "ASYNC_DECODE_TOKEN=1\n"
+        "DECODE_TOKEN_DELIVERY=async\n"
         "ATTENTION_INSTANCE_COUNT=1\n"
         "ERROR_COUNT=0\n",
         encoding="utf-8",
@@ -126,7 +126,7 @@ def _pap_artifacts(tmp_path: Path) -> dict[str, Path]:
     artifacts["tracked_worktree_patch"].write_bytes(b"")
     artifacts["tracked_index_patch"].write_bytes(b"")
     artifacts["effective_config"].write_text(
-        "PAP_UNIFIED_MD_FAST_KEY=1\nPAP_ASYNC_DECODE_TOKEN=1\n",
+        "PAP_UNIFIED_MD_FAST_KEY=1\n",
         encoding="utf-8",
     )
     return artifacts
@@ -251,7 +251,7 @@ def test_finalize_result_rejects_decode_token_join_config_mismatch(
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="decode-token join effective config"):
+    with pytest.raises(ValueError, match="PAP_ASYNC_DECODE_TOKEN was removed"):
         finalize_result(
             _client_result(),
             architecture="pap",
@@ -329,7 +329,7 @@ def test_finalize_result_rejects_metadata_fast_key_config_mismatch(
 ) -> None:
     artifacts = _pap_artifacts(tmp_path)
     artifacts["effective_config"].write_text(
-        "PAP_UNIFIED_MD_FAST_KEY=0\nPAP_ASYNC_DECODE_TOKEN=1\n",
+        "PAP_UNIFIED_MD_FAST_KEY=0\n",
         encoding="utf-8",
     )
 
@@ -362,7 +362,7 @@ def test_finalize_result_accepts_disabled_metadata_fast_key(
     stats["unified_md_fast_key_hits"] = 0
     artifacts["attention_stats"].write_text(json.dumps(stats))
     artifacts["effective_config"].write_text(
-        "PAP_UNIFIED_MD_FAST_KEY=0\nPAP_ASYNC_DECODE_TOKEN=1\n",
+        "PAP_UNIFIED_MD_FAST_KEY=0\n",
         encoding="utf-8",
     )
 
@@ -399,7 +399,7 @@ def test_finalize_result_aggregates_multi_instance_attention_stats(
     )
     artifacts["decode_token_join"].write_text(
         "STATUS=passed\n"
-        "ASYNC_DECODE_TOKEN=1\n"
+        "DECODE_TOKEN_DELIVERY=async\n"
         "ATTENTION_INSTANCE_COUNT=2\n"
         "ERROR_COUNT=0\n",
         encoding="utf-8",

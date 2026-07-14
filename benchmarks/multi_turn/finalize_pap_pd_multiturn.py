@@ -59,7 +59,6 @@ REQUIRED_ARTIFACTS = {
 }
 PD_REUSE_STATUS = "official_streaming_one_way_metrics_passed"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
-_FALSE_VALUES = frozenset({"0", "false", "no", "off"})
 _DECODE_TOKEN_JOIN_ZERO_FIELDS = (
     "decode_token_pending_tokens",
     "decode_token_pending_kv",
@@ -258,20 +257,12 @@ def _validate_decode_token_join(
     if values.get("STATUS") != "passed" or values.get("ERROR_COUNT") != "0":
         raise ValueError(f"decode-token join audit did not pass: {values}")
 
-    raw_enabled = effective_config.get("PAP_ASYNC_DECODE_TOKEN")
-    if raw_enabled is None:
-        raise ValueError("PAP_ASYNC_DECODE_TOKEN is missing from effective config")
-    normalized = raw_enabled.lower()
-    if normalized in _TRUE_VALUES:
-        enabled = True
-    elif normalized in _FALSE_VALUES:
-        enabled = False
-    else:
+    if "PAP_ASYNC_DECODE_TOKEN" in effective_config:
         raise ValueError(
-            f"invalid PAP_ASYNC_DECODE_TOKEN value: {raw_enabled}"
+            "PAP_ASYNC_DECODE_TOKEN was removed from the effective config"
         )
-    if values.get("ASYNC_DECODE_TOKEN") != str(int(enabled)):
-        raise ValueError("decode-token join effective config mismatch")
+    if values.get("DECODE_TOKEN_DELIVERY") != "async":
+        raise ValueError("decode-token join did not audit async delivery")
 
     stats_payloads = _attention_stat_payloads(attention)
     if values.get("ATTENTION_INSTANCE_COUNT") != str(len(stats_payloads)):
@@ -292,7 +283,7 @@ def _validate_decode_token_join(
             "decode_token_matched",
             instance=instance,
         )
-        if enabled and (received <= 0 or matched <= 0):
+        if received <= 0 or matched <= 0:
             raise ValueError(
                 f"decode-token join instance {instance} has no async matches"
             )

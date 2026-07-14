@@ -6,6 +6,7 @@ set -euo pipefail
 # when the PAP startup contract changes.
 
 for removed_flag in \
+  PAP_ASYNC_DECODE_TOKEN \
   PAP_ASYNC_DECODE_TOKEN_SYNC_ONLY_BARRIER \
   PAP_PROJECTION_SYNC_ONLY_BARRIER \
   PAP_PREFILL_SYNC_ONLY_BARRIER \
@@ -15,6 +16,10 @@ for removed_flag in \
   PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT; do
   if [[ -v "${removed_flag}" ]]; then
     case "${removed_flag}" in
+      PAP_ASYNC_DECODE_TOKEN)
+        replacement="unconditional asynchronous sampled-token delivery"
+        experiment_id="PAP-20260713-ASYNC-DECODE-TOKEN-D2H"
+        ;;
       PAP_*_SYNC_ONLY_BARRIER)
         replacement="no Projection or Prefill timing barrier"
         experiment_id="PAP-20260714-ASYNC-TTFT-ROOTCAUSE"
@@ -240,7 +245,6 @@ PAP_DECODE_COMMIT_MAX_ATTEMPTS="${PAP_DECODE_COMMIT_MAX_ATTEMPTS:-8}"
 PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS="${PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS:-0.05}"
 PAP_DECODE_COMMIT_RETRY_MAX_SECONDS="${PAP_DECODE_COMMIT_RETRY_MAX_SECONDS:-0.5}"
 PAP_DECODE_COMMIT_FLUSH_TIMEOUT="${PAP_DECODE_COMMIT_FLUSH_TIMEOUT:-5.0}"
-PAP_ASYNC_DECODE_TOKEN="${PAP_ASYNC_DECODE_TOKEN:-1}"
 PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC:-1}"
 PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE:-0}"
 PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE:-sealed_manifest}"
@@ -329,7 +333,6 @@ export PAP_DECODE_COMMIT_MAX_ATTEMPTS
 export PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS
 export PAP_DECODE_COMMIT_RETRY_MAX_SECONDS
 export PAP_DECODE_COMMIT_FLUSH_TIMEOUT
-export PAP_ASYNC_DECODE_TOKEN
 export PAP_PREFILL_KV_ASYNC
 export PAP_PREFILL_IPC_PROFILE
 export PAP_KV_HANDOFF_MODE
@@ -351,6 +354,7 @@ export PAP_KV_LEASE_TTL_SECONDS
 
 export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
 export VLLM_USE_V1=1
+export VLLM_USE_V2_MODEL_RUNNER=1
 export VLLM_ENABLE_V1_MULTIPROCESSING="${VLLM_ENABLE_V1_MULTIPROCESSING:-1}"
 export VLLM_WORKER_MULTIPROC_METHOD="${VLLM_WORKER_MULTIPROC_METHOD:-spawn}"
 export UCX_TLS="${UCX_TLS:-cuda_ipc,cuda_copy,tcp}"
@@ -823,10 +827,8 @@ PY
 audit_decode_token_join() {
   local stats_path="${RUN_ROOT}/attention_fast_path_stats.json"
   local summary_path="${RUN_ROOT}/decode_token_join_audit.env"
-  PAP_ASYNC_DECODE_TOKEN="${PAP_ASYNC_DECODE_TOKEN}" \
-    "${PYTHON_BIN}" - "${stats_path}" "${summary_path}" <<'PY'
+  "${PYTHON_BIN}" - "${stats_path}" "${summary_path}" <<'PY'
 import json
-import os
 import sys
 
 stats_path, summary_path = sys.argv[1:]
@@ -838,12 +840,6 @@ if "instances" in payload:
 else:
     instances = [payload]
 
-enabled = os.environ["PAP_ASYNC_DECODE_TOKEN"].lower() in {
-    "1",
-    "true",
-    "yes",
-    "on",
-}
 zero_fields = (
     "decode_token_pending_tokens",
     "decode_token_pending_kv",
@@ -864,15 +860,14 @@ for index, stats in enumerate(instances):
     for field in zero_fields:
         if int(stats[field]) != 0:
             errors.append(f"attention[{index}] {field}={stats[field]}")
-    if enabled:
-        if int(stats["decode_token_received"]) <= 0:
-            errors.append(f"attention[{index}] received no async decode tokens")
-        if int(stats["decode_token_matched"]) <= 0:
-            errors.append(f"attention[{index}] matched no async decode tokens")
+    if int(stats["decode_token_received"]) <= 0:
+        errors.append(f"attention[{index}] received no async decode tokens")
+    if int(stats["decode_token_matched"]) <= 0:
+        errors.append(f"attention[{index}] matched no async decode tokens")
 
 with open(summary_path, "w", encoding="utf-8") as output:
     output.write(f"STATUS={'failed' if errors else 'passed'}\n")
-    output.write(f"ASYNC_DECODE_TOKEN={int(enabled)}\n")
+    output.write("DECODE_TOKEN_DELIVERY=async\n")
     output.write(f"ATTENTION_INSTANCE_COUNT={len(instances)}\n")
     output.write(f"ERROR_COUNT={len(errors)}\n")
 
@@ -1166,7 +1161,7 @@ write_effective_config() {
     printf 'PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS=%q\n' "${PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS}"
     printf 'PAP_DECODE_COMMIT_RETRY_MAX_SECONDS=%q\n' "${PAP_DECODE_COMMIT_RETRY_MAX_SECONDS}"
     printf 'PAP_DECODE_COMMIT_FLUSH_TIMEOUT=%q\n' "${PAP_DECODE_COMMIT_FLUSH_TIMEOUT}"
-    printf 'PAP_ASYNC_DECODE_TOKEN=%q\n' "${PAP_ASYNC_DECODE_TOKEN}"
+    printf 'VLLM_USE_V2_MODEL_RUNNER=%q\n' "${VLLM_USE_V2_MODEL_RUNNER}"
     printf 'PAP_PREFILL_KV_ASYNC=%q\n' "${PAP_PREFILL_KV_ASYNC}"
     printf 'PAP_PREFILL_IPC_PROFILE=%q\n' "${PAP_PREFILL_IPC_PROFILE}"
     printf 'PAP_KV_HANDOFF_MODE=%q\n' "${PAP_KV_HANDOFF_MODE}"
