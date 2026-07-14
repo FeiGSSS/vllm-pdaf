@@ -394,7 +394,7 @@ def publish_prefill_kv_session_manifest(
     """Atomically publish one request's sealed Prefill KV layout."""
 
     from vllm.pap.protocol import PAPPrefillKVSessionManifest
-    from vllm.pap.kv_lease import (
+    from vllm.pap.lifecycle.lease import (
         pap_active_lease_id,
         pap_has_active_lease,
         pap_leased_block_ids,

@@ -398,7 +398,7 @@ class Scheduler(SchedulerInterface):
     def schedule(self, throttle_prefills: bool = False) -> SchedulerOutput:
         self.current_step += 1
         try:
-            from vllm.pap.kv_lease import pap_sweep_expired_leases
+            from vllm.pap.lifecycle.lease import pap_sweep_expired_leases
 
             pap_sweep_expired_leases()
         except ImportError:
@@ -2248,7 +2248,7 @@ class Scheduler(SchedulerInterface):
         the lease is released via PAP control plane.
         """
         try:
-            from vllm.pap.kv_lease import (
+            from vllm.pap.lifecycle.lease import (
                 pap_active_lease_id,
                 pap_has_active_lease,
                 pap_stash_deferred_blocks,

@@ -414,7 +414,7 @@ class EngineCore:
             new_seq_len=int(new_seq_len),
             new_token_ids=tuple(int(t) for t in new_token_ids),
         )
-        from vllm.pap.kv_lease import pap_refresh_lease
+        from vllm.pap.lifecycle.lease import pap_refresh_lease
 
         pap_refresh_lease(str(request_id))
         return {
@@ -429,7 +429,7 @@ class EngineCore:
         request_id: str,
         lease_id: str,
     ) -> dict[str, Any]:
-        from vllm.pap.kv_lease import pap_release_lease
+        from vllm.pap.lifecycle.lease import pap_release_lease
 
         released = pap_release_lease(str(lease_id))
         did_release = bool(released)

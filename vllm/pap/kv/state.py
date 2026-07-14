@@ -16,8 +16,8 @@ from typing import Any
 import torch
 
 from vllm.pap.config import PAPRuntimeConfig
-from vllm.pap.decode_commit_client import DecodeCommitClient as _DecodeCommitClient
-from vllm.pap.deferred_decode_token import (
+from vllm.pap.lifecycle.commit import DecodeCommitClient as _DecodeCommitClient
+from vllm.pap.lifecycle.decode_token import (
     DeferredDecodeCommit,
     DeferredDecodeTokenCommitter,
 )

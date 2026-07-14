@@ -14,20 +14,12 @@ import argparse
 import base64
 import hashlib
 import logging
-import os
 import socket
 import socketserver
-import time
-from collections import Counter, OrderedDict
-from collections.abc import Sequence
-from dataclasses import dataclass, field
-from queue import Queue
-from threading import Condition, Lock, Thread
+from threading import Lock, Thread
 from typing import Any
 
-import torch
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
 
 from vllm.pap.attention import (
     PAPAttentionDispatcher,
@@ -42,24 +34,11 @@ from vllm.pap.data_plane import (
     build_nixl_mailbox_offload_exec_transport,
 )
 from vllm.pap.protocol import (
-    PAPCudaIPCTensorHandle,
     PAPOffloadExecBatchDescriptor,
     PAPPrefillKVCacheCatalogDescriptor,
     PAPPrefillKVSessionManifest,
-    pap_offload_exec_trace_id,
 )
-from vllm.pap.decode_commit_client import DecodeCommitClient as _DecodeCommitClient
-from vllm.pap.deferred_decode_token import (
-    DeferredDecodeCommit,
-    DeferredDecodeTokenCommitter,
-)
-from vllm.pap.deferred_cuda_trace import (
-    begin_deferred_cuda_span,
-    deferred_cuda_trace_enabled,
-    deferred_cuda_trace_snapshot,
-    end_deferred_cuda_span,
-)
-from vllm.pap.lease_release_client import LeaseReleaseClient as _LeaseReleaseClient
+from vllm.pap.deferred_cuda_trace import deferred_cuda_trace_snapshot
 from vllm.pap.runtime_cuda_context_audit import write_runtime_cuda_context_audit
 
 from vllm.pap.attention.compute import (

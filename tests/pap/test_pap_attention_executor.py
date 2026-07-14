@@ -444,7 +444,7 @@ def test_unified_paged_flash_metadata_reuses_identical_decode_signature(
         arange_calls += 1
         return real_arange(*args, **kwargs)
 
-    monkeypatch.setattr(executor_module.torch, "arange", counted_arange)
+    monkeypatch.setattr(kv_state_module.torch, "arange", counted_arange)
     kv_cache = torch.zeros((4, 2, 4, 1, 2), dtype=torch.float32)
     states = [
         PAPUnifiedPagedKVState(
@@ -1664,7 +1664,7 @@ def test_unified_offload_exec_overlap_step_does_not_commit(
             commits.append((request_id, new_seq_len, tuple(new_token_ids), endpoint))
 
     monkeypatch.setattr(
-        executor_module.torch.ops._C_cache_ops,
+        kv_state_module.torch.ops._C_cache_ops,
         "reshape_and_cache_flash",
         lambda *args: None,
         raising=False,
@@ -1736,7 +1736,7 @@ def test_unified_decode_append_all_active_reuses_inputs_and_scales(
         calls.append(args)
 
     monkeypatch.setattr(
-        executor_module.torch.ops._C_cache_ops,
+        kv_state_module.torch.ops._C_cache_ops,
         "reshape_and_cache_flash",
         fake_reshape_and_cache_flash,
         raising=False,
@@ -1812,7 +1812,7 @@ def test_unified_decode_append_does_not_hold_registry_lock_during_gpu_work(
         assert allow_gpu_work.wait(timeout=5)
 
     monkeypatch.setattr(
-        executor_module.torch.ops._C_cache_ops,
+        kv_state_module.torch.ops._C_cache_ops,
         "reshape_and_cache_flash",
         blocking_reshape_and_cache_flash,
         raising=False,
@@ -1884,7 +1884,7 @@ def test_unified_decode_append_reuses_slot_plan_across_layers(
             )
     calls = []
     monkeypatch.setattr(
-        executor_module.torch.ops._C_cache_ops,
+        kv_state_module.torch.ops._C_cache_ops,
         "reshape_and_cache_flash",
         lambda *args: calls.append(args),
         raising=False,
@@ -1949,7 +1949,7 @@ def test_unified_decode_append_recovers_slot_plan_after_chunk_generations(
 
     calls = []
     monkeypatch.setattr(
-        executor_module.torch.ops._C_cache_ops,
+        kv_state_module.torch.ops._C_cache_ops,
         "reshape_and_cache_flash",
         lambda *args: calls.append(args),
         raising=False,
@@ -2008,7 +2008,7 @@ def test_unified_decode_append_latches_same_generation_topology_conflict(
 
     calls = []
     monkeypatch.setattr(
-        executor_module.torch.ops._C_cache_ops,
+        kv_state_module.torch.ops._C_cache_ops,
         "reshape_and_cache_flash",
         lambda *args: calls.append(args),
         raising=False,
@@ -2065,7 +2065,7 @@ def test_unified_decode_append_waits_for_complete_new_generation(
 
     calls = []
     monkeypatch.setattr(
-        executor_module.torch.ops._C_cache_ops,
+        kv_state_module.torch.ops._C_cache_ops,
         "reshape_and_cache_flash",
         lambda *args: calls.append(args),
         raising=False,
@@ -2127,7 +2127,7 @@ def test_unified_decode_append_batch_falls_back_for_incomplete_generation(
 
     calls = []
     monkeypatch.setattr(
-        executor_module.torch.ops._C_cache_ops,
+        kv_state_module.torch.ops._C_cache_ops,
         "reshape_and_cache_flash",
         lambda *args: calls.append(args),
         raising=False,
@@ -2190,7 +2190,7 @@ def test_unified_slot_conflict_clears_only_on_new_activation(
 
     calls = []
     monkeypatch.setattr(
-        executor_module.torch.ops._C_cache_ops,
+        kv_state_module.torch.ops._C_cache_ops,
         "reshape_and_cache_flash",
         lambda *args: calls.append(args),
         raising=False,
@@ -2475,7 +2475,7 @@ def test_unified_decode_append_disables_slot_plan_for_mixed_topology(
         )
     calls = []
     monkeypatch.setattr(
-        executor_module.torch.ops._C_cache_ops,
+        kv_state_module.torch.ops._C_cache_ops,
         "reshape_and_cache_flash",
         lambda *args: calls.append(args),
         raising=False,
@@ -2529,7 +2529,7 @@ def test_unified_decode_append_slot_plan_uses_session_generation(
 
     calls = []
     monkeypatch.setattr(
-        executor_module.torch.ops._C_cache_ops,
+        kv_state_module.torch.ops._C_cache_ops,
         "reshape_and_cache_flash",
         lambda *args: calls.append(args),
         raising=False,
@@ -2607,7 +2607,7 @@ def test_unified_decode_append_partial_batch_uses_fallback_gather(
     }
     calls = []
     monkeypatch.setattr(
-        executor_module.torch.ops._C_cache_ops,
+        kv_state_module.torch.ops._C_cache_ops,
         "reshape_and_cache_flash",
         lambda *args: calls.append(args),
         raising=False,
