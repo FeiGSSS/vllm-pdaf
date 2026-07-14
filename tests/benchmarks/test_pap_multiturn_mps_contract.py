@@ -1,43 +1,37 @@
+import os
+import subprocess
 from pathlib import Path
+
+from benchmarks.pap.profile_env import load_profile, runner_environment
 
 
 ROOT = Path(__file__).parents[2]
-PAP_WRAPPER = (
-    ROOT
-    / ".claude/skills/vllm-pap-benchmark/scripts/"
-    / "run_pap_multiturn_load.sh"
-)
-PAP_RUNNER = (
-    ROOT
-    / ".claude/skills/vllm-pap-benchmark/scripts/"
-    / "run_pap_same_pd_workload.sh"
-)
+P17_PROFILE = ROOT / "benchmarks/pap/profiles/p17_1pa1p.toml"
+P17_RUNNER = ROOT / "benchmarks/pap/scripts/run_p17_1pa1p.sh"
+PAP_RUNNER = ROOT / "benchmarks/pap/scripts/run_pap_workload.sh"
 
 
 def test_pap_only_runner_rejects_removed_mps_selectors() -> None:
-    wrapper = PAP_WRAPPER.read_text(encoding="utf-8")
-    runner = PAP_RUNNER.read_text(encoding="utf-8")
+    result = subprocess.run(
+        ["bash", str(P17_RUNNER), "quick", "c1"],
+        cwd=ROOT,
+        env={**os.environ, "PAP_LOAD_MPS_PROFILE": "legacy"},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
 
-    assert "PAP_LOAD_MPS_PROFILE was removed" in wrapper
-    assert "baseline_70_30" not in wrapper
-    assert "diagnostic_80_20" not in wrapper
-    assert "PAP_BENCH_MPS_PROFILE \\" in runner
-    assert "PAP_MPS_MODE \\" in runner
+    assert result.returncode == 2
+    assert "PAP_LOAD_MPS_PROFILE was removed" in result.stderr
 
 
 def test_pap_only_runner_has_one_static_64_28_profile() -> None:
-    wrapper = PAP_WRAPPER.read_text(encoding="utf-8")
-    runner = PAP_RUNNER.read_text(encoding="utf-8")
+    environment = runner_environment(load_profile(P17_PROFILE))
 
-    assert "dynamic" not in wrapper
-    assert "diagnostic_static_64_28" not in wrapper
-    assert 'PAP_STATIC_PREFILL_CHUNKS="${STATIC_PREFILL_CHUNKS}"' in wrapper
-    assert 'PAP_STATIC_ATTENTION_CHUNKS="${STATIC_ATTENTION_CHUNKS}"' in wrapper
-
-    assert "dynamic" not in runner
-    assert "diagnostic_static_64_28" not in runner
-    assert "PAP_STATIC_PREFILL_CHUNKS=16" in runner
-    assert "PAP_STATIC_ATTENTION_CHUNKS=7" in runner
+    assert environment["PAP_STATIC_PREFILL_CHUNKS"] == "16"
+    assert environment["PAP_STATIC_ATTENTION_CHUNKS"] == "7"
+    assert environment["PAP_STATIC_PREFILL_EXPECTED_SMS"] == "64"
+    assert environment["PAP_STATIC_ATTENTION_EXPECTED_SMS"] == "28"
 
 
 def test_static_mps_lifecycle_is_partitioned_and_audited() -> None:

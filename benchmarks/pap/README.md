@@ -23,6 +23,17 @@ five-turn C4 workload with 256 output tokens per turn. xPAyP and cross-host NIXL
 remain `preserved-unverified`; they are not runtime release gates in this
 milestone.
 
+Run a one-conversation smoke check or the canonical three-repetition C4 gate:
+
+```bash
+bash benchmarks/pap/scripts/run_p17_1pa1p.sh quick c1
+bash benchmarks/pap/scripts/run_p17_1pa1p.sh formal c4
+```
+
+The runner loads its model, workload, placement, transport, MPS, and audit
+values from `profiles/p17_1pa1p.toml`. Machine-specific model and corpus roots
+remain local overrides (`PAP_MODEL_ROOT` and `PAP_CORPUS_ROOT`).
+
 ## Paths and missing metadata
 
 Tracked records never store machine-specific absolute artifact paths. Every

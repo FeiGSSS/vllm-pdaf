@@ -57,7 +57,7 @@ The self-contained correctness/performance runner accepts the same topology:
 PAP_TOPOLOGY=3pa2p \
 PAP_PREFILL_GPUS=0,1,2 \
 PAP_PROJECTION_GPUS=3,4 \
-bash .claude/skills/vllm-pap-benchmark/scripts/run_pap_same_pd_workload.sh
+bash benchmarks/pap/scripts/run_pap_workload.sh
 ```
 
 Each run records `topology_manifest.json`, `routing_audit.json`, strict log

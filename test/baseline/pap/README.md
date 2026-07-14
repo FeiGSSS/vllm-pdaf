@@ -29,9 +29,23 @@ because they were generated during the PAP comparison iterations. Older generic
 PD/NIXL runs that are not part of PAP comparison remain in the original
 baseline directories.
 
-## Multi-turn north-star test bed
+## Current P17 release gate
 
-The fixed profile `qwen3_8b_chat_16k_2turn_o256_c1_v1` compares official
+P17 is the current 1PA1P same-host release gate. Its tracked configuration is
+`benchmarks/pap/profiles/p17_1pa1p.toml`; the runner reads that file directly.
+
+```bash
+bash benchmarks/pap/scripts/run_p17_1pa1p.sh quick c1
+bash benchmarks/pap/scripts/run_p17_1pa1p.sh formal c4
+```
+
+The C1 command is a smoke shape only. Performance comparison uses the C4
+formal shape and three repetitions. xPAyP and cross-host NIXL remain preserved
+but unverified in this milestone.
+
+## Historical two-turn comparison test bed
+
+The frozen profile `qwen3_8b_chat_16k_2turn_o256_c1_v1` compared official
 1P1D PD/NIXL with 1PA1P PAP on GPUs 1/2. It uses one two-turn conversation,
 a 16K first-turn document, a 120-token second-turn append, and 256 output
 tokens per turn. TTFT and TPOT are reported separately. The PAP north-star

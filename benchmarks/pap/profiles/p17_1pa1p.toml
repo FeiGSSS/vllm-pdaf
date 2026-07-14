@@ -85,10 +85,16 @@ direct_mailbox_output = true
 local_fast_stream_ordered = true
 local_fast_slot_count = 2
 decode_slot_plan_cache_limit = 256
+offload_exec_direct_qkv_send = true
+local_fast_batch_plan = true
+prompt_token_details = true
+prefix_cache_audit = false
+unified_kv_decode_capacity_tokens = 256
 
 [audit]
 require_clean_tracked_worktree = true
 strict_correctness = true
+session_drain_timeout_seconds = 60
 required_gates = [
   "client",
   "cache",

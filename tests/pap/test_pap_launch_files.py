@@ -8,8 +8,11 @@ ROOT = Path(__file__).resolve().parents[2]
 PAP_SHELL_ENTRYPOINTS = (
     ".claude/skills/vllm-pap-benchmark/scripts/bootstrap_pd_multiturn_reference.sh",
     ".claude/skills/vllm-pap-benchmark/scripts/run_multiturn_north_star.sh",
+    ".claude/skills/vllm-pap-benchmark/scripts/run_pap_multiturn_load.sh",
     ".claude/skills/vllm-pap-benchmark/scripts/run_pap_same_pd_workload.sh",
     ".claude/skills/vllm-pap-benchmark/scripts/run_pd_same_workload.sh",
+    "benchmarks/pap/scripts/run_p17_1pa1p.sh",
+    "benchmarks/pap/scripts/run_pap_workload.sh",
     "benchmarks/disagg_benchmarks/run_pap_128_testbed.sh",
     "examples/pap/launch_pap_nixl.sh",
 )
