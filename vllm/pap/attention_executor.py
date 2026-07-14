@@ -37,6 +37,10 @@ from vllm.pap.attention_session import (
     AttentionDecodeDescriptor,
     AttentionSessionStore,
 )
+from vllm.pap.config import (
+    PAPOffloadExecTransport,
+    PAPRuntimeConfig,
+)
 from vllm.pap.data_plane import (
     PAPCudaIPCTensorHandle,
     PAPOffloadExecBatchDescriptor,
@@ -99,17 +103,6 @@ def _pap_env_flag(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.lower() in {"1", "true", "yes", "on"}
-
-
-def _pap_attention_dispatch_mode() -> str:
-    mode = os.environ.get("PAP_ATTENTION_DISPATCH_MODE", "legacy").lower()
-    if mode not in {"legacy", "central_fifo", "central_combine"}:
-        raise ValueError(
-            "PAP_ATTENTION_DISPATCH_MODE must be legacy, central_fifo, or "
-            "central_combine, "
-            f"got {mode!r}"
-        )
-    return mode
 
 
 def _pap_attention_pool_profile_enabled() -> bool:
@@ -832,7 +825,13 @@ def build_unified_paged_flash_metadata(
 class PAPAttentionRegistry:
     """Thread-safe in-memory registry for PAP Attention control-plane state."""
 
-    def __init__(self, storage_device: str | torch.device | None = None) -> None:
+    def __init__(
+        self,
+        storage_device: str | torch.device | None = None,
+        *,
+        runtime_config: PAPRuntimeConfig | None = None,
+    ) -> None:
+        self.runtime_config = runtime_config
         self._lock = Lock()
         self._decode_append_lock = Lock()
         self._prefill_condition = Condition(self._lock)
@@ -5250,14 +5249,18 @@ def start_attention_tcp_server(
     return server
 
 
-def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
-    registry = registry or PAPAttentionRegistry()
-    dispatch_mode = _pap_attention_dispatch_mode()
-    active_peer_tracking = _pap_env_flag(
-        "PAP_ATTENTION_ACTIVE_PEER_TRACKING",
-        False,
-    )
+def create_app(
+    registry: PAPAttentionRegistry | None = None,
+    *,
+    config: PAPRuntimeConfig | None = None,
+) -> FastAPI:
+    runtime_config = config or PAPRuntimeConfig.from_env()
+    registry = registry or PAPAttentionRegistry(runtime_config=runtime_config)
+    attention_config = runtime_config.attention
+    dispatch_mode = attention_config.dispatch_mode.value
+    active_peer_tracking = attention_config.active_peer_tracking
     app = FastAPI(title="PAP Attention Executor")
+    app.state.pap_config = runtime_config
     app.state.registry = registry
     app.state.offload_exec_transport = None
     app.state.offload_exec_transports = {}
@@ -5278,9 +5281,7 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
                 registry=registry,
                 item=item,
             ),
-            max_queue_size=int(
-                os.environ.get("PAP_ATTENTION_DISPATCH_QUEUE_SIZE", "0")
-            ),
+            max_queue_size=attention_config.dispatch_queue_size,
         )
     elif dispatch_mode == "central_combine":
         app.state.offload_exec_dispatcher = PAPAttentionDispatcher(
@@ -5289,13 +5290,8 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
                 items=items,
             ),
             compatibility_key=_offload_exec_work_item_compatibility_key,
-            max_queue_size=int(
-                os.environ.get("PAP_ATTENTION_DISPATCH_QUEUE_SIZE", "0")
-            ),
-            coalesce_timeout_s=(
-                float(os.environ.get("PAP_ATTENTION_COMBINE_WAIT_US", "0"))
-                / 1_000_000.0
-            ),
+            max_queue_size=attention_config.dispatch_queue_size,
+            coalesce_timeout_s=attention_config.combine_wait_us / 1_000_000.0,
         )
     else:
         app.state.offload_exec_dispatcher = None
@@ -5533,6 +5529,7 @@ def create_app(registry: PAPAttentionRegistry | None = None) -> FastAPI:
                     transport = _build_attention_offload_exec_transport(
                         actor_id=(f"{app.state.offload_exec_actor_base}-{peer_key}"),
                         local_rank=app.state.offload_exec_local_rank,
+                        transport=runtime_config.offload_exec_transport,
                     )
                 if not hasattr(transport, "local_agent_metadata"):
                     raise HTTPException(
@@ -5834,59 +5831,56 @@ def maybe_start_offload_exec_transport(
     app: FastAPI,
     host: str,
     zmq_port: int | None,
+    config: PAPRuntimeConfig | None = None,
 ) -> None:
     """Initialize the optional OFFLOAD_EXEC data plane."""
 
     if zmq_port is None:
         return
-    local_rank = int(os.environ.get("PAP_OFFLOAD_EXEC_LOCAL_RANK", "0"))
-    actor_base = os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "attention")
+    runtime_config = config or app.state.pap_config
+    local_rank = runtime_config.attention.local_rank
+    actor_base = runtime_config.attention.actor_id
     app.state.offload_exec_local_rank = local_rank
     app.state.offload_exec_actor_base = actor_base
     app.state.offload_exec_transport = _build_attention_offload_exec_transport(
         actor_id=actor_base,
         local_rank=local_rank,
+        transport=runtime_config.offload_exec_transport,
     )
-    transport = os.environ.get("PAP_OFFLOAD_EXEC_TRANSPORT", "nixl_mailbox").lower()
-    if transport in {"nixl", "nixl_mailbox"}:
+    transport = runtime_config.offload_exec_transport
+    if transport is PAPOffloadExecTransport.NIXL_MAILBOX:
         logger.info(
             "PAP Attention OFFLOAD_EXEC NIXL mailbox initialized local_rank=%d",
             local_rank,
         )
         return
-    if transport in {"local_fast", "local-fast", "cuda_ipc_fast"}:
+    if transport is PAPOffloadExecTransport.LOCAL_FAST:
         logger.info(
             "PAP Attention OFFLOAD_EXEC local_fast CUDA IPC ring "
             "initialized local_rank=%d",
             local_rank,
         )
         return
-    raise RuntimeError(
-        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; use "
-        "nixl_mailbox or local_fast"
-    )
+    raise AssertionError(f"unsupported PAP OFFLOAD_EXEC transport: {transport}")
 
 
 def _build_attention_offload_exec_transport(
     *,
     actor_id: str,
     local_rank: int,
+    transport: PAPOffloadExecTransport,
 ) -> Any:
-    transport = os.environ.get("PAP_OFFLOAD_EXEC_TRANSPORT", "nixl_mailbox").lower()
-    if transport in {"nixl", "nixl_mailbox"}:
+    if transport is PAPOffloadExecTransport.NIXL_MAILBOX:
         return build_nixl_mailbox_offload_exec_transport(
             actor_id=actor_id,
             local_rank=local_rank,
         )
-    if transport in {"local_fast", "local-fast", "cuda_ipc_fast"}:
+    if transport is PAPOffloadExecTransport.LOCAL_FAST:
         return build_local_fast_offload_exec_transport(
             actor_id=actor_id,
             local_rank=local_rank,
         )
-    raise RuntimeError(
-        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; use "
-        "nixl_mailbox or local_fast"
-    )
+    raise AssertionError(f"unsupported PAP OFFLOAD_EXEC transport: {transport}")
 
 
 app = create_app()

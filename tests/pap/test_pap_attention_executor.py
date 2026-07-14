@@ -897,7 +897,6 @@ def test_attention_executor_skips_offload_exec_when_zmq_port_is_none(
 
 
 def test_attention_executor_starts_offload_exec_transport(monkeypatch) -> None:
-    app = create_app()
     fake_transport = object()
 
     def fake_build_transport(**kwargs):
@@ -909,6 +908,7 @@ def test_attention_executor_starts_offload_exec_transport(monkeypatch) -> None:
         "vllm.pap.attention_executor.build_nixl_mailbox_offload_exec_transport",
         fake_build_transport,
     )
+    app = create_app()
 
     maybe_start_offload_exec_transport(app=app, host="127.0.0.1", zmq_port=10300)
 
@@ -939,10 +939,16 @@ def test_attention_executor_binds_each_projection_to_distinct_transport(
     loop_peer_ids: list[str] = []
     loops_ready = Event()
 
-    def fake_build_transport(*, actor_id: str, local_rank: int) -> FakeTransport:
-        transport = FakeTransport(actor_id, local_rank)
-        transports.append(transport)
-        return transport
+    def fake_build_transport(
+        *,
+        actor_id: str,
+        local_rank: int,
+        transport,
+    ) -> FakeTransport:
+        assert transport.value == "nixl_mailbox"
+        fake_transport = FakeTransport(actor_id, local_rank)
+        transports.append(fake_transport)
+        return fake_transport
 
     def fake_mailbox_loop(*, registry, transport, peer_id) -> None:
         loops_started.append(transport)
@@ -1017,10 +1023,11 @@ def test_attention_executor_central_mode_shares_one_dispatcher(
     receiver_contexts = []
     receivers_ready = Event()
 
-    def fake_build_transport(*, actor_id, local_rank):
-        transport = FakeTransport(actor_id, local_rank)
-        transports.append(transport)
-        return transport
+    def fake_build_transport(*, actor_id, local_rank, transport):
+        assert transport.value == "nixl_mailbox"
+        fake_transport = FakeTransport(actor_id, local_rank)
+        transports.append(fake_transport)
+        return fake_transport
 
     def fake_receiver_loop(*, registry, transport, dispatcher, peer_id):
         receiver_contexts.append((transport, dispatcher, peer_id))
@@ -1279,16 +1286,10 @@ def test_mailbox_activity_sends_membership_generation(monkeypatch) -> None:
 
 
 def test_attention_executor_rejects_nccl_offload_exec_transport(monkeypatch) -> None:
-    app = create_app()
-
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_TRANSPORT", "nccl")
 
-    with pytest.raises(RuntimeError, match="use nixl_mailbox"):
-        maybe_start_offload_exec_transport(
-            app=app,
-            host="127.0.0.1",
-            zmq_port=10300,
-        )
+    with pytest.raises(ValueError, match="PAP_OFFLOAD_EXEC_TRANSPORT"):
+        create_app()
 
 
 def test_compute_offload_exec_output_from_packed_qkv(monkeypatch) -> None:

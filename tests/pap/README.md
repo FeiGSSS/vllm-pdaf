@@ -28,8 +28,9 @@ one CPU Gate run; they are not performance thresholds.
 
 `test_invariant_registry.py` is intentionally excluded from the frozen 585-case
 inventory because it validates the inventory itself. Tests created after the
-freeze, such as `tests/benchmarks/pap`, are prospective milestone tests and are
-outside this historical disposition audit.
+freeze, including `contract/test_runtime_config.py` and `tests/benchmarks/pap`,
+are prospective milestone tests and are outside this historical disposition
+audit.
 
 ## Dispositions
 

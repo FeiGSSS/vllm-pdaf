@@ -14,7 +14,8 @@
       "tests/benchmarks/test_pd_three_lane_testbed_contract.py"
     ],
     "excluded_owner_paths": [
-      "tests/pap/test_invariant_registry.py"
+      "tests/pap/test_invariant_registry.py",
+      "tests/pap/contract/test_runtime_config.py"
     ],
     "collected_count": 585,
     "passed_count": 582,
