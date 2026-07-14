@@ -765,7 +765,7 @@ def _pap_offload_exec_peer_zmq_port(peer_endpoint: str | None) -> int:
 
 @lru_cache(maxsize=1)
 def _pap_offload_exec_transport():
-    from vllm.pap.data_plane import (
+    from vllm.pap.transport import (
         build_local_fast_offload_exec_transport,
         build_nixl_mailbox_offload_exec_transport,
     )
@@ -791,7 +791,7 @@ def _pap_offload_exec_transport():
 
 @cache
 def _pap_nixl_mailbox_offload_exec_transport(attention_endpoint: str):
-    from vllm.pap.data_plane import (
+    from vllm.pap.transport import (
         build_local_fast_offload_exec_transport,
         build_nixl_mailbox_offload_exec_transport,
     )

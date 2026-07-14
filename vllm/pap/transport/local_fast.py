@@ -60,7 +60,7 @@ from vllm.pap.cuda_stream_memops import (
 )
 
 # Local imports
-from vllm.pap.data_plane import (
+from vllm.pap.protocol.offload_exec import (
     _offload_exec_batch_descriptor_from_metadata,
     _offload_exec_batch_plan_id,
     _offload_exec_batch_plan_payload,

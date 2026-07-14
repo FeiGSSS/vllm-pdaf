@@ -84,7 +84,7 @@ def test_pap_projection_mailbox_actor_id_includes_tp_rank(
     monkeypatch.setenv("PAP_NIXL_MAILBOX_ACTOR_ID", "projection-3")
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_LOCAL_RANK", "1")
     monkeypatch.setattr(
-        "vllm.pap.data_plane.build_nixl_mailbox_offload_exec_transport",
+        "vllm.pap.transport.build_nixl_mailbox_offload_exec_transport",
         fake_build_transport,
     )
     _pap_nixl_mailbox_offload_exec_transport.cache_clear()

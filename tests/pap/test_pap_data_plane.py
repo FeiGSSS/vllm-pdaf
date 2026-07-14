@@ -1,11 +1,11 @@
 import pytest
 import torch
 
-from vllm.pap.data_plane import (
-    PAPNixlMailboxOffloadExecTransport,
+from vllm.pap.protocol.offload_exec import (
     _offload_exec_batch_descriptor_from_metadata,
     _offload_exec_batch_descriptor_to_metadata,
 )
+from vllm.pap.transport.nixl_offload import PAPNixlMailboxOffloadExecTransport
 from vllm.pap.protocol import (
     PAPCudaIPCTensorHandle,
     PAPOffloadExecBatchDescriptor,

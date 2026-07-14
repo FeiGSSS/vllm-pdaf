@@ -1,7 +1,11 @@
-from vllm.pap.data_plane import (
+from vllm.pap.protocol import (
     PAPOffloadExecBatchDescriptor,
     PAPOffloadExecDescriptor,
+)
+from vllm.pap.protocol.offload_exec import (
     _offload_exec_batch_descriptor_to_metadata,
+)
+from vllm.pap.topology.routing import (
     build_offload_exec_route_groups,
     filter_offload_exec_route_groups_for_request_slice,
 )

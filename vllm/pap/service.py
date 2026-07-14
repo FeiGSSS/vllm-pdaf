@@ -29,7 +29,7 @@ from vllm.pap.config import (
     PAPOffloadExecTransport,
     PAPRuntimeConfig,
 )
-from vllm.pap.data_plane import (
+from vllm.pap.transport import (
     build_local_fast_offload_exec_transport,
     build_nixl_mailbox_offload_exec_transport,
 )
