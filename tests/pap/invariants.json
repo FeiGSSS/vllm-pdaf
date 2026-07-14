@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "inventory": {
     "commit": "dd2073bcf4637827d2adcd326a316b6b67af4fa4",
     "collected_at": "2026-07-14",
@@ -33,6 +33,35 @@
     "integration",
     "launcher",
     "benchmark-validator"
+  ],
+  "retired_tests": [
+    {
+      "node_id": "tests/pap/test_async_decode_token.py::test_pap_async_input_token_sync_only_diagnostic_barrier",
+      "removed_at": "2026-07-14",
+      "task": "2.1",
+      "reason": "The sync-only CUDA stream barrier changed Projection timing and is superseded by the barrier-free sampled-token lifecycle.",
+      "replacement_node_ids": [
+        "tests/pap/test_async_decode_token.py::test_pap_input_token_ids_are_empty_only_for_async_path"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_decode_commit.py::test_commit_client_diagnostic_gate_defers_post",
+      "removed_at": "2026-07-14",
+      "task": "2.1",
+      "reason": "The file gate paused decode-commit delivery and is superseded by normal asynchronous acknowledged delivery.",
+      "replacement_node_ids": [
+        "tests/pap/test_decode_commit.py::test_commit_client_commit_does_not_block_on_slow_post"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_multi_pap_proxy_server.py::test_diagnostic_prefill_gate_releases_projection_and_commit",
+      "removed_at": "2026-07-14",
+      "task": "2.1",
+      "reason": "The proxy isolation gate delayed Projection and commit after Prefill and is superseded by the ungated request lifecycle.",
+      "replacement_node_ids": [
+        "tests/pap/test_multi_pap_proxy_server.py::test_multi_proxy_has_no_decode_barrier"
+      ]
+    }
   ],
   "invariants": [
     {

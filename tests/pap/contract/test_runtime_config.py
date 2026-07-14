@@ -51,11 +51,8 @@ P17_PHASE0_ENV = {
     "PAP_ATTENTION_DISPATCH_QUEUE_SIZE": "0",
     "PAP_ATTENTION_COMBINE_WAIT_US": "0",
     "PAP_ATTENTION_ACTIVE_PEER_TRACKING": "0",
-    "PAP_PROJECTION_SYNC_ONLY_BARRIER": "0",
     "PAP_PREFILL_IPC_PROFILE": "0",
     "PAP_PREFILL_TORCH_PROFILE": "0",
-    "PAP_DIAG_R1_PROJECTION_GATE_COUNT": "0",
-    "PAP_DIAG_R1_COMMIT_GATE_COUNT": "0",
 }
 
 
@@ -149,7 +146,7 @@ def test_runtime_config_is_deeply_immutable_for_config_values() -> None:
         config.placement.prefill_devices[0] = 0  # type: ignore[index]
 
 
-def test_retired_flag_registry_is_informational_in_phase_one() -> None:
+def test_retired_flag_registry_reports_remaining_selectable_paths() -> None:
     config = PAPRuntimeConfig.from_env({})
     environment = {
         "PAP_ASYNC_DECODE_TOKEN": "0",
@@ -166,6 +163,52 @@ def test_retired_flag_registry_is_informational_in_phase_one() -> None:
     ]
     assert settings[0].matches_p17 is False
     assert settings[1].matches_p17 is True
+
+
+@pytest.mark.parametrize(
+    ("name", "experiment_id"),
+    [
+        (
+            "PAP_ASYNC_DECODE_TOKEN_SYNC_ONLY_BARRIER",
+            "PAP-20260714-ASYNC-TTFT-ROOTCAUSE",
+        ),
+        (
+            "PAP_PROJECTION_SYNC_ONLY_BARRIER",
+            "PAP-20260714-ASYNC-TTFT-ROOTCAUSE",
+        ),
+        (
+            "PAP_PREFILL_SYNC_ONLY_BARRIER",
+            "PAP-20260714-ASYNC-TTFT-ROOTCAUSE",
+        ),
+        (
+            "PAP_DIAG_R1_PROJECTION_GATE_COUNT",
+            "PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
+        ),
+        (
+            "PAP_DIAG_R1_COMMIT_GATE_COUNT",
+            "PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
+        ),
+        (
+            "PAP_DIAG_DECODE_COMMIT_GATE_FILE",
+            "PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
+        ),
+        (
+            "PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT",
+            "PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
+        ),
+    ],
+)
+def test_removed_timing_control_flags_fail_closed(
+    name: str,
+    experiment_id: str,
+) -> None:
+    with pytest.raises(PAPConfigError) as error:
+        PAPRuntimeConfig.from_env({name: "0"})
+
+    message = str(error.value)
+    assert name in message
+    assert "was removed" in message
+    assert experiment_id in message
 
 
 def test_p17_effective_config_matches_frozen_profile_field_by_field() -> None:

@@ -91,8 +91,24 @@ def test_invariant_registry_has_consistent_ids_and_paths() -> None:
     known_invariants = set(invariant_ids)
 
     audit = registry["test_audit"]
+    audit_by_node = {item["node_id"]: item for item in audit}
     node_ids = [item["node_id"] for item in audit]
     assert len(node_ids) == len(set(node_ids))
+
+    retired = registry["retired_tests"]
+    retired_node_ids = [item["node_id"] for item in retired]
+    assert len(retired_node_ids) == len(set(retired_node_ids))
+    current_node_ids = _current_node_ids()
+    for item in retired:
+        retired_audit = audit_by_node[item["node_id"]]
+        assert retired_audit["disposition"] == "delete"
+        assert item["node_id"] not in current_node_ids
+        for replacement_node_id in item["replacement_node_ids"]:
+            replacement_audit = audit_by_node[replacement_node_id]
+            assert replacement_node_id in current_node_ids
+            assert set(retired_audit["invariant_ids"]) & set(
+                replacement_audit["invariant_ids"]
+            )
 
     nodes_by_invariant: dict[str, set[str]] = defaultdict(set)
     for item in audit:
@@ -124,7 +140,10 @@ def test_invariant_registry_has_consistent_ids_and_paths() -> None:
 def test_invariant_registry_covers_frozen_pytest_inventory() -> None:
     registry = _registry()
     audited = {item["node_id"] for item in registry["test_audit"]}
-    assert audited == _current_node_ids()
+    retired = {item["node_id"] for item in registry["retired_tests"]}
+    current = _current_node_ids()
+    assert not current & retired
+    assert audited == current | retired
     assert len(audited) == registry["inventory"]["collected_count"]
 
 

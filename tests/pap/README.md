@@ -67,7 +67,10 @@ tests; shell tests should be limited to syntax and end-to-end assembly.
 
 The per-test audit additionally records the owner path, direct source owner,
 outcome, reference duration, disposition, reason, and destination for a move or
-rewrite. `invariants.schema.json` is the versioned machine-readable contract.
+rewrite. `retired_tests` records when an approved `delete` is executed and the
+surviving node IDs that protect the same invariant. This keeps the original
+585-case audit immutable while allowing the live collection to converge.
+`invariants.schema.json` is the versioned machine-readable contract.
 
 Arbitrary xPAyP topology and cross-host NIXL are supported capabilities, not
 retired experiments. Their code and interfaces are retained during the
@@ -100,7 +103,8 @@ Run the complete PAP CPU Gate with:
 
 The validator fails if the schema is invalid, IDs are duplicated, source owner
 paths disappear, invariant mappings disagree, a required invariant loses all
-surviving coverage, or the collected frozen test set drifts from the audit.
+surviving coverage, or the live collection differs from the frozen audit minus
+explicitly retired tests.
 
 When intentionally changing the suite, update the registry in the same commit:
 

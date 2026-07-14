@@ -242,21 +242,19 @@ class PAPRuntimeFeatures:
     local_fast_stream_ordered: bool
     local_fast_slot_count: int
     decode_slot_plan_cache_limit: int
-    projection_sync_only_barrier: bool
     prefill_ipc_profile: bool
     prefill_torch_profile: bool
-    diagnostic_projection_gate_count: int
-    diagnostic_commit_gate_count: int
 
 
 @dataclass(frozen=True)
 class PAPRetiredFlag:
-    """A selectable path scheduled for removal during convergence."""
+    """A selectable path scheduled for or already past removal."""
 
     name: str
     p17_values: frozenset[str]
     replacement: str
     experiment_id: str
+    removed: bool = False
 
 
 @dataclass(frozen=True)
@@ -284,12 +282,21 @@ PAP_RETIRED_FLAGS = (
         p17_values=_FALSE_VALUES,
         replacement="no sampled-token timing barrier",
         experiment_id="PAP-20260714-ASYNC-TTFT-ROOTCAUSE",
+        removed=True,
     ),
     PAPRetiredFlag(
         name="PAP_PROJECTION_SYNC_ONLY_BARRIER",
         p17_values=_FALSE_VALUES,
         replacement="no Projection timing barrier",
         experiment_id="PAP-20260714-ASYNC-TTFT-ROOTCAUSE",
+        removed=True,
+    ),
+    PAPRetiredFlag(
+        name="PAP_PREFILL_SYNC_ONLY_BARRIER",
+        p17_values=_FALSE_VALUES,
+        replacement="no Prefill timing barrier",
+        experiment_id="PAP-20260714-ASYNC-TTFT-ROOTCAUSE",
+        removed=True,
     ),
     PAPRetiredFlag(
         name="PAP_PREFILL_KV_ASYNC",
@@ -356,12 +363,28 @@ PAP_RETIRED_FLAGS = (
         p17_values=frozenset({"0"}),
         replacement="no diagnostic Projection gate",
         experiment_id="PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
+        removed=True,
     ),
     PAPRetiredFlag(
         name="PAP_DIAG_R1_COMMIT_GATE_COUNT",
         p17_values=frozenset({"0"}),
         replacement="no diagnostic decode-commit gate",
         experiment_id="PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
+        removed=True,
+    ),
+    PAPRetiredFlag(
+        name="PAP_DIAG_DECODE_COMMIT_GATE_FILE",
+        p17_values=_FALSE_VALUES,
+        replacement="unconditional decode-commit delivery",
+        experiment_id="PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
+        removed=True,
+    ),
+    PAPRetiredFlag(
+        name="PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT",
+        p17_values=frozenset({"120"}),
+        replacement="the normal decode-commit timeout and retry policy",
+        experiment_id="PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
+        removed=True,
     ),
 )
 
@@ -424,6 +447,7 @@ class PAPRuntimeConfig:
             PAPConfigError: If any configured value is invalid.
         """
         env = os.environ if environ is None else environ
+        reject_removed_pap_flags(env)
         tp_size = _env_int(env, "PAP_TP_SIZE", 1, minimum=1)
         topology_name = _env_text(
             env,
@@ -562,11 +586,6 @@ class PAPRuntimeConfig:
                 256,
                 minimum=0,
             ),
-            projection_sync_only_barrier=_env_bool(
-                env,
-                "PAP_PROJECTION_SYNC_ONLY_BARRIER",
-                False,
-            ),
             prefill_ipc_profile=_env_bool(
                 env,
                 "PAP_PREFILL_IPC_PROFILE",
@@ -576,18 +595,6 @@ class PAPRuntimeConfig:
                 env,
                 "PAP_PREFILL_TORCH_PROFILE",
                 False,
-            ),
-            diagnostic_projection_gate_count=_env_int(
-                env,
-                "PAP_DIAG_R1_PROJECTION_GATE_COUNT",
-                0,
-                minimum=0,
-            ),
-            diagnostic_commit_gate_count=_env_int(
-                env,
-                "PAP_DIAG_R1_COMMIT_GATE_COUNT",
-                0,
-                minimum=0,
             ),
         )
 
@@ -802,10 +809,10 @@ class PAPRuntimeConfig:
         self,
         environ: Mapping[str, str],
     ) -> tuple[PAPRetiredFlagSetting, ...]:
-        """Return explicitly configured flags scheduled for retirement.
+        """Return explicitly configured flags in the retirement registry.
 
-        This is informational in Phase 1. Phase 2 will turn retired selections
-        into fail-closed errors as their implementations are removed.
+        Removed entries are rejected by :meth:`from_env`; this method remains
+        available for inventory and migration reporting.
         """
         del self
         return tuple(
@@ -892,17 +899,11 @@ class PAPRuntimeConfig:
                     "pap_unified_md_fast_key": features.unified_md_fast_key,
                     "pap_direct_mailbox_output": features.direct_mailbox_output,
                     "pap_attention_dispatch_mode": dispatch_mode.value,
-                    "pap_projection_sync_only_barrier": (
-                        features.projection_sync_only_barrier
-                    ),
+                    "pap_projection_sync_only_barrier": False,
                     "pap_prefill_ipc_profile": features.prefill_ipc_profile,
                     "pap_prefill_torch_profile": features.prefill_torch_profile,
-                    "pap_diagnostic_projection_gate_count": (
-                        features.diagnostic_projection_gate_count
-                    ),
-                    "pap_diagnostic_commit_gate_count": (
-                        features.diagnostic_commit_gate_count
-                    ),
+                    "pap_diagnostic_projection_gate_count": 0,
+                    "pap_diagnostic_commit_gate_count": 0,
                 },
             },
         }
@@ -910,6 +911,23 @@ class PAPRuntimeConfig:
 
 def _normalize_flag_value(value: str) -> str:
     return str(value).strip().lower().replace("-", "_")
+
+
+def reject_removed_pap_flags(environ: Mapping[str, str]) -> None:
+    """Reject PAP variables whose runtime control paths no longer exist.
+
+    Args:
+        environ: Environment mapping to validate.
+
+    Raises:
+        PAPConfigError: If a removed variable is explicitly present.
+    """
+    for spec in PAP_RETIRED_FLAGS:
+        if spec.removed and spec.name in environ:
+            raise PAPConfigError(
+                f"{spec.name} was removed; use {spec.replacement}. "
+                f"Historical evidence: {spec.experiment_id}."
+            )
 
 
 def _env_text(

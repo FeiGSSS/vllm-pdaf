@@ -69,6 +69,11 @@ def test_pap_benchmark_runner_audits_async_decode_token_join() -> None:
     assert '--passed-gate decode_token_join' in text
     assert 'decode_token_join=${RUN_ROOT}/decode_token_join_audit.env' in text
     assert 'PAP_LEASE_RELEASE_TIMEOUT="${PAP_LEASE_RELEASE_TIMEOUT:-5.0}"' in text
+    assert "for removed_flag in" in text
+    assert "PAP_PROJECTION_SYNC_ONLY_BARRIER" in text
+    assert "PAP_DIAG_DECODE_COMMIT_GATE_FILE" in text
+    assert 'PAP_PROJECTION_SYNC_ONLY_BARRIER="${' not in text
+    assert 'PAP_DIAG_R1_PROJECTION_GATE_COUNT="${' not in text
 
 
 def test_pap_nixl_launcher_defaults_async_decode_token_on() -> None:

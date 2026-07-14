@@ -15,9 +15,10 @@ import queue
 import threading
 import time
 from collections.abc import Iterable
-from pathlib import Path
 
 import httpx
+
+from vllm.pap.config import reject_removed_pap_flags
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ class DecodeCommitClient:
     ) -> None:
         """Create a client that POSTs to *endpoint* (or
         ``PAP_DECODE_COMMIT_ENDPOINT`` env var)."""
+        reject_removed_pap_flags(os.environ)
         self.endpoint = endpoint or os.environ.get("PAP_DECODE_COMMIT_ENDPOINT", "")
         self.timeout_s = (
             float(timeout_s)
@@ -84,16 +86,6 @@ class DecodeCommitClient:
         self._acked_commit_seq_by_request: dict[str, int] = {}
         self._failed_commit_seq_by_request: dict[str, int] = {}
         self._failure_by_request: dict[str, str] = {}
-        diagnostic_gate = os.environ.get(
-            "PAP_DIAG_DECODE_COMMIT_GATE_FILE", ""
-        ).strip()
-        self._diagnostic_gate_file = (
-            Path(diagnostic_gate) if diagnostic_gate else None
-        )
-        self._diagnostic_gate_timeout_s = max(
-            0.0,
-            float(os.environ.get("PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT", "120")),
-        )
         if self.enabled:
             self._ensure_worker()
 
@@ -228,7 +220,6 @@ class DecodeCommitClient:
                 if self._queued_item_by_request.get(request_id) is item:
                     self._queued_item_by_request.pop(request_id, None)
             try:
-                self._wait_for_diagnostic_gate()
                 acked_commit_seq = self._post_commit(payload, endpoint)
             except Exception as exc:
                 logger.warning(
@@ -248,25 +239,6 @@ class DecodeCommitClient:
                 )
             finally:
                 self._queue.task_done()
-
-    def _wait_for_diagnostic_gate(self) -> None:
-        gate_file = self._diagnostic_gate_file
-        if gate_file is None:
-            return
-        logger.info("PAP diagnostic decode-commit gate waiting path=%s", gate_file)
-        deadline = time.monotonic() + self._diagnostic_gate_timeout_s
-        while not gate_file.exists():
-            if (
-                self._diagnostic_gate_timeout_s > 0
-                and time.monotonic() >= deadline
-            ):
-                raise TimeoutError(
-                    "PAP diagnostic decode-commit gate timed out: "
-                    f"{gate_file}"
-                )
-            time.sleep(0.005)
-        logger.info("PAP diagnostic decode-commit gate released path=%s", gate_file)
-        self._diagnostic_gate_file = None
 
     def _mark_done(
         self,

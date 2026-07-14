@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vllm.ai/schemas/pap-test-invariants-v1.json",
+  "$id": "https://vllm.ai/schemas/pap-test-invariants-v2.json",
   "title": "PAP test invariant registry",
   "type": "object",
   "additionalProperties": false,
@@ -8,13 +8,14 @@
     "schema_version",
     "inventory",
     "namespaces",
+    "retired_tests",
     "invariants",
     "test_audit",
     "audit_summary"
   ],
   "properties": {
     "schema_version": {
-      "const": 1
+      "const": 2
     },
     "inventory": {
       "$ref": "#/$defs/inventory"
@@ -35,6 +36,13 @@
           "launcher",
           "benchmark-validator"
         ]
+      }
+    },
+    "retired_tests": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/retiredTest"
       }
     },
     "invariants": {
@@ -138,6 +146,44 @@
         "id": {
           "type": "string",
           "minLength": 7
+        }
+      }
+    },
+    "retiredTest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "node_id",
+        "removed_at",
+        "task",
+        "reason",
+        "replacement_node_ids"
+      ],
+      "properties": {
+        "node_id": {
+          "type": "string",
+          "pattern": "^tests/.+::.+$"
+        },
+        "removed_at": {
+          "type": "string",
+          "format": "date"
+        },
+        "task": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+$"
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 20
+        },
+        "replacement_node_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^tests/.+::.+$"
+          }
         }
       }
     },

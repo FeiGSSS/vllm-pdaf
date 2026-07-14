@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import logging
 import os
 import time
@@ -14,12 +13,13 @@ from collections import Counter
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from itertools import count
-from pathlib import Path
 from typing import Any
 
 import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+
+from vllm.pap.config import reject_removed_pap_flags
 
 try:
     from examples.pap.pap_proxy_server import (
@@ -53,59 +53,6 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger("multi_pap_proxy")
-
-
-def _diagnostic_gate_count(name: str) -> int:
-    value = int(os.environ.get(name, "0"))
-    if value < 0:
-        raise ValueError(f"{name} must be non-negative")
-    return value
-
-
-def _publish_diagnostic_gate(path: Path) -> None:
-    temporary_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    temporary_path.write_text("released\n", encoding="utf-8")
-    os.replace(temporary_path, path)
-
-
-async def _diagnostic_after_prefill(
-    app_state: Any,
-    *,
-    request_number: int,
-    request_id: str,
-) -> None:
-    projection_count = app_state.diagnostic_projection_gate_count
-    commit_count = app_state.diagnostic_commit_gate_count
-    tracked_count = max(projection_count, commit_count)
-    if tracked_count <= 0 or request_number >= tracked_count:
-        return
-
-    wait_for_projection = request_number < projection_count
-    async with app_state.diagnostic_prefill_lock:
-        app_state.diagnostic_prefill_completed += 1
-        completed = app_state.diagnostic_prefill_completed
-        logger.info(
-            "PAP diagnostic R1 Prefill completion request_id=%s "
-            "request_number=%d completed=%d tracked=%d",
-            request_id,
-            request_number,
-            completed,
-            tracked_count,
-        )
-        if commit_count > 0 and completed == commit_count:
-            gate_file = app_state.diagnostic_commit_gate_file
-            assert gate_file is not None
-            _publish_diagnostic_gate(gate_file)
-            logger.info(
-                "PAP diagnostic decode-commit gate released path=%s",
-                gate_file,
-            )
-        if projection_count > 0 and completed == projection_count:
-            app_state.diagnostic_projection_gate.set()
-            logger.info("PAP diagnostic Projection gate released")
-
-    if wait_for_projection:
-        await app_state.diagnostic_projection_gate.wait()
 
 
 def _pap_prefill_ipc_profile_enabled() -> bool:
@@ -502,38 +449,11 @@ async def _stream_projection_with_cleanup(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     args = app.state.args
+    reject_removed_pap_flags(os.environ)
     app.state.groups = parse_pap_groups(args.pap_groups)
     app.state.projections = parse_projection_instances(args.projections)
     app.state.request_counter = count()
     app.state.pair_counts = Counter()
-    app.state.diagnostic_projection_gate_count = _diagnostic_gate_count(
-        "PAP_DIAG_R1_PROJECTION_GATE_COUNT"
-    )
-    app.state.diagnostic_commit_gate_count = _diagnostic_gate_count(
-        "PAP_DIAG_R1_COMMIT_GATE_COUNT"
-    )
-    app.state.diagnostic_prefill_completed = 0
-    app.state.diagnostic_prefill_lock = asyncio.Lock()
-    app.state.diagnostic_projection_gate = asyncio.Event()
-    if app.state.diagnostic_projection_gate_count == 0:
-        app.state.diagnostic_projection_gate.set()
-    commit_gate_path = os.environ.get(
-        "PAP_DIAG_DECODE_COMMIT_GATE_FILE", ""
-    ).strip()
-    app.state.diagnostic_commit_gate_file = (
-        Path(commit_gate_path) if commit_gate_path else None
-    )
-    if app.state.diagnostic_commit_gate_count > 0:
-        if app.state.diagnostic_commit_gate_file is None:
-            raise ValueError(
-                "PAP_DIAG_R1_COMMIT_GATE_COUNT requires "
-                "PAP_DIAG_DECODE_COMMIT_GATE_FILE"
-            )
-        app.state.diagnostic_commit_gate_file.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-        app.state.diagnostic_commit_gate_file.unlink(missing_ok=True)
     app.state.prefill_clients = {
         group: _make_client(group.prefill_host, group.prefill_port, "prefill")
         for group in app.state.groups
@@ -620,11 +540,6 @@ async def _handle_openai_request(api_path: str, request: Request):
         t0 = time.time()
         prefill_resp = await _post_json(prefill, api_path, prefill_payload, request_id)
         prefill_ms = int((time.time() - t0) * 1000)
-        await _diagnostic_after_prefill(
-            request.app.state,
-            request_number=request_number,
-            request_id=request_id,
-        )
 
         projection_payload_start = time.perf_counter() if profile else 0.0
         kv_params = enrich_prefill_kv_params(
@@ -749,11 +664,6 @@ async def health() -> dict[str, Any]:
         "projections": len(app.state.projections),
         "routing_policy": app.state.args.routing_policy,
         "pair_counts": dict(sorted(app.state.pair_counts.items())),
-        "diagnostic_prefill_completed": app.state.diagnostic_prefill_completed,
-        "diagnostic_projection_gate_count": (
-            app.state.diagnostic_projection_gate_count
-        ),
-        "diagnostic_commit_gate_count": app.state.diagnostic_commit_gate_count,
     }
 
 

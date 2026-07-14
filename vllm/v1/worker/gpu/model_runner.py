@@ -45,6 +45,7 @@ from vllm.model_executor.layers.mamba.ops.ssu_dispatch import (
 )
 from vllm.model_executor.model_loader import get_model_loader
 from vllm.multimodal import MULTIMODAL_REGISTRY
+from vllm.pap.config import reject_removed_pap_flags
 from vllm.pap.deferred_cuda_trace import (
     deferred_cuda_trace_enabled,
     deferred_trace_role,
@@ -152,10 +153,6 @@ def _pap_input_token_ids_for_forward(
     if not pap_enabled:
         return ()
     if async_decode_token_enabled():
-        if os.environ.get(
-            "PAP_ASYNC_DECODE_TOKEN_SYNC_ONLY_BARRIER", "0"
-        ).lower() in ("1", "true", "yes", "on"):
-            torch.cuda.current_stream(input_ids.device).synchronize()
         return ()
     return tuple(
         int(token_id)
@@ -205,6 +202,7 @@ def _publish_pap_sampled_tokens(
 
 class GPUModelRunner(LoRAModelRunnerMixin):
     def __init__(self, vllm_config: VllmConfig, device: torch.device):
+        reject_removed_pap_flags(os.environ)
         self.vllm_config = vllm_config
         self.model_config = vllm_config.model_config
         self.cache_config = vllm_config.cache_config

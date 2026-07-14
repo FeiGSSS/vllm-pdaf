@@ -2,14 +2,10 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from pathlib import Path
-from types import SimpleNamespace
-
-import anyio
 
 from examples.pap.multi_pap_proxy_server import (
     PAPGroup,
     ProjectionInstance,
-    _diagnostic_after_prefill,
     _prefill_usage_headers,
     build_projection_payload_for_group,
     parse_pap_groups,
@@ -18,46 +14,6 @@ from examples.pap.multi_pap_proxy_server import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def test_diagnostic_prefill_gate_releases_projection_and_commit(tmp_path) -> None:
-    async def run() -> None:
-        import asyncio
-
-        gate_file = tmp_path / "commit.released"
-        state = SimpleNamespace(
-            diagnostic_projection_gate_count=4,
-            diagnostic_commit_gate_count=4,
-            diagnostic_prefill_completed=0,
-            diagnostic_prefill_lock=asyncio.Lock(),
-            diagnostic_projection_gate=asyncio.Event(),
-            diagnostic_commit_gate_file=gate_file,
-        )
-        tasks = [
-            asyncio.create_task(
-                _diagnostic_after_prefill(
-                    state,
-                    request_number=index,
-                    request_id=f"request-{index}",
-                )
-            )
-            for index in range(3)
-        ]
-        await asyncio.sleep(0)
-        assert not state.diagnostic_projection_gate.is_set()
-        assert not gate_file.exists()
-
-        await _diagnostic_after_prefill(
-            state,
-            request_number=3,
-            request_id="request-3",
-        )
-        await asyncio.gather(*tasks)
-
-        assert state.diagnostic_projection_gate.is_set()
-        assert gate_file.read_text(encoding="utf-8") == "released\n"
-
-    anyio.run(run)
 
 
 def test_parse_pap_groups_from_compact_spec() -> None:
