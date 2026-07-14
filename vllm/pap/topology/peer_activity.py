@@ -140,7 +140,7 @@ def sync_pap_projection_peer_activity(
         if not active_endpoints:
             return None
         if notify is None:
-            from vllm.pap.shadow_attention import (
+            from vllm.pap.attention.client import (
                 update_offload_exec_mailbox_activity,
             )
 

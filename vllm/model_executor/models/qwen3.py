@@ -837,7 +837,7 @@ def _pap_bind_offload_exec_mailbox_peer(
         )
     if getattr(transport, "_pap_mailbox_bound", False):
         return
-    from vllm.pap.shadow_attention import bind_offload_exec_mailbox
+    from vllm.pap.attention.client import bind_offload_exec_mailbox
 
     peer_metadata = bind_offload_exec_mailbox(
         attention_endpoint=attention_endpoint,
@@ -1333,7 +1333,7 @@ class Qwen3Attention(nn.Module):
             PAPOffloadExecBatchDescriptor,
             PAPOffloadExecDescriptor,
         )
-        from vllm.pap.shadow_attention import select_attention_endpoint_for_request
+        from vllm.pap.attention.client import select_attention_endpoint_for_request
 
         offload_exec_zmq_endpoint_by_request = (
             additional_kwargs.get("pap_offload_exec_zmq_endpoint_by_request") or {}
@@ -2014,10 +2014,12 @@ class Qwen3Attention(nn.Module):
     ) -> None:
         """Register static KV backing and publish request-level layouts."""
 
-        from vllm.pap.shadow_attention import (
+        from vllm.pap.attention.client import (
+            select_attention_endpoint_for_request,
+        )
+        from vllm.pap.kv.handoff import (
             publish_prefill_kv_session_manifest,
             register_prefill_kv_catalog,
-            select_attention_endpoint_for_request,
         )
 
         eligible: list[tuple[int, str, str, str]] = []

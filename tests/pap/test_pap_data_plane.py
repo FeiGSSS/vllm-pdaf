@@ -416,7 +416,7 @@ def test_sealed_prefill_kv_handoff_posts_catalog_and_manifest_without_sync(
         deserialize_tensor_bundle,
         serialize_tensor_bundle,
     )
-    from vllm.pap.shadow_attention import (
+    from vllm.pap.kv.handoff import (
         publish_prefill_kv_session_manifest,
         register_prefill_kv_catalog,
     )
@@ -442,11 +442,11 @@ def test_sealed_prefill_kv_handoff_posts_catalog_and_manifest_without_sync(
         )
 
     monkeypatch.setattr(
-        "vllm.pap.shadow_attention.reduce_tensor",
+        "vllm.pap.kv.handoff.reduce_tensor",
         fake_reduce_tensor,
     )
     monkeypatch.setattr(
-        "vllm.pap.shadow_attention._post_bytes_tcp",
+        "vllm.pap.kv.handoff._post_bytes_tcp",
         fake_post_bytes_tcp,
     )
 

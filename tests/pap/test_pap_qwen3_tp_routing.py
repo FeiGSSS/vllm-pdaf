@@ -115,7 +115,7 @@ def test_pap_mailbox_bind_uses_stable_projection_source_id(monkeypatch) -> None:
     monkeypatch.setenv("PAP_NIXL_MAILBOX_ACTOR_ID", "projection-3")
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_LOCAL_RANK", "1")
     monkeypatch.setattr(
-        "vllm.pap.shadow_attention.bind_offload_exec_mailbox",
+        "vllm.pap.attention.client.bind_offload_exec_mailbox",
         fake_bind,
     )
     transport = FakeTransport()

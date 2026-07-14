@@ -1250,7 +1250,7 @@ def test_attention_executor_tracks_active_projection_membership(monkeypatch) -> 
 def test_mailbox_bind_sends_stable_projection_source_id(monkeypatch) -> None:
     import json
 
-    from vllm.pap import shadow_attention
+    from vllm.pap.attention import client as attention_client
 
     response_metadata = b"attention-metadata"
     response_body = json.dumps(
@@ -1285,12 +1285,12 @@ def test_mailbox_bind_sends_stable_projection_source_id(monkeypatch) -> None:
 
     fake_socket = FakeSocket()
     monkeypatch.setattr(
-        shadow_attention.socket,
+        attention_client.socket,
         "create_connection",
         lambda *_args, **_kwargs: fake_socket,
     )
 
-    result = shadow_attention.bind_offload_exec_mailbox(
+    result = attention_client.bind_offload_exec_mailbox(
         attention_endpoint="http://127.0.0.1:8300",
         local_agent_metadata=b"projection-metadata",
         source_id="projection-0-r0",
@@ -1304,7 +1304,7 @@ def test_mailbox_bind_sends_stable_projection_source_id(monkeypatch) -> None:
 def test_mailbox_activity_sends_membership_generation(monkeypatch) -> None:
     import json
 
-    from vllm.pap import shadow_attention
+    from vllm.pap.attention import client as attention_client
 
     response_body = json.dumps({"applied": True}).encode("utf-8")
 
@@ -1336,12 +1336,12 @@ def test_mailbox_activity_sends_membership_generation(monkeypatch) -> None:
 
     fake_socket = FakeSocket()
     monkeypatch.setattr(
-        shadow_attention.socket,
+        attention_client.socket,
         "create_connection",
         lambda *_args, **_kwargs: fake_socket,
     )
 
-    result = shadow_attention.update_offload_exec_mailbox_activity(
+    result = attention_client.update_offload_exec_mailbox_activity(
         attention_endpoint="http://127.0.0.1:8300",
         source_id="projection-0-r0",
         active=False,
