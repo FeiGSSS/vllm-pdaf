@@ -256,9 +256,9 @@ def test_qwen3_pap_mailbox_transport_is_per_attention_endpoint() -> None:
 
 
 def test_nixl_mailbox_zero_copy_recv_is_default_enabled() -> None:
-    text = (ROOT / "vllm" / "pap" / "nixl_mailbox.py").read_text()
+    from vllm.pap.transport.nixl import NIXL_MAILBOX_ZERO_COPY_RECV_DEFAULT
 
-    assert '"PAP_NIXL_MAILBOX_ZERO_COPY_RECV", True' in text
+    assert NIXL_MAILBOX_ZERO_COPY_RECV_DEFAULT is True
 
 
 def test_qwen3_dense_pap_uses_runner_dbo_path_only() -> None:

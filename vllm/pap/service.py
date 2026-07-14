@@ -26,24 +26,18 @@ from threading import Condition, Lock, Thread
 from typing import Any
 
 import torch
-from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from vllm.pap.attention import (
     PAPAttentionDispatcher,
     PAPAttentionWorkItem,
 )
-from vllm.pap.lifecycle import (
-    AttentionDecodeDescriptor,
-    AttentionSessionStore,
-)
 from vllm.pap.config import (
     PAPOffloadExecTransport,
     PAPRuntimeConfig,
 )
 from vllm.pap.data_plane import (
-    PAPOffloadKVIPCDescriptor,
-    PAPOffloadKVPagedIPCDescriptor,
     build_local_fast_offload_exec_transport,
     build_nixl_mailbox_offload_exec_transport,
 )
@@ -109,10 +103,6 @@ def _pap_env_flag(name: str, default: bool = False) -> bool:
 
 def _pap_attention_pool_profile_enabled() -> bool:
     return _pap_env_flag("PAP_ATTENTION_POOL_PROFILE", False)
-
-
-def _pap_prefill_ipc_profile_enabled() -> bool:
-    return _pap_env_flag("PAP_PREFILL_IPC_PROFILE", False)
 
 
 def _pap_kv_lease_profile_enabled() -> bool:
@@ -272,52 +262,6 @@ class PAPAttentionRegistration(BaseModel):
     kv_size: int | None = None
 
 
-class PAPAttentionComputeRequest(BaseModel):
-    """Tensor payload for the first PAP remote-attention compute path."""
-
-    request_id: str
-    layer_name: str
-    query: dict[str, Any]
-    key: dict[str, Any]
-    value: dict[str, Any]
-    scale: float
-
-
-class PAPAttentionAppendAndComputeRequest(BaseModel):
-    """Stateful decode attention request carrying only the current Q/K/V."""
-
-    request_id: str
-    layer_name: str
-    query: dict[str, Any]
-    key: dict[str, Any]
-    value: dict[str, Any]
-    scale: float
-    block_id: int | None = None
-    slot: int | None = None
-    seq_len: int | None = None
-
-
-class PAPAttentionImportPrefillKVRequest(BaseModel):
-    """Prompt KV import for the stateful PAP attention path."""
-
-    request_id: str
-    layer_name: str
-    key: dict[str, Any]
-    value: dict[str, Any]
-    seq_len: int
-    block_ids: list[int] | None = None
-
-
-class PAPOffloadExecRequest(BaseModel):
-    """Control-plane trigger for one OFFLOAD_EXEC tensor exchange."""
-
-    request_id: str
-    layer_name: str
-    step: int
-    scale: float
-    remote_address: str
-
-
 class PAPOffloadExecMailboxBindRequest(BaseModel):
     """Projection NIXL mailbox metadata used for one-time OFFLOAD_EXEC bind."""
 
@@ -333,22 +277,6 @@ class PAPOffloadExecMailboxActivityRequest(BaseModel):
     membership_generation: int = Field(ge=1)
 
 
-class PAPAttentionLayerEventRequest(BaseModel):
-    """Shape-only event emitted at Projection's q/k/v -> attention boundary."""
-
-    request_id: str
-    layer_name: str
-    query_shape: list[int]
-    key_shape: list[int]
-    value_shape: list[int]
-    dtype: str
-    device: str
-    is_decode: bool
-    num_reqs: int | None = None
-    num_actual_tokens: int | None = None
-    max_seq_len: int | None = None
-
-
 class PAPDecodeTokenRequest(BaseModel):
     """One sampled token copied asynchronously by the Projection worker."""
 
@@ -361,42 +289,6 @@ class PAPDecodeTokenBatchRequest(BaseModel):
     """Sampled tokens produced by one Projection forward."""
 
     tokens: list[PAPDecodeTokenRequest] = Field(min_length=1)
-
-
-@dataclass
-class PAPAttentionLayerEvent:
-    """Trace event for one Projection-side layer attention invocation."""
-
-    request_id: str
-    session_request_id: str
-    layer_name: str
-    query_shape: list[int]
-    key_shape: list[int]
-    value_shape: list[int]
-    dtype: str
-    device: str
-    is_decode: bool
-    num_reqs: int | None
-    num_actual_tokens: int | None
-    max_seq_len: int | None
-    created_at: float = field(default_factory=time.time)
-
-    def copy(self) -> PAPAttentionLayerEvent:
-        return PAPAttentionLayerEvent(
-            request_id=self.request_id,
-            session_request_id=self.session_request_id,
-            layer_name=self.layer_name,
-            query_shape=list(self.query_shape),
-            key_shape=list(self.key_shape),
-            value_shape=list(self.value_shape),
-            dtype=self.dtype,
-            device=self.device,
-            is_decode=self.is_decode,
-            num_reqs=self.num_reqs,
-            num_actual_tokens=self.num_actual_tokens,
-            max_seq_len=self.max_seq_len,
-            created_at=self.created_at,
-        )
 
 
 @dataclass
@@ -442,22 +334,6 @@ class PAPAttentionSession:
 
 
 @dataclass
-class PAPDecodeKVBuffer:
-    """Growable per-request/layer decode KV storage."""
-
-    key: torch.Tensor
-    value: torch.Tensor
-    length: int = 0
-
-    @property
-    def capacity(self) -> int:
-        return int(self.key.shape[0])
-
-    def view(self) -> tuple[torch.Tensor, torch.Tensor]:
-        return self.key[: self.length], self.value[: self.length]
-
-
-@dataclass
 class PAPPrefillLayerReadiness:
     """Import readiness for one Prefill KV descriptor."""
 
@@ -487,28 +363,6 @@ class PAPPrefillLayerReadiness:
             ready_at=self.ready_at,
             failed_at=self.failed_at,
         )
-
-
-@dataclass(frozen=True)
-class PAPPrefillAsyncImport:
-    """Generation-bound work item for one Prefill KV descriptor."""
-
-    descriptor: PAPOffloadKVPagedIPCDescriptor
-    queued_at: float
-    session_request_id: str
-    session_epoch: int
-
-
-@dataclass
-class PAPPrefillPagedKV:
-    """Paged KV backing opened from the Prefill-owned cache via IPC."""
-
-    kv_cache: torch.Tensor
-    block_ids: list[int]
-    seq_len: int
-    block_size: int
-    num_kv_heads: int
-    layout: str
 
 
 @dataclass(frozen=True)
@@ -833,12 +687,6 @@ class PAPAttentionRegistry:
         self._prefill_condition = Condition(self._lock)
         self._storage_device = self._resolve_storage_device(storage_device)
         self._sessions: dict[str, PAPAttentionSession] = {}
-        self._layer_events: dict[str, list[PAPAttentionLayerEvent]] = {}
-        self._decode_kv: dict[str, dict[str, PAPDecodeKVBuffer]] = {}
-        self._prefill_kv: dict[
-            str, dict[str, list[tuple[torch.Tensor, torch.Tensor]]]
-        ] = {}
-        self._prefill_paged_kv: dict[str, dict[str, PAPPrefillPagedKV]] = {}
         self._prefill_kv_catalog_id: str | None = None
         self._prefill_kv_catalog: dict[str, PAPPrefillKVCacheCatalogEntry] = {}
         self._session_manifest_prefix_lens: dict[str, int] = {}
@@ -846,8 +694,6 @@ class PAPAttentionRegistry:
         self._session_manifest_event_waited: set[str] = set()
         self._session_manifest_claimed: set[str] = set()
         self._prefill_readiness: dict[str, dict[str, PAPPrefillLayerReadiness]] = {}
-        self._prefill_async_queue: Queue[PAPPrefillAsyncImport] = Queue()
-        self._prefill_async_worker_started = False
         self._request_id_resolution_cache: dict[str, str] = {}
         self._session_lease_ids: dict[str, str] = {}
         self._session_leased_block_ids: dict[str, tuple[int, ...]] = {}
@@ -878,7 +724,6 @@ class PAPAttentionRegistry:
         self._offload_exec_peer_batches_by_source: Counter[str] = Counter()
         self._offload_exec_peer_rows_by_source: Counter[str] = Counter()
         self._offload_exec_compute_calls_by_layer: Counter[str] = Counter()
-        self._attention_sessions = AttentionSessionStore()
         self._decode_token_committer = DeferredDecodeTokenCommitter(
             self._dispatch_deferred_decode_commit
         )
@@ -946,52 +791,6 @@ class PAPAttentionRegistry:
     def storage_device(self) -> torch.device:
         return self._storage_device
 
-    @staticmethod
-    def _initial_decode_capacity(num_tokens: int) -> int:
-        configured = int(
-            os.environ.get("PAP_ATTENTION_DECODE_KV_INITIAL_CAPACITY", 128)
-        )
-        return max(int(num_tokens), configured)
-
-    @staticmethod
-    def _make_decode_buffer(
-        *,
-        key: torch.Tensor,
-        value: torch.Tensor,
-        capacity: int,
-    ) -> PAPDecodeKVBuffer:
-        return PAPDecodeKVBuffer(
-            key=torch.empty(
-                (capacity, *key.shape[1:]),
-                dtype=key.dtype,
-                device=key.device,
-            ),
-            value=torch.empty(
-                (capacity, *value.shape[1:]),
-                dtype=value.dtype,
-                device=value.device,
-            ),
-        )
-
-    def _ensure_decode_capacity(
-        self,
-        buffer: PAPDecodeKVBuffer,
-        *,
-        required: int,
-    ) -> PAPDecodeKVBuffer:
-        if required <= buffer.capacity:
-            return buffer
-        new_capacity = max(required, buffer.capacity * 2)
-        grown = self._make_decode_buffer(
-            key=buffer.key,
-            value=buffer.value,
-            capacity=new_capacity,
-        )
-        if buffer.length > 0:
-            grown.key[: buffer.length].copy_(buffer.key[: buffer.length])
-            grown.value[: buffer.length].copy_(buffer.value[: buffer.length])
-            grown.length = buffer.length
-        return grown
 
     @staticmethod
     def _decode_slot_plan_cache_limit() -> int:
@@ -1155,10 +954,6 @@ class PAPAttentionRegistry:
         session = self._sessions.pop(request_id, None)
         existed = session is not None
         prefill_endpoint = None if session is None else session.prefill_endpoint
-        self._layer_events.pop(request_id, None)
-        self._decode_kv.pop(request_id, None)
-        self._prefill_kv.pop(request_id, None)
-        self._prefill_paged_kv.pop(request_id, None)
         self._session_manifest_prefix_lens.pop(request_id, None)
         self._session_manifest_events.pop(request_id, None)
         self._session_manifest_event_waited.discard(request_id)
@@ -1184,7 +979,6 @@ class PAPAttentionRegistry:
         ):
             if cached_request_id == request_id or cached_session_id == request_id:
                 self._request_id_resolution_cache.pop(cached_request_id, None)
-        self._attention_sessions.free_session(request_id)
         return existed, lease_id, prefill_endpoint
 
     def _replace_existing_session_locked(
@@ -1196,10 +990,6 @@ class PAPAttentionRegistry:
             )
             return lease_id, prefill_endpoint
 
-        self._layer_events.pop(request_id, None)
-        self._decode_kv.pop(request_id, None)
-        self._prefill_kv.pop(request_id, None)
-        self._prefill_paged_kv.pop(request_id, None)
         self._session_manifest_prefix_lens.pop(request_id, None)
         self._session_manifest_events.pop(request_id, None)
         self._session_manifest_event_waited.discard(request_id)
@@ -1217,7 +1007,6 @@ class PAPAttentionRegistry:
         ):
             if cached_request_id == request_id or cached_session_id == request_id:
                 self._request_id_resolution_cache.pop(cached_request_id, None)
-        self._attention_sessions.free_session(request_id)
         self._sessions.pop(request_id, None)
         self._request_id_resolution_cache.pop(request_id, None)
         return lease_id, None
@@ -1865,19 +1654,9 @@ class PAPAttentionRegistry:
             self._session_epochs[registration.request_id] = self._next_session_epoch
             self._next_session_epoch += 1
             self._sessions[registration.request_id] = session
-            self._layer_events.setdefault(registration.request_id, [])
-            self._decode_kv.setdefault(registration.request_id, {})
-            self._prefill_kv.setdefault(registration.request_id, {})
-            self._prefill_paged_kv.setdefault(registration.request_id, {})
             self._prefill_readiness.setdefault(registration.request_id, {})
             self._request_id_resolution_cache[registration.request_id] = (
                 registration.request_id
-            )
-            self._attention_sessions.create_session(
-                registration.request_id,
-                registration.conversation_id,
-                block_size=registration.block_size,
-                max_seq_len=registration.max_seq_len,
             )
         if replaced_lease_id is not None:
             commit_client = _get_commit_client()
@@ -1988,112 +1767,6 @@ class PAPAttentionRegistry:
             if cache_key[0] == session_request_id:
                 self._offload_exec_session_entry_cache.pop(cache_key, None)
 
-    def reserve_decode_slot(
-        self,
-        *,
-        request_id: str,
-        layer_name: str,
-        seq_len: int,
-    ) -> tuple[int, int]:
-        with self._lock:
-            session_request_id = self._resolve_session_request_id_locked(request_id)
-            if session_request_id is None:
-                raise KeyError(request_id)
-            session = self._sessions[session_request_id]
-            seq_len = int(seq_len)
-            if seq_len <= 0:
-                raise ValueError("decode seq_len must be positive")
-
-            block_id = (seq_len - 1) // session.block_size
-            slot = block_id * session.block_size + ((seq_len - 1) % session.block_size)
-            return block_id, slot
-
-    def append_decode_kv_at_seq_len(
-        self,
-        *,
-        request_id: str,
-        layer_name: str,
-        key: torch.Tensor,
-        value: torch.Tensor,
-        seq_len: int,
-    ) -> tuple[list[tuple[torch.Tensor, torch.Tensor]], int]:
-        """Reserve the decode slot and append KV under one registry lock."""
-
-        with self._lock:
-            session_request_id = self._resolve_session_request_id_locked(request_id)
-            if session_request_id is None:
-                raise KeyError(request_id)
-            session = self._sessions[session_request_id]
-            seq_len = int(seq_len)
-            if seq_len <= 0:
-                raise ValueError("decode seq_len must be positive")
-
-            self._wait_for_prefill_layer_locked(
-                session_request_id=session_request_id,
-                session=session,
-                layer_name=layer_name,
-                decode_seq_len=seq_len,
-            )
-            prefill_layer_kv = self._prefill_kv.setdefault(session_request_id, {})
-            block_id = (seq_len - 1) // session.block_size
-            slot = block_id * session.block_size + ((seq_len - 1) % session.block_size)
-            descriptor = AttentionDecodeDescriptor(
-                request_id=session_request_id,
-                block_id=block_id,
-                slot=slot,
-                seq_len=seq_len,
-            )
-            should_append = self._record_layer_decode_descriptor(
-                session, layer_name, descriptor
-            )
-
-            layer_kv = self._decode_kv.setdefault(session_request_id, {})
-            decode_buffer = layer_kv.get(layer_name)
-            if not should_append:
-                if decode_buffer is None:
-                    decode_key = torch.empty(
-                        (0, *key.shape[1:]),
-                        dtype=key.dtype,
-                        device=key.device,
-                    )
-                    decode_value = torch.empty(
-                        (0, *value.shape[1:]),
-                        dtype=value.dtype,
-                        device=value.device,
-                    )
-                else:
-                    decode_key, decode_value = decode_buffer.view()
-            else:
-                key_state = key.detach().contiguous().to(self._storage_device)
-                value_state = value.detach().contiguous().to(self._storage_device)
-                if decode_buffer is None:
-                    decode_buffer = self._make_decode_buffer(
-                        key=key_state,
-                        value=value_state,
-                        capacity=self._initial_decode_capacity(key_state.shape[0]),
-                    )
-                required = decode_buffer.length + int(key_state.shape[0])
-                decode_buffer = self._ensure_decode_capacity(
-                    decode_buffer,
-                    required=required,
-                )
-                start = decode_buffer.length
-                end = start + int(key_state.shape[0])
-                decode_buffer.key[start:end].copy_(key_state)
-                decode_buffer.value[start:end].copy_(value_state)
-                decode_buffer.length = end
-                layer_kv[layer_name] = decode_buffer
-                decode_key, decode_value = decode_buffer.view()
-
-            segments: list[tuple[torch.Tensor, torch.Tensor]] = []
-            if layer_name in prefill_layer_kv:
-                segments.extend(prefill_layer_kv[layer_name])
-            if decode_key.numel() > 0:
-                segments.append((decode_key, decode_value))
-
-            full_seq_len = sum(int(segment_key.shape[0]) for segment_key, _ in segments)
-            session.decode_seq_lens[layer_name] = full_seq_len
-            return segments, session.decode_seq_lens[layer_name]
 
     def _resolve_session_request_id_locked(self, request_id: str) -> str | None:
         cached = self._request_id_resolution_cache.get(request_id)
@@ -2123,58 +1796,6 @@ class PAPAttentionRegistry:
                     return session_request_id
         return None
 
-    def record_layer_event(
-        self,
-        *,
-        request_id: str,
-        layer_name: str,
-        query_shape: list[int],
-        key_shape: list[int],
-        value_shape: list[int],
-        dtype: str,
-        device: str,
-        is_decode: bool,
-        num_reqs: int | None = None,
-        num_actual_tokens: int | None = None,
-        max_seq_len: int | None = None,
-    ) -> PAPAttentionLayerEvent:
-        with self._lock:
-            session_request_id = self._resolve_session_request_id_locked(request_id)
-            if session_request_id is None:
-                raise KeyError(request_id)
-            event = PAPAttentionLayerEvent(
-                request_id=request_id,
-                session_request_id=session_request_id,
-                layer_name=layer_name,
-                query_shape=list(query_shape),
-                key_shape=list(key_shape),
-                value_shape=list(value_shape),
-                dtype=dtype,
-                device=device,
-                is_decode=is_decode,
-                num_reqs=num_reqs,
-                num_actual_tokens=num_actual_tokens,
-                max_seq_len=max_seq_len,
-            )
-            self._layer_events.setdefault(session_request_id, []).append(event)
-        logger.debug(
-            "recorded PAP attention layer event request_id=%s "
-            "session=%s layer=%s decode=%s",
-            request_id,
-            session_request_id,
-            layer_name,
-            is_decode,
-        )
-        return event.copy()
-
-    def get_layer_events(self, request_id: str) -> list[PAPAttentionLayerEvent]:
-        with self._lock:
-            session_request_id = self._resolve_session_request_id_locked(request_id)
-            if session_request_id is None:
-                return []
-            return [
-                event.copy() for event in self._layer_events.get(session_request_id, [])
-            ]
 
     def _prefill_readiness_locked(
         self,
@@ -2190,36 +1811,6 @@ class PAPAttentionRegistry:
             ),
         )
 
-    def _mark_prefill_descriptor_received_locked(
-        self,
-        *,
-        session_request_id: str,
-        layer_name: str,
-    ) -> PAPPrefillLayerReadiness:
-        readiness = self._prefill_readiness_locked(
-            session_request_id=session_request_id,
-            layer_name=layer_name,
-        )
-        readiness.descriptor_received = True
-        readiness.received_at = time.perf_counter()
-        self._prefill_condition.notify_all()
-        return readiness
-
-    def _mark_prefill_descriptor_opened_locked(
-        self,
-        *,
-        session_request_id: str,
-        layer_name: str,
-    ) -> PAPPrefillLayerReadiness:
-        readiness = self._prefill_readiness_locked(
-            session_request_id=session_request_id,
-            layer_name=layer_name,
-        )
-        readiness.descriptor_received = True
-        readiness.descriptor_opened = True
-        readiness.opened_at = time.perf_counter()
-        self._prefill_condition.notify_all()
-        return readiness
 
     def _mark_prefill_ready_locked(
         self,
@@ -2240,23 +1831,6 @@ class PAPAttentionRegistry:
         self._prefill_condition.notify_all()
         return readiness
 
-    def _mark_prefill_failed_locked(
-        self,
-        *,
-        session_request_id: str,
-        layer_name: str,
-        error: BaseException,
-    ) -> PAPPrefillLayerReadiness:
-        readiness = self._prefill_readiness_locked(
-            session_request_id=session_request_id,
-            layer_name=layer_name,
-        )
-        readiness.failed = True
-        readiness.ready = False
-        readiness.error = str(error)
-        readiness.failed_at = time.perf_counter()
-        self._prefill_condition.notify_all()
-        return readiness
 
     def prefill_layer_readiness(
         self,
@@ -2284,764 +1858,10 @@ class PAPAttentionRegistry:
                 for _layer_name, readiness in sorted(readiness_by_layer.items())
             ]
 
-    def import_prefill_kv(
-        self,
-        *,
-        request_id: str,
-        layer_name: str,
-        key: torch.Tensor,
-        value: torch.Tensor,
-        seq_len: int,
-        block_ids: list[int] | None = None,
-        copy: bool = True,
-    ) -> int:
-        with self._lock:
-            session_request_id = self._resolve_session_request_id_locked(request_id)
-            if session_request_id is None:
-                raise KeyError(request_id)
-            session = self._sessions[session_request_id]
-            self._mark_prefill_descriptor_opened_locked(
-                session_request_id=session_request_id,
-                layer_name=layer_name,
-            )
-            if copy:
-                key_state = key.detach().contiguous().to(self._storage_device)
-                value_state = value.detach().contiguous().to(self._storage_device)
-            else:
-                key_state = key.detach()
-                value_state = value.detach()
-            seq_len = int(seq_len)
-            if seq_len < 0:
-                raise ValueError("seq_len must be non-negative")
-            if key_state.shape[0] != seq_len or value_state.shape[0] != seq_len:
-                raise ValueError("prefill KV seq_len must match tensor length")
-            expected_prefix_len = session.prefix_len
-            if expected_prefix_len is not None and int(expected_prefix_len) != seq_len:
-                raise ValueError(
-                    f"prefill KV seq_len {seq_len} does not match "
-                    f"registered prefix_len {expected_prefix_len}"
-                )
-            self._prefill_kv.setdefault(session_request_id, {})[layer_name] = [
-                (key_state, value_state)
-            ]
-            self._prefill_paged_kv.setdefault(session_request_id, {}).pop(
-                layer_name, None
-            )
-            imported_session = self._attention_sessions.import_prefill_kv(
-                session_request_id,
-                block_ids=list(block_ids)
-                if block_ids is not None
-                else list(
-                    range((seq_len + session.block_size - 1) // session.block_size)
-                ),
-                seq_len=seq_len,
-            )
-            session.block_ids = tuple(imported_session.block_ids)
-            session.seq_len = imported_session.seq_len
-            session.prefill_seq_lens[layer_name] = seq_len
-            session.decode_seq_lens[layer_name] = seq_len
-            self._mark_prefill_ready_locked(
-                session_request_id=session_request_id,
-                layer_name=layer_name,
-            )
-            if os.environ.get("PAP_ATTENTION_KV_DEBUG", "").lower() in (
-                "1",
-                "true",
-                "yes",
-                "on",
-            ):
-                logger.info(
-                    "PAP prefill KV imported request_id=%s layer=%s seq_len=%s "
-                    "key_shape=%s value_shape=%s key_norm=%.6f value_norm=%.6f",
-                    session_request_id,
-                    layer_name,
-                    seq_len,
-                    tuple(key_state.shape),
-                    tuple(value_state.shape),
-                    float(key_state.float().norm().item()),
-                    float(value_state.float().norm().item()),
-                )
-            return seq_len
-
-    def import_prefill_paged_kv(
-        self,
-        *,
-        request_id: str,
-        layer_name: str,
-        kv_cache: torch.Tensor,
-        block_ids: list[int],
-        seq_len: int,
-        block_size: int,
-        num_kv_heads: int,
-        layout: str,
-        lease_id: str | None = None,
-        leased_block_ids: tuple[int, ...] | None = None,
-        lease_capacity_tokens: int | None = None,
-        unified_kv_mode: bool = False,
-        prefix_len: int | None = None,
-        writable_start_token: int | None = None,
-        writable_end_token: int | None = None,
-        expected_session_request_id: str | None = None,
-        expected_session_epoch: int | None = None,
-    ) -> int:
-        from vllm.pap.remote_attention import paged_kv_segments
-
-        with self._lock:
-            session_request_id = self._resolve_session_request_id_locked(request_id)
-            if session_request_id is None:
-                raise KeyError(request_id)
-            if (
-                expected_session_request_id is not None
-                and session_request_id != expected_session_request_id
-            ):
-                raise RuntimeError(
-                    "stale async Prefill KV import resolved to a different session"
-                )
-            if expected_session_epoch is not None and self._session_epochs.get(
-                session_request_id
-            ) != int(expected_session_epoch):
-                raise RuntimeError("stale async Prefill KV import session epoch")
-            session = self._sessions[session_request_id]
-            if lease_id:
-                existing = self._session_lease_ids.get(session_request_id)
-                if existing is None:
-                    self._session_lease_ids[session_request_id] = lease_id
-                    if leased_block_ids is not None:
-                        self._session_leased_block_ids[session_request_id] = tuple(
-                            int(b) for b in leased_block_ids
-                        )
-                    if lease_capacity_tokens is not None:
-                        self._session_lease_capacity_tokens[session_request_id] = int(
-                            lease_capacity_tokens
-                        )
-                    if _pap_kv_lease_profile_enabled():
-                        logger.info(
-                            "PAP Attention captured lease request_id=%s "
-                            "lease_id=%s leased_blocks=%d capacity_tokens=%s",
-                            session_request_id,
-                            lease_id,
-                            len(leased_block_ids or ()),
-                            lease_capacity_tokens,
-                        )
-            self._mark_prefill_descriptor_opened_locked(
-                session_request_id=session_request_id,
-                layer_name=layer_name,
-            )
-            seq_len = int(seq_len)
-            if unified_kv_mode and lease_id is not None:
-                prefix_value = int(prefix_len) if prefix_len is not None else seq_len
-                w_start = (
-                    int(writable_start_token)
-                    if writable_start_token is not None
-                    else prefix_value
-                )
-                w_end = (
-                    int(writable_end_token)
-                    if writable_end_token is not None
-                    else prefix_value
-                )
-                capacity = (
-                    int(lease_capacity_tokens)
-                    if lease_capacity_tokens is not None
-                    else max(seq_len, w_end)
-                )
-                unified_state = PAPUnifiedPagedKVState(
-                    kv_cache=kv_cache.detach(),
-                    block_ids=tuple(int(b) for b in block_ids),
-                    prefix_len=prefix_value,
-                    seq_len=seq_len,
-                    capacity_tokens=capacity,
-                    writable_start_token=w_start,
-                    writable_end_token=w_end,
-                    lease_id=str(lease_id),
-                    block_size=int(block_size),
-                    num_kv_heads=int(num_kv_heads),
-                    layout=str(layout),
-                )
-                self._record_unified_slot_topology_locked(
-                    session_request_id=session_request_id,
-                    layer_name=layer_name,
-                    state=unified_state,
-                )
-                self._unified_paged_kv.setdefault(session_request_id, {})[
-                    layer_name
-                ] = unified_state
-                if _pap_kv_lease_profile_enabled():
-                    logger.info(
-                        "PAP unified KV state stored request_id=%s layer=%s "
-                        "prefix_len=%d seq_len=%d capacity=%d writable=%d..%d",
-                        session_request_id,
-                        layer_name,
-                        prefix_value,
-                        seq_len,
-                        capacity,
-                        w_start,
-                        w_end,
-                    )
-                self._mark_prefill_descriptor_received_locked(
-                    session_request_id=session_request_id,
-                    layer_name=layer_name,
-                )
-                self._mark_prefill_descriptor_opened_locked(
-                    session_request_id=session_request_id,
-                    layer_name=layer_name,
-                )
-                self._mark_prefill_ready_locked(
-                    session_request_id=session_request_id,
-                    layer_name=layer_name,
-                )
-                return seq_len
-            if seq_len < 0:
-                raise ValueError("seq_len must be non-negative")
-            expected_prefix_len = session.prefix_len
-            if expected_prefix_len is not None and int(expected_prefix_len) != seq_len:
-                raise ValueError(
-                    f"prefill KV seq_len {seq_len} does not match "
-                    f"registered prefix_len {expected_prefix_len}"
-                )
-            if int(block_size) != int(session.block_size):
-                raise ValueError(
-                    f"prefill KV block_size {block_size} does not match "
-                    f"registered block_size {session.block_size}"
-                )
-            segments = paged_kv_segments(
-                kv_cache=kv_cache.detach(),
-                block_ids=[int(block_id) for block_id in block_ids],
-                seq_len=seq_len,
-                num_kv_heads=int(num_kv_heads),
-                layout=layout,  # type: ignore[arg-type]
-            )
-            existing_prefill = self._prefill_paged_kv.get(session_request_id, {}).get(
-                layer_name
-            )
-            prefill_block_ids = [int(block_id) for block_id in block_ids]
-            prefill_seq_len = seq_len
-            if existing_prefill is not None:
-                prefill_block_ids = list(existing_prefill.block_ids)
-                for block_id in block_ids:
-                    block_id = int(block_id)
-                    if block_id not in prefill_block_ids:
-                        prefill_block_ids.append(block_id)
-                prefill_seq_len = max(int(existing_prefill.seq_len), seq_len)
-
-            existing_session_block_ids = [
-                int(block_id) for block_id in session.block_ids
-            ]
-            existing_session_seq_len = int(session.seq_len)
-            existing_decode_seq_len = int(
-                session.decode_seq_lens.get(layer_name, existing_session_seq_len)
-            )
-            merged_session_block_ids = list(prefill_block_ids)
-            for block_id in existing_session_block_ids:
-                if block_id not in merged_session_block_ids:
-                    merged_session_block_ids.append(block_id)
-            merged_session_seq_len = max(existing_session_seq_len, prefill_seq_len)
-            merged_decode_seq_len = max(
-                existing_decode_seq_len,
-                existing_session_seq_len,
-                prefill_seq_len,
-            )
-
-            self._prefill_kv.setdefault(session_request_id, {})[layer_name] = segments
-            prefix_state = PAPPrefillPagedKV(
-                kv_cache=kv_cache.detach(),
-                block_ids=prefill_block_ids,
-                seq_len=prefill_seq_len,
-                block_size=int(block_size),
-                num_kv_heads=int(num_kv_heads),
-                layout=str(layout),
-            )
-            self._prefill_paged_kv.setdefault(session_request_id, {})[layer_name] = (
-                prefix_state
-            )
-
-            imported_session = self._attention_sessions.import_prefill_kv(
-                session_request_id,
-                block_ids=merged_session_block_ids,
-                seq_len=merged_session_seq_len,
-            )
-            session.block_ids = tuple(imported_session.block_ids)
-            session.seq_len = max(imported_session.seq_len, existing_session_seq_len)
-            session.prefill_seq_lens[layer_name] = prefill_seq_len
-            session.decode_seq_lens[layer_name] = merged_decode_seq_len
-            self._mark_prefill_ready_locked(
-                session_request_id=session_request_id,
-                layer_name=layer_name,
-            )
-            return prefill_seq_len
-
-    def enqueue_prefill_paged_kv_descriptor(
-        self,
-        descriptor: PAPOffloadKVPagedIPCDescriptor,
-    ) -> int:
-        queue_start = time.perf_counter()
-        with self._lock:
-            session_request_id = self._resolve_session_request_id_locked(
-                descriptor.request_id
-            )
-            if session_request_id is None:
-                raise KeyError(descriptor.request_id)
-            session_epoch = self._session_epochs[session_request_id]
-            self._mark_prefill_descriptor_received_locked(
-                session_request_id=session_request_id,
-                layer_name=descriptor.layer_name,
-            )
-            if not self._prefill_async_worker_started:
-                Thread(
-                    target=self._prefill_async_worker_loop,
-                    daemon=True,
-                    name="pap-prefill-kv-import-worker",
-                ).start()
-                self._prefill_async_worker_started = True
-        self._prefill_async_queue.put(
-            PAPPrefillAsyncImport(
-                descriptor=descriptor,
-                queued_at=queue_start,
-                session_request_id=session_request_id,
-                session_epoch=session_epoch,
-            )
-        )
-        if _pap_prefill_ipc_profile_enabled():
-            logger.info(
-                "PAP prefill IPC attention queued request_id=%s layer=%s "
-                "seq_len=%d blocks=%d queue_ms=%.3f",
-                descriptor.request_id,
-                descriptor.layer_name,
-                int(descriptor.seq_len),
-                len(descriptor.block_ids),
-                (time.perf_counter() - queue_start) * 1000.0,
-            )
-        return int(descriptor.seq_len)
-
-    def _prefill_async_worker_loop(self) -> None:
-        while True:
-            work = self._prefill_async_queue.get()
-            descriptor = work.descriptor
-            queued_at = work.queued_at
-            try:
-                open_start = time.perf_counter()
-                kv_cache = open_ipc_paged_kv_cache(descriptor)
-                open_ms = (time.perf_counter() - open_start) * 1000.0
-                ready_start = time.perf_counter()
-                seq_len = self.import_prefill_paged_kv(
-                    request_id=descriptor.request_id,
-                    layer_name=descriptor.layer_name,
-                    kv_cache=kv_cache,
-                    block_ids=list(descriptor.block_ids),
-                    seq_len=descriptor.seq_len,
-                    block_size=descriptor.block_size,
-                    num_kv_heads=descriptor.num_kv_heads,
-                    layout=descriptor.layout,
-                    lease_id=descriptor.lease_id,
-                    leased_block_ids=descriptor.leased_block_ids,
-                    lease_capacity_tokens=descriptor.lease_capacity_tokens,
-                    unified_kv_mode=descriptor.unified_kv_mode,
-                    prefix_len=descriptor.prefix_len,
-                    writable_start_token=descriptor.writable_start_token,
-                    writable_end_token=descriptor.writable_end_token,
-                    expected_session_request_id=work.session_request_id,
-                    expected_session_epoch=work.session_epoch,
-                )
-                ready_ms = (time.perf_counter() - ready_start) * 1000.0
-                if _pap_prefill_ipc_profile_enabled():
-                    logger.info(
-                        "PAP prefill IPC attention ready request_id=%s layer=%s "
-                        "seq_len=%d blocks=%d queue_to_open_ms=%.3f open_ms=%.3f "
-                        "install_ms=%.3f total_ms=%.3f",
-                        descriptor.request_id,
-                        descriptor.layer_name,
-                        seq_len,
-                        len(descriptor.block_ids),
-                        (open_start - queued_at) * 1000.0,
-                        open_ms,
-                        ready_ms,
-                        (time.perf_counter() - queued_at) * 1000.0,
-                    )
-            except BaseException as exc:
-                stale = False
-                with self._lock:
-                    session_request_id = self._resolve_session_request_id_locked(
-                        descriptor.request_id
-                    )
-                    stale = (
-                        session_request_id != work.session_request_id
-                        or self._session_epochs.get(work.session_request_id)
-                        != work.session_epoch
-                    )
-                    if not stale:
-                        self._mark_prefill_failed_locked(
-                            session_request_id=work.session_request_id,
-                            layer_name=descriptor.layer_name,
-                            error=exc,
-                        )
-                if stale:
-                    logger.info(
-                        "PAP discarded stale async prefill KV import "
-                        "request_id=%s layer=%s epoch=%d",
-                        descriptor.request_id,
-                        descriptor.layer_name,
-                        work.session_epoch,
-                    )
-                else:
-                    logger.exception(
-                        "PAP async prefill KV import failed request_id=%s layer=%s",
-                        descriptor.request_id,
-                        descriptor.layer_name,
-                    )
-            finally:
-                self._prefill_async_queue.task_done()
-
-    def _wait_for_prefill_layer_locked(
-        self,
-        *,
-        session_request_id: str,
-        session: PAPAttentionSession,
-        layer_name: str,
-        decode_seq_len: int | None = None,
-    ) -> None:
-        has_registered_prefix = int(session.prefix_len or 0) > 0
-        has_scheduler_prefix = decode_seq_len is not None and int(decode_seq_len) > 1
-        if not has_registered_prefix and not has_scheduler_prefix:
-            return
-        deadline = time.monotonic() + float(
-            os.environ.get("PAP_ATTENTION_PREFILL_WAIT_TIMEOUT", "5.0")
-        )
-        prefill_layer_kv = self._prefill_kv.setdefault(session_request_id, {})
-        wait_start = time.perf_counter()
-        while True:
-            readiness = self._prefill_readiness.setdefault(session_request_id, {}).get(
-                layer_name
-            )
-            if readiness is not None and readiness.failed:
-                raise RuntimeError(
-                    "prefill KV import failed before stateful decode attention: "
-                    f"{readiness.error}"
-                )
-            if readiness is not None and readiness.ready:
-                return
-            if layer_name in prefill_layer_kv:
-                return
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
-                state = "missing"
-                if readiness is not None:
-                    state = (
-                        f"received={readiness.descriptor_received} "
-                        f"opened={readiness.descriptor_opened} "
-                        f"ready={readiness.ready} failed={readiness.failed}"
-                    )
-                raise RuntimeError(
-                    "prefill KV must be ready before stateful decode attention "
-                    f"request_id={session_request_id} layer={layer_name} state={state}"
-                )
-            if _pap_prefill_ipc_profile_enabled():
-                logger.info(
-                    "PAP prefill IPC attention wait request_id=%s layer=%s "
-                    "remaining_ms=%.3f waited_ms=%.3f",
-                    session_request_id,
-                    layer_name,
-                    remaining * 1000.0,
-                    (time.perf_counter() - wait_start) * 1000.0,
-                )
-            self._prefill_condition.wait(timeout=remaining)
-
-    def attention_segments_before_decode(
-        self,
-        *,
-        request_id: str,
-        layer_name: str,
-        seq_len: int | None = None,
-    ) -> list[tuple[torch.Tensor, torch.Tensor]]:
-        with self._lock:
-            session_request_id = self._resolve_session_request_id_locked(request_id)
-            if session_request_id is None:
-                raise KeyError(request_id)
-            session = self._sessions[session_request_id]
-            decode_seq_len = int(seq_len) if seq_len is not None else None
-            self._wait_for_prefill_layer_locked(
-                session_request_id=session_request_id,
-                session=session,
-                layer_name=layer_name,
-                decode_seq_len=decode_seq_len,
-            )
-            segments: list[tuple[torch.Tensor, torch.Tensor]] = []
-            prefill_layer_kv = self._prefill_kv.setdefault(session_request_id, {})
-            if layer_name in prefill_layer_kv:
-                segments.extend(prefill_layer_kv[layer_name])
-            decode_buffer = self._decode_kv.setdefault(session_request_id, {}).get(
-                layer_name
-            )
-            if decode_buffer is not None:
-                decode_key, decode_value = decode_buffer.view()
-                if decode_key.numel() > 0:
-                    segments.append((decode_key, decode_value))
-            return segments
-
-    def append_decode_kv(
-        self,
-        *,
-        request_id: str,
-        layer_name: str,
-        key: torch.Tensor,
-        value: torch.Tensor,
-        block_id: int | None = None,
-        slot: int | None = None,
-        seq_len: int | None = None,
-    ) -> tuple[list[tuple[torch.Tensor, torch.Tensor]], int]:
-        with self._lock:
-            session_request_id = self._resolve_session_request_id_locked(request_id)
-            if session_request_id is None:
-                raise KeyError(request_id)
-            session = self._sessions[session_request_id]
-            decode_seq_len = int(seq_len) if seq_len is not None else None
-            self._wait_for_prefill_layer_locked(
-                session_request_id=session_request_id,
-                session=session,
-                layer_name=layer_name,
-                decode_seq_len=decode_seq_len,
-            )
-            prefill_layer_kv = self._prefill_kv.setdefault(session_request_id, {})
-
-            if block_id is not None or slot is not None or seq_len is not None:
-                if block_id is None or slot is None or seq_len is None:
-                    raise ValueError(
-                        "block_id, slot, and seq_len must be provided together"
-                    )
-                descriptor = AttentionDecodeDescriptor(
-                    request_id=session_request_id,
-                    block_id=int(block_id),
-                    slot=int(slot),
-                    seq_len=int(seq_len),
-                )
-                should_append = self._record_layer_decode_descriptor(
-                    session, layer_name, descriptor
-                )
-            else:
-                should_append = True
-
-            layer_kv = self._decode_kv.setdefault(session_request_id, {})
-            decode_buffer = layer_kv.get(layer_name)
-            if not should_append:
-                if decode_buffer is None:
-                    decode_key = torch.empty(
-                        (0, *key.shape[1:]),
-                        dtype=key.dtype,
-                        device=key.device,
-                    )
-                    decode_value = torch.empty(
-                        (0, *value.shape[1:]),
-                        dtype=value.dtype,
-                        device=value.device,
-                    )
-                else:
-                    decode_key, decode_value = decode_buffer.view()
-            else:
-                key_state = key.detach().contiguous().to(self._storage_device)
-                value_state = value.detach().contiguous().to(self._storage_device)
-                if decode_buffer is None:
-                    decode_buffer = self._make_decode_buffer(
-                        key=key_state,
-                        value=value_state,
-                        capacity=self._initial_decode_capacity(key_state.shape[0]),
-                    )
-                required = decode_buffer.length + int(key_state.shape[0])
-                decode_buffer = self._ensure_decode_capacity(
-                    decode_buffer,
-                    required=required,
-                )
-                start = decode_buffer.length
-                end = start + int(key_state.shape[0])
-                decode_buffer.key[start:end].copy_(key_state)
-                decode_buffer.value[start:end].copy_(value_state)
-                decode_buffer.length = end
-                layer_kv[layer_name] = decode_buffer
-                decode_key, decode_value = decode_buffer.view()
-
-            segments: list[tuple[torch.Tensor, torch.Tensor]] = []
-            if layer_name in prefill_layer_kv:
-                segments.extend(prefill_layer_kv[layer_name])
-            if decode_key.numel() > 0:
-                segments.append((decode_key, decode_value))
-
-            full_seq_len = sum(int(segment_key.shape[0]) for segment_key, _ in segments)
-            if block_id is None and slot is None and seq_len is None:
-                self._record_layer_decode_without_descriptor(
-                    session, layer_name, full_seq_len
-                )
-            session.decode_seq_lens[layer_name] = full_seq_len
-            return segments, session.decode_seq_lens[layer_name]
-
-    @staticmethod
-    def _record_layer_decode_descriptor(
-        session: PAPAttentionSession,
-        layer_name: str,
-        descriptor: AttentionDecodeDescriptor,
-    ) -> bool:
-        if descriptor.block_id < 0:
-            raise ValueError("block_id must be non-negative")
-        if descriptor.slot < 0:
-            raise ValueError("slot must be non-negative")
-        if descriptor.seq_len <= 0:
-            raise ValueError("decode descriptor seq_len must be positive")
-        if descriptor.seq_len > session.max_seq_len:
-            raise ValueError(
-                f"seq_len {descriptor.seq_len} exceeds max_seq_len "
-                f"{session.max_seq_len}"
-            )
-
-        expected_offset = (descriptor.seq_len - 1) % session.block_size
-        expected_slot = descriptor.block_id * session.block_size + expected_offset
-        if descriptor.slot != expected_slot:
-            raise ValueError(
-                f"slot {descriptor.slot} does not match block_id "
-                f"{descriptor.block_id} and offset {expected_offset}"
-            )
-
-        layer_seq_len = session.decode_seq_lens.get(
-            layer_name,
-            session.prefill_seq_lens.get(layer_name, int(session.prefix_len or 0)),
-        )
-        if descriptor.seq_len < layer_seq_len:
-            raise ValueError(
-                f"decode descriptor seq_len {descriptor.seq_len} is behind "
-                f"current layer seq_len {layer_seq_len}"
-            )
-        should_append = descriptor.seq_len > layer_seq_len
-        if descriptor.seq_len > layer_seq_len + 1:
-            raise ValueError(
-                f"expected seq_len {layer_seq_len + 1}, got {descriptor.seq_len}"
-            )
-
-        if should_append:
-            block_ids = session.block_ids
-            if not block_ids or block_ids[-1] != descriptor.block_id:
-                session.block_ids = (*block_ids, descriptor.block_id)
-            session.seq_len = max(session.seq_len, descriptor.seq_len)
-        return should_append
-
-    @staticmethod
-    def _record_layer_decode_without_descriptor(
-        session: PAPAttentionSession,
-        layer_name: str,
-        seq_len: int,
-    ) -> bool:
-        if seq_len <= 0:
-            raise ValueError("decode seq_len must be positive")
-        if seq_len > session.max_seq_len:
-            raise ValueError(
-                f"seq_len {seq_len} exceeds max_seq_len {session.max_seq_len}"
-            )
-        layer_seq_len = session.decode_seq_lens.get(
-            layer_name,
-            session.prefill_seq_lens.get(layer_name, int(session.prefix_len or 0)),
-        )
-        if seq_len < layer_seq_len:
-            raise ValueError(
-                f"decode seq_len {seq_len} is behind current layer seq_len "
-                f"{layer_seq_len}"
-            )
-        if seq_len > layer_seq_len + 1:
-            raise ValueError(f"expected seq_len {layer_seq_len + 1}, got {seq_len}")
-        should_append = seq_len > layer_seq_len
-        if should_append:
-            block_id = (seq_len - 1) // session.block_size
-            expected_offset = (seq_len - 1) % session.block_size
-            block_ids = session.block_ids
-            if ((not block_ids) or expected_offset == 0) and (
-                not block_ids or block_ids[-1] != block_id
-            ):
-                session.block_ids = (*block_ids, block_id)
-            session.seq_len = max(session.seq_len, seq_len)
-        return should_append
 
     def size(self) -> int:
         with self._lock:
             return len(self._sessions)
-
-
-def _http_error_for_attention_exception(exc: Exception) -> HTTPException:
-    if isinstance(exc, KeyError):
-        return HTTPException(status_code=404, detail="unknown PAP request")
-    if isinstance(exc, RuntimeError):
-        return HTTPException(status_code=409, detail=str(exc))
-    if isinstance(exc, ValueError):
-        return HTTPException(status_code=400, detail=str(exc))
-    return HTTPException(status_code=500, detail=str(exc))
-
-
-def _compute_single_binary_attention_response(
-    registry: PAPAttentionRegistry,
-    payload: bytes,
-) -> bytes:
-    from vllm.pap.remote_attention import (
-        compute_segmented_attention_output,
-        deserialize_tensor_bundle,
-        serialize_tensor_bundle,
-    )
-
-    metadata, tensors = deserialize_tensor_bundle(payload)
-    request_id = str(metadata["request_id"])
-    layer_name = str(metadata["layer_name"])
-    query = tensors["query"]
-    key = tensors["key"]
-    value = tensors["value"]
-    block_id = metadata.get("block_id")
-    slot = metadata.get("slot")
-    seq_len_meta = metadata.get("seq_len")
-    segments, seq_len = registry.append_decode_kv(
-        request_id=request_id,
-        layer_name=layer_name,
-        key=key,
-        value=value,
-        block_id=None if block_id is None else int(block_id),
-        slot=None if slot is None else int(slot),
-        seq_len=None if seq_len_meta is None else int(seq_len_meta),
-    )
-    if torch.cuda.is_available():
-        query = query.to(registry.storage_device, non_blocking=True)
-    output = compute_segmented_attention_output(
-        query=query,
-        segments=segments,
-        scale=float(metadata["scale"]),
-    )
-    return serialize_tensor_bundle(
-        {
-            "request_id": request_id,
-            "layer_name": layer_name,
-            "seq_len": seq_len,
-        },
-        {"output": output},
-    )
-
-
-def open_ipc_prefill_kv(
-    descriptor: PAPOffloadKVIPCDescriptor,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Open CUDA IPC prefill KV tensors described by OFFLOAD_KV metadata."""
-    from torch.multiprocessing.reductions import rebuild_cuda_tensor
-
-    device_index = torch.accelerator.current_device_index()
-    props = torch.cuda.get_device_properties(device_index)
-    physical_gpu_id = str(props.uuid)
-
-    def rebuild(handle: dict[str, tuple[Any, ...]]) -> torch.Tensor:
-        if physical_gpu_id not in handle:
-            raise ValueError(
-                f"IPC handle not found for GPU UUID {physical_gpu_id}. "
-                f"Available UUIDs: {list(handle.keys())}"
-            )
-        args = list(handle[physical_gpu_id])
-        args[6] = device_index
-        return rebuild_cuda_tensor(*args)
-
-    return rebuild(descriptor.key.ipc_handle), rebuild(descriptor.value.ipc_handle)
-
-
-def open_ipc_paged_kv_cache(
-    descriptor: PAPOffloadKVPagedIPCDescriptor,
-) -> torch.Tensor:
-    """Open CUDA IPC paged KV backing tensor described by OFFLOAD_KV metadata."""
-    return open_ipc_tensor_handle(descriptor.kv_cache)
 
 
 def open_ipc_tensor_handle(handle: PAPCudaIPCTensorHandle) -> torch.Tensor:
@@ -3075,228 +1895,6 @@ def open_prefill_manifest_event(
     )
 
 
-def compute_batch_binary_attention_response(
-    registry: PAPAttentionRegistry,
-    payload: bytes,
-) -> bytes:
-    from vllm.pap.remote_attention import (
-        compute_segmented_attention_output,
-        deserialize_tensor_bundle,
-        serialize_tensor_bundle,
-    )
-
-    trace_remote_attention = os.environ.get("PAP_OFFLOAD_EXEC_TRACE", "").lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
-    trace_total_start = time.perf_counter() if trace_remote_attention else 0.0
-    trace_deserialize_start = time.perf_counter() if trace_remote_attention else 0.0
-    metadata, tensors = deserialize_tensor_bundle(payload)
-    trace_deserialize_ms = (
-        (time.perf_counter() - trace_deserialize_start) * 1000.0
-        if trace_remote_attention
-        else 0.0
-    )
-    response_items: list[dict[str, Any]] = []
-    response_tensors: dict[str, torch.Tensor] = {}
-    append_ms = 0.0
-    query_ms = 0.0
-    compute_ms = 0.0
-    for index, item in enumerate(metadata.get("items", [])):
-        request_id = str(item["request_id"])
-        layer_name = str(item["layer_name"])
-        if f"qkv_{index}" in tensors:
-            session = registry.get_session(
-                registry.resolve_session_request_id(request_id) or request_id
-            )
-            q_size = (session.q_size if session is not None else None) or int(
-                os.environ.get("PAP_OFFLOAD_EXEC_Q_SIZE", "0")
-            )
-            kv_size = (session.kv_size if session is not None else None) or int(
-                os.environ.get("PAP_OFFLOAD_EXEC_KV_SIZE", "0")
-            )
-            num_heads = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_HEADS", "0"))
-            num_kv_heads = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "0"))
-            head_dim = int(os.environ.get("PAP_OFFLOAD_EXEC_HEAD_DIM", "0"))
-            if (
-                q_size <= 0
-                or kv_size <= 0
-                or num_heads <= 0
-                or num_kv_heads <= 0
-                or head_dim <= 0
-            ):
-                raise RuntimeError(
-                    "PAP packed QKV requires q_size, kv_size, num_heads, "
-                    "num_kv_heads, and head_dim"
-                )
-            qkv = tensors[f"qkv_{index}"]
-            query_flat, key_flat, value_flat = qkv.split(
-                [q_size, kv_size, kv_size],
-                dim=-1,
-            )
-            query = query_flat.reshape(1, num_heads, head_dim)
-            key = key_flat.reshape(1, num_kv_heads, head_dim)
-            value = value_flat.reshape(1, num_kv_heads, head_dim)
-        else:
-            query = tensors[f"query_{index}"]
-            key = tensors[f"key_{index}"]
-            value = tensors[f"value_{index}"]
-        block_id = item.get("block_id")
-        slot = item.get("slot")
-        seq_len_meta = item.get("seq_len")
-        trace_append_start = time.perf_counter() if trace_remote_attention else 0.0
-        segments, seq_len = registry.append_decode_kv(
-            request_id=request_id,
-            layer_name=layer_name,
-            key=key,
-            value=value,
-            block_id=None if block_id is None else int(block_id),
-            slot=None if slot is None else int(slot),
-            seq_len=None if seq_len_meta is None else int(seq_len_meta),
-        )
-        if trace_remote_attention:
-            append_ms += (time.perf_counter() - trace_append_start) * 1000.0
-        if torch.cuda.is_available():
-            trace_query_start = time.perf_counter() if trace_remote_attention else 0.0
-            query = query.to(registry.storage_device, non_blocking=True)
-            if trace_remote_attention:
-                query_ms += (time.perf_counter() - trace_query_start) * 1000.0
-        trace_compute_start = time.perf_counter() if trace_remote_attention else 0.0
-        output = compute_segmented_attention_output(
-            query=query,
-            segments=segments,
-            scale=float(item["scale"]),
-        )
-        if trace_remote_attention:
-            compute_ms += (time.perf_counter() - trace_compute_start) * 1000.0
-        response_items.append(
-            {
-                "request_id": request_id,
-                "layer_name": layer_name,
-                "seq_len": seq_len,
-            }
-        )
-        response_tensors[f"output_{index}"] = output
-    trace_serialize_start = time.perf_counter() if trace_remote_attention else 0.0
-    response_body = serialize_tensor_bundle({"items": response_items}, response_tensors)
-    if trace_remote_attention:
-        trace_serialize_ms = (time.perf_counter() - trace_serialize_start) * 1000.0
-        trace_total_ms = (time.perf_counter() - trace_total_start) * 1000.0
-        layer_name = (
-            str(metadata["items"][0]["layer_name"]) if metadata["items"] else ""
-        )
-        logger.info(
-            "PAP remote attention batch server trace layer=%s calls=%d "
-            "deserialize_ms=%.3f append_ms=%.3f query_ms=%.3f compute_ms=%.3f "
-            "serialize_ms=%.3f total_ms=%.3f request_bytes=%d response_bytes=%d",
-            layer_name,
-            len(metadata.get("items", [])),
-            trace_deserialize_ms,
-            append_ms,
-            query_ms,
-            compute_ms,
-            trace_serialize_ms,
-            trace_total_ms,
-            len(payload),
-            len(response_body),
-        )
-    return response_body
-
-
-def compute_compact_attention_response(
-    registry: PAPAttentionRegistry,
-    payload: bytes,
-) -> bytes:
-    from vllm.pap.remote_attention import (
-        compute_segmented_attention_output,
-        deserialize_compact_attention_batch,
-        serialize_compact_attention_response,
-    )
-
-    trace_remote_attention = os.environ.get("PAP_OFFLOAD_EXEC_TRACE", "").lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
-    trace_total_start = time.perf_counter() if trace_remote_attention else 0.0
-    trace_deserialize_start = time.perf_counter() if trace_remote_attention else 0.0
-    items, qkv_tensors = deserialize_compact_attention_batch(payload)
-    trace_deserialize_ms = (
-        (time.perf_counter() - trace_deserialize_start) * 1000.0
-        if trace_remote_attention
-        else 0.0
-    )
-    outputs: list[torch.Tensor] = []
-    append_ms = 0.0
-    query_ms = 0.0
-    compute_ms = 0.0
-    for item, qkv in zip(items, qkv_tensors):
-        q_size = int(item["q_size"])
-        kv_size = int(item["kv_size"])
-        num_heads = int(item["num_heads"])
-        num_kv_heads = int(item["num_kv_heads"])
-        head_dim = int(item["head_dim"])
-        query_flat, key_flat, value_flat = qkv.split(
-            [q_size, kv_size, kv_size],
-            dim=-1,
-        )
-        query = query_flat.reshape(1, num_heads, head_dim)
-        key = key_flat.reshape(1, num_kv_heads, head_dim)
-        value = value_flat.reshape(1, num_kv_heads, head_dim)
-        trace_append_start = time.perf_counter() if trace_remote_attention else 0.0
-        segments, _seq_len = registry.append_decode_kv(
-            request_id=str(item["request_id"]),
-            layer_name=str(item["layer_name"]),
-            key=key,
-            value=value,
-            block_id=item.get("block_id"),
-            slot=item.get("slot"),
-            seq_len=item.get("seq_len"),
-        )
-        if trace_remote_attention:
-            append_ms += (time.perf_counter() - trace_append_start) * 1000.0
-        if torch.cuda.is_available():
-            trace_query_start = time.perf_counter() if trace_remote_attention else 0.0
-            query = query.to(registry.storage_device, non_blocking=True)
-            if trace_remote_attention:
-                query_ms += (time.perf_counter() - trace_query_start) * 1000.0
-        trace_compute_start = time.perf_counter() if trace_remote_attention else 0.0
-        outputs.append(
-            compute_segmented_attention_output(
-                query=query,
-                segments=segments,
-                scale=float(item["scale"]),
-            )
-        )
-        if trace_remote_attention:
-            compute_ms += (time.perf_counter() - trace_compute_start) * 1000.0
-    trace_serialize_start = time.perf_counter() if trace_remote_attention else 0.0
-    response_body = serialize_compact_attention_response(outputs)
-    if trace_remote_attention:
-        trace_serialize_ms = (time.perf_counter() - trace_serialize_start) * 1000.0
-        trace_total_ms = (time.perf_counter() - trace_total_start) * 1000.0
-        layer_name = str(items[0]["layer_name"]) if items else ""
-        logger.info(
-            "PAP remote attention compact server trace layer=%s calls=%d "
-            "deserialize_ms=%.3f append_ms=%.3f query_ms=%.3f compute_ms=%.3f "
-            "serialize_ms=%.3f total_ms=%.3f request_bytes=%d response_bytes=%d",
-            layer_name,
-            len(items),
-            trace_deserialize_ms,
-            append_ms,
-            query_ms,
-            compute_ms,
-            trace_serialize_ms,
-            trace_total_ms,
-            len(payload),
-            len(response_body),
-        )
-    return response_body
-
-
 def compute_binary_attention_response(
     registry: PAPAttentionRegistry,
     payload: bytes,
@@ -3304,49 +1902,19 @@ def compute_binary_attention_response(
     offload_exec_transport: Any | None = None,
     offload_exec_lock: Any | None = None,
 ) -> bytes:
+    """Handle the sealed KV handoff and batched OFFLOAD_EXEC wire protocol."""
     from vllm.pap.protocol import (
         PAPOffloadExecBatchDescriptor,
         PAPOffloadExecDescriptor,
     )
     from vllm.pap.remote_attention import (
-        COMPACT_ATTENTION_REQUEST_MAGIC,
         COMPACT_OFFLOAD_EXEC_BATCH_MAGIC,
-        COMPACT_OFFLOAD_EXEC_MAGIC,
         deserialize_compact_offload_exec_batch_command,
-        deserialize_compact_offload_exec_command,
         deserialize_tensor_bundle,
         serialize_compact_offload_exec_ack,
         serialize_tensor_bundle,
     )
 
-    if payload.startswith(COMPACT_ATTENTION_REQUEST_MAGIC):
-        return compute_compact_attention_response(registry, payload)
-    if payload.startswith(COMPACT_OFFLOAD_EXEC_MAGIC):
-        if offload_exec_transport is None:
-            raise RuntimeError("PAP OFFLOAD_EXEC transport is not initialized")
-        metadata = deserialize_compact_offload_exec_command(payload)
-        descriptor = PAPOffloadExecDescriptor(
-            request_id=str(metadata["request_id"]),
-            layer_name=str(metadata["layer_name"]),
-            step=int(metadata["step"]),
-            scale=float(metadata["scale"]),
-        )
-        if offload_exec_lock is None:
-            run_offload_exec_once(
-                registry=registry,
-                transport=offload_exec_transport,
-                remote_address=str(metadata["remote_address"]),
-                descriptor=descriptor,
-            )
-        else:
-            with offload_exec_lock:
-                run_offload_exec_once(
-                    registry=registry,
-                    transport=offload_exec_transport,
-                    remote_address=str(metadata["remote_address"]),
-                    descriptor=descriptor,
-                )
-        return serialize_compact_offload_exec_ack()
     if payload.startswith(COMPACT_OFFLOAD_EXEC_BATCH_MAGIC):
         if offload_exec_transport is None:
             raise RuntimeError("PAP OFFLOAD_EXEC transport is not initialized")
@@ -3380,25 +1948,9 @@ def compute_binary_attention_response(
                 )
         return serialize_compact_offload_exec_ack()
 
-    metadata, tensors = deserialize_tensor_bundle(payload)
-    if metadata.get("command") == "import_prefill_kv":
-        seq_len = registry.import_prefill_kv(
-            request_id=str(metadata["request_id"]),
-            layer_name=str(metadata["layer_name"]),
-            key=tensors["key"],
-            value=tensors["value"],
-            seq_len=int(metadata["seq_len"]),
-            block_ids=[int(block_id) for block_id in metadata.get("block_ids", [])],
-        )
-        return serialize_tensor_bundle(
-            {
-                "request_id": str(metadata["request_id"]),
-                "layer_name": str(metadata["layer_name"]),
-                "seq_len": seq_len,
-            },
-            {},
-        )
-    if metadata.get("command") == "register_prefill_kv_catalog":
+    metadata, _tensors = deserialize_tensor_bundle(payload)
+    command = str(metadata.get("command", ""))
+    if command == "register_prefill_kv_catalog":
         descriptor = PAPPrefillKVCacheCatalogDescriptor.from_dict(
             metadata["descriptor"]
         )
@@ -3415,7 +1967,7 @@ def compute_binary_attention_response(
             },
             {},
         )
-    if metadata.get("command") == "publish_prefill_kv_manifest":
+    if command == "publish_prefill_kv_manifest":
         manifest = PAPPrefillKVSessionManifest.from_dict(metadata["manifest"])
         prefix_len = registry.install_prefill_kv_session_manifest(
             manifest=manifest,
@@ -3430,74 +1982,11 @@ def compute_binary_attention_response(
             },
             {},
         )
-    if metadata.get("command") == "import_prefill_kv_ipc":
-        descriptor = PAPOffloadKVIPCDescriptor.from_dict(metadata["descriptor"])
-        key, value = open_ipc_prefill_kv(descriptor)
-        seq_len = registry.import_prefill_kv(
-            request_id=descriptor.request_id,
-            layer_name=descriptor.layer_name,
-            key=key,
-            value=value,
-            seq_len=descriptor.seq_len,
-            block_ids=list(descriptor.block_ids),
-            copy=False,
-        )
-        logger.info(
-            "PAP prefill KV imported via IPC descriptor request_id=%s "
-            "layer=%s seq_len=%s blocks=%s",
-            descriptor.request_id,
-            descriptor.layer_name,
-            seq_len,
-            len(descriptor.block_ids),
-        )
-        return serialize_tensor_bundle(
-            {
-                "request_id": descriptor.request_id,
-                "layer_name": descriptor.layer_name,
-                "seq_len": seq_len,
-            },
-            {},
-        )
-    if metadata.get("command") == "import_prefill_paged_kv_ipc":
-        raise ValueError(
-            "legacy per-layer paged KV import was removed; use a sealed manifest"
-        )
-    if metadata.get("command") == "offload_exec":
-        if offload_exec_transport is None:
-            raise RuntimeError("PAP OFFLOAD_EXEC transport is not initialized")
-        descriptor = PAPOffloadExecDescriptor(
-            request_id=str(metadata["request_id"]),
-            layer_name=str(metadata["layer_name"]),
-            step=int(metadata["step"]),
-            scale=float(metadata["scale"]),
-        )
-        if offload_exec_lock is None:
-            run_offload_exec_once(
-                registry=registry,
-                transport=offload_exec_transport,
-                remote_address=str(metadata["remote_address"]),
-                descriptor=descriptor,
-            )
-        else:
-            with offload_exec_lock:
-                run_offload_exec_once(
-                    registry=registry,
-                    transport=offload_exec_transport,
-                    remote_address=str(metadata["remote_address"]),
-                    descriptor=descriptor,
-                )
-        return serialize_tensor_bundle(
-            {
-                "request_id": descriptor.request_id,
-                "layer_name": descriptor.layer_name,
-                "step": descriptor.step,
-                "remote_address": str(metadata["remote_address"]),
-            },
-            {},
-        )
-    if "items" in metadata:
-        return compute_batch_binary_attention_response(registry, payload)
-    return _compute_single_binary_attention_response(registry, payload)
+    raise ValueError(
+        f"unsupported PAP wire command {command!r}; use sealed KV handoff "
+        "and batched OFFLOAD_EXEC"
+    )
+
 
 
 def _offload_exec_attention_shapes(
@@ -3534,196 +2023,6 @@ def _offload_exec_session(
     if session is None:
         raise KeyError(request_id)
     return session_request_id, session
-
-
-def compute_offload_exec_query_partial(
-    *,
-    registry: PAPAttentionRegistry,
-    request_id: str,
-    layer_name: str,
-    query_flat: torch.Tensor,
-    scale: float,
-    step: int,
-) -> Any | None:
-    from vllm.pap.remote_attention import compute_segmented_attention_partial_state
-
-    session_request_id, session = _offload_exec_session(
-        registry=registry,
-        request_id=request_id,
-    )
-    q_size, _kv_size, num_heads, _num_kv_heads, head_dim = (
-        _offload_exec_attention_shapes(session=session)
-    )
-    if int(query_flat.shape[-1]) != q_size:
-        raise ValueError(
-            f"query width {query_flat.shape[-1]} does not match q_size={q_size}"
-        )
-    if query_flat.shape[0] != 1:
-        raise RuntimeError("PAP OFFLOAD_EXEC currently supports one token per call")
-    query = query_flat.view(1, num_heads, head_dim)
-    segments = registry.attention_segments_before_decode(
-        request_id=session_request_id,
-        layer_name=layer_name,
-        seq_len=int(step),
-    )
-    non_empty_segments = [(key, value) for key, value in segments if key.numel() > 0]
-    if not non_empty_segments:
-        return None
-    if torch.cuda.is_available():
-        query = query.to(registry.storage_device, non_blocking=True)
-    return compute_segmented_attention_partial_state(
-        query=query,
-        segments=non_empty_segments,
-        scale=float(scale),
-    )
-
-
-def compute_offload_exec_output_from_kv_and_partial(
-    *,
-    registry: PAPAttentionRegistry,
-    request_id: str,
-    layer_name: str,
-    query_flat: torch.Tensor,
-    kv_flat: torch.Tensor,
-    scale: float,
-    step: int,
-    partial_state: Any | None,
-) -> torch.Tensor:
-    from vllm.pap.remote_attention import (
-        combine_segmented_attention_partial_states,
-        compute_segmented_attention_output,
-        compute_segmented_attention_partial_state,
-    )
-
-    session_request_id, session = _offload_exec_session(
-        registry=registry,
-        request_id=request_id,
-    )
-    q_size, kv_size, num_heads, num_kv_heads, head_dim = _offload_exec_attention_shapes(
-        session=session
-    )
-    if int(query_flat.shape[-1]) != q_size:
-        raise ValueError(
-            f"query width {query_flat.shape[-1]} does not match q_size={q_size}"
-        )
-    if int(kv_flat.shape[-1]) != kv_size + kv_size:
-        raise ValueError(
-            f"packed kv width {kv_flat.shape[-1]} does not match kv_size={kv_size}"
-        )
-    if query_flat.shape[0] != 1 or kv_flat.shape[0] != 1:
-        raise RuntimeError("PAP OFFLOAD_EXEC currently supports one token per call")
-
-    query = query_flat.view(1, num_heads, head_dim)
-    key_flat, value_flat = kv_flat.split([kv_size, kv_size], dim=-1)
-    key = key_flat.view(1, num_kv_heads, head_dim)
-    value = value_flat.view(1, num_kv_heads, head_dim)
-    seq_len = int(step)
-    if seq_len <= 0:
-        raise ValueError("PAP OFFLOAD_EXEC step must be positive")
-    block_id, slot = registry.reserve_decode_slot(
-        request_id=session_request_id,
-        layer_name=layer_name,
-        seq_len=seq_len,
-    )
-    registry.append_decode_kv(
-        request_id=session_request_id,
-        layer_name=layer_name,
-        key=key,
-        value=value,
-        block_id=block_id,
-        slot=slot,
-        seq_len=seq_len,
-    )
-    if torch.cuda.is_available():
-        query = query.to(registry.storage_device, non_blocking=True)
-    if partial_state is None:
-        output = compute_segmented_attention_output(
-            query=query,
-            segments=[(key, value)],
-            scale=float(scale),
-        )
-    else:
-        current_state = compute_segmented_attention_partial_state(
-            query=query,
-            segments=[(key, value)],
-            scale=float(scale),
-        )
-        output = combine_segmented_attention_partial_states(
-            [partial_state, current_state]
-        )
-    return output.reshape(1, -1)
-
-
-def compute_offload_exec_output(
-    *,
-    registry: PAPAttentionRegistry,
-    request_id: str,
-    layer_name: str,
-    qkv: torch.Tensor,
-    scale: float,
-    step: int,
-) -> torch.Tensor:
-    """Compute one OFFLOAD_EXEC attention output from a packed QKV tensor."""
-
-    from vllm.pap.remote_attention import compute_segmented_attention_output
-
-    session_request_id = registry.resolve_session_request_id(request_id)
-    if session_request_id is None:
-        raise KeyError(request_id)
-    session = registry.get_session(session_request_id)
-    if session is None:
-        raise KeyError(request_id)
-    q_size = session.q_size or int(os.environ.get("PAP_OFFLOAD_EXEC_Q_SIZE", "0"))
-    kv_size = session.kv_size or int(os.environ.get("PAP_OFFLOAD_EXEC_KV_SIZE", "0"))
-    if q_size <= 0 or kv_size <= 0:
-        raise RuntimeError(
-            "PAP OFFLOAD_EXEC requires q_size and kv_size in attention "
-            "registration or PAP_OFFLOAD_EXEC_Q_SIZE/PAP_OFFLOAD_EXEC_KV_SIZE"
-        )
-    if int(qkv.shape[-1]) != q_size + kv_size + kv_size:
-        raise ValueError(
-            f"packed qkv width {qkv.shape[-1]} does not match "
-            f"q_size={q_size} kv_size={kv_size}"
-        )
-    query_flat, key_flat, value_flat = qkv.split([q_size, kv_size, kv_size], dim=-1)
-    if query_flat.shape[0] != 1:
-        raise RuntimeError("PAP OFFLOAD_EXEC currently supports one token per call")
-    num_heads = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_HEADS", "0"))
-    num_kv_heads = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "0"))
-    head_dim = int(os.environ.get("PAP_OFFLOAD_EXEC_HEAD_DIM", "0"))
-    if num_heads <= 0 or num_kv_heads <= 0 or head_dim <= 0:
-        raise RuntimeError(
-            "PAP OFFLOAD_EXEC requires PAP_OFFLOAD_EXEC_NUM_HEADS, "
-            "PAP_OFFLOAD_EXEC_NUM_KV_HEADS, and PAP_OFFLOAD_EXEC_HEAD_DIM"
-        )
-    query = query_flat.view(1, num_heads, head_dim)
-    key = key_flat.view(1, num_kv_heads, head_dim)
-    value = value_flat.view(1, num_kv_heads, head_dim)
-    seq_len = int(step)
-    if seq_len <= 0:
-        raise ValueError("PAP OFFLOAD_EXEC step must be positive")
-    block_id, slot = registry.reserve_decode_slot(
-        request_id=session_request_id,
-        layer_name=layer_name,
-        seq_len=seq_len,
-    )
-    segments, _ = registry.append_decode_kv(
-        request_id=session_request_id,
-        layer_name=layer_name,
-        key=key,
-        value=value,
-        block_id=block_id,
-        slot=slot,
-        seq_len=seq_len,
-    )
-    if torch.cuda.is_available():
-        query = query.to(registry.storage_device, non_blocking=True)
-    output = compute_segmented_attention_output(
-        query=query,
-        segments=segments,
-        scale=float(scale),
-    )
-    return output.reshape(1, -1)
 
 
 def _run_paged_flash_varlen(
@@ -4074,91 +2373,6 @@ def _finalize_offload_exec_compute_trace(
     )
     if float(trace_stats.get("compute_unaccounted_ms", 0.0)) <= 0.0:
         trace_stats["compute_unaccounted_ms"] = max(0.0, compute_ms - explained_ms)
-
-
-def run_offload_exec_once(
-    *,
-    registry: PAPAttentionRegistry,
-    transport: Any,
-    remote_address: str,
-    descriptor: Any,
-) -> None:
-    """Receive packed QKV over OFFLOAD_EXEC and send attention output back."""
-
-    trace_offload_exec = os.environ.get("PAP_OFFLOAD_EXEC_TRACE", "").lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
-    trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
-    trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
-    logger.debug(
-        "PAP OFFLOAD_EXEC recv_qkv request_id=%s layer=%s step=%s remote=%s",
-        descriptor.request_id,
-        descriptor.layer_name,
-        descriptor.step,
-        remote_address,
-    )
-    qkv = transport.recv_qkv(descriptor, remote_address=remote_address)
-    trace_recv_ms = (
-        (time.perf_counter() - trace_recv_start) * 1000.0 if trace_offload_exec else 0.0
-    )
-    trace_compute_start = time.perf_counter() if trace_offload_exec else 0.0
-    logger.debug(
-        "PAP OFFLOAD_EXEC compute request_id=%s layer=%s step=%s qkv_shape=%s",
-        descriptor.request_id,
-        descriptor.layer_name,
-        descriptor.step,
-        tuple(qkv.shape),
-    )
-    output = compute_offload_exec_output(
-        registry=registry,
-        request_id=descriptor.request_id,
-        layer_name=descriptor.layer_name,
-        qkv=qkv,
-        scale=descriptor.scale,
-        step=descriptor.step,
-    )
-    trace_compute_ms = (
-        (time.perf_counter() - trace_compute_start) * 1000.0
-        if trace_offload_exec
-        else 0.0
-    )
-    trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
-    logger.debug(
-        "PAP OFFLOAD_EXEC send_output request_id=%s layer=%s step=%s "
-        "output_shape=%s remote=%s",
-        descriptor.request_id,
-        descriptor.layer_name,
-        descriptor.step,
-        tuple(output.shape),
-        remote_address,
-    )
-    transport.send_output(descriptor, output, remote_address=remote_address)
-    if trace_offload_exec:
-        trace_send_ms = (time.perf_counter() - trace_send_start) * 1000.0
-        trace_total_ms = (time.perf_counter() - trace_total_start) * 1000.0
-        logger.info(
-            "PAP OFFLOAD_EXEC attention trace request_id=%s layer=%s step=%s "
-            "recv_qkv_ms=%.3f compute_ms=%.3f send_output_ms=%.3f "
-            "total_ms=%.3f qkv_shape=%s output_shape=%s",
-            descriptor.request_id,
-            descriptor.layer_name,
-            descriptor.step,
-            trace_recv_ms,
-            trace_compute_ms,
-            trace_send_ms,
-            trace_total_ms,
-            tuple(qkv.shape),
-            tuple(output.shape),
-        )
-    logger.debug(
-        "PAP OFFLOAD_EXEC complete request_id=%s layer=%s step=%s",
-        descriptor.request_id,
-        descriptor.layer_name,
-        descriptor.step,
-    )
 
 
 def _combine_offload_exec_outputs(outputs: list[torch.Tensor]) -> torch.Tensor:
@@ -5330,38 +3544,6 @@ def create_app(
             raise HTTPException(status_code=404, detail="unknown PAP request")
         return session.__dict__
 
-    @app.post("/v1/pap/attention/offload-exec")
-    async def offload_exec(request: PAPOffloadExecRequest) -> dict[str, Any]:
-        from vllm.pap.protocol import PAPOffloadExecDescriptor
-
-        transport = app.state.offload_exec_transport
-        if transport is None:
-            raise HTTPException(
-                status_code=409,
-                detail="PAP OFFLOAD_EXEC transport is not initialized",
-            )
-        descriptor = PAPOffloadExecDescriptor(
-            request_id=request.request_id,
-            layer_name=request.layer_name,
-            step=int(request.step),
-            scale=float(request.scale),
-        )
-        try:
-            with app.state.offload_exec_lock:
-                run_offload_exec_once(
-                    registry=registry,
-                    transport=transport,
-                    remote_address=request.remote_address,
-                    descriptor=descriptor,
-                )
-        except Exception as exc:
-            raise _http_error_for_attention_exception(exc) from exc
-        return {
-            "request_id": request.request_id,
-            "layer_name": request.layer_name,
-            "step": int(request.step),
-            "remote_address": request.remote_address,
-        }
 
     @app.post("/v1/pap/attention/offload-exec-mailbox/activity")
     async def update_offload_exec_mailbox_activity(
@@ -5505,207 +3687,6 @@ def create_app(
 
     app.add_event_handler("shutdown", stop_offload_exec_dispatcher)
 
-    @app.post("/v1/pap/attention/import-prefill-kv")
-    async def import_prefill_kv(
-        request: PAPAttentionImportPrefillKVRequest,
-    ) -> dict[str, Any]:
-        from vllm.pap.remote_attention import deserialize_tensor
-
-        key = deserialize_tensor(request.key)
-        value = deserialize_tensor(request.value)
-        try:
-            seq_len = registry.import_prefill_kv(
-                request_id=request.request_id,
-                layer_name=request.layer_name,
-                key=key,
-                value=value,
-                seq_len=request.seq_len,
-                block_ids=request.block_ids,
-            )
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="unknown PAP request") from exc
-        except RuntimeError as exc:
-            logger.warning(
-                "rejected stateful PAP attention request_id=%s layer=%s "
-                "block_id=%s slot=%s seq_len=%s reason=%s",
-                request.request_id,
-                request.layer_name,
-                request.block_id,
-                request.slot,
-                request.seq_len,
-                exc,
-                exc_info=True,
-            )
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except ValueError as exc:
-            logger.warning(
-                "rejected stateful PAP attention request_id=%s layer=%s "
-                "block_id=%s slot=%s seq_len=%s reason=%s",
-                request.request_id,
-                request.layer_name,
-                request.block_id,
-                request.slot,
-                request.seq_len,
-                exc,
-                exc_info=True,
-            )
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        logger.debug(
-            "imported PAP prefill KV request_id=%s layer=%s seq_len=%s",
-            request.request_id,
-            request.layer_name,
-            seq_len,
-        )
-        return {
-            "request_id": request.request_id,
-            "layer_name": request.layer_name,
-            "seq_len": seq_len,
-        }
-
-    @app.post("/v1/pap/attention/append-and-compute")
-    async def append_and_compute_attention(
-        request: PAPAttentionAppendAndComputeRequest,
-    ) -> dict[str, Any]:
-        from vllm.pap.remote_attention import (
-            compute_segmented_attention_output,
-            deserialize_tensor,
-            serialize_attention_result,
-        )
-
-        query = deserialize_tensor(request.query)
-        key = deserialize_tensor(request.key)
-        value = deserialize_tensor(request.value)
-        try:
-            segments, seq_len = registry.append_decode_kv(
-                request_id=request.request_id,
-                layer_name=request.layer_name,
-                key=key,
-                value=value,
-                block_id=request.block_id,
-                slot=request.slot,
-                seq_len=request.seq_len,
-            )
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="unknown PAP request") from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        if torch.cuda.is_available():
-            query = query.to(registry.storage_device, non_blocking=True)
-        output = compute_segmented_attention_output(
-            query=query,
-            segments=segments,
-            scale=request.scale,
-        )
-        logger.debug(
-            "computed stateful PAP attention output request_id=%s layer=%s seq_len=%s",
-            request.request_id,
-            request.layer_name,
-            seq_len,
-        )
-        return {
-            "request_id": request.request_id,
-            "layer_name": request.layer_name,
-            "seq_len": seq_len,
-            "output": serialize_attention_result(output),
-        }
-
-    @app.post("/v1/pap/attention/append-and-compute-binary")
-    async def append_and_compute_attention_binary(
-        request: Request,
-    ) -> Response:
-        try:
-            content = _compute_single_binary_attention_response(
-                registry,
-                await request.body(),
-            )
-        except Exception as exc:
-            logger.warning("rejected binary PAP attention request", exc_info=True)
-            raise _http_error_for_attention_exception(exc) from exc
-        return Response(content=content, media_type="application/octet-stream")
-
-    @app.post("/v1/pap/attention/import-prefill-kv-binary")
-    async def import_prefill_kv_binary(
-        request: Request,
-    ) -> Response:
-        try:
-            content = compute_binary_attention_response(
-                registry,
-                await request.body(),
-            )
-        except Exception as exc:
-            logger.warning("rejected binary PAP prefill import", exc_info=True)
-            raise _http_error_for_attention_exception(exc) from exc
-        return Response(content=content, media_type="application/octet-stream")
-
-    @app.post("/v1/pap/attention/append-and-compute-batch-binary")
-    async def append_and_compute_attention_batch_binary(
-        request: Request,
-    ) -> Response:
-        try:
-            content = compute_batch_binary_attention_response(
-                registry,
-                await request.body(),
-            )
-        except Exception as exc:
-            logger.warning("rejected batch binary PAP attention request", exc_info=True)
-            raise _http_error_for_attention_exception(exc) from exc
-        return Response(content=content, media_type="application/octet-stream")
-
-    @app.post("/v1/pap/attention/compute")
-    async def compute_attention(
-        request: PAPAttentionComputeRequest,
-    ) -> dict[str, Any]:
-        from vllm.pap.remote_attention import (
-            compute_attention_output,
-            deserialize_tensor,
-            serialize_attention_result,
-        )
-
-        query = deserialize_tensor(request.query)
-        key = deserialize_tensor(request.key)
-        value = deserialize_tensor(request.value)
-        if torch.cuda.is_available():
-            query = query.cuda(non_blocking=True)
-            key = key.cuda(non_blocking=True)
-            value = value.cuda(non_blocking=True)
-        output = compute_attention_output(
-            query=query,
-            key=key,
-            value=value,
-            scale=request.scale,
-        )
-        logger.debug(
-            "computed PAP attention output request_id=%s layer=%s query_shape=%s",
-            request.request_id,
-            request.layer_name,
-            list(query.shape),
-        )
-        return {
-            "request_id": request.request_id,
-            "layer_name": request.layer_name,
-            "output": serialize_attention_result(output),
-        }
-
-    @app.post("/v1/pap/attention/layer-event")
-    async def record_layer_event(
-        event: PAPAttentionLayerEventRequest,
-    ) -> dict[str, Any]:
-        try:
-            recorded = registry.record_layer_event(**event.model_dump())
-        except KeyError as exc:
-            raise HTTPException(status_code=404, detail="unknown PAP request") from exc
-        return recorded.__dict__
-
-    @app.get("/v1/pap/attention/sessions/{request_id}/layer-events")
-    async def get_layer_events(request_id: str) -> dict[str, Any]:
-        return {
-            "request_id": request_id,
-            "events": [
-                event.__dict__ for event in registry.get_layer_events(request_id)
-            ],
-        }
 
     @app.get("/v1/pap/attention/sessions")
     async def get_active_session_count() -> dict[str, int]:

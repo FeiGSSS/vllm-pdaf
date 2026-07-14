@@ -35,6 +35,7 @@ import torch
 logger = logging.getLogger(__name__)
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 _SLOT_BYTE_ALIGNMENT = 16
+NIXL_MAILBOX_ZERO_COPY_RECV_DEFAULT = True
 
 
 def _nixl_mailbox_env_float(name: str, default: float) -> float:
@@ -465,7 +466,8 @@ class PAPNixlMailboxEndpoint:
             "PAP_NIXL_MAILBOX_SLOT_PROTOCOL", True
         )
         self._zero_copy_recv_enabled = _nixl_mailbox_env_bool(
-            "PAP_NIXL_MAILBOX_ZERO_COPY_RECV", True
+            "PAP_NIXL_MAILBOX_ZERO_COPY_RECV",
+            NIXL_MAILBOX_ZERO_COPY_RECV_DEFAULT,
         )
         self._cache_xfer_dlists_enabled = _nixl_mailbox_env_bool(
             "PAP_NIXL_MAILBOX_CACHE_XFER_DLISTS", True

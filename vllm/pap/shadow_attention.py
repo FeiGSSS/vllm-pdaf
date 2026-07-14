@@ -2,9 +2,8 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """PAP control-plane helpers.
 
-TCP control messages (compact binary format) for triggering the remote
-Attention executor and importing prefill KV. Tensor data for OFFLOAD_EXEC
-uses the PAP data plane; prefill KV import uses TCP binary bundles.
+TCP control messages trigger remote Attention execution and publish sealed
+Prefill KV catalog/manifest state. OFFLOAD_EXEC tensors use the PAP data plane.
 """
 
 from __future__ import annotations
@@ -24,20 +23,11 @@ import torch
 from torch.multiprocessing.reductions import reduce_tensor
 
 if TYPE_CHECKING:
-    from vllm.pap.protocol import PAPCudaIPCTensorHandle, PAPTensorTransport
+    from vllm.pap.protocol import PAPCudaIPCTensorHandle
 
 logger = logging.getLogger(__name__)
 
 _TCP_CONNECTIONS = local()
-
-
-def _pap_prefill_ipc_profile_enabled() -> bool:
-    return os.environ.get("PAP_PREFILL_IPC_PROFILE", "").lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
 
 
 def _pap_unified_kv_decode_capacity_tokens() -> int:
@@ -311,33 +301,6 @@ def update_offload_exec_mailbox_activity(
     return result
 
 
-def _block_ids_from_block_table(
-    *,
-    block_table: torch.Tensor,
-    seq_len: int,
-    block_size: int,
-) -> list[int]:
-    if block_table.ndim != 2 or block_table.shape[0] != 1:
-        raise ValueError("PAP KV import supports one request per call")
-    if seq_len < 0:
-        raise ValueError("seq_len must be non-negative")
-    if block_size <= 0:
-        raise ValueError("block_size must be positive")
-    num_blocks = (int(seq_len) + int(block_size) - 1) // int(block_size)
-    blocks = block_table[0, :num_blocks].to(device="cpu", dtype=torch.long).tolist()
-    return [int(block_id) for block_id in blocks]
-
-
-def _normalize_offload_kv_transport(
-    transport: Any | None,
-) -> PAPTensorTransport | None:
-    if transport is None:
-        return None
-    from vllm.pap.protocol import PAPTensorTransport
-
-    return PAPTensorTransport(transport)
-
-
 def _gpu_uuid_for_tensor(tensor: torch.Tensor) -> str:
     if tensor.device.type != "cuda":
         return "cpu"
@@ -358,212 +321,6 @@ def _make_cuda_ipc_tensor_handle(
         shape=tuple(int(dim) for dim in tensor.shape),
         ipc_handle={_gpu_uuid_for_tensor(tensor): tuple(ipc_args)},
     )
-
-
-def _maybe_synchronize_cuda_ipc_tensors(*tensors: torch.Tensor) -> None:
-    if not torch.cuda.is_available():
-        return
-    synced_devices: set[int] = set()
-    for tensor in tensors:
-        if tensor.device.type != "cuda":
-            continue
-        device_index = tensor.device.index
-        if device_index is None:
-            device_index = torch.cuda.current_device()
-        if device_index in synced_devices:
-            continue
-        torch.cuda.current_stream(device_index).synchronize()
-        synced_devices.add(device_index)
-
-
-def _post_prefill_kv_ipc(
-    *,
-    request_id: str,
-    layer_name: str,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    seq_len: int,
-    block_ids: Sequence[int] | None,
-    tcp_endpoint: str,
-    timeout: float,
-) -> int:
-    from vllm.pap.data_plane import PAPOffloadKVIPCDescriptor
-    from vllm.pap.remote_attention import (
-        deserialize_tensor_bundle,
-        serialize_tensor_bundle,
-    )
-
-    _maybe_synchronize_cuda_ipc_tensors(key, value)
-    descriptor = PAPOffloadKVIPCDescriptor(
-        request_id=request_id,
-        layer_name=layer_name,
-        seq_len=int(seq_len),
-        block_ids=tuple([] if block_ids is None else [int(b) for b in block_ids]),
-        key=_make_cuda_ipc_tensor_handle(key),
-        value=_make_cuda_ipc_tensor_handle(value),
-    )
-    request_body = serialize_tensor_bundle(
-        {
-            "command": "import_prefill_kv_ipc",
-            "descriptor": descriptor.to_dict(),
-        },
-        {},
-    )
-    response_body = _post_bytes_tcp(
-        endpoint=tcp_endpoint,
-        payload=request_body,
-        timeout=timeout,
-    )
-    response_metadata, _ = deserialize_tensor_bundle(response_body)
-    return int(response_metadata["seq_len"])
-
-
-def import_prefill_paged_kv(
-    *,
-    request_id: str,
-    layer_name: str,
-    kv_cache: torch.Tensor,
-    block_ids: Sequence[int],
-    seq_len: int,
-    block_size: int,
-    num_kv_heads: int,
-    layout: str,
-    tcp_endpoint: str | None = None,
-    timeout: float | None = None,
-) -> int:
-    """Install Prefill-owned paged KV backing storage in Attention."""
-
-    from vllm.pap.data_plane import PAPOffloadKVPagedIPCDescriptor
-    from vllm.pap.kv_lease import (
-        pap_active_lease_id,
-        pap_has_active_lease,
-        pap_leased_block_ids,
-        pap_pin_blocks,
-    )
-    from vllm.pap.remote_attention import (
-        deserialize_tensor_bundle,
-        serialize_tensor_bundle,
-    )
-
-    if not tcp_endpoint:
-        raise RuntimeError("PAP paged OFFLOAD_KV requires a TCP endpoint")
-    request_timeout = (
-        float(timeout)
-        if timeout is not None
-        else float(os.environ.get("PAP_REMOTE_ATTENTION_TIMEOUT", "5.0"))
-    )
-    profile = _pap_prefill_ipc_profile_enabled()
-    total_start = time.perf_counter() if profile else 0.0
-    sync_start = time.perf_counter() if profile else 0.0
-    _maybe_synchronize_cuda_ipc_tensors(kv_cache)
-    sync_ms = (time.perf_counter() - sync_start) * 1000.0 if profile else 0.0
-
-    lease_id: str | None = None
-    leased_block_ids: tuple[int, ...] | None = None
-    lease_capacity_tokens: int | None = None
-    unified_kv_mode = True
-    prefix_len_value: int | None = None
-    writable_start_token: int | None = None
-    writable_end_token: int | None = None
-    try:
-        if unified_kv_mode and not pap_has_active_lease(request_id):
-            lease_id = pap_pin_blocks(
-                request_id=request_id,
-                block_ids=tuple(int(b) for b in block_ids),
-            )
-            leased_block_ids = tuple(int(b) for b in block_ids)
-            lease_capacity_tokens = int(seq_len)
-        elif unified_kv_mode and pap_has_active_lease(request_id):
-            lease_id = pap_active_lease_id(request_id)
-            leased_block_ids = pap_leased_block_ids(request_id)
-    except Exception as exc:
-        logger.exception(
-            "PAP unified KV lease pin failed request_id=%s layer=%s blocks=%d",
-            request_id,
-            layer_name,
-            len(block_ids),
-        )
-        raise RuntimeError(
-            f"PAP unified KV lease pin failed for request_id={request_id}"
-        ) from exc
-    if unified_kv_mode:
-        prefix_len_value = int(seq_len)
-        block_capacity = len(block_ids) * int(block_size)
-        planned_capacity = min(
-            int(seq_len) + _pap_unified_kv_decode_capacity_tokens(),
-            block_capacity,
-        )
-        writable_start_token = int(seq_len)
-        writable_end_token = planned_capacity
-        lease_capacity_tokens = planned_capacity
-
-    descriptor_start = time.perf_counter() if profile else 0.0
-    descriptor = PAPOffloadKVPagedIPCDescriptor(
-        request_id=request_id,
-        layer_name=layer_name,
-        seq_len=int(seq_len),
-        block_ids=tuple(int(block_id) for block_id in block_ids),
-        block_size=int(block_size),
-        num_kv_heads=int(num_kv_heads),
-        layout=str(layout),
-        kv_cache=_make_cuda_ipc_tensor_handle(kv_cache),
-        lease_id=lease_id,
-        leased_block_ids=leased_block_ids,
-        lease_seq_len=int(seq_len) if lease_id is not None else None,
-        lease_capacity_tokens=lease_capacity_tokens,
-        unified_kv_mode=unified_kv_mode,
-        prefix_len=prefix_len_value,
-        writable_start_token=writable_start_token,
-        writable_end_token=writable_end_token,
-    )
-    descriptor_ms = (
-        (time.perf_counter() - descriptor_start) * 1000.0 if profile else 0.0
-    )
-    serialize_start = time.perf_counter() if profile else 0.0
-    request_body = serialize_tensor_bundle(
-        {
-            "command": "import_prefill_paged_kv_ipc",
-            "descriptor": descriptor.to_dict(),
-        },
-        {},
-    )
-    serialize_ms = (time.perf_counter() - serialize_start) * 1000.0 if profile else 0.0
-    post_start = time.perf_counter() if profile else 0.0
-    response_body = _post_bytes_tcp(
-        endpoint=tcp_endpoint,
-        payload=request_body,
-        timeout=request_timeout,
-    )
-    post_ms = (time.perf_counter() - post_start) * 1000.0 if profile else 0.0
-    deserialize_start = time.perf_counter() if profile else 0.0
-    response_metadata, _ = deserialize_tensor_bundle(response_body)
-    deserialize_ms = (
-        (time.perf_counter() - deserialize_start) * 1000.0 if profile else 0.0
-    )
-    if profile:
-        logger.info(
-            "PAP prefill IPC transport profile request_id=%s layer=%s "
-            "seq_len=%d blocks=%d delivery=async status=%s sync_ms=%.3f "
-            "descriptor_ms=%.3f serialize_ms=%.3f response_wait_ms=%.3f "
-            "deserialize_ms=%.3f total_ms=%.3f request_bytes=%d "
-            "response_bytes=%d endpoint=%s lease_id=%s",
-            request_id,
-            layer_name,
-            int(seq_len),
-            len(block_ids),
-            str(response_metadata.get("status", "ready")),
-            sync_ms,
-            descriptor_ms,
-            serialize_ms,
-            post_ms,
-            deserialize_ms,
-            (time.perf_counter() - total_start) * 1000.0,
-            len(request_body),
-            len(response_body),
-            tcp_endpoint,
-            lease_id,
-        )
-    return int(response_metadata["seq_len"])
 
 
 def register_prefill_kv_catalog(
@@ -716,99 +473,3 @@ def publish_prefill_kv_session_manifest(
             f"request_id={request_id} status={response_metadata.get('status')!r}"
         )
     return int(response_metadata["prefix_len"])
-
-
-def import_prefill_kv(
-    *,
-    request_id: str,
-    layer_name: str,
-    key: torch.Tensor,
-    value: torch.Tensor,
-    seq_len: int,
-    block_ids: Sequence[int] | None = None,
-    tcp_endpoint: str | None = None,
-    timeout: float | None = None,
-    transport: Any | None = None,
-) -> int:
-    from vllm.pap.remote_attention import (
-        deserialize_tensor_bundle,
-        serialize_tensor_bundle,
-    )
-
-    if not tcp_endpoint:
-        raise RuntimeError("PAP KV import requires a TCP control endpoint")
-
-    request_timeout = (
-        float(timeout)
-        if timeout is not None
-        else float(os.environ.get("PAP_REMOTE_ATTENTION_TIMEOUT", "5.0"))
-    )
-    from vllm.pap.protocol import PAPTensorTransport
-
-    if _normalize_offload_kv_transport(transport) is PAPTensorTransport.CUDA_IPC:
-        return _post_prefill_kv_ipc(
-            request_id=request_id,
-            layer_name=layer_name,
-            key=key,
-            value=value,
-            seq_len=int(seq_len),
-            block_ids=block_ids,
-            tcp_endpoint=tcp_endpoint,
-            timeout=request_timeout,
-        )
-
-    metadata = {
-        "command": "import_prefill_kv",
-        "request_id": request_id,
-        "layer_name": layer_name,
-        "seq_len": int(seq_len),
-        "block_ids": [] if block_ids is None else [int(b) for b in block_ids],
-    }
-    request_body = serialize_tensor_bundle(metadata, {"key": key, "value": value})
-    response_body = _post_bytes_tcp(
-        endpoint=tcp_endpoint,
-        payload=request_body,
-        timeout=request_timeout,
-    )
-    response_metadata, _ = deserialize_tensor_bundle(response_body)
-    return int(response_metadata["seq_len"])
-
-
-def import_prefill_kv_from_paged_cache(
-    *,
-    request_id: str,
-    layer_name: str,
-    kv_cache: torch.Tensor,
-    block_table: torch.Tensor,
-    seq_len: int,
-    block_size: int,
-    num_kv_heads: int,
-    layout: str,
-    tcp_endpoint: str | None = None,
-    timeout: float | None = None,
-    transport: Any | None = None,
-) -> int:
-    from vllm.pap.remote_attention import gather_paged_kv
-
-    if layout not in {"NHD", "HND"}:
-        raise ValueError(f"unsupported KV cache layout: {layout}")
-    key, value = gather_paged_kv(
-        kv_cache=kv_cache,
-        block_table=block_table,
-        seq_len=int(seq_len),
-        num_kv_heads=int(num_kv_heads),
-        layout=layout,
-    )
-    return import_prefill_kv(
-        request_id=request_id,
-        layer_name=layer_name,
-        key=key,
-        value=value,
-        seq_len=int(seq_len),
-        block_ids=_block_ids_from_block_table(
-            block_table=block_table, seq_len=int(seq_len), block_size=int(block_size)
-        ),
-        tcp_endpoint=tcp_endpoint,
-        timeout=timeout,
-        transport=transport,
-    )

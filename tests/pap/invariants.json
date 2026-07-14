@@ -46,30 +46,21 @@
       ]
     },
     {
-      "node_id": "tests/pap/test_decode_commit.py::test_commit_client_diagnostic_gate_defers_post",
-      "removed_at": "2026-07-14",
-      "task": "2.1",
-      "reason": "The file gate paused decode-commit delivery and is superseded by normal asynchronous acknowledged delivery.",
-      "replacement_node_ids": [
-        "tests/pap/test_decode_commit.py::test_commit_client_commit_does_not_block_on_slow_post"
-      ]
-    },
-    {
-      "node_id": "tests/pap/test_multi_pap_proxy_server.py::test_diagnostic_prefill_gate_releases_projection_and_commit",
-      "removed_at": "2026-07-14",
-      "task": "2.1",
-      "reason": "The proxy isolation gate delayed Projection and commit after Prefill and is superseded by the ungated request lifecycle.",
-      "replacement_node_ids": [
-        "tests/pap/test_multi_pap_proxy_server.py::test_multi_proxy_has_no_decode_barrier"
-      ]
-    },
-    {
       "node_id": "tests/pap/test_async_decode_token.py::test_pap_input_token_ids_are_empty_only_for_async_path",
       "removed_at": "2026-07-14",
       "task": "2.2",
       "reason": "The synchronous sampled-token D2H arm and its selector were removed; AsyncOutput callback delivery now protects the lifecycle.",
       "replacement_node_ids": [
         "tests/pap/test_async_decode_token.py::test_async_output_callback_receives_trimmed_sampled_tokens"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_decode_commit.py::test_commit_client_diagnostic_gate_defers_post",
+      "removed_at": "2026-07-14",
+      "task": "2.1",
+      "reason": "The file gate paused decode-commit delivery and is superseded by normal asynchronous acknowledged delivery.",
+      "replacement_node_ids": [
+        "tests/pap/test_decode_commit.py::test_commit_client_commit_does_not_block_on_slow_post"
       ]
     },
     {
@@ -82,6 +73,330 @@
       ]
     },
     {
+      "node_id": "tests/pap/test_multi_pap_proxy_server.py::test_diagnostic_prefill_gate_releases_projection_and_commit",
+      "removed_at": "2026-07-14",
+      "task": "2.1",
+      "reason": "The proxy isolation gate delayed Projection and commit after Prefill and is superseded by the ungated request lifecycle.",
+      "replacement_node_ids": [
+        "tests/pap/test_multi_pap_proxy_server.py::test_multi_proxy_has_no_decode_barrier"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_async_prefill_import_discards_stale_session_epoch",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_prefill_readiness_endpoint"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_async_prefill_import_preserves_unified_kv_descriptor",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_service_rejects_legacy_prefill_wire_command"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_append_and_compute_keeps_stateful_kv",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_binds_each_projection_to_distinct_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_batch_binary_accepts_packed_qkv",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_binds_each_projection_to_distinct_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_batch_binary_append_and_compute_keeps_stateful_kv",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_binds_each_projection_to_distinct_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_binary_append_and_compute_keeps_stateful_kv",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_binds_each_projection_to_distinct_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_binary_imports_prefill_kv_before_decode",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_service_rejects_legacy_prefill_wire_command"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_binary_imports_prefill_kv_ipc_descriptor",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_service_rejects_legacy_prefill_wire_command"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_compact_tcp_payload_keeps_stateful_kv",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_binds_each_projection_to_distinct_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_compute_existing_prefill_token_does_not_append",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_service_rejects_legacy_prefill_wire_command"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_compute_route_returns_attention_output",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_binds_each_projection_to_distinct_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_imports_prefill_kv_before_stateful_decode",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_service_rejects_legacy_prefill_wire_command"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_ipc_import_keeps_opened_tensor_views",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_binds_each_projection_to_distinct_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_logs_ipc_prefill_import",
+      "removed_at": "2026-07-14",
+      "task": "4.2",
+      "reason": "The test only asserted a log string from the removed per-layer Prefill KV import path.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_service_rejects_legacy_prefill_wire_command"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_records_scheduler_descriptor_state",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_binds_each_projection_to_distinct_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_rejects_bad_scheduler_descriptor",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_binds_each_projection_to_distinct_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_rejects_decode_when_prompt_kv_is_missing",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_binds_each_projection_to_distinct_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_tracks_decode_progress_per_layer",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_binds_each_projection_to_distinct_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_can_pin_state_to_configured_device",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_binds_each_projection_to_distinct_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_keeps_decode_kv_out_of_prefill_paged_block",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_service_rejects_legacy_prefill_wire_command"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_keeps_in_block_decode_tokens_attention_local",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_async_decode_token.py::test_async_output_callback_receives_trimmed_sampled_tokens"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_keeps_new_decode_block_attention_local",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_binds_each_projection_to_distinct_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_records_layer_event_without_payload_tensors",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_binds_each_projection_to_distinct_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_reimport_preserves_local_decode_kv",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_binds_each_projection_to_distinct_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_uses_local_decode_when_prefill_block_full",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_service_rejects_legacy_prefill_wire_command"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_waits_for_layer_prefill_before_decode",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_service_rejects_legacy_prefill_wire_command"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_compute_offload_exec_output_from_packed_qkv",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_rejects_nccl_offload_exec_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_compute_offload_exec_output_keeps_decode_kv_attention_local",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_rejects_nccl_offload_exec_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_compute_offload_exec_output_uses_step_block_descriptor",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_rejects_nccl_offload_exec_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_offload_exec_binary_command_triggers_transport",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_rejects_nccl_offload_exec_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_offload_exec_compact_command_triggers_transport",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_rejects_nccl_offload_exec_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_offload_exec_endpoint_triggers_transport",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_rejects_nccl_offload_exec_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_run_offload_exec_once_receives_qkv_and_sends_output",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_rejects_nccl_offload_exec_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_run_offload_exec_once_resolves_wrapped_request_id",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_rejects_nccl_offload_exec_transport"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_decode_waits_for_complete_registered_prefix",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_service_rejects_legacy_prefill_wire_command"
+      ]
+    },
+    {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_offload_exec_commit_uses_descriptor_decode_token_ids",
       "removed_at": "2026-07-14",
       "task": "2.2",
@@ -91,12 +406,156 @@
       ]
     },
     {
+      "node_id": "tests/pap/test_pap_attention_session.py::test_append_decode_token_does_not_reenter_public_record_method",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_prefill_readiness_endpoint"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_session.py::test_attention_session_appends_new_block_from_scheduler_descriptor",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_prefill_readiness_endpoint"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_session.py::test_attention_session_appends_with_scheduler_decode_descriptor",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_prefill_readiness_endpoint"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_session.py::test_attention_session_lifecycle_tracks_prefill_and_decode_blocks",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_prefill_readiness_endpoint"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_session.py::test_attention_session_records_existing_scheduler_descriptor",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_prefill_readiness_endpoint"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_session.py::test_attention_session_rejects_descriptor_that_skips_a_token",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_prefill_readiness_endpoint"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_session.py::test_attention_session_rejects_descriptor_with_wrong_slot",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_prefill_readiness_endpoint"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_session.py::test_attention_session_rejects_duplicate_request_id",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_prefill_readiness_endpoint"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_session.py::test_attention_session_rejects_seq_len_beyond_capacity",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_attention_prefill_readiness_endpoint"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_data_plane.py::test_import_prefill_kv_cuda_ipc_posts_descriptor_without_tensors",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_data_plane.py::test_batch_plan_ref_can_restore_template_only_descriptor"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_data_plane.py::test_import_prefill_paged_kv_cuda_ipc_posts_descriptor_without_tensors",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_data_plane.py::test_batch_plan_ref_can_restore_template_only_descriptor"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_data_plane.py::test_import_prefill_paged_kv_unified_reuses_active_lease",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_data_plane.py::test_batch_plan_ref_can_restore_template_only_descriptor"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_data_plane.py::test_offload_exec_batch_metadata_accepts_legacy_items",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_data_plane.py::test_batch_plan_ref_can_restore_template_only_descriptor"
+      ]
+    },
+    {
       "node_id": "tests/pap/test_pap_data_plane.py::test_offload_exec_batch_metadata_roundtrips_decode_token_ids",
       "removed_at": "2026-07-14",
       "task": "2.2",
       "reason": "The token-bearing OFFLOAD_EXEC protocol version was retired; compact token-free descriptor round trips remain protected.",
       "replacement_node_ids": [
         "tests/pap/test_pap_data_plane.py::test_offload_exec_batch_metadata_compact_roundtrip"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_data_plane.py::test_offload_exec_batch_metadata_v2_remains_backward_compatible",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_data_plane.py::test_batch_plan_ref_can_restore_template_only_descriptor"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_data_plane.py::test_offload_kv_ipc_descriptor_roundtrip",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_data_plane.py::test_batch_plan_ref_can_restore_template_only_descriptor"
+      ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_data_plane.py::test_offload_kv_paged_ipc_descriptor_roundtrip",
+      "removed_at": "2026-07-14",
+      "task": "2.4",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_data_plane.py::test_batch_plan_ref_can_restore_template_only_descriptor"
       ]
     },
     {
@@ -115,15 +574,6 @@
       "reason": "Missing descriptor token rows are no longer a runtime case because sampled tokens use only the reliable asynchronous sideband.",
       "replacement_node_ids": [
         "tests/pap/test_pap_qwen3_tp_routing.py::test_pap_offload_exec_step_groups_are_built_once_per_forward"
-      ]
-    },
-    {
-      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_logs_ipc_prefill_import",
-      "removed_at": "2026-07-14",
-      "task": "4.2",
-      "reason": "The test only asserted a log string from the removed per-layer Prefill KV import path.",
-      "replacement_node_ids": [
-        "tests/pap/test_pap_attention_executor.py::test_unified_decode_waits_for_complete_registered_prefix"
       ]
     }
   ],
@@ -199,9 +649,9 @@
         "tests/pap/test_pap_data_plane.py::test_offload_exec_descriptor_uses_stable_tensor_ids",
         "tests/pap/test_pap_data_plane.py::test_offload_kv_ipc_descriptor_roundtrip",
         "tests/pap/test_pap_data_plane.py::test_offload_kv_paged_ipc_descriptor_roundtrip",
-        "tests/pap/test_pap_data_plane.py::test_unified_paged_ipc_descriptor_requires_blocks_covering_writable_end",
-        "tests/pap/test_pap_data_plane.py::test_unified_paged_ipc_descriptor_requires_capacity_for_writable_end",
-        "tests/pap/test_pap_data_plane.py::test_unified_paged_ipc_descriptor_requires_lease",
+        "tests/pap/test_pap_data_plane.py::test_prefill_kv_session_manifest_requires_blocks_covering_writable_end",
+        "tests/pap/test_pap_data_plane.py::test_prefill_kv_session_manifest_requires_capacity_for_writable_end",
+        "tests/pap/test_pap_data_plane.py::test_prefill_kv_session_manifest_requires_lease",
         "tests/pap/test_pap_remote_attention.py::test_attention_result_round_trips_bfloat16",
         "tests/pap/test_pap_remote_attention.py::test_compact_attention_batch_round_trips",
         "tests/pap/test_pap_remote_attention.py::test_compact_offload_exec_batch_command_round_trips",
@@ -432,7 +882,7 @@
       "statement": "Attention sessions enforce creation, activation, generation, capacity, stale-epoch rejection, and idempotent cleanup ordering.",
       "level": "unit",
       "source_owners": [
-        "vllm/pap/attention_session.py"
+        "vllm/pap/lifecycle/__init__.py"
       ],
       "regressions": [
         {
@@ -480,7 +930,7 @@
         "tests/pap/test_pap_attention_executor.py::test_attention_executor_compute_existing_prefill_token_does_not_append",
         "tests/pap/test_pap_attention_executor.py::test_attention_executor_imports_prefill_kv_before_stateful_decode",
         "tests/pap/test_pap_attention_executor.py::test_attention_executor_logs_ipc_prefill_import",
-        "tests/pap/test_pap_attention_executor.py::test_attention_executor_paged_ipc_import_keeps_prefill_block_views",
+        "tests/pap/test_pap_attention_executor.py::test_attention_service_rejects_legacy_prefill_wire_command",
         "tests/pap/test_pap_attention_executor.py::test_attention_registry_keeps_decode_kv_out_of_prefill_paged_block",
         "tests/pap/test_pap_attention_executor.py::test_attention_registry_records_prefill_kv_handle",
         "tests/pap/test_pap_attention_executor.py::test_attention_registry_uses_local_decode_when_prefill_block_full",
@@ -2309,7 +2759,7 @@
         "benchmark-validator.correctness.gates"
       ],
       "disposition": "delete",
-      "reason": "Protects a timing diagnostic or selectable legacy branch that the approved P17 convergence explicitly removes.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -2945,7 +3395,7 @@
       "invariant_ids": [
         "lifecycle.decode-token.join"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -2958,7 +3408,7 @@
       "invariant_ids": [
         "lifecycle.decode-token.join"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -2971,7 +3421,7 @@
       "invariant_ids": [
         "lifecycle.decode-token.join"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -2984,7 +3434,7 @@
       "invariant_ids": [
         "lifecycle.decode-token.join"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -2997,7 +3447,7 @@
       "invariant_ids": [
         "lifecycle.decode-token.join"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -3089,7 +3539,7 @@
         "lifecycle.decode-token.join"
       ],
       "disposition": "delete",
-      "reason": "The OFF/ON switch test was merged into the unconditional asynchronous delivery lifecycle and V2 integration contracts.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -3258,7 +3708,7 @@
         "protocol.decode-commit.message"
       ],
       "disposition": "delete",
-      "reason": "Protects a timing diagnostic or selectable legacy branch that the approved P17 convergence explicitly removes.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -3648,7 +4098,7 @@
         "lifecycle.commit.ack"
       ],
       "disposition": "delete",
-      "reason": "The descriptor sampled-token field belonged only to the removed synchronous delivery path.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -3765,7 +4215,7 @@
         "integration.proxy.lifecycle"
       ],
       "disposition": "delete",
-      "reason": "Protects a timing diagnostic or selectable legacy branch that the approved P17 convergence explicitly removes.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -3842,8 +4292,8 @@
       "invariant_ids": [
         "integration.proxy.lifecycle"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -3855,8 +4305,8 @@
       "invariant_ids": [
         "integration.proxy.lifecycle"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -3985,7 +4435,7 @@
       "invariant_ids": [
         "lifecycle.session.state"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -3998,7 +4448,7 @@
       "invariant_ids": [
         "kv.unified.ownership"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -4012,7 +4462,7 @@
         "attention.paged.correctness"
       ],
       "disposition": "delete",
-      "reason": "Protects the retired Attention-local decode KV pool or stateful non-unified execution path; P17 requires Prefill-owned unified KV.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4024,8 +4474,8 @@
       "invariant_ids": [
         "attention.paged.correctness"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4038,7 +4488,7 @@
         "attention.paged.correctness"
       ],
       "disposition": "delete",
-      "reason": "Protects the retired Attention-local decode KV pool or stateful non-unified execution path; P17 requires Prefill-owned unified KV.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4051,7 +4501,7 @@
         "attention.paged.correctness"
       ],
       "disposition": "delete",
-      "reason": "Protects the retired Attention-local decode KV pool or stateful non-unified execution path; P17 requires Prefill-owned unified KV.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4064,7 +4514,7 @@
         "kv.unified.ownership"
       ],
       "disposition": "delete",
-      "reason": "Protects per-layer Prefill KV import superseded by the sealed catalog and request-manifest handoff.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4077,7 +4527,7 @@
         "kv.unified.ownership"
       ],
       "disposition": "delete",
-      "reason": "Protects per-layer Prefill KV import superseded by the sealed catalog and request-manifest handoff.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4129,7 +4579,7 @@
         "attention.paged.correctness"
       ],
       "disposition": "delete",
-      "reason": "Protects the retired Attention-local decode KV pool or stateful non-unified execution path; P17 requires Prefill-owned unified KV.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4141,8 +4591,8 @@
       "invariant_ids": [
         "kv.unified.ownership"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4154,8 +4604,8 @@
       "invariant_ids": [
         "attention.paged.correctness"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4181,7 +4631,7 @@
         "kv.unified.ownership"
       ],
       "disposition": "delete",
-      "reason": "Protects per-layer Prefill KV import superseded by the sealed catalog and request-manifest handoff.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4194,7 +4644,7 @@
         "attention.paged.correctness"
       ],
       "disposition": "delete",
-      "reason": "Protects per-layer Prefill KV import superseded by the sealed catalog and request-manifest handoff.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4207,11 +4657,11 @@
         "kv.unified.ownership"
       ],
       "disposition": "delete",
-      "reason": "Only asserted a log string from the removed per-layer Prefill KV import path.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
-      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_paged_ipc_import_keeps_prefill_block_views",
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_service_rejects_legacy_prefill_wire_command",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
       "source_owner": "vllm/pap/service.py",
       "duration_ms": 245.997,
@@ -4219,8 +4669,8 @@
       "invariant_ids": [
         "kv.unified.ownership"
       ],
-      "disposition": "delete",
-      "reason": "Protects per-layer Prefill KV import superseded by the sealed catalog and request-manifest handoff.",
+      "disposition": "keep",
+      "reason": "Fail-closed coverage for wire commands retired by sealed KV handoff.",
       "target_path": null
     },
     {
@@ -4232,8 +4682,8 @@
       "invariant_ids": [
         "attention.paged.correctness"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4245,8 +4695,8 @@
       "invariant_ids": [
         "attention.paged.correctness"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4258,8 +4708,8 @@
       "invariant_ids": [
         "attention.paged.correctness"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4271,8 +4721,8 @@
       "invariant_ids": [
         "attention.execution.direct"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4297,8 +4747,8 @@
       "invariant_ids": [
         "attention.execution.direct"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4336,7 +4786,7 @@
       "invariant_ids": [
         "attention.paged.correctness"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -4388,7 +4838,7 @@
       "invariant_ids": [
         "attention.paged.correctness"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -4415,7 +4865,7 @@
         "kv.unified.ownership"
       ],
       "disposition": "delete",
-      "reason": "Protects the retired Attention-local decode KV pool or stateful non-unified execution path; P17 requires Prefill-owned unified KV.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4428,7 +4878,7 @@
         "lifecycle.decode-token.join"
       ],
       "disposition": "delete",
-      "reason": "Protects the retired Attention-local decode KV pool or stateful non-unified execution path; P17 requires Prefill-owned unified KV.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4441,7 +4891,7 @@
         "attention.paged.correctness"
       ],
       "disposition": "delete",
-      "reason": "Protects the retired Attention-local decode KV pool or stateful non-unified execution path; P17 requires Prefill-owned unified KV.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4453,9 +4903,22 @@
       "invariant_ids": [
         "lifecycle.session.state"
       ],
-      "disposition": "rewrite",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "target_path": null
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_records_prefill_kv_handle",
+      "owner_path": "tests/pap/test_pap_attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
+      "duration_ms": 245.027,
+      "outcome": "passed",
+      "invariant_ids": [
+        "kv.unified.ownership"
+      ],
+      "disposition": "delete",
       "reason": "The readiness invariant survives, but the test targets per-layer mutable registration instead of the sealed manifest lifecycle.",
-      "target_path": "tests/pap/integration/test_attention_service.py"
+      "target_path": null
     },
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_matches_wrapped_vllm_request_ids",
@@ -4466,7 +4929,7 @@
       "invariant_ids": [
         "attention.paged.correctness"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -4479,22 +4942,9 @@
       "invariant_ids": [
         "attention.paged.correctness"
       ],
-      "disposition": "rewrite",
+      "disposition": "delete",
       "reason": "The readiness invariant survives, but the test targets per-layer mutable registration instead of the sealed manifest lifecycle.",
-      "target_path": "tests/pap/integration/test_attention_service.py"
-    },
-    {
-      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_records_prefill_kv_handle",
-      "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/service.py",
-      "duration_ms": 245.027,
-      "outcome": "passed",
-      "invariant_ids": [
-        "kv.unified.ownership"
-      ],
-      "disposition": "rewrite",
-      "reason": "The readiness invariant survives, but the test targets per-layer mutable registration instead of the sealed manifest lifecycle.",
-      "target_path": "tests/pap/integration/test_attention_service.py"
+      "target_path": null
     },
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_reimport_preserves_local_decode_kv",
@@ -4506,7 +4956,7 @@
         "attention.paged.correctness"
       ],
       "disposition": "delete",
-      "reason": "Protects the retired Attention-local decode KV pool or stateful non-unified execution path; P17 requires Prefill-owned unified KV.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4518,7 +4968,7 @@
       "invariant_ids": [
         "lifecycle.lease.drain"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -4531,7 +4981,7 @@
       "invariant_ids": [
         "lifecycle.session.state"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -4544,7 +4994,7 @@
       "invariant_ids": [
         "lifecycle.lease.drain"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -4557,7 +5007,7 @@
       "invariant_ids": [
         "attention.paged.correctness"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -4571,7 +5021,7 @@
         "kv.unified.ownership"
       ],
       "disposition": "delete",
-      "reason": "Protects the retired Attention-local decode KV pool or stateful non-unified execution path; P17 requires Prefill-owned unified KV.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4583,9 +5033,9 @@
       "invariant_ids": [
         "kv.unified.ownership"
       ],
-      "disposition": "rewrite",
-      "reason": "The readiness invariant survives, but the test targets per-layer mutable registration instead of the sealed manifest lifecycle.",
-      "target_path": "tests/pap/integration/test_attention_service.py"
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
+      "target_path": null
     },
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_release_endpoint_runs_in_fastapi_threadpool",
@@ -4596,8 +5046,8 @@
       "invariant_ids": [
         "lifecycle.lease.drain"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4609,7 +5059,7 @@
       "invariant_ids": [
         "lifecycle.decode-token.join"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -4622,7 +5072,7 @@
       "invariant_ids": [
         "attention.execution.combine"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -4700,7 +5150,7 @@
       "invariant_ids": [
         "attention.execution.direct"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -4714,7 +5164,7 @@
         "attention.execution.direct"
       ],
       "disposition": "delete",
-      "reason": "Protects the retired Attention-local decode KV pool or stateful non-unified execution path; P17 requires Prefill-owned unified KV.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4726,8 +5176,8 @@
       "invariant_ids": [
         "attention.execution.direct"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4739,8 +5189,8 @@
       "invariant_ids": [
         "lifecycle.decode-token.join"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4752,8 +5202,8 @@
       "invariant_ids": [
         "lifecycle.decode-token.join"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4765,8 +5215,8 @@
       "invariant_ids": [
         "attention.execution.direct"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4778,8 +5228,8 @@
       "invariant_ids": [
         "attention.execution.direct"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4791,8 +5241,8 @@
       "invariant_ids": [
         "attention.execution.direct"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4804,8 +5254,8 @@
       "invariant_ids": [
         "attention.execution.direct"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -4843,7 +5293,7 @@
       "invariant_ids": [
         "attention.execution.direct"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -4856,7 +5306,7 @@
       "invariant_ids": [
         "attention.execution.direct"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -4869,7 +5319,7 @@
       "invariant_ids": [
         "attention.execution.direct"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -4960,7 +5410,7 @@
       "invariant_ids": [
         "attention.execution.direct"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -4973,7 +5423,7 @@
       "invariant_ids": [
         "attention.execution.direct"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -5168,7 +5618,7 @@
       "invariant_ids": [
         "kv.unified.ownership"
       ],
-      "disposition": "keep",
+      "disposition": "delete",
       "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
       "target_path": null
     },
@@ -5208,7 +5658,7 @@
         "lifecycle.decode-token.join"
       ],
       "disposition": "delete",
-      "reason": "Direct descriptor-token commit was removed in favor of the asynchronous token and KV-ready join.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -5643,118 +6093,118 @@
     {
       "node_id": "tests/pap/test_pap_attention_session.py::test_append_decode_token_does_not_reenter_public_record_method",
       "owner_path": "tests/pap/test_pap_attention_session.py",
-      "source_owner": "vllm/pap/attention_session.py",
+      "source_owner": "vllm/pap/lifecycle/__init__.py",
       "duration_ms": 231.64,
       "outcome": "passed",
       "invariant_ids": [
         "lifecycle.session.state"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
       "node_id": "tests/pap/test_pap_attention_session.py::test_attention_session_appends_new_block_from_scheduler_descriptor",
       "owner_path": "tests/pap/test_pap_attention_session.py",
-      "source_owner": "vllm/pap/attention_session.py",
+      "source_owner": "vllm/pap/lifecycle/__init__.py",
       "duration_ms": 235.986,
       "outcome": "passed",
       "invariant_ids": [
         "lifecycle.session.state"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
       "node_id": "tests/pap/test_pap_attention_session.py::test_attention_session_appends_with_scheduler_decode_descriptor",
       "owner_path": "tests/pap/test_pap_attention_session.py",
-      "source_owner": "vllm/pap/attention_session.py",
+      "source_owner": "vllm/pap/lifecycle/__init__.py",
       "duration_ms": 235.725,
       "outcome": "passed",
       "invariant_ids": [
         "lifecycle.session.state"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
       "node_id": "tests/pap/test_pap_attention_session.py::test_attention_session_lifecycle_tracks_prefill_and_decode_blocks",
       "owner_path": "tests/pap/test_pap_attention_session.py",
-      "source_owner": "vllm/pap/attention_session.py",
+      "source_owner": "vllm/pap/lifecycle/__init__.py",
       "duration_ms": 229.687,
       "outcome": "passed",
       "invariant_ids": [
         "lifecycle.session.state"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
       "node_id": "tests/pap/test_pap_attention_session.py::test_attention_session_records_existing_scheduler_descriptor",
       "owner_path": "tests/pap/test_pap_attention_session.py",
-      "source_owner": "vllm/pap/attention_session.py",
+      "source_owner": "vllm/pap/lifecycle/__init__.py",
       "duration_ms": 236.805,
       "outcome": "passed",
       "invariant_ids": [
         "lifecycle.session.state"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
       "node_id": "tests/pap/test_pap_attention_session.py::test_attention_session_rejects_descriptor_that_skips_a_token",
       "owner_path": "tests/pap/test_pap_attention_session.py",
-      "source_owner": "vllm/pap/attention_session.py",
+      "source_owner": "vllm/pap/lifecycle/__init__.py",
       "duration_ms": 231.916,
       "outcome": "passed",
       "invariant_ids": [
         "lifecycle.session.state"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
       "node_id": "tests/pap/test_pap_attention_session.py::test_attention_session_rejects_descriptor_with_wrong_slot",
       "owner_path": "tests/pap/test_pap_attention_session.py",
-      "source_owner": "vllm/pap/attention_session.py",
+      "source_owner": "vllm/pap/lifecycle/__init__.py",
       "duration_ms": 230.792,
       "outcome": "passed",
       "invariant_ids": [
         "lifecycle.session.state"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
       "node_id": "tests/pap/test_pap_attention_session.py::test_attention_session_rejects_duplicate_request_id",
       "owner_path": "tests/pap/test_pap_attention_session.py",
-      "source_owner": "vllm/pap/attention_session.py",
+      "source_owner": "vllm/pap/lifecycle/__init__.py",
       "duration_ms": 232.499,
       "outcome": "passed",
       "invariant_ids": [
         "lifecycle.session.state"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
       "node_id": "tests/pap/test_pap_attention_session.py::test_attention_session_rejects_seq_len_beyond_capacity",
       "owner_path": "tests/pap/test_pap_attention_session.py",
-      "source_owner": "vllm/pap/attention_session.py",
+      "source_owner": "vllm/pap/lifecycle/__init__.py",
       "duration_ms": 229.763,
       "outcome": "passed",
       "invariant_ids": [
         "lifecycle.session.state"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -6326,7 +6776,7 @@
         "protocol.offload.descriptor"
       ],
       "disposition": "delete",
-      "reason": "Protects per-layer Prefill KV import superseded by the sealed catalog and request-manifest handoff.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -6339,7 +6789,7 @@
         "protocol.offload.descriptor"
       ],
       "disposition": "delete",
-      "reason": "Protects per-layer Prefill KV import superseded by the sealed catalog and request-manifest handoff.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -6352,7 +6802,7 @@
         "protocol.offload.descriptor"
       ],
       "disposition": "delete",
-      "reason": "Protects per-layer Prefill KV import superseded by the sealed catalog and request-manifest handoff.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -6430,7 +6880,7 @@
         "protocol.offload.descriptor"
       ],
       "disposition": "delete",
-      "reason": "Protects an internal legacy descriptor encoding that may be removed under the approved internal-API compatibility policy.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -6456,7 +6906,7 @@
         "protocol.offload.descriptor"
       ],
       "disposition": "delete",
-      "reason": "Token-bearing OFFLOAD_EXEC metadata was retired with synchronous sampled-token delivery.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -6482,7 +6932,7 @@
         "protocol.offload.descriptor"
       ],
       "disposition": "delete",
-      "reason": "Protects an internal legacy descriptor encoding that may be removed under the approved internal-API compatibility policy.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -6508,7 +6958,7 @@
         "protocol.offload.descriptor"
       ],
       "disposition": "delete",
-      "reason": "Protects per-layer Prefill KV import superseded by the sealed catalog and request-manifest handoff.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -6520,8 +6970,8 @@
       "invariant_ids": [
         "protocol.offload.descriptor"
       ],
-      "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "disposition": "delete",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -6577,42 +7027,42 @@
       "target_path": null
     },
     {
-      "node_id": "tests/pap/test_pap_data_plane.py::test_unified_paged_ipc_descriptor_requires_blocks_covering_writable_end",
+      "node_id": "tests/pap/test_pap_data_plane.py::test_prefill_kv_session_manifest_requires_blocks_covering_writable_end",
       "owner_path": "tests/pap/test_pap_data_plane.py",
-      "source_owner": "vllm/pap/data_plane.py",
+      "source_owner": "vllm/pap/protocol/descriptors.py",
       "duration_ms": 230.397,
       "outcome": "passed",
       "invariant_ids": [
         "protocol.offload.descriptor"
       ],
       "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "reason": "Protects lease, capacity, and block-coverage validation on the surviving sealed session manifest.",
       "target_path": null
     },
     {
-      "node_id": "tests/pap/test_pap_data_plane.py::test_unified_paged_ipc_descriptor_requires_capacity_for_writable_end",
+      "node_id": "tests/pap/test_pap_data_plane.py::test_prefill_kv_session_manifest_requires_capacity_for_writable_end",
       "owner_path": "tests/pap/test_pap_data_plane.py",
-      "source_owner": "vllm/pap/data_plane.py",
+      "source_owner": "vllm/pap/protocol/descriptors.py",
       "duration_ms": 230.308,
       "outcome": "passed",
       "invariant_ids": [
         "protocol.offload.descriptor"
       ],
       "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "reason": "Protects lease, capacity, and block-coverage validation on the surviving sealed session manifest.",
       "target_path": null
     },
     {
-      "node_id": "tests/pap/test_pap_data_plane.py::test_unified_paged_ipc_descriptor_requires_lease",
+      "node_id": "tests/pap/test_pap_data_plane.py::test_prefill_kv_session_manifest_requires_lease",
       "owner_path": "tests/pap/test_pap_data_plane.py",
-      "source_owner": "vllm/pap/data_plane.py",
+      "source_owner": "vllm/pap/protocol/descriptors.py",
       "duration_ms": 229.606,
       "outcome": "passed",
       "invariant_ids": [
         "protocol.offload.descriptor"
       ],
       "disposition": "keep",
-      "reason": "Directly protects a surviving PAP behavior, error semantic, or regression not fully covered by a stronger test.",
+      "reason": "Protects lease, capacity, and block-coverage validation on the surviving sealed session manifest.",
       "target_path": null
     },
     {
@@ -8380,7 +8830,7 @@
         "topology.tp.identity"
       ],
       "disposition": "delete",
-      "reason": "Qwen3 no longer selects sampled-token rows for OFFLOAD_EXEC descriptors.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -8393,7 +8843,7 @@
         "topology.tp.identity"
       ],
       "disposition": "delete",
-      "reason": "Missing descriptor token rows ceased to exist when the descriptor token field was removed.",
+      "reason": "Removed with superseded per-layer, non-unified, or single-item PAP runtime paths; the surviving sealed batched path protects the invariant.",
       "target_path": null
     },
     {
@@ -8894,10 +9344,10 @@
   "audit_summary": {
     "total": 584,
     "by_disposition": {
-      "keep": 304,
+      "keep": 254,
       "merge": 20,
-      "rewrite": 84,
-      "delete": 47,
+      "rewrite": 80,
+      "delete": 101,
       "move": 129
     }
   }
