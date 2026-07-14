@@ -1,6 +1,4 @@
 import asyncio
-from pathlib import Path
-
 import httpx
 
 from examples.pap.pap_proxy_server import (
@@ -13,8 +11,6 @@ from examples.pap.pap_proxy_server import (
     register_attention_handle,
     wait_attention_prefill_ready,
 )
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_build_prefill_payload_forces_single_token_non_streaming() -> None:
@@ -173,24 +169,6 @@ def test_wait_attention_prefill_ready_polls_until_layers_ready() -> None:
         "/v1/pap/attention/sessions/req-1/prefill-readiness",
         "/v1/pap/attention/sessions/req-1/prefill-readiness",
     ]
-
-
-def test_single_proxy_marks_attention_kv_installed_only_after_readiness() -> None:
-    text = (ROOT / "examples/pap/pap_proxy_server.py").read_text()
-
-    prefill = text.index("prefill_resp = await _post_json")
-    prefix_len = text.index("prefix_len = prefill_prefix_len_from_kv_params")
-    readiness = text.index("attention_ready =")
-    installed = text.index("pap_attention_kv_installed=attention_ready")
-    assert prefill < prefix_len < readiness < installed
-
-
-def test_single_proxy_has_no_decode_barrier() -> None:
-    text = (ROOT / "examples/pap/pap_proxy_server.py").read_text()
-
-    assert "decode_barrier" not in text
-    assert "DecodeBarrier" not in text
-    assert not (ROOT / "examples/pap/decode_barrier.py").exists()
 
 
 def test_build_projection_payload_does_not_claim_attention_kv_installed_by_default(

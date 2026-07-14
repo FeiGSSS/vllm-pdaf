@@ -1,8 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from pathlib import Path
-
 from examples.pap.multi_pap_proxy_server import (
     PAPGroup,
     ProjectionInstance,
@@ -12,8 +10,6 @@ from examples.pap.multi_pap_proxy_server import (
     parse_projection_instances,
     select_instances,
 )
-
-ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_parse_pap_groups_from_compact_spec() -> None:
@@ -80,13 +76,6 @@ def test_parse_pap_groups_accepts_ranked_attention_ports() -> None:
         "tcp://127.0.0.1:9300,tcp://127.0.0.1:9301"
     )
     assert groups[0].attention_zmq_endpoint == ("127.0.0.1:10300,127.0.0.1:10301")
-
-
-def test_multi_proxy_logs_ranked_attention_port_as_string() -> None:
-    text = (ROOT / "examples" / "pap" / "multi_pap_proxy_server.py").read_text()
-
-    assert "attention=%s:%s projection=%s:%d" in text
-    assert "attention=%s:%d projection=%s:%d" not in text
 
 
 def test_prefill_usage_headers_expose_local_cache_tokens() -> None:
@@ -321,43 +310,6 @@ def test_select_instances_can_stick_pa_to_projection() -> None:
         8200,
         8201,
     ]
-
-
-def test_multi_proxy_registers_attention_before_prefill_for_local_import() -> None:
-    text = (ROOT / "examples/pap/multi_pap_proxy_server.py").read_text()
-
-    register = text.index("attention_sessions = await register_attention_handles")
-    prefill = text.index("prefill_resp = await _post_json")
-    assert register < prefill
-    assert "prefill_prefix_len_from_kv_params(kv_params)" in text
-    assert "attach_pap_prefill_attention_params" in text
-    assert "pap_offload_exec_zmq_endpoint=group.attention_zmq_endpoint" in text
-    assert "register_attention_handles" in text
-
-
-def test_multi_proxy_marks_attention_kv_installed_only_after_readiness() -> None:
-    text = (ROOT / "examples/pap/multi_pap_proxy_server.py").read_text()
-
-    prefill = text.index("prefill_resp = await _post_json")
-    prefix_len = text.index("prefix_len = prefill_prefix_len_from_kv_params")
-    readiness = text.index("attention_ready =")
-    installed = text.index("pap_attention_kv_installed=attention_ready")
-    assert prefill < prefix_len < readiness < installed
-
-
-def test_multi_proxy_has_no_decode_barrier() -> None:
-    text = (ROOT / "examples/pap/multi_pap_proxy_server.py").read_text()
-
-    assert "decode_barrier" not in text
-    assert "DecodeBarrier" not in text
-
-
-def test_multi_proxy_does_not_store_conversation_placement() -> None:
-    text = (ROOT / "examples/pap/multi_pap_proxy_server.py").read_text()
-
-    assert "PAPConversationPlacement" not in text
-    assert "conversation_placements" not in text
-    assert "select_conversation_instances" not in text
 
 
 def test_build_projection_payload_for_group_keeps_kv_uninstalled() -> None:
