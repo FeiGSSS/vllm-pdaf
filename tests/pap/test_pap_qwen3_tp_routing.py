@@ -3,8 +3,8 @@
 
 from vllm.model_executor.models.qwen3 import (
     _pap_bind_offload_exec_mailbox_peer,
+    _pap_cached_offload_exec_transport,
     _pap_endpoint_for_tp_rank,
-    _pap_nixl_mailbox_offload_exec_transport,
     _pap_offload_exec_session_request_id,
     _pap_offload_exec_step_groups,
     _qwen3_deferred_qkv_trace_selected_role,
@@ -77,21 +77,22 @@ def test_pap_projection_mailbox_actor_id_includes_tp_rank(
 ) -> None:
     built = []
 
-    def fake_build_transport(*, actor_id, local_rank):
+    def fake_build_transport(*, actor_id, local_rank, buffer_bytes=None):
+        assert buffer_bytes is None
         built.append((actor_id, local_rank))
         return object()
 
     monkeypatch.setenv("PAP_NIXL_MAILBOX_ACTOR_ID", "projection-3")
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_LOCAL_RANK", "1")
     monkeypatch.setattr(
-        "vllm.pap.transport.build_nixl_mailbox_offload_exec_transport",
+        "vllm.pap.transport.factory.build_nixl_mailbox_offload_exec_transport",
         fake_build_transport,
     )
-    _pap_nixl_mailbox_offload_exec_transport.cache_clear()
+    _pap_cached_offload_exec_transport.cache_clear()
     try:
-        _pap_nixl_mailbox_offload_exec_transport("http://127.0.0.1:8302")
+        _pap_cached_offload_exec_transport("http://127.0.0.1:8302")
     finally:
-        _pap_nixl_mailbox_offload_exec_transport.cache_clear()
+        _pap_cached_offload_exec_transport.cache_clear()
 
     assert len(built) == 1
     actor_id, local_rank = built[0]

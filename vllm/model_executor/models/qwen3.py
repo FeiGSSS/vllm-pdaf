@@ -60,6 +60,10 @@ from vllm.model_executor.layers.logits_processor import LogitsProcessor
 from vllm.model_executor.layers.quantization import QuantizationConfig
 from vllm.model_executor.layers.rotary_embedding import get_rope
 from vllm.model_executor.layers.vocab_parallel_embedding import ParallelLMHead
+from vllm.pap.config import (
+    PAPOffloadExecTransport as PAPOffloadExecTransportKind,
+)
+from vllm.pap.config import parse_offload_exec_transport
 from vllm.pap.deferred_cuda_trace import (
     begin_deferred_cuda_span,
     deferred_cuda_trace_enabled,
@@ -559,8 +563,10 @@ def _pap_req_indices_are_contiguous(req_indices: tuple[int, ...]) -> bool:
     return start >= 0 and req_indices == tuple(range(start, start + len(req_indices)))
 
 
-def _pap_offload_exec_transport_kind() -> str:
-    return os.environ.get("PAP_OFFLOAD_EXEC_TRANSPORT", "nixl_mailbox").lower()
+def _pap_offload_exec_transport_kind() -> PAPOffloadExecTransportKind:
+    return parse_offload_exec_transport(
+        os.environ.get("PAP_OFFLOAD_EXEC_TRANSPORT", "nixl_mailbox")
+    )
 
 
 def _pap_tensor_parallel_rank() -> int:
@@ -763,50 +769,16 @@ def _pap_offload_exec_peer_zmq_port(peer_endpoint: str | None) -> int:
     )
 
 
-@lru_cache(maxsize=1)
-def _pap_offload_exec_transport():
-    from vllm.pap.transport import (
-        build_local_fast_offload_exec_transport,
-        build_nixl_mailbox_offload_exec_transport,
-    )
-
-    transport = _pap_offload_exec_transport_kind()
-    local_rank = _pap_tensor_parallel_rank()
-    if transport in {"nixl", "nixl_mailbox"}:
-        return build_nixl_mailbox_offload_exec_transport(
-            actor_id=os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "projection"),
-            local_rank=local_rank,
-        )
-    if transport in {"local_fast", "local-fast", "cuda_ipc_fast"}:
-        return build_local_fast_offload_exec_transport(
-            actor_id=os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "projection"),
-            local_rank=local_rank,
-        )
-
-    raise RuntimeError(
-        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; use "
-        "nixl_mailbox or local_fast"
-    )
-
-
 @cache
-def _pap_nixl_mailbox_offload_exec_transport(attention_endpoint: str):
-    from vllm.pap.transport import (
-        build_local_fast_offload_exec_transport,
-        build_nixl_mailbox_offload_exec_transport,
-    )
+def _pap_cached_offload_exec_transport(attention_endpoint: str):
+    from vllm.pap.transport.factory import build_offload_exec_transport
 
     local_rank = _pap_tensor_parallel_rank()
     actor_base = os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "projection")
     endpoint_hash = hashlib.sha1(attention_endpoint.encode("utf-8")).hexdigest()[:12]
     actor_id = f"{actor_base}-r{local_rank}-{endpoint_hash}"
-    transport = _pap_offload_exec_transport_kind()
-    if transport in {"local_fast", "local-fast", "cuda_ipc_fast"}:
-        return build_local_fast_offload_exec_transport(
-            actor_id=actor_id,
-            local_rank=local_rank,
-        )
-    return build_nixl_mailbox_offload_exec_transport(
+    return build_offload_exec_transport(
+        transport=_pap_offload_exec_transport_kind(),
         actor_id=actor_id,
         local_rank=local_rank,
     )
@@ -816,15 +788,7 @@ def _pap_offload_exec_transport_for_attention_endpoint(
     attention_endpoint: str | None,
     offload_exec_zmq_endpoint: str | None = None,
 ):
-    transport = _pap_offload_exec_transport_kind()
-    if transport in {"nixl", "nixl_mailbox"}:
-        return _pap_nixl_mailbox_offload_exec_transport(str(attention_endpoint or ""))
-    if transport in {"local_fast", "local-fast", "cuda_ipc_fast"}:
-        return _pap_nixl_mailbox_offload_exec_transport(str(attention_endpoint or ""))
-    raise RuntimeError(
-        f"PAP OFFLOAD_EXEC transport {transport!r} is not supported; use "
-        "nixl_mailbox or local_fast"
-    )
+    return _pap_cached_offload_exec_transport(str(attention_endpoint or ""))
 
 
 def _pap_bind_offload_exec_mailbox_peer(

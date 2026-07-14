@@ -29,10 +29,7 @@ from vllm.pap.config import (
     PAPOffloadExecTransport,
     PAPRuntimeConfig,
 )
-from vllm.pap.transport import (
-    build_local_fast_offload_exec_transport,
-    build_nixl_mailbox_offload_exec_transport,
-)
+from vllm.pap.transport.factory import build_offload_exec_transport
 from vllm.pap.protocol import (
     PAPPrefillKVCacheCatalogDescriptor,
     PAPPrefillKVSessionManifest,
@@ -596,17 +593,11 @@ def _build_attention_offload_exec_transport(
     local_rank: int,
     transport: PAPOffloadExecTransport,
 ) -> Any:
-    if transport is PAPOffloadExecTransport.NIXL_MAILBOX:
-        return build_nixl_mailbox_offload_exec_transport(
-            actor_id=actor_id,
-            local_rank=local_rank,
-        )
-    if transport is PAPOffloadExecTransport.LOCAL_FAST:
-        return build_local_fast_offload_exec_transport(
-            actor_id=actor_id,
-            local_rank=local_rank,
-        )
-    raise AssertionError(f"unsupported PAP OFFLOAD_EXEC transport: {transport}")
+    return build_offload_exec_transport(
+        transport=transport,
+        actor_id=actor_id,
+        local_rank=local_rank,
+    )
 
 
 app = create_app()

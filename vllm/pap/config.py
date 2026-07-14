@@ -491,7 +491,7 @@ class PAPRuntimeConfig:
             ),
         )
 
-        exec_transport = _parse_exec_transport(
+        exec_transport = parse_offload_exec_transport(
             _env_text(env, "PAP_OFFLOAD_EXEC_TRANSPORT", "nixl_mailbox")
         )
         kv_transport = _parse_kv_transport(
@@ -954,7 +954,22 @@ def _parse_enum(enum_type: type[_EnumT], value: str, name: str) -> _EnumT:
         ) from exc
 
 
-def _parse_exec_transport(value: str) -> PAPOffloadExecTransport:
+def parse_offload_exec_transport(
+    value: str | PAPOffloadExecTransport,
+) -> PAPOffloadExecTransport:
+    """Normalize a PAP execution transport name.
+
+    Args:
+        value: Canonical transport, configuration enum, or supported alias.
+
+    Returns:
+        Canonical execution transport enum.
+
+    Raises:
+        PAPConfigError: If the transport is unsupported.
+    """
+    if isinstance(value, PAPOffloadExecTransport):
+        return value
     normalized = _normalize_flag_value(value)
     aliases = {
         "nixl": PAPOffloadExecTransport.NIXL_MAILBOX,

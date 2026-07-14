@@ -3,6 +3,7 @@
 """PAP tensor transport backends."""
 
 from vllm.pap.protocol import PAPOffloadExecTransport, PAPTensorTransport
+from vllm.pap.transport.factory import build_offload_exec_transport
 from vllm.pap.transport.local_fast import (
     PAPLocalFastTransport,
     build_local_fast_offload_exec_transport,
@@ -25,6 +26,7 @@ __all__ = [
     "PAPNixlMailboxEndpoint",
     "PAPOffloadExecTransport",
     "PAPTensorTransport",
+    "build_offload_exec_transport",
     "build_local_fast_offload_exec_transport",
     "build_nixl_mailbox_offload_exec_transport",
 ]

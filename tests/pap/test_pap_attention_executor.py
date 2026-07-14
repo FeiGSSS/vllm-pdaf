@@ -14,6 +14,7 @@ from httpx import ASGITransport, AsyncClient, Response
 
 from vllm.pap.attention import compute as attention_compute_module
 from vllm.pap.attention import runtime as attention_runtime_module
+from vllm.pap.config import PAPOffloadExecTransport
 from vllm.pap.kv import metadata as kv_metadata_module
 from vllm.pap.kv import state as kv_state_module
 
@@ -969,7 +970,7 @@ def test_attention_executor_starts_offload_exec_transport(monkeypatch) -> None:
 
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_LOCAL_RANK", "2")
     monkeypatch.setattr(
-        "vllm.pap.attention_executor.build_nixl_mailbox_offload_exec_transport",
+        "vllm.pap.attention_executor.build_offload_exec_transport",
         fake_build_transport,
     )
     app = create_app()
@@ -978,6 +979,7 @@ def test_attention_executor_starts_offload_exec_transport(monkeypatch) -> None:
 
     assert app.state.offload_exec_transport is fake_transport
     assert fake_build_transport.kwargs == {
+        "transport": PAPOffloadExecTransport.NIXL_MAILBOX,
         "actor_id": "attention",
         "local_rank": 2,
     }
