@@ -125,7 +125,7 @@ def register_prefill_kv_catalog(
     """Register one process-lifetime Prefill KV-cache tensor in Attention."""
 
     from vllm.pap.protocol import PAPPrefillKVCacheCatalogDescriptor
-    from vllm.pap.remote_attention import (
+    from vllm.pap.protocol.wire import (
         deserialize_tensor_bundle,
         serialize_tensor_bundle,
     )
@@ -189,7 +189,7 @@ def publish_prefill_kv_session_manifest(
         pap_pin_blocks,
     )
     from vllm.pap.protocol import PAPPrefillKVSessionManifest
-    from vllm.pap.remote_attention import (
+    from vllm.pap.protocol.wire import (
         deserialize_tensor_bundle,
         serialize_tensor_bundle,
     )

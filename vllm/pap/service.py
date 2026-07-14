@@ -34,7 +34,6 @@ from vllm.pap.transport import (
     build_nixl_mailbox_offload_exec_transport,
 )
 from vllm.pap.protocol import (
-    PAPOffloadExecBatchDescriptor,
     PAPPrefillKVCacheCatalogDescriptor,
     PAPPrefillKVSessionManifest,
 )
@@ -116,55 +115,12 @@ logger = logging.getLogger("pap_attention")
 def compute_binary_attention_response(
     registry: PAPAttentionRegistry,
     payload: bytes,
-    *,
-    offload_exec_transport: Any | None = None,
-    offload_exec_lock: Any | None = None,
 ) -> bytes:
-    """Handle the sealed KV handoff and batched OFFLOAD_EXEC wire protocol."""
-    from vllm.pap.protocol import (
-        PAPOffloadExecBatchDescriptor,
-        PAPOffloadExecDescriptor,
-    )
-    from vllm.pap.remote_attention import (
-        COMPACT_OFFLOAD_EXEC_BATCH_MAGIC,
-        deserialize_compact_offload_exec_batch_command,
+    """Handle the sealed KV handoff wire protocol."""
+    from vllm.pap.protocol.wire import (
         deserialize_tensor_bundle,
-        serialize_compact_offload_exec_ack,
         serialize_tensor_bundle,
     )
-
-    if payload.startswith(COMPACT_OFFLOAD_EXEC_BATCH_MAGIC):
-        if offload_exec_transport is None:
-            raise RuntimeError("PAP OFFLOAD_EXEC transport is not initialized")
-        metadata = deserialize_compact_offload_exec_batch_command(payload)
-        descriptor = PAPOffloadExecBatchDescriptor(
-            layer_name=str(metadata["layer_name"]),
-            items=tuple(
-                PAPOffloadExecDescriptor(
-                    request_id=str(item["request_id"]),
-                    layer_name=str(metadata["layer_name"]),
-                    step=int(item["step"]),
-                    scale=float(item["scale"]),
-                )
-                for item in metadata["items"]
-            ),
-        )
-        if offload_exec_lock is None:
-            run_offload_exec_batch_once(
-                registry=registry,
-                transport=offload_exec_transport,
-                remote_address=str(metadata["remote_address"]),
-                descriptor=descriptor,
-            )
-        else:
-            with offload_exec_lock:
-                run_offload_exec_batch_once(
-                    registry=registry,
-                    transport=offload_exec_transport,
-                    remote_address=str(metadata["remote_address"]),
-                    descriptor=descriptor,
-                )
-        return serialize_compact_offload_exec_ack()
 
     metadata, _tensors = deserialize_tensor_bundle(payload)
     command = str(metadata.get("command", ""))
@@ -201,8 +157,7 @@ def compute_binary_attention_response(
             {},
         )
     raise ValueError(
-        f"unsupported PAP wire command {command!r}; use sealed KV handoff "
-        "and batched OFFLOAD_EXEC"
+        f"unsupported PAP wire command {command!r}; use sealed KV handoff"
     )
 
 
@@ -228,7 +183,6 @@ def start_attention_tcp_server(
     *,
     host: str,
     port: int,
-    app: FastAPI | None = None,
 ) -> socketserver.TCPServer:
     class Handler(socketserver.BaseRequestHandler):
         def handle(self) -> None:
@@ -243,12 +197,6 @@ def start_attention_tcp_server(
                     response = compute_binary_attention_response(
                         registry,
                         payload,
-                        offload_exec_transport=(
-                            None if app is None else app.state.offload_exec_transport
-                        ),
-                        offload_exec_lock=(
-                            None if app is None else app.state.offload_exec_lock
-                        ),
                     )
                     self.request.sendall(
                         len(response).to_bytes(8, byteorder="little") + response
@@ -672,7 +620,6 @@ def main() -> None:
             app.state.registry,
             host=args.host,
             port=args.tcp_port,
-            app=app,
         )
     if args.offload_exec_zmq_port is not None:
         logger.info(

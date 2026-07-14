@@ -21,6 +21,10 @@ from vllm.pap.protocol.models import (
     PAPOffloadExecMailboxActivityRequest,
     PAPOffloadExecMailboxBindRequest,
 )
+from vllm.pap.protocol.wire import (
+    deserialize_tensor_bundle,
+    serialize_tensor_bundle,
+)
 
 __all__ = [
     "PAPAttentionRegistration",
@@ -37,5 +41,7 @@ __all__ = [
     "PAPPrefillKVCacheCatalogDescriptor",
     "PAPPrefillKVSessionManifest",
     "PAPTensorTransport",
+    "deserialize_tensor_bundle",
     "pap_offload_exec_trace_id",
+    "serialize_tensor_bundle",
 ]

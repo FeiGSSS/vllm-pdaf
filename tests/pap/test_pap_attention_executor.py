@@ -444,7 +444,7 @@ def test_sealed_manifests_preserve_shared_prefix_and_private_tails() -> None:
 
 
 def test_attention_service_rejects_legacy_prefill_wire_command() -> None:
-    from vllm.pap.remote_attention import serialize_tensor_bundle
+    from vllm.pap.protocol.wire import serialize_tensor_bundle
 
     payload = serialize_tensor_bundle(
         {"command": "import_prefill_paged_kv_ipc", "descriptor": {}},

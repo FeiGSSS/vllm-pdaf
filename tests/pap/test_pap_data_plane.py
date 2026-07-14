@@ -412,7 +412,7 @@ def test_sealed_prefill_kv_handoff_posts_catalog_and_manifest_without_sync(
     monkeypatch,
 ) -> None:
     from vllm.pap.kv_lease import reset_global_kv_lease_registry
-    from vllm.pap.remote_attention import (
+    from vllm.pap.protocol.wire import (
         deserialize_tensor_bundle,
         serialize_tensor_bundle,
     )
