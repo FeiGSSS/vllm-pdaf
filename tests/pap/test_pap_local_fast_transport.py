@@ -11,6 +11,11 @@ from vllm.pap.cuda_stream_memops import (
     stream_write_value32,
 )
 from vllm.pap.transport.local_fast import (
+    _LocalFastMessage,
+    PAPLocalFastTransport,
+)
+from vllm.pap.transport.local_fast_endpoint import _open_or_create_doorbell
+from vllm.pap.transport.local_fast_protocol import (
     DTYPE_CODE_BFLOAT16,
     DIR_OUTPUT,
     DIR_QKV,
@@ -25,11 +30,8 @@ from vllm.pap.transport.local_fast import (
     _doorbell_read_metadata,
     _doorbell_record_offset,
     _doorbell_write,
-    _LocalFastMessage,
-    _open_or_create_doorbell,
     _payload_metadata,
     _signal_index,
-    PAPLocalFastTransport,
 )
 from vllm.pap.protocol import PAPOffloadExecBatchDescriptor
 
