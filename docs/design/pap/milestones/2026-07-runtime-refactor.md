@@ -1,3 +1,13 @@
+---
+pap_doc_schema: 1
+status: active
+canonical: null
+superseded_by: null
+related_experiments:
+  - PAP-20260714-SEAL-HANDOFF-KV
+last_validated_commit: bcbcefa127aabb06de5daf1d6adc50724b2c764b
+---
+
 # PAP Runtime Milestone 重构设计
 
 日期：2026-07-14
@@ -100,7 +110,13 @@ tests、完整 PAP CPU suite 和 P17 C1 quick。
 只迁移已经收敛的主路径。每次拆出一个有清晰接口的职责单元，不在文件移动期间
 加入新算法或性能优化。
 
-### 4.5 Milestone freeze
+### 4.5 文档迁移
+
+建立 PAP canonical 文档入口，把现有 `docs/design` 和 `docs/superpowers/specs`
+分类为 current、milestone、archived 或 superseded。提取旧 implementation plans
+中的实际决策和验证结果，更新全部引用后删除 `docs/superpowers/`。
+
+### 4.6 Milestone freeze
 
 完成全部测试、registry 校验、P17 C1 和三轮 P17 C4 formal，并生成前后对比报告。
 
@@ -403,9 +419,106 @@ record；新 runner 缺少 required metadata 或 strict audit 时 fail closed。
 canonical record。纳入 A 级回填的旧结果文档增加统一状态头，包含当前状态、证据
 等级、canonical experiment ID 和 `superseded_by`。
 
-## 10. 验收标准
+## 10. 文档治理
 
-### 10.1 阶段 Gate
+### 10.1 目标结构
+
+PAP 的长期文档统一进入：
+
+```text
+docs/design/pap/
+├── README.md                 # 唯一入口、当前状态和文档地图
+├── architecture.md           # 当前唯一有效的 PAP 架构
+├── runtime.md                # runtime 模块、状态机和接口
+├── benchmark-methodology.md  # workload、证据等级和统计规则
+├── experiment-index.md       # experiment registry 生成的索引
+├── milestones/               # 已冻结里程碑的设计与最终结果
+└── archive/
+    ├── designs/              # 被替代但有历史价值的设计
+    ├── experiments/          # 历史实验报告
+    └── reports/              # 周报、handoff 和阶段报告
+```
+
+`README.md` 是读者的唯一首入口。current 文档不得要求读者先阅读 archive 或 Git
+history 才能理解当前 PAP。
+
+### 10.2 文档状态
+
+PAP 文档使用机器可读的状态头：
+
+```yaml
+---
+pap_doc_schema: 1
+status: active | current | milestone | archived | superseded
+canonical: relative/path/or/null
+superseded_by: stable-milestone-or-document-id-or-null
+related_experiments: []
+last_validated_commit: full-git-commit-or-null
+---
+```
+
+- `active`：已经批准、仍在实施或验证中的 milestone 设计；
+- `current`：当前唯一有效的架构或方法；
+- `milestone`：某个已冻结阶段的设计与最终结果；
+- `archived`：仍有历史价值，但不再代表当前实现；
+- `superseded`：已被明确替代，必须提供 `canonical` 或 `superseded_by`。
+
+archive 保留历史原文；除增加状态头、修复链接和明显的事实标注外，不把旧文档
+重写成当前结论。
+
+本设计在实施期间保持 `active`；只有 Final freeze 全部通过后才能改为
+`milestone`。
+
+### 10.3 `docs/superpowers` 迁移
+
+本项目后续不再使用 Superpowers workflow，也不再创建
+`docs/superpowers/specs` 或 `docs/superpowers/plans`。
+
+- 仍有效的 spec 内容合并进 `architecture.md`、`runtime.md` 或 milestone 文档；
+- 已被替代但有历史价值的 spec 移入 `archive/designs`；
+- implementation plan 不整体迁入 archive，只提取已经发生的决策、验证命令和
+  结果；
+- 完成内容提取并更新全部 inbound links 后，删除 `docs/superpowers/`；
+- 删除使用独立 commit，删除前必须证明 tracked 文档和源码中不存在
+  `docs/superpowers`、`superpowers/specs` 或 `superpowers/plans` 引用。
+
+Git history 是旧 implementation plans 的最终回溯入口。
+
+### 10.4 临时实施计划
+
+本 milestone 的 implementation plan 写入
+`dev-memory/2026-07-14_PAP_runtime重构实施计划.md`。它是未跟踪的本地执行清单，
+不得成为 canonical documentation，也不作为最终交付物。计划完成后可以删除。
+
+### 10.5 现有 `docs/design` 分类
+
+每个现有 PAP 文档必须进入迁移清单，记录原路径、文档类型、状态、目标路径、
+canonical successor 和关联 experiment IDs。处理规则为：
+
+- 当前有效架构合并到少量 current 文档；
+- 已冻结的阶段设计和最终结果进入 `milestones`；
+- 旧实验报告进入 `archive/experiments`，结论以 registry 为准；
+- handoff、idea book、weekly report 和旧 stage report 进入 `archive/reports`；
+- superseded 文档必须指向 current 文档或 successor milestone；
+- 历史索引不得继续直接引用 implementation plans；
+- raw results、service logs 和 profiler artifacts 不进入 `docs`。
+
+### 10.6 文档 Gate
+
+文档迁移完成必须满足：
+
+- `docs/design/pap/README.md` 能导航全部 current、milestone 和 archive 类别；
+- 每份 PAP 文档有合法状态头；
+- current 事实、指标和决策只有一个 canonical source；
+- registry 生成的索引与 tracked records 一致；
+- 所有相对 Markdown 链接存在；
+- tracked tree 中不存在指向 `docs/superpowers` 的引用；
+- `docs/superpowers/` 已删除；
+- 历史 raw data 未移动或改写。
+
+## 11. 验收标准
+
+### 11.1 阶段 Gate
 
 | 阶段 | Gate |
 | --- | --- |
@@ -414,9 +527,10 @@ canonical record。纳入 A 级回填的旧结果文档增加统一状态头，�
 | 每类路径删除 | targeted tests、完整 CPU suite、P17 C1 quick |
 | 每个主要模块拆分 | import/contract tests、完整 CPU suite、P17 C1 quick |
 | 实验治理 | schema、A 级历史记录和生成索引校验 |
+| 文档治理 | 状态 schema、链接、canonical source、零 superpowers 引用 |
 | Final freeze | 完整测试、P17 C1、P17 C4 formal 三轮、前后报告 |
 
-### 10.2 正确性
+### 11.2 正确性
 
 - 所有请求成功，failed 为零；
 - output digest 一致；
@@ -425,13 +539,13 @@ canonical record。纳入 A 级回填的旧结果文档增加统一状态头，�
 - drain 后 active sessions 为零；
 - 无隐藏 OOM、timeout、stale update 或 server error。
 
-### 10.3 性能
+### 11.3 性能
 
 使用三轮中位数比较 R1 TTFT、R1 TPOT、steady TTFT 和 steady TPOT。任一指标相对
 pre-refactor baseline 回退超过 `5%` 时复跑一次；复跑仍超过即视为 regression。
 对应提交必须定位和修复或回退，不得通过恢复旧 runtime flag 掩盖问题。
 
-## 11. 非目标
+## 12. 非目标
 
 - 新性能优化；
 - 新 topology 或新模型支持；
@@ -441,7 +555,7 @@ pre-refactor baseline 回退超过 `5%` 时复跑一次；复跑仍超过即视�
 - 为测试数量或 coverage 百分比制造测试；
 - 在文件移动中改变数学、协议或调度行为。
 
-## 12. 交付物
+## 13. 交付物
 
 1. 当前 HEAD 的 P17 pre-refactor formal baseline；
 2. PAP 测试不变量账本和逐项 disposition；
@@ -451,9 +565,11 @@ pre-refactor baseline 回退超过 `5%` 时复跑一次；复跑仍超过即视�
 6. 关键历史实验的 versioned registry；
 7. 自动生成和校验的实验索引；
 8. post-refactor formal 结果与前后对比报告；
-9. 当前能力、未验证能力和后续工作说明。
+9. canonical PAP 文档、milestone/archive 分类和迁移清单；
+10. 已删除 `docs/superpowers` 且不存在残留引用；
+11. 当前能力、未验证能力和后续工作说明。
 
-## 13. 风险与回退
+## 14. 风险与回退
 
 - 每类删除和每个主要模块拆分使用独立 commit，便于精确回退；
 - benchmark artifacts 保持 untracked，不与源码提交混合；
