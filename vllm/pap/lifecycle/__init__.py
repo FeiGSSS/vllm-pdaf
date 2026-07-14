@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Compatibility imports for PAP Attention sessions."""
+"""PAP request lifecycle primitives."""
 
-from vllm.pap.lifecycle import (
+from vllm.pap.lifecycle.session import (
     AttentionDecodeDescriptor,
     AttentionSession,
     AttentionSessionStore,

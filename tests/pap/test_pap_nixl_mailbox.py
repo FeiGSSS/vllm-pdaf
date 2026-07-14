@@ -8,8 +8,8 @@ from threading import Condition, RLock
 import pytest
 import torch
 
-import vllm.pap.nixl_mailbox as nixl_mailbox
-from vllm.pap.nixl_mailbox import (
+import vllm.pap.transport.nixl as nixl_mailbox
+from vllm.pap.transport.nixl import (
     InProcessPAPMailboxBackend,
     PAPMailboxActor,
     PAPMailboxMessage,

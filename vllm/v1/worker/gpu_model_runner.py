@@ -106,7 +106,7 @@ from vllm.multimodal.inputs import (
     PlaceholderRange,
 )
 from vllm.multimodal.utils import get_mm_features_in_window, group_and_batch_mm_kwargs
-from vllm.pap.peer_activity import (
+from vllm.pap.topology import (
     PAPProjectionPeerActivity,
     sync_pap_projection_peer_activity,
 )
@@ -1217,7 +1217,7 @@ class GPUModelRunner(
         request_ids: Sequence[str],
         seq_lens_cpu_upper_bound: Sequence[int],
     ) -> tuple[dict[str, Any], ...]:
-        from vllm.pap.data_plane import build_offload_exec_route_groups
+        from vllm.pap.topology import build_offload_exec_route_groups
 
         request_ids_tuple = tuple(str(req_id) for req_id in request_ids)
         return build_offload_exec_route_groups(
@@ -1240,7 +1240,7 @@ class GPUModelRunner(
         route_groups: Iterable[dict[str, Any]],
         request_slice: slice,
     ) -> tuple[dict[str, Any], ...]:
-        from vllm.pap.data_plane import (
+        from vllm.pap.topology import (
             filter_offload_exec_route_groups_for_request_slice,
         )
 

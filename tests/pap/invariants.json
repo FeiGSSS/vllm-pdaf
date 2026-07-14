@@ -116,6 +116,15 @@
       "replacement_node_ids": [
         "tests/pap/test_pap_qwen3_tp_routing.py::test_pap_offload_exec_step_groups_are_built_once_per_forward"
       ]
+    },
+    {
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_logs_ipc_prefill_import",
+      "removed_at": "2026-07-14",
+      "task": "4.2",
+      "reason": "The test only asserted a log string from the removed per-layer Prefill KV import path.",
+      "replacement_node_ids": [
+        "tests/pap/test_pap_attention_executor.py::test_unified_decode_waits_for_complete_registered_prefix"
+      ]
     }
   ],
   "invariants": [
@@ -456,7 +465,7 @@
       "statement": "Prefill owns the only physical paged KV, Projection stays KV-unaware, and Attention appends decode KV into owned capacity.",
       "level": "integration",
       "source_owners": [
-        "vllm/pap/attention_executor.py"
+        "vllm/pap/service.py"
       ],
       "regressions": [
         {
@@ -487,7 +496,7 @@
       "statement": "A request-scoped sealed manifest installs a complete static layer catalog atomically and rejects incomplete or stale generations.",
       "level": "integration",
       "source_owners": [
-        "vllm/pap/attention_executor.py",
+        "vllm/pap/service.py",
         "vllm/pap/data_plane.py"
       ],
       "regressions": [
@@ -514,7 +523,7 @@
       "statement": "Decode append maps every active row to valid owned slots, detects ABA and topology conflicts, and performs GPU work outside locks.",
       "level": "unit",
       "source_owners": [
-        "vllm/pap/attention_executor.py"
+        "vllm/pap/service.py"
       ],
       "regressions": [
         {
@@ -620,7 +629,7 @@
       "statement": "Metadata and slot-plan caches use generation-safe fast keys, preserve row order and LRU atomicity, and fall back only for input.",
       "level": "unit",
       "source_owners": [
-        "vllm/pap/attention_executor.py"
+        "vllm/pap/service.py"
       ],
       "regressions": [
         {
@@ -655,7 +664,7 @@
       "statement": "Single-Projection topology executes each ready Attention item directly while preserving CUDA readiness and input lifetime.",
       "level": "unit",
       "source_owners": [
-        "vllm/pap/attention_executor.py"
+        "vllm/pap/service.py"
       ],
       "regressions": [
         {
@@ -664,7 +673,7 @@
         }
       ],
       "node_ids": [
-        "tests/pap/test_pap_attention_executor.py::test_attention_executor_declares_offload_exec_zmq_port",
+        "tests/pap/test_pap_attention_executor.py::test_attention_service_parses_offload_exec_zmq_port",
         "tests/pap/test_pap_attention_executor.py::test_attention_executor_rejects_nccl_offload_exec_transport",
         "tests/pap/test_pap_attention_executor.py::test_attention_executor_skips_offload_exec_when_zmq_port_is_none",
         "tests/pap/test_pap_attention_executor.py::test_attention_executor_starts_offload_exec_transport",
@@ -696,7 +705,7 @@
       "statement": "Multi-Projection topology combines only compatible same-layer work and scatters each result to its stable originating source.",
       "level": "unit",
       "source_owners": [
-        "vllm/pap/attention_executor.py",
+        "vllm/pap/service.py",
         "vllm/pap/attention_scheduler.py"
       ],
       "regressions": [
@@ -3970,7 +3979,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_async_prefill_import_discards_stale_session_epoch",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 246.981,
       "outcome": "passed",
       "invariant_ids": [
@@ -3983,7 +3992,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_async_prefill_import_preserves_unified_kv_descriptor",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 232.24,
       "outcome": "passed",
       "invariant_ids": [
@@ -3996,7 +4005,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_append_and_compute_keeps_stateful_kv",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 275.679,
       "outcome": "passed",
       "invariant_ids": [
@@ -4009,7 +4018,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_batch_binary_accepts_packed_qkv",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 262.321,
       "outcome": "passed",
       "invariant_ids": [
@@ -4022,7 +4031,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_batch_binary_append_and_compute_keeps_stateful_kv",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 275.841,
       "outcome": "passed",
       "invariant_ids": [
@@ -4035,7 +4044,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_binary_append_and_compute_keeps_stateful_kv",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 265.899,
       "outcome": "passed",
       "invariant_ids": [
@@ -4048,7 +4057,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_binary_imports_prefill_kv_before_decode",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 257.805,
       "outcome": "passed",
       "invariant_ids": [
@@ -4061,7 +4070,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_binary_imports_prefill_kv_ipc_descriptor",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 245.168,
       "outcome": "passed",
       "invariant_ids": [
@@ -4074,7 +4083,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_binds_each_projection_to_distinct_transport",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 254.298,
       "outcome": "passed",
       "invariant_ids": [
@@ -4087,7 +4096,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_builds_central_combine_dispatcher",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 242.762,
       "outcome": "passed",
       "invariant_ids": [
@@ -4100,7 +4109,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_central_mode_shares_one_dispatcher",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 247.601,
       "outcome": "passed",
       "invariant_ids": [
@@ -4113,7 +4122,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_compact_tcp_payload_keeps_stateful_kv",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 250.806,
       "outcome": "passed",
       "invariant_ids": [
@@ -4126,7 +4135,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_compute_existing_prefill_token_does_not_append",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 264.169,
       "outcome": "passed",
       "invariant_ids": [
@@ -4139,7 +4148,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_compute_route_returns_attention_output",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 269.598,
       "outcome": "passed",
       "invariant_ids": [
@@ -4150,22 +4159,22 @@
       "target_path": null
     },
     {
-      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_declares_offload_exec_zmq_port",
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_service_parses_offload_exec_zmq_port",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 237.5,
       "outcome": "passed",
       "invariant_ids": [
         "attention.execution.direct"
       ],
-      "disposition": "rewrite",
-      "reason": "The invariant is necessary, but source-string assertions must become behavior or structured configuration tests.",
-      "target_path": "tests/pap/contract/test_vllm_integration.py"
+      "disposition": "keep",
+      "reason": "Behaviorally protects the supported OFFLOAD_EXEC service CLI contract.",
+      "target_path": null
     },
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_imports_prefill_kv_before_stateful_decode",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 268.382,
       "outcome": "passed",
       "invariant_ids": [
@@ -4178,7 +4187,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_ipc_import_keeps_opened_tensor_views",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 253.085,
       "outcome": "passed",
       "invariant_ids": [
@@ -4191,20 +4200,20 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_logs_ipc_prefill_import",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 241.488,
       "outcome": "passed",
       "invariant_ids": [
         "kv.unified.ownership"
       ],
-      "disposition": "rewrite",
-      "reason": "The invariant is necessary, but source-string assertions must become behavior or structured configuration tests.",
-      "target_path": "tests/pap/contract/test_vllm_integration.py"
+      "disposition": "delete",
+      "reason": "Only asserted a log string from the removed per-layer Prefill KV import path.",
+      "target_path": null
     },
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_paged_ipc_import_keeps_prefill_block_views",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 245.997,
       "outcome": "passed",
       "invariant_ids": [
@@ -4217,7 +4226,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_records_scheduler_descriptor_state",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 255.893,
       "outcome": "passed",
       "invariant_ids": [
@@ -4230,7 +4239,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_rejects_bad_scheduler_descriptor",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 244.207,
       "outcome": "passed",
       "invariant_ids": [
@@ -4243,7 +4252,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_rejects_decode_when_prompt_kv_is_missing",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 5265.909,
       "outcome": "passed",
       "invariant_ids": [
@@ -4256,7 +4265,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_rejects_nccl_offload_exec_transport",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 244.269,
       "outcome": "passed",
       "invariant_ids": [
@@ -4269,7 +4278,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_rejects_unknown_dispatch_mode",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 239.64,
       "outcome": "passed",
       "invariant_ids": [
@@ -4282,7 +4291,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_skips_offload_exec_when_zmq_port_is_none",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 245.576,
       "outcome": "passed",
       "invariant_ids": [
@@ -4295,7 +4304,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_starts_offload_exec_transport",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 244.806,
       "outcome": "passed",
       "invariant_ids": [
@@ -4308,7 +4317,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_tracks_active_projection_membership",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 246.762,
       "outcome": "passed",
       "invariant_ids": [
@@ -4321,7 +4330,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_tracks_decode_progress_per_layer",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 270.809,
       "outcome": "passed",
       "invariant_ids": [
@@ -4334,7 +4343,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_fast_path_stats_endpoint",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 257.614,
       "outcome": "passed",
       "invariant_ids": [
@@ -4347,7 +4356,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_prefill_readiness_endpoint",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 251.547,
       "outcome": "passed",
       "invariant_ids": [
@@ -4360,7 +4369,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_caches_resolved_request_ids",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 238.122,
       "outcome": "passed",
       "invariant_ids": [
@@ -4373,7 +4382,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_can_pin_state_to_configured_device",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 250.614,
       "outcome": "passed",
       "invariant_ids": [
@@ -4386,7 +4395,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_does_not_release_lease_before_commit_ack",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 236.5,
       "outcome": "passed",
       "invariant_ids": [
@@ -4399,7 +4408,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_keeps_decode_kv_out_of_prefill_paged_block",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 239.807,
       "outcome": "passed",
       "invariant_ids": [
@@ -4412,7 +4421,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_keeps_in_block_decode_tokens_attention_local",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 240.102,
       "outcome": "passed",
       "invariant_ids": [
@@ -4425,7 +4434,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_keeps_new_decode_block_attention_local",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 234.382,
       "outcome": "passed",
       "invariant_ids": [
@@ -4438,7 +4447,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_lists_prefill_readiness",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 246.854,
       "outcome": "passed",
       "invariant_ids": [
@@ -4451,7 +4460,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_matches_wrapped_vllm_request_ids",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 245.297,
       "outcome": "passed",
       "invariant_ids": [
@@ -4464,7 +4473,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_records_layer_event_without_payload_tensors",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 243.26,
       "outcome": "passed",
       "invariant_ids": [
@@ -4477,7 +4486,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_records_prefill_kv_handle",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 245.027,
       "outcome": "passed",
       "invariant_ids": [
@@ -4490,7 +4499,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_reimport_preserves_local_decode_kv",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 230.763,
       "outcome": "passed",
       "invariant_ids": [
@@ -4503,7 +4512,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_release_session_notifies_prefill_lease",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 237.791,
       "outcome": "passed",
       "invariant_ids": [
@@ -4516,7 +4525,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_reports_active_session_count",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 248.977,
       "outcome": "passed",
       "invariant_ids": [
@@ -4529,7 +4538,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_reregister_releases_replaced_prefill_lease",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 241.492,
       "outcome": "passed",
       "invariant_ids": [
@@ -4542,7 +4551,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_returns_registered_snapshot_copy",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 241.669,
       "outcome": "passed",
       "invariant_ids": [
@@ -4555,7 +4564,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_uses_local_decode_when_prefill_block_full",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 240.948,
       "outcome": "passed",
       "invariant_ids": [
@@ -4568,7 +4577,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_registry_waits_for_layer_prefill_before_decode",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 247.021,
       "outcome": "passed",
       "invariant_ids": [
@@ -4581,7 +4590,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_release_endpoint_runs_in_fastapi_threadpool",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 251.571,
       "outcome": "passed",
       "invariant_ids": [
@@ -4594,7 +4603,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_release_waits_for_kv_ready_token_but_not_final_token",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 258.676,
       "outcome": "passed",
       "invariant_ids": [
@@ -4607,7 +4616,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_central_combine_compatibility_key_rejects_layer_or_scale",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 234.423,
       "outcome": "passed",
       "invariant_ids": [
@@ -4620,7 +4629,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_central_combine_executes_once_and_scatters_to_sources",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 244.88,
       "outcome": "passed",
       "invariant_ids": [
@@ -4633,7 +4642,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_central_combine_single_item_reuses_fifo_executor",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 239.884,
       "outcome": "passed",
       "invariant_ids": [
@@ -4646,7 +4655,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_central_dispatcher_computes_and_sends_to_each_source",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 248.271,
       "outcome": "passed",
       "invariant_ids": [
@@ -4659,7 +4668,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_central_dispatcher_preserves_cuda_ready_dependency",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 234.247,
       "outcome": "passed",
       "invariant_ids": [
@@ -4672,7 +4681,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_central_dispatcher_preserves_mailbox_trace_contract",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 233.551,
       "outcome": "passed",
       "invariant_ids": [
@@ -4685,7 +4694,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_compute_offload_exec_output_from_packed_qkv",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 242.006,
       "outcome": "passed",
       "invariant_ids": [
@@ -4698,7 +4707,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_compute_offload_exec_output_keeps_decode_kv_attention_local",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 237.201,
       "outcome": "passed",
       "invariant_ids": [
@@ -4711,7 +4720,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_compute_offload_exec_output_uses_step_block_descriptor",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 236.548,
       "outcome": "passed",
       "invariant_ids": [
@@ -4724,7 +4733,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_decode_token_batch_http_endpoint_records_one_forward",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 256.195,
       "outcome": "passed",
       "invariant_ids": [
@@ -4737,7 +4746,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_decode_token_http_endpoint_is_idempotent_and_rejects_mismatch",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 257.95,
       "outcome": "passed",
       "invariant_ids": [
@@ -4750,7 +4759,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_mailbox_activity_sends_membership_generation",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 240.464,
       "outcome": "passed",
       "invariant_ids": [
@@ -4763,7 +4772,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_mailbox_bind_sends_stable_projection_source_id",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 233.692,
       "outcome": "passed",
       "invariant_ids": [
@@ -4776,7 +4785,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_mailbox_receiver_enqueues_without_computing",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 233.634,
       "outcome": "passed",
       "invariant_ids": [
@@ -4789,7 +4798,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_mailbox_receiver_waits_for_dispatch_before_busy_spinning_again",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 303.892,
       "outcome": "passed",
       "invariant_ids": [
@@ -4802,7 +4811,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_offload_exec_batch_rows_uses_template_without_items",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 235.609,
       "outcome": "passed",
       "invariant_ids": [
@@ -4815,7 +4824,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_offload_exec_batch_session_entries_reuses_and_invalidates_cache",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 243.343,
       "outcome": "passed",
       "invariant_ids": [
@@ -4828,7 +4837,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_offload_exec_binary_command_triggers_transport",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 248.545,
       "outcome": "passed",
       "invariant_ids": [
@@ -4841,7 +4850,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_offload_exec_compact_command_triggers_transport",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 247.036,
       "outcome": "passed",
       "invariant_ids": [
@@ -4854,7 +4863,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_offload_exec_endpoint_triggers_transport",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 267.212,
       "outcome": "passed",
       "invariant_ids": [
@@ -4867,7 +4876,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_run_offload_exec_batch_once_single_item_avoids_output_cat",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 234.623,
       "outcome": "passed",
       "invariant_ids": [
@@ -4880,7 +4889,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_run_offload_exec_batch_once_uses_batched_compute",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 231.813,
       "outcome": "passed",
       "invariant_ids": [
@@ -4893,7 +4902,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_run_offload_exec_mailbox_loop_emits_recv_breakdown",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 277.158,
       "outcome": "passed",
       "invariant_ids": [
@@ -4906,7 +4915,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_run_offload_exec_mailbox_loop_emits_trace",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 234.164,
       "outcome": "passed",
       "invariant_ids": [
@@ -4919,7 +4928,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_run_offload_exec_mailbox_loop_prefetches_next_qkv_message",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 232.98,
       "outcome": "passed",
       "invariant_ids": [
@@ -4932,7 +4941,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_run_offload_exec_mailbox_loop_releases_qkv_message",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 234.645,
       "outcome": "passed",
       "invariant_ids": [
@@ -4945,7 +4954,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_run_offload_exec_once_receives_qkv_and_sends_output",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 238.063,
       "outcome": "passed",
       "invariant_ids": [
@@ -4958,7 +4967,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_run_offload_exec_once_resolves_wrapped_request_id",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 273.308,
       "outcome": "passed",
       "invariant_ids": [
@@ -4971,7 +4980,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_sealed_manifests_preserve_shared_prefix_and_private_tails",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 238.374,
       "outcome": "passed",
       "invariant_ids": [
@@ -4984,7 +4993,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_sealed_prefill_manifest_installs_all_layers_atomically",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 238.425,
       "outcome": "passed",
       "invariant_ids": [
@@ -4997,7 +5006,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_sealed_prefill_manifest_requires_complete_catalog",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 232.233,
       "outcome": "passed",
       "invariant_ids": [
@@ -5010,7 +5019,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_sealed_prefill_manifest_updates_before_claim_and_freezes_after",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 236.886,
       "outcome": "passed",
       "invariant_ids": [
@@ -5023,7 +5032,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_decode_append_all_active_reuses_inputs_and_scales",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 236.755,
       "outcome": "passed",
       "invariant_ids": [
@@ -5036,7 +5045,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_decode_append_batch_falls_back_for_incomplete_generation",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 243.105,
       "outcome": "passed",
       "invariant_ids": [
@@ -5049,7 +5058,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_decode_append_disables_slot_plan_for_mixed_topology",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 244.869,
       "outcome": "passed",
       "invariant_ids": [
@@ -5062,7 +5071,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_decode_append_does_not_hold_registry_lock_during_gpu_work",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 236.188,
       "outcome": "passed",
       "invariant_ids": [
@@ -5075,7 +5084,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_decode_append_latches_same_generation_topology_conflict",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 258.28,
       "outcome": "passed",
       "invariant_ids": [
@@ -5088,7 +5097,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_decode_append_partial_batch_uses_fallback_gather",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 238.134,
       "outcome": "passed",
       "invariant_ids": [
@@ -5101,7 +5110,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_decode_append_recovers_slot_plan_after_chunk_generations",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 295.804,
       "outcome": "passed",
       "invariant_ids": [
@@ -5114,7 +5123,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_decode_append_reuses_slot_plan_across_layers",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 234.58,
       "outcome": "passed",
       "invariant_ids": [
@@ -5127,7 +5136,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_decode_append_slot_plan_uses_session_generation",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 246.176,
       "outcome": "passed",
       "invariant_ids": [
@@ -5140,7 +5149,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_decode_append_waits_for_complete_new_generation",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 247.491,
       "outcome": "passed",
       "invariant_ids": [
@@ -5153,7 +5162,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_decode_waits_for_complete_registered_prefix",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 356.058,
       "outcome": "passed",
       "invariant_ids": [
@@ -5166,7 +5175,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_metadata_fast_key_mixed_unknown_batch_falls_back",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 246.117,
       "outcome": "passed",
       "invariant_ids": [
@@ -5179,7 +5188,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_metadata_fast_key_rejects_reused_request_aba",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 239.441,
       "outcome": "passed",
       "invariant_ids": [
@@ -5192,7 +5201,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_offload_exec_commit_uses_descriptor_decode_token_ids",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 269.04,
       "outcome": "passed",
       "invariant_ids": [
@@ -5205,7 +5214,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_offload_exec_commit_waits_for_async_decode_token",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 263.655,
       "outcome": "passed",
       "invariant_ids": [
@@ -5218,7 +5227,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_offload_exec_overlap_step_does_not_commit",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 244.188,
       "outcome": "passed",
       "invariant_ids": [
@@ -5231,7 +5240,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_paged_flash_metadata_avoids_scalar_tensor_writes_on_miss",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 244.877,
       "outcome": "passed",
       "invariant_ids": [
@@ -5244,7 +5253,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_paged_flash_metadata_fast_key_avoids_hit_block_scan",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 233.387,
       "outcome": "passed",
       "invariant_ids": [
@@ -5257,7 +5266,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_paged_flash_metadata_fast_key_can_be_disabled",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 235.326,
       "outcome": "passed",
       "invariant_ids": [
@@ -5270,7 +5279,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_paged_flash_metadata_fast_key_preserves_row_order",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 233.135,
       "outcome": "passed",
       "invariant_ids": [
@@ -5283,7 +5292,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_paged_flash_metadata_fast_key_snapshots_sequence_length",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 239.39,
       "outcome": "passed",
       "invariant_ids": [
@@ -5296,7 +5305,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_paged_flash_metadata_key_uses_unpadded_rows",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 239.481,
       "outcome": "passed",
       "invariant_ids": [
@@ -5309,7 +5318,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_paged_flash_metadata_lru_hit_is_atomic_with_eviction",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 454.33,
       "outcome": "passed",
       "invariant_ids": [
@@ -5322,7 +5331,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_paged_flash_metadata_pads_ragged_rows",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 234.532,
       "outcome": "passed",
       "invariant_ids": [
@@ -5335,7 +5344,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_paged_flash_metadata_preserves_lru_recency",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 234.59,
       "outcome": "passed",
       "invariant_ids": [
@@ -5348,7 +5357,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_paged_flash_metadata_reuses_identical_decode_signature",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 233.426,
       "outcome": "passed",
       "invariant_ids": [
@@ -5361,7 +5370,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_slot_conflict_clears_only_on_new_activation",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 249.495,
       "outcome": "passed",
       "invariant_ids": [
@@ -5374,7 +5383,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_slot_generation_rejects_advance_before_complete",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 242.654,
       "outcome": "passed",
       "invariant_ids": [
@@ -5387,7 +5396,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_slot_generation_rejects_new_layer_after_freeze",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 246.515,
       "outcome": "passed",
       "invariant_ids": [
@@ -5400,7 +5409,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_slot_generation_rejects_stale_activation",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 248.367,
       "outcome": "passed",
       "invariant_ids": [
@@ -5413,7 +5422,7 @@
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_unified_slot_topology_ids_are_unique_across_registries",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
+      "source_owner": "vllm/pap/service.py",
       "duration_ms": 238.907,
       "outcome": "passed",
       "invariant_ids": [
@@ -8885,10 +8894,10 @@
   "audit_summary": {
     "total": 584,
     "by_disposition": {
-      "keep": 303,
+      "keep": 304,
       "merge": 20,
-      "rewrite": 86,
-      "delete": 46,
+      "rewrite": 84,
+      "delete": 47,
       "move": 129
     }
   }

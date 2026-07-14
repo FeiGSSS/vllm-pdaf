@@ -1,17 +1,23 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Compatibility imports for PAP peer membership."""
+"""PAP topology, routing, and peer membership."""
 
-from vllm.pap.topology import (
+from vllm.pap.topology.peer_activity import (
     PAPProjectionPeerActivity,
     active_pap_attention_endpoints,
     pap_attention_endpoint_for_rank,
     sync_pap_projection_peer_activity,
 )
+from vllm.pap.topology.routing import (
+    build_offload_exec_route_groups,
+    filter_offload_exec_route_groups_for_request_slice,
+)
 
 __all__ = [
     "PAPProjectionPeerActivity",
     "active_pap_attention_endpoints",
+    "build_offload_exec_route_groups",
+    "filter_offload_exec_route_groups_for_request_slice",
     "pap_attention_endpoint_for_rank",
     "sync_pap_projection_peer_activity",
 ]

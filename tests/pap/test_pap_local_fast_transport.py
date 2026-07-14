@@ -10,7 +10,7 @@ from vllm.pap.cuda_stream_memops import (
     stream_wait_value32,
     stream_write_value32,
 )
-from vllm.pap.local_fast_transport import (
+from vllm.pap.transport.local_fast import (
     DTYPE_CODE_BFLOAT16,
     DIR_OUTPUT,
     DIR_QKV,
@@ -31,7 +31,7 @@ from vllm.pap.local_fast_transport import (
     _signal_index,
     PAPLocalFastTransport,
 )
-from vllm.pap.data_plane import PAPOffloadExecBatchDescriptor
+from vllm.pap.protocol import PAPOffloadExecBatchDescriptor
 
 
 def test_local_fast_doorbell_slots_are_independent(tmp_path) -> None:

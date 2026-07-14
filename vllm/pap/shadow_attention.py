@@ -24,7 +24,7 @@ import torch
 from torch.multiprocessing.reductions import reduce_tensor
 
 if TYPE_CHECKING:
-    from vllm.pap.data_plane import PAPCudaIPCTensorHandle, PAPTensorTransport
+    from vllm.pap.protocol import PAPCudaIPCTensorHandle, PAPTensorTransport
 
 logger = logging.getLogger(__name__)
 
@@ -333,7 +333,7 @@ def _normalize_offload_kv_transport(
 ) -> PAPTensorTransport | None:
     if transport is None:
         return None
-    from vllm.pap.data_plane import PAPTensorTransport
+    from vllm.pap.protocol import PAPTensorTransport
 
     return PAPTensorTransport(transport)
 
@@ -350,7 +350,7 @@ def _gpu_uuid_for_tensor(tensor: torch.Tensor) -> str:
 def _make_cuda_ipc_tensor_handle(
     tensor: torch.Tensor,
 ) -> PAPCudaIPCTensorHandle:
-    from vllm.pap.data_plane import PAPCudaIPCTensorHandle
+    from vllm.pap.protocol import PAPCudaIPCTensorHandle
 
     _, ipc_args = reduce_tensor(tensor)
     return PAPCudaIPCTensorHandle(
@@ -579,7 +579,7 @@ def register_prefill_kv_catalog(
 ) -> str:
     """Register one process-lifetime Prefill KV-cache tensor in Attention."""
 
-    from vllm.pap.data_plane import PAPPrefillKVCacheCatalogDescriptor
+    from vllm.pap.protocol import PAPPrefillKVCacheCatalogDescriptor
     from vllm.pap.remote_attention import (
         deserialize_tensor_bundle,
         serialize_tensor_bundle,
@@ -636,7 +636,7 @@ def publish_prefill_kv_session_manifest(
 ) -> int:
     """Atomically publish one request's sealed Prefill KV layout."""
 
-    from vllm.pap.data_plane import PAPPrefillKVSessionManifest
+    from vllm.pap.protocol import PAPPrefillKVSessionManifest
     from vllm.pap.kv_lease import (
         pap_active_lease_id,
         pap_has_active_lease,
@@ -743,7 +743,7 @@ def import_prefill_kv(
         if timeout is not None
         else float(os.environ.get("PAP_REMOTE_ATTENTION_TIMEOUT", "5.0"))
     )
-    from vllm.pap.data_plane import PAPTensorTransport
+    from vllm.pap.protocol import PAPTensorTransport
 
     if _normalize_offload_kv_transport(transport) is PAPTensorTransport.CUDA_IPC:
         return _post_prefill_kv_ipc(

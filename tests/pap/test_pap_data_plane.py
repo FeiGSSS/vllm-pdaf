@@ -13,7 +13,7 @@ from vllm.pap.data_plane import (
     _offload_exec_batch_descriptor_from_metadata,
     _offload_exec_batch_descriptor_to_metadata,
 )
-from vllm.pap.nixl_mailbox import PAPMailboxMessage
+from vllm.pap.transport.nixl import PAPMailboxMessage
 
 
 def test_offload_exec_descriptor_uses_stable_tensor_ids() -> None:

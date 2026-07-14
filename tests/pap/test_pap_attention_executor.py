@@ -2,9 +2,9 @@ import base64
 import hashlib
 import inspect
 import logging
+import sys
 import time
 from contextlib import suppress
-from pathlib import Path
 from threading import Event, Thread
 from typing import Any
 
@@ -26,6 +26,7 @@ from vllm.pap.attention_executor import (
     compute_offload_exec_output,
     create_app,
     maybe_start_offload_exec_transport,
+    parse_args,
     run_offload_exec_batch_once,
     run_offload_exec_mailbox_loop,
     run_offload_exec_mailbox_receiver_loop,
@@ -44,9 +45,6 @@ from vllm.pap.data_plane import (
     PAPPrefillKVCacheCatalogDescriptor,
     PAPPrefillKVSessionManifest,
 )
-
-ROOT = Path(__file__).resolve().parents[2]
-
 
 class _ASGITestClient:
     def __init__(self, app: Any) -> None:
@@ -837,17 +835,14 @@ def test_unified_paged_flash_metadata_preserves_lru_recency(
     assert first_b.block_table.data_ptr() != second_b.block_table.data_ptr()
 
 
-def test_attention_executor_declares_offload_exec_zmq_port() -> None:
-    text = (ROOT / "vllm" / "pap" / "attention_executor.py").read_text()
+def test_attention_service_parses_offload_exec_zmq_port(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["pap-attention", "--offload-exec-zmq-port", "8401"],
+    )
 
-    assert "--offload-exec-zmq-port" in text
-    assert "OFFLOAD_EXEC NIXL mailbox initialized" in text
-
-
-def test_attention_executor_logs_ipc_prefill_import() -> None:
-    text = (ROOT / "vllm" / "pap" / "attention_executor.py").read_text()
-
-    assert "PAP prefill KV imported via IPC descriptor" in text
+    assert parse_args().offload_exec_zmq_port == 8401
 
 
 def test_attention_executor_skips_offload_exec_when_zmq_port_is_none(

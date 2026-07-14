@@ -1329,7 +1329,7 @@ class Qwen3Attention(nn.Module):
             positions.detach().reshape(-1).to(device="cpu", dtype=torch.long)
         )
 
-        from vllm.pap.data_plane import (
+        from vllm.pap.protocol import (
             PAPOffloadExecBatchDescriptor,
             PAPOffloadExecDescriptor,
         )
@@ -1594,7 +1594,7 @@ class Qwen3Attention(nn.Module):
         key = k.view(-1, self.num_kv_heads, self.head_dim)
         value = v.view(-1, self.num_kv_heads, self.head_dim)
 
-        from vllm.pap.data_plane import (
+        from vllm.pap.protocol import (
             PAPOffloadExecBatchDescriptor,
             pap_offload_exec_trace_id,
         )
@@ -1971,7 +1971,7 @@ class Qwen3Attention(nn.Module):
         if block_size is None:
             return
 
-        from vllm.pap.data_plane import PAPTensorTransport
+        from vllm.pap.protocol import PAPTensorTransport
         from vllm.v1.attention.backends.utils import get_kv_cache_layout
 
         offload_kv_transport = PAPTensorTransport(

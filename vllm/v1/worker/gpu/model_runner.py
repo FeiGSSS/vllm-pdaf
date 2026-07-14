@@ -47,7 +47,7 @@ from vllm.model_executor.model_loader import get_model_loader
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.pap.config import reject_removed_pap_flags
 from vllm.pap.decode_token_client import DecodeTokenClient
-from vllm.pap.peer_activity import (
+from vllm.pap.topology import (
     PAPProjectionPeerActivity,
     sync_pap_projection_peer_activity,
 )
@@ -1015,7 +1015,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
     def _pap_offload_exec_route_groups_for_batch(
         self, input_batch: InputBatch
     ) -> tuple[dict[str, Any], ...]:
-        from vllm.pap.data_plane import build_offload_exec_route_groups
+        from vllm.pap.topology import build_offload_exec_route_groups
 
         request_ids = tuple(
             str(req_id) for req_id in input_batch.req_ids[: input_batch.num_reqs]
@@ -1042,7 +1042,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         route_groups: Iterable[dict[str, Any]],
         request_slice: slice,
     ) -> tuple[dict[str, Any], ...]:
-        from vllm.pap.data_plane import (
+        from vllm.pap.topology import (
             filter_offload_exec_route_groups_for_request_slice,
         )
 

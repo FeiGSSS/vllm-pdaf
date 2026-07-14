@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Compatibility imports for PAP Attention scheduling."""
+"""PAP Attention execution primitives."""
 
-from vllm.pap.attention import PAPAttentionDispatcher, PAPAttentionWorkItem
+from vllm.pap.attention.dispatcher import (
+    PAPAttentionDispatcher,
+    PAPAttentionWorkItem,
+)
 
 __all__ = ["PAPAttentionDispatcher", "PAPAttentionWorkItem"]
