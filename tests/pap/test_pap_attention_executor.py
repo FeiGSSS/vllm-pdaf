@@ -12,6 +12,10 @@ import anyio
 import pytest
 from httpx import ASGITransport, AsyncClient, Response
 
+from vllm.pap.attention import compute as attention_compute_module
+from vllm.pap.attention import runtime as attention_runtime_module
+from vllm.pap.kv import state as kv_state_module
+
 from vllm.pap.attention_executor import (
     PAPAttentionRegistration,
     PAPAttentionRegistry,
@@ -41,6 +45,7 @@ from vllm.pap.protocol import (
     PAPPrefillKVCacheCatalogDescriptor,
     PAPPrefillKVSessionManifest,
 )
+
 
 class _ASGITestClient:
     def __init__(self, app: Any) -> None:
@@ -518,7 +523,7 @@ def test_unified_paged_flash_metadata_fast_key_avoids_hit_block_scan(
         coerce_calls += 1
         return real_coerce(value)
 
-    monkeypatch.setattr(executor_module, "_coerce_block_id", counted_coerce)
+    monkeypatch.setattr(kv_state_module, "_coerce_block_id", counted_coerce)
     first = build_unified_paged_flash_metadata(
         states=[state],
         device=torch.device("cpu"),
@@ -682,7 +687,7 @@ def test_unified_paged_flash_metadata_lru_hit_is_atomic_with_eviction(
             return item
 
     coordinated_cache = CoordinatedCache(executor_module._UNIFIED_MD_CACHE.items())
-    monkeypatch.setattr(executor_module, "_UNIFIED_MD_CACHE", coordinated_cache)
+    monkeypatch.setattr(kv_state_module, "_UNIFIED_MD_CACHE", coordinated_cache)
     errors: list[BaseException] = []
 
     def hit_first() -> None:
@@ -1328,7 +1333,7 @@ def test_run_offload_exec_batch_once_uses_batched_compute(monkeypatch) -> None:
         return torch.tensor([[2.0, 0.0], [0.0, 3.0]])
 
     monkeypatch.setattr(
-        executor_module,
+        attention_compute_module,
         "compute_offload_exec_batch_output",
         fake_batch_compute,
     )
@@ -1386,7 +1391,7 @@ def test_unified_offload_exec_commit_waits_for_async_decode_token(
             commits.append((request_id, new_seq_len, tuple(new_token_ids), endpoint))
 
     monkeypatch.setattr(
-        executor_module,
+        kv_state_module,
         "_get_commit_client",
         lambda: FakeCommitClient(),
     )
@@ -1424,7 +1429,7 @@ def test_unified_offload_exec_commit_waits_for_async_decode_token(
         lambda **kwargs: 1,
     )
     monkeypatch.setattr(
-        executor_module,
+        attention_compute_module,
         "_compute_unified_paged_flash_batch",
         lambda **kwargs: torch.tensor([[2.0, 0.0]]),
     )
@@ -1542,7 +1547,7 @@ def test_attention_release_waits_for_kv_ready_token_but_not_final_token(
             return None
 
     monkeypatch.setattr(
-        executor_module,
+        kv_state_module,
         "_get_commit_client",
         lambda: FakeCommitClient(),
     )
@@ -1665,12 +1670,12 @@ def test_unified_offload_exec_overlap_step_does_not_commit(
         raising=False,
     )
     monkeypatch.setattr(
-        executor_module,
+        attention_compute_module,
         "_compute_unified_paged_flash_batch",
         lambda **kwargs: torch.tensor([[2.0, 0.0]]),
     )
     monkeypatch.setattr(
-        executor_module,
+        kv_state_module,
         "_get_commit_client",
         lambda: FakeCommitClient(),
     )
@@ -2736,12 +2741,12 @@ def test_attention_registry_release_session_notifies_prefill_lease(
             released.append((request_id, lease_id))
 
     monkeypatch.setattr(
-        executor_module,
+        kv_state_module,
         "_get_commit_client",
         lambda: FakeCommitClient(),
     )
     monkeypatch.setattr(
-        executor_module,
+        kv_state_module,
         "_get_lease_release_client",
         lambda: FakeLeaseReleaseClient(),
     )
@@ -2795,12 +2800,12 @@ def test_attention_registry_does_not_release_lease_before_commit_ack(
             events.append(("release", request_id, lease_id, endpoint))
 
     monkeypatch.setattr(
-        executor_module,
+        kv_state_module,
         "_get_commit_client",
         lambda: FakeCommitClient(),
     )
     monkeypatch.setattr(
-        executor_module,
+        kv_state_module,
         "_get_lease_release_client",
         lambda: FakeLeaseReleaseClient(),
     )
@@ -2845,12 +2850,12 @@ def test_attention_registry_reregister_releases_replaced_prefill_lease(
             released.append((request_id, lease_id))
 
     monkeypatch.setattr(
-        executor_module,
+        kv_state_module,
         "_get_commit_client",
         lambda: FakeCommitClient(),
     )
     monkeypatch.setattr(
-        executor_module,
+        kv_state_module,
         "_get_lease_release_client",
         lambda: FakeLeaseReleaseClient(),
     )
@@ -3076,7 +3081,7 @@ def test_run_offload_exec_batch_once_single_item_avoids_output_cat(
         raise AssertionError("single-item OFFLOAD_EXEC batch should not cat output")
 
     monkeypatch.setattr(
-        executor_module,
+        attention_compute_module,
         "compute_offload_exec_batch_output",
         fake_compute_offload_exec_batch_output,
     )
@@ -3153,7 +3158,7 @@ def test_run_offload_exec_mailbox_loop_releases_qkv_message(monkeypatch) -> None
     from vllm.pap import attention_executor as executor_module
 
     monkeypatch.setattr(
-        executor_module,
+        attention_runtime_module,
         "compute_offload_exec_batch_output",
         lambda **kwargs: torch.tensor([[2.0, 0.0]]),
     )
@@ -3226,7 +3231,7 @@ def test_mailbox_receiver_enqueues_without_computing(monkeypatch) -> None:
     dispatcher = FakeDispatcher()
     registry = PAPAttentionRegistry(storage_device="cpu")
     monkeypatch.setattr(
-        executor_module,
+        attention_runtime_module,
         "compute_offload_exec_batch_output",
         lambda **_kwargs: pytest.fail("receiver must not compute"),
     )
@@ -3364,7 +3369,7 @@ def test_central_dispatcher_computes_and_sends_to_each_source(monkeypatch) -> No
         return torch.ones((1, 2))
 
     monkeypatch.setattr(
-        executor_module,
+        attention_runtime_module,
         "compute_offload_exec_batch_output",
         fake_compute,
     )
@@ -3468,7 +3473,7 @@ def test_central_combine_executes_once_and_scatters_to_sources(
         return torch.tensor([[10.0, 11.0], [20.0, 21.0]])
 
     monkeypatch.setattr(
-        executor_module,
+        attention_runtime_module,
         "compute_offload_exec_batch_output",
         fake_compute,
     )
@@ -3532,7 +3537,7 @@ def test_central_combine_single_item_reuses_fifo_executor(monkeypatch) -> None:
     )
     calls = []
     monkeypatch.setattr(
-        executor_module,
+        attention_runtime_module,
         "_execute_offload_exec_work_item",
         lambda **kwargs: calls.append(kwargs),
     )
@@ -3628,7 +3633,7 @@ def test_central_dispatcher_preserves_cuda_ready_dependency(monkeypatch) -> None
     )
     dispatcher = FakeDispatcher()
     monkeypatch.setattr(
-        executor_module,
+        attention_runtime_module,
         "_record_offload_exec_ready_event",
         lambda _tensor: events.append("record") or ready_event,
         raising=False,
@@ -3653,13 +3658,13 @@ def test_central_dispatcher_preserves_cuda_ready_dependency(monkeypatch) -> None
         return torch.ones((1, 2))
 
     monkeypatch.setattr(
-        executor_module,
+        attention_runtime_module,
         "_wait_offload_exec_ready_event",
         wait_ready,
         raising=False,
     )
     monkeypatch.setattr(
-        executor_module,
+        attention_runtime_module,
         "compute_offload_exec_batch_output",
         fake_compute,
     )
@@ -3727,7 +3732,7 @@ def test_central_dispatcher_preserves_mailbox_trace_contract(
         return torch.ones((1, 2))
 
     monkeypatch.setattr(
-        executor_module,
+        attention_runtime_module,
         "compute_offload_exec_batch_output",
         fake_compute,
     )
@@ -3800,7 +3805,7 @@ def test_run_offload_exec_mailbox_loop_prefetches_next_qkv_message(
 
     monkeypatch.setenv("PAP_ATTENTION_MAILBOX_PREFETCH", "1")
     monkeypatch.setattr(
-        executor_module,
+        attention_runtime_module,
         "compute_offload_exec_batch_output",
         fake_compute_batch_output,
     )
@@ -3887,7 +3892,7 @@ def test_run_offload_exec_mailbox_loop_emits_trace(monkeypatch, caplog) -> None:
         return torch.tensor([[2.0, 0.0]])
 
     monkeypatch.setattr(
-        executor_module,
+        attention_runtime_module,
         "compute_offload_exec_batch_output",
         fake_compute_offload_exec_batch_output,
     )
@@ -3975,7 +3980,7 @@ def test_run_offload_exec_mailbox_loop_emits_recv_breakdown(
     from vllm.pap import attention_executor as executor_module
 
     monkeypatch.setattr(
-        executor_module,
+        attention_runtime_module,
         "compute_offload_exec_batch_output",
         lambda **kwargs: torch.tensor([[2.0, 0.0]]),
     )

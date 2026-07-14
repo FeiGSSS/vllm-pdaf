@@ -14,8 +14,20 @@ from vllm.pap.protocol.descriptors import (
     PAPTensorTransport,
     pap_offload_exec_trace_id,
 )
+from vllm.pap.protocol.models import (
+    PAPAttentionRegistration,
+    PAPDecodeTokenBatchRequest,
+    PAPDecodeTokenRequest,
+    PAPOffloadExecMailboxActivityRequest,
+    PAPOffloadExecMailboxBindRequest,
+)
 
 __all__ = [
+    "PAPAttentionRegistration",
+    "PAPDecodeTokenBatchRequest",
+    "PAPDecodeTokenRequest",
+    "PAPOffloadExecMailboxActivityRequest",
+    "PAPOffloadExecMailboxBindRequest",
     "PAPCudaIPCTensorHandle",
     "PAPDataPlaneChannel",
     "PAPDataPlaneRole",
