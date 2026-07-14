@@ -326,6 +326,7 @@ def test_prefill_kv_catalog_descriptor_roundtrip() -> None:
 def test_prefill_kv_session_manifest_roundtrip() -> None:
     manifest = PAPPrefillKVSessionManifest(
         request_id="req-1",
+        session_handle="req-1@pap-session-1",
         catalog_id="prefill-42-r0",
         prefix_len=16,
         block_ids=(2, 3, 4),
@@ -346,6 +347,7 @@ def test_prefill_kv_session_manifest_rejects_shared_writable_prefix() -> None:
     with pytest.raises(ValueError, match="writable_start_token"):
         PAPPrefillKVSessionManifest(
             request_id="req-1",
+            session_handle="req-1@pap-session-1",
             catalog_id="prefill-42-r0",
             prefix_len=16,
             block_ids=(2, 3, 4),
@@ -370,6 +372,7 @@ def _paged_ipc_handle() -> PAPCudaIPCTensorHandle:
 def _session_manifest(**overrides) -> PAPPrefillKVSessionManifest:
     values = {
         "request_id": "req-1",
+        "session_handle": "req-1@pap-session-1",
         "catalog_id": "prefill-test",
         "prefix_len": 4,
         "block_ids": (0, 1),
@@ -383,6 +386,11 @@ def _session_manifest(**overrides) -> PAPPrefillKVSessionManifest:
     }
     values.update(overrides)
     return PAPPrefillKVSessionManifest(**values)
+
+
+def test_prefill_kv_session_manifest_requires_session_handle() -> None:
+    with pytest.raises(ValueError, match="session_handle"):
+        _session_manifest(session_handle="")
 
 
 def test_prefill_kv_session_manifest_requires_lease() -> None:
@@ -455,6 +463,7 @@ def test_sealed_prefill_kv_handoff_posts_catalog_and_manifest_without_sync(
         ) == "registered"
         assert publish_prefill_kv_session_manifest(
             request_id="cmpl-sealed",
+            session_handle="cmpl-sealed@pap-session-1",
             catalog_id="prefill-test",
             block_ids=(0, 1),
             prefix_len=5,
@@ -474,6 +483,7 @@ def test_sealed_prefill_kv_handoff_posts_catalog_and_manifest_without_sync(
     assert catalog["catalog_id"] == "prefill-test"
     assert catalog["layer_name"] == "layer0"
     manifest = posted_metadata[1]["manifest"]
+    assert manifest["session_handle"] == "cmpl-sealed@pap-session-1"
     assert manifest["prefix_len"] == 5
     assert manifest["writable_start_token"] == 5
     assert manifest["writable_end_token"] == 8

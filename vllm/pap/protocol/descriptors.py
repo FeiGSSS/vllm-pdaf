@@ -252,6 +252,7 @@ class PAPPrefillKVSessionManifest:
     """Request-level block layout published after a Prefill chunk."""
 
     request_id: str
+    session_handle: str
     catalog_id: str
     prefix_len: int
     block_ids: tuple[int, ...]
@@ -266,6 +267,7 @@ class PAPPrefillKVSessionManifest:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "request_id", str(self.request_id))
+        object.__setattr__(self, "session_handle", str(self.session_handle))
         object.__setattr__(self, "catalog_id", str(self.catalog_id))
         object.__setattr__(self, "prefix_len", int(self.prefix_len))
         object.__setattr__(
@@ -298,6 +300,8 @@ class PAPPrefillKVSessionManifest:
             )
         if not self.request_id:
             raise ValueError("request_id must not be empty")
+        if not self.session_handle:
+            raise ValueError("session_handle must not be empty")
         if not self.catalog_id:
             raise ValueError("catalog_id must not be empty")
         if self.prefix_len <= 0:
@@ -325,6 +329,7 @@ class PAPPrefillKVSessionManifest:
     def to_dict(self) -> dict[str, Any]:
         return {
             "request_id": self.request_id,
+            "session_handle": self.session_handle,
             "catalog_id": self.catalog_id,
             "prefix_len": self.prefix_len,
             "block_ids": list(self.block_ids),
@@ -347,6 +352,7 @@ class PAPPrefillKVSessionManifest:
         event_handle = data.get("ready_event_handle")
         return cls(
             request_id=str(data["request_id"]),
+            session_handle=str(data["session_handle"]),
             catalog_id=str(data["catalog_id"]),
             prefix_len=int(data["prefix_len"]),
             block_ids=tuple(int(block_id) for block_id in data["block_ids"]),

@@ -382,6 +382,7 @@ def register_prefill_kv_catalog(
 def publish_prefill_kv_session_manifest(
     *,
     request_id: str,
+    session_handle: str,
     catalog_id: str,
     block_ids: Sequence[int],
     prefix_len: int,
@@ -442,6 +443,7 @@ def publish_prefill_kv_session_manifest(
     )
     manifest = PAPPrefillKVSessionManifest(
         request_id=request_id,
+        session_handle=session_handle,
         catalog_id=catalog_id,
         prefix_len=prefix_len,
         block_ids=normalized_block_ids,

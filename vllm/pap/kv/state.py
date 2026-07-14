@@ -1435,10 +1435,19 @@ class PAPAttentionRegistry:
         """Atomically publish one complete request-level KV layout snapshot."""
         with self._lock:
             session_request_id = self._resolve_session_request_id_locked(
-                manifest.request_id
+                manifest.session_handle
             )
             if session_request_id is None:
-                raise KeyError(manifest.request_id)
+                raise KeyError(manifest.session_handle)
+            request_session_id = self._resolve_session_request_id_locked(
+                manifest.request_id
+            )
+            if request_session_id != session_request_id:
+                raise RuntimeError(
+                    "PAP Prefill KV manifest session generation mismatch "
+                    f"request_id={manifest.request_id} "
+                    f"session_handle={manifest.session_handle}"
+                )
             if self._prefill_kv_catalog_id != manifest.catalog_id:
                 raise RuntimeError(
                     "PAP Prefill KV manifest catalog mismatch "
@@ -1579,11 +1588,18 @@ class PAPAttentionRegistry:
             replaced_lease_id, replaced_prefill_endpoint = (
                 self._replace_existing_session_locked(registration.request_id)
             )
-            self._session_epochs[registration.request_id] = self._next_session_epoch
+            session_epoch = self._next_session_epoch
+            session.prefill_kv_handle = (
+                f"{registration.request_id}@pap-session-{session_epoch}"
+            )
+            self._session_epochs[registration.request_id] = session_epoch
             self._next_session_epoch += 1
             self._sessions[registration.request_id] = session
             self._prefill_readiness.setdefault(registration.request_id, {})
             self._request_id_resolution_cache[registration.request_id] = (
+                registration.request_id
+            )
+            self._request_id_resolution_cache[session.prefill_kv_handle] = (
                 registration.request_id
             )
         if replaced_lease_id is not None:

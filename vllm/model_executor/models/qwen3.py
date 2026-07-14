@@ -2102,6 +2102,7 @@ class Qwen3Attention(nn.Module):
             )
             publish_prefill_kv_session_manifest(
                 request_id=request_id,
+                session_handle=prefill_kv_handle,
                 catalog_id=self._pap_prefill_kv_catalog_id,
                 block_ids=block_ids,
                 prefix_len=prefix_len,

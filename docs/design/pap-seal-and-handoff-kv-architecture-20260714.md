@@ -5,6 +5,12 @@
 状态：第一阶段已实现并通过 C1/C2 与 C4 quick；见
 [阶段结果](pap-seal-and-handoff-kv-results-20260714.md)
 
+文档生命周期：`historical/accepted`。本文保留 P17 首次引入双路径时的设计与
+A/B 验证语境；Runtime Milestone Task 2.4 已将 sealed catalog + request manifest
+收敛为唯一主路径，并移除 `PAP_KV_HANDOFF_MODE` 与逐层 descriptor 实现。当前契约见
+[Runtime 重构设计](pap/milestones/2026-07-runtime-refactor.md)，下文关于兼容回退的
+描述仅作为历史证据。
+
 ## 1. 目标
 
 将 Prefill 和 Decode 从同一份逐层 mutable KV registry 中解耦，同时保留：

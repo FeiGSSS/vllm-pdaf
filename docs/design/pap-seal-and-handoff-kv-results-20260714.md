@@ -4,6 +4,11 @@
 
 状态：实现已提交；C1/C2 正确性与 C4 quick A/B 已通过；C4 formal 待运行
 
+文档生命周期：`historical/accepted`。本文原样保留 `25c8723de` 阶段的双路径 A/B
+结论；Runtime Milestone Task 2.4 后，sealed catalog + request manifest 已成为唯一
+主路径，`PAP_KV_HANDOFF_MODE` 与旧逐层 descriptor 路径均已移除。本文出现的旧默认值、
+回滚方式和 mode 配置只用于解释历史实验，不再是当前运行说明。
+
 ## 1. 实现结论
 
 提交 `25c8723de` 实现了设计文档中的第一阶段 Seal-and-Handoff 数据面：

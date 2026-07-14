@@ -180,7 +180,7 @@ def test_sealed_prefill_manifest_installs_all_layers_atomically() -> None:
     import torch
 
     registry = PAPAttentionRegistry(storage_device="cpu")
-    registry.register_prefill_kv(
+    session = registry.register_prefill_kv(
         PAPAttentionRegistration(
             request_id="req-sealed",
             conversation_id="conv-sealed",
@@ -201,6 +201,7 @@ def test_sealed_prefill_manifest_installs_all_layers_atomically() -> None:
 
     manifest = PAPPrefillKVSessionManifest(
         request_id="req-sealed",
+        session_handle=session.prefill_kv_handle,
         catalog_id="prefill-test",
         prefix_len=5,
         block_ids=(1, 2, 3),
@@ -237,7 +238,7 @@ def test_sealed_prefill_manifest_updates_before_claim_and_freezes_after() -> Non
     import torch
 
     registry = PAPAttentionRegistry(storage_device="cpu")
-    registry.register_prefill_kv(
+    session = registry.register_prefill_kv(
         PAPAttentionRegistration(
             request_id="req-chunked",
             conversation_id="conv-chunked",
@@ -255,6 +256,7 @@ def test_sealed_prefill_manifest_updates_before_claim_and_freezes_after() -> Non
     def manifest(prefix_len: int) -> PAPPrefillKVSessionManifest:
         return PAPPrefillKVSessionManifest(
             request_id="req-chunked",
+            session_handle=session.prefill_kv_handle,
             catalog_id="prefill-test",
             prefix_len=prefix_len,
             block_ids=(1, 2, 3),
@@ -289,11 +291,65 @@ def test_sealed_prefill_manifest_updates_before_claim_and_freezes_after() -> Non
         )
 
 
+def test_sealed_prefill_manifest_rejects_stale_session_generation() -> None:
+    import torch
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registration = PAPAttentionRegistration(
+        request_id="req-aba",
+        conversation_id="conv-aba",
+        prefill_endpoint="http://localhost:8100",
+        prefix_len=5,
+        block_size=4,
+    )
+    old_session = registry.register_prefill_kv(registration)
+    shape = (8, 2, 4, 1, 2)
+    registry.register_prefill_kv_catalog(
+        descriptor=_catalog_descriptor(layer_name="layer0", shape=shape),
+        kv_cache=torch.zeros(shape),
+    )
+    new_session = registry.register_prefill_kv(registration)
+
+    assert old_session.prefill_kv_handle != new_session.prefill_kv_handle
+
+    def manifest(
+        session_handle: str,
+        lease_id: str,
+    ) -> PAPPrefillKVSessionManifest:
+        return PAPPrefillKVSessionManifest(
+            request_id=registration.request_id,
+            session_handle=session_handle,
+            catalog_id="prefill-test",
+            prefix_len=5,
+            block_ids=(0, 1),
+            block_size=4,
+            expected_layer_count=1,
+            lease_id=lease_id,
+            leased_block_ids=(0, 1),
+            lease_capacity_tokens=8,
+            writable_start_token=5,
+            writable_end_token=8,
+        )
+
+    with pytest.raises(KeyError, match="pap-session-1"):
+        registry.install_prefill_kv_session_manifest(
+            manifest=manifest(old_session.prefill_kv_handle, "lease-stale"),
+            ready_event=None,
+        )
+
+    assert registry.install_prefill_kv_session_manifest(
+        manifest=manifest(new_session.prefill_kv_handle, "lease-current"),
+        ready_event=None,
+    ) == 5
+    state = registry._unified_paged_kv[registration.request_id]["layer0"]
+    assert state.lease_id == "lease-current"
+
+
 def test_sealed_prefill_manifest_requires_complete_catalog() -> None:
     import torch
 
     registry = PAPAttentionRegistry(storage_device="cpu")
-    registry.register_prefill_kv(
+    session = registry.register_prefill_kv(
         PAPAttentionRegistration(
             request_id="req-incomplete",
             conversation_id="conv-incomplete",
@@ -308,6 +364,7 @@ def test_sealed_prefill_manifest_requires_complete_catalog() -> None:
     )
     manifest = PAPPrefillKVSessionManifest(
         request_id="req-incomplete",
+        session_handle=session.prefill_kv_handle,
         catalog_id="prefill-test",
         prefix_len=5,
         block_ids=(1, 2),
@@ -331,8 +388,9 @@ def test_sealed_manifests_preserve_shared_prefix_and_private_tails() -> None:
     import torch
 
     registry = PAPAttentionRegistry(storage_device="cpu")
+    sessions = {}
     for request_id in ("req-shared-a", "req-shared-b"):
-        registry.register_prefill_kv(
+        sessions[request_id] = registry.register_prefill_kv(
             PAPAttentionRegistration(
                 request_id=request_id,
                 conversation_id=request_id,
@@ -355,6 +413,7 @@ def test_sealed_manifests_preserve_shared_prefix_and_private_tails() -> None:
         registry.install_prefill_kv_session_manifest(
             manifest=PAPPrefillKVSessionManifest(
                 request_id=request_id,
+                session_handle=sessions[request_id].prefill_kv_handle,
                 catalog_id="prefill-test",
                 prefix_len=8,
                 block_ids=block_ids,
@@ -4021,7 +4080,7 @@ def test_attention_registry_records_prefill_kv_handle() -> None:
     assert snapshot.prefill_endpoint == "http://localhost:8100"
     assert snapshot.kv_transfer_params["remote_block_ids"] == [[1, 2, 3]]
     assert snapshot.prefix_len == 17
-    assert snapshot.prefill_kv_handle == "req-1"
+    assert snapshot.prefill_kv_handle == "req-1@pap-session-1"
     assert snapshot.role == "attention"
 
 
