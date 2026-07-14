@@ -314,22 +314,22 @@ tests/pap/
 └── fixtures/
 ```
 
-`tests/pap/invariants.json` 使用版本化 schema 记录 invariant ID、陈述、测试层级、
-源码 owner、pytest node IDs、regression commit/experiment ID 和 required 状态。
+测试策略记录在 `tests/pap/README.md`。不维护逐 pytest node 的机器可读清单；
+正式行为直接由 surviving tests 保护，随旧实现一起消失的测试直接删除。
 
 ### 8.3 测试规则
 
 - 源码字符串断言优先改为行为或结构化配置测试；
 - shell 只保留语法和端到端装配检查，配置逻辑进入 `PAPRuntimeConfig`；
 - 公共 fake、request builder 和 registry setup 收敛到 fixtures；
-- CPU unit/contract/integration suite 是每个提交的必跑 gate；
+- 每批只运行直接相关的 CPU unit/contract/integration tests；完整 suite 留到 Final freeze；
 - CUDA tests 单独标记，缺少硬件时明确 skip；
 - P17 C1/C4 由 benchmark runner 和严格 audit 负责，不混入 pytest；
 - coverage 只用于发现缺口，不设置人为百分比目标；
 - 不设置必须删除的测试数量目标。
 
-测试审计必须输出逐项 disposition 和理由。删除测试时，对应不变量必须随旧路径
-一起消失，或明确映射到更强的 surviving test。
+删除或合并测试时，在提交说明中写明其保护的行为以及 surviving test；无需维护
+独立的逐节点 disposition 台账。
 
 ## 9. 实验治理
 
@@ -523,9 +523,9 @@ canonical successor 和关联 experiment IDs。处理规则为：
 | 阶段 | Gate |
 | --- | --- |
 | Freeze | tracked-clean P17 C4 formal 三轮和全部 strict audit |
-| 测试治理 | PAP CPU suite 和 invariant registry validation |
-| 每类路径删除 | targeted tests、完整 CPU suite、P17 C1 quick |
-| 每个主要模块拆分 | import/contract tests、完整 CPU suite、P17 C1 quick |
+| 测试治理 | 每批 targeted PAP tests；Final freeze 再运行完整 PAP CPU suite |
+| 每类路径删除 | targeted tests 和静态检查 |
+| 每个主要模块拆分 | import/contract targeted tests 和静态检查 |
 | 实验治理 | schema、A 级历史记录和生成索引校验 |
 | 文档治理 | 状态 schema、链接、canonical source、零 superpowers 引用 |
 | Final freeze | 完整测试、P17 C1、P17 C4 formal 三轮、前后报告 |

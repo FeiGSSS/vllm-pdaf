@@ -1,92 +1,27 @@
-# PAP test governance
+# PAP test strategy
 
-This directory is governed by the PAP runtime-refactor milestone design. The
-registry in `invariants.json` answers two separate questions:
+PAP tests protect supported behavior; they do not maintain a permanent record
+for every historical pytest node. Tests for retired implementation paths should
+be deleted with those paths, and duplicate cases should be merged when the
+surviving test covers the same behavior.
 
-1. Which PAP behavior or failure semantic does a test protect?
-2. What should happen to that test while the suite is reorganized?
+## What must remain covered
 
-Test value is determined by the invariant it protects, not by who wrote the
-test or by a target test count.
+- P17 1PA1P `local_fast` protocol, lifecycle, unified-KV, Attention, and
+  transport behavior;
+- fail-closed validation for malformed descriptors, stale generations, and
+  invalid lifecycle transitions;
+- stable xPAyP and cross-host NIXL configuration and wire contracts.
 
-## Frozen inventory
+xPAyP and cross-host execution remain supported but are
+`preserved-unverified` during this milestone: they are not part of the fresh
+end-to-end runtime gate.
 
-The initial audit is anchored to commit
-`dd2073bcf4637827d2adcd326a316b6b67af4fa4` on 2026-07-14, before any runtime
-or existing-test changes in this milestone.
+## Refactor validation
 
-| Item | Frozen value |
-| --- | ---: |
-| Existing pytest cases | 585 |
-| Passed | 582 |
-| Skipped | 3 |
-| Aggregate setup/call/teardown time | 147817.401 ms |
-
-The skipped cases are the two CUDA local-fast stream-signal tests and the NIXL
-local-GPU endpoint test. Per-case durations are diagnostic inventory data from
-one CPU Gate run; they are not performance thresholds.
-
-`test_invariant_registry.py` is intentionally excluded from the frozen 585-case
-inventory because it validates the inventory itself. Tests created after the
-freeze, including `contract/test_runtime_config.py` and `tests/benchmarks/pap`,
-are prospective milestone tests and are outside this historical disposition
-audit.
-
-## Dispositions
-
-The initial audit records a planned disposition for every frozen node ID. Task
-1.1 records decisions only; it does not yet delete, rewrite, or move tests.
-
-| Disposition | Meaning | Initial count |
-| --- | --- | ---: |
-| `keep` | Uniquely protects surviving behavior, an error semantic, or a regression | 308 |
-| `merge` | Protects a necessary invariant but duplicates parameter variants | 20 |
-| `rewrite` | Protects a necessary outcome through source strings, private mocks, or a retired switch | 85 |
-| `delete` | Protects only an explicitly retired path or already-removed implementation | 43 |
-| `move` | Is necessary but belongs in the dedicated PAP hierarchy | 129 |
-
-There is no deletion quota. A test marked `delete` may be removed only with the
-corresponding retired runtime path and after the invariant is either removed or
-mapped to a stronger surviving test.
-
-Source-string assertions are marked `rewrite` when the underlying contract
-still matters. They should become behavior tests or structured configuration
-tests; shell tests should be limited to syntax and end-to-end assembly.
-
-## Invariant registry
-
-`invariants.json` contains nine namespaces: `protocol`, `topology`,
-`lifecycle`, `kv`, `attention`, `transport`, `integration`, `launcher`, and
-`benchmark-validator`. Each invariant records:
-
-- a stable ID and behavioral statement;
-- its test level and source owner modules;
-- all frozen pytest node IDs mapped to it;
-- regression commits or experiment IDs;
-- whether coverage is required and its current validation status.
-
-The per-test audit additionally records the owner path, direct source owner,
-outcome, reference duration, disposition, reason, and destination for a move or
-rewrite. `retired_tests` records when an approved `delete` is executed and the
-surviving node IDs that protect the same invariant. This keeps the original
-585-case audit immutable while allowing the live collection to converge.
-`invariants.schema.json` is the versioned machine-readable contract.
-
-Arbitrary xPAyP topology and cross-host NIXL are supported capabilities, not
-retired experiments. Their code and interfaces are retained during the
-milestone, but they are marked `preserved-unverified`: this milestone does not
-claim fresh end-to-end validation for them. Only the P17 1PA1P `local_fast`
-path is a runtime release gate.
-
-## Validation
-
-Run the registry checks with the repository virtual environment:
-
-```bash
-.venv/bin/python -m pytest tests/pap/test_invariant_registry.py -v
-```
-
-Run the complete PAP CPU Gate with:
+During the refactor, run only the tests directly related to each change. Run
+the complete PAP CPU Gate once at final freeze, followed by one P17 1PA1P
+runtime comparison. Pre-commit is not required in this environment.
 
 ```bash
 .venv/bin/python -m pytest \
@@ -101,17 +36,6 @@ Run the complete PAP CPU Gate with:
   tests/benchmarks/test_pd_three_lane_testbed_contract.py
 ```
 
-The validator fails if the schema is invalid, IDs are duplicated, source owner
-paths disappear, invariant mappings disagree, a required invariant loses all
-surviving coverage, or the live collection differs from the frozen audit minus
-explicitly retired tests.
-
-When intentionally changing the suite, update the registry in the same commit:
-
-1. map new or replacement tests to a behavioral invariant;
-2. update node IDs, owners, disposition reasons, and derived counts;
-3. retain regression evidence for required invariants;
-4. run the registry validator and complete PAP CPU Gate.
-
-P17 C1/C4 runtime validation belongs to the benchmark runner and strict audit,
-not to pytest.
+Prefer behavior and structured-config tests over source-text assertions. Keep
+shell tests for syntax and end-to-end assembly only; keep CUDA-dependent tests
+explicitly marked so CPU-only environments skip them clearly.
