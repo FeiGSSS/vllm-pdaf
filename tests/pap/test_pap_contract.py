@@ -560,10 +560,10 @@ def test_qwen3_prefill_uses_paged_kv_import_for_cuda_ipc() -> None:
     end = text.index("\n\nclass Qwen3DecoderLayer")
     method = text[start:end]
 
-    assert "import_prefill_paged_kv" in method
+    assert "_publish_pap_prefill_kv_manifests(" in method
+    assert "import_prefill_paged_kv(" not in method
     assert "import_prefill_kv_from_paged_cache" not in method
-    assert "block_ids = _pap_block_ids_from_block_table(" in method
-    assert "block_ids=block_ids" in method
+    assert "PAP paged Prefill KV export requires cuda_ipc" in method
     assert "kv_cache=kv_cache" in method
 
 

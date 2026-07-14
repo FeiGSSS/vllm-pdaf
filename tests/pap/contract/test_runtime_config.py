@@ -10,7 +10,6 @@ from vllm.pap.attention_executor import create_app
 from vllm.pap.config import (
     PAPAttentionDispatchMode,
     PAPConfigError,
-    PAPKVHandoffMode,
     PAPMPSMode,
     PAPOffloadExecTransport,
     PAPOffloadKVTransport,
@@ -28,27 +27,11 @@ P17_PHASE0_ENV = {
     "PAP_ROUTING_POLICY": "round_robin",
     "PAP_OFFLOAD_EXEC_TRANSPORT": "local_fast",
     "PAP_OFFLOAD_KV_TRANSPORT": "cuda_ipc",
-    "PAP_BENCH_MPS_PROFILE": "baseline_static_64_28",
-    "PAP_MPS_MODE": "static",
-    "PAP_PREFILL_MPS_PERCENT": "70",
-    "PAP_ATTENTION_MPS_PERCENT": "30",
-    "PAP_STATIC_PREFILL_CHUNKS": "16",
-    "PAP_STATIC_ATTENTION_CHUNKS": "7",
-    "PAP_STATIC_PREFILL_EXPECTED_SMS": "64",
-    "PAP_STATIC_ATTENTION_EXPECTED_SMS": "28",
-    "PAP_ENABLE_MPS": "1",
-    "PAP_KV_HANDOFF_MODE": "sealed_manifest",
-    "PAP_UNIFIED_KV": "1",
-    "PAP_BATCHED_ROUTE_COPY": "1",
-    "PAP_UNIFIED_MD_FAST_KEY": "1",
     "PAP_DIRECT_MAILBOX_OUTPUT": "1",
     "PAP_LOCAL_FAST_STREAM_ORDERED": "1",
     "PAP_LOCAL_FAST_SLOT_COUNT": "2",
     "PAP_DECODE_SLOT_PLAN_CACHE_LIMIT": "256",
-    "PAP_ATTENTION_DISPATCH_MODE": "legacy",
     "PAP_ATTENTION_DISPATCH_QUEUE_SIZE": "0",
-    "PAP_ATTENTION_COMBINE_WAIT_US": "0",
-    "PAP_ATTENTION_ACTIVE_PEER_TRACKING": "0",
     "PAP_PREFILL_IPC_PROFILE": "0",
     "PAP_PREFILL_TORCH_PROFILE": "0",
 }
@@ -65,14 +48,15 @@ def test_runtime_config_preserves_python_defaults() -> None:
     assert config.offload_exec_transport is PAPOffloadExecTransport.NIXL_MAILBOX
     assert config.offload_kv_transport is PAPOffloadKVTransport.CUDA_IPC
     assert config.same_host is False
-    assert config.mps.mode is PAPMPSMode.DYNAMIC
+    assert config.mps.mode is PAPMPSMode.STATIC
+    assert config.mps.profile_id == "baseline_static_64_28"
     runtime_contract = config.p17_profile_contract()["runtime"]
     assert runtime_contract["decode_token_delivery"] == "async"
     assert runtime_contract["prefill_kv_import"] == "async"
-    assert config.features.kv_handoff_mode is PAPKVHandoffMode.LAYER_DESCRIPTOR
-    assert config.features.unified_kv is False
-    assert config.features.batched_route_copy is True
-    assert config.features.unified_md_fast_key is True
+    assert runtime_contract["kv_handoff"] == "sealed_manifest"
+    assert runtime_contract["kv_ownership"] == "prefill_owned_unified"
+    assert runtime_contract["route_copy"] == "batched_with_input_fallback"
+    assert runtime_contract["metadata_lookup"] == "fast_key"
     assert config.features.direct_mailbox_output is False
     assert config.attention.dispatch_mode is PAPAttentionDispatchMode.LEGACY
     assert config.decode_commit.timeout_s == 0.2
@@ -100,6 +84,9 @@ def test_runtime_config_supports_arbitrary_xpayp_and_tp() -> None:
     assert config.offload_exec_transport is PAPOffloadExecTransport.NIXL_MAILBOX
     assert config.offload_kv_transport is PAPOffloadKVTransport.NIXL_MAILBOX
     assert config.same_host is False
+    assert config.attention.dispatch_mode is PAPAttentionDispatchMode.CENTRAL_COMBINE
+    assert config.attention.combine_wait_us == 1000.0
+    assert config.attention.active_peer_tracking is True
 
 
 @pytest.mark.parametrize(
@@ -174,6 +161,17 @@ def test_retired_flag_registry_reports_remaining_selectable_paths() -> None:
             "PAP_PREFILL_KV_ASYNC",
             "PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC",
         ),
+        ("PAP_KV_HANDOFF_MODE", "PAP-20260714-SEAL-HANDOFF-KV"),
+        ("PAP_UNIFIED_KV", "PAP-20260703-UNIFIED-KV"),
+        ("PAP_BATCHED_ROUTE_COPY", "PAP-20260711-ROUTE-COPY"),
+        ("PAP_UNIFIED_MD_FAST_KEY", "PAP-20260712-METADATA-FAST-KEY"),
+        ("PAP_ATTENTION_DISPATCH_MODE", "PAP-20260711-ATTENTION-COMBINE"),
+        ("PAP_ATTENTION_COMBINE_WAIT_US", "PAP-20260711-ATTENTION-COMBINE"),
+        (
+            "PAP_ATTENTION_ACTIVE_PEER_TRACKING",
+            "PAP-20260711-ACTIVE-PEER",
+        ),
+        ("PAP_MPS_MODE", "PAP-20260714-ASYNC-STATIC-BASELINE"),
         (
             "PAP_ASYNC_DECODE_TOKEN_SYNC_ONLY_BARRIER",
             "PAP-20260714-ASYNC-TTFT-ROOTCAUSE",
@@ -235,8 +233,7 @@ def test_attention_composition_uses_injected_config_not_later_env(
     monkeypatch,
 ) -> None:
     config = PAPRuntimeConfig.from_env(P17_PHASE0_ENV)
-    monkeypatch.setenv("PAP_ATTENTION_DISPATCH_MODE", "central_combine")
-    monkeypatch.setenv("PAP_ATTENTION_ACTIVE_PEER_TRACKING", "1")
+    monkeypatch.setenv("PAP_TOPOLOGY", "2pa2p")
 
     app = create_app(config=config)
 

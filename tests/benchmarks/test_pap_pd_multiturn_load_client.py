@@ -36,7 +36,6 @@ def _config(**overrides: object) -> LoadConfig:
         "git_tracked_worktree_dirty": False,
         "offload_exec_transport": "local_fast",
         "direct_mailbox_output": True,
-        "unified_md_fast_key": True,
     }
     values.update(overrides)
     return LoadConfig(**values)  # type: ignore[arg-type]

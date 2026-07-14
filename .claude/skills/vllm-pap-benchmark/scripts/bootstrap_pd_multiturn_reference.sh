@@ -317,7 +317,6 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
     --git-tracked-worktree-dirty 0 \
     --offload-exec-transport nixl \
     --direct-mailbox-output 0 \
-    --unified-md-fast-key 0 \
     --document-tokens 16000 \
     --append-tokens 120 \
     --output-tokens 256 \

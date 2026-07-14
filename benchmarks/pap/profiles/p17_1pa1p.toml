@@ -86,21 +86,6 @@ local_fast_stream_ordered = true
 local_fast_slot_count = 2
 decode_slot_plan_cache_limit = 256
 
-[runtime.phase0_flags]
-pap_async_decode_token = true
-pap_prefill_kv_async = true
-pap_kv_handoff_mode = "sealed_manifest"
-pap_unified_kv = true
-pap_batched_route_copy = true
-pap_unified_md_fast_key = true
-pap_direct_mailbox_output = true
-pap_attention_dispatch_mode = "legacy"
-pap_projection_sync_only_barrier = false
-pap_prefill_ipc_profile = false
-pap_prefill_torch_profile = false
-pap_diagnostic_projection_gate_count = 0
-pap_diagnostic_commit_gate_count = 0
-
 [audit]
 require_clean_tracked_worktree = true
 strict_correctness = true

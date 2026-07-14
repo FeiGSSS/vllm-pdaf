@@ -200,7 +200,13 @@ def build_app(
 
         register_vllm_dev_api_routers(app)
 
-    if os.environ.get("PAP_UNIFIED_KV", "").lower() in {"1", "true", "yes", "on"}:
+    try:
+        pap_prefill_capacity = int(
+            os.environ.get("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "0")
+        )
+    except ValueError:
+        pap_prefill_capacity = 0
+    if pap_prefill_capacity > 0:
         from vllm.pap.prefill_control_router import build_prefill_control_router
 
         app.include_router(build_prefill_control_router())

@@ -504,45 +504,9 @@ def test_unified_paged_flash_metadata_fast_key_avoids_hit_block_scan(
 def test_unified_paged_flash_metadata_fast_key_can_be_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import torch
-
-    from vllm.pap import attention_executor as executor_module
-
     monkeypatch.setenv("PAP_UNIFIED_MD_FAST_KEY", "0")
-    executor_module.reset_unified_paged_flash_metadata_cache()
-    state = _make_unified_state(
-        torch,
-        block_ids=tuple(range(32)),
-        seq_len=512,
-        lease_id="lease-toggle",
-    )
-    state.slot_generation = 1
-    state.slot_topology_id = 7
-    coerce_calls = 0
-    real_coerce = executor_module._coerce_block_id
-
-    def counted_coerce(value: Any) -> int:
-        nonlocal coerce_calls
-        coerce_calls += 1
-        return real_coerce(value)
-
-    monkeypatch.setattr(executor_module, "_coerce_block_id", counted_coerce)
-    build_unified_paged_flash_metadata(
-        states=[state],
-        device=torch.device("cpu"),
-    )
-    build_unified_paged_flash_metadata(
-        states=[state],
-        device=torch.device("cpu"),
-    )
-
-    assert coerce_calls == 64
-    stats = executor_module.unified_paged_flash_metadata_cache_stats()
-    assert stats["hits"] == 1
-    assert stats["misses"] == 1
-    assert stats["fast_key_lookups"] == 0
-    assert stats["full_key_scans"] == 2
-    assert stats["block_ids_scanned"] == 64
+    with pytest.raises(ValueError, match="was removed"):
+        create_app()
 
 
 def test_unified_paged_flash_metadata_fast_key_snapshots_sequence_length() -> None:
@@ -1001,10 +965,8 @@ def test_attention_executor_binds_each_projection_to_distinct_transport(
     assert transports[0].bound_peers == [peers[0]]
 
 
-@pytest.mark.parametrize("dispatch_mode", ["central_fifo", "central_combine"])
 def test_attention_executor_central_mode_shares_one_dispatcher(
     monkeypatch,
-    dispatch_mode,
 ) -> None:
     from vllm.pap import attention_executor as executor_module
 
@@ -1032,7 +994,9 @@ def test_attention_executor_central_mode_shares_one_dispatcher(
         if len(receiver_contexts) == 2:
             receivers_ready.set()
 
-    monkeypatch.setenv("PAP_ATTENTION_DISPATCH_MODE", dispatch_mode)
+    monkeypatch.setenv("PAP_TOPOLOGY", "1pa2p")
+    monkeypatch.setenv("PAP_PA_COUNT", "1")
+    monkeypatch.setenv("PAP_PROJECTION_COUNT", "2")
     monkeypatch.setattr(
         executor_module,
         "_build_attention_offload_exec_transport",
@@ -1049,11 +1013,21 @@ def test_attention_executor_central_mode_shares_one_dispatcher(
     peers = (b"projection-a", b"projection-b")
 
     for peer_index, peer_metadata in enumerate(peers):
+        source_id = f"projection-{peer_index}"
         response = client.post(
             "/v1/pap/attention/offload-exec-mailbox/bind",
             json={
                 "agent_metadata_b64": base64.b64encode(peer_metadata).decode(),
-                "source_id": f"projection-{peer_index}",
+                "source_id": source_id,
+            },
+        )
+        assert response.status_code == 200
+        response = client.post(
+            "/v1/pap/attention/offload-exec-mailbox/activity",
+            json={
+                "source_id": source_id,
+                "membership_generation": 1,
+                "active": True,
             },
         )
         assert response.status_code == 200
@@ -1067,26 +1041,25 @@ def test_attention_executor_central_mode_shares_one_dispatcher(
         "projection-1",
     }
     stats = client.get("/v1/pap/attention/stats").json()
-    assert stats["attention_dispatch_mode"] == dispatch_mode
+    assert stats["attention_dispatch_mode"] == "central_combine"
     assert stats["dispatcher_running"] is True
-    if dispatch_mode == "central_combine":
-        assert stats["dispatcher_expected_group_size"] == 2
-        assert stats["dispatcher_preferred_peer_id"] == "projection-0"
+    assert stats["dispatcher_expected_group_size"] == 2
+    assert stats["dispatcher_preferred_peer_id"] == "projection-0"
     dispatcher.stop(drain=True, timeout=1.0)
 
 
 def test_attention_executor_rejects_unknown_dispatch_mode(monkeypatch) -> None:
     monkeypatch.setenv("PAP_ATTENTION_DISPATCH_MODE", "separate_cohorts")
-
-    with pytest.raises(ValueError, match="PAP_ATTENTION_DISPATCH_MODE"):
+    with pytest.raises(ValueError, match="was removed"):
         create_app()
 
 
 def test_attention_executor_builds_central_combine_dispatcher(
     monkeypatch,
 ) -> None:
-    monkeypatch.setenv("PAP_ATTENTION_DISPATCH_MODE", "central_combine")
-    monkeypatch.setenv("PAP_ATTENTION_COMBINE_WAIT_US", "250")
+    monkeypatch.setenv("PAP_TOPOLOGY", "1pa2p")
+    monkeypatch.setenv("PAP_PA_COUNT", "1")
+    monkeypatch.setenv("PAP_PROJECTION_COUNT", "2")
 
     app = create_app()
 
@@ -1096,13 +1069,14 @@ def test_attention_executor_builds_central_combine_dispatcher(
     assert dispatcher._batch_handler is not None
     assert dispatcher._compatibility_key is not None
     stats = dispatcher.stats()
-    assert stats["dispatcher_coalesce_timeout_us"] == 250
+    assert stats["dispatcher_coalesce_timeout_us"] == 200
     assert stats["dispatcher_expected_group_size"] == 1
 
 
 def test_attention_executor_tracks_active_projection_membership(monkeypatch) -> None:
-    monkeypatch.setenv("PAP_ATTENTION_DISPATCH_MODE", "central_combine")
-    monkeypatch.setenv("PAP_ATTENTION_ACTIVE_PEER_TRACKING", "1")
+    monkeypatch.setenv("PAP_TOPOLOGY", "1pa2p")
+    monkeypatch.setenv("PAP_PA_COUNT", "1")
+    monkeypatch.setenv("PAP_PROJECTION_COUNT", "2")
     app = create_app()
     client = _ASGITestClient(app)
 
@@ -5304,56 +5278,9 @@ def test_attention_executor_paged_ipc_import_keeps_prefill_block_views(
         headers={"Content-Type": "application/octet-stream"},
     )
     assert retired_selector.status_code == 400
-    assert "async wire selector was removed" in retired_selector.json()["detail"]
-
-    imported = client.post(
-        "/v1/pap/attention/import-prefill-kv-binary",
-        content=serialize_tensor_bundle(
-            {
-                "command": "import_prefill_paged_kv_ipc",
-                "descriptor": descriptor.to_dict(),
-            },
-            {},
-        ),
-        headers={"Content-Type": "application/octet-stream"},
-    )
-
-    assert imported.status_code == 200
-    metadata, tensors = deserialize_tensor_bundle(imported.content)
-    assert metadata["seq_len"] == 5
-    assert metadata["status"] == "queued"
-    assert tensors == {}
-    registry = app.state.registry
-    registry._prefill_async_queue.join()
-    session_id = registry.resolve_session_request_id("req-paged-ipc")
-    segments, seq_len = registry.append_decode_kv(
-        request_id="req-paged-ipc",
-        layer_name="model.layers.0.self_attn.attn",
-        key=torch.tensor([[[9.0, 9.0]]]),
-        value=torch.tensor([[[10.0, 10.0]]]),
-        block_id=1,
-        slot=5,
-        seq_len=6,
-    )
-
-    assert seq_len == 6
-    assert len(segments) == 3
-    assert (
-        segments[0][0].untyped_storage().data_ptr()
-        == kv_cache.untyped_storage().data_ptr()
-    )
-    assert torch.equal(
-        torch.cat([key.detach().cpu() for key, _ in segments], dim=0),
-        torch.cat(
-            [
-                kv_cache[0, 0, :4, :1, :],
-                kv_cache[0, 1, :1, :1, :],
-                torch.tensor([[[9.0, 9.0]]]),
-            ],
-            dim=0,
-        ),
-    )
-    assert "model.layers.0.self_attn.attn" in registry._decode_kv[session_id]
+    assert "per-layer paged KV import was removed" in retired_selector.json()[
+        "detail"
+    ]
 
 
 def test_async_prefill_import_preserves_unified_kv_descriptor(

@@ -26,6 +26,7 @@ def _client_result(architecture: str = "pap") -> dict[str, object]:
             "direct_mailbox_output": True,
             "unified_md_fast_key": True,
             "prefill_kv_async": True,
+            "kv_handoff_mode": "sealed_manifest",
         },
         "validity": {"status": "passed", "cache_gate": "passed"},
         "cache_validation": {"status": "passed"},
@@ -121,16 +122,14 @@ def _pap_artifacts(tmp_path: Path) -> dict[str, Path]:
                 "direct_mailbox_output": True,
                 "unified_md_fast_key": True,
                 "prefill_kv_async": True,
+                "kv_handoff_mode": "sealed_manifest",
             }
         ),
         encoding="utf-8",
     )
     artifacts["tracked_worktree_patch"].write_bytes(b"")
     artifacts["tracked_index_patch"].write_bytes(b"")
-    artifacts["effective_config"].write_text(
-        "PAP_UNIFIED_MD_FAST_KEY=1\n",
-        encoding="utf-8",
-    )
+    artifacts["effective_config"].write_text("", encoding="utf-8")
     return artifacts
 
 
@@ -249,7 +248,7 @@ def test_finalize_result_rejects_decode_token_join_config_mismatch(
 ) -> None:
     artifacts = _pap_artifacts(tmp_path)
     artifacts["effective_config"].write_text(
-        "PAP_UNIFIED_MD_FAST_KEY=1\nPAP_ASYNC_DECODE_TOKEN=0\n",
+        "PAP_ASYNC_DECODE_TOKEN=0\n",
         encoding="utf-8",
     )
 
@@ -268,10 +267,13 @@ def test_finalize_result_rejects_decode_token_join_config_mismatch(
         )
 
     artifacts["effective_config"].write_text(
-        "PAP_UNIFIED_MD_FAST_KEY=1\nPAP_PREFILL_KV_ASYNC=0\n",
+        "PAP_PREFILL_KV_ASYNC=0\n",
         encoding="utf-8",
     )
-    with pytest.raises(ValueError, match="PAP_PREFILL_KV_ASYNC was removed"):
+    with pytest.raises(
+        ValueError,
+        match="removed PAP selectors remain.*PAP_PREFILL_KV_ASYNC",
+    ):
         finalize_result(
             _client_result(),
             architecture="pap",
@@ -374,32 +376,20 @@ def test_finalize_result_accepts_disabled_metadata_fast_key(
     artifacts = _pap_artifacts(tmp_path)
     result = _client_result()
     result["implementation"]["unified_md_fast_key"] = False
-    metadata = json.loads(artifacts["run_metadata"].read_text())
-    metadata["unified_md_fast_key"] = False
-    artifacts["run_metadata"].write_text(json.dumps(metadata))
-    stats = json.loads(artifacts["attention_stats"].read_text())
-    stats["unified_md_fast_key_lookups"] = 0
-    stats["unified_md_fast_key_hits"] = 0
-    artifacts["attention_stats"].write_text(json.dumps(stats))
-    artifacts["effective_config"].write_text(
-        "PAP_UNIFIED_MD_FAST_KEY=0\n",
-        encoding="utf-8",
-    )
 
-    finalized = finalize_result(
-        result,
-        architecture="pap",
-        passed_gates=(
-            "session_drain",
-            "routing",
-            "correctness_logs",
-            "attention_stats_capture",
-            "decode_token_join",
-        ),
-        artifacts=artifacts,
-    )
-
-    assert finalized["external_validation"]["status"] == "passed"
+    with pytest.raises(ValueError, match="metadata fast-key lookup"):
+        finalize_result(
+            result,
+            architecture="pap",
+            passed_gates=(
+                "session_drain",
+                "routing",
+                "correctness_logs",
+                "attention_stats_capture",
+                "decode_token_join",
+            ),
+            artifacts=artifacts,
+        )
 
 
 def test_finalize_result_aggregates_multi_instance_attention_stats(

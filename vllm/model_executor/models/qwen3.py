@@ -99,26 +99,6 @@ def _pap_direct_qkv_send_enabled() -> bool:
     )
 
 
-def _pap_batched_route_copy_enabled() -> bool:
-    return os.environ.get("PAP_BATCHED_ROUTE_COPY", "1").lower() in _TRUE_ENV_VALUES
-
-
-def _pap_prefill_ipc_profile_enabled() -> bool:
-    return _pap_env_enabled("PAP_PREFILL_IPC_PROFILE")
-
-
-def _pap_unified_kv_export_enabled() -> bool:
-    return _pap_env_enabled("PAP_UNIFIED_KV")
-
-
-def _pap_kv_handoff_mode() -> str:
-    mode = os.environ.get("PAP_KV_HANDOFF_MODE", "layer_descriptor").lower()
-    mode = mode.replace("-", "_")
-    if mode not in {"layer_descriptor", "sealed_manifest"}:
-        raise ValueError(f"unsupported PAP_KV_HANDOFF_MODE: {mode}")
-    return mode
-
-
 def _pap_unified_kv_export_decode_capacity_tokens() -> int:
     raw = os.environ.get("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "")
     if not raw:
@@ -1644,21 +1624,6 @@ class Qwen3Attention(nn.Module):
             return output
 
         direct_qkv_send_enabled = _pap_direct_qkv_send_enabled()
-        batched_route_copy_enabled = _pap_batched_route_copy_enabled()
-
-        def apply_remote_output(req_index: int, remote_output: torch.Tensor) -> None:
-            target = get_copy_output_buffer()[req_index : req_index + 1]
-            remote_output = remote_output.to(device=output.device, dtype=output.dtype)
-            if remote_output.shape != target.shape:
-                if remote_output.numel() != target.numel():
-                    raise RuntimeError(
-                        "PAP remote attention output shape mismatch: "
-                        f"got {tuple(remote_output.shape)}, "
-                        f"expected {tuple(target.shape)}"
-                    )
-                remote_output = remote_output.view_as(target)
-            target.copy_(remote_output)
-
         trace_offload_exec = os.environ.get("PAP_OFFLOAD_EXEC_TRACE", "").lower() in (
             "1",
             "true",
@@ -1698,7 +1663,7 @@ class Qwen3Attention(nn.Module):
                 trace_contiguous_route_groups += 1
             route_index_tensor = (
                 None
-                if route_is_contiguous or not batched_route_copy_enabled
+                if route_is_contiguous
                 else _pap_route_index_tensor(
                     additional_kwargs,
                     req_indices,
@@ -1723,18 +1688,11 @@ class Qwen3Attention(nn.Module):
             direct_qkv_batch: torch.Tensor | None = None
             direct_layout = False
             if direct_qkv_send_enabled and callable(send_qkv_batch_direct):
-                if batched_route_copy_enabled:
-                    direct_qkv_batch, direct_layout = _pap_qkv_batch_for_indices(
-                        direct_qkv_send_buffer,
-                        req_indices,
-                        index_tensor=route_index_tensor,
-                    )
-                else:
-                    direct_qkv_batch = _pap_direct_qkv_batch_for_indices(
-                        direct_qkv_send_buffer,
-                        req_indices,
-                    )
-                    direct_layout = direct_qkv_batch is not None
+                direct_qkv_batch, direct_layout = _pap_qkv_batch_for_indices(
+                    direct_qkv_send_buffer,
+                    req_indices,
+                    index_tensor=route_index_tensor,
+                )
             if direct_qkv_batch is not None:
                 if trace_offload_exec:
                     if direct_layout:
@@ -1924,19 +1882,12 @@ class Qwen3Attention(nn.Module):
                     return direct_output, pap_release_messages
                 if trace_offload_exec:
                     trace_scattered_output_rows += len(req_indices)
-                if batched_route_copy_enabled:
-                    _pap_scatter_attention_output_group(
-                        get_copy_output_buffer(),
-                        output_batch,
-                        req_indices=req_indices,
-                        index_tensor=route_index_tensor,
-                    )
-                else:
-                    for descriptor_index, req_index in enumerate(req_indices):
-                        apply_remote_output(
-                            req_index,
-                            output_batch[descriptor_index : descriptor_index + 1],
-                        )
+                _pap_scatter_attention_output_group(
+                    get_copy_output_buffer(),
+                    output_batch,
+                    req_indices=req_indices,
+                    index_tensor=route_index_tensor,
+                )
             finally:
                 if output_message is not None:
                     output_message.release()
@@ -1949,8 +1900,6 @@ class Qwen3Attention(nn.Module):
         return final_output.view(q.shape[0], self.num_heads * self.head_dim), []
 
     def _maybe_import_pap_prefill_kv_to_attention(self) -> None:
-        profile_ipc = _pap_prefill_ipc_profile_enabled()
-        profile_total_start = time.perf_counter() if profile_ipc else 0.0
         if not is_forward_context_available():
             return
         forward_context = get_forward_context()
@@ -2023,10 +1972,6 @@ class Qwen3Attention(nn.Module):
             return
 
         from vllm.pap.data_plane import PAPTensorTransport
-        from vllm.pap.shadow_attention import (
-            import_prefill_paged_kv,
-            select_attention_endpoint_for_request,
-        )
         from vllm.v1.attention.backends.utils import get_kv_cache_layout
 
         offload_kv_transport = PAPTensorTransport(
@@ -2036,124 +1981,20 @@ class Qwen3Attention(nn.Module):
         )
         if offload_kv_transport is not PAPTensorTransport.CUDA_IPC:
             raise RuntimeError("PAP paged Prefill KV export requires cuda_ipc")
-        if _pap_kv_handoff_mode() == "sealed_manifest":
-            self._publish_pap_prefill_kv_manifests(
-                request_ids=request_ids,
-                num_reqs=num_reqs,
-                num_scheduled_tokens=num_scheduled_tokens,
-                prefill_kv_handle_by_request=prefill_kv_handle_by_request,
-                import_request_ids=import_prefill_kv_to_attention_by_request,
-                tcp_endpoint_by_request=tcp_endpoint_by_request,
-                default_tcp_endpoint=default_tcp_endpoint,
-                seq_lens=seq_lens,
-                block_table=block_table,
-                kv_cache=kv_cache,
-                block_size=int(block_size),
-                layout=get_kv_cache_layout(),
-            )
-            return
-        seq_lens_start = time.perf_counter() if profile_ipc else 0.0
-        seq_lens_cpu = seq_lens.detach().to(device="cpu", dtype=torch.long)
-        seq_lens_cpu_ms = (
-            (time.perf_counter() - seq_lens_start) * 1000.0 if profile_ipc else 0.0
+        self._publish_pap_prefill_kv_manifests(
+            request_ids=request_ids,
+            num_reqs=num_reqs,
+            num_scheduled_tokens=num_scheduled_tokens,
+            prefill_kv_handle_by_request=prefill_kv_handle_by_request,
+            import_request_ids=import_prefill_kv_to_attention_by_request,
+            tcp_endpoint_by_request=tcp_endpoint_by_request,
+            default_tcp_endpoint=default_tcp_endpoint,
+            seq_lens=seq_lens,
+            block_table=block_table,
+            kv_cache=kv_cache,
+            block_size=int(block_size),
+            layout=get_kv_cache_layout(),
         )
-        import_count = 0
-        block_ids_total_ms = 0.0
-        import_total_ms = 0.0
-        for req_index in range(num_reqs):
-            req_profile_start = time.perf_counter() if profile_ipc else 0.0
-            request_id = str(request_ids[req_index])
-            if not is_pap_request_id(request_id):
-                continue
-            if request_id not in import_prefill_kv_to_attention_by_request:
-                continue
-            prefill_kv_handle = prefill_kv_handle_by_request.get(request_id)
-            if not prefill_kv_handle:
-                continue
-            prefix_len = int(seq_lens_cpu[req_index].item())
-            if prefix_len <= 1:
-                continue
-            import_key = (
-                request_id,
-                self.attn.layer_name,
-                prefix_len,
-                str(prefill_kv_handle),
-            )
-            if import_key in self._pap_imported_prefill_kv:
-                continue
-            tcp_endpoint = select_attention_endpoint_for_request(
-                request_id,
-                default_endpoint=default_tcp_endpoint,
-                endpoint_by_request=tcp_endpoint_by_request,
-            )
-            tcp_endpoint = _pap_endpoint_for_tp_rank(tcp_endpoint)
-            block_ids_start = time.perf_counter() if profile_ipc else 0.0
-            unified_export = _pap_unified_kv_export_enabled()
-            unified_capacity_tokens = 0
-            if unified_export:
-                unified_capacity_tokens = (
-                    _pap_unified_kv_export_decode_capacity_tokens()
-                )
-            block_seq_len = prefix_len
-            if unified_export and unified_capacity_tokens > 0:
-                block_seq_len = prefix_len + unified_capacity_tokens
-            block_ids = _pap_block_ids_from_block_table(
-                block_table=block_table[req_index : req_index + 1],
-                seq_len=block_seq_len,
-                block_size=int(block_size),
-            )
-
-            block_ids_ms = (
-                (time.perf_counter() - block_ids_start) * 1000.0 if profile_ipc else 0.0
-            )
-            publish_start = time.perf_counter() if profile_ipc else 0.0
-            import_prefill_paged_kv(
-                request_id=request_id,
-                layer_name=self.attn.layer_name,
-                kv_cache=kv_cache,
-                block_ids=block_ids,
-                seq_len=prefix_len,
-                block_size=int(block_size),
-                num_kv_heads=self.num_kv_heads,
-                layout=get_kv_cache_layout(),
-                tcp_endpoint=tcp_endpoint,
-            )
-            publish_ms = (
-                (time.perf_counter() - publish_start) * 1000.0 if profile_ipc else 0.0
-            )
-            self._pap_imported_prefill_kv.add(import_key)
-            if profile_ipc:
-                import_count += 1
-                block_ids_total_ms += block_ids_ms
-                import_total_ms += publish_ms
-                logger.info(
-                    "PAP prefill IPC model profile request_id=%s layer=%s "
-                    "prefix_len=%d blocks=%d delivery=async "
-                    "seq_lens_cpu_ms=%.3f "
-                    "block_ids_ms=%.3f publish_response_wait_ms=%.3f "
-                    "total_ms=%.3f",
-                    request_id,
-                    self.attn.layer_name,
-                    prefix_len,
-                    len(block_ids),
-                    seq_lens_cpu_ms,
-                    block_ids_ms,
-                    publish_ms,
-                    (time.perf_counter() - req_profile_start) * 1000.0,
-                )
-        if profile_ipc and import_count:
-            logger.info(
-                "PAP prefill IPC model aggregate layer=%s imports=%d "
-                "seq_lens_cpu_ms=%.3f block_ids_total_ms=%.3f "
-                "publish_response_wait_total_ms=%.3f total_ms=%.3f "
-                "delivery=async",
-                self.attn.layer_name,
-                import_count,
-                seq_lens_cpu_ms,
-                block_ids_total_ms,
-                import_total_ms,
-                (time.perf_counter() - profile_total_start) * 1000.0,
-            )
 
     def _publish_pap_prefill_kv_manifests(
         self,

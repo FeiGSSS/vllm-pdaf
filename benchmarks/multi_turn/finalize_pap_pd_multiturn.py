@@ -317,8 +317,10 @@ def _validate_pap_evidence(
     if implementation.get("prefill_kv_async") is not True:
         raise ValueError("PAP implementation must use async Prefill KV import")
     fast_key_enabled = implementation.get("unified_md_fast_key")
-    if not isinstance(fast_key_enabled, bool):
-        raise ValueError("implementation unified_md_fast_key must be boolean")
+    if fast_key_enabled is not True:
+        raise ValueError("PAP implementation must record metadata fast-key lookup")
+    if implementation.get("kv_handoff_mode") != "sealed_manifest":
+        raise ValueError("PAP implementation must record sealed KV manifests")
     fast_key_lookups = _attention_stat_total(
         attention,
         "unified_md_fast_key_lookups",
@@ -331,29 +333,33 @@ def _validate_pap_evidence(
         attention,
         "unified_md_full_key_scans",
     )
-    if fast_key_enabled and (fast_key_lookups <= 0 or fast_key_hits <= 0):
+    if fast_key_lookups <= 0 or fast_key_hits <= 0:
         raise ValueError("metadata fast key has no runtime hit evidence")
-    if not fast_key_enabled and (fast_key_lookups != 0 or fast_key_hits != 0):
-        raise ValueError("disabled metadata fast key recorded runtime lookups")
     if full_key_scans <= 0:
         raise ValueError("metadata cache recorded no full-key scans")
     effective_config = _env_values(artifacts["effective_config"])
-    if "PAP_PREFILL_KV_ASYNC" in effective_config:
+    retired_selectors = {
+        "PAP_PREFILL_KV_ASYNC",
+        "PAP_KV_HANDOFF_MODE",
+        "PAP_UNIFIED_KV",
+        "PAP_BATCHED_ROUTE_COPY",
+        "PAP_UNIFIED_MD_FAST_KEY",
+        "PAP_ATTENTION_DISPATCH_MODE",
+        "PAP_ATTENTION_COMBINE_WAIT_US",
+        "PAP_ATTENTION_ACTIVE_PEER_TRACKING",
+        "PAP_MPS_MODE",
+    }
+    present_retired = sorted(retired_selectors.intersection(effective_config))
+    if present_retired:
         raise ValueError(
-            "PAP_PREFILL_KV_ASYNC was removed from the effective config"
+            "removed PAP selectors remain in effective config: "
+            + ", ".join(present_retired)
         )
     _validate_decode_token_join(
         artifacts["decode_token_join"],
         effective_config=effective_config,
         attention=attention,
     )
-    expected_fast_key = "1" if fast_key_enabled else "0"
-    if effective_config.get("PAP_UNIFIED_MD_FAST_KEY") != expected_fast_key:
-        raise ValueError(
-            "metadata fast-key effective config mismatch: "
-            f"{effective_config.get('PAP_UNIFIED_MD_FAST_KEY')} "
-            f"!= {expected_fast_key}"
-        )
     deferred_trace_enabled = (
         effective_config.get("PAP_DEFERRED_CUDA_TRACE", "0").lower()
         in _TRUE_VALUES

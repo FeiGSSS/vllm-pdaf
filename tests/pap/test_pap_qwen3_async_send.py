@@ -65,15 +65,11 @@ def test_route_index_tensor_is_cached_for_all_layers() -> None:
 def test_batched_route_copy_can_be_disabled_for_ab(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from vllm.model_executor.models.qwen3 import (
-        _pap_batched_route_copy_enabled,
-    )
-
-    monkeypatch.delenv("PAP_BATCHED_ROUTE_COPY", raising=False)
-    assert _pap_batched_route_copy_enabled() is True
+    from vllm.pap.config import PAPConfigError, PAPRuntimeConfig
 
     monkeypatch.setenv("PAP_BATCHED_ROUTE_COPY", "0")
-    assert _pap_batched_route_copy_enabled() is False
+    with pytest.raises(PAPConfigError, match="was removed"):
+        PAPRuntimeConfig.from_env()
 
 
 def test_scatter_attention_output_group_uses_non_contiguous_indices() -> None:

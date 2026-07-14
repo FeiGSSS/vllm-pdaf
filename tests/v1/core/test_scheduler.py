@@ -166,7 +166,6 @@ def test_pap_unified_kv_decode_reservation_reaches_model_runner(
         num_hidden_layers=2,
         max_position_embeddings=512,
     ).save_pretrained(tmp_path)
-    monkeypatch.setenv("PAP_UNIFIED_KV", "1")
     monkeypatch.setenv("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "64")
     with patch("vllm.platforms.current_platform", CpuPlatform()):
         scheduler = create_scheduler(
@@ -205,7 +204,6 @@ def test_pap_unified_kv_decode_reservation_skips_non_pap_requests(
         num_hidden_layers=2,
         max_position_embeddings=512,
     ).save_pretrained(tmp_path)
-    monkeypatch.setenv("PAP_UNIFIED_KV", "1")
     monkeypatch.setenv("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "64")
     with patch("vllm.platforms.current_platform", CpuPlatform()):
         scheduler = create_scheduler(

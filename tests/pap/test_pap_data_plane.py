@@ -671,7 +671,6 @@ def test_import_prefill_paged_kv_unified_reuses_active_lease(
     from vllm.pap.shadow_attention import import_prefill_paged_kv
 
     reset_global_kv_lease_registry()
-    monkeypatch.setenv("PAP_UNIFIED_KV", "1")
     monkeypatch.setenv("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "10")
     descriptors = []
 
@@ -732,7 +731,6 @@ def test_sealed_prefill_kv_handoff_posts_catalog_and_manifest_without_sync(
     )
 
     reset_global_kv_lease_registry()
-    monkeypatch.setenv("PAP_UNIFIED_KV", "1")
     monkeypatch.setenv("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "3")
     posted_metadata = []
 

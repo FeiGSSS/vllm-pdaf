@@ -114,9 +114,13 @@ def sync_pap_projection_peer_activity(
     """Synchronize Projection membership after one scheduler state update."""
 
     projection_role = os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower()
-    tracking_enabled = os.environ.get("PAP_ATTENTION_ACTIVE_PEER_TRACKING", "0").lower()
-    if projection_role not in {"1", "true", "yes", "on"} or (
-        tracking_enabled not in {"1", "true", "yes", "on"}
+    try:
+        projection_count = int(os.environ.get("PAP_PROJECTION_COUNT", "1"))
+    except ValueError:
+        projection_count = 1
+    if (
+        projection_role not in {"1", "true", "yes", "on"}
+        or projection_count <= 1
     ):
         return tracker
 

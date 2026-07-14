@@ -37,10 +37,9 @@ class PAPOffloadKVTransport(str, Enum):
 
 
 class PAPAttentionDispatchMode(str, Enum):
-    """Legacy Attention execution selection retained during convergence."""
+    """Topology-derived Attention execution strategy."""
 
     LEGACY = "legacy"
-    CENTRAL_FIFO = "central_fifo"
     CENTRAL_COMBINE = "central_combine"
 
 
@@ -53,18 +52,9 @@ class PAPRoutingPolicy(str, Enum):
     PROJECTION_STICKY = "projection_sticky"
 
 
-class PAPKVHandoffMode(str, Enum):
-    """Prefill KV handoff modes retained during convergence."""
-
-    LAYER_DESCRIPTOR = "layer_descriptor"
-    SEALED_MANIFEST = "sealed_manifest"
-
-
 class PAPMPSMode(str, Enum):
     """PAP MPS resource partition modes."""
 
-    DISABLED = "disabled"
-    DYNAMIC = "dynamic"
     STATIC = "static"
 
 
@@ -215,7 +205,7 @@ class PAPLeaseReleaseConfig:
 
 @dataclass(frozen=True)
 class PAPAttentionServiceConfig:
-    """Attention service composition and retained dispatcher settings."""
+    """Attention service composition derived from topology."""
 
     dispatch_mode: PAPAttentionDispatchMode
     dispatch_queue_size: int
@@ -230,12 +220,8 @@ class PAPAttentionServiceConfig:
 
 @dataclass(frozen=True)
 class PAPRuntimeFeatures:
-    """Feature-selectable PAP paths retained until Phase 2 convergence."""
+    """Operational PAP controls that do not select core runtime paths."""
 
-    kv_handoff_mode: PAPKVHandoffMode
-    unified_kv: bool
-    batched_route_copy: bool
-    unified_md_fast_key: bool
     direct_mailbox_output: bool
     local_fast_stream_ordered: bool
     local_fast_slot_count: int
@@ -309,42 +295,56 @@ PAP_RETIRED_FLAGS = (
         p17_values=frozenset({"sealed_manifest"}),
         replacement="sealed catalog and request manifest handoff",
         experiment_id="PAP-20260714-SEAL-HANDOFF-KV",
+        removed=True,
     ),
     PAPRetiredFlag(
         name="PAP_UNIFIED_KV",
         p17_values=_TRUE_VALUES,
         replacement="Prefill-owned unified KV",
         experiment_id="PAP-20260703-UNIFIED-KV",
+        removed=True,
     ),
     PAPRetiredFlag(
         name="PAP_BATCHED_ROUTE_COPY",
         p17_values=_TRUE_VALUES,
         replacement="batched route copy with input-driven fallback",
         experiment_id="PAP-20260711-ROUTE-COPY",
+        removed=True,
     ),
     PAPRetiredFlag(
         name="PAP_UNIFIED_MD_FAST_KEY",
         p17_values=_TRUE_VALUES,
         replacement="unified metadata fast-key lookup",
         experiment_id="PAP-20260712-METADATA-FAST-KEY",
+        removed=True,
     ),
     PAPRetiredFlag(
         name="PAP_ATTENTION_DISPATCH_MODE",
         p17_values=frozenset({"legacy"}),
         replacement="topology-derived direct or combine execution",
         experiment_id="PAP-20260711-ATTENTION-COMBINE",
+        removed=True,
+    ),
+    PAPRetiredFlag(
+        name="PAP_ATTENTION_COMBINE_WAIT_US",
+        p17_values=frozenset({"0", "0.0"}),
+        replacement="topology-derived combine wait",
+        experiment_id="PAP-20260711-ATTENTION-COMBINE",
+        removed=True,
     ),
     PAPRetiredFlag(
         name="PAP_ATTENTION_ACTIVE_PEER_TRACKING",
         p17_values=_FALSE_VALUES,
         replacement="topology-derived peer membership tracking",
         experiment_id="PAP-20260711-ACTIVE-PEER",
+        removed=True,
     ),
     PAPRetiredFlag(
         name="PAP_MPS_MODE",
         p17_values=frozenset({"static"}),
         replacement="P17 static 64/28 MPS partition",
         experiment_id="PAP-20260714-ASYNC-STATIC-BASELINE",
+        removed=True,
     ),
     PAPRetiredFlag(
         name="PAP_PREFILL_IPC_PROFILE",
@@ -503,65 +503,18 @@ class PAPRuntimeConfig:
             exec_transport is PAPOffloadExecTransport.LOCAL_FAST,
         )
 
-        mps_mode = _parse_enum(
-            PAPMPSMode,
-            _env_text(env, "PAP_MPS_MODE", "dynamic"),
-            "PAP_MPS_MODE",
-        )
-        if not _env_bool(env, "PAP_ENABLE_MPS", True):
-            mps_mode = PAPMPSMode.DISABLED
         mps = PAPMPSConfig(
-            mode=mps_mode,
-            profile_id=_env_text(
-                env,
-                "PAP_BENCH_MPS_PROFILE",
-                "baseline_70_30",
-            ),
-            prefill_requested_percent=_env_int(
-                env,
-                "PAP_PREFILL_MPS_PERCENT",
-                70,
-            ),
-            attention_requested_percent=_env_int(
-                env,
-                "PAP_ATTENTION_MPS_PERCENT",
-                30,
-            ),
-            prefill_chunks=_env_int(
-                env,
-                "PAP_STATIC_PREFILL_CHUNKS",
-                16,
-                minimum=1,
-            ),
-            attention_chunks=_env_int(
-                env,
-                "PAP_STATIC_ATTENTION_CHUNKS",
-                7,
-                minimum=1,
-            ),
-            prefill_visible_sms=_env_int(
-                env,
-                "PAP_STATIC_PREFILL_EXPECTED_SMS",
-                64,
-                minimum=1,
-            ),
-            attention_visible_sms=_env_int(
-                env,
-                "PAP_STATIC_ATTENTION_EXPECTED_SMS",
-                28,
-                minimum=1,
-            ),
+            mode=PAPMPSMode.STATIC,
+            profile_id="baseline_static_64_28",
+            prefill_requested_percent=70,
+            attention_requested_percent=30,
+            prefill_chunks=16,
+            attention_chunks=7,
+            prefill_visible_sms=64,
+            attention_visible_sms=28,
         )
 
         features = PAPRuntimeFeatures(
-            kv_handoff_mode=_parse_enum(
-                PAPKVHandoffMode,
-                _env_text(env, "PAP_KV_HANDOFF_MODE", "layer_descriptor"),
-                "PAP_KV_HANDOFF_MODE",
-            ),
-            unified_kv=_env_bool(env, "PAP_UNIFIED_KV", False),
-            batched_route_copy=_env_bool(env, "PAP_BATCHED_ROUTE_COPY", True),
-            unified_md_fast_key=_env_bool(env, "PAP_UNIFIED_MD_FAST_KEY", True),
             direct_mailbox_output=_env_bool(
                 env,
                 "PAP_DIRECT_MAILBOX_OUTPUT",
@@ -596,11 +549,18 @@ class PAPRuntimeConfig:
             ),
         )
 
+        multi_projection = topology.projection_count > 1
+        if not multi_projection:
+            combine_wait_us = 0.0
+        elif topology.pa_count == 1:
+            combine_wait_us = 200.0
+        else:
+            combine_wait_us = 1000.0
         attention = PAPAttentionServiceConfig(
-            dispatch_mode=_parse_enum(
-                PAPAttentionDispatchMode,
-                _env_text(env, "PAP_ATTENTION_DISPATCH_MODE", "legacy"),
-                "PAP_ATTENTION_DISPATCH_MODE",
+            dispatch_mode=(
+                PAPAttentionDispatchMode.CENTRAL_COMBINE
+                if multi_projection
+                else PAPAttentionDispatchMode.LEGACY
             ),
             dispatch_queue_size=_env_int(
                 env,
@@ -608,17 +568,8 @@ class PAPRuntimeConfig:
                 0,
                 minimum=0,
             ),
-            combine_wait_us=_env_float(
-                env,
-                "PAP_ATTENTION_COMBINE_WAIT_US",
-                0.0,
-                minimum=0.0,
-            ),
-            active_peer_tracking=_env_bool(
-                env,
-                "PAP_ATTENTION_ACTIVE_PEER_TRACKING",
-                False,
-            ),
+            combine_wait_us=combine_wait_us,
+            active_peer_tracking=multi_projection,
             actor_id=_env_text(
                 env,
                 "PAP_NIXL_MAILBOX_ACTOR_ID",
@@ -863,18 +814,10 @@ class PAPRuntimeConfig:
             "runtime": {
                 "decode_token_delivery": "async",
                 "prefill_kv_import": "async",
-                "kv_handoff": features.kv_handoff_mode.value,
-                "kv_ownership": (
-                    "prefill_owned_unified" if features.unified_kv else "legacy_split"
-                ),
-                "route_copy": (
-                    "batched_with_input_fallback"
-                    if features.batched_route_copy
-                    else "per_row"
-                ),
-                "metadata_lookup": (
-                    "fast_key" if features.unified_md_fast_key else "full_scan"
-                ),
+                "kv_handoff": "sealed_manifest",
+                "kv_ownership": "prefill_owned_unified",
+                "route_copy": "batched_with_input_fallback",
+                "metadata_lookup": "fast_key",
                 "attention_execution": attention_execution,
                 "direct_mailbox_output": features.direct_mailbox_output,
                 "local_fast_stream_ordered": (
@@ -884,21 +827,6 @@ class PAPRuntimeConfig:
                 "decode_slot_plan_cache_limit": (
                     features.decode_slot_plan_cache_limit
                 ),
-                "phase0_flags": {
-                    "pap_async_decode_token": True,
-                    "pap_prefill_kv_async": True,
-                    "pap_kv_handoff_mode": features.kv_handoff_mode.value,
-                    "pap_unified_kv": features.unified_kv,
-                    "pap_batched_route_copy": features.batched_route_copy,
-                    "pap_unified_md_fast_key": features.unified_md_fast_key,
-                    "pap_direct_mailbox_output": features.direct_mailbox_output,
-                    "pap_attention_dispatch_mode": dispatch_mode.value,
-                    "pap_projection_sync_only_barrier": False,
-                    "pap_prefill_ipc_profile": features.prefill_ipc_profile,
-                    "pap_prefill_torch_profile": features.prefill_torch_profile,
-                    "pap_diagnostic_projection_gate_count": 0,
-                    "pap_diagnostic_commit_gate_count": 0,
-                },
             },
         }
 

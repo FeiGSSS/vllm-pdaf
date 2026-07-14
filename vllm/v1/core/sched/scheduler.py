@@ -1235,13 +1235,6 @@ class Scheduler(SchedulerInterface):
         params = request.kv_transfer_params
         if not params or not params.get("pap_import_prefill_kv_to_attention"):
             return 0
-        if os.environ.get("PAP_UNIFIED_KV", "").lower() not in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }:
-            return 0
         raw_capacity = os.environ.get(
             "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "0"
         )

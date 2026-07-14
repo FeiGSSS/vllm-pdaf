@@ -103,7 +103,7 @@ def test_sync_projection_peer_activity_covers_empty_cohort(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("PAP_PROJECTION_KV_UNAWARE", "1")
-    monkeypatch.setenv("PAP_ATTENTION_ACTIVE_PEER_TRACKING", "1")
+    monkeypatch.setenv("PAP_PROJECTION_COUNT", "2")
     monkeypatch.setenv("PAP_NIXL_MAILBOX_ACTOR_ID", "projection-0")
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_LOCAL_RANK", "0")
     notifications: list[dict[str, object]] = []
@@ -147,7 +147,7 @@ def test_sync_projection_peer_activity_ignores_non_projection_role(
     monkeypatch,
 ) -> None:
     monkeypatch.delenv("PAP_PROJECTION_KV_UNAWARE", raising=False)
-    monkeypatch.setenv("PAP_ATTENTION_ACTIVE_PEER_TRACKING", "1")
+    monkeypatch.setenv("PAP_PROJECTION_COUNT", "2")
 
     assert (
         sync_pap_projection_peer_activity(

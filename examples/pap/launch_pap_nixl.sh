@@ -8,12 +8,21 @@ if [[ -v PAP_ASYNC_DECODE_TOKEN ]]; then
 "PAP-20260713-ASYNC-DECODE-TOKEN-D2H." >&2
     exit 2
 fi
-if [[ -v PAP_PREFILL_KV_ASYNC ]]; then
-    echo "PAP_PREFILL_KV_ASYNC was removed; Prefill KV import is "\
-"unconditionally asynchronous. Historical evidence: "\
-"PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC." >&2
-    exit 2
-fi
+for removed_flag in \
+    PAP_PREFILL_KV_ASYNC \
+    PAP_KV_HANDOFF_MODE \
+    PAP_UNIFIED_KV \
+    PAP_BATCHED_ROUTE_COPY \
+    PAP_UNIFIED_MD_FAST_KEY \
+    PAP_ATTENTION_DISPATCH_MODE \
+    PAP_ATTENTION_COMBINE_WAIT_US \
+    PAP_ATTENTION_ACTIVE_PEER_TRACKING \
+    PAP_MPS_MODE; do
+    if [[ -v "${removed_flag}" ]]; then
+        echo "${removed_flag} was removed by the frozen P17 runtime contract" >&2
+        exit 2
+    fi
+done
 
 usage() {
     cat <<'EOF'
@@ -107,7 +116,6 @@ PAP_OFFLOAD_EXEC_TRACE="${PAP_OFFLOAD_EXEC_TRACE:-0}"
 PAP_ATTENTION_KV_DEBUG="${PAP_ATTENTION_KV_DEBUG:-0}"
 PAP_KV_LOCALITY_PROFILE="${PAP_KV_LOCALITY_PROFILE:-0}"
 PAP_KV_LOCALITY_PROFILE_MIN_BATCH="${PAP_KV_LOCALITY_PROFILE_MIN_BATCH:-1}"
-PAP_UNIFIED_KV="${PAP_UNIFIED_KV:-1}"
 PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-32}"
 PAP_DECODE_COMMIT_ENDPOINT="${PAP_DECODE_COMMIT_ENDPOINT:-}"
 PAP_DECODE_COMMIT_TIMEOUT="${PAP_DECODE_COMMIT_TIMEOUT:-0.2}"
@@ -467,6 +475,9 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
         if [[ "$ENABLE_MPS" == "1" ]]; then
             with_pa_mps_env "$idx" \
                 CUDA_MPS_ACTIVE_THREAD_PERCENTAGE="$ATTENTION_MPS_PERCENT" \
+                PAP_TOPOLOGY="$TOPOLOGY" \
+                PAP_PA_COUNT="$PA_COUNT" \
+                PAP_PROJECTION_COUNT="$PROJECTION_COUNT" \
                 PAP_NIXL_MAILBOX_ACTOR_ID="attention-${idx}-${rank}" \
                 PAP_OFFLOAD_EXEC_TRANSPORT="$PAP_OFFLOAD_EXEC_TRANSPORT" \
                 PAP_OFFLOAD_KV_TRANSPORT="$PAP_OFFLOAD_KV_TRANSPORT" \
@@ -490,6 +501,9 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
                 >"$LOG_DIR/attention_${idx}_${rank}.log" 2>&1 &
         else
             CUDA_VISIBLE_DEVICES="$gpu" \
+            PAP_TOPOLOGY="$TOPOLOGY" \
+            PAP_PA_COUNT="$PA_COUNT" \
+            PAP_PROJECTION_COUNT="$PROJECTION_COUNT" \
             PAP_NIXL_MAILBOX_ACTOR_ID="attention-${idx}-${rank}" \
             PAP_OFFLOAD_EXEC_TRANSPORT="$PAP_OFFLOAD_EXEC_TRANSPORT" \
             PAP_OFFLOAD_KV_TRANSPORT="$PAP_OFFLOAD_KV_TRANSPORT" \
@@ -531,8 +545,10 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
         with_pa_mps_env "$idx" \
             CUDA_MPS_ACTIVE_THREAD_PERCENTAGE="$PREFILL_MPS_PERCENT" \
             VLLM_PORT="$((VLLM_PORT_BASE + idx * 20))" \
+            PAP_TOPOLOGY="$TOPOLOGY" \
+            PAP_PA_COUNT="$PA_COUNT" \
+            PAP_PROJECTION_COUNT="$PROJECTION_COUNT" \
             PAP_OFFLOAD_KV_TRANSPORT="$PAP_OFFLOAD_KV_TRANSPORT" \
-            PAP_UNIFIED_KV="$PAP_UNIFIED_KV" \
             PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="$PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS" \
             PAP_KV_LEASE_TTL_SECONDS="$PAP_KV_LEASE_TTL_SECONDS" \
             VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
@@ -555,8 +571,10 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     else
         CUDA_VISIBLE_DEVICES="$gpu_csv" \
         VLLM_PORT="$((VLLM_PORT_BASE + idx * 20))" \
+        PAP_TOPOLOGY="$TOPOLOGY" \
+        PAP_PA_COUNT="$PA_COUNT" \
+        PAP_PROJECTION_COUNT="$PROJECTION_COUNT" \
         PAP_OFFLOAD_KV_TRANSPORT="$PAP_OFFLOAD_KV_TRANSPORT" \
-        PAP_UNIFIED_KV="$PAP_UNIFIED_KV" \
         PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="$PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS" \
         PAP_KV_LEASE_TTL_SECONDS="$PAP_KV_LEASE_TTL_SECONDS" \
         VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
@@ -587,6 +605,9 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     echo "Starting PAP Projection vLLM metadata-only $idx on GPU(s) $gpu_csv"
     CUDA_VISIBLE_DEVICES="$gpu_csv" \
     VLLM_PORT="$((VLLM_PORT_BASE + PA_COUNT * 20 + idx * 20))" \
+    PAP_TOPOLOGY="$TOPOLOGY" \
+    PAP_PA_COUNT="$PA_COUNT" \
+    PAP_PROJECTION_COUNT="$PROJECTION_COUNT" \
     PAP_NIXL_MAILBOX_ACTOR_ID="projection-${idx}" \
     PAP_OFFLOAD_EXEC_TRANSPORT="$PAP_OFFLOAD_EXEC_TRANSPORT" \
     PAP_OFFLOAD_KV_TRANSPORT="$PAP_OFFLOAD_KV_TRANSPORT" \

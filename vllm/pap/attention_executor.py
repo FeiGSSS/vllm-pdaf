@@ -649,8 +649,6 @@ def _unified_paged_flash_metadata_fast_key(
     states: Sequence[PAPUnifiedPagedKVState],
     device: torch.device,
 ) -> tuple[Any, ...] | None:
-    if not _pap_env_flag("PAP_UNIFIED_MD_FAST_KEY", True):
-        return None
     rows: list[tuple[int, int]] = []
     for state in states:
         topology_id = int(state.slot_topology_id)
@@ -3459,22 +3457,8 @@ def compute_binary_attention_response(
             {},
         )
     if metadata.get("command") == "import_prefill_paged_kv_ipc":
-        descriptor = PAPOffloadKVPagedIPCDescriptor.from_dict(metadata["descriptor"])
-        if "async" in metadata:
-            raise ValueError(
-                "PAP Prefill KV async wire selector was removed; paged IPC "
-                "import is unconditionally asynchronous"
-            )
-        seq_len = registry.enqueue_prefill_paged_kv_descriptor(descriptor)
-        return serialize_tensor_bundle(
-            {
-                "request_id": descriptor.request_id,
-                "layer_name": descriptor.layer_name,
-                "seq_len": seq_len,
-                "status": "queued",
-                "unified_kv_mode": descriptor.unified_kv_mode,
-            },
-            {},
+        raise ValueError(
+            "legacy per-layer paged KV import was removed; use a sealed manifest"
         )
     if metadata.get("command") == "offload_exec":
         if offload_exec_transport is None:
@@ -4063,8 +4047,8 @@ def compute_offload_exec_batch_output(
         return unified_output
 
     raise RuntimeError(
-        "PAP unified KV state missing for layer="
-        f"{descriptor.layer_name}; set PAP_UNIFIED_KV=1"
+        "PAP Prefill-owned KV state missing for layer="
+        f"{descriptor.layer_name}; sealed manifest handoff did not complete"
     )
 
 
@@ -5216,15 +5200,7 @@ def create_app(
     app.state.offload_exec_local_rank = 0
     app.state.offload_exec_actor_base = "attention"
     app.state.offload_exec_dispatch_mode = dispatch_mode
-    if dispatch_mode == "central_fifo":
-        app.state.offload_exec_dispatcher = PAPAttentionDispatcher(
-            handler=lambda item: _execute_offload_exec_work_item(
-                registry=registry,
-                item=item,
-            ),
-            max_queue_size=attention_config.dispatch_queue_size,
-        )
-    elif dispatch_mode == "central_combine":
+    if dispatch_mode == "central_combine":
         app.state.offload_exec_dispatcher = PAPAttentionDispatcher(
             batch_handler=lambda items: _execute_offload_exec_work_items(
                 registry=registry,
@@ -5487,7 +5463,7 @@ def create_app(
                 sync_dispatcher_membership()
             if peer_key not in app.state.offload_exec_mailbox_loop_peers:
                 dispatcher = app.state.offload_exec_dispatcher
-                if dispatch_mode in {"central_fifo", "central_combine"}:
+                if dispatch_mode == "central_combine":
                     assert dispatcher is not None
                     dispatcher.start()
                     target = run_offload_exec_mailbox_receiver_loop

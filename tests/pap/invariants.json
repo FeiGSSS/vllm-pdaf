@@ -18,10 +18,10 @@
       "tests/pap/contract/test_runtime_config.py",
       "tests/pap/contract/test_vllm_integration.py"
     ],
-    "collected_count": 585,
-    "passed_count": 582,
+    "collected_count": 584,
+    "passed_count": 581,
     "skipped_count": 3,
-    "total_duration_ms": 147817.401,
+    "total_duration_ms": 147569.135,
     "timing_scope": "One CPU Gate on the Phase 0 commit; duration includes pytest setup, call, and teardown for each collected case."
   },
   "namespaces": [
@@ -708,8 +708,7 @@
       "coverage_status": "preserved-unverified",
       "node_ids": [
         "tests/pap/test_pap_attention_executor.py::test_attention_executor_builds_central_combine_dispatcher",
-        "tests/pap/test_pap_attention_executor.py::test_attention_executor_central_mode_shares_one_dispatcher[central_combine]",
-        "tests/pap/test_pap_attention_executor.py::test_attention_executor_central_mode_shares_one_dispatcher[central_fifo]",
+        "tests/pap/test_pap_attention_executor.py::test_attention_executor_central_mode_shares_one_dispatcher",
         "tests/pap/test_pap_attention_executor.py::test_central_combine_compatibility_key_rejects_layer_or_scale",
         "tests/pap/test_pap_attention_executor.py::test_central_combine_executes_once_and_scatters_to_sources",
         "tests/pap/test_pap_attention_executor.py::test_central_combine_single_item_reuses_fifo_executor",
@@ -1086,8 +1085,8 @@
         }
       ],
       "node_ids": [
-        "tests/benchmarks/test_pap_multiturn_mps_contract.py::test_pap_only_runner_defaults_to_static_and_keeps_dynamic_profiles",
-        "tests/benchmarks/test_pap_multiturn_mps_contract.py::test_pap_only_runner_has_static_mps_baseline_and_diagnostic_alias",
+        "tests/benchmarks/test_pap_multiturn_mps_contract.py::test_pap_only_runner_has_one_static_64_28_profile",
+        "tests/benchmarks/test_pap_multiturn_mps_contract.py::test_pap_only_runner_rejects_removed_mps_selectors",
         "tests/benchmarks/test_pap_multiturn_mps_contract.py::test_static_mps_lifecycle_is_partitioned_and_audited",
         "tests/benchmarks/test_pap_multiturn_mps_contract.py::test_three_lane_runner_does_not_select_diagnostic_mps"
       ],
@@ -2500,7 +2499,7 @@
       "target_path": "tests/benchmarks/pap/test_finalize_pap_pd_multiturn.py"
     },
     {
-      "node_id": "tests/benchmarks/test_pap_multiturn_mps_contract.py::test_pap_only_runner_defaults_to_static_and_keeps_dynamic_profiles",
+      "node_id": "tests/benchmarks/test_pap_multiturn_mps_contract.py::test_pap_only_runner_has_one_static_64_28_profile",
       "owner_path": "tests/benchmarks/test_pap_multiturn_mps_contract.py",
       "source_owner": ".claude/skills/vllm-pap-benchmark/scripts/run_pap_multiturn_load.sh",
       "duration_ms": 255.323,
@@ -2508,12 +2507,12 @@
       "invariant_ids": [
         "launcher.mps.static"
       ],
-      "disposition": "delete",
-      "reason": "Protects a timing diagnostic or selectable legacy branch that the approved P17 convergence explicitly removes.",
-      "target_path": null
+      "disposition": "rewrite",
+      "reason": "The static P17 invariant survives, but source-string assertions should move to the structured launcher profile contract.",
+      "target_path": "tests/pap/contract/test_launcher_profile.py"
     },
     {
-      "node_id": "tests/benchmarks/test_pap_multiturn_mps_contract.py::test_pap_only_runner_has_static_mps_baseline_and_diagnostic_alias",
+      "node_id": "tests/benchmarks/test_pap_multiturn_mps_contract.py::test_pap_only_runner_rejects_removed_mps_selectors",
       "owner_path": "tests/benchmarks/test_pap_multiturn_mps_contract.py",
       "source_owner": ".claude/skills/vllm-pap-benchmark/scripts/run_pap_multiturn_load.sh",
       "duration_ms": 244.856,
@@ -2521,9 +2520,9 @@
       "invariant_ids": [
         "launcher.mps.static"
       ],
-      "disposition": "delete",
-      "reason": "Protects a timing diagnostic or selectable legacy branch that the approved P17 convergence explicitly removes.",
-      "target_path": null
+      "disposition": "rewrite",
+      "reason": "Fail-closed selector coverage survives, but source-string assertions should move to the structured launcher profile contract.",
+      "target_path": "tests/pap/contract/test_launcher_profile.py"
     },
     {
       "node_id": "tests/benchmarks/test_pap_multiturn_mps_contract.py::test_static_mps_lifecycle_is_partitioned_and_audited",
@@ -4099,7 +4098,7 @@
       "target_path": "tests/pap/contract/test_vllm_integration.py"
     },
     {
-      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_central_mode_shares_one_dispatcher[central_combine]",
+      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_central_mode_shares_one_dispatcher",
       "owner_path": "tests/pap/test_pap_attention_executor.py",
       "source_owner": "vllm/pap/attention_executor.py",
       "duration_ms": 247.601,
@@ -4110,19 +4109,6 @@
       "disposition": "rewrite",
       "reason": "Protects an accepted outcome through a retired feature switch; rewrite it against unconditional or topology-derived behavior.",
       "target_path": "tests/pap/contract/test_vllm_integration.py"
-    },
-    {
-      "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_central_mode_shares_one_dispatcher[central_fifo]",
-      "owner_path": "tests/pap/test_pap_attention_executor.py",
-      "source_owner": "vllm/pap/attention_executor.py",
-      "duration_ms": 248.266,
-      "outcome": "passed",
-      "invariant_ids": [
-        "attention.execution.combine"
-      ],
-      "disposition": "delete",
-      "reason": "Protects the manually selected central FIFO path replaced by topology-derived direct or combine execution.",
-      "target_path": null
     },
     {
       "node_id": "tests/pap/test_pap_attention_executor.py::test_attention_executor_compact_tcp_payload_keeps_stateful_kv",
@@ -8897,12 +8883,12 @@
     }
   ],
   "audit_summary": {
-    "total": 585,
+    "total": 584,
     "by_disposition": {
       "keep": 303,
       "merge": 20,
-      "rewrite": 84,
-      "delete": 49,
+      "rewrite": 86,
+      "delete": 46,
       "move": 129
     }
   }

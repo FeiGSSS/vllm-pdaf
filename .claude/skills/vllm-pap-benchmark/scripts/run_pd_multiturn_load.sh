@@ -386,7 +386,7 @@ for (( rep=1; rep<=REPETITIONS; rep++ )); do
     --git-commit "${GIT_COMMIT}" \
     --git-tracked-worktree-dirty "${GIT_TRACKED_WORKTREE_DIRTY}" \
     --offload-exec-transport "nixl-${TRANSFER_MODE}" \
-    --direct-mailbox-output 0 --unified-md-fast-key 0 \
+    --direct-mailbox-output 0 \
     --document-tokens 16000 --append-tokens 120 --output-tokens 256 \
     --rounds "${ROUNDS}" --active-conversations "${CONVERSATIONS}" \
     --request-rate "${REQUEST_RATE}" --block-size 16 --dtype float16 \

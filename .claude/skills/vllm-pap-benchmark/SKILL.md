@@ -226,10 +226,9 @@ bash .claude/skills/vllm-pap-benchmark/scripts/run_pap_multiturn_load.sh quick c
 
 Sampled-token delivery and Prefill KV import are unconditionally asynchronous;
 the retired `PAP_ASYNC_DECODE_TOKEN` and `PAP_PREFILL_KV_ASYNC` switches now
-fail closed. Set
-`PAP_LOAD_MPS_PROFILE=baseline_70_30` only when reproducing the retained dynamic
-MPS experiment. Static MPS is host-specific and must pass the recorded
-visible-SM and cleanup audits.
+fail closed. P17 has one static `64/28` MPS profile; dynamic/profile selectors
+are historical evidence only. Static MPS is host-specific and must pass the
+recorded visible-SM and cleanup audits.
 
 Refresh PD only through `bootstrap_pd_multiturn_reference.sh`. That script uses
 the unchanged official streaming proxy and validates the current effective

@@ -8,6 +8,15 @@ set -euo pipefail
 for removed_flag in \
   PAP_ASYNC_DECODE_TOKEN \
   PAP_PREFILL_KV_ASYNC \
+  PAP_KV_HANDOFF_MODE \
+  PAP_UNIFIED_KV \
+  PAP_BATCHED_ROUTE_COPY \
+  PAP_UNIFIED_MD_FAST_KEY \
+  PAP_ATTENTION_DISPATCH_MODE \
+  PAP_ATTENTION_COMBINE_WAIT_US \
+  PAP_ATTENTION_ACTIVE_PEER_TRACKING \
+  PAP_MPS_MODE \
+  PAP_BENCH_MPS_PROFILE \
   PAP_ASYNC_DECODE_TOKEN_SYNC_ONLY_BARRIER \
   PAP_PROJECTION_SYNC_ONLY_BARRIER \
   PAP_PREFILL_SYNC_ONLY_BARRIER \
@@ -24,6 +33,22 @@ for removed_flag in \
       PAP_PREFILL_KV_ASYNC)
         replacement="unconditional safe asynchronous Prefill KV import"
         experiment_id="PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC"
+        ;;
+      PAP_KV_HANDOFF_MODE)
+        replacement="sealed catalog and request manifest handoff"
+        experiment_id="PAP-20260714-SEAL-HANDOFF-KV"
+        ;;
+      PAP_UNIFIED_KV | PAP_BATCHED_ROUTE_COPY | PAP_UNIFIED_MD_FAST_KEY)
+        replacement="the frozen P17 data path"
+        experiment_id="PAP-20260703-UNIFIED-KV"
+        ;;
+      PAP_ATTENTION_*)
+        replacement="topology-derived Attention execution"
+        experiment_id="PAP-20260711-ATTENTION-COMBINE"
+        ;;
+      PAP_MPS_MODE | PAP_BENCH_MPS_PROFILE)
+        replacement="the P17 static 64/28 MPS partition"
+        experiment_id="PAP-20260714-ASYNC-STATIC-BASELINE"
         ;;
       PAP_*_SYNC_ONLY_BARRIER)
         replacement="no Projection or Prefill timing barrier"
@@ -142,43 +167,17 @@ MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8192}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
 PAP_PREFILL_GPU_MEMORY_UTILIZATION="${PAP_PREFILL_GPU_MEMORY_UTILIZATION:-0.76}"
 PAP_PROJECTION_GPU_MEMORY_UTILIZATION="${PAP_PROJECTION_GPU_MEMORY_UTILIZATION:-0.76}"
-PAP_BENCH_MPS_PROFILE="${PAP_BENCH_MPS_PROFILE:-baseline_70_30}"
-PAP_MPS_MODE="${PAP_MPS_MODE:-dynamic}"
-PAP_PREFILL_MPS_PERCENT="${PAP_PREFILL_MPS_PERCENT:-70}"
-PAP_ATTENTION_MPS_PERCENT="${PAP_ATTENTION_MPS_PERCENT:-30}"
-PAP_STATIC_PREFILL_CHUNKS="${PAP_STATIC_PREFILL_CHUNKS:-16}"
-PAP_STATIC_ATTENTION_CHUNKS="${PAP_STATIC_ATTENTION_CHUNKS:-7}"
+PAP_PREFILL_MPS_PERCENT=70
+PAP_ATTENTION_MPS_PERCENT=30
+PAP_STATIC_PREFILL_CHUNKS=16
+PAP_STATIC_ATTENTION_CHUNKS=7
 PAP_STATIC_PREFILL_EXPECTED_SMS=64
 PAP_STATIC_ATTENTION_EXPECTED_SMS=28
-PAP_ENABLE_MPS="${PAP_ENABLE_MPS:-1}"
-case "${PAP_MPS_MODE}" in
-  dynamic | static) ;;
-  *)
-    echo "ERROR: PAP_MPS_MODE must be dynamic or static" >&2
-    exit 2
-    ;;
-esac
+PAP_ENABLE_MPS=1
 if ! [[ "${PAP_STATIC_PREFILL_CHUNKS}" =~ ^[1-9][0-9]*$ \
   && "${PAP_STATIC_ATTENTION_CHUNKS}" =~ ^[1-9][0-9]*$ ]]; then
   echo "ERROR: static MPS chunk counts must be positive integers" >&2
   exit 2
-fi
-if [[ "${PAP_MPS_MODE}" == "static" ]]; then
-  case "${PAP_BENCH_MPS_PROFILE}" in
-    baseline_static_64_28 | diagnostic_static_64_28) ;;
-    *)
-      echo "ERROR: static MPS requires a static 64/28 profile" >&2
-      exit 2
-      ;;
-  esac
-fi
-if [[ "${PAP_MPS_MODE}" == "dynamic" ]]; then
-  case "${PAP_BENCH_MPS_PROFILE}" in
-    baseline_static_64_28 | diagnostic_static_64_28)
-      echo "ERROR: static 64/28 profiles require static MPS" >&2
-      exit 2
-      ;;
-  esac
 fi
 PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT:-nixl_mailbox}"
 PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT:-cuda_ipc}"
@@ -186,15 +185,12 @@ PAP_OFFLOAD_EXEC_TRACE="${PAP_OFFLOAD_EXEC_TRACE:-0}"
 PAP_DEFERRED_CUDA_TRACE="${PAP_DEFERRED_CUDA_TRACE:-0}"
 PAP_DEFERRED_CUDA_TRACE_MAX_PENDING="${PAP_DEFERRED_CUDA_TRACE_MAX_PENDING:-1024}"
 PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND="${PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND:-1}"
-PAP_BATCHED_ROUTE_COPY="${PAP_BATCHED_ROUTE_COPY:-1}"
 PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT="${PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT:-0}"
 PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT_OUTPUT="${PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT_OUTPUT:-0}"
 PAP_NIXL_MAILBOX_INLINE_PUBLISH="${PAP_NIXL_MAILBOX_INLINE_PUBLISH:-1}"
 PAP_NIXL_MAILBOX_BATCH_PLAN="${PAP_NIXL_MAILBOX_BATCH_PLAN:-1}"
 PAP_UNIFIED_MD_CACHE_LIMIT="${PAP_UNIFIED_MD_CACHE_LIMIT:-256}"
-PAP_UNIFIED_MD_FAST_KEY="${PAP_UNIFIED_MD_FAST_KEY:-1}"
 PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT:-256}"
-PAP_ATTENTION_DISPATCH_MODE="${PAP_ATTENTION_DISPATCH_MODE:-legacy}"
 PAP_ATTENTION_DISPATCH_QUEUE_SIZE="${PAP_ATTENTION_DISPATCH_QUEUE_SIZE:-0}"
 DEFAULT_ATTENTION_COMBINE_WAIT_US=0
 if (( PROJECTION_COUNT > 1 )); then
@@ -203,13 +199,6 @@ if (( PROJECTION_COUNT > 1 )); then
     DEFAULT_ATTENTION_COMBINE_WAIT_US=1000
   fi
 fi
-PAP_ATTENTION_COMBINE_WAIT_US="${PAP_ATTENTION_COMBINE_WAIT_US:-${DEFAULT_ATTENTION_COMBINE_WAIT_US}}"
-DEFAULT_ATTENTION_ACTIVE_PEER_TRACKING=0
-if [[ "${PAP_ATTENTION_DISPATCH_MODE}" == "central_combine" ]] \
-  && (( PROJECTION_COUNT > 1 )); then
-  DEFAULT_ATTENTION_ACTIVE_PEER_TRACKING=1
-fi
-PAP_ATTENTION_ACTIVE_PEER_TRACKING="${PAP_ATTENTION_ACTIVE_PEER_TRACKING:-${DEFAULT_ATTENTION_ACTIVE_PEER_TRACKING}}"
 PAP_DIRECT_MAILBOX_OUTPUT="${PAP_DIRECT_MAILBOX_OUTPUT:-}"
 if [[ -z "${PAP_DIRECT_MAILBOX_OUTPUT}" ]]; then
   if [[ "${PAP_OFFLOAD_EXEC_TRANSPORT}" == "local_fast" ]]; then
@@ -228,7 +217,6 @@ PAP_LOCAL_FAST_SLEEP_US="${PAP_LOCAL_FAST_SLEEP_US:-20}"
 PAP_LOCAL_FAST_SLEEP_AFTER_US="${PAP_LOCAL_FAST_SLEEP_AFTER_US:-50}"
 PAP_REMOTE_ATTENTION_PARALLELISM="${PAP_REMOTE_ATTENTION_PARALLELISM:-16}"
 PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-round_robin}"
-PAP_UNIFIED_KV="${PAP_UNIFIED_KV:-1}"
 DEFAULT_DECODE_CAPACITY_TOKENS=32
 DEFAULT_PROMPT_TOKENS_DETAILS=0
 if [[ "${PAP_BENCH_CLIENT_MODE}" != "canonical" ]]; then
@@ -251,7 +239,6 @@ PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS="${PAP_DECODE_COMMIT_RETRY_INITIAL_SECON
 PAP_DECODE_COMMIT_RETRY_MAX_SECONDS="${PAP_DECODE_COMMIT_RETRY_MAX_SECONDS:-0.5}"
 PAP_DECODE_COMMIT_FLUSH_TIMEOUT="${PAP_DECODE_COMMIT_FLUSH_TIMEOUT:-5.0}"
 PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE:-0}"
-PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE:-sealed_manifest}"
 PAP_RUNTIME_CUDA_CONTEXT_AUDIT="${PAP_RUNTIME_CUDA_CONTEXT_AUDIT:-0}"
 PAP_PREFILL_TORCH_PROFILE="${PAP_PREFILL_TORCH_PROFILE:-0}"
 PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS="${PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS:-32}"
@@ -283,11 +270,6 @@ if ! [[ "${PAP_DEFERRED_CUDA_TRACE_MAX_PENDING}" =~ ^[1-9][0-9]*$ ]]; then
   echo "PAP_DEFERRED_CUDA_TRACE_MAX_PENDING must be a positive integer" >&2
   exit 2
 fi
-if [[ "${PAP_RUNTIME_CUDA_CONTEXT_AUDIT}" == "1" \
-  && "${PAP_MPS_MODE}" != "static" ]]; then
-  echo "PAP runtime CUDA-context audit currently requires static MPS" >&2
-  exit 2
-fi
 if ! [[ "${PAP_PREFILL_TORCH_PROFILE}" =~ ^[01]$ ]]; then
   echo "PAP_PREFILL_TORCH_PROFILE must be 0 or 1" >&2
   exit 2
@@ -296,13 +278,6 @@ if ! [[ "${PAP_PREFILL_IPC_PROFILE}" =~ ^[01]$ ]]; then
   echo "PAP_PREFILL_IPC_PROFILE must be 0 or 1" >&2
   exit 2
 fi
-case "${PAP_KV_HANDOFF_MODE}" in
-  layer_descriptor | sealed_manifest) ;;
-  *)
-    echo "Unsupported PAP_KV_HANDOFF_MODE=${PAP_KV_HANDOFF_MODE}" >&2
-    exit 2
-    ;;
-esac
 if ! [[ "${PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS}" =~ ^[1-9][0-9]*$ \
   && "${PAP_PREFILL_TORCH_PROFILE_FLUSH_TIMEOUT}" =~ ^[1-9][0-9]*$ ]]; then
   echo "PAP Prefill torch-profile limits must be positive integers" >&2
@@ -317,18 +292,13 @@ export PAP_OFFLOAD_EXEC_TRACE
 export PAP_DEFERRED_CUDA_TRACE
 export PAP_DEFERRED_CUDA_TRACE_MAX_PENDING
 export PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND
-export PAP_BATCHED_ROUTE_COPY
 export PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT
 export PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT_OUTPUT
 export PAP_NIXL_MAILBOX_INLINE_PUBLISH
 export PAP_NIXL_MAILBOX_BATCH_PLAN
 export PAP_UNIFIED_MD_CACHE_LIMIT
-export PAP_UNIFIED_MD_FAST_KEY
 export PAP_DECODE_SLOT_PLAN_CACHE_LIMIT
-export PAP_ATTENTION_DISPATCH_MODE
 export PAP_ATTENTION_DISPATCH_QUEUE_SIZE
-export PAP_ATTENTION_COMBINE_WAIT_US
-export PAP_ATTENTION_ACTIVE_PEER_TRACKING
 export PAP_DECODE_COMMIT_FAIL_CLOSED
 export PAP_DECODE_COMMIT_TIMEOUT
 export PAP_DECODE_COMMIT_QUEUE_SIZE
@@ -337,7 +307,6 @@ export PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS
 export PAP_DECODE_COMMIT_RETRY_MAX_SECONDS
 export PAP_DECODE_COMMIT_FLUSH_TIMEOUT
 export PAP_PREFILL_IPC_PROFILE
-export PAP_KV_HANDOFF_MODE
 export PAP_RUNTIME_CUDA_CONTEXT_AUDIT
 export PAP_PREFILL_TORCH_PROFILE
 export PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS
@@ -537,7 +506,7 @@ write_static_mps_audit() {
   [[ "${lspart}" == *"${attention_partition_id}"* ]] \
     || die "static MPS lspart omitted PA ${idx} Attention partition"
   {
-    printf 'PAP_MPS_MODE=%q\n' "${PAP_MPS_MODE}"
+    printf 'MPS_MODE=static\n'
     printf 'PHYSICAL_GPU_INDEX=%q\n' "${PREFILL_GPUS[idx]}"
     printf 'GPU_UUID=%q\n' "${MPS_GPU_UUIDS[idx]}"
     printf 'PREFILL_PARTITION_ID=%q\n' "${MPS_PREFILL_PARTITIONS[idx]}"
@@ -603,19 +572,11 @@ start_mps_for_pa() {
   mkdir -p "${pipe_dir}" "${log_dir}"
   MPS_PIPE_DIRS[idx]="${pipe_dir}"
   MPS_LOG_DIRS[idx]="${log_dir}"
-  if [[ "${PAP_MPS_MODE}" == "static" ]]; then
-    CUDA_VISIBLE_DEVICES="${gpu}" \
-    CUDA_MPS_PIPE_DIRECTORY="${pipe_dir}" \
-    CUDA_MPS_LOG_DIRECTORY="${log_dir}" \
-    nvidia-cuda-mps-control -d -S
-  else
-    CUDA_VISIBLE_DEVICES="${gpu}" \
-    CUDA_MPS_PIPE_DIRECTORY="${pipe_dir}" \
-    CUDA_MPS_LOG_DIRECTORY="${log_dir}" \
-    nvidia-cuda-mps-control -d
-  fi
+  CUDA_VISIBLE_DEVICES="${gpu}" \
+  CUDA_MPS_PIPE_DIRECTORY="${pipe_dir}" \
+  CUDA_MPS_LOG_DIRECTORY="${log_dir}" \
+  nvidia-cuda-mps-control -d -S
   MPS_STARTED_DIRS+=("${pipe_dir}")
-  [[ "${PAP_MPS_MODE}" == "static" ]] || return 0
 
   if ! gpu_uuid="$(
     nvidia-smi -i "${gpu}" --query-gpu=uuid --format=csv,noheader
@@ -662,8 +623,7 @@ cleanup() {
   for pid in "${PIDS[@]:-}"; do
     wait "${pid}" >/dev/null 2>&1 || true
   done
-  if [[ "${PAP_MPS_MODE}" == "static" ]]; then
-    for (( idx=${#MPS_STARTED_DIRS[@]} - 1; idx>=0; idx-- )); do
+  for (( idx=${#MPS_STARTED_DIRS[@]} - 1; idx>=0; idx-- )); do
       pipe_dir="${MPS_STARTED_DIRS[idx]}"
       cleanup_log="${RUN_LOG_DIR}/mps_static_cleanup_pa_${idx}.log"
       : > "${cleanup_log}"
@@ -698,12 +658,11 @@ cleanup() {
           fi
         fi
       fi
-    done
-  fi
+  done
   for pipe_dir in "${MPS_STARTED_DIRS[@]:-}"; do
     if ! mps_control "${pipe_dir}" quit >/dev/null 2>&1; then
       echo "WARNING: failed to stop MPS daemon at ${pipe_dir}" >&2
-      [[ "${PAP_MPS_MODE}" == "static" ]] && cleanup_failed=1
+      cleanup_failed=1
     fi
   done
   if (( code == 0 && cleanup_failed != 0 )); then
@@ -1096,8 +1055,6 @@ write_effective_config() {
     printf 'PAP_PROXY_PORT=%q\n' "${PAP_PROXY_PORT}"
     printf 'PAP_PREFILL_GPU_MEMORY_UTILIZATION=%q\n' "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}"
     printf 'PAP_PROJECTION_GPU_MEMORY_UTILIZATION=%q\n' "${PAP_PROJECTION_GPU_MEMORY_UTILIZATION}"
-    printf 'PAP_BENCH_MPS_PROFILE=%q\n' "${PAP_BENCH_MPS_PROFILE}"
-    printf 'PAP_MPS_MODE=%q\n' "${PAP_MPS_MODE}"
     printf 'PAP_PREFILL_MPS_PERCENT=%q\n' "${PAP_PREFILL_MPS_PERCENT}"
     printf 'PAP_ATTENTION_MPS_PERCENT=%q\n' "${PAP_ATTENTION_MPS_PERCENT}"
     printf 'PAP_STATIC_PREFILL_CHUNKS=%q\n' \
@@ -1116,21 +1073,14 @@ write_effective_config() {
     printf 'PAP_DEFERRED_CUDA_TRACE_MAX_PENDING=%q\n' \
       "${PAP_DEFERRED_CUDA_TRACE_MAX_PENDING}"
     printf 'PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND=%q\n' "${PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND}"
-    printf 'PAP_BATCHED_ROUTE_COPY=%q\n' "${PAP_BATCHED_ROUTE_COPY}"
     printf 'PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT=%q\n' "${PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT}"
     printf 'PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT_OUTPUT=%q\n' "${PAP_OFFLOAD_EXEC_DIRECT_QKV_SENDER_SLOT_OUTPUT}"
     printf 'PAP_NIXL_MAILBOX_INLINE_PUBLISH=%q\n' "${PAP_NIXL_MAILBOX_INLINE_PUBLISH}"
     printf 'PAP_NIXL_MAILBOX_BATCH_PLAN=%q\n' "${PAP_NIXL_MAILBOX_BATCH_PLAN}"
     printf 'PAP_UNIFIED_MD_CACHE_LIMIT=%q\n' "${PAP_UNIFIED_MD_CACHE_LIMIT}"
-    printf 'PAP_UNIFIED_MD_FAST_KEY=%q\n' "${PAP_UNIFIED_MD_FAST_KEY}"
     printf 'PAP_DECODE_SLOT_PLAN_CACHE_LIMIT=%q\n' "${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}"
-    printf 'PAP_ATTENTION_DISPATCH_MODE=%q\n' "${PAP_ATTENTION_DISPATCH_MODE}"
     printf 'PAP_ATTENTION_DISPATCH_QUEUE_SIZE=%q\n' \
       "${PAP_ATTENTION_DISPATCH_QUEUE_SIZE}"
-    printf 'PAP_ATTENTION_COMBINE_WAIT_US=%q\n' \
-      "${PAP_ATTENTION_COMBINE_WAIT_US}"
-    printf 'PAP_ATTENTION_ACTIVE_PEER_TRACKING=%q\n' \
-      "${PAP_ATTENTION_ACTIVE_PEER_TRACKING}"
     printf 'PAP_DIRECT_MAILBOX_OUTPUT=%q\n' "${PAP_DIRECT_MAILBOX_OUTPUT}"
     printf 'PAP_LOCAL_FAST_ASYNC_DOORBELL=%q\n' "${PAP_LOCAL_FAST_ASYNC_DOORBELL}"
     printf 'PAP_LOCAL_FAST_STREAM_ORDERED=%q\n' "${PAP_LOCAL_FAST_STREAM_ORDERED}"
@@ -1153,7 +1103,6 @@ write_effective_config() {
     printf 'PREFILL_PORT_BASE=%q\n' "${PREFILL_PORT_BASE}"
     printf 'PROJECTION_PORT_BASE=%q\n' "${PROJECTION_PORT_BASE}"
     printf 'ATTENTION_PORT_BASE=%q\n' "${ATTENTION_PORT_BASE}"
-    printf 'PAP_UNIFIED_KV=%q\n' "${PAP_UNIFIED_KV}"
     printf 'PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS=%q\n' "${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}"
     printf 'PAP_DECODE_COMMIT_ENDPOINT=%q\n' "${PAP_DECODE_COMMIT_ENDPOINT}"
     printf 'PAP_DECODE_COMMIT_FAIL_CLOSED=%q\n' "${PAP_DECODE_COMMIT_FAIL_CLOSED}"
@@ -1165,7 +1114,6 @@ write_effective_config() {
     printf 'PAP_DECODE_COMMIT_FLUSH_TIMEOUT=%q\n' "${PAP_DECODE_COMMIT_FLUSH_TIMEOUT}"
     printf 'VLLM_USE_V2_MODEL_RUNNER=%q\n' "${VLLM_USE_V2_MODEL_RUNNER}"
     printf 'PAP_PREFILL_IPC_PROFILE=%q\n' "${PAP_PREFILL_IPC_PROFILE}"
-    printf 'PAP_KV_HANDOFF_MODE=%q\n' "${PAP_KV_HANDOFF_MODE}"
     printf 'PAP_RUNTIME_CUDA_CONTEXT_AUDIT=%q\n' \
       "${PAP_RUNTIME_CUDA_CONTEXT_AUDIT}"
     printf 'PAP_PREFILL_TORCH_PROFILE=%q\n' \
@@ -1281,11 +1229,7 @@ write_run_metadata() {
   PAP_LOCAL_FAST_STREAM_ORDERED="${PAP_LOCAL_FAST_STREAM_ORDERED}" \
   PAP_LOCAL_FAST_SLOT_COUNT="${PAP_LOCAL_FAST_SLOT_COUNT}" \
   PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
-  PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE}" \
   PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}" \
-  PAP_ATTENTION_DISPATCH_MODE="${PAP_ATTENTION_DISPATCH_MODE}" \
-  PAP_ATTENTION_COMBINE_WAIT_US="${PAP_ATTENTION_COMBINE_WAIT_US}" \
-  PAP_ATTENTION_ACTIVE_PEER_TRACKING="${PAP_ATTENTION_ACTIVE_PEER_TRACKING}" \
   PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" \
   PAP_MULTITURN_LOAD_ROUNDS="${PAP_MULTITURN_LOAD_ROUNDS}" \
   PAP_MULTITURN_LOAD_CONVERSATIONS="${PAP_MULTITURN_LOAD_CONVERSATIONS}" \
@@ -1305,12 +1249,20 @@ import json
 import os
 from datetime import datetime
 
+pa_count = int(os.environ["PA_COUNT"])
+projection_count = int(os.environ["PROJECTION_COUNT"])
+attention_dispatch_mode = (
+    "legacy" if projection_count == 1 else "central_combine"
+)
+attention_combine_wait_us = (
+    0.0 if projection_count == 1 else (200.0 if pa_count == 1 else 1000.0)
+)
 metadata = {
     "mode": "pap",
     "client_mode": os.environ["PAP_BENCH_CLIENT_MODE"],
     "topology": os.environ["TOPOLOGY"],
-    "pa_count": int(os.environ["PA_COUNT"]),
-    "projection_count": int(os.environ["PROJECTION_COUNT"]),
+    "pa_count": pa_count,
+    "projection_count": projection_count,
     "routing_policy": os.environ["PAP_ROUTING_POLICY"],
     "run_id": os.environ["RUN_ID"],
     "result_root": os.environ["RUN_ROOT"],
@@ -1325,26 +1277,22 @@ metadata = {
     "max_num_seqs": os.environ["MAX_NUM_SEQS"],
     "offload_exec_transport": os.environ["PAP_OFFLOAD_EXEC_TRANSPORT"],
     "offload_kv_transport": os.environ["PAP_OFFLOAD_KV_TRANSPORT"],
-    "batched_route_copy": os.environ["PAP_BATCHED_ROUTE_COPY"] == "1",
+    "batched_route_copy": True,
     "direct_mailbox_output": os.environ["PAP_DIRECT_MAILBOX_OUTPUT"] == "1",
-    "unified_md_fast_key": os.environ["PAP_UNIFIED_MD_FAST_KEY"] == "1",
+    "unified_md_fast_key": True,
     "local_fast_stream_ordered": (
         os.environ["PAP_LOCAL_FAST_STREAM_ORDERED"] == "1"
     ),
     "local_fast_slot_count": int(os.environ["PAP_LOCAL_FAST_SLOT_COUNT"]),
     "prefill_kv_async": True,
     "prefill_ipc_profile": os.environ["PAP_PREFILL_IPC_PROFILE"] == "1",
-    "kv_handoff_mode": os.environ["PAP_KV_HANDOFF_MODE"],
+    "kv_handoff_mode": "sealed_manifest",
     "decode_slot_plan_cache_limit": int(
         os.environ["PAP_DECODE_SLOT_PLAN_CACHE_LIMIT"]
     ),
-    "attention_dispatch_mode": os.environ["PAP_ATTENTION_DISPATCH_MODE"],
-    "attention_combine_wait_us": float(
-        os.environ["PAP_ATTENTION_COMBINE_WAIT_US"]
-    ),
-    "attention_active_peer_tracking": (
-        os.environ["PAP_ATTENTION_ACTIVE_PEER_TRACKING"] == "1"
-    ),
+    "attention_dispatch_mode": attention_dispatch_mode,
+    "attention_combine_wait_us": attention_combine_wait_us,
+    "attention_active_peer_tracking": projection_count > 1,
     "prompt_tokens_details": (
         os.environ["PAP_ENABLE_PROMPT_TOKENS_DETAILS"] == "1"
     ),
@@ -1654,10 +1602,8 @@ cd "${ROOT_DIR}"
 (( PA_COUNT >= 1 && PROJECTION_COUNT >= 1 )) \
   || die "PAP topology must contain at least one PA and one Projection"
 [[ "${PAP_TP_SIZE}" == "1" ]] || die "This runner is intentionally fixed to PAP_TP_SIZE=1"
-if [[ "${PAP_MPS_MODE}" == "static" ]]; then
-  [[ "${PAP_ENABLE_MPS}" == "1" ]] \
-    || die "static MPS requires PAP_ENABLE_MPS=1"
-fi
+[[ "${PAP_ENABLE_MPS}" == "1" ]] \
+  || die "P17 requires static MPS"
 if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" ]]; then
   [[ "${TOPOLOGY}" == "1pa1p" ]] \
     || die "multiturn_north_star requires PAP_TOPOLOGY=1pa1p"
@@ -1679,8 +1625,6 @@ if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" ]]; then
     || die "multiturn_north_star requires prompt token details"
   [[ "${PAP_ENABLE_MPS}" == "1" ]] \
     || die "multiturn_north_star requires PAP_ENABLE_MPS=1"
-  [[ "${PAP_MPS_MODE}" == "dynamic" ]] \
-    || die "multiturn_north_star requires dynamic MPS"
   [[ "${PAP_PREFILL_MPS_PERCENT}" == "70" \
     && "${PAP_ATTENTION_MPS_PERCENT}" == "30" ]] \
     || die "multiturn_north_star requires PAP MPS 70/30"
@@ -1704,32 +1648,9 @@ elif [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" ]]; then
     || die "multiturn_load requires prompt details and forbids cache audit"
   [[ "${PAP_ENABLE_MPS}" == "1" ]] \
     || die "multiturn_load requires PAP MPS"
-  case "${PAP_BENCH_MPS_PROFILE}" in
-    baseline_70_30)
-      [[ "${PAP_MPS_MODE}" == "dynamic" ]] \
-        || die "baseline_70_30 requires dynamic MPS"
-      [[ "${PAP_PREFILL_MPS_PERCENT}" == "70" \
-        && "${PAP_ATTENTION_MPS_PERCENT}" == "30" ]] \
-        || die "baseline_70_30 requires PAP MPS 70/30"
-      ;;
-    diagnostic_80_20)
-      [[ "${PAP_MPS_MODE}" == "dynamic" ]] \
-        || die "diagnostic_80_20 requires dynamic MPS"
-      [[ "${PAP_PREFILL_MPS_PERCENT}" == "80" \
-        && "${PAP_ATTENTION_MPS_PERCENT}" == "20" ]] \
-        || die "diagnostic_80_20 requires PAP MPS 80/20"
-      ;;
-    baseline_static_64_28 | diagnostic_static_64_28)
-      [[ "${PAP_MPS_MODE}" == "static" ]] \
-        || die "static 64/28 profiles require static MPS"
-      [[ "${PAP_STATIC_PREFILL_CHUNKS}" == "16" \
-        && "${PAP_STATIC_ATTENTION_CHUNKS}" == "7" ]] \
-        || die "static 64/28 profiles require 16/7 chunks"
-      ;;
-    *)
-      die "unknown PAP_BENCH_MPS_PROFILE: ${PAP_BENCH_MPS_PROFILE}"
-      ;;
-  esac
+  [[ "${PAP_STATIC_PREFILL_CHUNKS}" == "16" \
+    && "${PAP_STATIC_ATTENTION_CHUNKS}" == "7" ]] \
+    || die "P17 static MPS requires 16/7 chunks"
   (( PAP_MULTITURN_LOAD_ROUNDS >= 4 )) \
     || die "multiturn_load requires at least four rounds"
   (( PAP_MULTITURN_LOAD_CONVERSATIONS <= MAX_NUM_SEQS )) \
@@ -1828,19 +1749,16 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       "CUDA_MPS_PIPE_DIRECTORY=${MPS_PIPE_DIRS[idx]}"
       "CUDA_MPS_LOG_DIRECTORY=${MPS_LOG_DIRS[idx]}"
     )
-    if [[ "${PAP_MPS_MODE}" == "static" ]]; then
-      attention_env+=(
-        "CUDA_MPS_SM_PARTITION=${MPS_ATTENTION_PARTITIONS[idx]}"
-      )
-    else
-      attention_env+=(
-        "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=${PAP_ATTENTION_MPS_PERCENT}"
-      )
-    fi
+    attention_env+=(
+      "CUDA_MPS_SM_PARTITION=${MPS_ATTENTION_PARTITIONS[idx]}"
+    )
   fi
   echo "Starting PAP Attention ${idx} on GPU ${PREFILL_GPUS[idx]}"
   env \
     "${attention_env[@]}" \
+    PAP_TOPOLOGY="${TOPOLOGY}" \
+    PAP_PA_COUNT="${PA_COUNT}" \
+    PAP_PROJECTION_COUNT="${PROJECTION_COUNT}" \
     PAP_NIXL_MAILBOX_ACTOR_ID="attention-${idx}-0" \
     PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT}" \
     PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
@@ -1854,11 +1772,8 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_LOCAL_FAST_SLEEP_US="${PAP_LOCAL_FAST_SLEEP_US}" \
     PAP_LOCAL_FAST_SLEEP_AFTER_US="${PAP_LOCAL_FAST_SLEEP_AFTER_US}" \
     PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
-    PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE}" \
     PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}" \
-    PAP_ATTENTION_DISPATCH_MODE="${PAP_ATTENTION_DISPATCH_MODE}" \
     PAP_ATTENTION_DISPATCH_QUEUE_SIZE="${PAP_ATTENTION_DISPATCH_QUEUE_SIZE}" \
-    PAP_ATTENTION_COMBINE_WAIT_US="${PAP_ATTENTION_COMBINE_WAIT_US}" \
     PAP_DEFERRED_CUDA_TRACE="${PAP_DEFERRED_CUDA_TRACE}" \
     PAP_DEFERRED_TRACE_ROLE=attention \
     PAP_DEFERRED_TRACE_OUTPUT= \
@@ -1900,15 +1815,9 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       "CUDA_MPS_PIPE_DIRECTORY=${MPS_PIPE_DIRS[idx]}"
       "CUDA_MPS_LOG_DIRECTORY=${MPS_LOG_DIRS[idx]}"
     )
-    if [[ "${PAP_MPS_MODE}" == "static" ]]; then
-      prefill_env+=(
-        "CUDA_MPS_SM_PARTITION=${MPS_PREFILL_PARTITIONS[idx]}"
-      )
-    else
-      prefill_env+=(
-        "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE=${PAP_PREFILL_MPS_PERCENT}"
-      )
-    fi
+    prefill_env+=(
+      "CUDA_MPS_SM_PARTITION=${MPS_PREFILL_PARTITIONS[idx]}"
+    )
   fi
   echo "Starting PAP Prefill ${idx} on GPU ${PREFILL_GPUS[idx]}"
   prefill_profiler_args=()
@@ -1923,13 +1832,14 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
   env \
     "${prefill_env[@]}" \
     VLLM_PORT="$((VLLM_PREFILL_PORT_BASE + idx * 20))" \
+    PAP_TOPOLOGY="${TOPOLOGY}" \
+    PAP_PA_COUNT="${PA_COUNT}" \
+    PAP_PROJECTION_COUNT="${PROJECTION_COUNT}" \
     PAP_DEFERRED_CUDA_TRACE=0 \
     PAP_DEFERRED_TRACE_ROLE= \
     PAP_DEFERRED_TRACE_OUTPUT= \
     PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
-    PAP_UNIFIED_KV="${PAP_UNIFIED_KV}" \
     PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
-    PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE}" \
     PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}" \
     PAP_PREFIX_CACHE_AUDIT="${PAP_PREFIX_CACHE_AUDIT}" \
     PAP_RUNTIME_CUDA_CONTEXT_AUDIT_PATH="$(
@@ -1970,6 +1880,9 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
   env \
     CUDA_VISIBLE_DEVICES="${PROJECTION_GPUS[idx]}" \
     VLLM_PORT="$((VLLM_PROJECTION_PORT_BASE + idx * 20))" \
+    PAP_TOPOLOGY="${TOPOLOGY}" \
+    PAP_PA_COUNT="${PA_COUNT}" \
+    PAP_PROJECTION_COUNT="${PROJECTION_COUNT}" \
     PAP_NIXL_MAILBOX_ACTOR_ID="projection-${idx}" \
     PAP_DEFERRED_CUDA_TRACE="${PAP_DEFERRED_CUDA_TRACE}" \
     PAP_DEFERRED_TRACE_ROLE=projection \
@@ -2115,9 +2028,7 @@ case "${PAP_BENCH_CLIENT_MODE}" in
       --git-tracked-worktree-dirty "${GIT_TRACKED_WORKTREE_DIRTY}" \
       --offload-exec-transport "${PAP_OFFLOAD_EXEC_TRANSPORT}" \
       --direct-mailbox-output "${PAP_DIRECT_MAILBOX_OUTPUT}" \
-      --unified-md-fast-key "${PAP_UNIFIED_MD_FAST_KEY}" \
       --prefill-ipc-profile "${PAP_PREFILL_IPC_PROFILE}" \
-      --kv-handoff-mode "${PAP_KV_HANDOFF_MODE}" \
       --document-tokens "${INPUT_LEN}" \
       --append-tokens 120 \
       --output-tokens "${OUTPUT_LEN}" \
@@ -2148,9 +2059,7 @@ case "${PAP_BENCH_CLIENT_MODE}" in
       --git-tracked-worktree-dirty "${GIT_TRACKED_WORKTREE_DIRTY}" \
       --offload-exec-transport "${PAP_OFFLOAD_EXEC_TRANSPORT}" \
       --direct-mailbox-output "${PAP_DIRECT_MAILBOX_OUTPUT}" \
-      --unified-md-fast-key "${PAP_UNIFIED_MD_FAST_KEY}" \
       --prefill-ipc-profile "${PAP_PREFILL_IPC_PROFILE}" \
-      --kv-handoff-mode "${PAP_KV_HANDOFF_MODE}" \
       --document-tokens "${INPUT_LEN}" \
       --append-tokens 120 \
       --output-tokens "${OUTPUT_LEN}" \

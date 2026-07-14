@@ -18,31 +18,21 @@ def test_pap_benchmark_runner_captures_attention_fast_path_stats() -> None:
     assert "/v1/pap/attention/stats" in text
     assert "attention_fast_path_stats.json" in text
     assert "capture_attention_fast_path_stats" in text
-    assert (
-        'PAP_ATTENTION_DISPATCH_MODE="${PAP_ATTENTION_DISPATCH_MODE:-legacy}"' in text
-    )
-    assert (
-        'PAP_ATTENTION_COMBINE_WAIT_US="${PAP_ATTENTION_COMBINE_WAIT_US:-'
-        '${DEFAULT_ATTENTION_COMBINE_WAIT_US}}"' in text
-    )
+    assert "PAP_ATTENTION_DISPATCH_MODE \\" in text
+    assert "PAP_ATTENTION_COMBINE_WAIT_US \\" in text
     assert "DEFAULT_ATTENTION_COMBINE_WAIT_US=200" in text
     assert "DEFAULT_ATTENTION_COMBINE_WAIT_US=1000" in text
-    assert 'PAP_BATCHED_ROUTE_COPY="${PAP_BATCHED_ROUTE_COPY:-1}"' in text
-    assert "export PAP_BATCHED_ROUTE_COPY" in text
-    assert "printf 'PAP_BATCHED_ROUTE_COPY=%q\\n'" in text
+    assert 'PAP_BATCHED_ROUTE_COPY="${' not in text
+    assert "export PAP_BATCHED_ROUTE_COPY" not in text
+    assert "printf 'PAP_BATCHED_ROUTE_COPY=%q\\n'" not in text
     assert '"batched_route_copy"' in text
     assert '"attention_dispatch_mode"' in text
     assert '"attention_combine_wait_us"' in text
-    assert "DEFAULT_ATTENTION_ACTIVE_PEER_TRACKING=0" in text
-    assert "DEFAULT_ATTENTION_ACTIVE_PEER_TRACKING=1" in text
-    assert (
-        'PAP_ATTENTION_ACTIVE_PEER_TRACKING="'
-        "${PAP_ATTENTION_ACTIVE_PEER_TRACKING:-"
-        '${DEFAULT_ATTENTION_ACTIVE_PEER_TRACKING}}"' in text
-    )
-    assert "export PAP_ATTENTION_ACTIVE_PEER_TRACKING" in text
-    assert "printf 'PAP_ATTENTION_ACTIVE_PEER_TRACKING=%q\\n'" in text
+    assert 'PAP_ATTENTION_ACTIVE_PEER_TRACKING="${' not in text
+    assert "export PAP_ATTENTION_ACTIVE_PEER_TRACKING" not in text
+    assert "printf 'PAP_ATTENTION_ACTIVE_PEER_TRACKING=%q\\n'" not in text
     assert '"attention_active_peer_tracking"' in text
+    assert 'PAP_PROJECTION_COUNT="${PROJECTION_COUNT}"' in text
 
 
 def test_pap_benchmark_runner_audits_async_decode_token_join() -> None:
@@ -152,17 +142,18 @@ def test_pap_runner_defaults_to_safe_async_prefill_kv_import() -> None:
 
     assert 'PAP_PREFILL_KV_ASYNC="${PAP_PREFILL_KV_ASYNC:-1}"' not in text
     assert 'PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE:-0}"' in text
-    assert 'PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE:-sealed_manifest}"' in text
+    assert 'PAP_KV_HANDOFF_MODE="${' not in text
     assert "printf 'PAP_PREFILL_KV_ASYNC=%q\\n'" not in text
-    assert "printf 'PAP_KV_HANDOFF_MODE=%q\\n'" in text
+    assert "printf 'PAP_KV_HANDOFF_MODE=%q\\n'" not in text
     assert "PAP_PREFILL_KV_ASYNC \\" in text
     assert "PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC" in text
     assert '"prefill_kv_async": True' in text
-    assert text.count('PAP_KV_HANDOFF_MODE="${PAP_KV_HANDOFF_MODE}"') >= 3
+    assert "PAP_KV_HANDOFF_MODE \\" in text
+    assert '"kv_handoff_mode": "sealed_manifest"' in text
     assert "--prefill-kv-async" not in text
     assert text.count('--prefill-ipc-profile "${PAP_PREFILL_IPC_PROFILE}"') == 2
-    assert "PAP_PREFILL_KV_ASYNC was removed" in nixl_text
-    assert "PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC" in nixl_text
+    assert "PAP_PREFILL_KV_ASYNC" in nixl_text
+    assert "frozen P17 runtime contract" in nixl_text
 
 
 def test_pap_benchmark_runner_supports_arbitrary_xy_topology() -> None:
@@ -244,9 +235,9 @@ def test_pap_runner_supports_multiturn_north_star() -> None:
     assert '--git-tracked-worktree-dirty "${GIT_TRACKED_WORKTREE_DIRTY}"' in text
     assert '--offload-exec-transport "${PAP_OFFLOAD_EXEC_TRANSPORT}"' in text
     assert '--direct-mailbox-output "${PAP_DIRECT_MAILBOX_OUTPUT}"' in text
-    assert '--unified-md-fast-key "${PAP_UNIFIED_MD_FAST_KEY}"' in text
-    assert 'PAP_UNIFIED_MD_FAST_KEY="${PAP_UNIFIED_MD_FAST_KEY:-1}"' in text
-    assert "PAP_UNIFIED_MD_FAST_KEY=%q" in text
+    assert "--unified-md-fast-key" not in text
+    assert 'PAP_UNIFIED_MD_FAST_KEY="${' not in text
+    assert "PAP_UNIFIED_MD_FAST_KEY=%q" not in text
     assert '--result "${RUN_ROOT}/result.json"' in text
     assert "validate_north_star_result" in text
     assert "finalize_pap_pd_multiturn.py" in text
@@ -325,7 +316,7 @@ def test_pd_multiturn_reference_bootstrap_uses_unchanged_official_proxy() -> Non
     assert "pap_pd_multiturn_client.py" in text
     assert '--architecture "pd"' in text
     assert '--topology "1p1d"' in text
-    assert "--unified-md-fast-key 0" in text
+    assert "--unified-md-fast-key" not in text
     assert (
         'PREFILL_CUDA_VISIBLE_DEVICES="${PD_PREFILL_CUDA_VISIBLE_DEVICES:-1}"'
         in text
@@ -519,7 +510,9 @@ def test_pap_launch_exports_unified_kv_control_endpoints() -> None:
     script = ROOT / "examples" / "pap" / "launch_pap_nixl.sh"
     text = script.read_text()
 
-    assert 'PAP_UNIFIED_KV="${PAP_UNIFIED_KV:-1}"' in text
+    assert 'PAP_UNIFIED_KV="${' not in text
+    assert "PAP_UNIFIED_KV" in text
+    assert "frozen P17 runtime contract" in text
     assert "PAP_DECODE_COMMIT_ENDPOINT" in text
     assert "PAP_LEASE_RELEASE_ENDPOINT" in text
     assert 'PAP_DECODE_COMMIT_ENDPOINT="$decode_commit_endpoint"' in text

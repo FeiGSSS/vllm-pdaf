@@ -40,15 +40,6 @@ def _pap_prefill_ipc_profile_enabled() -> bool:
     }
 
 
-def _pap_unified_kv_enabled() -> bool:
-    return os.environ.get("PAP_UNIFIED_KV", "").lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
-
-
 def _pap_unified_kv_decode_capacity_tokens() -> int:
     raw = os.environ.get("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "")
     if not raw:
@@ -470,7 +461,7 @@ def import_prefill_paged_kv(
     lease_id: str | None = None
     leased_block_ids: tuple[int, ...] | None = None
     lease_capacity_tokens: int | None = None
-    unified_kv_mode = _pap_unified_kv_enabled()
+    unified_kv_mode = True
     prefix_len_value: int | None = None
     writable_start_token: int | None = None
     writable_end_token: int | None = None
@@ -657,8 +648,6 @@ def publish_prefill_kv_session_manifest(
         serialize_tensor_bundle,
     )
 
-    if not _pap_unified_kv_enabled():
-        raise RuntimeError("sealed Prefill KV manifests require PAP_UNIFIED_KV=1")
     if not tcp_endpoint:
         raise RuntimeError("PAP Prefill KV manifest requires a TCP endpoint")
     request_timeout = (
