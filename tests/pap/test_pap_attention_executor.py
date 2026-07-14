@@ -14,6 +14,7 @@ from httpx import ASGITransport, AsyncClient, Response
 
 from vllm.pap.attention import compute as attention_compute_module
 from vllm.pap.attention import runtime as attention_runtime_module
+from vllm.pap.kv import metadata as kv_metadata_module
 from vllm.pap.kv import state as kv_state_module
 
 from vllm.pap.attention_executor import (
@@ -503,7 +504,7 @@ def test_unified_paged_flash_metadata_reuses_identical_decode_signature(
         arange_calls += 1
         return real_arange(*args, **kwargs)
 
-    monkeypatch.setattr(kv_state_module.torch, "arange", counted_arange)
+    monkeypatch.setattr(kv_metadata_module.torch, "arange", counted_arange)
     kv_cache = torch.zeros((4, 2, 4, 1, 2), dtype=torch.float32)
     states = [
         PAPUnifiedPagedKVState(
@@ -582,7 +583,7 @@ def test_unified_paged_flash_metadata_fast_key_avoids_hit_block_scan(
         coerce_calls += 1
         return real_coerce(value)
 
-    monkeypatch.setattr(kv_state_module, "_coerce_block_id", counted_coerce)
+    monkeypatch.setattr(kv_metadata_module, "_coerce_block_id", counted_coerce)
     first = build_unified_paged_flash_metadata(
         states=[state],
         device=torch.device("cpu"),
@@ -746,7 +747,7 @@ def test_unified_paged_flash_metadata_lru_hit_is_atomic_with_eviction(
             return item
 
     coordinated_cache = CoordinatedCache(executor_module._UNIFIED_MD_CACHE.items())
-    monkeypatch.setattr(kv_state_module, "_UNIFIED_MD_CACHE", coordinated_cache)
+    monkeypatch.setattr(kv_metadata_module, "_UNIFIED_MD_CACHE", coordinated_cache)
     errors: list[BaseException] = []
 
     def hit_first() -> None:

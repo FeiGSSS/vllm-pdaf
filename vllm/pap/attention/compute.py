@@ -15,16 +15,18 @@ from vllm.pap.deferred_cuda_trace import (
     begin_deferred_cuda_span,
     end_deferred_cuda_span,
 )
+from vllm.pap.kv.metadata import (
+    PAPPagedFlashMetadata,
+    build_unified_paged_flash_metadata,
+)
 from vllm.pap.kv.state import (
     PAPAttentionRegistry,
     PAPAttentionSession,
-    PAPPagedFlashMetadata,
     PAPUnifiedPagedKVState,
     _DECODE_COMMIT_PATH,
     _DEFERRED_CUDA_TRACE_ENABLED,
     _log_kv_locality_profile,
     _prefill_control_endpoint,
-    build_unified_paged_flash_metadata,
 )
 from vllm.pap.protocol import pap_offload_exec_trace_id
 

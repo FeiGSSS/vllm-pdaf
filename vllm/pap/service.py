@@ -65,18 +65,24 @@ from vllm.pap.attention.runtime import (
     run_offload_exec_mailbox_loop,
     run_offload_exec_mailbox_receiver_loop,
 )
+from vllm.pap.kv.metadata import (
+    PAPPagedFlashMetadata,
+    _coerce_block_id,
+    _UNIFIED_MD_CACHE,
+    build_unified_paged_flash_metadata,
+    reset_unified_paged_flash_metadata_cache,
+    unified_paged_flash_metadata_cache_stats,
+)
 from vllm.pap.kv.state import (
     PAPAttentionRegistry,
     PAPAttentionSession,
     PAPOffloadExecSessionEntry,
-    PAPPagedFlashMetadata,
     PAPPrefillKVCacheCatalogEntry,
     PAPPrefillLayerReadiness,
     PAPUnifiedPagedKVState,
     PAPUnifiedSlotActivation,
     PAPUnifiedSlotTopology,
     _block_locality_stats,
-    _coerce_block_id,
     _DECODE_COMMIT_PATH,
     _DEFERRED_CUDA_TRACE_ENABLED,
     _get_commit_client,
@@ -90,12 +96,8 @@ from vllm.pap.kv.state import (
     _pap_kv_locality_profile_enabled,
     _prefill_control_endpoint,
     _trace_add_elapsed_ms,
-    _UNIFIED_MD_CACHE,
-    build_unified_paged_flash_metadata,
     open_ipc_tensor_handle,
     open_prefill_manifest_event,
-    reset_unified_paged_flash_metadata_cache,
-    unified_paged_flash_metadata_cache_stats,
 )
 from vllm.pap.protocol.models import (
     PAPAttentionRegistration,
