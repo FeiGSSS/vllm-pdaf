@@ -233,6 +233,9 @@ hip_compat.h
 
 # Benchmark dataset
 benchmarks/**/*.json
+!benchmarks/pap/schemas/*.schema.json
+!benchmarks/pap/registry/runs/*.json
+!benchmarks/pap/registry/experiments/*.json
 
 # Linting
 actionlint

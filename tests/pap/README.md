@@ -27,8 +27,9 @@ local-GPU endpoint test. Per-case durations are diagnostic inventory data from
 one CPU Gate run; they are not performance thresholds.
 
 `test_invariant_registry.py` is intentionally excluded from the frozen 585-case
-inventory because it validates the inventory itself. The current suite
-therefore collects the frozen cases plus the registry validator cases.
+inventory because it validates the inventory itself. Tests created after the
+freeze, such as `tests/benchmarks/pap`, are prospective milestone tests and are
+outside this historical disposition audit.
 
 ## Dispositions
 
@@ -86,6 +87,7 @@ Run the complete PAP CPU Gate with:
 ```bash
 .venv/bin/python -m pytest \
   tests/pap \
+  tests/benchmarks/pap \
   tests/benchmarks/test_compare_pap_pd_multiturn.py \
   tests/benchmarks/test_compare_pap_pd_multiturn_load.py \
   tests/benchmarks/test_finalize_pap_pd_multiturn.py \
