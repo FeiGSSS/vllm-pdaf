@@ -18,6 +18,7 @@ def test_history_catalog_covers_every_reviewed_row() -> None:
     assert len(catalog.experiments) == 43
     assert len(catalog.negative_results) == 15
     root_cause = catalog.experiments["PAP-20260714-ASYNC-TTFT-ROOTCAUSE"]
+    assert root_cause.status == "archived"
     assert root_cause.evidence == "diagnostic"
     assert root_cause.decision == "superseded"
     assert (
@@ -27,6 +28,7 @@ def test_history_catalog_covers_every_reviewed_row() -> None:
     assert catalog.negative_results["NEG-ADAPTIVE-COALESCE"].decision == (
         "rolled-back"
     )
+    assert catalog.negative_results["NEG-ADAPTIVE-COALESCE"].status == "archived"
 
 
 def test_history_catalog_rejects_an_unclassified_row(tmp_path: Path) -> None:

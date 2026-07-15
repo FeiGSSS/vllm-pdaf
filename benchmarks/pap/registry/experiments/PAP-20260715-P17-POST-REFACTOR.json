@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "kind": "pap-experiment-record",
+  "status": "current",
   "experiment_id": "PAP-20260715-P17-POST-REFACTOR",
   "title": "P17 post-refactor milestone freeze",
   "recorded_at": "2026-07-15",

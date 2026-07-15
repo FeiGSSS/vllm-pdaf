@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """CLI wrapper for PAP remote-attention diagnostics."""
 
-from vllm.pap.remote_attention_diagnostics import main
+from benchmarks.pap.tooling.remote_attention_diagnostics import main
 
 
 if __name__ == "__main__":

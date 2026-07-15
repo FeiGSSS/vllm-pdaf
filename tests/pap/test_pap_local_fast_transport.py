@@ -11,9 +11,9 @@ from vllm.pap.cuda_stream_memops import (
     stream_write_value32,
 )
 from vllm.pap.transport.local_fast import (
-    _LocalFastMessage,
     PAPLocalFastTransport,
 )
+from vllm.pap.transport.local_fast_io import _LocalFastMessage
 from vllm.pap.transport.local_fast_endpoint import _open_or_create_doorbell
 from vllm.pap.transport.local_fast_protocol import (
     DTYPE_CODE_BFLOAT16,

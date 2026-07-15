@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from vllm.pap.remote_attention_diagnostics import (
+from benchmarks.pap.tooling.remote_attention_diagnostics import (
     DiagnosticRow,
     LowerBoundConfig,
     estimate_remote_attention_lower_bound,

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from vllm.pap.trace_summary import summarize_pap_trace_logs
+from benchmarks.pap.tooling.trace_summary import summarize_pap_trace_logs
 
 _RESULT_NAME_RE = re.compile(
     r"(?P<topology>[A-Za-z0-9]+)_i(?P<input_len>\d+)_o(?P<output_len>\d+)"

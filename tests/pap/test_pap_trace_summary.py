@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from vllm.pap.trace_summary import summarize_pap_trace_logs
+from benchmarks.pap.tooling.trace_summary import summarize_pap_trace_logs
 
 
 def test_trace_summary_extracts_projection_attention_and_mailbox_stats(

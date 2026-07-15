@@ -3,6 +3,8 @@ source_document = "docs/design/pap-experiment-history-index.md"
 
 # Historical details stay in the reviewed source table. This compact overlay
 # assigns the same evidence and decision vocabulary used by new JSON records.
+# Every row sourced from this historical ledger is archived by definition, so
+# that status is represented once by the loader instead of repeated per ID.
 
 [experiments.evidence]
 historical = [

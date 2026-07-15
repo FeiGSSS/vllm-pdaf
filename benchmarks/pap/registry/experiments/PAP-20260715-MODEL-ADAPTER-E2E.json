@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "kind": "pap-experiment-record",
+  "status": "current",
   "experiment_id": "PAP-20260715-MODEL-ADAPTER-E2E",
   "title": "P17 model-adapter extraction regression gate",
   "recorded_at": "2026-07-15",

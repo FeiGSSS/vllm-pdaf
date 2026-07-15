@@ -9,8 +9,8 @@ from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from vllm.pap.decode_token_client import DecodeTokenClient
 from vllm.pap.integration.request import PAPProjectionRequestStore
+from vllm.pap.lifecycle.decode_token_client import DecodeTokenClient
 from vllm.v1.outputs import ModelRunnerOutput
 
 

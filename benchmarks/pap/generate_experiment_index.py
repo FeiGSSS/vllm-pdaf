@@ -38,10 +38,10 @@ def render_generated_region(snapshot: RegistrySnapshot) -> str:
         "### Full experiment records",
         "",
         (
-            "| Experiment | Evidence | Decision | Validity | Runs | "
+            "| Experiment | Status | Evidence | Decision | Validity | Runs | "
             "Successor | Conclusion |"
         ),
-        "| --- | --- | --- | --- | --- | --- | --- |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     ordered = sorted(
         snapshot.experiments.values(),
@@ -56,6 +56,7 @@ def render_generated_region(snapshot: RegistrySnapshot) -> str:
                 _cell(value)
                 for value in (
                     experiment["experiment_id"],
+                    experiment["status"],
                     experiment["evidence"],
                     experiment["decision"],
                     experiment["validity"]["status"],
@@ -71,8 +72,8 @@ def render_generated_region(snapshot: RegistrySnapshot) -> str:
             "",
             "### Reviewed historical experiments",
             "",
-            "| Experiment | Evidence | Decision | Source | Successor |",
-            "| --- | --- | --- | --- | --- |",
+            "| Experiment | Status | Evidence | Decision | Source | Successor |",
+            "| --- | --- | --- | --- | --- | --- |",
         ]
     )
     for experiment in sorted(
@@ -85,6 +86,7 @@ def render_generated_region(snapshot: RegistrySnapshot) -> str:
                 _cell(value)
                 for value in (
                     experiment.experiment_id,
+                    experiment.status,
                     experiment.evidence,
                     experiment.decision,
                     f"history §{experiment.section}",
@@ -98,8 +100,8 @@ def render_generated_region(snapshot: RegistrySnapshot) -> str:
             "",
             "### Reviewed negative results",
             "",
-            "| Negative result | Decision | Source |",
-            "| --- | --- | --- |",
+            "| Negative result | Status | Decision | Source |",
+            "| --- | --- | --- | --- |",
         ]
     )
     for result in sorted(
@@ -107,7 +109,8 @@ def render_generated_region(snapshot: RegistrySnapshot) -> str:
         key=lambda item: item.result_id,
     ):
         lines.append(
-            f"| {_cell(result.result_id)} | {_cell(result.decision)} | history §7 |"
+            f"| {_cell(result.result_id)} | {_cell(result.status)} | "
+            f"{_cell(result.decision)} | history §7 |"
         )
     lines.extend(["", END_MARKER])
     return "\n".join(lines)

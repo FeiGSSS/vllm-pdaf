@@ -19,7 +19,7 @@ from vllm.pap.deferred_cuda_trace import (
 )
 from vllm.pap.kv.metadata import unified_paged_flash_metadata_cache_stats
 from vllm.pap.kv.models import PAPAttentionSession, PAPPrefillLayerReadiness
-from vllm.pap.kv.state import PAPAttentionRegistry
+from vllm.pap.kv.registry import PAPAttentionRegistry
 from vllm.pap.protocol import PAPAttentionRegistration
 
 

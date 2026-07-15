@@ -1,3 +1,7 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+"""Attention-to-Prefill KV lease-release client."""
+
 from __future__ import annotations
 
 import logging

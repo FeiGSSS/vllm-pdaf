@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "kind": "pap-experiment-record",
+  "status": "archived",
   "experiment_id": "PAP-20260714-P17-PRE-REFACTOR",
   "title": "P17 pre-refactor milestone freeze",
   "recorded_at": "2026-07-14",

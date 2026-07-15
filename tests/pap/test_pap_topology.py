@@ -1,6 +1,8 @@
+"""PAP topology and projection-peer activity tests."""
+
 import pytest
 
-from vllm.pap.peer_activity import (
+from vllm.pap.topology import (
     PAPProjectionPeerActivity,
     active_pap_attention_endpoints,
     pap_attention_endpoint_for_rank,

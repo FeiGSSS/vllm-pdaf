@@ -1,12 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+"""PAP Attention dispatcher tests."""
 
 from threading import Event, Thread
 
 import pytest
 import torch
 
-from vllm.pap.attention_scheduler import (
+from vllm.pap.attention import (
     PAPAttentionDispatcher,
     PAPAttentionWorkItem,
 )

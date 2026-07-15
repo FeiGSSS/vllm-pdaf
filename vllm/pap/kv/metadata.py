@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 import torch
 
 if TYPE_CHECKING:
-    from vllm.pap.kv.state import PAPUnifiedPagedKVState
+    from vllm.pap.kv.registry import PAPUnifiedPagedKVState
 
 
 @dataclass(frozen=True)

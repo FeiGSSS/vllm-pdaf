@@ -1791,7 +1791,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       fi
     )" \
     PAP_LEASE_RELEASE_ENDPOINT="${lease_release_endpoint}" \
-    "${PYTHON_BIN}" -m vllm.pap.attention_executor \
+    "${PYTHON_BIN}" -m vllm.pap.service \
       --host 127.0.0.1 \
       --port "${attention_port}" \
       --tcp-port "${attention_tcp_port}" \

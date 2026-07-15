@@ -31,6 +31,7 @@ class HistoricalExperiment:
     evidence: str
     decision: str
     superseded_by: str | None
+    status: str = "archived"
 
 
 @dataclass(frozen=True)
@@ -39,6 +40,7 @@ class NegativeResult:
 
     result_id: str
     decision: str
+    status: str = "archived"
 
 
 @dataclass(frozen=True)

@@ -17,7 +17,7 @@ from torch.multiprocessing.reductions import reduce_tensor
 
 if TYPE_CHECKING:
     from vllm.pap.protocol import PAPCudaIPCTensorHandle
-    from vllm.pap.kv.state import PAPAttentionRegistry
+    from vllm.pap.kv.registry import PAPAttentionRegistry
 
 logger = logging.getLogger(__name__)
 

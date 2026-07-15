@@ -7,6 +7,8 @@ directories.
 ## Layout
 
 - `profiles/p17_1pa1p.toml` is the only runtime release-gate profile.
+- `tooling/` contains offline trace summaries and remote-Attention diagnostics;
+  runtime code under `vllm/pap/` does not import it.
 - `schemas/` defines versioned run-manifest and experiment-record contracts.
 - `registry/runs/` records what happened in a run without copying raw data.
 - `registry/experiments/` records hypotheses, evidence, conclusions, decisions,
@@ -125,4 +127,11 @@ Regenerate or check the deterministic index:
   --output benchmarks/pap/registry/INDEX.md
 .venv/bin/python benchmarks/pap/generate_experiment_index.py \
   --output benchmarks/pap/registry/INDEX.md --check
+```
+
+Run offline diagnostics through the stable tool entry points:
+
+```bash
+.venv/bin/python tools/pap_trace_summary.py RUN_DIR/service_logs
+.venv/bin/python tools/pap_remote_attention_diagnostics.py RUN_DIR
 ```

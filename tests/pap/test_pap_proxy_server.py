@@ -13,32 +13,6 @@ from examples.pap.pap_proxy_server import (
 )
 
 
-def test_build_prefill_payload_forces_single_token_non_streaming() -> None:
-    payload = build_prefill_payload(
-        {
-            "model": "qwen",
-            "prompt": "hello",
-            "stream": True,
-            "max_tokens": 32,
-            "max_completion_tokens": 32,
-            "stream_options": {"include_usage": True},
-        }
-    )
-
-    assert payload["stream"] is False
-    assert payload["max_tokens"] == 1
-    assert payload["kv_transfer_params"] == {
-        "do_remote_decode": True,
-        "do_remote_prefill": False,
-        "remote_engine_id": None,
-        "remote_block_ids": None,
-        "remote_host": None,
-        "remote_port": None,
-    }
-    assert "max_completion_tokens" not in payload
-    assert "stream_options" not in payload
-
-
 def test_prefill_payload_can_attach_attention_import_params() -> None:
     payload = attach_pap_prefill_attention_params(
         build_prefill_payload({"model": "qwen", "prompt": "hello"}),

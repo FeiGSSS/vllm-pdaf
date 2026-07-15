@@ -1,3 +1,5 @@
+"""PAP protocol and transport contract tests."""
+
 import pytest
 import torch
 
@@ -411,7 +413,7 @@ def test_prefill_kv_session_manifest_requires_blocks_covering_writable_end() -> 
 def test_sealed_prefill_kv_handoff_posts_catalog_and_manifest_without_sync(
     monkeypatch,
 ) -> None:
-    from vllm.pap.kv_lease import reset_global_kv_lease_registry
+    from vllm.pap.lifecycle.lease import reset_global_kv_lease_registry
     from vllm.pap.protocol.wire import (
         deserialize_tensor_bundle,
         serialize_tensor_bundle,

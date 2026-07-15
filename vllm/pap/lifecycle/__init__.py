@@ -7,6 +7,7 @@ from vllm.pap.lifecycle.decode_token import (
     DeferredDecodeCommit,
     DeferredDecodeTokenCommitter,
 )
+from vllm.pap.lifecycle.decode_token_client import DecodeTokenClient
 from vllm.pap.lifecycle.lease import (
     PAPKVLeaseEntry,
     PAPKVLeaseRegistry,
@@ -22,11 +23,14 @@ from vllm.pap.lifecycle.lease import (
     pap_sweep_expired_leases,
     reset_global_kv_lease_registry,
 )
+from vllm.pap.lifecycle.lease_release import LeaseReleaseClient
 
 __all__ = [
     "DecodeCommitClient",
+    "DecodeTokenClient",
     "DeferredDecodeCommit",
     "DeferredDecodeTokenCommitter",
+    "LeaseReleaseClient",
     "PAPKVLeaseEntry",
     "PAPKVLeaseRegistry",
     "get_global_kv_lease_registry",

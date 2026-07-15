@@ -1,0 +1,841 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+"""Data movement and wire handling for the PAP local-fast transport."""
+
+from __future__ import annotations
+
+import logging
+import os
+import time
+from dataclasses import dataclass
+from math import prod
+from typing import Any
+
+import torch
+
+from vllm.pap.cuda_stream_memops import (
+    stream_wait_value32,
+    stream_write_value32,
+)
+from vllm.pap.deferred_cuda_trace import (
+    begin_deferred_cuda_span,
+    end_deferred_cuda_span,
+    record_deferred_host_duration,
+)
+from vllm.pap.protocol import (
+    PAPOffloadExecBatchDescriptor,
+    PAPOffloadExecDescriptor,
+)
+from vllm.pap.protocol.offload_exec import (
+    _offload_exec_batch_descriptor_from_metadata,
+    _offload_exec_batch_descriptor_to_metadata,
+    _offload_exec_batch_plan_id,
+    _offload_exec_batch_plan_payload,
+)
+from vllm.pap.transport.local_fast_protocol import (
+    DIR_OUTPUT,
+    DIR_QKV,
+    RECORD_FLAG_FIXED_TENSOR,
+    RECORD_FLAG_OUTPUT_DESCRIPTORLESS,
+    RECORD_FLAG_PLAN_FULL,
+    RECORD_FLAG_PLAN_REF,
+    _CODE_TO_DTYPE,
+    _DTYPE_TO_CODE,
+    _WireMetadata,
+    _doorbell_ack,
+    _doorbell_read_metadata,
+    _doorbell_read_record,
+    _doorbell_record_offset,
+    _dtype_from_name,
+    _dtype_name,
+    _layer_index_and_template,
+    _layer_name_from_template,
+    _payload_metadata,
+    _signal_index,
+)
+
+logger = logging.getLogger(__name__)
+
+SPIN_TIGHT_ITERS = int(os.environ.get("PAP_LOCAL_FAST_SPIN_ITERS", "2048"))
+SPIN_YIELD_ITERS = int(os.environ.get("PAP_LOCAL_FAST_YIELD_ITERS", "64"))
+SPIN_SLEEP_US = int(os.environ.get("PAP_LOCAL_FAST_SLEEP_US", "20"))
+SPIN_SLEEP_AFTER_US = int(os.environ.get("PAP_LOCAL_FAST_SLEEP_AFTER_US", "50"))
+
+
+def _sched_yield() -> None:
+    try:
+        os.sched_yield()
+    except AttributeError:
+        time.sleep(0)
+
+
+@dataclass
+class _LocalFastMessage:
+    """Minimal duck-typed stand-in for ``PAPMailboxMessage``.
+
+    The mailbox transport returns message objects with ``tensor``,
+    ``release()``, and ``kind`` attributes; some call sites use
+    ``recv_*_batch_message`` and then call ``.release()`` on the result.
+    For the stream-ordered transport, ``release()`` publishes the slot's GPU
+    release generation after the consumer work already queued on the stream.
+    """
+
+    msg_id: str
+    kind: str
+    tensor: torch.Tensor
+    metadata: dict[str, Any]
+    release_callback: Any = None
+    _released: bool = False
+
+    def release(self) -> None:
+        if self._released:
+            return
+        self._released = True
+        if self.release_callback is not None:
+            self.release_callback()
+
+
+# ---------------------------------------------------------------------------
+# Transport
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _PendingDoorbell:
+    direction: int
+    seq: int
+    nbytes: int
+    offset: int
+    wire: _WireMetadata
+    event: torch.cuda.Event
+    src_tensor_ref: torch.Tensor
+    peer_tensor_ref: torch.Tensor
+    enqueue_time: float
+    descriptor_layer_name: str
+    descriptor_batch_id: str
+
+
+class _PAPLocalFastIOMixin:
+    """Own local-fast payload encoding, transfer, and receive APIs."""
+
+    def _descriptor_metadata(
+        self,
+        direction: int,
+        descriptor: PAPOffloadExecBatchDescriptor,
+    ) -> dict[str, Any]:
+        if direction == DIR_OUTPUT and self._batch_plan_enabled:
+            self._output_descriptor_elisions += 1
+            return {}
+        if direction != DIR_QKV or not self._batch_plan_enabled:
+            return _offload_exec_batch_descriptor_to_metadata(descriptor)
+
+        plan_key = descriptor.batch_id_suffix or descriptor.batch_id
+        plan_id = self._sent_step_plans.get(plan_key)
+        if plan_id is not None:
+            self._sent_step_plans.move_to_end(plan_key)
+            self._step_plan_refs += 1
+            return {
+                "v": 5,
+                "l": descriptor.layer_name,
+                "p": plan_id,
+            }
+
+        plan_payload = _offload_exec_batch_plan_payload(descriptor)
+        plan_id = _offload_exec_batch_plan_id(plan_payload)
+        self._sent_step_plans[plan_key] = plan_id
+        self._sent_step_plans.move_to_end(plan_key)
+        if self._step_plan_cache_limit > 0:
+            while len(self._sent_step_plans) > self._step_plan_cache_limit:
+                self._sent_step_plans.popitem(last=False)
+        self._step_plan_builds += 1
+        return {
+            "v": 4,
+            "l": descriptor.layer_name,
+            "p": plan_id,
+            **plan_payload,
+        }
+
+    def _wire_metadata(
+        self,
+        direction: int,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        tensor: torch.Tensor,
+    ) -> _WireMetadata:
+        descriptor_metadata = self._descriptor_metadata(direction, descriptor)
+        dtype_code = _DTYPE_TO_CODE.get(tensor.dtype)
+        layer_info = _layer_index_and_template(descriptor.layer_name)
+        if tensor.ndim != 2 or dtype_code is None:
+            self._json_records += 1
+            return _WireMetadata(
+                metadata=_payload_metadata(descriptor_metadata, tensor),
+            )
+
+        shape = (int(tensor.shape[0]), int(tensor.shape[1]))
+        layer_index = layer_info[0] if layer_info is not None else -1
+        if direction == DIR_OUTPUT and not descriptor_metadata:
+            plan_key = descriptor.batch_id_suffix or descriptor.batch_id
+            plan_id_text = self._sent_step_plans.get(plan_key)
+            if plan_id_text is None:
+                plan_id_text = self._recv_plan_ids_by_key.get(plan_key)
+            self._binary_outputs += 1
+            return _WireMetadata(
+                metadata=None,
+                plan_id=(int(plan_id_text, 16) if plan_id_text else 0),
+                shape=shape,
+                layer_index=layer_index,
+                dtype_code=dtype_code,
+                flags=RECORD_FLAG_FIXED_TENSOR
+                | RECORD_FLAG_OUTPUT_DESCRIPTORLESS,
+            )
+
+        metadata_version = int(descriptor_metadata.get("v", 0))
+        if direction == DIR_QKV and metadata_version in {4, 5}:
+            try:
+                plan_id = int(str(descriptor_metadata["p"]), 16)
+            except (KeyError, ValueError):
+                plan_id = 0
+            if plan_id > 0 and layer_info is not None:
+                if metadata_version == 4:
+                    self._json_records += 1
+                    return _WireMetadata(
+                        metadata={"descriptor": descriptor_metadata},
+                        plan_id=plan_id,
+                        shape=shape,
+                        layer_index=layer_index,
+                        dtype_code=dtype_code,
+                        flags=RECORD_FLAG_FIXED_TENSOR | RECORD_FLAG_PLAN_FULL,
+                    )
+                self._binary_qkv_refs += 1
+                return _WireMetadata(
+                    metadata=None,
+                    plan_id=plan_id,
+                    shape=shape,
+                    layer_index=layer_index,
+                    dtype_code=dtype_code,
+                    flags=RECORD_FLAG_FIXED_TENSOR | RECORD_FLAG_PLAN_REF,
+                )
+
+        self._json_records += 1
+        return _WireMetadata(
+            metadata=_payload_metadata(descriptor_metadata, tensor),
+        )
+
+    def _send_to_peer(
+        self,
+        *,
+        direction: int,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        tensor: torch.Tensor,
+    ) -> int:
+        """Memcpy ``tensor`` into peer's recv buffer and ring the doorbell.
+
+        Returns the slot offset used in the peer's buffer.
+        """
+
+        peer = self._require_peer()
+        self._raise_if_notify_failed()
+        nbytes = int(tensor.numel() * tensor.element_size())
+        if nbytes > peer.slot_bytes:
+            raise RuntimeError(
+                f"PAP local fast payload {nbytes}B exceeds peer slot {peer.slot_bytes}B"
+            )
+        if nbytes > peer.peer_tensor.numel() * peer.peer_tensor.element_size():
+            raise RuntimeError(
+                f"PAP local fast payload {nbytes}B exceeds peer IPC buffer "
+                f"{peer.peer_tensor.numel() * peer.peer_tensor.element_size()}B"
+            )
+
+        wire = self._wire_metadata(direction, descriptor, tensor)
+
+        with peer.wait_cond:
+            if self._async_doorbell and not self._stream_ordered:
+                while peer.pending_qkv_seq != 0 or peer.pending_output_seq != 0:
+                    self._raise_if_notify_failed()
+                    peer.wait_cond.wait(timeout=0.01)
+            self._raise_if_notify_failed()
+
+            seq = self._next_seq(peer, direction)
+            slot_id = (seq - 1) % peer.slot_count
+            offset = slot_id * peer.slot_bytes
+            last_by_slot = (
+                peer.last_qkv_seq_by_slot
+                if direction == DIR_QKV
+                else peer.last_output_seq_by_slot
+            )
+            previous_seq = last_by_slot[slot_id]
+            self._wait_control_slot(
+                peer=peer,
+                direction=direction,
+                slot_id=slot_id,
+                previous_seq=previous_seq,
+            )
+
+            # Copy raw bytes from the source tensor into the peer's uint8 recv
+            # buffer.  We re-view both sides as 1-D uint8 of the correct length
+            # so dtype/shape mismatches don't matter; the receiver reinterprets
+            # the bytes via the carried ``nbytes`` + the descriptor's expected
+            # layout.
+            src_bytes = tensor.detach().contiguous().view(-1).view(torch.uint8)
+            src_bytes = src_bytes.narrow(0, 0, nbytes)
+            dst_bytes = peer.peer_tensor.narrow(0, offset, nbytes)
+
+            stream = torch.cuda.current_stream(self.device)
+            if self._stream_ordered and previous_seq:
+                stream_wait_value32(
+                    self._signal_buffer,
+                    _signal_index(
+                        direction,
+                        slot_id,
+                        self._slot_count,
+                        release=True,
+                    ),
+                    previous_seq,
+                    stream,
+                )
+            t_memcpy_start = time.perf_counter()
+            copy_span_name = None
+            if self._deferred_cuda_trace:
+                copy_span_name = (
+                    "qkv_p2p_copy_gpu_ms"
+                    if direction == DIR_QKV
+                    else "output_p2p_copy_gpu_ms"
+                )
+            if copy_span_name is not None:
+                copy_trace = begin_deferred_cuda_span(
+                    copy_span_name,
+                    stream,
+                )
+                try:
+                    dst_bytes.copy_(src_bytes, non_blocking=True)
+                finally:
+                    end_deferred_cuda_span(copy_trace)
+            else:
+                dst_bytes.copy_(src_bytes, non_blocking=True)
+            t_sync_start = time.perf_counter()
+
+            if self._stream_ordered:
+                assert peer.peer_signal_tensor is not None
+                stream_write_value32(
+                    peer.peer_signal_tensor,
+                    _signal_index(
+                        direction,
+                        slot_id,
+                        peer.slot_count,
+                        release=False,
+                    ),
+                    seq,
+                    stream,
+                )
+                t_doorbell_start = time.perf_counter()
+                self._write_doorbell_sync(
+                    peer=peer,
+                    direction=direction,
+                    seq=seq,
+                    nbytes=nbytes,
+                    offset=offset,
+                    wire=wire,
+                )
+                t_done = time.perf_counter()
+                sync_ms = 0.0
+                enqueue_ms = (t_doorbell_start - t_sync_start) * 1000.0
+                doorbell_ms = (t_done - t_doorbell_start) * 1000.0
+                peer.source_refs[(direction, slot_id)] = src_bytes
+            elif self._async_doorbell:
+                event = torch.cuda.Event()
+                event.record(stream)
+                self._set_pending_seq(peer, direction, seq)
+                enqueue_time = time.perf_counter()
+                assert self._notify_queue is not None
+                self._notify_queue.put(
+                    _PendingDoorbell(
+                        direction=direction,
+                        seq=seq,
+                        nbytes=nbytes,
+                        offset=offset,
+                        wire=wire,
+                        event=event,
+                        src_tensor_ref=src_bytes,
+                        peer_tensor_ref=peer.peer_tensor,
+                        enqueue_time=enqueue_time,
+                        descriptor_layer_name=descriptor.layer_name,
+                        descriptor_batch_id=getattr(descriptor, "batch_id", ""),
+                    )
+                )
+                t_done = time.perf_counter()
+                sync_ms = 0.0
+                enqueue_ms = (t_done - t_sync_start) * 1000.0
+                doorbell_ms = 0.0
+            else:
+                stream.synchronize()
+                t_doorbell_start = time.perf_counter()
+                self._write_doorbell_sync(
+                    peer=peer,
+                    direction=direction,
+                    seq=seq,
+                    nbytes=nbytes,
+                    offset=offset,
+                    wire=wire,
+                )
+                t_done = time.perf_counter()
+                sync_ms = (t_doorbell_start - t_sync_start) * 1000.0
+                enqueue_ms = 0.0
+                doorbell_ms = (t_done - t_doorbell_start) * 1000.0
+            last_by_slot[slot_id] = seq
+
+        if self._trace:
+            kind = "qkv" if direction == DIR_QKV else "output"
+            logger.info(
+                "PAP local fast transport send trace kind=%s layer=%s "
+                "batch=%s memcpy_ms=%.3f sync_ms=%.3f enqueue_ms=%.3f "
+                "doorbell_ms=%.3f async=%d stream_ordered=%d "
+                "slot=%d nbytes=%d seq=%d wire_flags=%d has_json=%d",
+                kind,
+                descriptor.layer_name,
+                getattr(descriptor, "batch_id", ""),
+                (t_sync_start - t_memcpy_start) * 1000.0,
+                sync_ms,
+                enqueue_ms,
+                doorbell_ms,
+                int(self._async_doorbell),
+                int(self._stream_ordered),
+                slot_id,
+                nbytes,
+                seq,
+                wire.flags,
+                int(bool(wire.metadata)),
+            )
+        return offset
+
+    def _recv_from_peer(
+        self,
+        *,
+        direction: int,
+    ) -> tuple[int, int, int, int, dict[str, Any]]:
+        """Spin until peer has rung the doorbell for ``direction``."""
+
+        peer = self._require_peer()
+        # We read the *local* doorbell (peer wrote into it via mmap).
+        mm = self._doorbell_mm
+        expected = (
+            peer.expected_qkv_seq if direction == DIR_QKV else peer.expected_output_seq
+        )
+        slot_id = (expected - 1) % self._slot_count
+        record_offset = _doorbell_record_offset(
+            direction,
+            slot_id,
+            self._slot_count,
+        )
+        iters = 0
+        t_start = time.perf_counter()
+        while True:
+            record = _doorbell_read_record(mm, record_offset)
+            seq = record.seq
+            if seq == expected:
+                break
+            if seq > expected:
+                raise RuntimeError(
+                    "PAP local fast control ring skipped a message: "
+                    f"expected={expected} observed={seq} slot={slot_id}"
+                )
+            iters += 1
+            if iters < SPIN_TIGHT_ITERS:
+                continue
+            if iters < SPIN_TIGHT_ITERS + SPIN_YIELD_ITERS:
+                _sched_yield()
+                continue
+            waited_us = (time.perf_counter() - t_start) * 1_000_000.0
+            if waited_us >= SPIN_SLEEP_AFTER_US:
+                time.sleep(max(SPIN_SLEEP_US, 0) / 1_000_000.0)
+            else:
+                _sched_yield()
+        t_doorbell_seen = time.perf_counter()
+        if self._deferred_cuda_trace and direction == DIR_OUTPUT:
+            record_deferred_host_duration(
+                "output_doorbell_wait_wall_ms",
+                (t_doorbell_seen - t_start) * 1000.0,
+            )
+        nbytes = record.nbytes
+        offset = record.offset
+        metadata = _doorbell_read_metadata(
+            mm,
+            record_offset,
+            record.metadata_len,
+        )
+        if record.flags & RECORD_FLAG_FIXED_TENSOR:
+            try:
+                dtype = _CODE_TO_DTYPE[record.dtype_code]
+            except KeyError as exc:
+                raise RuntimeError(
+                    "PAP local fast fixed record has invalid dtype code: "
+                    f"{record.dtype_code}"
+                ) from exc
+            metadata.update(
+                {
+                    "shape": [record.dim0, record.dim1],
+                    "dtype": _dtype_name(dtype),
+                    "_fixed_flags": record.flags,
+                    "_plan_id": record.plan_id,
+                    "_layer_index": record.layer_index,
+                }
+            )
+        _doorbell_ack(mm, record_offset, seq)
+        if self._stream_ordered:
+            stream = torch.cuda.current_stream(self.device)
+            ready_span_name = None
+            if self._deferred_cuda_trace:
+                ready_span_name = (
+                    "qkv_ready_wait_gpu_ms"
+                    if direction == DIR_QKV
+                    else "output_ready_wait_gpu_ms"
+                )
+            if ready_span_name is not None:
+                ready_trace = begin_deferred_cuda_span(
+                    ready_span_name,
+                    stream,
+                )
+                try:
+                    stream_wait_value32(
+                        self._signal_buffer,
+                        _signal_index(
+                            direction,
+                            slot_id,
+                            self._slot_count,
+                            release=False,
+                        ),
+                        seq,
+                        stream,
+                    )
+                finally:
+                    end_deferred_cuda_span(ready_trace)
+            else:
+                stream_wait_value32(
+                    self._signal_buffer,
+                    _signal_index(
+                        direction,
+                        slot_id,
+                        self._slot_count,
+                        release=False,
+                    ),
+                    seq,
+                    stream,
+                )
+        # Bump our expectation for the next round.
+        if direction == DIR_QKV:
+            peer.expected_qkv_seq = expected + 1
+        else:
+            peer.expected_output_seq = expected + 1
+        if self._trace:
+            kind = "qkv" if direction == DIR_QKV else "output"
+            logger.info(
+                "PAP local fast transport recv trace kind=%s "
+                "spin_ms=%.3f stream_ordered=%d slot=%d "
+                "nbytes=%d offset=%d seq=%d wire_flags=%d has_json=%d",
+                kind,
+                (time.perf_counter() - t_start) * 1000.0,
+                int(self._stream_ordered),
+                slot_id,
+                nbytes,
+                offset,
+                seq,
+                int(metadata.get("_fixed_flags", 0)),
+                int(record.metadata_len > 0),
+            )
+        return seq, slot_id, nbytes, offset, metadata
+
+    def _release_recv_slot(self, direction: int, slot_id: int, seq: int) -> None:
+        if not self._stream_ordered:
+            return
+        peer = self._require_peer()
+        assert peer.peer_signal_tensor is not None
+        stream_write_value32(
+            peer.peer_signal_tensor,
+            _signal_index(
+                direction,
+                slot_id,
+                peer.slot_count,
+                release=True,
+            ),
+            seq,
+            torch.cuda.current_stream(self.device),
+        )
+
+    def _materialize_recv(
+        self,
+        *,
+        nbytes: int,
+        offset: int,
+        metadata: dict[str, Any],
+    ) -> torch.Tensor:
+        shape = tuple(int(dim) for dim in metadata["shape"])
+        dtype = _dtype_from_name(str(metadata["dtype"]))
+        expected_nbytes = int(prod(shape) * torch.empty((), dtype=dtype).element_size())
+        if expected_nbytes != int(nbytes):
+            raise RuntimeError(
+                f"PAP local fast payload size mismatch: metadata shape={shape} "
+                f"dtype={dtype} expects {expected_nbytes} bytes, got {nbytes}"
+            )
+        view = self._recv_buffer.narrow(0, int(offset), int(nbytes))
+        return view.view(dtype).reshape(shape)
+
+    def _validate_output_record(
+        self,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        metadata: dict[str, Any],
+    ) -> None:
+        flags = int(metadata.get("_fixed_flags", 0))
+        if not flags & RECORD_FLAG_OUTPUT_DESCRIPTORLESS:
+            return
+        layer_info = _layer_index_and_template(descriptor.layer_name)
+        if layer_info is not None and int(metadata["_layer_index"]) != layer_info[0]:
+            raise RuntimeError("PAP local fast output layer index mismatch")
+        plan_key = descriptor.batch_id_suffix or descriptor.batch_id
+        expected_plan_id = self._sent_step_plans.get(plan_key)
+        received_plan_id = int(metadata.get("_plan_id", 0))
+        if (
+            expected_plan_id is not None
+            and received_plan_id > 0
+            and int(expected_plan_id, 16) != received_plan_id
+        ):
+            raise RuntimeError("PAP local fast output step plan id mismatch")
+
+    # ------------------------------------------------------------------
+    # Public transport API (mirrors PAPNixlMailboxOffloadExecTransport)
+    # ------------------------------------------------------------------
+
+    # --- single-descriptor variants (unused on hot path, kept for API) ---
+
+    def send_qkv(
+        self,
+        descriptor: PAPOffloadExecDescriptor,
+        qkv: torch.Tensor,
+        *,
+        remote_address: str,
+    ) -> None:
+        batch = PAPOffloadExecBatchDescriptor(
+            layer_name=descriptor.layer_name,
+            items=(descriptor,),
+        )
+        self.send_qkv_batch(batch, qkv, remote_address=remote_address)
+
+    def recv_qkv(
+        self,
+        descriptor: PAPOffloadExecDescriptor,
+        *,
+        remote_address: str,
+    ) -> torch.Tensor:
+        batch = PAPOffloadExecBatchDescriptor(
+            layer_name=descriptor.layer_name,
+            items=(descriptor,),
+        )
+        return self.recv_qkv_batch(batch, remote_address=remote_address)
+
+    def send_output(
+        self,
+        descriptor: PAPOffloadExecDescriptor,
+        output: torch.Tensor,
+        *,
+        remote_address: str,
+    ) -> None:
+        batch = PAPOffloadExecBatchDescriptor(
+            layer_name=descriptor.layer_name,
+            items=(descriptor,),
+        )
+        self.send_output_batch(batch, output, remote_address=remote_address)
+
+    def recv_output(
+        self,
+        descriptor: PAPOffloadExecDescriptor,
+        *,
+        remote_address: str,
+    ) -> torch.Tensor:
+        batch = PAPOffloadExecBatchDescriptor(
+            layer_name=descriptor.layer_name,
+            items=(descriptor,),
+        )
+        return self.recv_output_batch(batch, remote_address=remote_address)
+
+    # --- batched variants (the actual hot path) ---
+
+    def send_qkv_batch(
+        self,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        qkv: torch.Tensor,
+        *,
+        remote_address: str,
+    ) -> None:
+        self._send_to_peer(direction=DIR_QKV, descriptor=descriptor, tensor=qkv)
+
+    def send_qkv_batch_direct(
+        self,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        qkv: torch.Tensor,
+        *,
+        remote_address: str,
+    ) -> None:
+        # In the local-fast path there is no separate "direct payload slot"
+        # ceremony; the batched path is already direct.
+        self.send_qkv_batch(descriptor, qkv, remote_address=remote_address)
+
+    def recv_qkv_batch(
+        self,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        *,
+        remote_address: str,
+    ) -> torch.Tensor:
+        seq, slot_id, nbytes, offset, metadata = self._recv_from_peer(direction=DIR_QKV)
+        tensor = self._materialize_recv(nbytes=nbytes, offset=offset, metadata=metadata)
+        owned = tensor.clone()
+        self._release_recv_slot(DIR_QKV, slot_id, seq)
+        return owned
+
+    def send_output_batch(
+        self,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        output: torch.Tensor,
+        *,
+        remote_address: str,
+    ) -> None:
+        self._send_to_peer(direction=DIR_OUTPUT, descriptor=descriptor, tensor=output)
+
+    def recv_output_batch(
+        self,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        *,
+        remote_address: str,
+    ) -> torch.Tensor:
+        seq, slot_id, nbytes, offset, metadata = self._recv_from_peer(
+            direction=DIR_OUTPUT
+        )
+        self._validate_output_record(descriptor, metadata)
+        tensor = self._materialize_recv(nbytes=nbytes, offset=offset, metadata=metadata)
+        owned = tensor.clone()
+        self._release_recv_slot(DIR_OUTPUT, slot_id, seq)
+        return owned
+
+    # --- message-style variants (used by attention mailbox loop) ---
+
+    def recv_qkv_batch_message(
+        self,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        *,
+        remote_address: str,
+    ) -> Any:
+        seq, slot_id, nbytes, offset, metadata = self._recv_from_peer(direction=DIR_QKV)
+        tensor = self._materialize_recv(
+            nbytes=nbytes,
+            offset=offset,
+            metadata=metadata,
+        )
+        return _LocalFastMessage(
+            msg_id=descriptor.qkv_tensor_id,
+            kind="attention_task_batch",
+            tensor=tensor,
+            metadata=_offload_exec_batch_descriptor_to_metadata(descriptor),
+            release_callback=lambda: self._release_recv_slot(
+                DIR_QKV,
+                slot_id,
+                seq,
+            ),
+        )
+
+    def recv_output_batch_message(
+        self,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        *,
+        remote_address: str,
+    ) -> Any:
+        seq, slot_id, nbytes, offset, metadata = self._recv_from_peer(
+            direction=DIR_OUTPUT
+        )
+        self._validate_output_record(descriptor, metadata)
+        tensor = self._materialize_recv(
+            nbytes=nbytes,
+            offset=offset,
+            metadata=metadata,
+        )
+        return _LocalFastMessage(
+            msg_id=descriptor.output_tensor_id,
+            kind="attention_result_batch",
+            tensor=tensor,
+            metadata=_offload_exec_batch_descriptor_to_metadata(descriptor),
+            release_callback=lambda: self._release_recv_slot(
+                DIR_OUTPUT,
+                slot_id,
+                seq,
+            ),
+        )
+
+    def recv_next_qkv_batch(
+        self,
+    ) -> tuple[PAPOffloadExecBatchDescriptor, torch.Tensor]:
+        descriptor, message = self.recv_next_qkv_batch_message()
+        tensor = message.tensor.clone()
+        message.release()
+        return descriptor, tensor
+
+    def recv_next_qkv_batch_message(
+        self,
+    ) -> tuple[PAPOffloadExecBatchDescriptor, Any]:
+        seq, slot_id, nbytes, offset, metadata = self._recv_from_peer(direction=DIR_QKV)
+        fixed_flags = int(metadata.get("_fixed_flags", 0))
+        if fixed_flags & RECORD_FLAG_PLAN_REF:
+            plan_id = f"{int(metadata['_plan_id']):016x}"
+            try:
+                layer_template = self._recv_plan_layer_templates[plan_id]
+            except KeyError as exc:
+                raise RuntimeError(
+                    f"PAP local fast received unknown step plan id: {plan_id}"
+                ) from exc
+            descriptor_metadata = {
+                "v": 5,
+                "l": _layer_name_from_template(
+                    layer_template,
+                    int(metadata["_layer_index"]),
+                ),
+                "p": plan_id,
+            }
+        else:
+            descriptor_metadata = dict(metadata["descriptor"])
+            if fixed_flags & RECORD_FLAG_PLAN_FULL:
+                plan_id = str(descriptor_metadata["p"])
+                layer_info = _layer_index_and_template(
+                    str(descriptor_metadata["l"])
+                )
+                if layer_info is None:
+                    raise RuntimeError(
+                        "PAP local fast step plan has an invalid layer name"
+                    )
+                if int(plan_id, 16) != int(metadata["_plan_id"]):
+                    raise RuntimeError("PAP local fast step plan id mismatch")
+                self._recv_plan_layer_templates[plan_id] = layer_info[1]
+        descriptor = _offload_exec_batch_descriptor_from_metadata(
+            descriptor_metadata,
+            plan_cache=(self._recv_batch_plans if self._batch_plan_enabled else None),
+            template_only=self._batch_plan_enabled,
+        )
+        received_plan_id = int(metadata.get("_plan_id", 0))
+        if received_plan_id > 0:
+            plan_key = descriptor.batch_id_suffix or descriptor.batch_id
+            self._recv_plan_ids_by_key[plan_key] = f"{received_plan_id:016x}"
+        tensor = self._materialize_recv(nbytes=nbytes, offset=offset, metadata=metadata)
+        message = _LocalFastMessage(
+            msg_id=descriptor.qkv_tensor_id,
+            kind="attention_task_batch",
+            tensor=tensor,
+            metadata=descriptor_metadata,
+            release_callback=lambda: self._release_recv_slot(
+                DIR_QKV,
+                slot_id,
+                seq,
+            ),
+        )
+        return descriptor, message
+
+    def recv_next_attention_batch_message(
+        self,
+    ) -> tuple[PAPOffloadExecBatchDescriptor, Any]:
+        return self.recv_next_qkv_batch_message()
+
+    # ------------------------------------------------------------------
+    # Cleanup (best-effort; daemon process exit will reclaim resources)
+    # ------------------------------------------------------------------

@@ -39,3 +39,15 @@ runtime comparison. Pre-commit is not required in this environment.
 Prefer behavior and structured-config tests over source-text assertions. Keep
 shell tests for syntax and end-to-end assembly only; keep CUDA-dependent tests
 explicitly marked so CPU-only environments skip them clearly.
+
+## Ownership and redundancy audit
+
+Test filenames follow the current owner modules (`attention`, `kv`, `protocol`,
+`topology`, `transport`, and `lifecycle`), not retired top-level façade names.
+An exact AST-body audit is sufficient for mechanical duplication; broader
+similarity is reviewed by behavior because different failure transitions can
+have intentionally similar setup.
+
+The post-façade audit removed the two exact duplicate cases it found. The
+remaining xPAyP and NIXL unit contracts are retained because those capabilities
+are supported, while their E2E lanes remain outside the P17 refactor gate.

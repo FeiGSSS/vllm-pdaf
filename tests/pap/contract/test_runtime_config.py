@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from vllm.pap.attention_executor import create_app
 from vllm.pap.config import (
     PAPAttentionDispatchMode,
     PAPConfigError,
@@ -16,6 +15,7 @@ from vllm.pap.config import (
     PAPRuntimeConfig,
     PAP_RETIRED_FLAGS,
 )
+from vllm.pap.service import create_app
 
 ROOT = Path(__file__).resolve().parents[3]
 

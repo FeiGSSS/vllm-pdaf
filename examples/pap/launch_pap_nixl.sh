@@ -493,7 +493,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
                 PAP_KV_LOCALITY_PROFILE_MIN_BATCH="$PAP_KV_LOCALITY_PROFILE_MIN_BATCH" \
                 PAP_DECODE_COMMIT_ENDPOINT="$decode_commit_endpoint" \
                 PAP_LEASE_RELEASE_ENDPOINT="$lease_release_endpoint" \
-                .venv/bin/python -m vllm.pap.attention_executor \
+                .venv/bin/python -m vllm.pap.service \
                 --host 127.0.0.1 \
                 --port "$attention_port" \
                 --tcp-port "$attention_tcp_port" \
@@ -519,7 +519,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
             PAP_KV_LOCALITY_PROFILE_MIN_BATCH="$PAP_KV_LOCALITY_PROFILE_MIN_BATCH" \
             PAP_DECODE_COMMIT_ENDPOINT="$decode_commit_endpoint" \
             PAP_LEASE_RELEASE_ENDPOINT="$lease_release_endpoint" \
-            .venv/bin/python -m vllm.pap.attention_executor \
+            .venv/bin/python -m vllm.pap.service \
             --host 127.0.0.1 \
             --port "$attention_port" \
             --tcp-port "$attention_tcp_port" \

@@ -39,12 +39,24 @@ def test_current_registry_validates() -> None:
     assert set(snapshot.profiles) == {"p17_1pa1p"}
     assert set(snapshot.runs) == {
         "20260714_dd2073bcf_p17_pre_refactor_formal",
+        "20260715_003029a77_p17_model_adapter_formal",
         "20260715_3bfa8d15d_p17_post_refactor_formal",
+        "20260715_7f732f5be_p17_runtime_boundary_formal",
+        "20260715_b695efe69_p17_integration_formal",
     }
     assert set(snapshot.experiments) == {
         "PAP-20260714-P17-PRE-REFACTOR",
+        "PAP-20260715-INTEGRATION-E2E",
+        "PAP-20260715-MODEL-ADAPTER-E2E",
         "PAP-20260715-P17-POST-REFACTOR",
+        "PAP-20260715-RUNTIME-BOUNDARY-E2E",
     }
+    assert snapshot.experiments["PAP-20260714-P17-PRE-REFACTOR"]["status"] == (
+        "archived"
+    )
+    assert snapshot.experiments["PAP-20260715-P17-POST-REFACTOR"]["status"] == (
+        "current"
+    )
     assert len(snapshot.historical_experiments) == 43
     assert len(snapshot.negative_results) == 15
 

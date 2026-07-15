@@ -23,7 +23,7 @@ from vllm.pap.attention.dispatcher import (
     PAPAttentionWorkItem,
 )
 from vllm.pap.kv.observability import pap_env_flag as _pap_env_flag
-from vllm.pap.kv.state import PAPAttentionRegistry
+from vllm.pap.kv.registry import PAPAttentionRegistry
 from vllm.pap.protocol import (
     PAPOffloadExecBatchDescriptor,
     pap_offload_exec_trace_id,

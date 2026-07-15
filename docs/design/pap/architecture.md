@@ -66,23 +66,36 @@ Request routing selects a stable `(PA, Projection)` pair for a turn.
 - `protocol/`: wire models, descriptors, sealed KV codec, and transport
   contracts.
 - `topology/`: route groups and Projection peer membership.
-- `lifecycle/`: asynchronous sampled tokens, decode commits, ACKs, and leases.
-- `kv/`: sealed handoff, Prefill-owned registry state, paged metadata, data
-  models, CUDA IPC opening, and optional KV observability.
+- `lifecycle/`: asynchronous sampled-token delivery and joining, decode commits,
+  ACKs, and lease release/ownership.
+- `kv/`: `registry.py` owns session/catalog/lifecycle state;
+  `decode_state.py` owns unified-KV slot planning, append, and readiness waits;
+  the package also contains sealed handoff, metadata, models, IPC opening, and
+  optional observability.
 - `attention/`: the service-facing runtime façade plus direct/combine dispatch
   and compute runtime.
-- `transport/`: backend-neutral contract plus `local_fast` and NIXL backends.
+- `transport/`: backend-neutral contract plus NIXL; `local_fast.py` owns peer
+  binding and lifecycle, while `local_fast_io.py` owns wire encoding and the
+  send/receive hot path.
 - `service.py`: thin Attention HTTP/TCP and transport composition.
 
-`attention_executor.py`, `remote_attention.py`, `shadow_attention.py`, and old
-client modules may remain compatibility façades. Both vLLM model runners call
-the same `integration/` owner; V1 fails closed for PAP while V2 provides the
-asynchronous sampled-token callback. Qwen3 delegates its PAP model path to
-`model/`; none of these entry points define alternate runtime algorithms.
+Legacy top-level compatibility façades have been removed; the retirement record
+is [compatibility.md](compatibility.md). Runtime code, launchers, and tests now
+import their owning modules directly. Both vLLM model runners call the same
+`integration/` owner; V1 fails closed for PAP while V2 provides the asynchronous
+sampled-token callback. Qwen3 delegates its PAP model path to `model/`; none of
+these entry points define alternate runtime algorithms.
 
-## Compatibility rule
+## Import ownership rule
 
-Stable launch/import entry points may forward to their new owners. Private
-module layout can continue to change. Historical experimental branches are
-reproduced from their Git commits and raw artifacts, not from selectable code
-paths in the current runtime.
+New top-level forwarding modules are not allowed. Launchers use
+`python -m vllm.pap.service`; code and tests import `attention/`, `kv/`,
+`lifecycle/`, `protocol/`, `topology/`, and `transport/` owners directly.
+Historical experimental branches are reproduced from their Git commits and raw
+artifacts, not from selectable code paths in the current runtime.
+
+Offline trace analysis and remote-Attention reports live under
+`benchmarks/pap/tooling/` and are invoked through `tools/pap_*`; the runtime
+package does not import benchmark tooling. The obsolete
+`decode_commit_router.py` was removed because the current Prefill control path
+is exclusively owned by `prefill_control_router.py`.

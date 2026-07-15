@@ -5,80 +5,80 @@
 
 ### Full experiment records
 
-| Experiment | Evidence | Decision | Validity | Runs | Successor | Conclusion |
-| --- | --- | --- | --- | --- | --- | --- |
-| PAP-20260714-P17-PRE-REFACTOR | formal-clean | accepted | valid | 20260714_dd2073bcf_p17_pre_refactor_formal | — | All three repetitions completed 20 of 20 requests, passed strict client, cache, Attention-stat, correctness, async decode-token join, routing, commit, lease, MPS, and zero-session-drain gates, and used one clean commit with empty tracked patches. This run is the accepted pre-refactor P17 baseline; it does not validate xPAyP or cross-host NIXL. |
-| PAP-20260715-INTEGRATION-E2E | formal-clean | accepted | valid | 20260715_b695efe69_p17_integration_formal | — | All three clean repetitions at b695efe69 completed 20 of 20 requests and passed client, cache, Attention-stat, correctness, async decode-token join, routing, commit, lease, MPS, and zero-session-drain gates. Relative changes versus 3bfa8d15d were -0.07% R1 TTFT, -0.14% R1 TPOT, +1.43% steady TTFT, and -0.12% steady TPOT; all passed the 5% regression gate. xPAyP and cross-host NIXL remain preserved-unverified. |
-| PAP-20260715-MODEL-ADAPTER-E2E | formal-clean | accepted | valid | 20260715_003029a77_p17_model_adapter_formal | — | All three clean repetitions at 003029a77 completed 20 of 20 requests and passed client, cache, Attention-stat, correctness, async decode-token join, routing, commit, lease, MPS, and zero-session-drain gates. Relative changes versus b695efe69 were -0.10% R1 TTFT, +0.08% R1 TPOT, -1.61% steady TTFT, and +0.02% steady TPOT; all passed the 5% regression gate. xPAyP and cross-host NIXL remain preserved-unverified. |
-| PAP-20260715-P17-POST-REFACTOR | formal-clean | accepted | valid | 20260715_3bfa8d15d_p17_post_refactor_formal | — | All three post-refactor repetitions completed 20 of 20 requests and passed every strict audit on clean commit 3bfa8d15d. Relative changes were +0.17% R1 TTFT, -0.14% R1 TPOT, -2.13% steady TTFT, and -0.16% steady TPOT, so the 5% release gate passed. xPAyP and cross-host NIXL remain preserved-unverified. |
-| PAP-20260715-RUNTIME-BOUNDARY-E2E | formal-clean | accepted | valid | 20260715_7f732f5be_p17_runtime_boundary_formal | — | The first attempt at 3b2ddd4b6 stopped in repetition 2 when session deletion raced a queued asynchronous sampled-token batch. Commit 7f732f5be records bounded released-handle tombstones while retaining 404 for never-seen IDs. Its three clean repetitions completed 60 of 60 requests and passed all correctness audits. Relative changes versus 003029a77 were +0.05% R1 TTFT, -0.20% R1 TPOT, +4.31% steady TTFT, and -0.21% steady TPOT; all passed the 5% regression gate. xPAyP and cross-host NIXL remain preserved-unverified. |
+| Experiment | Status | Evidence | Decision | Validity | Runs | Successor | Conclusion |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| PAP-20260714-P17-PRE-REFACTOR | archived | formal-clean | accepted | valid | 20260714_dd2073bcf_p17_pre_refactor_formal | — | All three repetitions completed 20 of 20 requests, passed strict client, cache, Attention-stat, correctness, async decode-token join, routing, commit, lease, MPS, and zero-session-drain gates, and used one clean commit with empty tracked patches. This run is the accepted pre-refactor P17 baseline; it does not validate xPAyP or cross-host NIXL. |
+| PAP-20260715-INTEGRATION-E2E | current | formal-clean | accepted | valid | 20260715_b695efe69_p17_integration_formal | — | All three clean repetitions at b695efe69 completed 20 of 20 requests and passed client, cache, Attention-stat, correctness, async decode-token join, routing, commit, lease, MPS, and zero-session-drain gates. Relative changes versus 3bfa8d15d were -0.07% R1 TTFT, -0.14% R1 TPOT, +1.43% steady TTFT, and -0.12% steady TPOT; all passed the 5% regression gate. xPAyP and cross-host NIXL remain preserved-unverified. |
+| PAP-20260715-MODEL-ADAPTER-E2E | current | formal-clean | accepted | valid | 20260715_003029a77_p17_model_adapter_formal | — | All three clean repetitions at 003029a77 completed 20 of 20 requests and passed client, cache, Attention-stat, correctness, async decode-token join, routing, commit, lease, MPS, and zero-session-drain gates. Relative changes versus b695efe69 were -0.10% R1 TTFT, +0.08% R1 TPOT, -1.61% steady TTFT, and +0.02% steady TPOT; all passed the 5% regression gate. xPAyP and cross-host NIXL remain preserved-unverified. |
+| PAP-20260715-P17-POST-REFACTOR | current | formal-clean | accepted | valid | 20260715_3bfa8d15d_p17_post_refactor_formal | — | All three post-refactor repetitions completed 20 of 20 requests and passed every strict audit on clean commit 3bfa8d15d. Relative changes were +0.17% R1 TTFT, -0.14% R1 TPOT, -2.13% steady TTFT, and -0.16% steady TPOT, so the 5% release gate passed. xPAyP and cross-host NIXL remain preserved-unverified. |
+| PAP-20260715-RUNTIME-BOUNDARY-E2E | current | formal-clean | accepted | valid | 20260715_7f732f5be_p17_runtime_boundary_formal | — | The first attempt at 3b2ddd4b6 stopped in repetition 2 when session deletion raced a queued asynchronous sampled-token batch. Commit 7f732f5be records bounded released-handle tombstones while retaining 404 for never-seen IDs. Its three clean repetitions completed 60 of 60 requests and passed all correctness audits. Relative changes versus 003029a77 were +0.05% R1 TTFT, -0.20% R1 TPOT, +4.31% steady TTFT, and -0.21% steady TPOT; all passed the 5% regression gate. xPAyP and cross-host NIXL remain preserved-unverified. |
 
 ### Reviewed historical experiments
 
-| Experiment | Evidence | Decision | Source | Successor |
-| --- | --- | --- | --- | --- |
-| PAP-20260522-PROTO-NIXL | historical | accepted | history §6.1 | — |
-| PAP-20260524-PROJECTION-KVUNAWARE | historical | accepted | history §6.1 | — |
-| PAP-20260524-SHARED-KV | historical | superseded | history §6.1 | PAP-20260703-UNIFIED-KV |
-| PAP-20260526-3WAY | controlled | optional | history §6.1 | — |
-| PAP-20260526-MAILBOX | historical | accepted | history §6.1 | — |
-| PAP-20260527-CONCURRENCY | controlled | rejected | history §6.1 | — |
-| PAP-20260527-WAVEFRONT | controlled | optional | history §6.1 | — |
-| PAP-20260528-TP2 | smoke | accepted | history §6.1 | — |
-| PAP-20260701-MAILBOX-HOTPATH | controlled | optional | history §6.2 | — |
-| PAP-20260701-PD-METHODOLOGY | controlled | accepted | history §6.2 | — |
-| PAP-20260702-REMOTE-TRACE | diagnostic | accepted | history §6.2 | — |
-| PAP-20260703-SLOTMAPPING | controlled | accepted | history §6.2 | — |
-| PAP-20260703-UNIFIED-KV | smoke | accepted | history §6.2 | — |
-| PAP-20260706-DECODE-COMMIT | smoke | accepted | history §6.2 | — |
-| PAP-20260710-ACK-LEASE | controlled | accepted | history §6.2 | — |
-| PAP-20260710-ARBITRARY-XY | smoke | accepted | history §6.3 | — |
-| PAP-20260710-QPS4-PD-AB | controlled | accepted | history §6.2 | — |
-| PAP-20260710-SLOTPLAN | controlled | accepted | history §6.2 | — |
-| PAP-20260711-ACTIVE-PEER | formal-clean | accepted | history §6.3 | — |
-| PAP-20260711-ADAPTIVE-COALESCE | controlled | rolled-back | history §6.3 | — |
-| PAP-20260711-ATTENTION-COMBINE | controlled | accepted | history §6.3 | — |
-| PAP-20260711-CENTRAL-DISPATCH | controlled | superseded | history §6.3 | PAP-20260711-ATTENTION-COMBINE |
-| PAP-20260711-MULTITURN-CHAT | formal-clean | accepted | history §6.3 | — |
-| PAP-20260711-MULTITURN-EXACT | formal-clean | accepted | history §6.3 | — |
-| PAP-20260711-ROUTE-COPY | formal-clean | accepted | history §6.3 | — |
-| PAP-20260712-DEFERRED-GPU-TRACE | diagnostic | optional | history §6.3 | — |
-| PAP-20260712-METADATA-BULK | formal-clean | superseded | history §6.3 | PAP-20260712-TOPOLOGY-GENERATION |
-| PAP-20260712-METADATA-FAST-KEY | formal-clean | accepted | history §6.3 | — |
-| PAP-20260712-MULTITURN-NORTHSTAR | formal-clean | superseded | history §6.3 | PAP-20260712-METADATA-BULK |
-| PAP-20260712-TOPOLOGY-GENERATION | formal-clean | superseded | history §6.3 | PAP-20260712-METADATA-FAST-KEY |
-| PAP-20260713-ASYNC-DECODE-TOKEN-D2H | controlled | accepted | history §6.3 | — |
-| PAP-20260713-BILATERAL-TRACE-C4 | diagnostic | accepted | history §6.3 | — |
-| PAP-20260713-FIVE-TURN-C4 | formal-clean | superseded | history §6.3 | PAP-20260713-PD-THREE-LANE-C4 |
-| PAP-20260713-MPS-80-20-DIAG | diagnostic | rejected | history §6.3 | — |
-| PAP-20260713-PD-PUSH-ROOTCAUSE | diagnostic | superseded | history §6.3 | PAP-20260713-UCX122-GET-AB |
-| PAP-20260713-PD-THREE-LANE-C2 | controlled | inconclusive | history §6.3 | — |
-| PAP-20260713-PD-THREE-LANE-C4 | formal-clean | accepted | history §6.3 | — |
-| PAP-20260713-UCX122-GET-AB | diagnostic | accepted | history §6.3 | — |
-| PAP-20260714-ASYNC-STATIC-BASELINE | controlled | accepted | history §6.3 | — |
-| PAP-20260714-ASYNC-TTFT-ROOTCAUSE | diagnostic | superseded | history §6.3 | PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC |
-| PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION | diagnostic | superseded | history §6.3 | PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC |
-| PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC | controlled | accepted | history §6.3 | — |
-| PAP-20260714-SEAL-HANDOFF-KV | controlled | accepted | history §6.3 | — |
+| Experiment | Status | Evidence | Decision | Source | Successor |
+| --- | --- | --- | --- | --- | --- |
+| PAP-20260522-PROTO-NIXL | archived | historical | accepted | history §6.1 | — |
+| PAP-20260524-PROJECTION-KVUNAWARE | archived | historical | accepted | history §6.1 | — |
+| PAP-20260524-SHARED-KV | archived | historical | superseded | history §6.1 | PAP-20260703-UNIFIED-KV |
+| PAP-20260526-3WAY | archived | controlled | optional | history §6.1 | — |
+| PAP-20260526-MAILBOX | archived | historical | accepted | history §6.1 | — |
+| PAP-20260527-CONCURRENCY | archived | controlled | rejected | history §6.1 | — |
+| PAP-20260527-WAVEFRONT | archived | controlled | optional | history §6.1 | — |
+| PAP-20260528-TP2 | archived | smoke | accepted | history §6.1 | — |
+| PAP-20260701-MAILBOX-HOTPATH | archived | controlled | optional | history §6.2 | — |
+| PAP-20260701-PD-METHODOLOGY | archived | controlled | accepted | history §6.2 | — |
+| PAP-20260702-REMOTE-TRACE | archived | diagnostic | accepted | history §6.2 | — |
+| PAP-20260703-SLOTMAPPING | archived | controlled | accepted | history §6.2 | — |
+| PAP-20260703-UNIFIED-KV | archived | smoke | accepted | history §6.2 | — |
+| PAP-20260706-DECODE-COMMIT | archived | smoke | accepted | history §6.2 | — |
+| PAP-20260710-ACK-LEASE | archived | controlled | accepted | history §6.2 | — |
+| PAP-20260710-ARBITRARY-XY | archived | smoke | accepted | history §6.3 | — |
+| PAP-20260710-QPS4-PD-AB | archived | controlled | accepted | history §6.2 | — |
+| PAP-20260710-SLOTPLAN | archived | controlled | accepted | history §6.2 | — |
+| PAP-20260711-ACTIVE-PEER | archived | formal-clean | accepted | history §6.3 | — |
+| PAP-20260711-ADAPTIVE-COALESCE | archived | controlled | rolled-back | history §6.3 | — |
+| PAP-20260711-ATTENTION-COMBINE | archived | controlled | accepted | history §6.3 | — |
+| PAP-20260711-CENTRAL-DISPATCH | archived | controlled | superseded | history §6.3 | PAP-20260711-ATTENTION-COMBINE |
+| PAP-20260711-MULTITURN-CHAT | archived | formal-clean | accepted | history §6.3 | — |
+| PAP-20260711-MULTITURN-EXACT | archived | formal-clean | accepted | history §6.3 | — |
+| PAP-20260711-ROUTE-COPY | archived | formal-clean | accepted | history §6.3 | — |
+| PAP-20260712-DEFERRED-GPU-TRACE | archived | diagnostic | optional | history §6.3 | — |
+| PAP-20260712-METADATA-BULK | archived | formal-clean | superseded | history §6.3 | PAP-20260712-TOPOLOGY-GENERATION |
+| PAP-20260712-METADATA-FAST-KEY | archived | formal-clean | accepted | history §6.3 | — |
+| PAP-20260712-MULTITURN-NORTHSTAR | archived | formal-clean | superseded | history §6.3 | PAP-20260712-METADATA-BULK |
+| PAP-20260712-TOPOLOGY-GENERATION | archived | formal-clean | superseded | history §6.3 | PAP-20260712-METADATA-FAST-KEY |
+| PAP-20260713-ASYNC-DECODE-TOKEN-D2H | archived | controlled | accepted | history §6.3 | — |
+| PAP-20260713-BILATERAL-TRACE-C4 | archived | diagnostic | accepted | history §6.3 | — |
+| PAP-20260713-FIVE-TURN-C4 | archived | formal-clean | superseded | history §6.3 | PAP-20260713-PD-THREE-LANE-C4 |
+| PAP-20260713-MPS-80-20-DIAG | archived | diagnostic | rejected | history §6.3 | — |
+| PAP-20260713-PD-PUSH-ROOTCAUSE | archived | diagnostic | superseded | history §6.3 | PAP-20260713-UCX122-GET-AB |
+| PAP-20260713-PD-THREE-LANE-C2 | archived | controlled | inconclusive | history §6.3 | — |
+| PAP-20260713-PD-THREE-LANE-C4 | archived | formal-clean | accepted | history §6.3 | — |
+| PAP-20260713-UCX122-GET-AB | archived | diagnostic | accepted | history §6.3 | — |
+| PAP-20260714-ASYNC-STATIC-BASELINE | archived | controlled | accepted | history §6.3 | — |
+| PAP-20260714-ASYNC-TTFT-ROOTCAUSE | archived | diagnostic | superseded | history §6.3 | PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC |
+| PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION | archived | diagnostic | superseded | history §6.3 | PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC |
+| PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC | archived | controlled | accepted | history §6.3 | — |
+| PAP-20260714-SEAL-HANDOFF-KV | archived | controlled | accepted | history §6.3 | — |
 
 ### Reviewed negative results
 
-| Negative result | Decision | Source |
-| --- | --- | --- |
-| NEG-1PA2P-SPLIT-PEER | superseded | history §7 |
-| NEG-3WAY-GENERAL | rejected | history §7 |
-| NEG-ADAPTIVE-COALESCE | rolled-back | history §7 |
-| NEG-ASYNC-PREFILL-NO-READINESS | rejected | history §7 |
-| NEG-ATTENTION-LOCAL-KV | superseded | history §7 |
-| NEG-HIGHSCALE-INVALID | rejected | history §7 |
-| NEG-MAILBOX-MICRO | rolled-back | history §7 |
-| NEG-MPS-STATIC-80-20 | rejected | history §7 |
-| NEG-PROJECTION-ZEROBLOCK | rejected | history §7 |
-| NEG-QFIRST-PARTIAL | rejected | history §7 |
-| NEG-QWEN3-NONTHINK | rejected | history §7 |
-| NEG-RESIDENT-MULTITURN | superseded | history §7 |
-| NEG-SLOTMAP-PERROW | superseded | history §7 |
-| NEG-TRANSPORT-LEGACY | superseded | history §7 |
-| NEG-WAVEFRONT-FIXED | superseded | history §7 |
+| Negative result | Status | Decision | Source |
+| --- | --- | --- | --- |
+| NEG-1PA2P-SPLIT-PEER | archived | superseded | history §7 |
+| NEG-3WAY-GENERAL | archived | rejected | history §7 |
+| NEG-ADAPTIVE-COALESCE | archived | rolled-back | history §7 |
+| NEG-ASYNC-PREFILL-NO-READINESS | archived | rejected | history §7 |
+| NEG-ATTENTION-LOCAL-KV | archived | superseded | history §7 |
+| NEG-HIGHSCALE-INVALID | archived | rejected | history §7 |
+| NEG-MAILBOX-MICRO | archived | rolled-back | history §7 |
+| NEG-MPS-STATIC-80-20 | archived | rejected | history §7 |
+| NEG-PROJECTION-ZEROBLOCK | archived | rejected | history §7 |
+| NEG-QFIRST-PARTIAL | archived | rejected | history §7 |
+| NEG-QWEN3-NONTHINK | archived | rejected | history §7 |
+| NEG-RESIDENT-MULTITURN | archived | superseded | history §7 |
+| NEG-SLOTMAP-PERROW | archived | superseded | history §7 |
+| NEG-TRANSPORT-LEGACY | archived | superseded | history §7 |
+| NEG-WAVEFRONT-FIXED | archived | superseded | history §7 |
 
 <!-- PAP-EXPERIMENT-INDEX:END -->

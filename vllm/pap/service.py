@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""PAP Attention service composition and compatibility runtime.
+"""PAP Attention service composition root.
 
 This first PAP slice keeps Attention as an internal compute endpoint. The
 process is intentionally not an OpenAI-compatible vLLM server: it records which
@@ -21,85 +21,17 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
-from vllm.pap.attention import (
-    PAPAttentionDispatcher,
-    PAPAttentionRuntime,
-    PAPAttentionWorkItem,
+from vllm.pap.attention import PAPAttentionRuntime
+from vllm.pap.attention.runtime import (
+    run_offload_exec_mailbox_loop,
+    run_offload_exec_mailbox_receiver_loop,
 )
 from vllm.pap.config import (
     PAPOffloadExecTransport,
     PAPRuntimeConfig,
 )
-from vllm.pap.transport.factory import build_offload_exec_transport
-from vllm.pap.protocol import (
-    PAPPrefillKVCacheCatalogDescriptor,
-    PAPPrefillKVSessionManifest,
-)
-from vllm.pap.deferred_cuda_trace import deferred_cuda_trace_snapshot
-from vllm.pap.runtime_cuda_context_audit import write_runtime_cuda_context_audit
-
-# Retain the historical ``vllm.pap.attention_executor`` symbol surface while
-# service composition itself depends on ``PAPAttentionRuntime``.
-from vllm.pap.attention.compute import (
-    _combine_offload_exec_outputs,
-    _compute_unified_paged_flash_batch,
-    _finalize_offload_exec_compute_trace,
-    _offload_exec_attention_shapes,
-    _offload_exec_batch_rows,
-    _offload_exec_session,
-    _run_paged_flash_varlen,
-    compute_offload_exec_batch_output,
-    run_offload_exec_batch_once,
-)
-from vllm.pap.attention.runtime import (
-    _combine_offload_exec_work_items,
-    _execute_offload_exec_work_item,
-    _execute_offload_exec_work_items,
-    _new_offload_exec_compute_trace_stats,
-    _offload_exec_work_item_compatibility_key,
-    _qkv_message_recv_trace,
-    _QKVBatchMessagePrefetcher,
-    _record_offload_exec_ready_event,
-    _recv_next_qkv_batch_message_or_tensor,
-    _wait_offload_exec_ready_event,
-    run_offload_exec_mailbox_loop,
-    run_offload_exec_mailbox_receiver_loop,
-)
-from vllm.pap.kv.metadata import (
-    PAPPagedFlashMetadata,
-    _coerce_block_id,
-    _UNIFIED_MD_CACHE,
-    build_unified_paged_flash_metadata,
-    reset_unified_paged_flash_metadata_cache,
-    unified_paged_flash_metadata_cache_stats,
-)
 from vllm.pap.kv.handoff import accept_prefill_kv_handoff
-from vllm.pap.kv.state import (
-    PAPAttentionRegistry,
-    PAPAttentionSession,
-    PAPOffloadExecSessionEntry,
-    PAPPrefillKVCacheCatalogEntry,
-    PAPPrefillLayerReadiness,
-    PAPUnifiedPagedKVState,
-    PAPUnifiedSlotActivation,
-    PAPUnifiedSlotTopology,
-    _block_locality_stats,
-    _DECODE_COMMIT_PATH,
-    _DEFERRED_CUDA_TRACE_ENABLED,
-    _get_commit_client,
-    _get_lease_release_client,
-    _KV_LOCALITY_PROFILE_SEEN,
-    _LEASE_RELEASE_PATH,
-    _log_kv_locality_profile,
-    _pap_attention_pool_profile_enabled,
-    _pap_env_flag,
-    _pap_kv_lease_profile_enabled,
-    _pap_kv_locality_profile_enabled,
-    _prefill_control_endpoint,
-    _trace_add_elapsed_ms,
-    open_ipc_tensor_handle,
-    open_prefill_manifest_event,
-)
+from vllm.pap.kv.registry import PAPAttentionRegistry
 from vllm.pap.protocol.models import (
     PAPAttentionRegistration,
     PAPDecodeTokenBatchRequest,
@@ -107,6 +39,8 @@ from vllm.pap.protocol.models import (
     PAPOffloadExecMailboxActivityRequest,
     PAPOffloadExecMailboxBindRequest,
 )
+from vllm.pap.runtime_cuda_context_audit import write_runtime_cuda_context_audit
+from vllm.pap.transport.factory import build_offload_exec_transport
 
 logging.basicConfig(
     level=logging.INFO,
@@ -186,7 +120,7 @@ def create_app(
     registry = runtime.registry
     dispatch_mode = runtime.dispatch_mode
     active_peer_tracking = runtime.active_peer_tracking
-    app = FastAPI(title="PAP Attention Executor")
+    app = FastAPI(title="PAP Attention Service")
     app.state.pap_config = runtime_config
     app.state.pap_runtime = runtime
     app.state.registry = registry
@@ -449,7 +383,7 @@ def create_app(
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run PAP Attention executor")
+    parser = argparse.ArgumentParser(description="Run the PAP Attention service")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8300)
     parser.add_argument("--tcp-port", type=int, default=None)
@@ -520,7 +454,7 @@ app = create_app()
 
 
 def main() -> None:
-    """Run the PAP Attention executor service."""
+    """Run the PAP Attention service."""
     import uvicorn
 
     args = parse_args()

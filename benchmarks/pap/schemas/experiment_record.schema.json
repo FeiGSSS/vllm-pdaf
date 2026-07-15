@@ -7,6 +7,7 @@
   "required": [
     "schema_version",
     "kind",
+    "status",
     "experiment_id",
     "title",
     "recorded_at",
@@ -32,6 +33,12 @@
     },
     "kind": {
       "const": "pap-experiment-record"
+    },
+    "status": {
+      "enum": [
+        "current",
+        "archived"
+      ]
     },
     "experiment_id": {
       "$ref": "#/$defs/experimentId"

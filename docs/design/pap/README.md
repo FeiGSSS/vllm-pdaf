@@ -24,7 +24,9 @@ Prefill–Attention–Projection implementation. Read these documents in order:
    drain paths.
 3. [Benchmark methodology](benchmark-methodology.md) — P17, evidence grades,
    experiment records, and release gates.
-4. [Runtime refactor milestone](milestones/2026-07-runtime-refactor.md) — scope,
+4. [Compatibility retirement](compatibility.md) — removed legacy façades and
+   the current import-ownership rule.
+5. [Runtime refactor milestone](milestones/2026-07-runtime-refactor.md) — scope,
    decisions, and the frozen validation result.
 
 The detailed historical ledger remains at
@@ -60,5 +62,6 @@ there; the active local implementation checklist lives outside `docs/`.
 - P17 profile: `benchmarks/pap/profiles/p17_1pa1p.toml`
 - P17 runner: `benchmarks/pap/scripts/run_p17_1pa1p.sh`
 - Generic xPAyP workload runner: `benchmarks/pap/scripts/run_pap_workload.sh`
+- Offline diagnostics: `benchmarks/pap/tooling/`, invoked through `tools/pap_*`
 - Test policy: [tests/pap/README.md](../../../tests/pap/README.md)
 - Runnable examples: [examples/pap/README.md](../../../examples/pap/README.md)

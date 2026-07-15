@@ -13,7 +13,7 @@ from vllm.pap.kv.models import (
     PAPPrefillLayerReadiness,
     PAPUnifiedPagedKVState,
 )
-from vllm.pap.kv.state import PAPAttentionRegistry
+from vllm.pap.kv.registry import PAPAttentionRegistry
 
 __all__ = [
     "PAPAttentionRegistry",

@@ -1,13 +1,19 @@
 # PAP
 
-This directory contains the current runnable Prefill-Attention-Projection
-service. It supports arbitrary `xPAyP` single-turn topologies. Multi-turn
-resident KV reuse is the next implementation phase and is not enabled yet.
+This directory contains the runnable Prefill-Attention-Projection service.
+The current release gate is the P17 Qwen3-8B, same-host `1PA1P` path. Same-host
+and cross-host `xPAyP` implementations remain available but are not revalidated
+by this milestone. The validated multi-turn path reuses Prefill-owned KV through
+vLLM's native prefix cache; it does not keep an Attention session resident
+between turns.
+
+See [`docs/design/pap/`](../../docs/design/pap/README.md) for the canonical
+architecture, runtime, and validation boundary.
 
 Roles:
 
 - **Prefill** runs normal vLLM prompt processing and owns prompt paged KV blocks.
-- **Attention** is an internal executor colocated with Prefill. It opens
+- **Attention** is an internal service colocated with Prefill. It opens
   Prefill paged KV through CUDA IPC and appends decode K/V directly to those
   Prefill-owned blocks.
 - **Projection** runs the model decode path and sends current-token Q/K/V to

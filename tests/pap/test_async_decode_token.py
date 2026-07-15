@@ -6,15 +6,15 @@ import time
 import numpy as np
 import pytest
 
-from vllm.pap.decode_token_client import DecodeTokenClient
-from vllm.pap.deferred_decode_token import (
-    DeferredDecodeCommit,
-    DeferredDecodeTokenCommitter,
-)
 from vllm.pap.integration import (
     PAPDecodeTokenBridge,
     PAPProjectionRequestStore,
 )
+from vllm.pap.lifecycle.decode_token import (
+    DeferredDecodeCommit,
+    DeferredDecodeTokenCommitter,
+)
+from vllm.pap.lifecycle.decode_token_client import DecodeTokenClient
 from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.worker.gpu.async_utils import AsyncOutput
 
@@ -209,7 +209,7 @@ def _patch_decode_token_http_client(
             return post(url, json=json, timeout=timeout)
 
     monkeypatch.setattr(
-        "vllm.pap.decode_token_client.httpx.Client",
+        "vllm.pap.lifecycle.decode_token_client.httpx.Client",
         FakeHTTPClient,
     )
 
@@ -239,11 +239,11 @@ def test_decode_token_client_reuses_one_http_connection(
         raise AssertionError("one-shot httpx.post must not be used")
 
     monkeypatch.setattr(
-        "vllm.pap.decode_token_client.httpx.Client",
+        "vllm.pap.lifecycle.decode_token_client.httpx.Client",
         FakeHTTPClient,
     )
     monkeypatch.setattr(
-        "vllm.pap.decode_token_client.httpx.post",
+        "vllm.pap.lifecycle.decode_token_client.httpx.post",
         reject_one_shot_post,
     )
     client = DecodeTokenClient(queue_size=8, max_attempts=1)
