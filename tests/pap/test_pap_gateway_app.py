@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+"""PAP gateway topology and routing tests."""
 
-from examples.pap.multi_pap_proxy_server import (
+from vllm.pap.gateway.app import (
     PAPGroup,
     ProjectionInstance,
     _prefill_usage_headers,

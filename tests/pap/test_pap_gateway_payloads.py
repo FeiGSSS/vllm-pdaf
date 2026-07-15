@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+"""PAP gateway request-payload tests."""
 
-from examples.pap.pd_payloads import (
+from vllm.pap.gateway.payloads import (
     build_decode_payload,
     build_prefill_payload,
     build_projection_kv_unaware_payload,
@@ -49,7 +50,7 @@ def test_build_decode_payload_attaches_prefill_kv_params_without_aliasing() -> N
 
 
 def test_prefill_payload_marks_attention_kv_import() -> None:
-    from examples.pap.pd_payloads import attach_pap_prefill_attention_params
+    from vllm.pap.gateway.payloads import attach_pap_prefill_attention_params
 
     payload = attach_pap_prefill_attention_params(
         build_prefill_payload({"model": "qwen", "prompt": "hello"}),

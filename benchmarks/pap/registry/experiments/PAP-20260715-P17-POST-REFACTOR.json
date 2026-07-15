@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "kind": "pap-experiment-record",
-  "status": "current",
+  "status": "archived",
   "experiment_id": "PAP-20260715-P17-POST-REFACTOR",
   "title": "P17 post-refactor milestone freeze",
   "recorded_at": "2026-07-15",
   "hypothesis": "A tracked-clean three-repetition P17 1PA1P run can freeze the converged and modularized PAP runtime after the milestone refactor.",
   "evidence": "formal-clean",
-  "decision": "accepted",
+  "decision": "superseded",
   "validity": {
     "status": "valid",
     "reasons": []
@@ -73,7 +73,7 @@
   ],
   "conclusion": "All three post-refactor repetitions completed 20 of 20 requests and passed every strict audit on clean commit 3bfa8d15d. Relative changes were +0.17% R1 TTFT, -0.14% R1 TPOT, -2.13% steady TTFT, and -0.16% steady TPOT, so the 5% release gate passed. xPAyP and cross-host NIXL remain preserved-unverified.",
   "supersedes": [],
-  "superseded_by": null,
+  "superseded_by": "PAP-20260715-ARCHITECTURE-MILESTONE",
   "raw_artifacts": [
     {
       "name": "aggregate",

@@ -1,11 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import itertools
-import os
 import time
 from collections import defaultdict, deque
 from collections.abc import Iterable
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any
 
 from vllm.compilation.cuda_graph import CUDAGraphStat
@@ -31,7 +30,7 @@ from vllm.model_executor.layers.fused_moe.routed_experts_capturer import (
 from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry
 from vllm.multimodal.encoder_budget import MultiModalBudget
 from vllm.multimodal.utils import get_mm_features_in_window
-from vllm.pap.integration import PAPRequestMetadata
+from vllm.pap.integration.scheduler import PAPSchedulerAdapter
 from vllm.v1.core.encoder_cache_manager import (
     EncoderCacheManager,
     EncoderDecoderCacheManager,
@@ -67,15 +66,6 @@ from vllm.v1.utils import record_function_or_nullcontext
 logger = init_logger(__name__)
 
 
-@dataclass(frozen=True)
-class PAPProjectionScheduleState:
-    remote_prefix_len: int
-    remote_computed_tokens: int
-    local_computed_token_offset: int
-    allocate_external_computed_blocks: bool = False
-    allocate_local_slots: bool = False
-
-
 class Scheduler(SchedulerInterface):
     def __init__(
         self,
@@ -89,6 +79,7 @@ class Scheduler(SchedulerInterface):
         log_stats: bool = False,
     ) -> None:
         self.vllm_config = vllm_config
+        self.pap_scheduler = PAPSchedulerAdapter.from_environ()
         self.scheduler_config = vllm_config.scheduler_config
         self.cache_config = vllm_config.cache_config
         self.lora_config = vllm_config.lora_config
@@ -398,12 +389,7 @@ class Scheduler(SchedulerInterface):
 
     def schedule(self, throttle_prefills: bool = False) -> SchedulerOutput:
         self.current_step += 1
-        try:
-            from vllm.pap.lifecycle.lease import pap_sweep_expired_leases
-
-            pap_sweep_expired_leases()
-        except ImportError:
-            pass
+        self.pap_scheduler.sweep_expired_leases()
         # NOTE(woosuk) on the scheduling algorithm:
         # There's no "decoding phase" nor "prefill phase" in the scheduler.
         # Each request just has the num_computed_tokens and
@@ -540,7 +526,7 @@ class Scheduler(SchedulerInterface):
 
             # Schedule newly needed KV blocks for the request.
             with record_function_or_nullcontext("schedule: allocate_slots"):
-                pap_projection_state = self._get_pap_projection_schedule_state(request)
+                pap_projection_state = self.pap_scheduler.projection_state(request)
                 pap_local_computed_token_offset = (
                     pap_projection_state.local_computed_token_offset
                     if pap_projection_state is not None
@@ -552,7 +538,7 @@ class Scheduler(SchedulerInterface):
                     else True
                 )
                 pap_decode_capacity_tokens = (
-                    self._get_pap_unified_kv_decode_capacity_tokens(request)
+                    self.pap_scheduler.decode_capacity_tokens(request)
                 )
                 while True:
                     new_blocks = self.kv_cache_manager.allocate_slots(
@@ -706,7 +692,7 @@ class Scheduler(SchedulerInterface):
                 num_external_computed_tokens = 0
                 load_kv_async = False
                 connector_prefix_cache_queries, connector_prefix_cache_hits = 0, 0
-                pap_projection_state = self._get_pap_projection_schedule_state(request)
+                pap_projection_state = self.pap_scheduler.projection_state(request)
                 num_uncached_common_prefix_tokens = 0
 
                 # Get already-cached tokens.
@@ -925,7 +911,7 @@ class Scheduler(SchedulerInterface):
                 )
                 if not load_kv_async:
                     effective_lookahead_tokens += (
-                        self._get_pap_unified_kv_decode_capacity_tokens(request)
+                        self.pap_scheduler.decode_capacity_tokens(request)
                     )
 
                 # Determine if we need to allocate cross-attention blocks.
@@ -1206,61 +1192,6 @@ class Scheduler(SchedulerInterface):
         self, connector: KVConnectorBase_V1, scheduler_output: SchedulerOutput
     ) -> KVConnectorMetadata:
         return connector.build_connector_meta(scheduler_output)
-
-    @staticmethod
-    def _get_pap_projection_remote_prefix_len(request: Request) -> int | None:
-        metadata = PAPRequestMetadata.from_mapping(request.kv_transfer_params)
-        if not metadata.projection_kv_unaware:
-            return None
-        prefix_len = metadata.remote_prefix_len
-        if prefix_len is None:
-            raise ValueError(
-                "PAP KV-unaware Projection request requires pap_remote_prefix_len"
-            )
-        if prefix_len <= 0:
-            raise ValueError(
-                "PAP KV-unaware Projection request requires a positive "
-                "pap_remote_prefix_len"
-            )
-        if prefix_len > request.num_prompt_tokens:
-            raise ValueError(
-                "PAP KV-unaware Projection prefix length cannot exceed prompt length"
-            )
-        return prefix_len
-
-    @staticmethod
-    def _get_pap_unified_kv_decode_capacity_tokens(request: Request) -> int:
-        metadata = PAPRequestMetadata.from_mapping(request.kv_transfer_params)
-        if not metadata.import_prefill_kv_to_attention:
-            return 0
-        raw_capacity = os.environ.get(
-            "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "0"
-        )
-        try:
-            return max(0, int(raw_capacity))
-        except ValueError:
-            return 0
-
-    @classmethod
-    def _get_pap_projection_schedule_state(
-        cls, request: Request
-    ) -> PAPProjectionScheduleState | None:
-        remote_prefix_len = cls._get_pap_projection_remote_prefix_len(request)
-        if remote_prefix_len is None:
-            return None
-        remote_computed_tokens = max(remote_prefix_len - 1, 0)
-        return PAPProjectionScheduleState(
-            remote_prefix_len=remote_prefix_len,
-            remote_computed_tokens=remote_computed_tokens,
-            local_computed_token_offset=remote_computed_tokens,
-        )
-
-    @classmethod
-    def _get_pap_projection_local_computed_token_offset(cls, request: Request) -> int:
-        state = cls._get_pap_projection_schedule_state(request)
-        if state is None:
-            return 0
-        return state.local_computed_token_offset
 
     def _preempt_request(self, request: Request, timestamp: float) -> None:
         """Preempt a request and put it back to the waiting queue.
@@ -2245,37 +2176,11 @@ class Scheduler(SchedulerInterface):
         blocks, fully bypass block-pool return; the actual free happens when
         the lease is released via PAP control plane.
         """
-        try:
-            from vllm.pap.lifecycle.lease import (
-                pap_active_lease_id,
-                pap_has_active_lease,
-                pap_stash_deferred_blocks,
-            )
-        except ImportError:  # PAP module optional in some unit-test paths
-            pap_has_active_lease = None  # type: ignore[assignment]
-            pap_active_lease_id = None  # type: ignore[assignment]
-            pap_stash_deferred_blocks = None  # type: ignore[assignment]
-
-        if (
-            pap_has_active_lease is not None
-            and pap_has_active_lease(request.request_id)
+        if PAPSchedulerAdapter.defer_leased_blocks(
+            request_id=request.request_id,
+            pop_blocks=lambda: self.kv_cache_manager.pop_blocks_for_free(request),
+            free_blocks=self.kv_cache_manager.block_pool.free_blocks,
         ):
-            lease_id = (
-                pap_active_lease_id(request.request_id)
-                if pap_active_lease_id is not None
-                else None
-            )
-            blocks = self.kv_cache_manager.pop_blocks_for_free(request)
-            if lease_id is not None and pap_stash_deferred_blocks is not None:
-                blocks.reverse()
-                pap_stash_deferred_blocks(
-                    lease_id=lease_id,
-                    blocks=blocks,
-                    free_callback=self.kv_cache_manager.block_pool.free_blocks,
-                )
-            else:
-                # Lease state inconsistent: fall back to immediate free.
-                self.kv_cache_manager.block_pool.free_blocks(reversed(blocks))
             return
 
         if not self.defer_block_free or (

@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """PAP Attention execution primitives."""
 
-from vllm.pap.attention.controller import PAPAttentionRuntime
+from vllm.pap.attention.runtime import PAPAttentionRuntime
 from vllm.pap.attention.dispatcher import (
     PAPAttentionDispatcher,
     PAPAttentionWorkItem,

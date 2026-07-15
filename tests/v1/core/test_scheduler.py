@@ -108,48 +108,6 @@ def test_schedule(enable_prefix_caching: bool, prompt_logprobs: int | None):
         assert scheduler.running[i] == request
 
 
-def test_pap_projection_remote_prefix_len_parser():
-    (request,) = create_requests(num_requests=1, num_tokens=10)
-    request.kv_transfer_params = {
-        "pap_projection_kv_unaware": True,
-        "pap_remote_prefix_len": 10,
-        "pap_attention_kv_installed": True,
-    }
-
-    assert Scheduler._get_pap_projection_remote_prefix_len(request) == 10
-
-    request.kv_transfer_params = {"pap_projection_kv_unaware": True}
-    with pytest.raises(ValueError, match="pap_remote_prefix_len"):
-        Scheduler._get_pap_projection_remote_prefix_len(request)
-
-    request.kv_transfer_params = {
-        "pap_projection_kv_unaware": True,
-        "pap_remote_prefix_len": 11,
-    }
-    with pytest.raises(ValueError, match="cannot exceed"):
-        Scheduler._get_pap_projection_remote_prefix_len(request)
-
-
-def test_pap_projection_schedule_state_is_explicit():
-    (request,) = create_requests(num_requests=1, num_tokens=10)
-    request.kv_transfer_params = {
-        "pap_projection_kv_unaware": True,
-        "pap_remote_prefix_len": 10,
-    }
-
-    state = Scheduler._get_pap_projection_schedule_state(request)
-
-    assert state is not None
-    assert state.remote_prefix_len == 10
-    assert state.remote_computed_tokens == 9
-    assert state.local_computed_token_offset == 9
-    assert not state.allocate_external_computed_blocks
-    assert not state.allocate_local_slots
-
-    request.kv_transfer_params = None
-    assert Scheduler._get_pap_projection_schedule_state(request) is None
-
-
 def test_pap_unified_kv_decode_reservation_reaches_model_runner(
     monkeypatch, tmp_path
 ):

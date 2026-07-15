@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260715-ARCHITECTURE-MILESTONE
   - PAP-20260715-RUNTIME-BOUNDARY-E2E
   - PAP-20260715-MODEL-ADAPTER-E2E
   - PAP-20260715-INTEGRATION-E2E
@@ -11,7 +12,7 @@ related_experiments:
   - PAP-20260713-ASYNC-DECODE-TOKEN-D2H
   - PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: 7f732f5bea71d2bd4698f7bd04c1415cc77115cc
+last_validated_commit: 9fb642937d27f8871ce653216f8b70d64176679a
 ---
 
 # PAP runtime
@@ -90,10 +91,13 @@ diagnostic and cannot be promoted to normal performance results.
 
 The major responsibilities now have explicit packages, and Qwen3 delegates PAP
 forward-batch, Projection Attention, and Prefill KV publication to `model/`.
-One `integration/runner.py` owner now supplies both model runners, and
-`attention/controller.py` shields the service from registry/dispatcher
-internals. KV data models, IPC opening, and observability are separate from the
-registry. The remaining large state is the performance-sensitive unified-KV
-registry and the local-fast/NIXL backend internals. Further splits should be
-mechanical and owner-driven; they must not reintroduce removed runtime
-selectors or broaden the P17 gate.
+Surface-specific `integration/` adapters now isolate scheduler, engine, worker,
+API, KV-cache, and model-runner glue from vLLM internals. One
+`integration/runner.py` owner supplies both model runners, and
+`attention/runtime.py` shields the service from registry/dispatcher internals.
+`attention/peers.py` owns Projection membership and transport threads, while
+`gateway/` owns the external request sequence. KV data models, IPC opening, and
+observability are separate from the registry. The remaining large state is the
+performance-sensitive unified-KV registry and the local-fast/NIXL backend
+internals. Further splits should be owner-driven; they must not reintroduce
+removed runtime selectors or broaden the P17 gate.

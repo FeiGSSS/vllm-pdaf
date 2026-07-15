@@ -1,15 +1,19 @@
+"""PAP gateway client and handoff tests."""
+
 import asyncio
 import httpx
 
-from examples.pap.pap_proxy_server import (
+from vllm.pap.gateway.clients import (
     PAPServiceClient,
-    attach_pap_prefill_attention_params,
-    build_prefill_payload,
-    build_projection_payload,
     prefill_kv_handle_from_kv_params,
     prefill_prefix_len_from_kv_params,
     register_attention_handle,
     wait_attention_prefill_ready,
+)
+from vllm.pap.gateway.payloads import (
+    attach_pap_prefill_attention_params,
+    build_prefill_payload,
+    build_projection_kv_unaware_payload as build_projection_payload,
 )
 
 

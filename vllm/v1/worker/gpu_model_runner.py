@@ -4,7 +4,6 @@
 import functools
 import gc
 import itertools
-import os
 import threading
 import time
 from collections import defaultdict
@@ -106,7 +105,7 @@ from vllm.multimodal.inputs import (
     PlaceholderRange,
 )
 from vllm.multimodal.utils import get_mm_features_in_window, group_and_batch_mm_kwargs
-from vllm.pap.integration import PAPModelRunnerAdapter
+from vllm.pap.integration.runner import PAPModelRunnerAdapter
 from vllm.platforms import current_platform
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import SamplingType
@@ -234,18 +233,6 @@ if TYPE_CHECKING:
     from vllm.v1.worker.encoder_cudagraph import EncoderCudaGraphManager
 
 logger = init_logger(__name__)
-
-_TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
-
-
-def _pap_projection_critical_trace_enabled() -> bool:
-    return (
-        os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower()
-        in _TRUE_ENV_VALUES
-        and os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower()
-        in _TRUE_ENV_VALUES
-    )
-
 
 AttnMetadataDict: TypeAlias = dict[str, AttentionMetadata]
 # list when ubatching is enabled
@@ -4123,7 +4110,7 @@ class GPUModelRunner(
             assert kv_connector_metadata is not None
             get_kv_transfer_group().handle_preemptions(kv_connector_metadata)
 
-        trace_pap_projection = _pap_projection_critical_trace_enabled()
+        trace_pap_projection = self.pap_runner.critical_trace
         trace_input_prep_start_ns = (
             time.perf_counter_ns() if trace_pap_projection else 0
         )

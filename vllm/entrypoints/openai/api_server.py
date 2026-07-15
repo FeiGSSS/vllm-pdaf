@@ -53,6 +53,7 @@ from vllm.entrypoints.serve.utils.server_utils import (
 )
 from vllm.exceptions import VLLMValidationError
 from vllm.logger import init_logger
+from vllm.pap.integration.api import install_pap_control_routes
 from vllm.reasoning import ReasoningParserManager
 from vllm.renderers.online_derenderer import OnlineDerenderer
 from vllm.renderers.online_renderer import OnlineRenderer
@@ -200,16 +201,7 @@ def build_app(
 
         register_vllm_dev_api_routers(app)
 
-    try:
-        pap_prefill_capacity = int(
-            os.environ.get("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "0")
-        )
-    except ValueError:
-        pap_prefill_capacity = 0
-    if pap_prefill_capacity > 0:
-        from vllm.pap.prefill_control_router import build_prefill_control_router
-
-        app.include_router(build_prefill_control_router())
+    install_pap_control_routes(app)
 
     if "generate" in supported_tasks:
         from vllm.entrypoints.generate.api_router import (

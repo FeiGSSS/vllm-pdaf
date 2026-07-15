@@ -58,7 +58,7 @@ def test_runtime_config_preserves_python_defaults() -> None:
     assert runtime_contract["route_copy"] == "batched_with_input_fallback"
     assert runtime_contract["metadata_lookup"] == "fast_key"
     assert config.features.direct_mailbox_output is False
-    assert config.attention.dispatch_mode is PAPAttentionDispatchMode.LEGACY
+    assert config.attention.dispatch_mode is PAPAttentionDispatchMode.DIRECT
     assert config.decode_commit.timeout_s == 0.2
     assert config.decode_token.queue_size == 1024
     assert config.lease_release.max_attempts == 5
@@ -239,5 +239,5 @@ def test_attention_composition_uses_injected_config_not_later_env(
 
     assert app.state.pap_config is config
     assert app.state.registry.runtime_config is config
-    assert app.state.offload_exec_dispatch_mode == "legacy"
-    assert app.state.offload_exec_dispatcher is None
+    assert app.state.pap_peer_manager.dispatch_mode == "direct"
+    assert app.state.pap_peer_manager.dispatcher is None

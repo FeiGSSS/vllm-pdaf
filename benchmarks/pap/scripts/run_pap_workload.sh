@@ -1253,7 +1253,7 @@ from datetime import datetime
 pa_count = int(os.environ["PA_COUNT"])
 projection_count = int(os.environ["PROJECTION_COUNT"])
 attention_dispatch_mode = (
-    "legacy" if projection_count == 1 else "central_combine"
+    "direct" if projection_count == 1 else "central_combine"
 )
 attention_combine_wait_us = (
     0.0 if projection_count == 1 else (200.0 if pa_count == 1 else 1000.0)
@@ -1939,9 +1939,9 @@ audit_runtime_cuda_contexts
 PAP_GROUPS_SPEC="$(build_pap_groups_spec)"
 PROJECTIONS_SPEC="$(build_projections_spec)"
 
-echo "Starting multi PAP proxy on port ${PAP_PROXY_PORT}"
+echo "Starting PAP Gateway on port ${PAP_PROXY_PORT}"
 env \
-  "${PYTHON_BIN}" examples/pap/multi_pap_proxy_server.py \
+  "${PYTHON_BIN}" -m vllm.pap.gateway.app \
   --host 127.0.0.1 \
   --port "${PAP_PROXY_PORT}" \
   --pap-groups "${PAP_GROUPS_SPEC}" \
@@ -1950,7 +1950,7 @@ env \
   > "${RUN_LOG_DIR}/proxy.log" 2>&1 &
 PIDS+=("$!")
 
-wait_for_http "http://127.0.0.1:${PAP_PROXY_PORT}/health" "multi PAP proxy"
+wait_for_http "http://127.0.0.1:${PAP_PROXY_PORT}/health" "PAP Gateway"
 wait_cluster_stable
 
 write_effective_config

@@ -1,6 +1,8 @@
 # PAP
 
-This directory contains the runnable Prefill-Attention-Projection service.
+This directory contains thin launchers and request examples for the
+Prefill-Attention-Projection service. Gateway implementation lives in
+`vllm/pap/gateway/`; Attention implementation lives in `vllm/pap/attention/`.
 The current release gate is the P17 Qwen3-8B, same-host `1PA1P` path. Same-host
 and cross-host `xPAyP` implementations remain available but are not revalidated
 by this milestone. The validated multi-turn path reuses Prefill-owned KV through

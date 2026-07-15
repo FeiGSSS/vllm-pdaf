@@ -8,10 +8,7 @@ from typing import Literal, overload
 
 from vllm.distributed.kv_events import BlockStored, KVCacheEvent
 from vllm.logger import init_logger
-from vllm.pap.prefix_cache_audit import (
-    build_prefix_cache_audit_state,
-    pap_prefix_cache_audit_enabled,
-)
+from vllm.pap.integration.kv_cache import PAPKVCacheAdapter
 from vllm.v1.core.kv_cache_coordinator import get_kv_cache_coordinator
 from vllm.v1.core.kv_cache_metrics import KVCacheMetricsCollector
 from vllm.v1.core.kv_cache_utils import KVCacheBlock
@@ -243,10 +240,12 @@ class KVCacheManager:
                 preempted=request.num_preemptions > 0,
             )
 
-        if pap_prefix_cache_audit_enabled():
-            audit_state = build_prefix_cache_audit_state(self, request)
-            audit_state["hit_tokens"] = int(num_new_computed_tokens)
-            logger.info("PAP prefix cache lookup audit %s", audit_state)
+        PAPKVCacheAdapter.log_prefix_lookup(
+            logger,
+            self,
+            request,
+            num_new_computed_tokens,
+        )
 
         return self.create_kv_cache_blocks(computed_blocks), num_new_computed_tokens
 
@@ -639,8 +638,7 @@ class KVCacheManager:
             num_computed_tokens: The number of computed tokens, including tokens
                 that are already cached and tokens to be cached.
         """
-        params = request.kv_transfer_params
-        if params and params.get("pap_projection_kv_unaware"):
+        if not PAPKVCacheAdapter.should_cache_locally(request.kv_transfer_params):
             return
         if self.enable_caching:
             self.coordinator.cache_blocks(request, num_computed_tokens)
@@ -704,11 +702,7 @@ class KVCacheManager:
         request.num_computed_tokens = int(new_seq_len)
         if self.enable_caching:
             self.coordinator.cache_blocks(request, int(new_seq_len))
-        if pap_prefix_cache_audit_enabled():
-            logger.info(
-                "PAP prefix cache commit audit %s",
-                build_prefix_cache_audit_state(self, request),
-            )
+        PAPKVCacheAdapter.log_decode_commit(logger, self, request)
 
     def create_kv_cache_blocks(
         self, blocks: tuple[list[KVCacheBlock], ...]

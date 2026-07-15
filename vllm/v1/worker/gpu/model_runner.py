@@ -19,7 +19,6 @@ instead of embedding feature-specific logic directly.
 
 import functools
 import gc
-import os
 import time
 from collections.abc import Callable, Iterable
 from copy import deepcopy
@@ -45,7 +44,7 @@ from vllm.model_executor.layers.mamba.ops.ssu_dispatch import (
 )
 from vllm.model_executor.model_loader import get_model_loader
 from vllm.multimodal import MULTIMODAL_REGISTRY
-from vllm.pap.integration import PAPModelRunnerAdapter
+from vllm.pap.integration.runner import PAPModelRunnerAdapter
 from vllm.sequence import IntermediateTensors
 from vllm.tasks import SupportedTask
 from vllm.utils.math_utils import cdiv
@@ -120,15 +119,6 @@ from vllm.v1.worker.lora_model_runner_mixin import LoRAModelRunnerMixin
 from vllm.v1.worker.utils import KVBlockZeroer
 
 logger = init_logger(__name__)
-
-
-def _pap_projection_critical_trace_enabled() -> bool:
-    return (
-        os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower()
-        in ("1", "true", "yes", "on")
-        and os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower()
-        in ("1", "true", "yes", "on")
-    )
 
 
 class GPUModelRunner(LoRAModelRunnerMixin):
@@ -1166,9 +1156,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         skip_attn_for_dummy_run: bool = False,
         is_profile: bool = False,
     ) -> ModelRunnerOutput | IntermediateTensors | None:
-        trace_pap_projection = (
-            _pap_projection_critical_trace_enabled() and not dummy_run
-        )
+        trace_pap_projection = self.pap_runner.critical_trace and not dummy_run
         trace_input_prep_start_ns = (
             time.perf_counter_ns() if trace_pap_projection else 0
         )

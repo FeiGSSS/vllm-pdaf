@@ -1,0 +1,1134 @@
+{
+  "schema_version": 1,
+  "kind": "pap-run-manifest",
+  "run_id": "20260715_9fb642937_pap_milestone_formal",
+  "experiment_id": "PAP-20260715-ARCHITECTURE-MILESTONE",
+  "profile_id": "p17_1pa1p",
+  "architecture": "pap",
+  "mode": "formal",
+  "evidence": "formal-clean",
+  "provenance": {
+    "branch": "missing",
+    "commit": "9fb642937d27f8871ce653216f8b70d64176679a",
+    "tracked_worktree_dirty": false,
+    "tracked_worktree_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tracked_index_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "started_at": "2026-07-15T13:09:29+08:00"
+  },
+  "workload": {
+    "model": {
+      "path": {
+        "root_id": "model-store",
+        "relative_path": "Qwen3-8B"
+      },
+      "dtype": "float16",
+      "tensor_parallel_size": 1
+    },
+    "corpus": {
+      "path": {
+        "root_id": "reference-benchmarks",
+        "relative_path": "sonnet_4x.txt"
+      },
+      "sha256": "4a53bd26108f9193c693ab6a9482ee5ce5102b545b70a5ca3a8cb11ca1171859"
+    },
+    "parameters": {
+      "profile_id": "qwen3_8b_token_16k_5turn_o256_c4_v2",
+      "profile_version": 2,
+      "api": "/v1/completions",
+      "workload_semantics": "exact_token_continuous_multiturn",
+      "prompt_input": "token_ids",
+      "history_rule": "previous_prompt_plus_full_output_plus_suffix",
+      "document_tokens": 16000,
+      "append_tokens_per_later_round": 120,
+      "output_tokens_per_round": 256,
+      "rounds": 5,
+      "active_conversations": 4,
+      "request_rate_per_round": 2.0,
+      "arrival_mode": "fixed_rate_round_barrier_closed_loop",
+      "temperature": 0,
+      "seed": 0,
+      "ignore_eos": true,
+      "return_token_ids": true,
+      "block_size": 16,
+      "max_model_len": 20000,
+      "max_num_batched_tokens": 4096,
+      "max_num_seqs": 4
+    }
+  },
+  "topology": {
+    "name": "1pa1p",
+    "pa_count": 1,
+    "projection_count": 1,
+    "pd_prefill_count": 0,
+    "pd_decode_count": 0,
+    "routing_policy": "round_robin"
+  },
+  "placement": {
+    "prefill_devices": [
+      1
+    ],
+    "attention_devices": [
+      1
+    ],
+    "projection_devices": [
+      2
+    ],
+    "decode_devices": []
+  },
+  "transport": {
+    "offload_exec": "local_fast",
+    "offload_kv": "cuda_ipc",
+    "same_host": true
+  },
+  "mps": {
+    "mode": "static",
+    "profile_id": "baseline_static_64_28",
+    "prefill_visible_sms": 64,
+    "attention_visible_sms": 28
+  },
+  "runtime": {
+    "profile": "p17_1pa1p",
+    "settings": {
+      "offload_exec_transport": "local_fast",
+      "direct_mailbox_output": true,
+      "unified_md_fast_key": true,
+      "prefill_kv_async": true,
+      "prefill_ipc_profile": false,
+      "kv_handoff_mode": "sealed_manifest",
+      "async_decode_token": true,
+      "unified_kv": true,
+      "batched_route_copy": true,
+      "attention_dispatch_mode": "legacy"
+    }
+  },
+  "environment": {
+    "hardware_signature": "NVIDIA L20x2",
+    "software": {
+      "vllm": "0.23.1rc1.dev678+g4a7737647",
+      "cuda_driver": "missing",
+      "torch": "missing",
+      "nixl": "missing",
+      "ucx": "missing"
+    },
+    "fingerprint_basis": [
+      "hardware_signature",
+      "vllm_version",
+      "git_commit",
+      "implementation_fingerprint"
+    ]
+  },
+  "fingerprints": {
+    "profile": "1cabd2226607a6af2a4cbfcd70c1daada8c8272ceda757bb7cc6622569c9b533",
+    "implementation": "54eb60419dab3c5613b825d253f34c54ab0d41a4fb4fc94b0c0de3a92777924f",
+    "request_shape": "68c42d5ba9115b950afbe09feeb736f45280bca00b8bbade25bba3f06e0dfdae",
+    "hardware_runtime": "9e724766c69e2ef78329c95d8999d1366c8de1b1411c85916889d2fcd7f5bd0c"
+  },
+  "repetitions": {
+    "count": 3,
+    "order": [
+      1,
+      2,
+      3
+    ],
+    "aggregation_method": "pooled request-level samples across repetitions; nearest-rank p90",
+    "items": [
+      {
+        "index": 1,
+        "repetition_id": "content_sha256:89b4fd35b83d53bfb26d1a73207572d08a35caba60868b8e1fa526a85a70f438",
+        "result_artifact": {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/result.json"
+        }
+      },
+      {
+        "index": 2,
+        "repetition_id": "content_sha256:75c00ce829bd33bdaea652a020ccfd5a53c9a4e9ab0cdc596cbb1ba5364b22fc",
+        "result_artifact": {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/result.json"
+        }
+      },
+      {
+        "index": 3,
+        "repetition_id": "content_sha256:4dc0b051044557a80d74ca5fc7c24e0a8d62f7c936189c9600ce0c418ddddc29",
+        "result_artifact": {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/result.json"
+        }
+      }
+    ]
+  },
+  "audits": {
+    "client": {
+      "status": "passed",
+      "detail": "All client request and shape checks pass.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/result.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/result.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/result.json"
+        }
+      ]
+    },
+    "cache": {
+      "status": "passed",
+      "detail": "All exact multi-turn cache checks pass.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/result.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/result.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/result.json"
+        }
+      ]
+    },
+    "attention_stats": {
+      "status": "passed",
+      "detail": "Runtime Attention statistics are captured for every repetition.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/attention_fast_path_stats.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/attention_fast_path_stats.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/attention_fast_path_stats.json"
+        }
+      ]
+    },
+    "correctness": {
+      "status": "passed",
+      "detail": "Strict service-log correctness audit has zero matches.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/correctness_audit.env"
+        }
+      ]
+    },
+    "decode_token_join": {
+      "status": "passed",
+      "detail": "Async decode-token join audit reports no errors.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/decode_token_join_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/decode_token_join_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/decode_token_join_audit.env"
+        }
+      ]
+    },
+    "routing": {
+      "status": "passed",
+      "detail": "All requests follow the expected 1PA1P route.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/routing_audit.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/routing_audit.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/routing_audit.json"
+        }
+      ]
+    },
+    "commit": {
+      "status": "passed",
+      "detail": "Strict logs contain no decode-commit error signatures.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/correctness_audit.env"
+        }
+      ]
+    },
+    "lease": {
+      "status": "passed",
+      "detail": "Strict logs and zero-session drain contain no lease failures.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/session_drain.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/session_drain.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/session_drain.env"
+        }
+      ]
+    },
+    "session_drain": {
+      "status": "passed",
+      "detail": "Attention drains to zero active sessions.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/session_drain.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/session_drain.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/session_drain.env"
+        }
+      ]
+    },
+    "mps": {
+      "status": "passed",
+      "detail": "Static MPS exposes 64 Prefill and 28 Attention SMs.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/mps_static_audit_pa_0.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/mps_static_audit_pa_0.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/mps_static_audit_pa_0.env"
+        }
+      ]
+    }
+  },
+  "metrics": {
+    "completed_requests": 60,
+    "failed_requests": 0,
+    "values": [
+      {
+        "name": "ttft_ms",
+        "scope": "round_1",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 10529.052232508548
+      },
+      {
+        "name": "tpot_ms",
+        "scope": "round_1",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 39.21837421766409
+      },
+      {
+        "name": "ttft_ms",
+        "scope": "steady_rounds_2_5",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 207.80527750321198
+      },
+      {
+        "name": "tpot_ms",
+        "scope": "steady_rounds_2_5",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 50.429114168646805
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "name": "aggregate_aggregate.json",
+      "kind": "aggregate",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/aggregate.json"
+      },
+      "sha256": "83e11c0807e15a6d9d230fcecd3c447cbc83931d223bf444acc3a9db52ee303b"
+    },
+    {
+      "name": "rep1_1PA1P_multiturn_load.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/1PA1P_multiturn_load.log"
+      },
+      "sha256": "88377b455137ac214cfeec2ffcdb868be713d246208c280cb320b9ceb48364f2"
+    },
+    {
+      "name": "rep1_attention_fast_path_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/attention_fast_path_stats.json"
+      },
+      "sha256": "7f7c1e62fd5cd64ccd06f88d134262446e2eb376039b0fc58b8bf783db160979"
+    },
+    {
+      "name": "rep1_attention_fast_path_stats_0.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/attention_fast_path_stats_0.json"
+      },
+      "sha256": "7f7c1e62fd5cd64ccd06f88d134262446e2eb376039b0fc58b8bf783db160979"
+    },
+    {
+      "name": "rep1_correctness_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/correctness_audit.env"
+      },
+      "sha256": "f9a3034cd98003be7d986a25059ba66e605c06c6ea3563409b324384d6c1911a"
+    },
+    {
+      "name": "rep1_correctness_audit_matches.log",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/correctness_audit_matches.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep1_decode_token_join_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/decode_token_join_audit.env"
+      },
+      "sha256": "6bffcdda621cdf7667525bde18b7896370990f00e200ac52cf2adf8503966e9c"
+    },
+    {
+      "name": "rep1_effective_config.env",
+      "kind": "configuration",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/effective_config.env"
+      },
+      "sha256": "11975dd6e66cea663ba95dd2636098134eb8e3e97d576b84fc1dcfe16871da6b"
+    },
+    {
+      "name": "rep1_git_status.txt",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/git_status.txt"
+      },
+      "sha256": "88ff0c5d4e5616ac200f1f16ca4840f1145145488daef004443768862c9a7992"
+    },
+    {
+      "name": "rep1_mps_static_audit_pa_0.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/mps_static_audit_pa_0.env"
+      },
+      "sha256": "b267de58730d93dac640625c9470ab9811ee4c9dec4addc7580b47f4427974c8"
+    },
+    {
+      "name": "rep1_result.json",
+      "kind": "result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/result.json"
+      },
+      "sha256": "3dc8a4f92f3ece93b58b86c152f77c3382ee4113a8c065bebdcbbdb869827626"
+    },
+    {
+      "name": "rep1_routing_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/routing_audit.env"
+      },
+      "sha256": "9e225a01e6f2c1dc484df4b96a5d30ddfc4da97106121f055fab132200c8359b"
+    },
+    {
+      "name": "rep1_routing_audit.json",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/routing_audit.json"
+      },
+      "sha256": "6387c3845b62f5026004b0d995c16aa67eafb7c562b642534e9c6c71ee90cf58"
+    },
+    {
+      "name": "rep1_run_metadata.json",
+      "kind": "manifest",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/run_metadata.json"
+      },
+      "sha256": "2d03bb5fa352da188ba1adfdec52f7a7f52e533398558f1c8cf5da71a979ca08"
+    },
+    {
+      "name": "rep1_attention_0_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/service_logs/attention_0_0.log"
+      },
+      "sha256": "64df1c489dd860c5ae32fe70dedf0487011a81d7d62d354827781858c25ef6bb"
+    },
+    {
+      "name": "rep1_control.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/service_logs/mps-log/pa-0/control.log"
+      },
+      "sha256": "dd6586c432f7f3c307d24874f0013f8184df8b489a22f8ca67f1c923441eee3f"
+    },
+    {
+      "name": "rep1_server.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/service_logs/mps-log/pa-0/server.log"
+      },
+      "sha256": "fb12ee8633bcc7aae9395e63934444c22401f1f1cad682434fbad519edc535cf"
+    },
+    {
+      "name": "rep1_mps_static_0_attention_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/service_logs/mps_static_0_attention_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep1_mps_static_0_prefill_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/service_logs/mps_static_0_prefill_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep1_mps_static_cleanup_pa_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/service_logs/mps_static_cleanup_pa_0.log"
+      },
+      "sha256": "8b6e32c07b2b7e9eced784b80e7fc83957835b2f844ec738086705376008d43d"
+    },
+    {
+      "name": "rep1_prefill_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/service_logs/prefill_0.log"
+      },
+      "sha256": "40dc4d784c48db5f6f235ee2122aff1030781bf3f30be7ffaa09e42e99f9c2a4"
+    },
+    {
+      "name": "rep1_projection_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/service_logs/projection_0.log"
+      },
+      "sha256": "0413264fd4ec0f5c9cec41a60cb1724c1e08b1d826f7b4731b6d6cb141dfa264"
+    },
+    {
+      "name": "rep1_proxy.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/service_logs/proxy.log"
+      },
+      "sha256": "37de1015a5391d3176f0c15a630dd39a9e919cdcd10ce5ec0e761ef15604a8cb"
+    },
+    {
+      "name": "rep1_session_drain.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/session_drain.env"
+      },
+      "sha256": "e6ff9bb006a7fe1c28473ee20082c5a6894a3f5e28c4a841344f4fef8af72935"
+    },
+    {
+      "name": "rep1_topology_manifest.json",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/topology_manifest.json"
+      },
+      "sha256": "e7c36dcf9b9c1ee22bfd2b812c265e8eb90cba5606a64bb50603653c69064f3d"
+    },
+    {
+      "name": "rep1_topology_runtime_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/topology_runtime_stats.json"
+      },
+      "sha256": "38754ac2a34601cc1e17fb42ce6edab621933ac84aa87294564f81ccd9440d48"
+    },
+    {
+      "name": "rep1_tracked_index.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/tracked_index.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep1_tracked_worktree.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep1/tracked_worktree.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep2_1PA1P_multiturn_load.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/1PA1P_multiturn_load.log"
+      },
+      "sha256": "4435cba75a7d5b39820cb8d6e4008c2343186d28aba4ef3337f1d9d750a7a463"
+    },
+    {
+      "name": "rep2_attention_fast_path_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/attention_fast_path_stats.json"
+      },
+      "sha256": "d66e47a4b2fa542085bf861031717b35bd8cbcb607d444793d8c942c0a117361"
+    },
+    {
+      "name": "rep2_attention_fast_path_stats_0.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/attention_fast_path_stats_0.json"
+      },
+      "sha256": "d66e47a4b2fa542085bf861031717b35bd8cbcb607d444793d8c942c0a117361"
+    },
+    {
+      "name": "rep2_correctness_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/correctness_audit.env"
+      },
+      "sha256": "f9a3034cd98003be7d986a25059ba66e605c06c6ea3563409b324384d6c1911a"
+    },
+    {
+      "name": "rep2_correctness_audit_matches.log",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/correctness_audit_matches.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep2_decode_token_join_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/decode_token_join_audit.env"
+      },
+      "sha256": "6bffcdda621cdf7667525bde18b7896370990f00e200ac52cf2adf8503966e9c"
+    },
+    {
+      "name": "rep2_effective_config.env",
+      "kind": "configuration",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/effective_config.env"
+      },
+      "sha256": "4e193443efd5cec5e788138f2093101f34d18f9a2f6bcaa08ab8e55bbf331980"
+    },
+    {
+      "name": "rep2_git_status.txt",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/git_status.txt"
+      },
+      "sha256": "88ff0c5d4e5616ac200f1f16ca4840f1145145488daef004443768862c9a7992"
+    },
+    {
+      "name": "rep2_mps_static_audit_pa_0.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/mps_static_audit_pa_0.env"
+      },
+      "sha256": "b267de58730d93dac640625c9470ab9811ee4c9dec4addc7580b47f4427974c8"
+    },
+    {
+      "name": "rep2_result.json",
+      "kind": "result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/result.json"
+      },
+      "sha256": "e4079ac09dd888b8e37a55f1256b4ee8ff0c5e5f6cd9c5d5813862ae1d060927"
+    },
+    {
+      "name": "rep2_routing_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/routing_audit.env"
+      },
+      "sha256": "9e225a01e6f2c1dc484df4b96a5d30ddfc4da97106121f055fab132200c8359b"
+    },
+    {
+      "name": "rep2_routing_audit.json",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/routing_audit.json"
+      },
+      "sha256": "d19a4f5925f841df0322ca05ff523ef3fd34f756a4a995d1d7ce0ade4679f2e4"
+    },
+    {
+      "name": "rep2_run_metadata.json",
+      "kind": "manifest",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/run_metadata.json"
+      },
+      "sha256": "4fc24afe624406a8556f5ef200182ab147b7c40e98d02892d1b89b0970bf020c"
+    },
+    {
+      "name": "rep2_attention_0_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/service_logs/attention_0_0.log"
+      },
+      "sha256": "9c585ff3267aa3568b0db82b2b485f719fcd5c6e5e802754ef893e032acd14dd"
+    },
+    {
+      "name": "rep2_control.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/service_logs/mps-log/pa-0/control.log"
+      },
+      "sha256": "30941d952e5dfcea0ee88120c3d05e2aad1450b60b7851365ad0de3997ee5f36"
+    },
+    {
+      "name": "rep2_server.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/service_logs/mps-log/pa-0/server.log"
+      },
+      "sha256": "ce66bcadc1bb5ffe34f5a4464a00ba831b17453856c4e67b00eac2da285160c2"
+    },
+    {
+      "name": "rep2_mps_static_0_attention_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/service_logs/mps_static_0_attention_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep2_mps_static_0_prefill_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/service_logs/mps_static_0_prefill_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep2_mps_static_cleanup_pa_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/service_logs/mps_static_cleanup_pa_0.log"
+      },
+      "sha256": "8b6e32c07b2b7e9eced784b80e7fc83957835b2f844ec738086705376008d43d"
+    },
+    {
+      "name": "rep2_prefill_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/service_logs/prefill_0.log"
+      },
+      "sha256": "a4a33cad17bc54f91544fab268514091b7a2d109e9fda46a59bce03a0508d8f6"
+    },
+    {
+      "name": "rep2_projection_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/service_logs/projection_0.log"
+      },
+      "sha256": "29b06d4c84815e2c7ca0f9bab6f486249cb95d122d3facaadbd7875ec2ba8fa0"
+    },
+    {
+      "name": "rep2_proxy.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/service_logs/proxy.log"
+      },
+      "sha256": "69fd4f0a0980bdf2fd44de11736b885141dc32c69a467689e9eeeafb8c539fba"
+    },
+    {
+      "name": "rep2_session_drain.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/session_drain.env"
+      },
+      "sha256": "e6ff9bb006a7fe1c28473ee20082c5a6894a3f5e28c4a841344f4fef8af72935"
+    },
+    {
+      "name": "rep2_topology_manifest.json",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/topology_manifest.json"
+      },
+      "sha256": "1245bf35dee9cc1f04e3a6c2845843ade9b28cdaee45b91b32253c80927b63d7"
+    },
+    {
+      "name": "rep2_topology_runtime_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/topology_runtime_stats.json"
+      },
+      "sha256": "38754ac2a34601cc1e17fb42ce6edab621933ac84aa87294564f81ccd9440d48"
+    },
+    {
+      "name": "rep2_tracked_index.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/tracked_index.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep2_tracked_worktree.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep2/tracked_worktree.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep3_1PA1P_multiturn_load.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/1PA1P_multiturn_load.log"
+      },
+      "sha256": "1c31636fe06d037f929245f1c0c550c3b4c2f6e5631ff7be90ef46452155f35b"
+    },
+    {
+      "name": "rep3_attention_fast_path_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/attention_fast_path_stats.json"
+      },
+      "sha256": "110f9b078bad07ccf12bfaf3593f2e27971b1c882a1056a85d7f79ca20b9ff6f"
+    },
+    {
+      "name": "rep3_attention_fast_path_stats_0.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/attention_fast_path_stats_0.json"
+      },
+      "sha256": "110f9b078bad07ccf12bfaf3593f2e27971b1c882a1056a85d7f79ca20b9ff6f"
+    },
+    {
+      "name": "rep3_correctness_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/correctness_audit.env"
+      },
+      "sha256": "f9a3034cd98003be7d986a25059ba66e605c06c6ea3563409b324384d6c1911a"
+    },
+    {
+      "name": "rep3_correctness_audit_matches.log",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/correctness_audit_matches.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep3_decode_token_join_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/decode_token_join_audit.env"
+      },
+      "sha256": "6bffcdda621cdf7667525bde18b7896370990f00e200ac52cf2adf8503966e9c"
+    },
+    {
+      "name": "rep3_effective_config.env",
+      "kind": "configuration",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/effective_config.env"
+      },
+      "sha256": "241b375e1937d760d46be0072a7ee055942246429c484b30af6e31e206dc7ddd"
+    },
+    {
+      "name": "rep3_git_status.txt",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/git_status.txt"
+      },
+      "sha256": "88ff0c5d4e5616ac200f1f16ca4840f1145145488daef004443768862c9a7992"
+    },
+    {
+      "name": "rep3_mps_static_audit_pa_0.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/mps_static_audit_pa_0.env"
+      },
+      "sha256": "b267de58730d93dac640625c9470ab9811ee4c9dec4addc7580b47f4427974c8"
+    },
+    {
+      "name": "rep3_result.json",
+      "kind": "result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/result.json"
+      },
+      "sha256": "071d50ffd2b0a32d39e79fd15f461a1047ee2ec2032375f193f1c3a04793d74d"
+    },
+    {
+      "name": "rep3_routing_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/routing_audit.env"
+      },
+      "sha256": "9e225a01e6f2c1dc484df4b96a5d30ddfc4da97106121f055fab132200c8359b"
+    },
+    {
+      "name": "rep3_routing_audit.json",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/routing_audit.json"
+      },
+      "sha256": "24b39086564b1c451f554ffe3f0cad6d7b1e07e9a3dd99e16c7e79739062437c"
+    },
+    {
+      "name": "rep3_run_metadata.json",
+      "kind": "manifest",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/run_metadata.json"
+      },
+      "sha256": "f955e0513f0eb4ed7b785c5dac0d3a324cffbb3de42d9e6b9771de9ef3be1c35"
+    },
+    {
+      "name": "rep3_attention_0_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/service_logs/attention_0_0.log"
+      },
+      "sha256": "cbbc5d026434f89a59c3f529889a272db3131866b2debd006ed7f2f9d5d0477a"
+    },
+    {
+      "name": "rep3_control.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/service_logs/mps-log/pa-0/control.log"
+      },
+      "sha256": "5ab64fe95cfec8fd7c3a3d0f2e2e7a7700122b25f26d2dc7482607b392ec9340"
+    },
+    {
+      "name": "rep3_server.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/service_logs/mps-log/pa-0/server.log"
+      },
+      "sha256": "de185822434d35ad40140a66fac8e6ae75a13f770d698ed511932ff8a260f9f5"
+    },
+    {
+      "name": "rep3_mps_static_0_attention_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/service_logs/mps_static_0_attention_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep3_mps_static_0_prefill_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/service_logs/mps_static_0_prefill_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep3_mps_static_cleanup_pa_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/service_logs/mps_static_cleanup_pa_0.log"
+      },
+      "sha256": "8b6e32c07b2b7e9eced784b80e7fc83957835b2f844ec738086705376008d43d"
+    },
+    {
+      "name": "rep3_prefill_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/service_logs/prefill_0.log"
+      },
+      "sha256": "c6248c35c5a7c8558c175790782a09a9753e665acfe64f4d119b2e008ea20224"
+    },
+    {
+      "name": "rep3_projection_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/service_logs/projection_0.log"
+      },
+      "sha256": "4c950a2a2c4c0b52d3d33b6a2d079d74ca8831bcbfbbf17e3846ef03806a89ac"
+    },
+    {
+      "name": "rep3_proxy.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/service_logs/proxy.log"
+      },
+      "sha256": "a951c378d1ea6036d60eaf65ffe4fe7c2061ccf29206f0fc5d0335f56c8a1c15"
+    },
+    {
+      "name": "rep3_session_drain.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/session_drain.env"
+      },
+      "sha256": "e6ff9bb006a7fe1c28473ee20082c5a6894a3f5e28c4a841344f4fef8af72935"
+    },
+    {
+      "name": "rep3_topology_manifest.json",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/topology_manifest.json"
+      },
+      "sha256": "86368d418fe8b6c90e6ec7473b3356bb4e66f2446067cb2790d4da4aae519824"
+    },
+    {
+      "name": "rep3_topology_runtime_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/topology_runtime_stats.json"
+      },
+      "sha256": "38754ac2a34601cc1e17fb42ce6edab621933ac84aa87294564f81ccd9440d48"
+    },
+    {
+      "name": "rep3_tracked_index.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/tracked_index.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep3_tracked_worktree.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/rep3/tracked_worktree.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "validity": {
+    "status": "passed",
+    "reasons": []
+  },
+  "failure_reasons": []
+}

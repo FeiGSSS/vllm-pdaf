@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Shared request payload helpers for PAP and native PD proxy experiments."""
+"""Request-payload construction for the PAP gateway."""
 
 from __future__ import annotations
 

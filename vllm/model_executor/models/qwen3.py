@@ -61,11 +61,13 @@ from vllm.pap.deferred_cuda_trace import (
     deferred_trace_role,
     end_deferred_cuda_span,
 )
-from vllm.pap.mode import pap_request_ids_are_routable
-from vllm.pap.model import (
-    PAPPrefillKVPublisher,
-    PAPProjectionAttentionAdapter,
+from vllm.pap.integration.settings import (
+    pap_env_enabled,
+    pap_projection_critical_trace_enabled,
 )
+from vllm.pap.mode import pap_request_ids_are_routable
+from vllm.pap.model.prefill import PAPPrefillKVPublisher
+from vllm.pap.model.projection import PAPProjectionAttentionAdapter
 from vllm.sequence import IntermediateTensors
 from vllm.transformers_utils.config import set_default_rope_theta
 from vllm.v1.attention.backend import AttentionType
@@ -83,22 +85,11 @@ from .utils import AutoWeightsLoader, PPMissingLayer, extract_layer_index, maybe
 
 logger = init_logger(__name__)
 
-
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 
 
-def _pap_env_enabled(name: str) -> bool:
-    return os.environ.get(name, "").lower() in _TRUE_ENV_VALUES
-
-
-def _pap_projection_critical_trace_enabled() -> bool:
-    return _pap_env_enabled("PAP_PROJECTION_KV_UNAWARE") and _pap_env_enabled(
-        "PAP_PROJECTION_CRITICAL_TRACE"
-    )
-
-
 def _pap_projection_decode_trace_enabled() -> bool:
-    if not _pap_projection_critical_trace_enabled():
+    if not pap_projection_critical_trace_enabled():
         return False
     if not is_forward_context_available():
         return False
@@ -501,7 +492,7 @@ class Qwen3Attention(nn.Module):
                 "qkv_norm_rope_gpu_ms",
                 torch.cuda.current_stream(hidden_states.device),
             )
-        trace_offload_exec = _pap_env_enabled("PAP_OFFLOAD_EXEC_TRACE")
+        trace_offload_exec = pap_env_enabled("PAP_OFFLOAD_EXEC_TRACE")
         trace_pre_attn_start = time.perf_counter() if trace_offload_exec else 0.0
         trace_pre_attn_start_ns = time.perf_counter_ns() if trace_offload_exec else 0
         try:
@@ -725,9 +716,9 @@ class Qwen3DecoderLayer(nn.Module):
         residual: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         layer_name = self.self_attn.attn.layer_name
-        trace_projection_layer = _pap_env_enabled("PAP_OFFLOAD_EXEC_TRACE") and (
-            _pap_env_enabled("PAP_PROJECTION_KV_UNAWARE")
-            or _pap_projection_critical_trace_enabled()
+        trace_projection_layer = pap_env_enabled("PAP_OFFLOAD_EXEC_TRACE") and (
+            pap_env_enabled("PAP_PROJECTION_KV_UNAWARE")
+            or pap_projection_critical_trace_enabled()
         )
         trace_layer_start_ns = time.perf_counter_ns() if trace_projection_layer else 0
 
@@ -822,7 +813,7 @@ class Qwen3DecoderLayer(nn.Module):
             projection_timeline = (
                 self.self_attn._pap_projection_adapter.last_projection_timeline or {}
             )
-            if _pap_projection_critical_trace_enabled() and projection_timeline:
+            if pap_projection_critical_trace_enabled() and projection_timeline:
                 qkv_ms = float(projection_timeline.get("pre_attn_compute_ms", 0.0))
                 send_ms = float(projection_timeline.get("send_ms", 0.0))
                 recv_ms = float(projection_timeline.get("recv_ms", 0.0))

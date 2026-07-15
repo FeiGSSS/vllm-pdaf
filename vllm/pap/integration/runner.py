@@ -17,19 +17,13 @@ from vllm.pap.integration.projection import (
     select_projection_request_ids,
 )
 from vllm.pap.integration.request import PAPProjectionRequestStore
+from vllm.pap.integration.settings import PAPRuntimeSettings
 from vllm.pap.topology import (
     PAPProjectionPeerActivity,
     sync_pap_projection_peer_activity,
 )
 
 logger = init_logger(__name__)
-
-_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
-
-
-def _env_enabled(name: str) -> bool:
-    return os.environ.get(name, "").lower() in _TRUE_VALUES
-
 
 @dataclass(slots=True)
 class PAPModelRunnerAdapter:
@@ -41,6 +35,7 @@ class PAPModelRunnerAdapter:
     supports_async_sampled_tokens: bool
     projection_kv_unaware: bool
     debug_decision: bool
+    critical_trace: bool = False
     store: PAPProjectionRequestStore = field(
         default_factory=PAPProjectionRequestStore
     )
@@ -58,6 +53,7 @@ class PAPModelRunnerAdapter:
     ) -> PAPModelRunnerAdapter:
         """Create one adapter from the model-runner composition root."""
         reject_removed_pap_flags(os.environ)
+        settings = PAPRuntimeSettings.from_environ()
         kv_transfer_config = vllm_config.kv_transfer_config
         extra = (
             kv_transfer_config.kv_connector_extra_config
@@ -77,8 +73,9 @@ class PAPModelRunnerAdapter:
             attention_tcp_endpoint=attention_tcp_endpoint,
             block_size=int(vllm_config.cache_config.block_size),
             supports_async_sampled_tokens=supports_async_sampled_tokens,
-            projection_kv_unaware=_env_enabled("PAP_PROJECTION_KV_UNAWARE"),
-            debug_decision=_env_enabled("PAP_DEBUG_DECISION"),
+            projection_kv_unaware=settings.projection_kv_unaware,
+            debug_decision=settings.debug_decision,
+            critical_trace=settings.critical_trace,
         )
 
     def update_request(

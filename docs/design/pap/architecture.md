@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260715-ARCHITECTURE-MILESTONE
   - PAP-20260715-RUNTIME-BOUNDARY-E2E
   - PAP-20260715-MODEL-ADAPTER-E2E
   - PAP-20260715-INTEGRATION-E2E
@@ -11,7 +12,7 @@ related_experiments:
   - PAP-20260710-ARBITRARY-XY
   - PAP-20260711-ATTENTION-COMBINE
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: 7f732f5bea71d2bd4698f7bd04c1415cc77115cc
+last_validated_commit: 9fb642937d27f8871ce653216f8b70d64176679a
 ---
 
 # PAP architecture
@@ -22,7 +23,7 @@ whole request.
 
 ## Roles and data flow
 
-1. The proxy selects a Prefill–Attention group and a Projection endpoint.
+1. The Gateway selects a Prefill–Attention group and a Projection endpoint.
 2. Prefill processes prompt chunks and owns prompt plus decode KV blocks.
 3. Prefill publishes a static KV catalog and one generation-bound request
    manifest to its colocated Attention service.
@@ -58,9 +59,14 @@ Request routing selects a stable `(PA, Projection)` pair for a turn.
 
 - `config.py`: typed topology, placement, transport, MPS, lifecycle, and
   feature configuration; retired selectors fail closed.
-- `integration/`: typed request metadata plus one model-runner adapter owning
-  Projection request state, forward-context construction, peer activity, and
-  the asynchronous sampled-token bridge shared with vLLM.
+- `gateway/`: the OpenAI-compatible request boundary, role clients, payload
+  construction, topology selection, and Prefill–Attention–Projection request
+  orchestration. `1PA1P` is the `x=1, y=1` form of the same gateway path.
+- `integration/`: the only PAP-to-vLLM glue boundary. `scheduler.py`,
+  `engine.py`, `worker.py`, `kv_cache.py`, and `api.py` translate PAP state for
+  their matching vLLM owners; `runner.py` owns Projection request state,
+  forward-context construction, peer activity, and asynchronous sampled-token
+  delivery. `settings.py` parses shared process settings once per owner.
 - `model/`: typed forward-batch access, Projection Attention execution, and
   Prefill sealed-KV publication used by model implementations.
 - `protocol/`: wire models, descriptors, sealed KV codec, and transport
@@ -72,25 +78,31 @@ Request routing selects a stable `(PA, Projection)` pair for a turn.
   `decode_state.py` owns unified-KV slot planning, append, and readiness waits;
   the package also contains sealed handoff, metadata, models, IPC opening, and
   optional observability.
-- `attention/`: the service-facing runtime façade plus direct/combine dispatch
-  and compute runtime.
+- `attention/`: `runtime.py` owns the service-facing runtime;
+  `execution.py` owns direct/combine mailbox execution; `peers.py` owns
+  Projection membership, transports, and receiver threads; `dispatcher.py`
+  and `compute.py` own queueing and Attention compute.
 - `transport/`: backend-neutral contract plus NIXL; `local_fast.py` owns peer
   binding and lifecycle, while `local_fast_io.py` owns wire encoding and the
   send/receive hot path.
-- `service.py`: thin Attention HTTP/TCP and transport composition.
+- `service.py`: thin Attention HTTP/TCP composition and process entry point.
 
 Legacy top-level compatibility façades have been removed; the retirement record
 is [compatibility.md](compatibility.md). Runtime code, launchers, and tests now
-import their owning modules directly. Both vLLM model runners call the same
-`integration/` owner; V1 fails closed for PAP while V2 provides the asynchronous
-sampled-token callback. Qwen3 delegates its PAP model path to `model/`; none of
+import their owning modules directly. The vLLM scheduler, engine, worker, API
+server, KV manager, and both model runners call surface-specific `integration/`
+adapters instead of parsing PAP metadata, environment settings, or lease state
+themselves. KV block allocation and decode-commit mutation remain in the vLLM
+KV manager because that owner controls its internal block structures. Qwen3's
+thin tensor interception points delegate PAP execution to `model/`; none of
 these entry points define alternate runtime algorithms.
 
 ## Import ownership rule
 
 New top-level forwarding modules are not allowed. Launchers use
-`python -m vllm.pap.service`; code and tests import `attention/`, `kv/`,
-`lifecycle/`, `protocol/`, `topology/`, and `transport/` owners directly.
+`python -m vllm.pap.service` and `python -m vllm.pap.gateway.app`; code and
+tests import `attention/`, `gateway/`, `kv/`, `lifecycle/`, `protocol/`,
+`topology/`, `transport/`, and surface-specific `integration/` owners directly.
 Historical experimental branches are reproduced from their Git commits and raw
 artifacts, not from selectable code paths in the current runtime.
 

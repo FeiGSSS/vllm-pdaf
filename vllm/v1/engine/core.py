@@ -31,6 +31,8 @@ from vllm.logger import init_logger
 from vllm.logging_utils.dump_input import dump_engine_exception
 from vllm.lora.request import LoRARequest
 from vllm.multimodal import MULTIMODAL_REGISTRY
+from vllm.pap.integration.engine import PAPEngineAdapter
+from vllm.pap.integration.settings import PAPRuntimeSettings
 from vllm.tasks import POOLING_TASKS, SupportedTask
 from vllm.tracing import instrument, maybe_init_worker_tracer
 from vllm.transformers_utils.config import maybe_register_config_serialize_by_value
@@ -89,20 +91,6 @@ from vllm.version import __version__ as VLLM_VERSION
 logger = init_logger(__name__)
 
 HANDSHAKE_TIMEOUT_MINS = 5
-
-
-def _pap_critical_trace_enabled() -> bool:
-    return os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    ) and os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
 
 
 _R = TypeVar("_R")  # Return type for collective_rpc
@@ -171,6 +159,7 @@ class EngineCore:
             block_size=scheduler_block_size,
             hash_block_size=hash_block_size,
         )
+        self.pap_runtime = PAPRuntimeSettings.from_environ()
         self.use_spec_decode = vllm_config.speculative_config is not None
         self.check_for_draft_tokens = (
             self.use_spec_decode or vllm_config.model_config.is_diffusion
@@ -391,57 +380,19 @@ class EngineCore:
         new_seq_len: int,
         new_token_ids: Sequence[int],
     ) -> dict[str, Any]:
-        requests = getattr(self.scheduler, "requests", {})
-        request = requests.get(str(request_id))
-        if request is None:
-            finished_req_ids: set[str] = getattr(
-                self.scheduler, "finished_req_ids", set()
-            )
-            reason = (
-                "request_finished"
-                if str(request_id) in finished_req_ids
-                else "unknown_request"
-            )
-            return {
-                "request_id": str(request_id),
-                "applied": False,
-                "reason": reason,
-            }
-        old_seq_len = int(request.num_computed_tokens)
-        kv_cache_manager = cast(Any, self.scheduler).kv_cache_manager
-        kv_cache_manager.apply_decode_commit(
-            request=request,
-            new_seq_len=int(new_seq_len),
-            new_token_ids=tuple(int(t) for t in new_token_ids),
+        return PAPEngineAdapter.apply_decode_commit(
+            self.scheduler,
+            request_id,
+            new_seq_len,
+            new_token_ids,
         )
-        from vllm.pap.lifecycle.lease import pap_refresh_lease
-
-        pap_refresh_lease(str(request_id))
-        return {
-            "request_id": str(request_id),
-            "applied": True,
-            "old_seq_len": old_seq_len,
-            "new_seq_len": int(request.num_computed_tokens),
-        }
 
     def pap_release_kv_lease(
         self,
         request_id: str,
         lease_id: str,
     ) -> dict[str, Any]:
-        from vllm.pap.lifecycle.lease import pap_release_lease
-
-        released = pap_release_lease(str(lease_id))
-        did_release = bool(released)
-        result: dict[str, Any] = {
-            "request_id": str(request_id),
-            "lease_id": str(lease_id),
-            "released": did_release,
-            "block_count": len(released),
-        }
-        if not did_release:
-            result["reason"] = "unknown_or_released_lease"
-        return result
+        return PAPEngineAdapter.release_kv_lease(request_id, lease_id)
 
     def add_request(self, request: Request, request_wave: int = 0):
         """Add request to the scheduler.
@@ -468,7 +419,9 @@ class EngineCore:
 
         if (
             request.kv_transfer_params is not None
-            and not self._is_pap_metadata_only_request(request)
+            and not PAPEngineAdapter.is_metadata_only_request(
+                request.kv_transfer_params
+            )
             and not self.scheduler.get_kv_connector()
         ):
             logger.warning(
@@ -481,11 +434,6 @@ class EngineCore:
             # Immediately abort so the connector's request_finished hook runs
             # to free any pre-admission KV-transfer resources.
             self.abort_requests([request.request_id])
-
-    @staticmethod
-    def _is_pap_metadata_only_request(request: Request) -> bool:
-        params = request.kv_transfer_params
-        return bool(params and params.get("pap_projection_kv_unaware"))
 
     def abort_requests(self, request_ids: list[str]):
         """Abort requests from the scheduler."""
@@ -568,7 +516,7 @@ class EngineCore:
         # or finished and not yet removed from the batch.
         if not self.scheduler.has_requests():
             return {}, False
-        trace_pap = _pap_critical_trace_enabled()
+        trace_pap = self.pap_runtime.critical_trace
         trace_step_start_ns = time.perf_counter_ns() if trace_pap else 0
         scheduler_output = self.scheduler.schedule(self._should_throttle_prefills())
         trace_sched_done_ns = time.perf_counter_ns() if trace_pap else 0
@@ -679,7 +627,7 @@ class EngineCore:
         deferred_trace_step_start_ns = 0
         deferred_trace_sched_done_ns = 0
         if self.scheduler.has_requests():
-            trace_pap = _pap_critical_trace_enabled()
+            trace_pap = self.pap_runtime.critical_trace
             trace_step_start_ns = time.perf_counter_ns() if trace_pap else 0
             scheduler_output = self.scheduler.schedule(self._should_throttle_prefills())
             trace_sched_done_ns = time.perf_counter_ns() if trace_pap else 0
@@ -755,7 +703,7 @@ class EngineCore:
                 raise RuntimeError("unexpected error")
 
         trace_model_done_ns = (
-            time.perf_counter_ns() if _pap_critical_trace_enabled() else 0
+            time.perf_counter_ns() if self.pap_runtime.critical_trace else 0
         )
 
         # Before processing the model output, process any aborts that happened

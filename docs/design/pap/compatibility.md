@@ -4,9 +4,10 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260715-ARCHITECTURE-MILESTONE
   - PAP-20260715-RUNTIME-BOUNDARY-E2E
   - PAP-20260715-INTEGRATION-E2E
-last_validated_commit: 7f732f5bea71d2bd4698f7bd04c1415cc77115cc
+last_validated_commit: 9fb642937d27f8871ce653216f8b70d64176679a
 ---
 
 # PAP compatibility retirement record
@@ -61,3 +62,17 @@ formal baseline.
 
 All four metrics remain below the 5% regression threshold. xPAyP and
 cross-host NIXL stay preserved but unverified by this freeze.
+
+## Architecture milestone evidence
+
+The controlled retirement evidence was followed by a tracked-clean formal run
+on commit `9fb642937d27f8871ce653216f8b70d64176679a`. Three repetitions again
+completed 60/60 requests and 48/48 cache transitions with every strict gate
+passing. The canonical record is
+`PAP-20260715-ARCHITECTURE-MILESTONE`; raw evidence is under
+`test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/`.
+
+Against the preceding post-refactor formal baseline, R1 TTFT changed by
+-0.16%, R1 TPOT by -0.10%, steady TTFT by +1.98%, and steady TPOT by +0.06%.
+The clean milestone therefore passes the 5% regression gate and supersedes the
+controlled result as the current release evidence.

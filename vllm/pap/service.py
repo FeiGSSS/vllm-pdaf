@@ -12,19 +12,18 @@ from __future__ import annotations
 
 import argparse
 import base64
-import hashlib
 import logging
 import socket
 import socketserver
-from threading import Lock, Thread
+from threading import Thread
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
 
 from vllm.pap.attention import PAPAttentionRuntime
-from vllm.pap.attention.runtime import (
-    run_offload_exec_mailbox_loop,
-    run_offload_exec_mailbox_receiver_loop,
+from vllm.pap.attention.peers import (
+    PAPAttentionPeerConflict,
+    PAPAttentionPeerManager,
 )
 from vllm.pap.config import (
     PAPOffloadExecTransport,
@@ -40,7 +39,6 @@ from vllm.pap.protocol.models import (
     PAPOffloadExecMailboxBindRequest,
 )
 from vllm.pap.runtime_cuda_context_audit import write_runtime_cuda_context_audit
-from vllm.pap.transport.factory import build_offload_exec_transport
 
 logging.basicConfig(
     level=logging.INFO,
@@ -118,35 +116,15 @@ def create_app(
     runtime_config = config or PAPRuntimeConfig.from_env()
     runtime = PAPAttentionRuntime(config=runtime_config, registry=registry)
     registry = runtime.registry
-    dispatch_mode = runtime.dispatch_mode
-    active_peer_tracking = runtime.active_peer_tracking
+    peer_manager = PAPAttentionPeerManager(
+        runtime=runtime,
+        config=runtime_config,
+    )
     app = FastAPI(title="PAP Attention Service")
     app.state.pap_config = runtime_config
     app.state.pap_runtime = runtime
+    app.state.pap_peer_manager = peer_manager
     app.state.registry = registry
-    app.state.offload_exec_transport = None
-    app.state.offload_exec_transports = {}
-    app.state.offload_exec_source_ids = {}
-    app.state.offload_exec_active_source_ids = set()
-    app.state.offload_exec_membership_generations = {}
-    app.state.offload_exec_membership_updates = 0
-    app.state.offload_exec_membership_stale_updates = 0
-    app.state.offload_exec_lock = Lock()
-    app.state.offload_exec_mailbox_loop_started = False
-    app.state.offload_exec_mailbox_loop_peers = set()
-    app.state.offload_exec_local_rank = 0
-    app.state.offload_exec_actor_base = "attention"
-    app.state.offload_exec_dispatch_mode = dispatch_mode
-    app.state.offload_exec_dispatcher = runtime.dispatcher
-
-    def sync_dispatcher_membership() -> None:
-        if dispatch_mode != "central_combine":
-            return
-        if active_peer_tracking:
-            source_ids = set(app.state.offload_exec_active_source_ids)
-        else:
-            source_ids = set(app.state.offload_exec_source_ids.values())
-        runtime.sync_dispatcher_membership(source_ids)
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
@@ -154,20 +132,7 @@ def create_app(
 
     @app.get("/v1/pap/attention/stats")
     async def attention_stats() -> dict[str, Any]:
-        with app.state.offload_exec_lock:
-            active_source_ids = sorted(app.state.offload_exec_active_source_ids)
-            membership_generations = dict(
-                sorted(app.state.offload_exec_membership_generations.items())
-            )
-            membership_updates = app.state.offload_exec_membership_updates
-            membership_stale_updates = app.state.offload_exec_membership_stale_updates
-        membership_stats = {
-            "attention_active_source_ids": active_source_ids,
-            "attention_membership_generations": membership_generations,
-            "attention_membership_updates": membership_updates,
-            "attention_membership_stale_updates": membership_stale_updates,
-        }
-        return runtime.stats(membership_stats)
+        return runtime.stats(peer_manager.membership_stats())
 
     @app.post("/v1/pap/attention/register")
     async def register(
@@ -219,147 +184,39 @@ def create_app(
             raise HTTPException(status_code=404, detail="unknown PAP request")
         return session.__dict__
 
-
     @app.post("/v1/pap/attention/offload-exec-mailbox/activity")
     async def update_offload_exec_mailbox_activity(
         request: PAPOffloadExecMailboxActivityRequest,
     ) -> dict[str, Any]:
-        source_id = str(request.source_id)
-        generation = int(request.membership_generation)
-        active = bool(request.active)
-        with app.state.offload_exec_lock:
-            previous_generation = app.state.offload_exec_membership_generations.get(
-                source_id
+        try:
+            return peer_manager.update_activity(
+                source_id=str(request.source_id),
+                generation=int(request.membership_generation),
+                active=bool(request.active),
             )
-            previous_active = source_id in app.state.offload_exec_active_source_ids
-            if previous_generation is not None and generation < previous_generation:
-                app.state.offload_exec_membership_stale_updates += 1
-                return {
-                    "source_id": source_id,
-                    "active": previous_active,
-                    "membership_generation": previous_generation,
-                    "applied": False,
-                    "stale": True,
-                }
-            if previous_generation == generation:
-                if previous_active != active:
-                    raise HTTPException(
-                        status_code=409,
-                        detail=("PAP mailbox membership generation changed activity"),
-                    )
-                return {
-                    "source_id": source_id,
-                    "active": active,
-                    "membership_generation": generation,
-                    "applied": False,
-                    "stale": False,
-                }
-            app.state.offload_exec_membership_generations[source_id] = generation
-            if active:
-                app.state.offload_exec_active_source_ids.add(source_id)
-            else:
-                app.state.offload_exec_active_source_ids.discard(source_id)
-            app.state.offload_exec_membership_updates += 1
-            sync_dispatcher_membership()
-        return {
-            "source_id": source_id,
-            "active": active,
-            "membership_generation": generation,
-            "applied": True,
-            "stale": False,
-        }
+        except PAPAttentionPeerConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @app.post("/v1/pap/attention/offload-exec-mailbox/bind")
     async def bind_offload_exec_mailbox(
         request: PAPOffloadExecMailboxBindRequest,
     ) -> dict[str, Any]:
         peer_metadata = base64.b64decode(request.agent_metadata_b64.encode("ascii"))
-        peer_key = hashlib.sha1(peer_metadata).hexdigest()[:16]
-        source_id = str(request.source_id or peer_key)
-        with app.state.offload_exec_lock:
-            existing_source_id = app.state.offload_exec_source_ids.get(peer_key)
-            if existing_source_id is not None and existing_source_id != source_id:
-                raise HTTPException(
-                    status_code=409,
-                    detail="PAP mailbox peer changed its stable source id",
-                )
-            if any(
-                existing_peer_key != peer_key and existing_source_id == source_id
-                for existing_peer_key, existing_source_id in (
-                    app.state.offload_exec_source_ids.items()
-                )
-            ):
-                raise HTTPException(
-                    status_code=409,
-                    detail="PAP mailbox source id is already bound",
-                )
-            transport = app.state.offload_exec_transports.get(peer_key)
-            if transport is None:
-                initial_transport = app.state.offload_exec_transport
-                if (
-                    not app.state.offload_exec_transports
-                    and initial_transport is not None
-                ):
-                    transport = initial_transport
-                else:
-                    transport = _build_attention_offload_exec_transport(
-                        actor_id=(f"{app.state.offload_exec_actor_base}-{peer_key}"),
-                        local_rank=app.state.offload_exec_local_rank,
-                        transport=runtime_config.offload_exec_transport,
-                    )
-                if not hasattr(transport, "local_agent_metadata"):
-                    raise HTTPException(
-                        status_code=409,
-                        detail=(
-                            "PAP OFFLOAD_EXEC mailbox transport is not initialized"
-                        ),
-                    )
-                transport.bind_peer(peer_metadata)
-                transport._pap_mailbox_bound = True
-                app.state.offload_exec_transports[peer_key] = transport
-            app.state.offload_exec_source_ids[peer_key] = source_id
-            if dispatch_mode == "central_combine":
-                sync_dispatcher_membership()
-            if peer_key not in app.state.offload_exec_mailbox_loop_peers:
-                dispatcher = app.state.offload_exec_dispatcher
-                if dispatch_mode == "central_combine":
-                    assert dispatcher is not None
-                    dispatcher.start()
-                    target = run_offload_exec_mailbox_receiver_loop
-                    kwargs = {
-                        "registry": registry,
-                        "transport": transport,
-                        "dispatcher": dispatcher,
-                        "peer_id": source_id,
-                    }
-                    thread_kind = "receiver"
-                else:
-                    target = run_offload_exec_mailbox_loop
-                    kwargs = {
-                        "registry": registry,
-                        "transport": transport,
-                        "peer_id": peer_key,
-                    }
-                    thread_kind = "loop"
-                Thread(
-                    target=target,
-                    kwargs=kwargs,
-                    daemon=True,
-                    name=(f"pap-offload-exec-mailbox-{thread_kind}-{peer_key}"),
-                ).start()
-                app.state.offload_exec_mailbox_loop_peers.add(peer_key)
-                app.state.offload_exec_mailbox_loop_started = True
+        try:
+            local_metadata = peer_manager.bind(
+                peer_metadata=peer_metadata,
+                source_id=request.source_id,
+            )
+        except PAPAttentionPeerConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {
-            "agent_metadata_b64": base64.b64encode(
-                transport.local_agent_metadata
-            ).decode("ascii")
+            "agent_metadata_b64": base64.b64encode(local_metadata).decode("ascii")
         }
 
-    async def stop_offload_exec_dispatcher() -> None:
-        runtime.stop()
+    async def stop_peer_manager() -> None:
+        peer_manager.stop()
 
-    app.add_event_handler("shutdown", stop_offload_exec_dispatcher)
-
+    app.add_event_handler("shutdown", stop_peer_manager)
 
     @app.get("/v1/pap/attention/sessions")
     async def get_active_session_count() -> dict[str, int]:
@@ -407,19 +264,15 @@ def maybe_start_offload_exec_transport(
     config: PAPRuntimeConfig | None = None,
 ) -> None:
     """Initialize the optional OFFLOAD_EXEC data plane."""
-
+    del host
     if zmq_port is None:
         return
     runtime_config = config or app.state.pap_config
     local_rank = runtime_config.attention.local_rank
-    actor_base = runtime_config.attention.actor_id
-    app.state.offload_exec_local_rank = local_rank
-    app.state.offload_exec_actor_base = actor_base
-    app.state.offload_exec_transport = _build_attention_offload_exec_transport(
-        actor_id=actor_base,
-        local_rank=local_rank,
-        transport=runtime_config.offload_exec_transport,
-    )
+    peer_manager: PAPAttentionPeerManager = app.state.pap_peer_manager
+    if runtime_config != peer_manager.config:
+        raise ValueError("PAP Attention transport config must match app config")
+    peer_manager.initialize(enabled=True)
     transport = runtime_config.offload_exec_transport
     if transport is PAPOffloadExecTransport.NIXL_MAILBOX:
         logger.info(
@@ -435,19 +288,6 @@ def maybe_start_offload_exec_transport(
         )
         return
     raise AssertionError(f"unsupported PAP OFFLOAD_EXEC transport: {transport}")
-
-
-def _build_attention_offload_exec_transport(
-    *,
-    actor_id: str,
-    local_rank: int,
-    transport: PAPOffloadExecTransport,
-) -> Any:
-    return build_offload_exec_transport(
-        transport=transport,
-        actor_id=actor_id,
-        local_rank=local_rank,
-    )
 
 
 app = create_app()

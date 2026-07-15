@@ -42,8 +42,11 @@ explicitly marked so CPU-only environments skip them clearly.
 
 ## Ownership and redundancy audit
 
-Test filenames follow the current owner modules (`attention`, `kv`, `protocol`,
-`topology`, `transport`, and `lifecycle`), not retired top-level façade names.
+Test filenames follow the current owner modules (`attention`, `gateway`,
+`integration`, `kv`, `protocol`, `topology`, `transport`, and `lifecycle`), not
+retired top-level façade or example-script names. vLLM integration parsing and
+adapter behavior belongs in `contract/test_vllm_integration.py`; generic vLLM
+tests retain only the scheduling or execution behavior that crosses the seam.
 An exact AST-body audit is sufficient for mechanical duplication; broader
 similarity is reviewed by behavior because different failure transitions can
 have intentionally similar setup.

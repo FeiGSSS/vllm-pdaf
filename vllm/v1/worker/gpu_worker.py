@@ -57,8 +57,8 @@ from vllm.multimodal.video import (
     PYNVVIDEOCODEC_MAX_RETAINED_DECODERS,
     PYNVVIDEOCODEC_VIDEO_BACKEND,
 )
+from vllm.pap.integration.worker import PAPWorkerAdapter
 from vllm.platforms import current_platform
-from vllm.pap.runtime_cuda_context_audit import write_runtime_cuda_context_audit
 from vllm.profiler.wrapper import CudaProfilerWrapper, TorchProfilerWrapper
 from vllm.sequence import IntermediateTensors
 from vllm.tasks import SupportedTask
@@ -85,23 +85,6 @@ from .gpu.warmup import warmup_kernels
 from .utils import request_memory
 
 logger = init_logger(__name__)
-
-
-def _pap_critical_trace_enabled() -> bool:
-    return (
-        os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower()
-        in ("1", "true", "yes", "on")
-        and os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower()
-        in ("1", "true", "yes", "on")
-    )
-
-
-def _pap_projection_kv_unaware_process() -> bool:
-    return os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
 
 
 if TYPE_CHECKING:
@@ -157,6 +140,7 @@ class Worker(WorkerBase):
             distributed_init_method=distributed_init_method,
             is_driver_worker=is_driver_worker,
         )
+        self.pap_worker = PAPWorkerAdapter.from_environ()
 
         # configure float32 matmul precision according to vLLM env.
         precision = envs.VLLM_FLOAT32_MATMUL_PRECISION
@@ -362,9 +346,7 @@ class Worker(WorkerBase):
                 self.local_rank,
                 current_platform.dist_backend,
             )
-            write_runtime_cuda_context_audit(
-                role=os.environ.get("PAP_RUNTIME_CUDA_CONTEXT_ROLE", "vllm_worker")
-            )
+            self.pap_worker.write_cuda_context_audit()
 
             if self.use_v2_model_runner:
                 logger.info_once("Using V2 Model Runner")
@@ -387,16 +369,10 @@ class Worker(WorkerBase):
             raise RuntimeError(f"Not support device type: {self.device_config.device}")
 
         # Initialize workspace manager
-        try:
-            pap_runner_microbatch_count = int(
-                os.environ.get("PAP_RUNNER_MICROBATCH_COUNT", "0")
-            )
-        except ValueError:
-            pap_runner_microbatch_count = 0
         num_ubatches = (
             self.vllm_config.parallel_config.num_ubatches
             if self.vllm_config.parallel_config.use_ubatching
-            else max(1, pap_runner_microbatch_count)
+            else max(1, self.pap_worker.runner_microbatch_count)
         )
         init_workspace_manager(self.device, num_ubatches)
 
@@ -741,7 +717,7 @@ class Worker(WorkerBase):
 
     @instrument(span_name="Warmup (GPU)")
     def compile_or_warm_up_model(self) -> CompilationTimes:
-        if _pap_projection_kv_unaware_process():
+        if self.pap_worker.projection_kv_unaware:
             logger.info(
                 "PAP Projection KV-unaware process skips local-attention warmup"
             )
@@ -977,7 +953,7 @@ class Worker(WorkerBase):
     def sample_tokens(
         self, grammar_output: "GrammarOutput | None"
     ) -> ModelRunnerOutput | AsyncModelRunnerOutput:
-        trace_pap = _pap_critical_trace_enabled()
+        trace_pap = self.pap_worker.critical_trace
         trace_start_ns = time.perf_counter_ns() if trace_pap else 0
         output = self.model_runner.sample_tokens(grammar_output)
         if trace_pap:
@@ -1052,7 +1028,7 @@ class Worker(WorkerBase):
                 comm_postprocess=comm_postprocess,
             )
 
-        trace_pap = _pap_critical_trace_enabled()
+        trace_pap = self.pap_worker.critical_trace
         trace_exec_start_ns = time.perf_counter_ns() if trace_pap else 0
         with self.annotate_profile(scheduler_output):
             output = self.model_runner.execute_model(

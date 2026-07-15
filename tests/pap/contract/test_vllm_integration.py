@@ -6,9 +6,14 @@ import pytest
 
 from vllm.pap.integration import (
     PAPDecodeTokenBridge,
+    PAPEngineAdapter,
     PAPModelRunnerAdapter,
+    PAPRuntimeSettings,
+    PAPSchedulerAdapter,
+    PAPWorkerAdapter,
     bind_projection_request_store,
     build_projection_forward_context,
+    install_pap_control_routes,
     select_projection_request_ids,
 )
 from vllm.v1.worker.gpu.model_runner import GPUModelRunner as GPUModelRunnerV2
@@ -60,6 +65,86 @@ def _runner_adapter(
         projection_kv_unaware=True,
         debug_decision=False,
     )
+
+
+def _scheduler_request(params=None, *, prompt_tokens: int = 10):
+    return SimpleNamespace(
+        request_id="req-a",
+        kv_transfer_params=params,
+        num_prompt_tokens=prompt_tokens,
+    )
+
+
+def test_scheduler_adapter_owns_projection_metadata_validation() -> None:
+    request = _scheduler_request(
+        {
+            "pap_projection_kv_unaware": True,
+            "pap_remote_prefix_len": 10,
+            "pap_attention_kv_installed": True,
+        }
+    )
+
+    state = PAPSchedulerAdapter.projection_state(request)
+
+    assert state is not None
+    assert state.remote_prefix_len == 10
+    assert state.remote_computed_tokens == 9
+    assert state.local_computed_token_offset == 9
+    assert not state.allocate_external_computed_blocks
+    assert not state.allocate_local_slots
+
+    request.kv_transfer_params = {"pap_projection_kv_unaware": True}
+    with pytest.raises(ValueError, match="pap_remote_prefix_len"):
+        PAPSchedulerAdapter.projection_state(request)
+
+    request.kv_transfer_params = {
+        "pap_projection_kv_unaware": True,
+        "pap_remote_prefix_len": 11,
+    }
+    with pytest.raises(ValueError, match="cannot exceed"):
+        PAPSchedulerAdapter.projection_state(request)
+
+    request.kv_transfer_params = None
+    assert PAPSchedulerAdapter.projection_state(request) is None
+
+
+def test_runtime_settings_are_parsed_once_per_owner() -> None:
+    settings = PAPRuntimeSettings.from_environ(
+        {
+            "PAP_PROJECTION_KV_UNAWARE": "true",
+            "PAP_PROJECTION_CRITICAL_TRACE": "on",
+            "PAP_DEBUG_DECISION": "yes",
+            "PAP_RUNNER_MICROBATCH_COUNT": "4",
+            "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS": "64",
+            "PAP_RUNTIME_CUDA_CONTEXT_ROLE": "projection",
+        }
+    )
+    worker = PAPWorkerAdapter(settings)
+
+    assert settings.critical_trace
+    assert settings.debug_decision
+    assert settings.unified_kv_decode_capacity_tokens == 64
+    assert worker.projection_kv_unaware
+    assert worker.runner_microbatch_count == 4
+
+
+def test_engine_adapter_recognizes_metadata_only_request() -> None:
+    assert PAPEngineAdapter.is_metadata_only_request(
+        {"pap_projection_kv_unaware": True}
+    )
+    assert not PAPEngineAdapter.is_metadata_only_request(None)
+
+
+def test_api_adapter_installs_control_routes_only_for_unified_kv() -> None:
+    app = SimpleNamespace(include_router=lambda router: installed.append(router))
+    installed = []
+
+    assert not install_pap_control_routes(app, {})
+    assert install_pap_control_routes(
+        app,
+        {"PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS": "64"},
+    )
+    assert len(installed) == 1
 
 
 def _v2_runner_for_removal(

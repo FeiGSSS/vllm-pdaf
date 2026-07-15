@@ -39,7 +39,7 @@ class PAPOffloadKVTransport(str, Enum):
 class PAPAttentionDispatchMode(str, Enum):
     """Topology-derived Attention execution strategy."""
 
-    LEGACY = "legacy"
+    DIRECT = "direct"
     CENTRAL_COMBINE = "central_combine"
 
 
@@ -560,7 +560,7 @@ class PAPRuntimeConfig:
             dispatch_mode=(
                 PAPAttentionDispatchMode.CENTRAL_COMBINE
                 if multi_projection
-                else PAPAttentionDispatchMode.LEGACY
+                else PAPAttentionDispatchMode.DIRECT
             ),
             dispatch_queue_size=_env_int(
                 env,
@@ -775,7 +775,7 @@ class PAPRuntimeConfig:
         features = self.features
         dispatch_mode = self.attention.dispatch_mode
         if (
-            dispatch_mode is PAPAttentionDispatchMode.LEGACY
+            dispatch_mode is PAPAttentionDispatchMode.DIRECT
             and self.topology.projection_count == 1
         ):
             attention_execution = "topology_derived_direct"

@@ -14,16 +14,16 @@ import anyio
 import pytest
 from httpx import ASGITransport, AsyncClient, Response
 
-from vllm.pap import service as service_module
 from vllm.pap.attention import PAPAttentionDispatcher, PAPAttentionWorkItem
 from vllm.pap.attention import compute as attention_compute_module
-from vllm.pap.attention import runtime as attention_runtime_module
+from vllm.pap.attention import peers as attention_peers_module
+from vllm.pap.attention import execution as attention_runtime_module
 from vllm.pap.attention.compute import (
     _offload_exec_batch_rows,
     compute_offload_exec_batch_output,
     run_offload_exec_batch_once,
 )
-from vllm.pap.attention.runtime import (
+from vllm.pap.attention.execution import (
     _execute_offload_exec_work_item,
     _execute_offload_exec_work_items,
     _offload_exec_work_item_compatibility_key,
@@ -954,7 +954,7 @@ def test_attention_executor_skips_offload_exec_when_zmq_port_is_none(
 ) -> None:
     app = create_app()
     maybe_start_offload_exec_transport(app=app, host="127.0.0.1", zmq_port=None)
-    assert app.state.offload_exec_transport is None
+    assert app.state.pap_peer_manager.initial_transport is None
 
 
 def test_attention_executor_starts_offload_exec_transport(monkeypatch) -> None:
@@ -966,14 +966,14 @@ def test_attention_executor_starts_offload_exec_transport(monkeypatch) -> None:
 
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_LOCAL_RANK", "2")
     monkeypatch.setattr(
-        "vllm.pap.service.build_offload_exec_transport",
+        "vllm.pap.attention.peers.build_offload_exec_transport",
         fake_build_transport,
     )
     app = create_app()
 
     maybe_start_offload_exec_transport(app=app, host="127.0.0.1", zmq_port=10300)
 
-    assert app.state.offload_exec_transport is fake_transport
+    assert app.state.pap_peer_manager.initial_transport is fake_transport
     assert fake_build_transport.kwargs == {
         "transport": PAPOffloadExecTransport.NIXL_MAILBOX,
         "actor_id": "attention",
@@ -1020,12 +1020,12 @@ def test_attention_executor_binds_each_projection_to_distinct_transport(
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_LOCAL_RANK", "2")
     monkeypatch.setenv("PAP_NIXL_MAILBOX_ACTOR_ID", "attention-4")
     monkeypatch.setattr(
-        service_module,
-        "_build_attention_offload_exec_transport",
+        attention_peers_module,
+        "build_offload_exec_transport",
         fake_build_transport,
     )
     monkeypatch.setattr(
-        service_module,
+        attention_peers_module,
         "run_offload_exec_mailbox_loop",
         fake_mailbox_loop,
     )
@@ -1096,12 +1096,12 @@ def test_attention_executor_central_mode_shares_one_dispatcher(
     monkeypatch.setenv("PAP_PA_COUNT", "1")
     monkeypatch.setenv("PAP_PROJECTION_COUNT", "2")
     monkeypatch.setattr(
-        service_module,
-        "_build_attention_offload_exec_transport",
+        attention_peers_module,
+        "build_offload_exec_transport",
         fake_build_transport,
     )
     monkeypatch.setattr(
-        service_module,
+        attention_peers_module,
         "run_offload_exec_mailbox_receiver_loop",
         fake_receiver_loop,
     )
@@ -1131,7 +1131,7 @@ def test_attention_executor_central_mode_shares_one_dispatcher(
         assert response.status_code == 200
 
     assert receivers_ready.wait(timeout=1.0)
-    dispatcher = app.state.offload_exec_dispatcher
+    dispatcher = app.state.pap_peer_manager.dispatcher
     assert dispatcher is not None
     assert {id(context[1]) for context in receiver_contexts} == {id(dispatcher)}
     assert {context[2] for context in receiver_contexts} == {
@@ -1161,8 +1161,8 @@ def test_attention_executor_builds_central_combine_dispatcher(
 
     app = create_app()
 
-    assert app.state.offload_exec_dispatch_mode == "central_combine"
-    dispatcher = app.state.offload_exec_dispatcher
+    assert app.state.pap_peer_manager.dispatch_mode == "central_combine"
+    dispatcher = app.state.pap_peer_manager.dispatcher
     assert dispatcher is not None
     assert dispatcher._batch_handler is not None
     assert dispatcher._compatibility_key is not None
@@ -2745,7 +2745,7 @@ def test_attention_fast_path_stats_endpoint() -> None:
 
     assert response.status_code == 200
     assert response.json() == {
-        "attention_dispatch_mode": "legacy",
+        "attention_dispatch_mode": "direct",
         "attention_active_peer_tracking": False,
         "attention_active_source_ids": [],
         "attention_membership_generations": {},

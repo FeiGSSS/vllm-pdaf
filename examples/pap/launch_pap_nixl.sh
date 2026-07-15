@@ -645,8 +645,8 @@ done
 pap_groups_spec="$(build_pap_groups_spec)"
 projections_spec="$(build_projections_spec)"
 
-echo "Starting multi PAP proxy on port $PROXY_PORT"
-.venv/bin/python examples/pap/multi_pap_proxy_server.py \
+echo "Starting PAP Gateway on port $PROXY_PORT"
+.venv/bin/python -m vllm.pap.gateway.app \
     --host 127.0.0.1 \
     --port "$PROXY_PORT" \
     --pap-groups "$pap_groups_spec" \
@@ -655,7 +655,7 @@ echo "Starting multi PAP proxy on port $PROXY_PORT"
     >"$LOG_DIR/proxy.log" 2>&1 &
 PIDS+=("$!")
 
-wait_for_http "http://127.0.0.1:$PROXY_PORT/health" "multi PAP proxy"
+wait_for_http "http://127.0.0.1:$PROXY_PORT/health" "PAP Gateway"
 
 if [[ -n "$STATUS_FILE" ]]; then
     echo "$PROXY_PORT" >"$STATUS_FILE"

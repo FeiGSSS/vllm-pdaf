@@ -42,10 +42,12 @@ def test_current_registry_validates() -> None:
         "20260715_003029a77_p17_model_adapter_formal",
         "20260715_3bfa8d15d_p17_post_refactor_formal",
         "20260715_7f732f5be_p17_runtime_boundary_formal",
+        "20260715_9fb642937_pap_milestone_formal",
         "20260715_b695efe69_p17_integration_formal",
     }
     assert set(snapshot.experiments) == {
         "PAP-20260714-P17-PRE-REFACTOR",
+        "PAP-20260715-ARCHITECTURE-MILESTONE",
         "PAP-20260715-INTEGRATION-E2E",
         "PAP-20260715-MODEL-ADAPTER-E2E",
         "PAP-20260715-P17-POST-REFACTOR",
@@ -55,6 +57,11 @@ def test_current_registry_validates() -> None:
         "archived"
     )
     assert snapshot.experiments["PAP-20260715-P17-POST-REFACTOR"]["status"] == (
+        "archived"
+    )
+    assert snapshot.experiments["PAP-20260715-ARCHITECTURE-MILESTONE"][
+        "status"
+    ] == (
         "current"
     )
     assert len(snapshot.historical_experiments) == 43
