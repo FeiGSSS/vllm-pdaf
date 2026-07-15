@@ -4,11 +4,12 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260715-INTEGRATION-E2E
   - PAP-20260715-P17-POST-REFACTOR
   - PAP-20260710-ARBITRARY-XY
   - PAP-20260711-ATTENTION-COMBINE
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: 3bfa8d15dfb7c48264e845a319bc089d620ba57f
+last_validated_commit: b695efe69f4e8dca3ecbddcd64a19339e425412f
 ---
 
 # PAP architecture
