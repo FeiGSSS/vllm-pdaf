@@ -106,6 +106,10 @@ from vllm.multimodal.inputs import (
     PlaceholderRange,
 )
 from vllm.multimodal.utils import get_mm_features_in_window, group_and_batch_mm_kwargs
+from vllm.pap.integration import (
+    PAPProjectionRequestStore,
+    bind_projection_request_store,
+)
 from vllm.pap.topology import (
     PAPProjectionPeerActivity,
     sync_pap_projection_peer_activity,
@@ -853,13 +857,8 @@ class GPUModelRunner(
         self._draft_token_ids: list[list[int]] | torch.Tensor | None = None
         self._draft_probs: torch.Tensor | None = None
         self._draft_prob_req_ids: list[str] | None = None
-        self.pap_attention_tcp_endpoint_by_req_id: dict[str, str] = {}
-        self.pap_attention_endpoint_by_req_id: dict[str, str] = {}
-        self.pap_offload_exec_zmq_endpoint_by_req_id: dict[str, str] = {}
-        self.pap_prefill_prefix_len_by_req_id: dict[str, int] = {}
-        self.pap_prefill_kv_handle_by_req_id: dict[str, str] = {}
-        self.pap_import_prefill_kv_to_attention_by_req_id: set[str] = set()
-        self.pap_attention_kv_installed_by_req_id: set[str] = set()
+        self.pap_projection_request_store: PAPProjectionRequestStore
+        bind_projection_request_store(self)
         self.pap_offload_exec_activity_tracker: PAPProjectionPeerActivity | None = None
         # N-gram GPU path: async D2H buffer/event for per-request valid draft counts.
         self._num_valid_draft_tokens: torch.Tensor | None = None
@@ -1150,13 +1149,7 @@ class GPUModelRunner(
         return stream
 
     def _remove_pap_request(self, req_id: str) -> None:
-        self.pap_attention_tcp_endpoint_by_req_id.pop(req_id, None)
-        self.pap_attention_endpoint_by_req_id.pop(req_id, None)
-        self.pap_offload_exec_zmq_endpoint_by_req_id.pop(req_id, None)
-        self.pap_prefill_prefix_len_by_req_id.pop(req_id, None)
-        self.pap_prefill_kv_handle_by_req_id.pop(req_id, None)
-        self.pap_import_prefill_kv_to_attention_by_req_id.discard(req_id)
-        self.pap_attention_kv_installed_by_req_id.discard(req_id)
+        self.pap_projection_request_store.remove(req_id)
 
     def _add_pap_attention_endpoint(
         self, req_id: str, kv_transfer_params: dict[str, Any] | None
@@ -1183,27 +1176,7 @@ class GPUModelRunner(
                 req_id,
                 sorted(kv_transfer_params.keys()),
             )
-        tcp_endpoint = kv_transfer_params.get("pap_attention_tcp_endpoint")
-        if tcp_endpoint:
-            self.pap_attention_tcp_endpoint_by_req_id[req_id] = str(tcp_endpoint)
-        attention_endpoint = kv_transfer_params.get("pap_attention_endpoint")
-        if attention_endpoint:
-            self.pap_attention_endpoint_by_req_id[req_id] = str(attention_endpoint)
-        zmq_endpoint = kv_transfer_params.get("pap_offload_exec_zmq_endpoint")
-        if zmq_endpoint:
-            self.pap_offload_exec_zmq_endpoint_by_req_id[req_id] = str(zmq_endpoint)
-        remote_num_tokens = kv_transfer_params.get("pap_remote_prefix_len")
-        if remote_num_tokens is None:
-            remote_num_tokens = kv_transfer_params.get("remote_num_tokens")
-        if remote_num_tokens is not None:
-            self.pap_prefill_prefix_len_by_req_id[req_id] = int(remote_num_tokens)
-        prefill_kv_handle = kv_transfer_params.get("pap_prefill_kv_handle")
-        if prefill_kv_handle:
-            self.pap_prefill_kv_handle_by_req_id[req_id] = str(prefill_kv_handle)
-        if kv_transfer_params.get("pap_import_prefill_kv_to_attention"):
-            self.pap_import_prefill_kv_to_attention_by_req_id.add(req_id)
-        if kv_transfer_params.get("pap_attention_kv_installed"):
-            self.pap_attention_kv_installed_by_req_id.add(req_id)
+        self.pap_projection_request_store.update(req_id, kv_transfer_params)
 
     @staticmethod
     def _pap_filter_mapping_for_request_ids(

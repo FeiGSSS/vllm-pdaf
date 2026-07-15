@@ -47,6 +47,10 @@ from vllm.model_executor.model_loader import get_model_loader
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.pap.config import reject_removed_pap_flags
 from vllm.pap.decode_token_client import DecodeTokenClient
+from vllm.pap.integration import (
+    PAPProjectionRequestStore,
+    bind_projection_request_store,
+)
 from vllm.pap.topology import (
     PAPProjectionPeerActivity,
     sync_pap_projection_peer_activity,
@@ -309,13 +313,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
         # KV Connector if configured.
         self.kv_connector: KVConnector = NO_OP_KV_CONNECTOR
-        self.pap_attention_tcp_endpoint_by_req_id: dict[str, str] = {}
-        self.pap_attention_endpoint_by_req_id: dict[str, str] = {}
-        self.pap_offload_exec_zmq_endpoint_by_req_id: dict[str, str] = {}
-        self.pap_prefill_prefix_len_by_req_id: dict[str, int] = {}
-        self.pap_prefill_kv_handle_by_req_id: dict[str, str] = {}
-        self.pap_import_prefill_kv_to_attention_by_req_id: set[str] = set()
-        self.pap_attention_kv_installed_by_req_id: set[str] = set()
+        self.pap_projection_request_store: PAPProjectionRequestStore
+        bind_projection_request_store(self)
         self.pap_offload_exec_activity_tracker: PAPProjectionPeerActivity | None = None
         self.pap_decode_token_client: DecodeTokenClient | None = None
 
@@ -832,7 +831,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         return cuda_graph_size
 
     def _remove_request(self, req_id: str) -> bool:
-        session_request_id = self.pap_prefill_kv_handle_by_req_id.get(req_id)
+        session_request_id = (
+            self.pap_projection_request_store.prefill_kv_handle_by_request.get(req_id)
+        )
         if (
             self.pap_decode_token_client is not None
             and session_request_id is not None
@@ -843,13 +844,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     f"{session_request_id}"
                 )
             self.pap_decode_token_client.forget_request(session_request_id)
-        self.pap_attention_tcp_endpoint_by_req_id.pop(req_id, None)
-        self.pap_attention_endpoint_by_req_id.pop(req_id, None)
-        self.pap_offload_exec_zmq_endpoint_by_req_id.pop(req_id, None)
-        self.pap_prefill_prefix_len_by_req_id.pop(req_id, None)
-        self.pap_prefill_kv_handle_by_req_id.pop(req_id, None)
-        self.pap_import_prefill_kv_to_attention_by_req_id.discard(req_id)
-        self.pap_attention_kv_installed_by_req_id.discard(req_id)
+        self.pap_projection_request_store.remove(req_id)
         # Call model_state.remove_request *before* req_states.remove_request
         # so the model_state can still look up the slot index.
         self.model_state.remove_request(req_id)
@@ -890,27 +885,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 req_id,
                 sorted(kv_transfer_params.keys()),
             )
-        tcp_endpoint = kv_transfer_params.get("pap_attention_tcp_endpoint")
-        if tcp_endpoint:
-            self.pap_attention_tcp_endpoint_by_req_id[req_id] = str(tcp_endpoint)
-        attention_endpoint = kv_transfer_params.get("pap_attention_endpoint")
-        if attention_endpoint:
-            self.pap_attention_endpoint_by_req_id[req_id] = str(attention_endpoint)
-        zmq_endpoint = kv_transfer_params.get("pap_offload_exec_zmq_endpoint")
-        if zmq_endpoint:
-            self.pap_offload_exec_zmq_endpoint_by_req_id[req_id] = str(zmq_endpoint)
-        remote_num_tokens = kv_transfer_params.get("pap_remote_prefix_len")
-        if remote_num_tokens is None:
-            remote_num_tokens = kv_transfer_params.get("remote_num_tokens")
-        if remote_num_tokens is not None:
-            self.pap_prefill_prefix_len_by_req_id[req_id] = int(remote_num_tokens)
-        prefill_kv_handle = kv_transfer_params.get("pap_prefill_kv_handle")
-        if prefill_kv_handle:
-            self.pap_prefill_kv_handle_by_req_id[req_id] = str(prefill_kv_handle)
-        if kv_transfer_params.get("pap_import_prefill_kv_to_attention"):
-            self.pap_import_prefill_kv_to_attention_by_req_id.add(req_id)
-        if kv_transfer_params.get("pap_attention_kv_installed"):
-            self.pap_attention_kv_installed_by_req_id.add(req_id)
+        self.pap_projection_request_store.update(req_id, kv_transfer_params)
 
     def _pap_offload_exec_zmq_endpoints_for_batch(
         self, input_batch: InputBatch

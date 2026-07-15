@@ -4,6 +4,7 @@ from types import MethodType
 
 import pytest
 
+from vllm.pap.integration import bind_projection_request_store
 from vllm.v1.worker.gpu.model_runner import GPUModelRunner as GPUModelRunnerV2
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner as GPUModelRunnerV1
 
@@ -40,20 +41,50 @@ def _v2_runner_for_removal(
 ) -> tuple[GPUModelRunnerV2, list[str]]:
     events: list[str] = []
     runner = object.__new__(GPUModelRunnerV2)
-    runner.pap_prefill_kv_handle_by_req_id = {"req-a": "session-a"}
+    store = bind_projection_request_store(runner)
+    store.update(
+        "req-a",
+        {
+            "pap_attention_tcp_endpoint": "tcp",
+            "pap_attention_endpoint": "http",
+            "pap_offload_exec_zmq_endpoint": "zmq",
+            "pap_remote_prefix_len": 16,
+            "pap_prefill_kv_handle": "session-a",
+            "pap_import_prefill_kv_to_attention": True,
+            "pap_attention_kv_installed": True,
+        },
+    )
     runner.pap_decode_token_client = _DecodeTokenClient(
         events,
         flush_succeeds=flush_succeeds,
     )
-    runner.pap_attention_tcp_endpoint_by_req_id = {"req-a": "tcp"}
-    runner.pap_attention_endpoint_by_req_id = {"req-a": "http"}
-    runner.pap_offload_exec_zmq_endpoint_by_req_id = {"req-a": "zmq"}
-    runner.pap_prefill_prefix_len_by_req_id = {"req-a": 16}
-    runner.pap_import_prefill_kv_to_attention_by_req_id = {"req-a"}
-    runner.pap_attention_kv_installed_by_req_id = {"req-a"}
     runner.model_state = _ModelState(events)
     runner.req_states = _RequestStates()
     return runner, events
+
+
+@pytest.mark.parametrize("runner_type", [GPUModelRunnerV1, GPUModelRunnerV2])
+def test_model_runners_share_typed_projection_request_state(runner_type) -> None:
+    runner = object.__new__(runner_type)
+    store = bind_projection_request_store(runner)
+
+    runner._add_pap_attention_endpoint(
+        "req-a",
+        {
+            "pap_attention_endpoint": "http://attention",
+            "remote_num_tokens": "16",
+        },
+    )
+    runner._add_pap_attention_endpoint(
+        "req-a",
+        {"pap_prefill_kv_handle": "session-a"},
+    )
+
+    assert store.attention_endpoint_by_request == {
+        "req-a": "http://attention"
+    }
+    assert runner.pap_prefill_prefix_len_by_req_id == {"req-a": 16}
+    assert runner.pap_prefill_kv_handle_by_req_id == {"req-a": "session-a"}
 
 
 def test_v2_runner_flushes_decode_tokens_before_removing_request() -> None:

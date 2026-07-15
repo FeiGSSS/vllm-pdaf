@@ -31,6 +31,7 @@ from vllm.model_executor.layers.fused_moe.routed_experts_capturer import (
 from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry
 from vllm.multimodal.encoder_budget import MultiModalBudget
 from vllm.multimodal.utils import get_mm_features_in_window
+from vllm.pap.integration import PAPRequestMetadata
 from vllm.v1.core.encoder_cache_manager import (
     EncoderCacheManager,
     EncoderDecoderCacheManager,
@@ -1208,17 +1209,14 @@ class Scheduler(SchedulerInterface):
 
     @staticmethod
     def _get_pap_projection_remote_prefix_len(request: Request) -> int | None:
-        params = request.kv_transfer_params
-        if not params or not params.get("pap_projection_kv_unaware"):
+        metadata = PAPRequestMetadata.from_mapping(request.kv_transfer_params)
+        if not metadata.projection_kv_unaware:
             return None
-        value = params.get("pap_remote_prefix_len")
-        if value is None:
-            value = params.get("remote_num_tokens")
-        if value is None:
+        prefix_len = metadata.remote_prefix_len
+        if prefix_len is None:
             raise ValueError(
                 "PAP KV-unaware Projection request requires pap_remote_prefix_len"
             )
-        prefix_len = int(value)
         if prefix_len <= 0:
             raise ValueError(
                 "PAP KV-unaware Projection request requires a positive "
@@ -1232,8 +1230,8 @@ class Scheduler(SchedulerInterface):
 
     @staticmethod
     def _get_pap_unified_kv_decode_capacity_tokens(request: Request) -> int:
-        params = request.kv_transfer_params
-        if not params or not params.get("pap_import_prefill_kv_to_attention"):
+        metadata = PAPRequestMetadata.from_mapping(request.kv_transfer_params)
+        if not metadata.import_prefill_kv_to_attention:
             return 0
         raw_capacity = os.environ.get(
             "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "0"
