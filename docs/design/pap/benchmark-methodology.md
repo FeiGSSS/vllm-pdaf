@@ -7,7 +7,8 @@ related_experiments:
   - PAP-20260701-PD-METHODOLOGY
   - PAP-20260713-PD-THREE-LANE-C4
   - PAP-20260714-P17-PRE-REFACTOR
-last_validated_commit: null
+  - PAP-20260715-P17-POST-REFACTOR
+last_validated_commit: 3bfa8d15dfb7c48264e845a319bc089d620ba57f
 ---
 
 # PAP benchmark methodology

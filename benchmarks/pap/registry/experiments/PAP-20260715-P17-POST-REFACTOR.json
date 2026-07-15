@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "kind": "pap-experiment-record",
+  "experiment_id": "PAP-20260715-P17-POST-REFACTOR",
+  "title": "P17 post-refactor milestone freeze",
+  "recorded_at": "2026-07-15",
+  "hypothesis": "A tracked-clean three-repetition P17 1PA1P run can freeze the converged and modularized PAP runtime after the milestone refactor.",
+  "evidence": "formal-clean",
+  "decision": "accepted",
+  "validity": {
+    "status": "valid",
+    "reasons": []
+  },
+  "baseline": {
+    "status": "not-applicable",
+    "description": "The independently owned pre-refactor baseline remains in PAP-20260714-P17-PRE-REFACTOR; the milestone document performs the cross-record comparison.",
+    "run_ids": []
+  },
+  "treatment": {
+    "status": "present",
+    "description": "Tracked-clean P17 1PA1P formal freeze after runtime convergence, module extraction, test governance, and experiment normalization.",
+    "run_ids": [
+      "20260715_3bfa8d15d_p17_post_refactor_formal"
+    ]
+  },
+  "primary_variable": {
+    "name": "milestone_state",
+    "baseline": "not-applicable",
+    "treatment": "post-refactor"
+  },
+  "run_ids": [
+    "20260715_3bfa8d15d_p17_post_refactor_formal"
+  ],
+  "aggregation_method": "Pooled request-level samples across three post-refactor repetitions; median and nearest-rank p90. The milestone document compares this record with the independently registered pre-refactor freeze.",
+  "metrics": [
+    {
+      "name": "ttft_ms",
+      "scope": "round_1",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 10545.477076004317,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "tpot_ms",
+      "scope": "round_1",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 39.25640942741701,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "ttft_ms",
+      "scope": "steady_rounds_2_5",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 203.77965999796288,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "tpot_ms",
+      "scope": "steady_rounds_2_5",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 50.398172588229144,
+      "direction": "lower-is-better"
+    }
+  ],
+  "conclusion": "All three post-refactor repetitions completed 20 of 20 requests and passed every strict audit on clean commit 3bfa8d15d. Relative changes were +0.17% R1 TTFT, -0.14% R1 TPOT, -2.13% steady TTFT, and -0.16% steady TPOT, so the 5% release gate passed. xPAyP and cross-host NIXL remain preserved-unverified.",
+  "supersedes": [],
+  "superseded_by": null,
+  "raw_artifacts": [
+    {
+      "name": "aggregate",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_3bfa8d15d_p17_post_refactor_formal/aggregate.json"
+      },
+      "sha256": "ac07e92ea78707eacfc3853f487ff41b4d02fa56b9bfd8b5b0b37a9deba654ec"
+    },
+    {
+      "name": "rep1_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_3bfa8d15d_p17_post_refactor_formal/rep1/result.json"
+      },
+      "sha256": "affb98fadf619c9e7957f9d4cecccb0c1d55e3810c99256e41200087eb755e58"
+    },
+    {
+      "name": "rep2_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_3bfa8d15d_p17_post_refactor_formal/rep2/result.json"
+      },
+      "sha256": "2bc82998db1df57084a2622804966aa44a2c2a33462fadee8919e7297d9af4fc"
+    },
+    {
+      "name": "rep3_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_3bfa8d15d_p17_post_refactor_formal/rep3/result.json"
+      },
+      "sha256": "0f807ad0072e42e177d198b4224b805d2a25ddf580031561891d05af5fbe1a7d"
+    }
+  ],
+  "tags": [
+    "p17",
+    "post-refactor",
+    "milestone-freeze",
+    "1pa1p",
+    "local-fast"
+  ]
+}

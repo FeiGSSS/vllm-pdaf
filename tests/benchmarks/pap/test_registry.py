@@ -11,6 +11,8 @@ from benchmarks.pap.validate_registry import validate_registry
 
 ROOT = Path(__file__).parents[3]
 PAP_ROOT = ROOT / "benchmarks" / "pap"
+BASELINE_RUN = "20260714_dd2073bcf_p17_pre_refactor_formal.json"
+BASELINE_EXPERIMENT = "PAP-20260714-P17-PRE-REFACTOR.json"
 
 
 def _copy_registry(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -36,10 +38,12 @@ def test_current_registry_validates() -> None:
 
     assert set(snapshot.profiles) == {"p17_1pa1p"}
     assert set(snapshot.runs) == {
-        "20260714_dd2073bcf_p17_pre_refactor_formal"
+        "20260714_dd2073bcf_p17_pre_refactor_formal",
+        "20260715_3bfa8d15d_p17_post_refactor_formal",
     }
     assert set(snapshot.experiments) == {
-        "PAP-20260714-P17-PRE-REFACTOR"
+        "PAP-20260714-P17-PRE-REFACTOR",
+        "PAP-20260715-P17-POST-REFACTOR",
     }
     assert len(snapshot.historical_experiments) == 43
     assert len(snapshot.negative_results) == 15
@@ -47,7 +51,7 @@ def test_current_registry_validates() -> None:
 
 def test_formal_clean_run_rejects_dirty_worktree(tmp_path: Path) -> None:
     profile_dir, run_dir, experiment_dir = _copy_registry(tmp_path)
-    run_path = next(run_dir.glob("*.json"))
+    run_path = run_dir / BASELINE_RUN
     run = _load(run_path)
     run["provenance"]["tracked_worktree_dirty"] = True
     _write(run_path, run)
@@ -62,7 +66,7 @@ def test_formal_clean_run_rejects_dirty_worktree(tmp_path: Path) -> None:
 
 def test_run_schema_rejects_absolute_artifact_path(tmp_path: Path) -> None:
     profile_dir, run_dir, experiment_dir = _copy_registry(tmp_path)
-    run_path = next(run_dir.glob("*.json"))
+    run_path = run_dir / BASELINE_RUN
     run = _load(run_path)
     run["artifacts"][0]["path"]["relative_path"] = "/tmp/result.json"
     _write(run_path, run)
@@ -77,7 +81,7 @@ def test_run_schema_rejects_absolute_artifact_path(tmp_path: Path) -> None:
 
 def test_run_schema_rejects_short_commit(tmp_path: Path) -> None:
     profile_dir, run_dir, experiment_dir = _copy_registry(tmp_path)
-    run_path = next(run_dir.glob("*.json"))
+    run_path = run_dir / BASELINE_RUN
     run = _load(run_path)
     run["provenance"]["commit"] = "dd2073bcf"
     _write(run_path, run)
@@ -92,7 +96,7 @@ def test_run_schema_rejects_short_commit(tmp_path: Path) -> None:
 
 def test_p17_run_rejects_profile_drift(tmp_path: Path) -> None:
     profile_dir, run_dir, experiment_dir = _copy_registry(tmp_path)
-    run_path = next(run_dir.glob("*.json"))
+    run_path = run_dir / BASELINE_RUN
     run = _load(run_path)
     run["mps"]["attention_visible_sms"] = 27
     _write(run_path, run)
@@ -107,7 +111,7 @@ def test_p17_run_rejects_profile_drift(tmp_path: Path) -> None:
 
 def test_experiment_arm_must_match_run_ids(tmp_path: Path) -> None:
     profile_dir, run_dir, experiment_dir = _copy_registry(tmp_path)
-    experiment_path = next(experiment_dir.glob("*.json"))
+    experiment_path = experiment_dir / BASELINE_EXPERIMENT
     experiment = _load(experiment_path)
     experiment["baseline"]["run_ids"] = []
     experiment["baseline"]["status"] = "not-applicable"
@@ -123,7 +127,7 @@ def test_experiment_arm_must_match_run_ids(tmp_path: Path) -> None:
 
 def test_experiment_metric_must_match_run_manifest(tmp_path: Path) -> None:
     profile_dir, run_dir, experiment_dir = _copy_registry(tmp_path)
-    experiment_path = next(experiment_dir.glob("*.json"))
+    experiment_path = experiment_dir / BASELINE_EXPERIMENT
     experiment = _load(experiment_path)
     experiment["metrics"][0]["baseline_value"] = 1.0
     _write(experiment_path, experiment)
@@ -138,7 +142,7 @@ def test_experiment_metric_must_match_run_manifest(tmp_path: Path) -> None:
 
 def test_experiment_artifact_must_be_registered_by_run(tmp_path: Path) -> None:
     profile_dir, run_dir, experiment_dir = _copy_registry(tmp_path)
-    experiment_path = next(experiment_dir.glob("*.json"))
+    experiment_path = experiment_dir / BASELINE_EXPERIMENT
     experiment = _load(experiment_path)
     experiment["raw_artifacts"][0]["sha256"] = "f" * 64
     _write(experiment_path, experiment)
@@ -153,7 +157,7 @@ def test_experiment_artifact_must_be_registered_by_run(tmp_path: Path) -> None:
 
 def test_supersede_graph_rejects_cycle(tmp_path: Path) -> None:
     profile_dir, run_dir, experiment_dir = _copy_registry(tmp_path)
-    experiment_path = next(experiment_dir.glob("*.json"))
+    experiment_path = experiment_dir / BASELINE_EXPERIMENT
     experiment = _load(experiment_path)
     experiment_id = experiment["experiment_id"]
     experiment["decision"] = "superseded"
@@ -171,7 +175,7 @@ def test_supersede_graph_rejects_cycle(tmp_path: Path) -> None:
 
 def test_registry_rejects_duplicate_experiment_id(tmp_path: Path) -> None:
     profile_dir, run_dir, experiment_dir = _copy_registry(tmp_path)
-    source = next(experiment_dir.glob("*.json"))
+    source = experiment_dir / BASELINE_EXPERIMENT
     shutil.copy2(source, experiment_dir / "PAP-20260714-DUPLICATE.json")
 
     with pytest.raises(ValueError, match="duplicate experiment_id"):

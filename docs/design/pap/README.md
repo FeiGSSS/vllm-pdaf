@@ -5,8 +5,9 @@ canonical: null
 superseded_by: null
 related_experiments:
   - PAP-20260714-P17-PRE-REFACTOR
+  - PAP-20260715-P17-POST-REFACTOR
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: null
+last_validated_commit: 3bfa8d15dfb7c48264e845a319bc089d620ba57f
 ---
 
 # PAP documentation
@@ -21,7 +22,7 @@ Prefill–Attention–Projection implementation. Read these documents in order:
 3. [Benchmark methodology](benchmark-methodology.md) — P17, evidence grades,
    experiment records, and release gates.
 4. [Runtime refactor milestone](milestones/2026-07-runtime-refactor.md) — scope,
-   decisions, and the still-active milestone checklist.
+   decisions, and the frozen validation result.
 
 The detailed historical ledger remains at
 [PAP development and experiment history](../pap-experiment-history-index.md).
@@ -33,7 +34,7 @@ Its normalized status index is generated at
 The accepted runtime path is Qwen3-8B FP16, 1PA1P/TP1, same-host
 `local_fast`, static MPS 64/28, asynchronous decode-token delivery,
 asynchronous Prefill KV import, sealed manifest handoff, and Prefill-owned
-unified KV. This is the only end-to-end release gate for the current milestone.
+unified KV. This is the only end-to-end release gate for the frozen milestone.
 
 Arbitrary xPAyP and cross-host NIXL remain implemented and contract-covered,
 but are `preserved-unverified`: this milestone does not claim fresh E2E

@@ -4,10 +4,11 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260715-P17-POST-REFACTOR
   - PAP-20260713-ASYNC-DECODE-TOKEN-D2H
   - PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: null
+last_validated_commit: 3bfa8d15dfb7c48264e845a319bc089d620ba57f
 ---
 
 # PAP runtime

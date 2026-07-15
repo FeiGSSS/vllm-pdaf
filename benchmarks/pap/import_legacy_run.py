@@ -60,6 +60,35 @@ def _async_decode_token_setting(
     return "missing"
 
 
+def _boolean_setting(
+    metadata: dict[str, Any],
+    metadata_key: str,
+    effective: dict[str, str],
+    environment_key: str,
+    *,
+    fallback: bool | str = "missing",
+) -> bool | str:
+    value = metadata.get(metadata_key)
+    if isinstance(value, bool):
+        return value
+    raw_value = effective.get(environment_key)
+    if raw_value is None:
+        return fallback
+    normalized = raw_value.lower()
+    if normalized in _TRUE_VALUES:
+        return True
+    if normalized in _FALSE_VALUES:
+        return False
+    return "missing"
+
+
+def _mps_mode(mps_audit: dict[str, str]) -> str:
+    return mps_audit.get(
+        "PAP_MPS_MODE",
+        mps_audit.get("MPS_MODE", "missing"),
+    )
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -419,7 +448,7 @@ def import_legacy_run(
     for payload in rep_payloads:
         rep_mps = payload["mps"]
         if (
-            rep_mps.get("PAP_MPS_MODE") != "static"
+            _mps_mode(rep_mps) != "static"
             or rep_mps.get("PREFILL_VISIBLE_SMS") != "64"
             or rep_mps.get("ATTENTION_VISIBLE_SMS") != "28"
         ):
@@ -537,6 +566,20 @@ def import_legacy_run(
         failure_reasons.append(f"{failed} benchmark requests failed")
     failure_reasons = list(dict.fromkeys(failure_reasons))
 
+    mps_mode = _mps_mode(mps)
+    mps_profile_id = effective.get("PAP_BENCH_MPS_PROFILE", "missing")
+    if (
+        mps_profile_id == "missing"
+        and profile_id == "p17_1pa1p"
+        and mps_mode == "static"
+        and mps.get("PREFILL_VISIBLE_SMS") == "64"
+        and mps.get("ATTENTION_VISIBLE_SMS") == "28"
+    ):
+        mps_profile_id = "baseline_static_64_28"
+    unified_kv_fallback: bool | str = (
+        True if profile_id == "p17_1pa1p" else "missing"
+    )
+
     return {
         "schema_version": 1,
         "kind": "pap-run-manifest",
@@ -594,8 +637,8 @@ def import_legacy_run(
             "same_host": True,
         },
         "mps": {
-            "mode": mps.get("PAP_MPS_MODE", "missing"),
-            "profile_id": effective.get("PAP_BENCH_MPS_PROFILE", "missing"),
+            "mode": mps_mode,
+            "profile_id": mps_profile_id,
             "prefill_visible_sms": int(mps["PREFILL_VISIBLE_SMS"]),
             "attention_visible_sms": int(mps["ATTENTION_VISIBLE_SMS"]),
         },
@@ -627,12 +670,22 @@ def import_legacy_run(
                     "missing",
                 ),
                 "async_decode_token": decode_token_setting,
-                "unified_kv": effective.get("PAP_UNIFIED_KV") == "1",
-                "batched_route_copy": effective.get("PAP_BATCHED_ROUTE_COPY")
-                == "1",
-                "attention_dispatch_mode": effective.get(
-                    "PAP_ATTENTION_DISPATCH_MODE",
-                    "missing",
+                "unified_kv": _boolean_setting(
+                    metadata,
+                    "unified_kv",
+                    effective,
+                    "PAP_UNIFIED_KV",
+                    fallback=unified_kv_fallback,
+                ),
+                "batched_route_copy": _boolean_setting(
+                    metadata,
+                    "batched_route_copy",
+                    effective,
+                    "PAP_BATCHED_ROUTE_COPY",
+                ),
+                "attention_dispatch_mode": metadata.get(
+                    "attention_dispatch_mode",
+                    effective.get("PAP_ATTENTION_DISPATCH_MODE", "missing"),
                 ),
             },
         },

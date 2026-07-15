@@ -203,3 +203,47 @@ def test_legacy_import_reads_old_and_unconditional_decode_token_evidence() -> No
         {},
     ) is False
     assert _async_decode_token_setting({}, {}) == "missing"
+
+
+def test_p17_import_reads_converged_metadata_and_mps_audit(tmp_path: Path) -> None:
+    source = _make_legacy_run(tmp_path)
+    rep = source / "rep1"
+    metadata_path = rep / "run_metadata.json"
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata.update(
+        {
+            "batched_route_copy": True,
+            "attention_dispatch_mode": "legacy",
+        }
+    )
+    _write_json(metadata_path, metadata)
+    (rep / "effective_config.env").write_text("", encoding="utf-8")
+    (rep / "mps_static_audit_pa_0.env").write_text(
+        "MPS_MODE=static\n"
+        "PREFILL_VISIBLE_SMS=64\n"
+        "ATTENTION_VISIBLE_SMS=28\n",
+        encoding="utf-8",
+    )
+
+    manifest = import_legacy_run(
+        source,
+        experiment_id="PAP-20260715-P17-IMPORT-TEST",
+        run_id="p17_import_test_run",
+        profile_id="p17_1pa1p",
+        evidence="formal-clean",
+        artifact_root_id="raw-root",
+        roots={"raw-root": tmp_path},
+    )
+
+    assert manifest["mps"] == {
+        "mode": "static",
+        "profile_id": "baseline_static_64_28",
+        "prefill_visible_sms": 64,
+        "attention_visible_sms": 28,
+    }
+    assert manifest["runtime"]["settings"]["unified_kv"] is True
+    assert manifest["runtime"]["settings"]["batched_route_copy"] is True
+    assert (
+        manifest["runtime"]["settings"]["attention_dispatch_mode"]
+        == "legacy"
+    )

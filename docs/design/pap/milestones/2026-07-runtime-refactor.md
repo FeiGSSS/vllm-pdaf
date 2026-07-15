@@ -1,18 +1,20 @@
 ---
 pap_doc_schema: 1
-status: active
+status: milestone
 canonical: null
 superseded_by: null
 related_experiments:
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: bcbcefa127aabb06de5daf1d6adc50724b2c764b
+  - PAP-20260714-P17-PRE-REFACTOR
+  - PAP-20260715-P17-POST-REFACTOR
+last_validated_commit: 3bfa8d15dfb7c48264e845a319bc089d620ba57f
 ---
 
 # PAP Runtime Milestone 重构设计
 
 日期：2026-07-14
 
-状态：已逐节评审通过，待书面 spec 复核
+状态：已完成并冻结
 
 ## 1. 背景与目标
 
@@ -119,7 +121,8 @@ current、milestone、archived 或 superseded。旧 implementation plans/specs �
 
 ### 4.6 Milestone freeze
 
-完成全部测试、registry 校验、P17 C1 和三轮 P17 C4 formal，并生成前后对比报告。
+完成合并后的 PAP CPU gate、registry 校验和三轮 P17 C4 formal，并生成前后对比
+报告。C1 smoke 不重复执行，正式 C4 是唯一运行 release gate。
 
 ## 5. 最终模块边界
 
@@ -538,8 +541,8 @@ canonical successor 和关联 experiment IDs。处理规则为：
 | 每类路径删除 | targeted tests 和静态检查 |
 | 每个主要模块拆分 | import/contract targeted tests 和静态检查 |
 | 实验治理 | schema、A 级历史记录和生成索引校验 |
-| 文档治理 | 状态 schema、链接、canonical source、零 superpowers 引用 |
-| Final freeze | 完整测试、P17 C1、P17 C4 formal 三轮、前后报告 |
+| 文档治理 | 状态 schema、链接、canonical source、superpowers 历史边界 |
+| Final freeze | 合并 PAP CPU gate、P17 C4 formal 三轮、前后报告 |
 
 ### 11.2 正确性
 
@@ -585,6 +588,28 @@ pre-refactor baseline 回退超过 `5%` 时复跑一次；复跑仍超过即视�
 - 每类删除和每个主要模块拆分使用独立 commit，便于精确回退；
 - benchmark artifacts 保持 untracked，不与源码提交混合；
 - NIXL/xPAyP 不做未经验证的行为清理；
-- 重构批次只跑 targeted tests；P17 C1 和 C4 formal 只用于最终冻结；
+- 重构批次只跑 targeted tests；P17 C4 formal 只用于最终冻结；
 - 如果 pre-refactor freeze 本身不稳定或 strict audit 失败，重构不得开始；
 - 回退通过 Git commit 完成，不重新引入长期实验开关。
+
+## 15. 最终冻结结果
+
+PAP runtime 在 tracked-clean commit
+`3bfa8d15dfb7c48264e845a319bc089d620ba57f` 完成最终验证。合并 CPU gate 为
+`498 passed, 3 skipped`；registry validator 通过。正式 P17 C4 运行三次，每次
+20/20 请求成功，client、cache、Attention stats、correctness、async decode-token
+join、routing、commit、lease、static MPS 64/28 和 zero-session-drain gate 全部通过。
+
+| 指标 | Pre-refactor | Post-refactor | 变化 | 判定 |
+| --- | ---: | ---: | ---: | --- |
+| R1 TTFT median | 10527.16 ms | 10545.48 ms | +0.17% | 通过 |
+| R1 TPOT median | 39.310 ms | 39.256 ms | -0.14% | 通过 |
+| R2–5 TTFT median | 208.22 ms | 203.78 ms | -2.13% | 通过 |
+| R2–5 TPOT median | 50.481 ms | 50.398 ms | -0.16% | 通过 |
+
+四项指标均未达到 5% regression 阈值，因此 milestone 冻结通过。原始结果保留在
+`test/baseline/pap/results/runs/20260715_3bfa8d15d_p17_post_refactor_formal/`，
+tracked 结论为 `PAP-20260715-P17-POST-REFACTOR`。
+
+任意 `xPAyP` 和跨机 NIXL 的接口与实现兼容性仍保留，但本 milestone 未重新进行
+E2E 验证，不属于上述通过结论。

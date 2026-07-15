@@ -8,6 +8,7 @@
 | Experiment | Evidence | Decision | Validity | Runs | Successor | Conclusion |
 | --- | --- | --- | --- | --- | --- | --- |
 | PAP-20260714-P17-PRE-REFACTOR | formal-clean | accepted | valid | 20260714_dd2073bcf_p17_pre_refactor_formal | — | All three repetitions completed 20 of 20 requests, passed strict client, cache, Attention-stat, correctness, async decode-token join, routing, commit, lease, MPS, and zero-session-drain gates, and used one clean commit with empty tracked patches. This run is the accepted pre-refactor P17 baseline; it does not validate xPAyP or cross-host NIXL. |
+| PAP-20260715-P17-POST-REFACTOR | formal-clean | accepted | valid | 20260715_3bfa8d15d_p17_post_refactor_formal | — | All three post-refactor repetitions completed 20 of 20 requests and passed every strict audit on clean commit 3bfa8d15d. Relative changes were +0.17% R1 TTFT, -0.14% R1 TPOT, -2.13% steady TTFT, and -0.16% steady TPOT, so the 5% release gate passed. xPAyP and cross-host NIXL remain preserved-unverified. |
 
 ### Reviewed historical experiments
 
