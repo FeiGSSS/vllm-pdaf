@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "kind": "pap-experiment-record",
+  "status": "current",
+  "experiment_id": "PAP-20260715-PAGED-FA-SM-PROBE",
+  "title": "P17 paged-FlashAttention SM and HBM concurrency probe",
+  "recorded_at": "2026-07-15",
+  "hypothesis": "Static MPS does not partition HBM bandwidth, but reducing Attention from 92 to 28 visible SMs may reduce the memory-level parallelism with which the FA2 kernel drives that shared bandwidth.",
+  "evidence": "diagnostic",
+  "decision": "accepted",
+  "validity": {
+    "status": "valid",
+    "reasons": []
+  },
+  "baseline": {
+    "status": "present",
+    "description": "Matched P17 C4 paged-FA shape with all 92 L20 SMs visible and FA2 auto-split enabled.",
+    "run_ids": [
+      "20260715_e5a6711f0_paged_fa_full92_diagnostic"
+    ]
+  },
+  "treatment": {
+    "status": "present",
+    "description": "The same tensors, layout, FA2 call, and physical L20 under a static 28-SM MPS partition with auto-split enabled.",
+    "run_ids": [
+      "20260715_e5a6711f0_paged_fa_mps28_diagnostic"
+    ]
+  },
+  "primary_variable": {
+    "name": "visible_attention_sms",
+    "baseline": 92,
+    "treatment": 28
+  },
+  "run_ids": [
+    "20260715_e5a6711f0_paged_fa_full92_diagnostic",
+    "20260715_e5a6711f0_paged_fa_mps28_diagnostic"
+  ],
+  "aggregation_method": "For each of four SM/split cases, nine CUDA-event samples of 180 calls were averaged after 108 warmup calls. NSYS sampled GPU-wide counters at 10 kHz for one second inside an NVTX range. NCU supplied non-MPS launch geometry; a one-call torch trace supplied MPS launch geometry.",
+  "metrics": [
+    {
+      "name": "paged_fa_time_ms",
+      "scope": "auto_split",
+      "statistic": "mean",
+      "unit": "ms",
+      "baseline_value": 0.35078273584813247,
+      "treatment_value": 0.5722383287217881,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "logical_min_kv_bandwidth",
+      "scope": "auto_split",
+      "statistic": "mean",
+      "unit": "GB/s",
+      "baseline_value": 607.2140109318723,
+      "treatment_value": 372.2228681811295,
+      "direction": "higher-is-better"
+    },
+    {
+      "name": "dram_read_throughput",
+      "scope": "auto_split",
+      "statistic": "mean",
+      "unit": "%",
+      "baseline_value": 80.32658476658477,
+      "treatment_value": 48.68385780885781,
+      "direction": "higher-is-better"
+    },
+    {
+      "name": "sm_active",
+      "scope": "physical_gpu",
+      "statistic": "mean",
+      "unit": "%",
+      "baseline_value": 86.34319410319411,
+      "treatment_value": 25.676184926184927,
+      "direction": "descriptive"
+    },
+    {
+      "name": "auto_split_count",
+      "scope": "main_attention_kernel",
+      "statistic": "observed",
+      "unit": "splits",
+      "baseline_value": 7,
+      "treatment_value": 2,
+      "direction": "descriptive"
+    },
+    {
+      "name": "main_kernel_grid_ctas",
+      "scope": "auto_split",
+      "statistic": "observed",
+      "unit": "CTA",
+      "baseline_value": 168,
+      "treatment_value": 48,
+      "direction": "descriptive"
+    }
+  ],
+  "conclusion": "The 28-SM treatment is 1.631x slower and reaches 48.68% mean DRAM-read throughput versus 80.33% at 92 SMs. FA2 auto-split remains active: it chooses 7 splits and 168 CTAs at 92 SMs, and 2 splits and 48 CTAs at 28 SMs, keeping roughly 1.8 grid waves per visible SM. The main kernel consumes about 82 KiB shared memory per CTA, limiting residency to one CTA per SM. MPS does not statically partition HBM; the slowdown comes from too few concurrent SM/CTA/warp request generators to saturate the shared HBM bandwidth. Forcing more split waves alone cannot recover 92-SM concurrency.",
+  "supersedes": [],
+  "superseded_by": null,
+  "raw_artifacts": [
+    {
+      "name": "summary",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_paged_fa_sm_probe_gpu3/summary.json"
+      },
+      "sha256": "bc11e66f8aa76f11dc02986376e8166b02aec3e72ec5aa21a20ae4ab3c20c3d3"
+    },
+    {
+      "name": "full92_auto_ncu",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_paged_fa_sm_probe_gpu3/ncu/full92_splits0.ncu-rep"
+      },
+      "sha256": "a507c871370f7e33282b65865e853777d7a20eba5261531ac4e4f18f18bf74c1"
+    },
+    {
+      "name": "mps28_auto_torch_trace",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_paged_fa_mps_trace_gpu4/torch_trace/mps28_splits0.trace.json"
+      },
+      "sha256": "e08db86dc51d7c3b904d0d595f538e672859b9e3ce6d5e7b3878f1b21f4e8446"
+    }
+  ],
+  "tags": [
+    "p17",
+    "paged-flash-attention",
+    "static-mps",
+    "sm-partition",
+    "memory-bandwidth",
+    "diagnostic"
+  ]
+}

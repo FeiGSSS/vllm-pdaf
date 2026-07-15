@@ -40,6 +40,47 @@ The runner loads its model, workload, placement, transport, MPS, and audit
 values from `profiles/p17_1pa1p.toml`. Machine-specific model and corpus roots
 remain local overrides (`PAP_MODEL_ROOT` and `PAP_CORPUS_ROOT`).
 
+### Standalone paged-FlashAttention SM probe
+
+The paged-FA probe reproduces the P17 C4 Attention shape without launching PAP
+services or importing code from `vllm/pap/`. It compares full 92-SM execution
+with a static 28-SM MPS partition, and compares FA2 auto-split with fixed
+single-split. MPS counters come from NSYS GPU-wide sampling; NCU is used only
+after the MPS partition is removed because this installed NCU version does not
+support reliable profiling under MPS.
+
+```bash
+PAP_FA_PROBE_GPU=3 \
+PAP_FA_PROBE_RUN_TORCH_TRACE=1 \
+PAP_FA_PROBE_OUTPUT_ROOT=/path/to/run \
+  bash benchmarks/pap/scripts/run_paged_fa_sm_probe.sh
+
+.venv/bin/python \
+  benchmarks/pap/tooling/summarize_paged_fa_sm_probe.py \
+  /path/to/run
+```
+
+The probe records CUDA-event timing, NVTX-scoped GPU metrics, main-kernel launch
+geometry, and raw NSYS/NCU/torch traces. It is a diagnostic experiment, not a
+P17 correctness or release gate.
+
+#### Deferred optimization: low-smem FA2 decode specialization
+
+This is a high-value, high-complexity follow-up and is not a current P17 release
+blocker. The accepted diagnostic
+[`PAP-20260715-PAGED-FA-SM-PROBE`](registry/experiments/PAP-20260715-PAGED-FA-SM-PROBE.json)
+shows that the current FA2 kernel uses about 82 KiB of shared memory per CTA,
+limiting residency to one CTA per SM. Revisit this work after lower-risk MPS
+quota, overlap, and existing-backend optimizations are exhausted, or when FA2
+remains on the measured PAP critical path.
+
+The future specialization should be narrow: SM89, BF16, head dimension 128,
+paged-KV decode, and the P17 GQA shape. Its acceptance gates are at most 50 KiB
+shared memory per CTA, two resident CTAs per SM without a new register limit,
+output agreement with the existing FA2 path, lower 28-SM matched-shape latency,
+and no material full-92-SM or P17 E2E regression. Keep the existing FA2 kernel
+as the default until those gates pass.
+
 ## Paths and missing metadata
 
 Tracked records never store machine-specific absolute artifact paths. Every
