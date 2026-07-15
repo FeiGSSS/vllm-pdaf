@@ -58,6 +58,8 @@ Request routing selects a stable `(PA, Projection)` pair for a turn.
   feature configuration; retired selectors fail closed.
 - `integration/`: typed request metadata, Projection request state, batch
   adapters, and the asynchronous sampled-token bridge shared with vLLM.
+- `model/`: typed forward-batch access, Projection Attention execution, and
+  Prefill sealed-KV publication used by model implementations.
 - `protocol/`: wire models, descriptors, sealed KV codec, and transport
   contracts.
 - `topology/`: route groups and Projection peer membership.
@@ -68,8 +70,9 @@ Request routing selects a stable `(PA, Projection)` pair for a turn.
 - `service.py`: Attention HTTP/TCP composition and service lifecycle.
 
 `attention_executor.py`, `remote_attention.py`, `shadow_attention.py`, and old
-client modules may remain compatibility façades. They do not define alternate
-runtime algorithms.
+client modules may remain compatibility façades. Qwen3 delegates its PAP model
+path to `model/`; none of these entry points define alternate runtime
+algorithms.
 
 ## Compatibility rule
 

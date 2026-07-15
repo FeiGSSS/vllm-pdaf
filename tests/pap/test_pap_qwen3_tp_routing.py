@@ -2,17 +2,19 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
 from vllm.model_executor.models.qwen3 import (
+    _qwen3_deferred_qkv_trace_selected_role,
+)
+from vllm.pap.model.context import pap_endpoint_for_tp_rank
+from vllm.pap.model.projection import (
     _pap_bind_offload_exec_mailbox_peer,
     _pap_cached_offload_exec_transport,
-    _pap_endpoint_for_tp_rank,
     _pap_offload_exec_session_request_id,
     _pap_offload_exec_step_groups,
-    _qwen3_deferred_qkv_trace_selected_role,
 )
 
 
 def test_pap_endpoint_for_tp_rank_keeps_scalar_endpoint() -> None:
-    assert _pap_endpoint_for_tp_rank("127.0.0.1:10300", tp_rank=1) == (
+    assert pap_endpoint_for_tp_rank("127.0.0.1:10300", tp_rank=1) == (
         "127.0.0.1:10300"
     )
 
@@ -54,7 +56,7 @@ def test_bilateral_qkv_trace_selects_only_target_decode_roles() -> None:
 
 def test_pap_endpoint_for_tp_rank_selects_csv_entry() -> None:
     assert (
-        _pap_endpoint_for_tp_rank(
+        pap_endpoint_for_tp_rank(
             "127.0.0.1:10300,127.0.0.1:10301",
             tp_rank=1,
         )
@@ -64,7 +66,7 @@ def test_pap_endpoint_for_tp_rank_selects_csv_entry() -> None:
 
 def test_pap_endpoint_for_tp_rank_selects_sequence_entry() -> None:
     assert (
-        _pap_endpoint_for_tp_rank(
+        pap_endpoint_for_tp_rank(
             ("http://127.0.0.1:8300", "http://127.0.0.1:8301"),
             tp_rank=1,
         )

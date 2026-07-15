@@ -1,4 +1,4 @@
-from vllm.model_executor.models.qwen3 import _pap_prune_imported_prefill_kv
+from vllm.pap.model.prefill import _pap_prune_imported_prefill_kv
 
 
 def test_pap_prune_imported_prefill_kv_removes_finished_requests() -> None:

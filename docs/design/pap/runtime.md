@@ -82,7 +82,9 @@ diagnostic and cannot be promoted to normal performance results.
 
 ## Known refactor boundary
 
-The major responsibilities now have explicit packages, while `kv/state.py`,
-the transport backends, and `service.py` still contain compatibility glue and
-backend-local state. Further splits should be mechanical and owner-driven; they
-must not reintroduce removed runtime selectors or broaden the P17 gate.
+The major responsibilities now have explicit packages, and Qwen3 delegates PAP
+forward-batch, Projection Attention, and Prefill KV publication to `model/`.
+`kv/state.py`, the transport backends, and `service.py` still contain
+compatibility glue and backend-local state. Further splits should be mechanical
+and owner-driven; they must not reintroduce removed runtime selectors or
+broaden the P17 gate.
