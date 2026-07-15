@@ -1,0 +1,83 @@
+---
+pap_doc_schema: 1
+status: current
+canonical: null
+superseded_by: null
+related_experiments:
+  - PAP-20260713-ASYNC-DECODE-TOKEN-D2H
+  - PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC
+  - PAP-20260714-SEAL-HANDOFF-KV
+last_validated_commit: null
+---
+
+# PAP runtime
+
+The current runtime has one accepted correctness path. Environment variables
+are parsed at service/launcher composition roots into `PAPRuntimeConfig`; core
+components receive typed configuration instead of choosing experimental paths.
+
+## KV publication and readiness
+
+The sealed handoff has two levels:
+
+- A static catalog describes each stable Prefill KV backing tensor and its
+  CUDA IPC/NIXL metadata. Attention opens and reuses it.
+- A request manifest binds a request and session generation to its catalog,
+  block layout, prefix length, and GPU ready event.
+
+Attention may activate a request only after the complete manifest is ready for
+the expected generation. Stale generations and incomplete prefixes fail
+closed. Registry locks protect validation and snapshots; CUDA handle opening,
+copies, and kernel work stay outside the global control lock.
+
+The unified paged state remains Prefill-owned. Input-driven cases such as a
+ragged or partial batch may use a conservative correctness fallback, but no
+environment variable can select the retired per-layer descriptor or
+non-unified ownership paths.
+
+## Decode-step lifecycle
+
+For every active step:
+
+1. Projection builds the topology-derived route plan and sends Q/K/V.
+2. Attention waits for matching KV readiness, appends decode K/V, and executes
+   direct or combine/scatter paged attention.
+3. Attention publishes the result to Projection.
+4. Sampled-token delivery is always asynchronous. Token and KV completion join
+   by request/session generation before the step commits.
+5. Decode commit and ACK advance the Prefill scheduler/cache transaction.
+6. Lease release happens after the committed tail is safe to release.
+7. Shutdown/drain requires no pending token, commit, lease, or Attention
+   session state.
+
+Retries, bounded queues, timeouts, and failure propagation remain operational
+controls. Synchronous sampled-token D2H, synchronous Prefill KV import,
+diagnostic barriers, manual dispatch modes, dynamic MPS, and handoff mode
+selectors have been removed or explicitly rejected as retired flags.
+
+## Transport boundary
+
+The execution transport is built through `transport/factory.py`:
+
+- `local_fast` uses same-host CUDA IPC endpoints and a stream-ordered slot/
+  doorbell protocol.
+- NIXL uses the backend-neutral mailbox actor/message layer plus NIXL endpoint
+  metadata, notification, and transfer progress.
+
+Protocol and lifecycle callers depend on the transport interface rather than
+backend-specific endpoint types. Cross-host NIXL is preserved but is not an E2E
+gate in this milestone.
+
+## Observability
+
+Correctness logs, routing audit, decode-token join, commit/lease accounting,
+MPS visibility, session drain, and optional deferred CUDA traces are evidence;
+they must not change normal scheduling semantics. Trace-on timings are
+diagnostic and cannot be promoted to normal performance results.
+
+## Known refactor boundary
+
+The major responsibilities now have explicit packages, while `kv/state.py`,
+the transport backends, and `service.py` still contain compatibility glue and
+backend-local state. Further splits should be mechanical and owner-driven; they
+must not reintroduce removed runtime selectors or broaden the P17 gate.

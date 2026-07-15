@@ -97,13 +97,14 @@ commit 运行三轮 P17 C4 formal。该 commit 的 PAP runtime 必须与代码�
 
 ### 4.2 契约保护
 
-先建立测试不变量账本、P17 profile 和实验 schema，再删除任何旧路径。必要时增加
-characterization tests，但不得为覆盖率数字制造低价值测试。
+先建立精简测试策略、P17 profile 和实验 schema，再删除任何旧路径。必要时增加
+characterization tests，但不维护逐 pytest node 的永久账本，也不得为覆盖率数字制造
+低价值测试。
 
 ### 4.3 主路径收敛
 
-每次只删除一类旧路径。每类删除作为独立 review/commit 边界，并运行 targeted
-tests、完整 PAP CPU suite 和 P17 C1 quick。
+每次只删除一类旧路径。相关删除可以合并为一个清晰 review/commit 边界，每批只运行
+targeted tests；完整 PAP CPU suite 和 P17 留到 final freeze。
 
 ### 4.4 模块拆分
 
@@ -112,9 +113,9 @@ tests、完整 PAP CPU suite 和 P17 C1 quick。
 
 ### 4.5 文档迁移
 
-建立 PAP canonical 文档入口，把现有 `docs/design` 和 `docs/superpowers/specs`
-分类为 current、milestone、archived 或 superseded。提取旧 implementation plans
-中的实际决策和验证结果，更新全部引用后删除 `docs/superpowers/`。
+建立 PAP canonical 文档入口，把现有 `docs/design` 和 `docs/superpowers` 内容分类为
+current、milestone、archived 或 superseded。旧 implementation plans/specs 作为历史
+记录保留，但不再作为 active workflow 或 canonical source。
 
 ### 4.6 Milestone freeze
 
@@ -485,14 +486,12 @@ archive 保留历史原文；除增加状态头、修复链接和明显的事实
 `docs/superpowers/specs` 或 `docs/superpowers/plans`。
 
 - 仍有效的 spec 内容合并进 `architecture.md`、`runtime.md` 或 milestone 文档；
-- 已被替代但有历史价值的 spec 移入 `archive/designs`；
-- implementation plan 不整体迁入 archive，只提取已经发生的决策、验证命令和
-  结果；
-- 完成内容提取并更新全部 inbound links 后，删除 `docs/superpowers/`；
-- 删除使用独立 commit，删除前必须证明 tracked 文档和源码中不存在
-  `docs/superpowers`、`superpowers/specs` 或 `superpowers/plans` 引用。
+- 已有 spec/plan 保留原文，统一视为 historical/non-canonical；
+- implementation plan 中仍有价值的决策和验证结果可提取到 canonical 文档，但不
+  要求批量重写或复制原文；
+- 若未来要移动或删除 `docs/superpowers/`，必须作为独立任务由用户再次确认。
 
-Git history 是旧 implementation plans 的最终回溯入口。
+Git history 和保留的原文共同提供旧 implementation plans 的回溯入口。
 
 ### 10.4 临时实施计划
 
@@ -522,8 +521,8 @@ canonical successor 和关联 experiment IDs。处理规则为：
 - current 事实、指标和决策只有一个 canonical source；
 - registry 生成的索引与 tracked records 一致；
 - 所有相对 Markdown 链接存在；
-- tracked tree 中不存在指向 `docs/superpowers` 的引用；
-- `docs/superpowers/` 已删除；
+- canonical 文档不依赖 `docs/superpowers` 才能解释当前实现；
+- `docs/superpowers/` 被明确标为 historical/non-canonical；
 - 历史 raw data 未移动或改写。
 
 ## 11. 验收标准
@@ -568,7 +567,7 @@ pre-refactor baseline 回退超过 `5%` 时复跑一次；复跑仍超过即视�
 ## 13. 交付物
 
 1. 当前 HEAD 的 P17 pre-refactor formal baseline；
-2. PAP 测试不变量账本和逐项 disposition；
+2. 精简 PAP 测试策略和冗余测试清理；
 3. 删除历史分支后的唯一 P17 runtime 主路径；
 4. 模块化 `vllm.pap` package；
 5. local-fast/NIXL backend contract；
@@ -576,7 +575,7 @@ pre-refactor baseline 回退超过 `5%` 时复跑一次；复跑仍超过即视�
 7. 自动生成和校验的实验索引；
 8. post-refactor formal 结果与前后对比报告；
 9. canonical PAP 文档、milestone/archive 分类和迁移清单；
-10. 已删除 `docs/superpowers` 且不存在残留引用；
+10. `docs/superpowers` 已退出 active workflow 并明确标为 historical；
 11. 当前能力、未验证能力和后续工作说明。
 
 ## 14. 风险与回退
@@ -584,6 +583,6 @@ pre-refactor baseline 回退超过 `5%` 时复跑一次；复跑仍超过即视�
 - 每类删除和每个主要模块拆分使用独立 commit，便于精确回退；
 - benchmark artifacts 保持 untracked，不与源码提交混合；
 - NIXL/xPAyP 不做未经验证的行为清理；
-- P17 C1 在每个行为或结构边界后运行，C4 formal 只用于首尾冻结；
+- 重构批次只跑 targeted tests；P17 C1 和 C4 formal 只用于最终冻结；
 - 如果 pre-refactor freeze 本身不稳定或 strict audit 失败，重构不得开始；
 - 回退通过 Git commit 完成，不重新引入长期实验开关。
