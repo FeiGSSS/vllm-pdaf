@@ -398,15 +398,24 @@ Decision 枚举统一为：
 
 ### 9.4 历史回填范围
 
-只对当前 `pap-experiment-history-index.md` 中以下集合进行 A 级完整迁移：
+只对当前 `pap-experiment-history-index.md` 中以下集合进行 A 级全覆盖迁移：
 
 1. 第 6 节实验账本中的每个稳定 experiment ID；
 2. 第 7 节中的每个 negative-result ID；
 3. 第 1.2 节当前正式证据摘要引用、但尚未被前两项覆盖的 experiment ID。
 
 模块档案、时间线或背景段落中仅作为路径示例出现的其他 raw run 不在回填范围。
-每个纳入记录需要人工复核 metrics、commit、配置、audit、证据等级、结论和替代
-关系。
+历史账本已经逐行记录 metrics、commit/状态、结论和 raw evidence。为了避免为 43 个
+稳定实验和 15 个负结果再制造一套大而重复的 JSON/run manifest，legacy A 级迁移采用
+两层格式：
+
+- 原历史账本行继续保存经人工复核的 workload、指标、结论和 raw evidence；
+- `benchmarks/pap/registry/history_status.toml` 为每一行统一 evidence、decision 和
+  successor，并由 validator 检查全覆盖、唯一性和 successor 合法性。
+
+当前 milestone freeze 和以后新运行的实验仍使用完整 run manifest + experiment JSON。
+旧实验只有在 raw artifacts 被重新复核且完整记录确有使用价值时才晋升为完整 JSON，
+不得为了形式统一复制 prose 或虚构缺失字段。
 
 其他未进入当前索引的 raw directories 原地保留，本 milestone 不登记、不移动、
 不改写。历史缺失字段必须显式记为 `missing`，不得推测补全。
@@ -414,10 +423,11 @@ Decision 枚举统一为：
 外部 raw 路径使用 `root_id + relative_path`。legacy importer 只生成新的 tracked
 record；新 runner 缺少 required metadata 或 strict audit 时 fail closed。
 
-历史索引第 6、7 节的表格由 registry 生成，并使用生成区域标记防止手工编辑。
-人工维护的模块解释和时间线可以保留，但引用实验数字、状态和替代关系时必须来自
-canonical record。纳入 A 级回填的旧结果文档增加统一状态头，包含当前状态、证据
-等级、canonical experiment ID 和 `superseded_by`。
+生成的 `benchmarks/pap/registry/INDEX.md` 合并完整 records 与 compact history
+status。历史索引第 6、7 节保留为 legacy 详情源，不再复制成 58 组 JSON；validator
+保证其 ID 集合与 status overlay 无漂移。人工维护的模块解释和时间线可以保留，但
+引用 experiment 状态和替代关系时必须来自 registry。纳入 A 级回填的旧结果文档增加
+统一状态头，包含当前状态、证据等级、canonical experiment ID 和 `superseded_by`。
 
 ## 10. 文档治理
 

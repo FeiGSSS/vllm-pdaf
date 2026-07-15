@@ -41,6 +41,8 @@ def test_current_registry_validates() -> None:
     assert set(snapshot.experiments) == {
         "PAP-20260714-P17-PRE-REFACTOR"
     }
+    assert len(snapshot.historical_experiments) == 43
+    assert len(snapshot.negative_results) == 15
 
 
 def test_formal_clean_run_rejects_dirty_worktree(tmp_path: Path) -> None:

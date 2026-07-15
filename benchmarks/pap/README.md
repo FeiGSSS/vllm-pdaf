@@ -11,7 +11,11 @@ directories.
 - `registry/runs/` records what happened in a run without copying raw data.
 - `registry/experiments/` records hypotheses, evidence, conclusions, decisions,
   and supersede relationships.
-- `registry/INDEX.md` is generated from experiment records.
+- `registry/history_status.toml` assigns normalized evidence, decision, and
+  successor states to every reviewed row in the historical ledger without
+  duplicating its metrics, conclusions, or raw paths into dozens of JSON files.
+- `registry/INDEX.md` is generated from full records and the compact history
+  status overlay.
 - `import_legacy_run.py` converts a reviewed legacy formal directory into a new
   manifest without writing to the source directory.
 - `validate_registry.py` applies schema and cross-record fail-closed checks.
@@ -58,6 +62,14 @@ initial registry uses:
 Unknown historical metadata is the literal string `missing`. It must not be
 omitted or reconstructed by guesswork. `null` and `not-applicable` express a
 known absence; they do not mean missing evidence.
+
+Full JSON run/experiment records are required for the current milestone and
+all new experiments. The 43 pre-milestone experiments and 15 negative results
+remain detailed in `docs/design/pap-experiment-history-index.md`; the compact
+status overlay makes their coverage and lifecycle machine-checkable. A legacy
+row is promoted to a full JSON record only when its raw artifacts are reviewed
+and the additional metadata is useful, so migration does not fabricate fields
+or duplicate prose.
 
 ## Evidence and decisions
 

@@ -13,6 +13,13 @@ from typing import Any
 
 from jsonschema import Draft202012Validator, FormatChecker
 
+from benchmarks.pap.history_catalog import (
+    HistoricalExperiment,
+    HistoryCatalog,
+    NegativeResult,
+    load_history_catalog,
+)
+
 
 ROOT = Path(__file__).parents[2]
 PAP_ROOT = Path(__file__).parent
@@ -21,6 +28,8 @@ SCHEMA_DIR = PAP_ROOT / "schemas"
 REGISTRY_DIR = PAP_ROOT / "registry"
 RUN_DIR = REGISTRY_DIR / "runs"
 EXPERIMENT_DIR = REGISTRY_DIR / "experiments"
+HISTORY_STATUS_PATH = REGISTRY_DIR / "history_status.toml"
+HISTORY_INDEX_PATH = ROOT / "docs" / "design" / "pap-experiment-history-index.md"
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 REQUIRED_AUDITS = {
     "client",
@@ -43,6 +52,8 @@ class RegistrySnapshot:
     profiles: dict[str, dict[str, Any]]
     runs: dict[str, dict[str, Any]]
     experiments: dict[str, dict[str, Any]]
+    historical_experiments: dict[str, HistoricalExperiment]
+    negative_results: dict[str, NegativeResult]
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -577,6 +588,8 @@ def validate_registry(
     profile_dir: Path = PROFILE_DIR,
     run_dir: Path = RUN_DIR,
     experiment_dir: Path = EXPERIMENT_DIR,
+    history_status_path: Path = HISTORY_STATUS_PATH,
+    history_index_path: Path = HISTORY_INDEX_PATH,
     verify_artifacts: bool = False,
     artifact_roots: dict[str, Path] | None = None,
 ) -> RegistrySnapshot:
@@ -586,6 +599,8 @@ def validate_registry(
         profile_dir: Directory containing TOML profiles.
         run_dir: Directory containing run manifests.
         experiment_dir: Directory containing experiment records.
+        history_status_path: Compact evidence/decision overlay for legacy rows.
+        history_index_path: Reviewed Markdown source for legacy rows.
         verify_artifacts: Whether to resolve and hash raw artifact references.
         artifact_roots: Root ID to local directory mappings.
 
@@ -604,6 +619,17 @@ def validate_registry(
     errors.extend(run_errors)
     errors.extend(experiment_errors)
     errors.extend(_validate_profiles(profiles))
+    try:
+        history = load_history_catalog(history_index_path, history_status_path)
+    except (OSError, ValueError, tomllib.TOMLDecodeError) as error:
+        errors.append(f"historical registry: {error}")
+        history = HistoryCatalog({}, {})
+    overlap = set(experiments) & set(history.experiments)
+    if overlap:
+        errors.append(
+            "experiments cannot be both compact historical and full records: "
+            f"{sorted(overlap)}"
+        )
 
     run_schema = _read_json(SCHEMA_DIR / "run_manifest.schema.json")
     experiment_schema = _read_json(
@@ -650,7 +676,13 @@ def validate_registry(
 
     if errors:
         raise ValueError("PAP registry validation failed:\n" + "\n".join(errors))
-    return RegistrySnapshot(profiles, runs, experiments)
+    return RegistrySnapshot(
+        profiles,
+        runs,
+        experiments,
+        history.experiments,
+        history.negative_results,
+    )
 
 
 def _parse_root(raw: str) -> tuple[str, Path]:
@@ -685,7 +717,9 @@ def main() -> int:
         "PAP registry valid: "
         f"{len(snapshot.profiles)} profiles, "
         f"{len(snapshot.runs)} runs, "
-        f"{len(snapshot.experiments)} experiments"
+        f"{len(snapshot.experiments)} full experiments, "
+        f"{len(snapshot.historical_experiments)} historical experiments, "
+        f"{len(snapshot.negative_results)} negative results"
     )
     return 0
 
