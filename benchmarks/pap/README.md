@@ -64,22 +64,47 @@ The probe records CUDA-event timing, NVTX-scoped GPU metrics, main-kernel launch
 geometry, and raw NSYS/NCU/torch traces. It is a diagnostic experiment, not a
 P17 correctness or release gate.
 
-#### Deferred optimization: low-smem FA2 decode specialization
+The backend comparison tool reuses the same captured P17 shape and exact
+cross-layer KV stride to compare FA2 with the PAP-owned kernel integration:
 
-This is a high-value, high-complexity follow-up and is not a current P17 release
-blocker. The accepted diagnostic
+```bash
+.venv/bin/python \
+  benchmarks/pap/tooling/paged_attention_backend_probe.py \
+  --triton-splits 4 --expected-sms 92
+```
+
+The 2026-07-16 diagnostic used one dirty-worktree repetition, so it is decision
+evidence rather than a formal release record:
+
+| Condition | FA2 | PAP Triton split-4 | Max error vs FA2 |
+| --- | ---: | ---: | ---: |
+| [full 92 SM](../../test/baseline/pap/results/runs/20260716_paged_decode_backend_probe/full92.json) | 0.3511 ms | 0.3313 ms | 1.91e-6 |
+| [static-MPS 28 SM](../../test/baseline/pap/results/runs/20260716_paged_decode_backend_probe/mps28.json) | 0.5727 ms | 0.3383 ms | 1.91e-6 |
+
+The matching P17 C4 quick run reduced steady TPOT from 49.75 ms to 42.47 ms;
+the PD control is 41.97 ms. All 20 requests, token digests, cache checks,
+lifecycle audits, static-MPS checks, and session drain passed. Preserve the
+[C1](../../test/baseline/pap/results/runs/20260716_triton_decode_c1_quick/aggregate.json)
+and [C4](../../test/baseline/pap/results/runs/20260716_triton_decode_c4_quick/aggregate.json)
+raw results; run the three-repetition clean gate only when fixing the next
+milestone commit.
+
+#### Deferred alternative: low-smem FA2 decode specialization
+
+This is no longer a current P17 blocker. The accepted diagnostic
 [`PAP-20260715-PAGED-FA-SM-PROBE`](registry/experiments/PAP-20260715-PAGED-FA-SM-PROBE.json)
 shows that the current FA2 kernel uses about 82 KiB of shared memory per CTA,
-limiting residency to one CTA per SM. Revisit this work after lower-risk MPS
-quota, overlap, and existing-backend optimizations are exhausted, or when FA2
-remains on the measured PAP critical path.
+limiting residency to one CTA per SM. P17 instead uses vLLM's existing Triton
+paged-decode kernel with four KV splits; matched-shape and C4 E2E measurements
+removed the measured FA2-related TPOT gap without adding a new CUDA kernel.
+Revisit a low-smem FA2 specialization only if a future shape cannot use the
+Triton path or new evidence puts FA2 back on the critical path.
 
 The future specialization should be narrow: SM89, BF16, head dimension 128,
 paged-KV decode, and the P17 GQA shape. Its acceptance gates are at most 50 KiB
 shared memory per CTA, two resident CTAs per SM without a new register limit,
-output agreement with the existing FA2 path, lower 28-SM matched-shape latency,
-and no material full-92-SM or P17 E2E regression. Keep the existing FA2 kernel
-as the default until those gates pass.
+output agreement with the current Triton path, lower 28-SM matched-shape
+latency, and no material full-92-SM or P17 E2E regression.
 
 ## Paths and missing metadata
 

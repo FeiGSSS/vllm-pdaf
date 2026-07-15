@@ -18,7 +18,8 @@ Roles:
 - **Prefill** runs normal vLLM prompt processing and owns prompt paged KV blocks.
 - **Attention** is an internal service colocated with Prefill. It opens
   Prefill paged KV through CUDA IPC and appends decode K/V directly to those
-  Prefill-owned blocks.
+  Prefill-owned blocks. The P17 path runs vLLM's Triton paged-decode kernel
+  with one split-4 workspace shared by all layers in a decode step.
 - **Projection** runs the model decode path and sends current-token Q/K/V to
   Attention. It does not receive Prefill prompt KV bytes.
 

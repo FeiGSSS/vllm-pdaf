@@ -1484,7 +1484,7 @@ def test_unified_offload_exec_commit_waits_for_async_decode_token(
     )
     monkeypatch.setattr(
         attention_compute_module,
-        "_compute_unified_paged_flash_batch",
+        "_compute_unified_paged_attention_batch",
         lambda **kwargs: torch.tensor([[2.0, 0.0]]),
     )
     descriptor = PAPOffloadExecBatchDescriptor(
@@ -1571,10 +1571,31 @@ def test_attention_step_context_reuses_plan_and_publishes_once(
         lambda *args: reshape_calls.append(args),
         raising=False,
     )
+    workspace_builds = []
+    workspaces = []
+
+    original_workspace_builder = (
+        attention_compute_module.build_paged_decode_workspace
+    )
+
+    def build_workspace(query):
+        workspace = original_workspace_builder(query)
+        workspace_builds.append(workspace)
+        return workspace
+
+    def compute_attention(**kwargs):
+        workspaces.append(kwargs["workspace"])
+        return torch.tensor([[2.0, 0.0]])
+
     monkeypatch.setattr(
         attention_compute_module,
-        "_compute_unified_paged_flash_batch",
-        lambda **kwargs: torch.tensor([[2.0, 0.0]]),
+        "build_paged_decode_workspace",
+        build_workspace,
+    )
+    monkeypatch.setattr(
+        attention_compute_module,
+        "_compute_unified_paged_attention_batch",
+        compute_attention,
     )
     monkeypatch.setattr(
         kv_registry_module,
@@ -1613,6 +1634,9 @@ def test_attention_step_context_reuses_plan_and_publishes_once(
 
     assert len(reshape_calls) == 2
     assert reshape_calls[1][4].data_ptr() == reshape_calls[0][4].data_ptr()
+    assert len(workspace_builds) == 1
+    assert len(workspaces) == 2
+    assert all(workspace is workspace_builds[0] for workspace in workspaces)
     assert commits == [
         (
             "req-step",
@@ -1866,7 +1890,7 @@ def test_unified_offload_exec_overlap_step_does_not_commit(
     )
     monkeypatch.setattr(
         attention_compute_module,
-        "_compute_unified_paged_flash_batch",
+        "_compute_unified_paged_attention_batch",
         lambda **kwargs: torch.tensor([[2.0, 0.0]]),
     )
     monkeypatch.setattr(

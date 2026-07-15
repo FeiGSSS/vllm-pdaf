@@ -31,7 +31,8 @@ whole request.
 4. Projection runs the KV-unaware decode model path. For each step it sends
    Q/K/V to Attention and receives the attention output.
 5. Attention opens the Prefill-owned KV through CUDA IPC or NIXL, appends the
-   current decode K/V, runs paged FlashAttention, and returns the output.
+   current decode K/V, runs vLLM's Triton paged-decode kernel, and returns the
+   output.
 6. Sampled tokens, decode commits, ACKs, leases, and session drain close the
    request without transferring KV ownership to Projection.
 
@@ -82,7 +83,8 @@ Request routing selects a stable `(PA, Projection)` pair for a turn.
 - `attention/`: `runtime.py` owns the service-facing runtime;
   `execution.py` owns direct/combine mailbox execution; `peers.py` owns
   Projection membership, transports, and receiver threads; `dispatcher.py`
-  and `compute.py` own queueing and Attention compute.
+  and `compute.py` own queueing and Attention compute; `kernels.py` owns the
+  selected decode kernel and its step-level workspace.
 - `transport/`: backend-neutral contract plus NIXL; `local_fast.py` owns peer
   binding and lifecycle, while `local_fast_io.py` owns wire encoding and the
   send/receive hot path.
@@ -106,6 +108,13 @@ tests import `attention/`, `gateway/`, `kv/`, `lifecycle/`, `protocol/`,
 `topology/`, `transport/`, and surface-specific `integration/` owners directly.
 Historical experimental branches are reproduced from their Git commits and raw
 artifacts, not from selectable code paths in the current runtime.
+
+The P17 kernel selection is one main path, not a runtime experiment switch.
+`PAPAttentionStepContext` prepares block metadata and a fixed split-4 Triton
+workspace once per decode step, then reuses them across all model layers. The
+runtime does not retain the former per-layer FA2 fallback. Historical
+`paged_flash_*` trace field names remain stable so old and new runs can be
+compared without rewriting experiment data.
 
 Offline trace analysis and remote-Attention reports live under
 `benchmarks/pap/tooling/` and are invoked through `tools/pap_*`; the runtime

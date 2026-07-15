@@ -11,6 +11,11 @@ from typing import Any
 
 import torch
 
+from vllm.pap.attention.kernels import (
+    PAPPagedDecodeWorkspace,
+    build_paged_decode_workspace,
+    run_paged_decode_attention,
+)
 from vllm.pap.deferred_cuda_trace import (
     begin_deferred_cuda_span,
     end_deferred_cuda_span,
@@ -66,47 +71,17 @@ def _offload_exec_session(
     return session_request_id, session
 
 
-def _run_paged_flash_varlen(
-    *,
-    flash_attn_varlen_func: Any,
-    fa_version: int,
-    query: torch.Tensor,
-    key_cache: torch.Tensor,
-    value_cache: torch.Tensor,
-    metadata: PAPPagedFlashMetadata,
-    scale: float,
-    causal: bool,
-    return_softmax_lse: bool,
-) -> Any:
-    output = torch.empty_like(query)
-    return flash_attn_varlen_func(
-        q=query,
-        k=key_cache,
-        v=value_cache,
-        out=output,
-        cu_seqlens_q=metadata.cu_seqlens_q,
-        seqused_k=metadata.seq_lens,
-        max_seqlen_q=1,
-        max_seqlen_k=metadata.max_seq_len,
-        softmax_scale=float(scale),
-        causal=causal,
-        block_table=metadata.block_table,
-        softcap=0.0,
-        return_softmax_lse=return_softmax_lse,
-        fa_version=fa_version,
-    )
-
-
-def _compute_unified_paged_flash_batch(
+def _compute_unified_paged_attention_batch(
     *,
     query_batch: torch.Tensor,
     states: list[PAPUnifiedPagedKVState],
     scale: float,
     layer_name: str,
     metadata: PAPPagedFlashMetadata,
+    workspace: PAPPagedDecodeWorkspace,
     trace_stats: dict[str, float] | None = None,
 ) -> torch.Tensor | None:
-    """Single-source Prefill-owned paged FA compute (Stage 4 unified path)."""
+    """Run Prefill-owned paged decode Attention on one layer."""
     if not states:
         return None
     if not query_batch.is_cuda:
@@ -122,21 +97,8 @@ def _compute_unified_paged_flash_batch(
     if base_kv.device != query_batch.device:
         return None
 
-    try:
-        from vllm.v1.attention.backends.fa_utils import (
-            flash_attn_varlen_func,
-            get_flash_attn_version,
-            is_flash_attn_varlen_func_available,
-        )
-    except Exception:
-        return None
-    if not is_flash_attn_varlen_func_available():
-        return None
-
     if metadata.max_seq_len <= 0:
         return None
-
-    fa_version = get_flash_attn_version(head_size=int(query_batch.shape[-1]))
     key_cache, value_cache = base_kv.unbind(1)
     _log_kv_locality_profile(
         mode="unified",
@@ -154,7 +116,7 @@ def _compute_unified_paged_flash_batch(
         and torch.cuda.is_available()
     )
     if use_deferred_flash_trace:
-        deferred_flash_trace = begin_deferred_cuda_span(
+        deferred_attention_trace = begin_deferred_cuda_span(
             "paged_fa_gpu_ms",
             torch.cuda.current_stream(query_batch.device),
         )
@@ -171,35 +133,30 @@ def _compute_unified_paged_flash_batch(
         start_event.record(stream)
     if use_deferred_flash_trace:
         try:
-            result = _run_paged_flash_varlen(
-                flash_attn_varlen_func=flash_attn_varlen_func,
-                fa_version=fa_version,
+            output = run_paged_decode_attention(
                 query=query_batch,
                 key_cache=key_cache,
                 value_cache=value_cache,
                 metadata=metadata,
+                workspace=workspace,
                 scale=float(scale),
-                causal=True,
-                return_softmax_lse=False,
+                block_size=int(states[0].block_size),
             )
         finally:
-            end_deferred_cuda_span(deferred_flash_trace)
+            end_deferred_cuda_span(deferred_attention_trace)
     else:
-        result = _run_paged_flash_varlen(
-            flash_attn_varlen_func=flash_attn_varlen_func,
-            fa_version=fa_version,
+        output = run_paged_decode_attention(
             query=query_batch,
             key_cache=key_cache,
             value_cache=value_cache,
             metadata=metadata,
+            workspace=workspace,
             scale=float(scale),
-            causal=True,
-            return_softmax_lse=False,
+            block_size=int(states[0].block_size),
         )
     if end_event is not None:
         end_event.record(torch.cuda.current_stream(query_batch.device))
         end_event.synchronize()
-    output = result[0] if isinstance(result, tuple) else result
     if trace_stats is not None:
         paged_done_ns = time.perf_counter_ns()
         paged_wall_ms = (time.perf_counter() - paged_start) * 1000.0
@@ -248,7 +205,7 @@ def compute_offload_exec_batch_output(
     qkv_batch: torch.Tensor,
     trace_stats: dict[str, float] | None = None,
 ) -> torch.Tensor:
-    """Compute one OFFLOAD_EXEC attention output batch via paged FlashAttention."""
+    """Compute one OFFLOAD_EXEC output batch via paged decode Attention."""
 
     request_ids, steps, scales = _offload_exec_batch_rows(descriptor)
     if int(qkv_batch.shape[0]) != len(request_ids):
@@ -359,16 +316,22 @@ def compute_offload_exec_batch_output(
             trace_stats["metadata_build_ms"] += metadata_build_ms
             trace_stats["pre_compute_done_ns"] = float(time.perf_counter_ns())
 
-        unified_output = _compute_unified_paged_flash_batch(
+        if step_context.paged_decode_workspace is None:
+            step_context.paged_decode_workspace = build_paged_decode_workspace(
+                query_batch
+            )
+
+        unified_output = _compute_unified_paged_attention_batch(
             query_batch=query_batch,
             states=list(unified_states),
             scale=step_context.scale,
             layer_name=layer_name,
             metadata=step_context.metadata,
+            workspace=step_context.paged_decode_workspace,
             trace_stats=trace_stats,
         )
         if unified_output is None:
-            raise RuntimeError("PAP unified paged FlashAttention failed")
+            raise RuntimeError("PAP unified paged decode Attention failed")
         reshape_start = time.perf_counter() if trace_stats is not None else 0.0
         if unified_output.ndim == 3:
             unified_output = unified_output.reshape(batch_size, num_heads * head_dim)

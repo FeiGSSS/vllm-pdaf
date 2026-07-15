@@ -7,9 +7,12 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from threading import Lock, RLock
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
+
+if TYPE_CHECKING:
+    from vllm.pap.attention.kernels import PAPPagedDecodeWorkspace
 
 
 @dataclass
@@ -171,6 +174,7 @@ class PAPAttentionStepContext:
     scale: float
     slot_tensor: torch.Tensor | None = None
     metadata: Any | None = None
+    paged_decode_workspace: PAPPagedDecodeWorkspace | None = None
     completed_layers: set[str] = field(default_factory=set)
     kv_ready_published: bool = False
     lock: RLock = field(default_factory=RLock, repr=False)

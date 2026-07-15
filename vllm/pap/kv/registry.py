@@ -929,7 +929,7 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
             self._attention_step_slot_plan_builds += 1
 
     def record_attention_step_metadata_build(self) -> None:
-        """Record construction of one step-owned FlashAttention metadata."""
+        """Record construction of one step-owned paged-attention plan."""
         with self._lock:
             self._attention_step_metadata_builds += 1
 
