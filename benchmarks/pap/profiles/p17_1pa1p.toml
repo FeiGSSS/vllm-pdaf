@@ -85,6 +85,8 @@ direct_mailbox_output = true
 local_fast_stream_ordered = true
 local_fast_slot_count = 2
 decode_slot_plan_cache_limit = 256
+
+[runner]
 offload_exec_direct_qkv_send = true
 local_fast_batch_plan = true
 prompt_token_details = true

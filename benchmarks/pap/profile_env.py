@@ -66,6 +66,7 @@ def runner_environment(profile: Mapping[str, Any]) -> dict[str, str]:
     transport = _section(profile, "transport")
     mps = _section(profile, "mps")
     runtime = _section(profile, "runtime")
+    runner = _section(profile, "runner")
     audit = _section(profile, "audit")
 
     rounds = _integer(workload.get("rounds"), "workload.rounds", minimum=1)
@@ -247,22 +248,22 @@ def runner_environment(profile: Mapping[str, Any]) -> dict[str, str]:
             )
         ),
         "PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND": _bool(
-            runtime.get("offload_exec_direct_qkv_send"),
-            "runtime.offload_exec_direct_qkv_send",
+            runner.get("offload_exec_direct_qkv_send"),
+            "runner.offload_exec_direct_qkv_send",
         ),
         "PAP_LOCAL_FAST_BATCH_PLAN": _bool(
-            runtime.get("local_fast_batch_plan"), "runtime.local_fast_batch_plan"
+            runner.get("local_fast_batch_plan"), "runner.local_fast_batch_plan"
         ),
         "PAP_ENABLE_PROMPT_TOKENS_DETAILS": _bool(
-            runtime.get("prompt_token_details"), "runtime.prompt_token_details"
+            runner.get("prompt_token_details"), "runner.prompt_token_details"
         ),
         "PAP_PREFIX_CACHE_AUDIT": _bool(
-            runtime.get("prefix_cache_audit"), "runtime.prefix_cache_audit"
+            runner.get("prefix_cache_audit"), "runner.prefix_cache_audit"
         ),
         "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS": str(
             _integer(
-                runtime.get("unified_kv_decode_capacity_tokens"),
-                "runtime.unified_kv_decode_capacity_tokens",
+                runner.get("unified_kv_decode_capacity_tokens"),
+                "runner.unified_kv_decode_capacity_tokens",
                 minimum=1,
             )
         ),
