@@ -7,13 +7,13 @@ from vllm.pap.kv.metadata import (
     build_unified_paged_flash_metadata,
 )
 
-from vllm.pap.kv.state import (
-    PAPAttentionRegistry,
+from vllm.pap.kv.models import (
     PAPAttentionSession,
     PAPPrefillKVCacheCatalogEntry,
     PAPPrefillLayerReadiness,
     PAPUnifiedPagedKVState,
 )
+from vllm.pap.kv.state import PAPAttentionRegistry
 
 __all__ = [
     "PAPAttentionRegistry",

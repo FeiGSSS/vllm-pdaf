@@ -45,18 +45,7 @@ from vllm.model_executor.layers.mamba.ops.ssu_dispatch import (
 )
 from vllm.model_executor.model_loader import get_model_loader
 from vllm.multimodal import MULTIMODAL_REGISTRY
-from vllm.pap.config import reject_removed_pap_flags
-from vllm.pap.integration import (
-    PAPDecodeTokenBridge,
-    PAPProjectionRequestStore,
-    bind_projection_request_store,
-    build_projection_forward_context,
-    select_projection_request_ids,
-)
-from vllm.pap.topology import (
-    PAPProjectionPeerActivity,
-    sync_pap_projection_peer_activity,
-)
+from vllm.pap.integration import PAPModelRunnerAdapter
 from vllm.sequence import IntermediateTensors
 from vllm.tasks import SupportedTask
 from vllm.utils.math_utils import cdiv
@@ -144,7 +133,10 @@ def _pap_projection_critical_trace_enabled() -> bool:
 
 class GPUModelRunner(LoRAModelRunnerMixin):
     def __init__(self, vllm_config: VllmConfig, device: torch.device):
-        reject_removed_pap_flags(os.environ)
+        self.pap_runner = PAPModelRunnerAdapter.from_vllm_config(
+            vllm_config,
+            supports_async_sampled_tokens=True,
+        )
         self.vllm_config = vllm_config
         self.model_config = vllm_config.model_config
         self.cache_config = vllm_config.cache_config
@@ -274,11 +266,6 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
         # KV Connector if configured.
         self.kv_connector: KVConnector = NO_OP_KV_CONNECTOR
-        self.pap_projection_request_store: PAPProjectionRequestStore
-        bind_projection_request_store(self)
-        self.pap_offload_exec_activity_tracker: PAPProjectionPeerActivity | None = None
-        self.pap_decode_token_bridge = PAPDecodeTokenBridge()
-
         # For transferring state from execute_model to subsequent sample_tokens call.
         self.execute_model_state: ExecuteModelState | None = None
 
@@ -522,7 +509,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             )
 
         self.kv_caches: list[torch.Tensor] = []
-        if self._pap_projection_kv_unaware_process():
+        if self.pap_runner.projection_kv_unaware:
             logger.info(
                 "PAP Projection KV-unaware process binds metadata-only KV "
                 "placeholders without allocating KV cache tensors"
@@ -545,14 +532,6 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 self.vllm_config,
             )
         self.kv_connector = get_kv_connector(self.vllm_config, kv_caches_dict)
-
-    @staticmethod
-    def _pap_projection_kv_unaware_process() -> bool:
-        return os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower() in (
-            "1",
-            "true",
-            "yes",
-        )
 
     def _init_kv_zero_meta(self) -> None:
         """Build KV-block zeroing metadata; invoked from gpu_worker."""
@@ -792,11 +771,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         return cuda_graph_size
 
     def _remove_request(self, req_id: str) -> bool:
-        self.pap_decode_token_bridge.drain_request(
-            self.pap_projection_request_store,
-            req_id,
-        )
-        self.pap_projection_request_store.remove(req_id)
+        self.pap_runner.remove_request(req_id)
         # Call model_state.remove_request *before* req_states.remove_request
         # so the model_state can still look up the slot index.
         self.model_state.remove_request(req_id)
@@ -811,96 +786,6 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             self.prompt_logprobs_worker.remove_request(req_id)
         self.lora_state.remove_request(req_id)
         return True
-
-    def _add_pap_attention_endpoint(
-        self, req_id: str, kv_transfer_params: dict[str, Any] | None
-    ) -> None:
-        if not kv_transfer_params:
-            if os.environ.get("PAP_DEBUG_DECISION", "").lower() in (
-                "1",
-                "true",
-                "yes",
-                "on",
-            ):
-                logger.info(
-                    "PAP add endpoint skipped req_id=%s: empty kv params", req_id
-                )
-            return
-        if os.environ.get("PAP_DEBUG_DECISION", "").lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        ):
-            logger.info(
-                "PAP add endpoint req_id=%s kv_keys=%s",
-                req_id,
-                sorted(kv_transfer_params.keys()),
-            )
-        self.pap_projection_request_store.update(req_id, kv_transfer_params)
-
-    def _pap_request_ids_for_batch(
-        self,
-        input_batch: InputBatch,
-    ) -> frozenset[str]:
-        request_ids = tuple(input_batch.req_ids[: input_batch.num_reqs])
-        ktc = self.vllm_config.kv_transfer_config
-        extra = ktc.kv_connector_extra_config if ktc is not None else {}
-        pap_enabled = extra.get("pap_enabled", False) if extra else False
-        return select_projection_request_ids(
-            self.pap_projection_request_store,
-            request_ids,
-            globally_enabled=bool(pap_enabled),
-        )
-
-    def _pap_enabled_for_batch(self, input_batch: InputBatch) -> bool:
-        return bool(self._pap_request_ids_for_batch(input_batch))
-
-    def _pap_forward_context_kwargs(
-        self,
-        input_batch: InputBatch,
-        finished_request_ids: Iterable[str] = (),
-    ) -> dict[str, Any]:
-        pap_enabled = self._pap_enabled_for_batch(input_batch)
-        kv_transfer_config = self.vllm_config.kv_transfer_config
-        attention_tcp_endpoint = (
-            kv_transfer_config.get_from_extra_config(
-                "pap_attention_tcp_endpoint", None
-            )
-            if kv_transfer_config is not None
-            else None
-        )
-        return build_projection_forward_context(
-            self.pap_projection_request_store,
-            request_ids=input_batch.req_ids[: input_batch.num_reqs],
-            num_scheduled_tokens=input_batch.num_scheduled_tokens[
-                : input_batch.num_reqs
-            ],
-            num_actual_tokens=input_batch.num_tokens,
-            positions=input_batch.positions,
-            seq_lens_cpu_upper_bound=input_batch.seq_lens_cpu_upper_bound[
-                : input_batch.num_reqs
-            ].tolist(),
-            pap_enabled=pap_enabled,
-            attention_tcp_endpoint=attention_tcp_endpoint,
-            block_size=self.vllm_config.cache_config.block_size,
-            finished_request_ids=finished_request_ids,
-        )
-
-    def _pap_sampled_token_callback(
-        self,
-        input_batch: InputBatch,
-    ) -> Callable[[ModelRunnerOutput], None] | None:
-        pap_request_ids = self._pap_request_ids_for_batch(input_batch)
-        request_ids = tuple(input_batch.req_ids[: input_batch.num_reqs])
-        return self.pap_decode_token_bridge.build_callback(
-            self.pap_projection_request_store,
-            pap_request_ids=pap_request_ids,
-            request_ids=request_ids,
-            seq_lens_cpu_upper_bound=input_batch.seq_lens_cpu_upper_bound[
-                : input_batch.num_reqs
-            ].tolist(),
-        )
 
     def finish_requests(self, scheduler_output: SchedulerOutput) -> None:
         finished_req_ids = scheduler_output.finished_req_ids
@@ -933,7 +818,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             # chunk. Remove old state so it can be cleanly re-added below
             # with the updated prompt_token_ids and mm_features.
             self._remove_request(req_id)
-            self._add_pap_attention_endpoint(req_id, new_req_data.kv_transfer_params)
+            self.pap_runner.update_request(req_id, new_req_data.kv_transfer_params)
 
             prompt_len = len(new_req_data.prompt_token_ids)
             sampling_params = new_req_data.sampling_params
@@ -1017,18 +902,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # Decode first, then prefill.
         # batch_idx -> req_id
         req_ids = sorted(num_tokens_per_req, key=num_tokens_per_req.get)  # type: ignore[arg-type]
-        if os.environ.get("PAP_DEBUG_DECISION", "").lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        ):
-            logger.info(
-                "PAP prepare_inputs req_ids=%s endpoint_keys=%s num_tokens=%s",
-                tuple(req_ids[:4]),
-                tuple(list(self.pap_attention_tcp_endpoint_by_req_id.keys())[:4]),
-                {key: num_tokens_per_req[key] for key in req_ids[:4]},
-            )
+        self.pap_runner.log_prepared_batch(req_ids, num_tokens_per_req)
         numtoks_iter = map(num_tokens_per_req.get, req_ids)
         num_scheduled_tokens = np.fromiter(numtoks_iter, dtype=np.int32, count=num_reqs)
 
@@ -1311,10 +1185,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             self.add_requests(scheduler_output)
             self.update_requests(scheduler_output)
             self.block_tables.apply_staged_writes()
-            self.pap_offload_exec_activity_tracker = sync_pap_projection_peer_activity(
-                tracker=self.pap_offload_exec_activity_tracker,
-                request_ids=scheduler_output.num_scheduled_tokens.keys(),
-                endpoint_by_request=self.pap_attention_endpoint_by_req_id,
+            self.pap_runner.sync_peer_activity(
+                scheduler_output.num_scheduled_tokens.keys()
             )
             if scheduler_output.total_num_scheduled_tokens == 0:
                 # No need to run the model.
@@ -1504,32 +1376,18 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             preempted_req_ids = scheduler_output.preempted_req_ids
             if preempted_req_ids:
                 pap_finished_req_ids = pap_finished_req_ids.union(preempted_req_ids)
-            pap_additional_kwargs = self._pap_forward_context_kwargs(
-                input_batch,
-                pap_finished_req_ids,
+            pap_additional_kwargs = self.pap_runner.build_forward_context(
+                request_ids=input_batch.req_ids[: input_batch.num_reqs],
+                num_scheduled_tokens=input_batch.num_scheduled_tokens[
+                    : input_batch.num_reqs
+                ],
+                num_actual_tokens=input_batch.num_tokens,
+                positions=input_batch.positions,
+                seq_lens_cpu_upper_bound=input_batch.seq_lens_cpu_upper_bound[
+                    : input_batch.num_reqs
+                ].tolist(),
+                finished_request_ids=pap_finished_req_ids,
             )
-            if os.environ.get("PAP_DEBUG_DECISION", "").lower() in (
-                "1",
-                "true",
-                "yes",
-                "on",
-            ):
-                logger.info(
-                    "PAP forward context enabled=%s req_ids=%s tcp_keys=%s "
-                    "installed=%s",
-                    pap_additional_kwargs["pap_enabled"],
-                    pap_additional_kwargs["pap_request_ids"][:4],
-                    tuple(
-                        pap_additional_kwargs[
-                            "pap_attention_tcp_endpoint_by_request"
-                        ].keys()
-                    ),
-                    tuple(
-                        pap_additional_kwargs[
-                            "pap_attention_kv_installed_by_request"
-                        ]
-                    ),
-                )
             with set_forward_context(
                 attn_metadata,
                 self.vllm_config,
@@ -1713,7 +1571,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             num_sampled_tokens=num_sampled,
             main_stream=self.main_stream,
             copy_stream=self.output_copy_stream,
-            output_ready_callback=self._pap_sampled_token_callback(input_batch),
+            output_ready_callback=self.pap_runner.sampled_token_callback(
+                request_ids=input_batch.req_ids[: input_batch.num_reqs],
+                seq_lens_cpu_upper_bound=input_batch.seq_lens_cpu_upper_bound[
+                    : input_batch.num_reqs
+                ].tolist(),
+            ),
         )
 
         mm_inputs: tuple[list[torch.Tensor], torch.Tensor] | None = None
@@ -1835,7 +1698,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         """Release GPU tensors (model weights, KV caches, workspace) so that
         memory is reclaimable when running in the same process."""
         torch.accelerator.synchronize()
-        self.pap_decode_token_bridge.shutdown()
+        self.pap_runner.shutdown()
         if hasattr(self, "kv_caches"):
             self.kv_caches.clear()
         if hasattr(self, "attn_groups"):

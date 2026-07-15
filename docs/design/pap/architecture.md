@@ -57,23 +57,27 @@ Request routing selects a stable `(PA, Projection)` pair for a turn.
 
 - `config.py`: typed topology, placement, transport, MPS, lifecycle, and
   feature configuration; retired selectors fail closed.
-- `integration/`: typed request metadata, Projection request state, batch
-  adapters, and the asynchronous sampled-token bridge shared with vLLM.
+- `integration/`: typed request metadata plus one model-runner adapter owning
+  Projection request state, forward-context construction, peer activity, and
+  the asynchronous sampled-token bridge shared with vLLM.
 - `model/`: typed forward-batch access, Projection Attention execution, and
   Prefill sealed-KV publication used by model implementations.
 - `protocol/`: wire models, descriptors, sealed KV codec, and transport
   contracts.
 - `topology/`: route groups and Projection peer membership.
 - `lifecycle/`: asynchronous sampled tokens, decode commits, ACKs, and leases.
-- `kv/`: sealed handoff, Prefill-owned state, and paged metadata.
-- `attention/`: direct/combine dispatch and compute runtime.
+- `kv/`: sealed handoff, Prefill-owned registry state, paged metadata, data
+  models, CUDA IPC opening, and optional KV observability.
+- `attention/`: the service-facing runtime façade plus direct/combine dispatch
+  and compute runtime.
 - `transport/`: backend-neutral contract plus `local_fast` and NIXL backends.
-- `service.py`: Attention HTTP/TCP composition and service lifecycle.
+- `service.py`: thin Attention HTTP/TCP and transport composition.
 
 `attention_executor.py`, `remote_attention.py`, `shadow_attention.py`, and old
-client modules may remain compatibility façades. Qwen3 delegates its PAP model
-path to `model/`; none of these entry points define alternate runtime
-algorithms.
+client modules may remain compatibility façades. Both vLLM model runners call
+the same `integration/` owner; V1 fails closed for PAP while V2 provides the
+asynchronous sampled-token callback. Qwen3 delegates its PAP model path to
+`model/`; none of these entry points define alternate runtime algorithms.
 
 ## Compatibility rule
 

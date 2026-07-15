@@ -2,9 +2,14 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """PAP Attention execution primitives."""
 
+from vllm.pap.attention.controller import PAPAttentionRuntime
 from vllm.pap.attention.dispatcher import (
     PAPAttentionDispatcher,
     PAPAttentionWorkItem,
 )
 
-__all__ = ["PAPAttentionDispatcher", "PAPAttentionWorkItem"]
+__all__ = [
+    "PAPAttentionDispatcher",
+    "PAPAttentionRuntime",
+    "PAPAttentionWorkItem",
+]

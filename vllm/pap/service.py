@@ -23,6 +23,7 @@ from fastapi import FastAPI, HTTPException
 
 from vllm.pap.attention import (
     PAPAttentionDispatcher,
+    PAPAttentionRuntime,
     PAPAttentionWorkItem,
 )
 from vllm.pap.config import (
@@ -37,6 +38,8 @@ from vllm.pap.protocol import (
 from vllm.pap.deferred_cuda_trace import deferred_cuda_trace_snapshot
 from vllm.pap.runtime_cuda_context_audit import write_runtime_cuda_context_audit
 
+# Retain the historical ``vllm.pap.attention_executor`` symbol surface while
+# service composition itself depends on ``PAPAttentionRuntime``.
 from vllm.pap.attention.compute import (
     _combine_offload_exec_outputs,
     _compute_unified_paged_flash_batch,
@@ -70,6 +73,7 @@ from vllm.pap.kv.metadata import (
     reset_unified_paged_flash_metadata_cache,
     unified_paged_flash_metadata_cache_stats,
 )
+from vllm.pap.kv.handoff import accept_prefill_kv_handoff
 from vllm.pap.kv.state import (
     PAPAttentionRegistry,
     PAPAttentionSession,
@@ -116,48 +120,7 @@ def compute_binary_attention_response(
     payload: bytes,
 ) -> bytes:
     """Handle the sealed KV handoff wire protocol."""
-    from vllm.pap.protocol.wire import (
-        deserialize_tensor_bundle,
-        serialize_tensor_bundle,
-    )
-
-    metadata, _tensors = deserialize_tensor_bundle(payload)
-    command = str(metadata.get("command", ""))
-    if command == "register_prefill_kv_catalog":
-        descriptor = PAPPrefillKVCacheCatalogDescriptor.from_dict(
-            metadata["descriptor"]
-        )
-        kv_cache = open_ipc_tensor_handle(descriptor.kv_cache)
-        installed = registry.register_prefill_kv_catalog(
-            descriptor=descriptor,
-            kv_cache=kv_cache,
-        )
-        return serialize_tensor_bundle(
-            {
-                "status": "registered" if installed else "existing",
-                "catalog_id": descriptor.catalog_id,
-                "layer_name": descriptor.layer_name,
-            },
-            {},
-        )
-    if command == "publish_prefill_kv_manifest":
-        manifest = PAPPrefillKVSessionManifest.from_dict(metadata["manifest"])
-        prefix_len = registry.install_prefill_kv_session_manifest(
-            manifest=manifest,
-            ready_event=open_prefill_manifest_event(manifest),
-        )
-        return serialize_tensor_bundle(
-            {
-                "status": "ready",
-                "request_id": manifest.request_id,
-                "catalog_id": manifest.catalog_id,
-                "prefix_len": prefix_len,
-            },
-            {},
-        )
-    raise ValueError(
-        f"unsupported PAP wire command {command!r}; use sealed KV handoff"
-    )
+    return accept_prefill_kv_handoff(registry, payload)
 
 
 def _recv_exact(sock: Any, size: int) -> bytes:
@@ -219,12 +182,13 @@ def create_app(
     config: PAPRuntimeConfig | None = None,
 ) -> FastAPI:
     runtime_config = config or PAPRuntimeConfig.from_env()
-    registry = registry or PAPAttentionRegistry(runtime_config=runtime_config)
-    attention_config = runtime_config.attention
-    dispatch_mode = attention_config.dispatch_mode.value
-    active_peer_tracking = attention_config.active_peer_tracking
+    runtime = PAPAttentionRuntime(config=runtime_config, registry=registry)
+    registry = runtime.registry
+    dispatch_mode = runtime.dispatch_mode
+    active_peer_tracking = runtime.active_peer_tracking
     app = FastAPI(title="PAP Attention Executor")
     app.state.pap_config = runtime_config
+    app.state.pap_runtime = runtime
     app.state.registry = registry
     app.state.offload_exec_transport = None
     app.state.offload_exec_transports = {}
@@ -239,39 +203,20 @@ def create_app(
     app.state.offload_exec_local_rank = 0
     app.state.offload_exec_actor_base = "attention"
     app.state.offload_exec_dispatch_mode = dispatch_mode
-    if dispatch_mode == "central_combine":
-        app.state.offload_exec_dispatcher = PAPAttentionDispatcher(
-            batch_handler=lambda items: _execute_offload_exec_work_items(
-                registry=registry,
-                items=items,
-            ),
-            compatibility_key=_offload_exec_work_item_compatibility_key,
-            max_queue_size=attention_config.dispatch_queue_size,
-            coalesce_timeout_s=attention_config.combine_wait_us / 1_000_000.0,
-        )
-    else:
-        app.state.offload_exec_dispatcher = None
+    app.state.offload_exec_dispatcher = runtime.dispatcher
 
     def sync_dispatcher_membership() -> None:
         if dispatch_mode != "central_combine":
             return
-        dispatcher = app.state.offload_exec_dispatcher
-        assert dispatcher is not None
         if active_peer_tracking:
             source_ids = set(app.state.offload_exec_active_source_ids)
         else:
             source_ids = set(app.state.offload_exec_source_ids.values())
-        dispatcher.set_expected_group_size(max(1, len(source_ids)))
-        dispatcher.set_preferred_peer_id(min(source_ids) if source_ids else None)
+        runtime.sync_dispatcher_membership(source_ids)
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        return {
-            "status": "ok",
-            "role": "attention",
-            "sessions": registry.size(),
-            "dispatch_mode": dispatch_mode,
-        }
+        return runtime.health()
 
     @app.get("/v1/pap/attention/stats")
     async def attention_stats() -> dict[str, Any]:
@@ -282,52 +227,25 @@ def create_app(
             )
             membership_updates = app.state.offload_exec_membership_updates
             membership_stale_updates = app.state.offload_exec_membership_stale_updates
-        stats = {
-            "attention_dispatch_mode": dispatch_mode,
-            "attention_active_peer_tracking": active_peer_tracking,
+        membership_stats = {
             "attention_active_source_ids": active_source_ids,
             "attention_membership_generations": membership_generations,
             "attention_membership_updates": membership_updates,
             "attention_membership_stale_updates": membership_stale_updates,
-            **registry.decode_append_fast_path_stats(),
-            **registry.decode_token_stats(),
-            **registry.offload_exec_dispatch_stats(),
         }
-        stats.update(
-            {
-                f"unified_md_{key}": value
-                for key, value in unified_paged_flash_metadata_cache_stats().items()
-            }
-        )
-        dispatcher = app.state.offload_exec_dispatcher
-        if dispatcher is not None:
-            stats.update(dispatcher.stats())
-        if _DEFERRED_CUDA_TRACE_ENABLED:
-            active_sessions = registry.size()
-            if active_sessions == 0:
-                trace_snapshot = deferred_cuda_trace_snapshot(blocking=True)
-                trace_snapshot["scope"] = "attention_process_critical_chain"
-                stats["deferred_cuda_trace"] = trace_snapshot
-            else:
-                stats["deferred_cuda_trace"] = {
-                    "enabled": True,
-                    "scope": "attention_process_critical_chain",
-                    "status": "waiting_for_session_drain",
-                    "active_sessions": active_sessions,
-                }
-        return stats
+        return runtime.stats(membership_stats)
 
     @app.post("/v1/pap/attention/register")
     async def register(
         registration: PAPAttentionRegistration,
     ) -> dict[str, Any]:
-        return registry.register_prefill_kv(registration).__dict__
+        return runtime.register_prefill_kv(registration)
 
     def record_one_decode_token(
         request: PAPDecodeTokenRequest,
     ) -> dict[str, Any]:
         try:
-            status = registry.record_decode_token(
+            status = runtime.record_decode_token(
                 request_id=request.request_id,
                 new_seq_len=request.new_seq_len,
                 token_id=request.token_id,
@@ -362,7 +280,7 @@ def create_app(
 
     @app.get("/v1/pap/attention/sessions/{request_id}")
     async def get_session(request_id: str) -> dict[str, Any]:
-        session = registry.get_session(request_id)
+        session = runtime.get_session(request_id)
         if session is None:
             raise HTTPException(status_code=404, detail="unknown PAP request")
         return session.__dict__
@@ -504,16 +422,14 @@ def create_app(
         }
 
     async def stop_offload_exec_dispatcher() -> None:
-        dispatcher = app.state.offload_exec_dispatcher
-        if dispatcher is not None:
-            dispatcher.stop(drain=True, timeout=5.0)
+        runtime.stop()
 
     app.add_event_handler("shutdown", stop_offload_exec_dispatcher)
 
 
     @app.get("/v1/pap/attention/sessions")
     async def get_active_session_count() -> dict[str, int]:
-        return {"active_sessions": registry.active_session_count()}
+        return {"active_sessions": runtime.active_session_count()}
 
     @app.get("/v1/pap/attention/sessions/{request_id}/prefill-readiness")
     async def get_prefill_readiness(request_id: str) -> dict[str, Any]:
@@ -521,13 +437,13 @@ def create_app(
             "request_id": request_id,
             "layers": [
                 readiness.__dict__
-                for readiness in registry.get_prefill_readiness(request_id)
+                for readiness in runtime.get_prefill_readiness(request_id)
             ],
         }
 
     @app.delete("/v1/pap/attention/sessions/{request_id}")
     def release_session(request_id: str) -> dict[str, Any]:
-        return {"released": registry.release_session(request_id)}
+        return {"released": runtime.release_session(request_id)}
 
     return app
 

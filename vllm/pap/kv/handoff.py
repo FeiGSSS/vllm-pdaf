@@ -17,6 +17,7 @@ from torch.multiprocessing.reductions import reduce_tensor
 
 if TYPE_CHECKING:
     from vllm.pap.protocol import PAPCudaIPCTensorHandle
+    from vllm.pap.kv.state import PAPAttentionRegistry
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,63 @@ def _make_cuda_ipc_tensor_handle(
         dtype=str(tensor.dtype).removeprefix("torch."),
         shape=tuple(int(dim) for dim in tensor.shape),
         ipc_handle={_gpu_uuid_for_tensor(tensor): tuple(ipc_args)},
+    )
+
+
+def accept_prefill_kv_handoff(
+    registry: PAPAttentionRegistry,
+    payload: bytes,
+) -> bytes:
+    """Install one sealed Prefill KV catalog or request manifest."""
+    from vllm.pap.kv.ipc import (
+        open_ipc_tensor_handle,
+        open_prefill_manifest_event,
+    )
+    from vllm.pap.protocol import (
+        PAPPrefillKVCacheCatalogDescriptor,
+        PAPPrefillKVSessionManifest,
+    )
+    from vllm.pap.protocol.wire import (
+        deserialize_tensor_bundle,
+        serialize_tensor_bundle,
+    )
+
+    metadata, _tensors = deserialize_tensor_bundle(payload)
+    command = str(metadata.get("command", ""))
+    if command == "register_prefill_kv_catalog":
+        descriptor = PAPPrefillKVCacheCatalogDescriptor.from_dict(
+            metadata["descriptor"]
+        )
+        kv_cache = open_ipc_tensor_handle(descriptor.kv_cache)
+        installed = registry.register_prefill_kv_catalog(
+            descriptor=descriptor,
+            kv_cache=kv_cache,
+        )
+        return serialize_tensor_bundle(
+            {
+                "status": "registered" if installed else "existing",
+                "catalog_id": descriptor.catalog_id,
+                "layer_name": descriptor.layer_name,
+            },
+            {},
+        )
+    if command == "publish_prefill_kv_manifest":
+        manifest = PAPPrefillKVSessionManifest.from_dict(metadata["manifest"])
+        prefix_len = registry.install_prefill_kv_session_manifest(
+            manifest=manifest,
+            ready_event=open_prefill_manifest_event(manifest),
+        )
+        return serialize_tensor_bundle(
+            {
+                "status": "ready",
+                "request_id": manifest.request_id,
+                "catalog_id": manifest.catalog_id,
+                "prefix_len": prefix_len,
+            },
+            {},
+        )
+    raise ValueError(
+        f"unsupported PAP wire command {command!r}; use sealed KV handoff"
     )
 
 
@@ -266,6 +324,7 @@ def publish_prefill_kv_session_manifest(
 
 
 __all__ = [
+    "accept_prefill_kv_handoff",
     "publish_prefill_kv_session_manifest",
     "register_prefill_kv_catalog",
 ]

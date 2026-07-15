@@ -106,16 +106,7 @@ from vllm.multimodal.inputs import (
     PlaceholderRange,
 )
 from vllm.multimodal.utils import get_mm_features_in_window, group_and_batch_mm_kwargs
-from vllm.pap.integration import (
-    PAPProjectionRequestStore,
-    bind_projection_request_store,
-    build_projection_forward_context,
-    select_projection_request_ids,
-)
-from vllm.pap.topology import (
-    PAPProjectionPeerActivity,
-    sync_pap_projection_peer_activity,
-)
+from vllm.pap.integration import PAPModelRunnerAdapter
 from vllm.platforms import current_platform
 from vllm.pooling_params import PoolingParams
 from vllm.sampling_params import SamplingType
@@ -859,9 +850,10 @@ class GPUModelRunner(
         self._draft_token_ids: list[list[int]] | torch.Tensor | None = None
         self._draft_probs: torch.Tensor | None = None
         self._draft_prob_req_ids: list[str] | None = None
-        self.pap_projection_request_store: PAPProjectionRequestStore
-        bind_projection_request_store(self)
-        self.pap_offload_exec_activity_tracker: PAPProjectionPeerActivity | None = None
+        self.pap_runner = PAPModelRunnerAdapter.from_vllm_config(
+            self.vllm_config,
+            supports_async_sampled_tokens=False,
+        )
         # N-gram GPU path: async D2H buffer/event for per-request valid draft counts.
         self._num_valid_draft_tokens: torch.Tensor | None = None
         self._num_valid_draft_tokens_cpu: torch.Tensor | None = None
@@ -1150,93 +1142,6 @@ class GPUModelRunner(
             self.async_output_copy_stream = stream
         return stream
 
-    def _remove_pap_request(self, req_id: str) -> None:
-        self.pap_projection_request_store.remove(req_id)
-
-    def _add_pap_attention_endpoint(
-        self, req_id: str, kv_transfer_params: dict[str, Any] | None
-    ) -> None:
-        if not kv_transfer_params:
-            if os.environ.get("PAP_DEBUG_DECISION", "").lower() in (
-                "1",
-                "true",
-                "yes",
-                "on",
-            ):
-                logger.info(
-                    "PAP add endpoint skipped req_id=%s: empty kv params", req_id
-                )
-            return
-        if os.environ.get("PAP_DEBUG_DECISION", "").lower() in (
-            "1",
-            "true",
-            "yes",
-            "on",
-        ):
-            logger.info(
-                "PAP add endpoint req_id=%s kv_keys=%s",
-                req_id,
-                sorted(kv_transfer_params.keys()),
-            )
-        self.pap_projection_request_store.update(req_id, kv_transfer_params)
-
-    def _pap_enabled_for_request_ids(self, request_ids: Sequence[str]) -> bool:
-        ktc = self.vllm_config.kv_transfer_config
-        extra = ktc.kv_connector_extra_config if ktc is not None else {}
-        pap_enabled = extra.get("pap_enabled", False) if extra else False
-        return bool(
-            select_projection_request_ids(
-                self.pap_projection_request_store,
-                request_ids,
-                globally_enabled=bool(pap_enabled),
-            )
-        )
-
-    def _pap_forward_context_kwargs(
-        self,
-        request_ids: Sequence[str],
-        num_scheduled_tokens: Sequence[int],
-        num_actual_tokens: int,
-        positions: torch.Tensor,
-        seq_lens_cpu_upper_bound: Sequence[int],
-        finished_request_ids: Iterable[str] = (),
-    ) -> dict[str, Any]:
-        request_ids_tuple = tuple(str(req_id) for req_id in request_ids)
-        pap_enabled = self._pap_enabled_for_request_ids(request_ids_tuple)
-        if pap_enabled:
-            raise RuntimeError(
-                "PAP asynchronous decode-token delivery requires the V2 model "
-                "runner; set VLLM_USE_V2_MODEL_RUNNER=1"
-            )
-        kv_transfer_config = self.vllm_config.kv_transfer_config
-        attention_tcp_endpoint = (
-            kv_transfer_config.get_from_extra_config(
-                "pap_attention_tcp_endpoint", None
-            )
-            if kv_transfer_config is not None
-            else None
-        )
-        return build_projection_forward_context(
-            self.pap_projection_request_store,
-            request_ids=request_ids_tuple,
-            num_scheduled_tokens=num_scheduled_tokens,
-            num_actual_tokens=num_actual_tokens,
-            positions=positions,
-            seq_lens_cpu_upper_bound=seq_lens_cpu_upper_bound,
-            pap_enabled=pap_enabled,
-            attention_tcp_endpoint=attention_tcp_endpoint,
-            block_size=self.vllm_config.cache_config.block_size,
-            finished_request_ids=finished_request_ids,
-        )
-
-    @staticmethod
-    def _pap_projection_kv_unaware_process() -> bool:
-        return os.environ.get("PAP_PROJECTION_KV_UNAWARE", "0").lower() in (
-            "1",
-            "true",
-            "yes",
-        )
-
     def _update_states(self, scheduler_output: "SchedulerOutput") -> Callable | None:
         """Update the cached states and the persistent batch with the scheduler
         output.
@@ -1249,7 +1154,7 @@ class GPUModelRunner(
         """
         # Remove finished requests from the cached states.
         for req_id in scheduler_output.finished_req_ids:
-            self._remove_pap_request(req_id)
+            self.pap_runner.remove_request(req_id)
             self.requests.pop(req_id, None)
             self.num_prompt_logprobs.pop(req_id, None)
         self.late_interaction_runner.on_requests_finished(
@@ -1310,13 +1215,13 @@ class GPUModelRunner(
             req_id = new_req_data.req_id
             if req_id in self.requests:
                 # For streaming case only.
-                self._add_pap_attention_endpoint(
+                self.pap_runner.update_request(
                     req_id, new_req_data.kv_transfer_params
                 )
                 req_state = self._update_streaming_request(req_id, new_req_data)
                 reqs_to_add.append(req_state)
                 continue
-            self._add_pap_attention_endpoint(req_id, new_req_data.kv_transfer_params)
+            self.pap_runner.update_request(req_id, new_req_data.kv_transfer_params)
 
             sampling_params = new_req_data.sampling_params
             pooling_params = new_req_data.pooling_params
@@ -1565,10 +1470,8 @@ class GPUModelRunner(
         self._may_reorder_batch(scheduler_output)
         # Refresh batch metadata with any pending updates.
         self.input_batch.refresh_metadata()
-        self.pap_offload_exec_activity_tracker = sync_pap_projection_peer_activity(
-            tracker=self.pap_offload_exec_activity_tracker,
-            request_ids=self.input_batch.req_id_to_index.keys(),
-            endpoint_by_request=self.pap_attention_endpoint_by_req_id,
+        self.pap_runner.sync_peer_activity(
+            self.input_batch.req_id_to_index.keys()
         )
 
         # Incrementally update ngram_gpu tensors after batch is stable
@@ -4441,34 +4344,16 @@ class GPUModelRunner(
             preempted_req_ids = scheduler_output.preempted_req_ids
             if preempted_req_ids:
                 pap_finished_req_ids = pap_finished_req_ids.union(preempted_req_ids)
-            pap_additional_kwargs = self._pap_forward_context_kwargs(
-                req_ids,
-                num_scheduled_tokens_np,
-                num_tokens_unpadded,
-                positions,
-                self.optimistic_seq_lens_cpu[:num_reqs].tolist(),
-                pap_finished_req_ids,
+            pap_additional_kwargs = self.pap_runner.build_forward_context(
+                request_ids=req_ids,
+                num_scheduled_tokens=num_scheduled_tokens_np,
+                num_actual_tokens=num_tokens_unpadded,
+                positions=positions,
+                seq_lens_cpu_upper_bound=(
+                    self.optimistic_seq_lens_cpu[:num_reqs].tolist()
+                ),
+                finished_request_ids=pap_finished_req_ids,
             )
-            if os.environ.get("PAP_DEBUG_DECISION", "").lower() in (
-                "1",
-                "true",
-                "yes",
-                "on",
-            ):
-                logger.info(
-                    "PAP forward context enabled=%s req_ids=%s tcp_keys=%s "
-                    "installed=%s",
-                    pap_additional_kwargs["pap_enabled"],
-                    pap_additional_kwargs["pap_request_ids"][:4],
-                    tuple(
-                        pap_additional_kwargs[
-                            "pap_attention_tcp_endpoint_by_request"
-                        ].keys()
-                    ),
-                    tuple(
-                        pap_additional_kwargs["pap_attention_kv_installed_by_request"]
-                    ),
-                )
 
         # Set cudagraph mode to none if calc_kv_scales is true.
         # KV scales calculation involves dynamic operations that are incompatible
@@ -6621,6 +6506,7 @@ class GPUModelRunner(
         from vllm.model_executor.layers.rotary_embedding import _ROPE_DICT
         from vllm.v1.worker.workspace import reset_workspace_manager
 
+        self.pap_runner.shutdown()
         # Calls torch.accelerator.synchronize()
         self._cleanup_profiling_kv_cache()
         if current_platform.is_rocm():

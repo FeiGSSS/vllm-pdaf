@@ -19,13 +19,14 @@ from vllm.pap.kv.metadata import (
     PAPPagedFlashMetadata,
     build_unified_paged_flash_metadata,
 )
+from vllm.pap.kv.models import PAPAttentionSession, PAPUnifiedPagedKVState
+from vllm.pap.kv.observability import (
+    log_kv_locality_profile as _log_kv_locality_profile,
+)
 from vllm.pap.kv.state import (
     PAPAttentionRegistry,
-    PAPAttentionSession,
-    PAPUnifiedPagedKVState,
     _DECODE_COMMIT_PATH,
     _DEFERRED_CUDA_TRACE_ENABLED,
-    _log_kv_locality_profile,
     _prefill_control_endpoint,
 )
 from vllm.pap.protocol import pap_offload_exec_trace_id

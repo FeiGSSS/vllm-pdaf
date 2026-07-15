@@ -12,9 +12,11 @@ from vllm.pap.integration.request import (
     PAPRequestMetadata,
     bind_projection_request_store,
 )
+from vllm.pap.integration.runner import PAPModelRunnerAdapter
 
 __all__ = [
     "PAPDecodeTokenBridge",
+    "PAPModelRunnerAdapter",
     "PAPProjectionRequestStore",
     "PAPRequestMetadata",
     "bind_projection_request_store",

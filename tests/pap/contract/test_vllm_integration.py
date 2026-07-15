@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from types import MethodType, SimpleNamespace
+from types import SimpleNamespace
 
 import pytest
 
 from vllm.pap.integration import (
     PAPDecodeTokenBridge,
+    PAPModelRunnerAdapter,
     bind_projection_request_store,
     build_projection_forward_context,
     select_projection_request_ids,
@@ -46,14 +47,29 @@ class _DecodeTokenClient:
         self._events.append("shutdown")
 
 
+def _runner_adapter(
+    *,
+    supports_async_sampled_tokens: bool,
+    globally_enabled: bool = False,
+) -> PAPModelRunnerAdapter:
+    return PAPModelRunnerAdapter(
+        globally_enabled=globally_enabled,
+        attention_tcp_endpoint=None,
+        block_size=16,
+        supports_async_sampled_tokens=supports_async_sampled_tokens,
+        projection_kv_unaware=True,
+        debug_decision=False,
+    )
+
+
 def _v2_runner_for_removal(
     *,
     flush_succeeds: bool,
 ) -> tuple[GPUModelRunnerV2, list[str]]:
     events: list[str] = []
     runner = object.__new__(GPUModelRunnerV2)
-    store = bind_projection_request_store(runner)
-    store.update(
+    runner.pap_runner = _runner_adapter(supports_async_sampled_tokens=True)
+    runner.pap_runner.store.update(
         "req-a",
         {
             "pap_attention_tcp_endpoint": "tcp",
@@ -65,7 +81,7 @@ def _v2_runner_for_removal(
             "pap_attention_kv_installed": True,
         },
     )
-    runner.pap_decode_token_bridge = PAPDecodeTokenBridge(
+    runner.pap_runner.decode_token_bridge = PAPDecodeTokenBridge(
         client=_DecodeTokenClient(
             events,
             flush_succeeds=flush_succeeds,
@@ -77,27 +93,31 @@ def _v2_runner_for_removal(
 
 
 @pytest.mark.parametrize("runner_type", [GPUModelRunnerV1, GPUModelRunnerV2])
-def test_model_runners_share_typed_projection_request_state(runner_type) -> None:
+def test_model_runners_share_one_pap_adapter_boundary(runner_type) -> None:
     runner = object.__new__(runner_type)
-    store = bind_projection_request_store(runner)
+    runner.pap_runner = _runner_adapter(
+        supports_async_sampled_tokens=runner_type is GPUModelRunnerV2
+    )
 
-    runner._add_pap_attention_endpoint(
+    runner.pap_runner.update_request(
         "req-a",
         {
             "pap_attention_endpoint": "http://attention",
             "remote_num_tokens": "16",
         },
     )
-    runner._add_pap_attention_endpoint(
+    runner.pap_runner.update_request(
         "req-a",
         {"pap_prefill_kv_handle": "session-a"},
     )
 
-    assert store.attention_endpoint_by_request == {
+    assert runner.pap_runner.store.attention_endpoint_by_request == {
         "req-a": "http://attention"
     }
-    assert runner.pap_prefill_prefix_len_by_req_id == {"req-a": 16}
-    assert runner.pap_prefill_kv_handle_by_req_id == {"req-a": "session-a"}
+    assert runner.pap_runner.store.prefill_prefix_len_by_request == {"req-a": 16}
+    assert runner.pap_runner.store.prefill_kv_handle_by_request == {
+        "req-a": "session-a"
+    }
 
 
 def test_projection_batch_adapter_builds_filtered_forward_context() -> None:
@@ -156,7 +176,7 @@ def test_v2_runner_flushes_decode_tokens_before_removing_request() -> None:
     assert runner._remove_request("req-a") is False
 
     assert events == ["flush:session-a", "forget:session-a", "remove:req-a"]
-    assert "req-a" not in runner.pap_prefill_kv_handle_by_req_id
+    assert "req-a" not in runner.pap_runner.store.prefill_kv_handle_by_request
 
 
 def test_v2_runner_fails_closed_when_decode_token_flush_fails() -> None:
@@ -166,18 +186,19 @@ def test_v2_runner_fails_closed_when_decode_token_flush_fails() -> None:
         runner._remove_request("req-a")
 
     assert events == ["flush:session-a"]
-    assert runner.pap_prefill_kv_handle_by_req_id == {"req-a": "session-a"}
+    assert runner.pap_runner.store.prefill_kv_handle_by_request == {
+        "req-a": "session-a"
+    }
 
 
 def test_v1_runner_rejects_pap_without_async_sampled_token_callback() -> None:
-    runner = object.__new__(GPUModelRunnerV1)
-    runner._pap_enabled_for_request_ids = MethodType(
-        lambda _self, _request_ids: True,
-        runner,
+    adapter = _runner_adapter(
+        supports_async_sampled_tokens=False,
+        globally_enabled=True,
     )
 
     with pytest.raises(RuntimeError, match="VLLM_USE_V2_MODEL_RUNNER=1"):
-        runner._pap_forward_context_kwargs(
+        adapter.build_forward_context(
             request_ids=("req-a",),
             num_scheduled_tokens=(1,),
             num_actual_tokens=1,

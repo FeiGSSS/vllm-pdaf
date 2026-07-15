@@ -9,7 +9,6 @@ import os
 import time
 from collections import Counter, OrderedDict
 from collections.abc import Sequence
-from dataclasses import dataclass, field
 from threading import Condition, Lock
 from typing import Any
 
@@ -24,6 +23,30 @@ from vllm.pap.kv.metadata import (
     reset_unified_paged_flash_metadata_cache,
     unified_paged_flash_metadata_cache_stats,
 )
+from vllm.pap.kv.ipc import (
+    open_ipc_tensor_handle,
+    open_prefill_manifest_event,
+)
+from vllm.pap.kv.models import (
+    PAPAttentionSession,
+    PAPOffloadExecSessionEntry,
+    PAPPrefillKVCacheCatalogEntry,
+    PAPPrefillLayerReadiness,
+    PAPUnifiedPagedKVState,
+    PAPUnifiedSlotActivation,
+    PAPUnifiedSlotTopology,
+    allocate_unified_slot_topology_id as _allocate_unified_slot_topology_id,
+)
+from vllm.pap.kv.observability import (
+    _KV_LOCALITY_PROFILE_SEEN,
+    block_locality_stats as _block_locality_stats,
+    log_kv_locality_profile as _log_kv_locality_profile,
+    pap_attention_pool_profile_enabled as _pap_attention_pool_profile_enabled,
+    pap_env_flag as _pap_env_flag,
+    pap_kv_lease_profile_enabled as _pap_kv_lease_profile_enabled,
+    pap_kv_locality_profile_enabled as _pap_kv_locality_profile_enabled,
+    trace_add_elapsed_ms as _trace_add_elapsed_ms,
+)
 from vllm.pap.lifecycle.commit import DecodeCommitClient as _DecodeCommitClient
 from vllm.pap.lifecycle.decode_token import (
     DeferredDecodeCommit,
@@ -37,7 +60,6 @@ from vllm.pap.deferred_cuda_trace import (
 from vllm.pap.lease_release_client import LeaseReleaseClient as _LeaseReleaseClient
 from vllm.pap.protocol import (
     PAPAttentionRegistration,
-    PAPCudaIPCTensorHandle,
     PAPPrefillKVCacheCatalogDescriptor,
     PAPPrefillKVSessionManifest,
 )
@@ -73,305 +95,6 @@ def _get_lease_release_client() -> _LeaseReleaseClient:
     return _lease_release_client
 
 
-def _pap_env_flag(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.lower() in {"1", "true", "yes", "on"}
-
-
-def _pap_attention_pool_profile_enabled() -> bool:
-    return _pap_env_flag("PAP_ATTENTION_POOL_PROFILE", False)
-
-
-def _pap_kv_lease_profile_enabled() -> bool:
-    return _pap_env_flag("PAP_KV_LEASE_PROFILE", False)
-
-
-def _pap_kv_locality_profile_enabled() -> bool:
-    return _pap_env_flag("PAP_KV_LOCALITY_PROFILE", False)
-
-_KV_LOCALITY_PROFILE_SEEN: set[tuple[str, str]] = set()
-
-
-def _block_locality_stats(
-    *,
-    block_ids: tuple[int, ...],
-    seq_len: int,
-    block_size: int,
-) -> dict[str, float | int | list[int]]:
-    live_blocks = min(
-        len(block_ids),
-        max(0, (int(seq_len) + int(block_size) - 1) // int(block_size)),
-    )
-    live = [int(block_id) for block_id in block_ids[:live_blocks]]
-    if not live:
-        return {
-            "seq_len": int(seq_len),
-            "live_blocks": 0,
-            "total_blocks": len(block_ids),
-            "reserved_blocks": len(block_ids),
-            "span": 0,
-            "density": 0.0,
-            "contiguous_pair_frac": 0.0,
-            "mean_abs_delta": 0.0,
-            "max_abs_delta": 0,
-            "runs": 0,
-            "first_blocks": [],
-            "first_deltas": [],
-        }
-    deltas = [live[index + 1] - live[index] for index in range(len(live) - 1)]
-    span = max(live) - min(live) + 1
-    contiguous_pairs = sum(1 for delta in deltas if delta == 1)
-    abs_deltas = [abs(delta) for delta in deltas]
-    return {
-        "seq_len": int(seq_len),
-        "live_blocks": live_blocks,
-        "total_blocks": len(block_ids),
-        "reserved_blocks": len(block_ids) - live_blocks,
-        "span": span,
-        "density": float(live_blocks) / float(span) if span > 0 else 0.0,
-        "contiguous_pair_frac": (
-            float(contiguous_pairs) / float(len(deltas)) if deltas else 1.0
-        ),
-        "mean_abs_delta": (
-            float(sum(abs_deltas)) / float(len(abs_deltas)) if abs_deltas else 0.0
-        ),
-        "max_abs_delta": max(abs_deltas) if abs_deltas else 0,
-        "runs": 1 + sum(1 for delta in deltas if delta != 1),
-        "first_blocks": live[:16],
-        "first_deltas": deltas[:15],
-    }
-
-
-def _log_kv_locality_profile(
-    *,
-    mode: str,
-    layer_name: str,
-    states: list[PAPUnifiedPagedKVState],
-    kv_cache: torch.Tensor,
-    key_cache: torch.Tensor,
-    value_cache: torch.Tensor,
-    layout: str,
-) -> None:
-    if not _pap_kv_locality_profile_enabled():
-        return
-    min_batch = int(os.environ.get("PAP_KV_LOCALITY_PROFILE_MIN_BATCH", "1"))
-    if len(states) < min_batch:
-        return
-    profile_key = (str(mode), str(layer_name))
-    if profile_key in _KV_LOCALITY_PROFILE_SEEN:
-        return
-    _KV_LOCALITY_PROFILE_SEEN.add(profile_key)
-
-    rows = []
-    for state in states:
-        rows.append(
-            _block_locality_stats(
-                block_ids=tuple(int(block_id) for block_id in state.block_ids),
-                seq_len=int(state.seq_len),
-                block_size=int(state.block_size),
-            )
-        )
-    first = rows[0]
-
-    def avg(name: str) -> float:
-        values = [float(row[name]) for row in rows]
-        return sum(values) / float(len(values)) if values else 0.0
-
-    seq_lens = [int(row["seq_len"]) for row in rows]
-    logger.info(
-        "PAP KV locality profile mode=%s layer=%s batch=%d layout=%s "
-        "kv_shape=%s kv_stride=%s key_stride=%s value_stride=%s dtype=%s "
-        "device=%s kv_contiguous=%s seq_len_min=%d seq_len_max=%d "
-        "live_blocks_avg=%.2f total_blocks_avg=%.2f reserved_blocks_avg=%.2f "
-        "span_avg=%.2f density_avg=%.3f contiguous_pair_frac_avg=%.3f "
-        "mean_abs_delta_avg=%.2f max_abs_delta_avg=%.2f runs_avg=%.2f "
-        "first_live_blocks=%s first_deltas=%s",
-        mode,
-        layer_name,
-        len(states),
-        layout,
-        tuple(kv_cache.shape),
-        tuple(kv_cache.stride()),
-        tuple(key_cache.stride()),
-        tuple(value_cache.stride()),
-        kv_cache.dtype,
-        kv_cache.device,
-        kv_cache.is_contiguous(),
-        min(seq_lens) if seq_lens else 0,
-        max(seq_lens) if seq_lens else 0,
-        avg("live_blocks"),
-        avg("total_blocks"),
-        avg("reserved_blocks"),
-        avg("span"),
-        avg("density"),
-        avg("contiguous_pair_frac"),
-        avg("mean_abs_delta"),
-        avg("max_abs_delta"),
-        avg("runs"),
-        first["first_blocks"],
-        first["first_deltas"],
-    )
-
-
-def _trace_add_elapsed_ms(
-    trace_stats: dict[str, float] | None,
-    key: str,
-    start: float,
-) -> None:
-    if trace_stats is not None:
-        trace_stats[key] = (
-            trace_stats.get(key, 0.0) + (time.perf_counter() - start) * 1000.0
-        )
-
-@dataclass
-class PAPAttentionSession:
-    """Snapshot of one PAP request known by the Attention executor."""
-
-    request_id: str
-    conversation_id: str
-    prefill_endpoint: str
-    kv_transfer_params: dict[str, Any]
-    prefix_len: int | None
-    block_size: int
-    max_seq_len: int
-    block_ids: tuple[int, ...] = ()
-    seq_len: int = 0
-    created_at: float = field(default_factory=time.time)
-    role: str = "attention"
-    prefill_kv_handle: str = ""
-    decode_seq_lens: dict[str, int] = field(default_factory=dict)
-    prefill_seq_lens: dict[str, int] = field(default_factory=dict)
-    q_size: int | None = None
-    kv_size: int | None = None
-
-    def copy(self) -> PAPAttentionSession:
-        return PAPAttentionSession(
-            request_id=self.request_id,
-            conversation_id=self.conversation_id,
-            prefill_endpoint=self.prefill_endpoint,
-            kv_transfer_params=dict(self.kv_transfer_params),
-            prefix_len=self.prefix_len,
-            block_size=self.block_size,
-            max_seq_len=self.max_seq_len,
-            block_ids=tuple(self.block_ids),
-            seq_len=self.seq_len,
-            created_at=self.created_at,
-            role=self.role,
-            prefill_kv_handle=self.prefill_kv_handle,
-            decode_seq_lens=dict(self.decode_seq_lens),
-            prefill_seq_lens=dict(self.prefill_seq_lens),
-            q_size=self.q_size,
-            kv_size=self.kv_size,
-        )
-
-@dataclass
-class PAPPrefillLayerReadiness:
-    """Import readiness for one Prefill KV descriptor."""
-
-    request_id: str
-    layer_name: str
-    descriptor_received: bool = False
-    descriptor_opened: bool = False
-    ready: bool = False
-    failed: bool = False
-    error: str = ""
-    received_at: float = field(default_factory=time.perf_counter)
-    opened_at: float = 0.0
-    ready_at: float = 0.0
-    failed_at: float = 0.0
-
-    def copy(self) -> PAPPrefillLayerReadiness:
-        return PAPPrefillLayerReadiness(
-            request_id=self.request_id,
-            layer_name=self.layer_name,
-            descriptor_received=self.descriptor_received,
-            descriptor_opened=self.descriptor_opened,
-            ready=self.ready,
-            failed=self.failed,
-            error=self.error,
-            received_at=self.received_at,
-            opened_at=self.opened_at,
-            ready_at=self.ready_at,
-            failed_at=self.failed_at,
-        )
-
-@dataclass(frozen=True)
-class PAPPrefillKVCacheCatalogEntry:
-    """Opened process-lifetime Prefill KV-cache backing for one layer."""
-
-    catalog_id: str
-    layer_name: str
-    kv_cache: torch.Tensor
-    block_size: int
-    num_kv_heads: int
-    layout: str
-
-@dataclass
-class PAPUnifiedPagedKVState:
-    """Unified Prefill-owned KV state for unified-KV mode.
-
-    The same physical KV cache backs prefix and decode suffix. Attention writes
-    decode K/V into the writable range [writable_start_token, writable_end_token)
-    via leased block IDs, and reads the full [0, seq_len) range for FA compute.
-    """
-
-    kv_cache: torch.Tensor
-    block_ids: tuple[int, ...]
-    prefix_len: int
-    seq_len: int
-    capacity_tokens: int
-    writable_start_token: int
-    writable_end_token: int
-    lease_id: str
-    block_size: int
-    num_kv_heads: int
-    layout: str
-    slot_generation: int = 0
-    slot_topology_id: int = 0
-
-PAPUnifiedSlotTopology = tuple[tuple[int, ...], int, str]
-
-@dataclass
-class PAPUnifiedSlotActivation:
-    """Generation-bound topology observations for one unified-KV session."""
-
-    prefix_len: int
-    generation: int
-    canonical_topology: PAPUnifiedSlotTopology
-    canonical_topology_id: int
-    topology_ids: dict[PAPUnifiedSlotTopology, int]
-    layer_observations: dict[str, int]
-    expected_layers: frozenset[str] | None = None
-    conflict_latched: bool = False
-    complete: bool = True
-
-@dataclass(frozen=True)
-class PAPOffloadExecSessionEntry:
-    """Shape metadata for one OFFLOAD_EXEC request in a batch."""
-
-    session_request_id: str
-    prefill_endpoint: str
-    q_size: int
-    kv_size: int
-    num_heads: int
-    num_kv_heads: int
-    head_dim: int
-
-_UNIFIED_SLOT_TOPOLOGY_ID_LOCK = Lock()
-
-_UNIFIED_SLOT_TOPOLOGY_ID_NEXT = 1
-
-
-def _allocate_unified_slot_topology_id() -> int:
-    global _UNIFIED_SLOT_TOPOLOGY_ID_NEXT
-    with _UNIFIED_SLOT_TOPOLOGY_ID_LOCK:
-        topology_id = _UNIFIED_SLOT_TOPOLOGY_ID_NEXT
-        _UNIFIED_SLOT_TOPOLOGY_ID_NEXT += 1
-    return topology_id
-
-
 class PAPAttentionRegistry:
     """Thread-safe in-memory registry for PAP Attention control-plane state."""
 
@@ -385,6 +108,28 @@ class PAPAttentionRegistry:
         self._lock = Lock()
         self._decode_append_lock = Lock()
         self._prefill_condition = Condition(self._lock)
+        if runtime_config is None:
+            self._decode_slot_plan_cache_limit_value = int(
+                os.environ.get("PAP_DECODE_SLOT_PLAN_CACHE_LIMIT", "256")
+            )
+            self._decode_token_flush_timeout_s = float(
+                os.environ.get("PAP_DECODE_TOKEN_FLUSH_TIMEOUT", "5.0")
+            )
+            self._prefill_wait_timeout_s = float(
+                os.environ.get("PAP_ATTENTION_PREFILL_WAIT_TIMEOUT", "5.0")
+            )
+        else:
+            self._decode_slot_plan_cache_limit_value = (
+                runtime_config.features.decode_slot_plan_cache_limit
+            )
+            self._decode_token_flush_timeout_s = (
+                runtime_config.decode_token.flush_timeout_s
+            )
+            self._prefill_wait_timeout_s = (
+                runtime_config.attention.prefill_wait_timeout_s
+            )
+            if storage_device is None:
+                storage_device = runtime_config.attention.storage_device
         self._storage_device = self._resolve_storage_device(storage_device)
         self._sessions: dict[str, PAPAttentionSession] = {}
         self._prefill_kv_catalog_id: str | None = None
@@ -492,9 +237,8 @@ class PAPAttentionRegistry:
         return self._storage_device
 
 
-    @staticmethod
-    def _decode_slot_plan_cache_limit() -> int:
-        return int(os.environ.get("PAP_DECODE_SLOT_PLAN_CACHE_LIMIT", "256"))
+    def _decode_slot_plan_cache_limit(self) -> int:
+        return self._decode_slot_plan_cache_limit_value
 
     def _record_unified_slot_topology_locked(
         self,
@@ -715,9 +459,7 @@ class PAPAttentionRegistry:
         request_id = self.resolve_session_request_id(request_id) or str(request_id)
         deferred_flushed = self._decode_token_committer.flush_request(
             request_id,
-            timeout_s=float(
-                os.environ.get("PAP_DECODE_TOKEN_FLUSH_TIMEOUT", "5.0")
-            ),
+            timeout_s=self._decode_token_flush_timeout_s,
         )
         if not deferred_flushed:
             logger.warning(
@@ -1085,9 +827,7 @@ class PAPAttentionRegistry:
         """Return per-row unified states if every row has unified state."""
         events_to_wait: list[tuple[Any, torch.device]] = []
         with self._lock:
-            deadline = time.monotonic() + float(
-                os.environ.get("PAP_ATTENTION_PREFILL_WAIT_TIMEOUT", "5.0")
-            )
+            deadline = time.monotonic() + self._prefill_wait_timeout_s
             while True:
                 states: list[PAPUnifiedPagedKVState] = []
                 pending_request_id = ""
@@ -1346,9 +1086,7 @@ class PAPAttentionRegistry:
         if self.resolve_session_request_id(registration.request_id) is not None:
             deferred_flushed = self._decode_token_committer.flush_request(
                 registration.request_id,
-                timeout_s=float(
-                    os.environ.get("PAP_DECODE_TOKEN_FLUSH_TIMEOUT", "5.0")
-                ),
+                timeout_s=self._decode_token_flush_timeout_s,
             )
             if not deferred_flushed:
                 logger.warning(
@@ -1578,34 +1316,3 @@ class PAPAttentionRegistry:
     def size(self) -> int:
         with self._lock:
             return len(self._sessions)
-
-
-def open_ipc_tensor_handle(handle: PAPCudaIPCTensorHandle) -> torch.Tensor:
-    """Open one CUDA IPC tensor handle on the current physical GPU."""
-    from torch.multiprocessing.reductions import rebuild_cuda_tensor
-
-    device_index = torch.accelerator.current_device_index()
-    props = torch.cuda.get_device_properties(device_index)
-    physical_gpu_id = str(props.uuid)
-    ipc_handle = handle.ipc_handle
-    if physical_gpu_id not in ipc_handle:
-        raise ValueError(
-            f"IPC handle not found for GPU UUID {physical_gpu_id}. "
-            f"Available UUIDs: {list(ipc_handle.keys())}"
-        )
-    args = list(ipc_handle[physical_gpu_id])
-    args[6] = device_index
-    return rebuild_cuda_tensor(*args)
-
-
-def open_prefill_manifest_event(
-    manifest: PAPPrefillKVSessionManifest,
-) -> Any | None:
-    """Open an interprocess CUDA event carried by a Prefill manifest."""
-    if manifest.ready_event_handle is None:
-        return None
-    device_index = torch.accelerator.current_device_index()
-    return torch.cuda.Event.from_ipc_handle(
-        device_index,
-        manifest.ready_event_handle,
-    )
