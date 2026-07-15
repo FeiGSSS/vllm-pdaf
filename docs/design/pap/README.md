@@ -4,11 +4,12 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260715-MODEL-ADAPTER-E2E
   - PAP-20260715-INTEGRATION-E2E
   - PAP-20260714-P17-PRE-REFACTOR
   - PAP-20260715-P17-POST-REFACTOR
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: b695efe69f4e8dca3ecbddcd64a19339e425412f
+last_validated_commit: 003029a77105b8a80f0508b4b78b4dcb8559a96e
 ---
 
 # PAP documentation
