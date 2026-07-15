@@ -4,13 +4,14 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260715-RUNTIME-BOUNDARY-E2E
   - PAP-20260715-MODEL-ADAPTER-E2E
   - PAP-20260715-INTEGRATION-E2E
   - PAP-20260701-PD-METHODOLOGY
   - PAP-20260713-PD-THREE-LANE-C4
   - PAP-20260714-P17-PRE-REFACTOR
   - PAP-20260715-P17-POST-REFACTOR
-last_validated_commit: 003029a77105b8a80f0508b4b78b4dcb8559a96e
+last_validated_commit: 7f732f5bea71d2bd4698f7bd04c1415cc77115cc
 ---
 
 # PAP benchmark methodology

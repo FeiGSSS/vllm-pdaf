@@ -4,13 +4,14 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260715-RUNTIME-BOUNDARY-E2E
   - PAP-20260715-MODEL-ADAPTER-E2E
   - PAP-20260715-INTEGRATION-E2E
   - PAP-20260715-P17-POST-REFACTOR
   - PAP-20260713-ASYNC-DECODE-TOKEN-D2H
   - PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: 003029a77105b8a80f0508b4b78b4dcb8559a96e
+last_validated_commit: 7f732f5bea71d2bd4698f7bd04c1415cc77115cc
 ---
 
 # PAP runtime
@@ -55,6 +56,10 @@ For every active step:
 6. Lease release happens after the committed tail is safe to release.
 7. Shutdown/drain requires no pending token, commit, lease, or Attention
    session state.
+
+Session release retains a bounded tombstone for known generation-bound handles.
+This makes a queued late sampled-token notification idempotent after DELETE,
+while a request ID that was never registered still fails closed with 404.
 
 Retries, bounded queues, timeouts, and failure propagation remain operational
 controls. Synchronous sampled-token D2H, synchronous Prefill KV import,

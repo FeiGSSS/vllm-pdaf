@@ -1,0 +1,1134 @@
+{
+  "schema_version": 1,
+  "kind": "pap-run-manifest",
+  "run_id": "20260715_7f732f5be_p17_runtime_boundary_formal",
+  "experiment_id": "PAP-20260715-RUNTIME-BOUNDARY-E2E",
+  "profile_id": "p17_1pa1p",
+  "architecture": "pap",
+  "mode": "formal",
+  "evidence": "formal-clean",
+  "provenance": {
+    "branch": "missing",
+    "commit": "7f732f5bea71d2bd4698f7bd04c1415cc77115cc",
+    "tracked_worktree_dirty": false,
+    "tracked_worktree_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tracked_index_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "started_at": "2026-07-15T10:50:42+08:00"
+  },
+  "workload": {
+    "model": {
+      "path": {
+        "root_id": "model-store",
+        "relative_path": "Qwen3-8B"
+      },
+      "dtype": "float16",
+      "tensor_parallel_size": 1
+    },
+    "corpus": {
+      "path": {
+        "root_id": "reference-benchmarks",
+        "relative_path": "sonnet_4x.txt"
+      },
+      "sha256": "4a53bd26108f9193c693ab6a9482ee5ce5102b545b70a5ca3a8cb11ca1171859"
+    },
+    "parameters": {
+      "profile_id": "qwen3_8b_token_16k_5turn_o256_c4_v2",
+      "profile_version": 2,
+      "api": "/v1/completions",
+      "workload_semantics": "exact_token_continuous_multiturn",
+      "prompt_input": "token_ids",
+      "history_rule": "previous_prompt_plus_full_output_plus_suffix",
+      "document_tokens": 16000,
+      "append_tokens_per_later_round": 120,
+      "output_tokens_per_round": 256,
+      "rounds": 5,
+      "active_conversations": 4,
+      "request_rate_per_round": 2.0,
+      "arrival_mode": "fixed_rate_round_barrier_closed_loop",
+      "temperature": 0,
+      "seed": 0,
+      "ignore_eos": true,
+      "return_token_ids": true,
+      "block_size": 16,
+      "max_model_len": 20000,
+      "max_num_batched_tokens": 4096,
+      "max_num_seqs": 4
+    }
+  },
+  "topology": {
+    "name": "1pa1p",
+    "pa_count": 1,
+    "projection_count": 1,
+    "pd_prefill_count": 0,
+    "pd_decode_count": 0,
+    "routing_policy": "round_robin"
+  },
+  "placement": {
+    "prefill_devices": [
+      1
+    ],
+    "attention_devices": [
+      1
+    ],
+    "projection_devices": [
+      2
+    ],
+    "decode_devices": []
+  },
+  "transport": {
+    "offload_exec": "local_fast",
+    "offload_kv": "cuda_ipc",
+    "same_host": true
+  },
+  "mps": {
+    "mode": "static",
+    "profile_id": "baseline_static_64_28",
+    "prefill_visible_sms": 64,
+    "attention_visible_sms": 28
+  },
+  "runtime": {
+    "profile": "p17_1pa1p",
+    "settings": {
+      "offload_exec_transport": "local_fast",
+      "direct_mailbox_output": true,
+      "unified_md_fast_key": true,
+      "prefill_kv_async": true,
+      "prefill_ipc_profile": false,
+      "kv_handoff_mode": "sealed_manifest",
+      "async_decode_token": true,
+      "unified_kv": true,
+      "batched_route_copy": true,
+      "attention_dispatch_mode": "legacy"
+    }
+  },
+  "environment": {
+    "hardware_signature": "NVIDIA L20x2",
+    "software": {
+      "vllm": "0.23.1rc1.dev678+g4a7737647",
+      "cuda_driver": "missing",
+      "torch": "missing",
+      "nixl": "missing",
+      "ucx": "missing"
+    },
+    "fingerprint_basis": [
+      "hardware_signature",
+      "vllm_version",
+      "git_commit",
+      "implementation_fingerprint"
+    ]
+  },
+  "fingerprints": {
+    "profile": "1cabd2226607a6af2a4cbfcd70c1daada8c8272ceda757bb7cc6622569c9b533",
+    "implementation": "54eb60419dab3c5613b825d253f34c54ab0d41a4fb4fc94b0c0de3a92777924f",
+    "request_shape": "68c42d5ba9115b950afbe09feeb736f45280bca00b8bbade25bba3f06e0dfdae",
+    "hardware_runtime": "1f56745aee2b6252153ebfb7602c10345095435c4015f777b56ac5058c40345d"
+  },
+  "repetitions": {
+    "count": 3,
+    "order": [
+      1,
+      2,
+      3
+    ],
+    "aggregation_method": "pooled request-level samples across repetitions; nearest-rank p90",
+    "items": [
+      {
+        "index": 1,
+        "repetition_id": "content_sha256:31ff103ccf4cabebeca3e1f736fc9b168619412596858dc5793d3cfbd682c82d",
+        "result_artifact": {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/result.json"
+        }
+      },
+      {
+        "index": 2,
+        "repetition_id": "content_sha256:360c4d19967e9c969efbe4590961c6641937b1853311b572be7f4e5b8d656c58",
+        "result_artifact": {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/result.json"
+        }
+      },
+      {
+        "index": 3,
+        "repetition_id": "content_sha256:b70cb54905fe1acec2144ce36d25400de69c5c15b86f39998c834ad875488795",
+        "result_artifact": {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/result.json"
+        }
+      }
+    ]
+  },
+  "audits": {
+    "client": {
+      "status": "passed",
+      "detail": "All client request and shape checks pass.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/result.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/result.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/result.json"
+        }
+      ]
+    },
+    "cache": {
+      "status": "passed",
+      "detail": "All exact multi-turn cache checks pass.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/result.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/result.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/result.json"
+        }
+      ]
+    },
+    "attention_stats": {
+      "status": "passed",
+      "detail": "Runtime Attention statistics are captured for every repetition.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/attention_fast_path_stats.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/attention_fast_path_stats.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/attention_fast_path_stats.json"
+        }
+      ]
+    },
+    "correctness": {
+      "status": "passed",
+      "detail": "Strict service-log correctness audit has zero matches.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/correctness_audit.env"
+        }
+      ]
+    },
+    "decode_token_join": {
+      "status": "passed",
+      "detail": "Async decode-token join audit reports no errors.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/decode_token_join_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/decode_token_join_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/decode_token_join_audit.env"
+        }
+      ]
+    },
+    "routing": {
+      "status": "passed",
+      "detail": "All requests follow the expected 1PA1P route.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/routing_audit.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/routing_audit.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/routing_audit.json"
+        }
+      ]
+    },
+    "commit": {
+      "status": "passed",
+      "detail": "Strict logs contain no decode-commit error signatures.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/correctness_audit.env"
+        }
+      ]
+    },
+    "lease": {
+      "status": "passed",
+      "detail": "Strict logs and zero-session drain contain no lease failures.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/session_drain.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/session_drain.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/session_drain.env"
+        }
+      ]
+    },
+    "session_drain": {
+      "status": "passed",
+      "detail": "Attention drains to zero active sessions.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/session_drain.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/session_drain.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/session_drain.env"
+        }
+      ]
+    },
+    "mps": {
+      "status": "passed",
+      "detail": "Static MPS exposes 64 Prefill and 28 Attention SMs.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/mps_static_audit_pa_0.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/mps_static_audit_pa_0.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/mps_static_audit_pa_0.env"
+        }
+      ]
+    }
+  },
+  "metrics": {
+    "completed_requests": 60,
+    "failed_requests": 0,
+    "values": [
+      {
+        "name": "ttft_ms",
+        "scope": "round_1",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 10533.330389502225
+      },
+      {
+        "name": "tpot_ms",
+        "scope": "round_1",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 39.15545689410018
+      },
+      {
+        "name": "ttft_ms",
+        "scope": "steady_rounds_2_5",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 212.13672000158112
+      },
+      {
+        "name": "tpot_ms",
+        "scope": "steady_rounds_2_5",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 50.24471884512333
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "name": "aggregate_aggregate.json",
+      "kind": "aggregate",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/aggregate.json"
+      },
+      "sha256": "6324b7ac9108ecb14186aa2fc8caf50b44e280fb59b5e40db1e2e52e3a82e738"
+    },
+    {
+      "name": "rep1_1PA1P_multiturn_load.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/1PA1P_multiturn_load.log"
+      },
+      "sha256": "4a3cb031cde9487d4692a79fdcff2a19290175dded87c22a761c8b6c84b0bbf7"
+    },
+    {
+      "name": "rep1_attention_fast_path_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/attention_fast_path_stats.json"
+      },
+      "sha256": "5732ef3d45edeb7a0482086d1e2a6bed67462e85b25ce05a1007914c0ddc0b7a"
+    },
+    {
+      "name": "rep1_attention_fast_path_stats_0.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/attention_fast_path_stats_0.json"
+      },
+      "sha256": "5732ef3d45edeb7a0482086d1e2a6bed67462e85b25ce05a1007914c0ddc0b7a"
+    },
+    {
+      "name": "rep1_correctness_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/correctness_audit.env"
+      },
+      "sha256": "f9a3034cd98003be7d986a25059ba66e605c06c6ea3563409b324384d6c1911a"
+    },
+    {
+      "name": "rep1_correctness_audit_matches.log",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/correctness_audit_matches.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep1_decode_token_join_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/decode_token_join_audit.env"
+      },
+      "sha256": "6bffcdda621cdf7667525bde18b7896370990f00e200ac52cf2adf8503966e9c"
+    },
+    {
+      "name": "rep1_effective_config.env",
+      "kind": "configuration",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/effective_config.env"
+      },
+      "sha256": "58480ae8be942e1a87e3d5f312bbc9ca853d1e076dcba3e46f2073efdaaf564c"
+    },
+    {
+      "name": "rep1_git_status.txt",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/git_status.txt"
+      },
+      "sha256": "2dc4ea0936255d4aa7e8fea35a91422aa96ac7d23b45cf214e663481c0da58ba"
+    },
+    {
+      "name": "rep1_mps_static_audit_pa_0.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/mps_static_audit_pa_0.env"
+      },
+      "sha256": "b267de58730d93dac640625c9470ab9811ee4c9dec4addc7580b47f4427974c8"
+    },
+    {
+      "name": "rep1_result.json",
+      "kind": "result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/result.json"
+      },
+      "sha256": "8867f5c16d65e9b683ce0644ddc049509d4604424cc6c69528e2becceb61e208"
+    },
+    {
+      "name": "rep1_routing_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/routing_audit.env"
+      },
+      "sha256": "9e225a01e6f2c1dc484df4b96a5d30ddfc4da97106121f055fab132200c8359b"
+    },
+    {
+      "name": "rep1_routing_audit.json",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/routing_audit.json"
+      },
+      "sha256": "8b5ebc65ade0a059a46daf61451b0bf6814175e25047c9857a1c48bd9b38bccf"
+    },
+    {
+      "name": "rep1_run_metadata.json",
+      "kind": "manifest",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/run_metadata.json"
+      },
+      "sha256": "527694b96987fe818d493d9bef64495a16fec33668e82fe9a6151c0ec63a1bdb"
+    },
+    {
+      "name": "rep1_attention_0_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/service_logs/attention_0_0.log"
+      },
+      "sha256": "502b5dbd6916f8066add40b0c213f08d7b63efc19a5e804cf25e2277db33a841"
+    },
+    {
+      "name": "rep1_control.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/service_logs/mps-log/pa-0/control.log"
+      },
+      "sha256": "887736d33c4ad1923f22103803208416d62046bf51bd293e8bd66f51ecc9405e"
+    },
+    {
+      "name": "rep1_server.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/service_logs/mps-log/pa-0/server.log"
+      },
+      "sha256": "2c84c2c108b18c75a8c38b66c25329fc5afad9de233431078d62d39ca59c8165"
+    },
+    {
+      "name": "rep1_mps_static_0_attention_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/service_logs/mps_static_0_attention_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep1_mps_static_0_prefill_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/service_logs/mps_static_0_prefill_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep1_mps_static_cleanup_pa_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/service_logs/mps_static_cleanup_pa_0.log"
+      },
+      "sha256": "8b6e32c07b2b7e9eced784b80e7fc83957835b2f844ec738086705376008d43d"
+    },
+    {
+      "name": "rep1_prefill_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/service_logs/prefill_0.log"
+      },
+      "sha256": "6edcf3dc29ef2fafaca995d1180a42a7473d15bd820ccdb24856ec4913402a87"
+    },
+    {
+      "name": "rep1_projection_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/service_logs/projection_0.log"
+      },
+      "sha256": "b56f87fbd8811bf86ee548bde2a4c002c6882f956667ef6b558d30ce4b1d0e71"
+    },
+    {
+      "name": "rep1_proxy.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/service_logs/proxy.log"
+      },
+      "sha256": "13f8532f6c54a96b7bdcfcebef01b1bda809f32fdf1490027d369ade56183fe7"
+    },
+    {
+      "name": "rep1_session_drain.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/session_drain.env"
+      },
+      "sha256": "e6ff9bb006a7fe1c28473ee20082c5a6894a3f5e28c4a841344f4fef8af72935"
+    },
+    {
+      "name": "rep1_topology_manifest.json",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/topology_manifest.json"
+      },
+      "sha256": "e7c36dcf9b9c1ee22bfd2b812c265e8eb90cba5606a64bb50603653c69064f3d"
+    },
+    {
+      "name": "rep1_topology_runtime_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/topology_runtime_stats.json"
+      },
+      "sha256": "38754ac2a34601cc1e17fb42ce6edab621933ac84aa87294564f81ccd9440d48"
+    },
+    {
+      "name": "rep1_tracked_index.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/tracked_index.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep1_tracked_worktree.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep1/tracked_worktree.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep2_1PA1P_multiturn_load.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/1PA1P_multiturn_load.log"
+      },
+      "sha256": "7856ed49dba958be4113bf910b06091488662a4d9595b76fb0143b2f2b13b856"
+    },
+    {
+      "name": "rep2_attention_fast_path_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/attention_fast_path_stats.json"
+      },
+      "sha256": "806a861443ea271e55c6902f904bb3fdbb2f02dcede6a992bcf65262c0499764"
+    },
+    {
+      "name": "rep2_attention_fast_path_stats_0.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/attention_fast_path_stats_0.json"
+      },
+      "sha256": "806a861443ea271e55c6902f904bb3fdbb2f02dcede6a992bcf65262c0499764"
+    },
+    {
+      "name": "rep2_correctness_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/correctness_audit.env"
+      },
+      "sha256": "f9a3034cd98003be7d986a25059ba66e605c06c6ea3563409b324384d6c1911a"
+    },
+    {
+      "name": "rep2_correctness_audit_matches.log",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/correctness_audit_matches.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep2_decode_token_join_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/decode_token_join_audit.env"
+      },
+      "sha256": "6bffcdda621cdf7667525bde18b7896370990f00e200ac52cf2adf8503966e9c"
+    },
+    {
+      "name": "rep2_effective_config.env",
+      "kind": "configuration",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/effective_config.env"
+      },
+      "sha256": "45629cfe59cadbdbc31021bca1fddd4c69458121c529836a9082918cc93d3b59"
+    },
+    {
+      "name": "rep2_git_status.txt",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/git_status.txt"
+      },
+      "sha256": "2dc4ea0936255d4aa7e8fea35a91422aa96ac7d23b45cf214e663481c0da58ba"
+    },
+    {
+      "name": "rep2_mps_static_audit_pa_0.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/mps_static_audit_pa_0.env"
+      },
+      "sha256": "b267de58730d93dac640625c9470ab9811ee4c9dec4addc7580b47f4427974c8"
+    },
+    {
+      "name": "rep2_result.json",
+      "kind": "result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/result.json"
+      },
+      "sha256": "7892b4998a8a23f2258a266074f002a1a2fbef7a4997dc2500bc3d4102f7f596"
+    },
+    {
+      "name": "rep2_routing_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/routing_audit.env"
+      },
+      "sha256": "9e225a01e6f2c1dc484df4b96a5d30ddfc4da97106121f055fab132200c8359b"
+    },
+    {
+      "name": "rep2_routing_audit.json",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/routing_audit.json"
+      },
+      "sha256": "25b511415de87ebefb6cd5f18134beec757aff08295e99fb3223e6de9d8ebdbb"
+    },
+    {
+      "name": "rep2_run_metadata.json",
+      "kind": "manifest",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/run_metadata.json"
+      },
+      "sha256": "60fd94f43014fa8624ebdcf0b182a4b18a4671f69d91046a6ff10345eedf6d30"
+    },
+    {
+      "name": "rep2_attention_0_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/service_logs/attention_0_0.log"
+      },
+      "sha256": "bbdcfe155ee5eaf6dbda0520c77d67dd7fd7d5a54b005546ae664c3f26531654"
+    },
+    {
+      "name": "rep2_control.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/service_logs/mps-log/pa-0/control.log"
+      },
+      "sha256": "7897eb89f6bd3bccc161a35fd7a72638de44b4ebcae0d1b5a53a32c5573637b7"
+    },
+    {
+      "name": "rep2_server.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/service_logs/mps-log/pa-0/server.log"
+      },
+      "sha256": "bba0f88d11d09b0255671597dd69757de41d8d22716d1bf606ff425106e5fbd2"
+    },
+    {
+      "name": "rep2_mps_static_0_attention_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/service_logs/mps_static_0_attention_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep2_mps_static_0_prefill_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/service_logs/mps_static_0_prefill_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep2_mps_static_cleanup_pa_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/service_logs/mps_static_cleanup_pa_0.log"
+      },
+      "sha256": "8b6e32c07b2b7e9eced784b80e7fc83957835b2f844ec738086705376008d43d"
+    },
+    {
+      "name": "rep2_prefill_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/service_logs/prefill_0.log"
+      },
+      "sha256": "059a2b85a796740a8c3e9e8bc4e399c8d36beebc5ce335d3d888c1fa66a1f3c6"
+    },
+    {
+      "name": "rep2_projection_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/service_logs/projection_0.log"
+      },
+      "sha256": "0539693ce1473b2b6ec7ace28e24ab335eba9288d2f3766063a8f6d6aeda5fc6"
+    },
+    {
+      "name": "rep2_proxy.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/service_logs/proxy.log"
+      },
+      "sha256": "12b318c913b23c847d8bcfa50e25d7cee5c323d5b9a53cb298362833b43d08fd"
+    },
+    {
+      "name": "rep2_session_drain.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/session_drain.env"
+      },
+      "sha256": "e6ff9bb006a7fe1c28473ee20082c5a6894a3f5e28c4a841344f4fef8af72935"
+    },
+    {
+      "name": "rep2_topology_manifest.json",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/topology_manifest.json"
+      },
+      "sha256": "1245bf35dee9cc1f04e3a6c2845843ade9b28cdaee45b91b32253c80927b63d7"
+    },
+    {
+      "name": "rep2_topology_runtime_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/topology_runtime_stats.json"
+      },
+      "sha256": "38754ac2a34601cc1e17fb42ce6edab621933ac84aa87294564f81ccd9440d48"
+    },
+    {
+      "name": "rep2_tracked_index.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/tracked_index.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep2_tracked_worktree.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep2/tracked_worktree.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep3_1PA1P_multiturn_load.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/1PA1P_multiturn_load.log"
+      },
+      "sha256": "1780d88dd6ae603ae6692c816cc42b78a560c40b97405de87389dfe58c105722"
+    },
+    {
+      "name": "rep3_attention_fast_path_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/attention_fast_path_stats.json"
+      },
+      "sha256": "7dc5a3f4cbd47ce8e0b54e3b4ea1f0b5a2e9271a5456282af765a826fd9f6a3f"
+    },
+    {
+      "name": "rep3_attention_fast_path_stats_0.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/attention_fast_path_stats_0.json"
+      },
+      "sha256": "7dc5a3f4cbd47ce8e0b54e3b4ea1f0b5a2e9271a5456282af765a826fd9f6a3f"
+    },
+    {
+      "name": "rep3_correctness_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/correctness_audit.env"
+      },
+      "sha256": "f9a3034cd98003be7d986a25059ba66e605c06c6ea3563409b324384d6c1911a"
+    },
+    {
+      "name": "rep3_correctness_audit_matches.log",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/correctness_audit_matches.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep3_decode_token_join_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/decode_token_join_audit.env"
+      },
+      "sha256": "6bffcdda621cdf7667525bde18b7896370990f00e200ac52cf2adf8503966e9c"
+    },
+    {
+      "name": "rep3_effective_config.env",
+      "kind": "configuration",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/effective_config.env"
+      },
+      "sha256": "ddbc88a755da9a4110b7e310ff695e16be18384172f039893af23db228c95eb7"
+    },
+    {
+      "name": "rep3_git_status.txt",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/git_status.txt"
+      },
+      "sha256": "2dc4ea0936255d4aa7e8fea35a91422aa96ac7d23b45cf214e663481c0da58ba"
+    },
+    {
+      "name": "rep3_mps_static_audit_pa_0.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/mps_static_audit_pa_0.env"
+      },
+      "sha256": "b267de58730d93dac640625c9470ab9811ee4c9dec4addc7580b47f4427974c8"
+    },
+    {
+      "name": "rep3_result.json",
+      "kind": "result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/result.json"
+      },
+      "sha256": "133ec30e875d9c758324d40c47be4806e79126445647f0d5d23e28ad229aa5dd"
+    },
+    {
+      "name": "rep3_routing_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/routing_audit.env"
+      },
+      "sha256": "9e225a01e6f2c1dc484df4b96a5d30ddfc4da97106121f055fab132200c8359b"
+    },
+    {
+      "name": "rep3_routing_audit.json",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/routing_audit.json"
+      },
+      "sha256": "dc399a2554e8ebb6964e28d52304b0e773458a9af6b246896c461bd1304dddb3"
+    },
+    {
+      "name": "rep3_run_metadata.json",
+      "kind": "manifest",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/run_metadata.json"
+      },
+      "sha256": "1dd8bedc403ad3215451ecb023e3f6ba1c151f9b67d94be7b996dba73555e3e9"
+    },
+    {
+      "name": "rep3_attention_0_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/service_logs/attention_0_0.log"
+      },
+      "sha256": "8ee755e55b3f015429b71a3bad8f40d458ec158ac10ec3c30684ea4597b8be7c"
+    },
+    {
+      "name": "rep3_control.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/service_logs/mps-log/pa-0/control.log"
+      },
+      "sha256": "eefbd56281457c98abf6a798d803f94873231ea86893f64fd63eef586e8a3dd1"
+    },
+    {
+      "name": "rep3_server.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/service_logs/mps-log/pa-0/server.log"
+      },
+      "sha256": "7ec18df8088ec64820c1c68d54f39857293b10839bc6be79de6a13fa89fa31a2"
+    },
+    {
+      "name": "rep3_mps_static_0_attention_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/service_logs/mps_static_0_attention_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep3_mps_static_0_prefill_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/service_logs/mps_static_0_prefill_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep3_mps_static_cleanup_pa_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/service_logs/mps_static_cleanup_pa_0.log"
+      },
+      "sha256": "8b6e32c07b2b7e9eced784b80e7fc83957835b2f844ec738086705376008d43d"
+    },
+    {
+      "name": "rep3_prefill_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/service_logs/prefill_0.log"
+      },
+      "sha256": "7ab14b855ba910c479fd5ac5dcc531cc62b4661d7cebef38a189e3368be5137f"
+    },
+    {
+      "name": "rep3_projection_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/service_logs/projection_0.log"
+      },
+      "sha256": "5702665cc72ef890973c6034ee85166e16542dadaee3b12509ff8d01003dbf4c"
+    },
+    {
+      "name": "rep3_proxy.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/service_logs/proxy.log"
+      },
+      "sha256": "2dff370bbffe388c56a5b09a3cfe7b46f11590edd68ded5bb0026903d59e5689"
+    },
+    {
+      "name": "rep3_session_drain.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/session_drain.env"
+      },
+      "sha256": "e6ff9bb006a7fe1c28473ee20082c5a6894a3f5e28c4a841344f4fef8af72935"
+    },
+    {
+      "name": "rep3_topology_manifest.json",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/topology_manifest.json"
+      },
+      "sha256": "86368d418fe8b6c90e6ec7473b3356bb4e66f2446067cb2790d4da4aae519824"
+    },
+    {
+      "name": "rep3_topology_runtime_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/topology_runtime_stats.json"
+      },
+      "sha256": "38754ac2a34601cc1e17fb42ce6edab621933ac84aa87294564f81ccd9440d48"
+    },
+    {
+      "name": "rep3_tracked_index.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/tracked_index.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep3_tracked_worktree.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_7f732f5be_p17_runtime_boundary_formal/rep3/tracked_worktree.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "validity": {
+    "status": "passed",
+    "reasons": []
+  },
+  "failure_reasons": []
+}
