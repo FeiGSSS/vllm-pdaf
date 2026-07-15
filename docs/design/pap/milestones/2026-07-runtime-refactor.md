@@ -157,8 +157,10 @@ transport backend
 
 具体约束：
 
-- 核心模块不得直接读取环境变量；环境变量只在 launcher/config composition root
-  解析一次；
+- 核心模块不得通过环境变量选择 KV ownership、handoff、同步/异步、dispatch 或 MPS
+  算法路径；这些 selector 只在 launcher/config composition root 解析或 fail fast；
+- backend buffer/endpoint、timeout 和 observability 等 operational knobs 可暂留 owner
+  module 的兼容读取，并作为后续 cleanup debt 明确记录；
 - `attention_executor.py` 在本 milestone 保留为薄兼容入口，只做 re-export 和服务
   启动；
 - Qwen3、scheduler 和 model runner 只保留 PAP adapter，不各自实现 PAP 状态机；

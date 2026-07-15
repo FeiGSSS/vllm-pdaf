@@ -12,9 +12,12 @@ last_validated_commit: null
 
 # PAP runtime
 
-The current runtime has one accepted correctness path. Environment variables
-are parsed at service/launcher composition roots into `PAPRuntimeConfig`; core
-components receive typed configuration instead of choosing experimental paths.
+The current runtime has one accepted correctness path. Path-selecting variables
+are parsed or rejected at service/launcher composition roots through
+`PAPRuntimeConfig`; core components cannot use them to revive experimental
+algorithms. Backend sizing, endpoint, timeout, and observability knobs still
+have some compatibility reads inside their owner modules and remain explicit
+cleanup debt rather than alternate runtime paths.
 
 ## KV publication and readiness
 
