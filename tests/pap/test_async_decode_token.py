@@ -11,11 +11,12 @@ from vllm.pap.deferred_decode_token import (
     DeferredDecodeCommit,
     DeferredDecodeTokenCommitter,
 )
+from vllm.pap.integration import (
+    PAPDecodeTokenBridge,
+    PAPProjectionRequestStore,
+)
 from vllm.v1.outputs import ModelRunnerOutput
 from vllm.v1.worker.gpu.async_utils import AsyncOutput
-from vllm.v1.worker.gpu.model_runner import (
-    _publish_pap_sampled_tokens,
-)
 
 
 def test_deferred_decode_token_dispatches_after_token_and_kv_are_ready() -> None:
@@ -447,29 +448,45 @@ def test_async_output_callback_receives_trimmed_sampled_tokens() -> None:
     assert order == ["synchronized", "callback:[[42], [43, 44]]"]
 
 
-def test_publish_pap_sampled_tokens_uses_captured_route_and_next_seq_len() -> None:
+def test_decode_token_bridge_uses_captured_route_and_next_seq_len() -> None:
     published: list[tuple[dict[str, object], ...]] = []
 
     class FakeClient:
         def publish_batch(self, tokens) -> None:
             published.append(tuple(tokens))
 
+        def flush_request(self, _request_id: str) -> bool:
+            return True
+
+        def forget_request(self, _request_id: str) -> None:
+            return None
+
+        def shutdown(self) -> None:
+            return None
+
     output = ModelRunnerOutput(
         req_ids=["projection-a", "projection-b"],
         req_id_to_index={"projection-a": 0, "projection-b": 1},
         sampled_token_ids=[[42], []],
     )
-
-    _publish_pap_sampled_tokens(
-        output,
-        client=FakeClient(),
-        pap_request_ids=frozenset({"projection-a"}),
-        session_request_id_by_request={"projection-a": "prefill-a"},
-        attention_endpoint_by_request={
-            "projection-a": "http://127.0.0.1:8300"
+    store = PAPProjectionRequestStore()
+    store.update(
+        "projection-a",
+        {
+            "pap_prefill_kv_handle": "prefill-a",
+            "pap_attention_endpoint": "http://127.0.0.1:8300",
         },
-        next_seq_len_by_request={"projection-a": 17},
     )
+    bridge = PAPDecodeTokenBridge(client=FakeClient())
+    callback = bridge.build_callback(
+        store,
+        pap_request_ids=frozenset({"projection-a"}),
+        request_ids=("projection-a", "projection-b"),
+        seq_lens_cpu_upper_bound=(16, 8),
+    )
+
+    assert callback is not None
+    callback(output)
 
     assert published == [
         (
@@ -482,14 +499,17 @@ def test_publish_pap_sampled_tokens_uses_captured_route_and_next_seq_len() -> No
         )
     ]
 
+    incomplete_store = PAPProjectionRequestStore()
+    incomplete_store.update(
+        "projection-a",
+        {"pap_attention_endpoint": "http://127.0.0.1:8300"},
+    )
+    incomplete_callback = bridge.build_callback(
+        incomplete_store,
+        pap_request_ids=frozenset({"projection-a"}),
+        request_ids=("projection-a",),
+        seq_lens_cpu_upper_bound=(16,),
+    )
+    assert incomplete_callback is not None
     with pytest.raises(RuntimeError, match="missing routing metadata"):
-        _publish_pap_sampled_tokens(
-            output,
-            client=FakeClient(),
-            pap_request_ids=frozenset({"projection-a"}),
-            session_request_id_by_request={},
-            attention_endpoint_by_request={
-                "projection-a": "http://127.0.0.1:8300"
-            },
-            next_seq_len_by_request={"projection-a": 17},
-        )
+        incomplete_callback(output)

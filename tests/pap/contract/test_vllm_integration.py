@@ -5,6 +5,7 @@ from types import MethodType, SimpleNamespace
 import pytest
 
 from vllm.pap.integration import (
+    PAPDecodeTokenBridge,
     bind_projection_request_store,
     build_projection_forward_context,
     select_projection_request_ids,
@@ -31,12 +32,18 @@ class _DecodeTokenClient:
         self._events = events
         self._flush_succeeds = flush_succeeds
 
+    def publish_batch(self, _tokens) -> None:
+        raise AssertionError("not used by request-removal tests")
+
     def flush_request(self, request_id: str) -> bool:
         self._events.append(f"flush:{request_id}")
         return self._flush_succeeds
 
     def forget_request(self, request_id: str) -> None:
         self._events.append(f"forget:{request_id}")
+
+    def shutdown(self) -> None:
+        self._events.append("shutdown")
 
 
 def _v2_runner_for_removal(
@@ -58,9 +65,11 @@ def _v2_runner_for_removal(
             "pap_attention_kv_installed": True,
         },
     )
-    runner.pap_decode_token_client = _DecodeTokenClient(
-        events,
-        flush_succeeds=flush_succeeds,
+    runner.pap_decode_token_bridge = PAPDecodeTokenBridge(
+        client=_DecodeTokenClient(
+            events,
+            flush_succeeds=flush_succeeds,
+        )
     )
     runner.model_state = _ModelState(events)
     runner.req_states = _RequestStates()

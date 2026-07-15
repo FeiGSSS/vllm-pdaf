@@ -46,8 +46,8 @@ from vllm.model_executor.layers.mamba.ops.ssu_dispatch import (
 from vllm.model_executor.model_loader import get_model_loader
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.pap.config import reject_removed_pap_flags
-from vllm.pap.decode_token_client import DecodeTokenClient
 from vllm.pap.integration import (
+    PAPDecodeTokenBridge,
     PAPProjectionRequestStore,
     bind_projection_request_store,
     build_projection_forward_context,
@@ -140,47 +140,6 @@ def _pap_projection_critical_trace_enabled() -> bool:
         and os.environ.get("PAP_PROJECTION_CRITICAL_TRACE", "").lower()
         in ("1", "true", "yes", "on")
     )
-
-
-def _publish_pap_sampled_tokens(
-    output: ModelRunnerOutput,
-    *,
-    client: DecodeTokenClient,
-    pap_request_ids: frozenset[str],
-    session_request_id_by_request: dict[str, str],
-    attention_endpoint_by_request: dict[str, str],
-    next_seq_len_by_request: dict[str, int],
-) -> None:
-    notifications: list[dict[str, object]] = []
-    for request_id, token_ids in zip(output.req_ids, output.sampled_token_ids):
-        if not token_ids or request_id not in pap_request_ids:
-            continue
-        session_request_id = session_request_id_by_request.get(request_id)
-        attention_endpoint = attention_endpoint_by_request.get(request_id)
-        next_seq_len = next_seq_len_by_request.get(request_id)
-        if (
-            session_request_id is None
-            or attention_endpoint is None
-            or next_seq_len is None
-        ):
-            raise RuntimeError(
-                "PAP asynchronous decode-token delivery is missing routing "
-                f"metadata for sampled request {request_id}"
-            )
-        if len(token_ids) != 1:
-            raise RuntimeError(
-                "PAP async decode-token handoff requires one sampled token per "
-                f"request, got {len(token_ids)} for {request_id}"
-            )
-        notifications.append(
-            {
-                "request_id": session_request_id,
-                "new_seq_len": next_seq_len,
-                "token_id": int(token_ids[0]),
-                "endpoint": attention_endpoint,
-            }
-        )
-    client.publish_batch(notifications)
 
 
 class GPUModelRunner(LoRAModelRunnerMixin):
@@ -318,7 +277,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self.pap_projection_request_store: PAPProjectionRequestStore
         bind_projection_request_store(self)
         self.pap_offload_exec_activity_tracker: PAPProjectionPeerActivity | None = None
-        self.pap_decode_token_client: DecodeTokenClient | None = None
+        self.pap_decode_token_bridge = PAPDecodeTokenBridge()
 
         # For transferring state from execute_model to subsequent sample_tokens call.
         self.execute_model_state: ExecuteModelState | None = None
@@ -833,19 +792,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         return cuda_graph_size
 
     def _remove_request(self, req_id: str) -> bool:
-        session_request_id = (
-            self.pap_projection_request_store.prefill_kv_handle_by_request.get(req_id)
+        self.pap_decode_token_bridge.drain_request(
+            self.pap_projection_request_store,
+            req_id,
         )
-        if (
-            self.pap_decode_token_client is not None
-            and session_request_id is not None
-        ):
-            if not self.pap_decode_token_client.flush_request(session_request_id):
-                raise RuntimeError(
-                    "PAP decode-token delivery failed before request removal: "
-                    f"{session_request_id}"
-                )
-            self.pap_decode_token_client.forget_request(session_request_id)
         self.pap_projection_request_store.remove(req_id)
         # Call model_state.remove_request *before* req_states.remove_request
         # so the model_state can still look up the slot index.
@@ -942,37 +892,14 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         input_batch: InputBatch,
     ) -> Callable[[ModelRunnerOutput], None] | None:
         pap_request_ids = self._pap_request_ids_for_batch(input_batch)
-        if not pap_request_ids:
-            return None
         request_ids = tuple(input_batch.req_ids[: input_batch.num_reqs])
-        session_request_id_by_request = {
-            request_id: self.pap_prefill_kv_handle_by_req_id[request_id]
-            for request_id in request_ids
-            if request_id in self.pap_prefill_kv_handle_by_req_id
-        }
-        attention_endpoint_by_request = {
-            request_id: self.pap_attention_endpoint_by_req_id[request_id]
-            for request_id in request_ids
-            if request_id in self.pap_attention_endpoint_by_req_id
-        }
-        next_seq_len_by_request = {
-            request_id: int(seq_len) + 1
-            for request_id, seq_len in zip(
-                request_ids,
-                input_batch.seq_lens_cpu_upper_bound[
-                    : input_batch.num_reqs
-                ].tolist(),
-            )
-        }
-        if self.pap_decode_token_client is None:
-            self.pap_decode_token_client = DecodeTokenClient()
-        return functools.partial(
-            _publish_pap_sampled_tokens,
-            client=self.pap_decode_token_client,
+        return self.pap_decode_token_bridge.build_callback(
+            self.pap_projection_request_store,
             pap_request_ids=pap_request_ids,
-            session_request_id_by_request=session_request_id_by_request,
-            attention_endpoint_by_request=attention_endpoint_by_request,
-            next_seq_len_by_request=next_seq_len_by_request,
+            request_ids=request_ids,
+            seq_lens_cpu_upper_bound=input_batch.seq_lens_cpu_upper_bound[
+                : input_batch.num_reqs
+            ].tolist(),
         )
 
     def finish_requests(self, scheduler_output: SchedulerOutput) -> None:
@@ -1908,8 +1835,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         """Release GPU tensors (model weights, KV caches, workspace) so that
         memory is reclaimable when running in the same process."""
         torch.accelerator.synchronize()
-        if self.pap_decode_token_client is not None:
-            self.pap_decode_token_client.shutdown()
+        self.pap_decode_token_bridge.shutdown()
         if hasattr(self, "kv_caches"):
             self.kv_caches.clear()
         if hasattr(self, "attn_groups"):
