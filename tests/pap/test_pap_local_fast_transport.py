@@ -1,6 +1,7 @@
 import os
 import threading
 from collections import OrderedDict
+from types import SimpleNamespace
 
 import pytest
 import torch
@@ -10,11 +11,13 @@ from vllm.pap.cuda_stream_memops import (
     stream_wait_value32,
     stream_write_value32,
 )
+from vllm.pap.protocol import PAPOffloadExecBatchDescriptor
+from vllm.pap.transport import local_fast_io
 from vllm.pap.transport.local_fast import (
     PAPLocalFastTransport,
 )
-from vllm.pap.transport.local_fast_io import _LocalFastMessage
 from vllm.pap.transport.local_fast_endpoint import _open_or_create_doorbell
+from vllm.pap.transport.local_fast_io import _LocalFastMessage
 from vllm.pap.transport.local_fast_protocol import (
     DTYPE_CODE_BFLOAT16,
     DIR_OUTPUT,
@@ -26,14 +29,13 @@ from vllm.pap.transport.local_fast_protocol import (
     _doorbell_ack,
     _doorbell_bytes,
     _doorbell_read_header,
-    _doorbell_read_record,
     _doorbell_read_metadata,
+    _doorbell_read_record,
     _doorbell_record_offset,
     _doorbell_write,
     _payload_metadata,
     _signal_index,
 )
-from vllm.pap.protocol import PAPOffloadExecBatchDescriptor
 
 
 def test_local_fast_doorbell_slots_are_independent(tmp_path) -> None:
@@ -210,6 +212,98 @@ def test_local_fast_fixed_doorbell_record_needs_no_json(tmp_path) -> None:
         assert record.dtype_code == DTYPE_CODE_BFLOAT16
         assert record.flags == RECORD_FLAG_FIXED_TENSOR | RECORD_FLAG_PLAN_REF
         assert _doorbell_read_metadata(mm, offset, record.metadata_len) == {}
+
+        _doorbell_ack(mm, offset, 5)
+        _doorbell_write(
+            mm,
+            offset,
+            seq=5,
+            nbytes=64,
+            offset=0,
+            metadata=None,
+            plan_id=0x5678,
+            shape=(2, 16),
+            layer_index=8,
+            dtype_code=DTYPE_CODE_BFLOAT16,
+            flags=RECORD_FLAG_FIXED_TENSOR | RECORD_FLAG_PLAN_REF,
+        )
+        assert _doorbell_read_record(mm, offset).ack == 5
+    finally:
+        mm.close()
+        os.close(fd)
+
+
+def test_local_fast_prepares_descriptorless_output_gpu_wait(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    slot_count = 2
+    path = tmp_path / "doorbell-output"
+    fd, mm = _open_or_create_doorbell(str(path), _doorbell_bytes(slot_count))
+    waits = []
+    stream = object()
+    monkeypatch.setattr(
+        local_fast_io.torch.cuda,
+        "current_stream",
+        lambda _device: stream,
+    )
+    monkeypatch.setattr(
+        local_fast_io,
+        "stream_wait_value32",
+        lambda signal, index, seq, current_stream: waits.append(
+            (signal, index, seq, current_stream)
+        ),
+    )
+
+    transport = object.__new__(PAPLocalFastTransport)
+    transport.close = lambda: None
+    transport.device = torch.device("cuda:0")
+    transport._stream_ordered = True
+    transport._batch_plan_enabled = True
+    transport._slot_count = slot_count
+    transport._slot_bytes = 64
+    transport._recv_buffer = torch.zeros(128, dtype=torch.uint8)
+    transport._signal_buffer = torch.zeros(4 * slot_count, dtype=torch.int32)
+    transport._doorbell_mm = mm
+    transport._deferred_cuda_trace = False
+    transport._descriptorless_output_receives = 0
+    transport._peer = SimpleNamespace(expected_output_seq=1)
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="model.layers.0.self_attn.attn",
+        items=(),
+        batch_id_suffix="req-a@7,req-b@8",
+        metadata_template={
+            "r": ("req-a", "req-b"),
+            "s": (7, 8),
+            "a": (0.125, 0.125),
+        },
+    )
+    try:
+        message = transport.prepare_output_batch_message(
+            descriptor,
+            shape=(2, 4),
+            dtype=torch.bfloat16,
+            remote_address="",
+        )
+
+        assert message is not None
+        assert tuple(message.tensor.shape) == (2, 4)
+        assert message.tensor.dtype == torch.bfloat16
+        assert transport._peer.expected_output_seq == 2
+        assert transport._descriptorless_output_receives == 1
+        record_offset = _doorbell_record_offset(DIR_OUTPUT, 0, slot_count)
+        assert _doorbell_read_header(mm, record_offset)[4] == 1
+        assert len(waits) == 1
+        signal, signal_index, seq, current_stream = waits[0]
+        assert signal is transport._signal_buffer
+        assert signal_index == _signal_index(
+            DIR_OUTPUT,
+            0,
+            slot_count,
+            release=False,
+        )
+        assert seq == 1
+        assert current_stream is stream
     finally:
         mm.close()
         os.close(fd)

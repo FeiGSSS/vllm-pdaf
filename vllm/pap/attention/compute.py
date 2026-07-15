@@ -17,18 +17,14 @@ from vllm.pap.deferred_cuda_trace import (
 )
 from vllm.pap.kv.metadata import (
     PAPPagedFlashMetadata,
-    build_unified_paged_flash_metadata,
+    build_unified_paged_flash_step_metadata,
 )
 from vllm.pap.kv.decode_state import _DEFERRED_CUDA_TRACE_ENABLED
 from vllm.pap.kv.models import PAPAttentionSession, PAPUnifiedPagedKVState
 from vllm.pap.kv.observability import (
     log_kv_locality_profile as _log_kv_locality_profile,
 )
-from vllm.pap.kv.registry import (
-    PAPAttentionRegistry,
-    _DECODE_COMMIT_PATH,
-    _prefill_control_endpoint,
-)
+from vllm.pap.kv.registry import PAPAttentionRegistry
 from vllm.pap.protocol import pap_offload_exec_trace_id
 
 logger = logging.getLogger("pap_attention")
@@ -107,6 +103,7 @@ def _compute_unified_paged_flash_batch(
     states: list[PAPUnifiedPagedKVState],
     scale: float,
     layer_name: str,
+    metadata: PAPPagedFlashMetadata,
     trace_stats: dict[str, float] | None = None,
 ) -> torch.Tensor | None:
     """Single-source Prefill-owned paged FA compute (Stage 4 unified path)."""
@@ -136,20 +133,6 @@ def _compute_unified_paged_flash_batch(
     if not is_flash_attn_varlen_func_available():
         return None
 
-    metadata_start = time.perf_counter() if trace_stats is not None else 0.0
-    metadata = build_unified_paged_flash_metadata(
-        states=states, device=query_batch.device
-    )
-    if trace_stats is not None:
-        metadata_done_ns = time.perf_counter_ns()
-        metadata_ms = (time.perf_counter() - metadata_start) * 1000.0
-        trace_stats["paged_metadata_ms"] = (
-            trace_stats.get("paged_metadata_ms", 0.0) + metadata_ms
-        )
-        trace_stats["metadata_build_ms"] = (
-            trace_stats.get("metadata_build_ms", 0.0) + metadata_ms
-        )
-        trace_stats["pre_compute_done_ns"] = float(metadata_done_ns)
     if metadata.max_seq_len <= 0:
         return None
 
@@ -279,37 +262,27 @@ def compute_offload_exec_batch_output(
     num_heads_default = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_HEADS", "0"))
     num_kv_heads_default = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "0"))
     head_dim_default = int(os.environ.get("PAP_OFFLOAD_EXEC_HEAD_DIM", "0"))
-    session_entries = registry.offload_exec_batch_session_entries(
-        request_ids,
+    step_context = registry.get_or_create_attention_step_context(
+        request_ids=request_ids,
+        decode_seq_lens=steps,
+        scales=scales,
+        layer_name=str(descriptor.layer_name),
         default_q_size=int(os.environ.get("PAP_OFFLOAD_EXEC_Q_SIZE", "0")),
         default_kv_size=int(os.environ.get("PAP_OFFLOAD_EXEC_KV_SIZE", "0")),
         num_heads=num_heads_default,
         num_kv_heads=num_kv_heads_default,
         head_dim=head_dim_default,
     )
-
-    common_shape: tuple[int, int, int, int, int] | None = None
-    common_scale: float | None = None
-    for scale, session_entry in zip(scales, session_entries):
-        shape = (
-            session_entry.q_size,
-            session_entry.kv_size,
-            session_entry.num_heads,
-            session_entry.num_kv_heads,
-            session_entry.head_dim,
-        )
-        if common_shape is None:
-            common_shape = shape
-            common_scale = float(scale)
-        elif shape != common_shape or float(scale) != common_scale:
-            raise RuntimeError("PAP OFFLOAD_EXEC batch has mixed shapes or scales")
     if trace_stats is not None:
         trace_stats["shape_lookup_ms"] += (
             time.perf_counter() - shape_lookup_start
         ) * 1000.0
 
-    assert common_shape is not None
-    _q_size, kv_size, num_heads, num_kv_heads, head_dim = common_shape
+    _q_size = step_context.q_size
+    kv_size = step_context.kv_size
+    num_heads = step_context.num_heads
+    num_kv_heads = step_context.num_kv_heads
+    head_dim = step_context.head_dim
     batch_size = len(request_ids)
 
     qkv_split_start = time.perf_counter() if trace_stats is not None else 0.0
@@ -331,38 +304,67 @@ def compute_offload_exec_batch_output(
             time.perf_counter() - query_move_start
         ) * 1000.0
 
-    append_start = time.perf_counter() if trace_stats is not None else 0.0
-    decode_seq_lens = list(steps)
-    session_request_ids = tuple(
-        session_entry.session_request_id for session_entry in session_entries
-    )
+    layer_name = str(descriptor.layer_name)
+    with step_context.lock:
+        unified_states = step_context.layer_states.get(layer_name)
+        if unified_states is None:
+            raise RuntimeError(
+                f"PAP Attention step received unexpected layer {layer_name}"
+            )
+        layer_completed = layer_name in step_context.completed_layers
+        expected_seq_lens = (
+            step_context.result_seq_lens
+            if layer_completed
+            else step_context.prior_seq_lens
+        )
+        if tuple(int(state.seq_len) for state in unified_states) != expected_seq_lens:
+            raise RuntimeError(
+                "PAP Attention step observed a layer sequence-length drift "
+                f"layer={layer_name}"
+            )
 
-    unified_states = registry.get_unified_paged_states(
-        session_request_ids=session_request_ids,
-        layer_name=descriptor.layer_name,
-    )
-    if unified_states is not None:
-        commit_new_seq_lens: list[int | None] = [
-            int(decode_len) if int(decode_len) > int(state.seq_len) else None
-            for decode_len, state in zip(decode_seq_lens, unified_states)
-        ]
+        append_start = time.perf_counter() if trace_stats is not None else 0.0
         written = registry.append_decode_kv_to_unified_prefill_cache(
-            session_request_ids=session_request_ids,
-            layer_name=descriptor.layer_name,
+            session_request_ids=step_context.session_request_ids,
+            layer_name=layer_name,
             key_batch=key_batch,
             value_batch=value_batch,
-            decode_seq_lens=decode_seq_lens,
+            decode_seq_lens=step_context.decode_seq_lens,
+            step_context=step_context,
             trace_stats=trace_stats,
         )
-        if any(seq_len is not None for seq_len in commit_new_seq_lens) and written <= 0:
-            raise RuntimeError("PAP unified KV append wrote no rows")
+        expected_writes = 0 if layer_completed else len(step_context.active_indices)
+        if written != expected_writes:
+            raise RuntimeError(
+                "PAP Attention step KV append row count mismatch "
+                f"expected={expected_writes} written={written}"
+            )
         if trace_stats is not None:
             trace_stats["append_kv_ms"] += (time.perf_counter() - append_start) * 1000.0
+
+        metadata_build_ms = 0.0
+        if step_context.metadata is None:
+            metadata_start = time.perf_counter()
+            step_context.metadata = build_unified_paged_flash_step_metadata(
+                states=unified_states,
+                seq_lens=step_context.result_seq_lens,
+                device=query_batch.device,
+            )
+            metadata_build_ms = (
+                time.perf_counter() - metadata_start
+            ) * 1000.0
+            registry.record_attention_step_metadata_build()
+        if trace_stats is not None:
+            trace_stats["paged_metadata_ms"] += metadata_build_ms
+            trace_stats["metadata_build_ms"] += metadata_build_ms
+            trace_stats["pre_compute_done_ns"] = float(time.perf_counter_ns())
+
         unified_output = _compute_unified_paged_flash_batch(
             query_batch=query_batch,
-            states=unified_states,
-            scale=common_scale,
-            layer_name=descriptor.layer_name,
+            states=list(unified_states),
+            scale=step_context.scale,
+            layer_name=layer_name,
+            metadata=step_context.metadata,
             trace_stats=trace_stats,
         )
         if unified_output is None:
@@ -377,25 +379,11 @@ def compute_offload_exec_batch_output(
                 trace_stats.get("attention_output_reshape_ms", 0.0) + reshape_ms
             )
             trace_stats["post_compute_done_ns"] = float(time.perf_counter_ns())
-        for index, request_id in enumerate(request_ids):
-            new_seq_len = commit_new_seq_lens[index]
-            if new_seq_len is None:
-                continue
-            endpoint = _prefill_control_endpoint(
-                session_entries[index].prefill_endpoint,
-                _DECODE_COMMIT_PATH,
-            )
-            registry.record_decode_kv_ready(
-                request_id=request_id,
-                new_seq_len=new_seq_len,
-                endpoint=endpoint,
-            )
+        registry.complete_attention_step_layer(
+            context=step_context,
+            layer_name=layer_name,
+        )
         return unified_output
-
-    raise RuntimeError(
-        "PAP Prefill-owned KV state missing for layer="
-        f"{descriptor.layer_name}; sealed manifest handoff did not complete"
-    )
 
 
 def _finalize_offload_exec_compute_trace(

@@ -1525,6 +1525,115 @@ def test_unified_offload_exec_commit_waits_for_async_decode_token(
     ]
 
 
+def test_attention_step_context_reuses_plan_and_publishes_once(
+    monkeypatch,
+) -> None:
+    import torch
+
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_HEAD_DIM", "2")
+    kv_metadata_module.reset_unified_paged_flash_metadata_cache()
+
+    commits = []
+
+    class FakeCommitClient:
+        def commit(self, *, request_id, new_seq_len, new_token_ids, endpoint):
+            commits.append(
+                (request_id, new_seq_len, tuple(new_token_ids), endpoint)
+            )
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-step",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+            q_size=2,
+            kv_size=2,
+            num_heads=1,
+            num_kv_heads=1,
+            head_dim=2,
+        )
+    )
+    _install_unified_activation(
+        registry,
+        request_id="req-step",
+        layer_names=("layer0", "layer1"),
+        kv_cache=torch.zeros((2, 2, 4, 1, 2)),
+        block_ids=(0,),
+        seq_len=1,
+    )
+    reshape_calls = []
+    monkeypatch.setattr(
+        kv_registry_module.torch.ops._C_cache_ops,
+        "reshape_and_cache_flash",
+        lambda *args: reshape_calls.append(args),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        attention_compute_module,
+        "_compute_unified_paged_flash_batch",
+        lambda **kwargs: torch.tensor([[2.0, 0.0]]),
+    )
+    monkeypatch.setattr(
+        kv_registry_module,
+        "_get_commit_client",
+        lambda: FakeCommitClient(),
+    )
+
+    assert (
+        registry.record_decode_token(
+            request_id="req-step",
+            new_seq_len=2,
+            token_id=42,
+        )
+        == "pending"
+    )
+    qkv = torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]])
+    for layer_name in ("layer0", "layer1"):
+        descriptor = PAPOffloadExecBatchDescriptor(
+            layer_name=layer_name,
+            items=(
+                PAPOffloadExecDescriptor(
+                    request_id="req-step",
+                    layer_name=layer_name,
+                    step=2,
+                    scale=1.0,
+                ),
+            ),
+        )
+        compute_offload_exec_batch_output(
+            registry=registry,
+            descriptor=descriptor,
+            qkv_batch=qkv,
+        )
+        if layer_name == "layer0":
+            assert commits == []
+
+    assert len(reshape_calls) == 2
+    assert reshape_calls[1][4].data_ptr() == reshape_calls[0][4].data_ptr()
+    assert commits == [
+        (
+            "req-step",
+            2,
+            (42,),
+            "http://localhost:8100/v1/pap/prefill/decode-commit",
+        )
+    ]
+    assert registry.attention_step_context_stats() == {
+        "step_context_hits": 1,
+        "step_context_misses": 1,
+        "step_context_entries": 1,
+        "step_slot_plan_builds": 1,
+        "step_metadata_builds": 1,
+        "step_kv_ready_publishes": 1,
+    }
+    token_stats = registry.decode_token_stats()
+    assert token_stats["decode_kv_ready"] == 1
+    assert token_stats["decode_token_duplicates"] == 0
+
+
 def test_decode_token_http_endpoint_is_idempotent_and_rejects_mismatch() -> None:
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
@@ -2758,6 +2867,12 @@ def test_attention_fast_path_stats_endpoint() -> None:
         "slot_plan_misses": 0,
         "slot_plan_entries": 0,
         "slot_topology_mismatches": 0,
+        "step_context_hits": 0,
+        "step_context_misses": 0,
+        "step_context_entries": 0,
+        "step_slot_plan_builds": 0,
+        "step_metadata_builds": 0,
+        "step_kv_ready_publishes": 0,
         "unified_md_hits": 0,
         "unified_md_misses": 0,
         "unified_md_entries": 0,

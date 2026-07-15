@@ -30,6 +30,9 @@ class PAPPagedFlashMetadata:
 _UNIFIED_MD_CACHE: OrderedDict[tuple[Any, ...], PAPPagedFlashMetadata] = (
     OrderedDict()
 )
+_UNIFIED_STATIC_BLOCK_TABLE_CACHE: OrderedDict[
+    tuple[Any, ...], torch.Tensor
+] = OrderedDict()
 _UNIFIED_MD_CU_SEQLENS_Q: dict[tuple[str, int], torch.Tensor] = {}
 _UNIFIED_MD_CACHE_HITS = 0
 _UNIFIED_MD_CACHE_MISSES = 0
@@ -49,6 +52,7 @@ def reset_unified_paged_flash_metadata_cache() -> None:
     global _UNIFIED_MD_FULL_KEY_SCANS
     with _UNIFIED_MD_CACHE_LOCK:
         _UNIFIED_MD_CACHE.clear()
+        _UNIFIED_STATIC_BLOCK_TABLE_CACHE.clear()
         _UNIFIED_MD_CU_SEQLENS_Q.clear()
         _UNIFIED_MD_CACHE_HITS = 0
         _UNIFIED_MD_CACHE_MISSES = 0
@@ -65,7 +69,10 @@ def unified_paged_flash_metadata_cache_stats() -> dict[str, int]:
         return {
             "hits": int(_UNIFIED_MD_CACHE_HITS),
             "misses": int(_UNIFIED_MD_CACHE_MISSES),
-            "entries": len(_UNIFIED_MD_CACHE),
+            "entries": (
+                len(_UNIFIED_MD_CACHE)
+                + len(_UNIFIED_STATIC_BLOCK_TABLE_CACHE)
+            ),
             "fast_key_lookups": int(_UNIFIED_MD_FAST_KEY_LOOKUPS),
             "fast_key_hits": int(_UNIFIED_MD_FAST_KEY_HITS),
             "full_key_scans": int(_UNIFIED_MD_FULL_KEY_SCANS),
@@ -89,6 +96,17 @@ def _unified_paged_flash_metadata_fast_key(
             return None
         rows.append((topology_id, int(state.seq_len)))
     return ("topology", str(torch.device(device)), tuple(rows))
+
+
+def _unified_static_block_table_fast_key(
+    *,
+    states: Sequence[PAPUnifiedPagedKVState],
+    device: torch.device,
+) -> tuple[Any, ...] | None:
+    topology_ids = tuple(int(state.slot_topology_id) for state in states)
+    if any(topology_id <= 0 for topology_id in topology_ids):
+        return None
+    return ("static_topology", str(torch.device(device)), topology_ids)
 
 
 def _coerce_block_id(value: Any) -> int:
@@ -165,6 +183,127 @@ def _store_unified_paged_flash_metadata(
         while len(_UNIFIED_MD_CACHE) > limit:
             _UNIFIED_MD_CACHE.popitem(last=False)
         return metadata
+
+
+def _lookup_unified_static_block_table(
+    key: tuple[Any, ...],
+    *,
+    fast_key: bool,
+) -> torch.Tensor | None:
+    global _UNIFIED_MD_CACHE_HITS, _UNIFIED_MD_FAST_KEY_HITS
+    global _UNIFIED_MD_FAST_KEY_LOOKUPS
+    with _UNIFIED_MD_CACHE_LOCK:
+        if fast_key:
+            _UNIFIED_MD_FAST_KEY_LOOKUPS += 1
+        cached = _UNIFIED_STATIC_BLOCK_TABLE_CACHE.get(key)
+        if cached is not None:
+            _UNIFIED_MD_CACHE_HITS += 1
+            if fast_key:
+                _UNIFIED_MD_FAST_KEY_HITS += 1
+            _UNIFIED_STATIC_BLOCK_TABLE_CACHE.move_to_end(key)
+        return cached
+
+
+def _store_unified_static_block_table(
+    key: tuple[Any, ...],
+    block_table: torch.Tensor,
+) -> torch.Tensor:
+    global _UNIFIED_MD_CACHE_HITS, _UNIFIED_MD_CACHE_MISSES
+    limit = _unified_paged_flash_metadata_cache_limit()
+    with _UNIFIED_MD_CACHE_LOCK:
+        cached = _UNIFIED_STATIC_BLOCK_TABLE_CACHE.get(key)
+        if cached is not None:
+            _UNIFIED_MD_CACHE_HITS += 1
+            _UNIFIED_STATIC_BLOCK_TABLE_CACHE.move_to_end(key)
+            return cached
+        _UNIFIED_MD_CACHE_MISSES += 1
+        if limit <= 0:
+            return block_table
+        _UNIFIED_STATIC_BLOCK_TABLE_CACHE[key] = block_table
+        _UNIFIED_STATIC_BLOCK_TABLE_CACHE.move_to_end(key)
+        while len(_UNIFIED_STATIC_BLOCK_TABLE_CACHE) > limit:
+            _UNIFIED_STATIC_BLOCK_TABLE_CACHE.popitem(last=False)
+        return block_table
+
+
+def build_unified_paged_flash_step_metadata(
+    *,
+    states: Sequence[PAPUnifiedPagedKVState],
+    seq_lens: Sequence[int],
+    device: torch.device,
+) -> PAPPagedFlashMetadata:
+    """Build dynamic decode metadata over a reusable static block table."""
+
+    batch_size = len(states)
+    normalized_seq_lens = tuple(int(seq_len) for seq_len in seq_lens)
+    if batch_size <= 0:
+        raise ValueError(
+            "unified paged FlashAttention metadata requires at least one state"
+        )
+    if len(normalized_seq_lens) != batch_size:
+        raise ValueError("PAP Attention step metadata row count mismatch")
+
+    cache_key = _unified_static_block_table_fast_key(
+        states=states,
+        device=device,
+    )
+    block_table = None
+    if cache_key is not None:
+        block_table = _lookup_unified_static_block_table(
+            cache_key,
+            fast_key=True,
+        )
+
+    if block_table is None:
+        block_rows = [
+            tuple(_coerce_block_id(raw) for raw in state.block_ids)
+            for state in states
+        ]
+        if any(not block_row for block_row in block_rows):
+            raise ValueError("unified state has no blocks")
+        _record_unified_paged_flash_metadata_scan(
+            sum(len(block_row) for block_row in block_rows)
+        )
+        if cache_key is None:
+            cache_key = (
+                "static_blocks",
+                str(torch.device(device)),
+                tuple(block_rows),
+            )
+            block_table = _lookup_unified_static_block_table(
+                cache_key,
+                fast_key=False,
+            )
+        if block_table is None:
+            max_blocks = max(len(block_row) for block_row in block_rows)
+            padded_rows = [
+                block_row + (block_row[-1],) * (max_blocks - len(block_row))
+                for block_row in block_rows
+            ]
+            block_table = torch.tensor(
+                padded_rows,
+                dtype=torch.int32,
+                device=device,
+            )
+            block_table = _store_unified_static_block_table(
+                cache_key,
+                block_table,
+            )
+
+    seq_lens_tensor = torch.tensor(
+        normalized_seq_lens,
+        dtype=torch.int32,
+        device=device,
+    )
+    return PAPPagedFlashMetadata(
+        block_table=block_table,
+        seq_lens=seq_lens_tensor,
+        cu_seqlens_q=_cached_decode_cu_seqlens_q(
+            batch_size=batch_size,
+            device=device,
+        ),
+        max_seq_len=max(normalized_seq_lens),
+    )
 
 
 def build_unified_paged_flash_metadata(
@@ -253,6 +392,7 @@ def build_unified_paged_flash_metadata(
 __all__ = [
     "PAPPagedFlashMetadata",
     "build_unified_paged_flash_metadata",
+    "build_unified_paged_flash_step_metadata",
     "reset_unified_paged_flash_metadata_cache",
     "unified_paged_flash_metadata_cache_stats",
 ]

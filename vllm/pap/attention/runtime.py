@@ -80,6 +80,7 @@ class PAPAttentionRuntime:
             "attention_active_peer_tracking": self.active_peer_tracking,
             **dict(membership or {}),
             **self.registry.decode_append_fast_path_stats(),
+            **self.registry.attention_step_context_stats(),
             **self.registry.decode_token_stats(),
             **self.registry.offload_exec_dispatch_stats(),
         }

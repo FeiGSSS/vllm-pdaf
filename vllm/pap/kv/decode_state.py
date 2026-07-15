@@ -18,6 +18,7 @@ from vllm.pap.deferred_cuda_trace import (
 )
 from vllm.pap.kv.metadata import _coerce_block_id
 from vllm.pap.kv.models import (
+    PAPAttentionStepContext,
     PAPUnifiedPagedKVState,
     PAPUnifiedSlotActivation,
     allocate_unified_slot_topology_id as _allocate_unified_slot_topology_id,
@@ -191,6 +192,7 @@ class _PAPDecodeStateMixin:
         key_batch: torch.Tensor,
         value_batch: torch.Tensor,
         decode_seq_lens: Sequence[int],
+        step_context: PAPAttentionStepContext | None = None,
         trace_stats: dict[str, float] | None = None,
     ) -> int:
         """Write a same-layer decode batch into Prefill-owned unified KV blocks.
@@ -203,6 +205,12 @@ class _PAPDecodeStateMixin:
                 "PAP unified KV append session_request_ids/decode_seq_lens "
                 "length mismatch"
             )
+        if step_context is not None and (
+            tuple(session_request_ids) != step_context.session_request_ids
+            or tuple(int(value) for value in decode_seq_lens)
+            != step_context.decode_seq_lens
+        ):
+            raise RuntimeError("PAP Attention step context batch mismatch")
 
         decode_lock_start = time.perf_counter() if trace_stats is not None else 0.0
         with self._decode_append_lock:
@@ -264,6 +272,14 @@ class _PAPDecodeStateMixin:
                     expected_positions.append(position)
 
                 if not active_indices or base_v_cache is None:
+                    if (
+                        step_context is not None
+                        and layer_name not in step_context.completed_layers
+                        and tuple(active_indices) != step_context.active_indices
+                    ):
+                        raise RuntimeError(
+                            "PAP Attention step active rows changed across layers"
+                        )
                     if trace_stats is not None:
                         trace_stats["append_prepare_ms"] += (
                             time.perf_counter() - prepare_start
@@ -278,7 +294,33 @@ class _PAPDecodeStateMixin:
 
                 slot_plan_key = None
                 slot_tensor = None
-                if all_rows_active:
+                use_step_slot_plan = False
+                if step_context is not None:
+                    if tuple(active_indices) != step_context.active_indices:
+                        raise RuntimeError(
+                            "PAP Attention step active rows changed across layers"
+                        )
+                    expected_step_positions = tuple(
+                        step_context.prior_seq_lens[index]
+                        for index in active_indices
+                    )
+                    if tuple(expected_positions) != expected_step_positions:
+                        raise RuntimeError(
+                            "PAP Attention step slot plan sequence mismatch"
+                        )
+                    expected_topology_ids = tuple(
+                        step_context.topology_ids[index]
+                        for index in active_indices
+                    )
+                    if tuple(
+                        int(state.slot_topology_id) for state in active_states
+                    ) != expected_topology_ids:
+                        raise RuntimeError(
+                            "PAP Attention step slot topology changed"
+                        )
+                    use_step_slot_plan = True
+                    slot_tensor = step_context.slot_tensor
+                elif all_rows_active:
                     slot_plan_key = self._decode_slot_plan_key_locked(
                         session_request_ids=session_request_ids,
                         layer_name=layer_name,
@@ -332,7 +374,11 @@ class _PAPDecodeStateMixin:
                     dtype=torch.int64,
                     device=base_v_cache.device,
                 )
-                if slot_plan_key is not None:
+                if use_step_slot_plan:
+                    assert step_context is not None
+                    step_context.slot_tensor = slot_tensor
+                    self.record_attention_step_slot_plan_build()
+                elif slot_plan_key is not None:
                     with self._lock:
                         self._store_decode_slot_plan_locked(
                             slot_plan_key,

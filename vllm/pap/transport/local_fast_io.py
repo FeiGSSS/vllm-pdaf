@@ -765,6 +765,86 @@ class _PAPLocalFastIOMixin:
             ),
         )
 
+    def prepare_output_batch_message(
+        self,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        *,
+        shape: tuple[int, int],
+        dtype: torch.dtype,
+        remote_address: str,
+    ) -> Any | None:
+        """Reserve the next output slot and enqueue its GPU-ready wait.
+
+        The sealed step plan supplies output shape and dtype, so Projection
+        does not need to wait for or read the per-layer output doorbell.  The
+        GPU ready/release generations remain the payload-lifetime authority.
+        """
+        del remote_address
+        if not self._stream_ordered or not self._batch_plan_enabled:
+            return None
+        if dtype not in _DTYPE_TO_CODE:
+            return None
+        if tuple(shape)[0] != descriptor.item_count:
+            raise RuntimeError("PAP descriptorless output row count mismatch")
+
+        peer = self._require_peer()
+        seq = int(peer.expected_output_seq)
+        slot_id = (seq - 1) % self._slot_count
+        offset = slot_id * self._slot_bytes
+        nbytes = int(prod(shape) * torch.empty((), dtype=dtype).element_size())
+        if nbytes > self._slot_bytes:
+            raise RuntimeError(
+                f"PAP descriptorless output {nbytes}B exceeds slot "
+                f"{self._slot_bytes}B"
+            )
+
+        record_offset = _doorbell_record_offset(
+            DIR_OUTPUT,
+            slot_id,
+            self._slot_count,
+        )
+        _doorbell_ack(self._doorbell_mm, record_offset, seq)
+        stream = torch.cuda.current_stream(self.device)
+        wait_trace = None
+        if self._deferred_cuda_trace:
+            wait_trace = begin_deferred_cuda_span(
+                "output_ready_wait_gpu_ms",
+                stream,
+            )
+        try:
+            stream_wait_value32(
+                self._signal_buffer,
+                _signal_index(
+                    DIR_OUTPUT,
+                    slot_id,
+                    self._slot_count,
+                    release=False,
+                ),
+                seq,
+                stream,
+            )
+        finally:
+            end_deferred_cuda_span(wait_trace)
+        peer.expected_output_seq = seq + 1
+        self._descriptorless_output_receives += 1
+
+        tensor = self._materialize_recv(
+            nbytes=nbytes,
+            offset=offset,
+            metadata={"shape": list(shape), "dtype": _dtype_name(dtype)},
+        )
+        return _LocalFastMessage(
+            msg_id=descriptor.output_tensor_id,
+            kind="attention_result_batch",
+            tensor=tensor,
+            metadata=_offload_exec_batch_descriptor_to_metadata(descriptor),
+            release_callback=lambda: self._release_recv_slot(
+                DIR_OUTPUT,
+                slot_id,
+                seq,
+            ),
+        )
+
     def recv_next_qkv_batch(
         self,
     ) -> tuple[PAPOffloadExecBatchDescriptor, torch.Tensor]:

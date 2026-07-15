@@ -149,13 +149,12 @@ def _doorbell_write(
     start = int(record_offset)
     body_start = start + DOORBELL_HEADER_BYTES
     mm[body_start : body_start + len(meta)] = meta
-    previous = _doorbell_read_record(mm, record_offset)
     header = DOORBELL_RECORD_STRUCT.pack(
         0,
         nbytes,
         offset,
         len(meta),
-        previous.ack,
+        0,
         int(plan_id),
         int(shape[0]),
         int(shape[1]),
@@ -164,7 +163,13 @@ def _doorbell_write(
         int(flags),
         0,
     )
-    mm[start : start + DOORBELL_HEADER_BYTES] = header
+    # ACK is an independent receiver-owned watermark.  Do not overwrite it:
+    # descriptorless output receive may publish the ACK before this descriptor
+    # is written, concurrently with the sender.
+    ack_start = 4 * 8
+    ack_end = ack_start + 8
+    mm[start : start + ack_start] = header[:ack_start]
+    mm[start + ack_end : start + DOORBELL_HEADER_BYTES] = header[ack_end:]
     mm[start : start + 8] = struct.pack("<Q", seq)
 
 

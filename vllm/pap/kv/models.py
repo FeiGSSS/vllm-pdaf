@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from threading import Lock
+from threading import Lock, RLock
 from typing import Any
 
 import torch
@@ -146,6 +146,39 @@ class PAPOffloadExecSessionEntry:
     num_heads: int
     num_kv_heads: int
     head_dim: int
+
+
+@dataclass
+class PAPAttentionStepContext:
+    """Decode-step state shared by every remote Attention layer."""
+
+    cache_key: tuple[Any, ...]
+    request_ids: tuple[str, ...]
+    decode_seq_lens: tuple[int, ...]
+    session_entries: tuple[PAPOffloadExecSessionEntry, ...]
+    prior_seq_lens: tuple[int, ...]
+    result_seq_lens: tuple[int, ...]
+    commit_new_seq_lens: tuple[int | None, ...]
+    active_indices: tuple[int, ...]
+    expected_layers: frozenset[str]
+    layer_states: dict[str, tuple[PAPUnifiedPagedKVState, ...]]
+    topology_ids: tuple[int, ...]
+    q_size: int
+    kv_size: int
+    num_heads: int
+    num_kv_heads: int
+    head_dim: int
+    scale: float
+    slot_tensor: torch.Tensor | None = None
+    metadata: Any | None = None
+    completed_layers: set[str] = field(default_factory=set)
+    kv_ready_published: bool = False
+    lock: RLock = field(default_factory=RLock, repr=False)
+
+    @property
+    def session_request_ids(self) -> tuple[str, ...]:
+        """Resolved registry request ids in batch row order."""
+        return tuple(entry.session_request_id for entry in self.session_entries)
 
 
 _UNIFIED_SLOT_TOPOLOGY_ID_LOCK = Lock()

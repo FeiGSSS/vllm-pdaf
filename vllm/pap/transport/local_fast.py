@@ -237,6 +237,7 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         self._step_plan_builds = 0
         self._step_plan_refs = 0
         self._output_descriptor_elisions = 0
+        self._descriptorless_output_receives = 0
         self._binary_qkv_refs = 0
         self._binary_outputs = 0
         self._json_records = 0
@@ -547,11 +548,13 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         logger.info(
             "PAP local fast transport stats actor=%s step_plan_builds=%d "
             "step_plan_refs=%d output_descriptor_elisions=%d "
+            "descriptorless_output_receives=%d "
             "binary_qkv_refs=%d binary_outputs=%d json_records=%d",
             self.actor_id,
             self._step_plan_builds,
             self._step_plan_refs,
             self._output_descriptor_elisions,
+            self._descriptorless_output_receives,
             self._binary_qkv_refs,
             self._binary_outputs,
             self._json_records,
@@ -629,6 +632,9 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
             "step_plan_builds": self._step_plan_builds,
             "step_plan_refs": self._step_plan_refs,
             "output_descriptor_elisions": self._output_descriptor_elisions,
+            "descriptorless_output_receives": (
+                self._descriptorless_output_receives
+            ),
             "binary_qkv_refs": self._binary_qkv_refs,
             "binary_outputs": self._binary_outputs,
             "json_records": self._json_records,

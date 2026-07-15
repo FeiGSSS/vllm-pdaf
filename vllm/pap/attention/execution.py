@@ -290,6 +290,7 @@ def _execute_offload_exec_work_items(
             item=items[0],
         )
         return
+    items = tuple(sorted(items, key=lambda item: item.peer_id))
     for item in items:
         _wait_offload_exec_ready_event(item)
     descriptor, qkv_batch, row_counts = _combine_offload_exec_work_items(items)
