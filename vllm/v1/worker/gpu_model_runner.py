@@ -109,6 +109,8 @@ from vllm.multimodal.utils import get_mm_features_in_window, group_and_batch_mm_
 from vllm.pap.integration import (
     PAPProjectionRequestStore,
     bind_projection_request_store,
+    build_projection_forward_context,
+    select_projection_request_ids,
 )
 from vllm.pap.topology import (
     PAPProjectionPeerActivity,
@@ -1178,67 +1180,17 @@ class GPUModelRunner(
             )
         self.pap_projection_request_store.update(req_id, kv_transfer_params)
 
-    @staticmethod
-    def _pap_filter_mapping_for_request_ids(
-        mapping: dict[str, Any], request_ids: Iterable[str]
-    ) -> dict[str, Any]:
-        request_id_set = set(request_ids)
-        return {key: value for key, value in mapping.items() if key in request_id_set}
-
-    def _pap_offload_exec_route_groups_for_request_ids(
-        self,
-        request_ids: Sequence[str],
-        seq_lens_cpu_upper_bound: Sequence[int],
-    ) -> tuple[dict[str, Any], ...]:
-        from vllm.pap.topology import build_offload_exec_route_groups
-
-        request_ids_tuple = tuple(str(req_id) for req_id in request_ids)
-        return build_offload_exec_route_groups(
-            request_ids_tuple,
-            attention_endpoint_by_request=self.pap_attention_endpoint_by_req_id,
-            offload_exec_zmq_endpoint_by_request=(
-                self.pap_offload_exec_zmq_endpoint_by_req_id
-            ),
-            steps_by_request={
-                req_id: int(step)
-                for req_id, step in zip(
-                    request_ids_tuple,
-                    seq_lens_cpu_upper_bound,
-                )
-            },
-        )
-
-    @staticmethod
-    def _pap_filter_route_groups_for_request_slice(
-        route_groups: Iterable[dict[str, Any]],
-        request_slice: slice,
-    ) -> tuple[dict[str, Any], ...]:
-        from vllm.pap.topology import (
-            filter_offload_exec_route_groups_for_request_slice,
-        )
-
-        return filter_offload_exec_route_groups_for_request_slice(
-            route_groups,
-            request_slice,
-        )
-
     def _pap_enabled_for_request_ids(self, request_ids: Sequence[str]) -> bool:
         ktc = self.vllm_config.kv_transfer_config
         extra = ktc.kv_connector_extra_config if ktc is not None else {}
         pap_enabled = extra.get("pap_enabled", False) if extra else False
-        if pap_enabled:
-            return True
-        for req_id in request_ids:
-            if (
-                req_id in self.pap_attention_endpoint_by_req_id
-                or req_id in self.pap_offload_exec_zmq_endpoint_by_req_id
-            ):
-                logger.info(
-                    "PAP enabled via per-request mailbox endpoint req_id=%s",
-                    req_id,
-                )
-                return True
-        return False
+        return bool(
+            select_projection_request_ids(
+                self.pap_projection_request_store,
+                request_ids,
+                globally_enabled=bool(pap_enabled),
+            )
+        )
 
     def _pap_forward_context_kwargs(
         self,
@@ -1256,73 +1208,26 @@ class GPUModelRunner(
                 "PAP asynchronous decode-token delivery requires the V2 model "
                 "runner; set VLLM_USE_V2_MODEL_RUNNER=1"
             )
-        return {
-            "pap_request_ids": request_ids_tuple,
-            "pap_num_scheduled_tokens": tuple(
-                int(num_tokens) for num_tokens in num_scheduled_tokens
-            ),
-            "pap_num_reqs": len(request_ids_tuple),
-            "pap_num_actual_tokens": num_actual_tokens,
-            "pap_positions": positions,
-            "pap_enabled": pap_enabled,
-            "pap_attention_tcp_endpoint": (
-                self.vllm_config.kv_transfer_config.get_from_extra_config(
-                    "pap_attention_tcp_endpoint", None
-                )
-                if self.vllm_config.kv_transfer_config is not None
-                else None
-            ),
-            "pap_block_size": self.vllm_config.cache_config.block_size,
-            "pap_attention_tcp_endpoint_by_request": (
-                self._pap_filter_mapping_for_request_ids(
-                    self.pap_attention_tcp_endpoint_by_req_id, request_ids_tuple
-                )
-            ),
-            "pap_attention_endpoint_by_request": (
-                self._pap_filter_mapping_for_request_ids(
-                    self.pap_attention_endpoint_by_req_id, request_ids_tuple
-                )
-            ),
-            "pap_offload_exec_zmq_endpoint_by_request": (
-                self._pap_filter_mapping_for_request_ids(
-                    self.pap_offload_exec_zmq_endpoint_by_req_id,
-                    request_ids_tuple,
-                )
-            ),
-            "pap_offload_exec_route_groups": (
-                self._pap_offload_exec_route_groups_for_request_ids(
-                    request_ids_tuple,
-                    seq_lens_cpu_upper_bound,
-                )
-            ),
-            "pap_prefill_prefix_len_by_request": (
-                self._pap_filter_mapping_for_request_ids(
-                    self.pap_prefill_prefix_len_by_req_id, request_ids_tuple
-                )
-            ),
-            "pap_prefill_kv_handle_by_request": (
-                self._pap_filter_mapping_for_request_ids(
-                    self.pap_prefill_kv_handle_by_req_id, request_ids_tuple
-                )
-            ),
-            "pap_attention_kv_installed_by_request": (
-                tuple(
-                    req_id
-                    for req_id in request_ids_tuple
-                    if req_id in self.pap_attention_kv_installed_by_req_id
-                )
-            ),
-            "pap_import_prefill_kv_to_attention_by_request": (
-                tuple(
-                    req_id
-                    for req_id in request_ids_tuple
-                    if req_id in self.pap_import_prefill_kv_to_attention_by_req_id
-                )
-            ),
-            "pap_finished_request_ids": tuple(
-                str(req_id) for req_id in finished_request_ids
-            ),
-        }
+        kv_transfer_config = self.vllm_config.kv_transfer_config
+        attention_tcp_endpoint = (
+            kv_transfer_config.get_from_extra_config(
+                "pap_attention_tcp_endpoint", None
+            )
+            if kv_transfer_config is not None
+            else None
+        )
+        return build_projection_forward_context(
+            self.pap_projection_request_store,
+            request_ids=request_ids_tuple,
+            num_scheduled_tokens=num_scheduled_tokens,
+            num_actual_tokens=num_actual_tokens,
+            positions=positions,
+            seq_lens_cpu_upper_bound=seq_lens_cpu_upper_bound,
+            pap_enabled=pap_enabled,
+            attention_tcp_endpoint=attention_tcp_endpoint,
+            block_size=self.vllm_config.cache_config.block_size,
+            finished_request_ids=finished_request_ids,
+        )
 
     @staticmethod
     def _pap_projection_kv_unaware_process() -> bool:

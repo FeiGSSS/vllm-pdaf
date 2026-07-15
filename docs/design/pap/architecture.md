@@ -55,8 +55,8 @@ Request routing selects a stable `(PA, Projection)` pair for a turn.
 
 - `config.py`: typed topology, placement, transport, MPS, lifecycle, and
   feature configuration; retired selectors fail closed.
-- `integration/`: typed request metadata and the adapter state shared by the
-  vLLM scheduler and Projection model runners.
+- `integration/`: typed request metadata, Projection request state, and batch
+  adapters shared by the vLLM scheduler and model runners.
 - `protocol/`: wire models, descriptors, sealed KV codec, and transport
   contracts.
 - `topology/`: route groups and Projection peer membership.

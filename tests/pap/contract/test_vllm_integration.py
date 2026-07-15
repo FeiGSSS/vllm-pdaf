@@ -1,10 +1,14 @@
 from __future__ import annotations
 
-from types import MethodType
+from types import MethodType, SimpleNamespace
 
 import pytest
 
-from vllm.pap.integration import bind_projection_request_store
+from vllm.pap.integration import (
+    bind_projection_request_store,
+    build_projection_forward_context,
+    select_projection_request_ids,
+)
 from vllm.v1.worker.gpu.model_runner import GPUModelRunner as GPUModelRunnerV2
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner as GPUModelRunnerV1
 
@@ -85,6 +89,56 @@ def test_model_runners_share_typed_projection_request_state(runner_type) -> None
     }
     assert runner.pap_prefill_prefix_len_by_req_id == {"req-a": 16}
     assert runner.pap_prefill_kv_handle_by_req_id == {"req-a": "session-a"}
+
+
+def test_projection_batch_adapter_builds_filtered_forward_context() -> None:
+    owner = SimpleNamespace()
+    store = bind_projection_request_store(owner)
+    store.update(
+        "req-a",
+        {
+            "pap_attention_tcp_endpoint": "tcp://attention",
+            "pap_attention_endpoint": "http://attention",
+            "pap_offload_exec_zmq_endpoint": "tcp://mailbox",
+            "pap_remote_prefix_len": 16,
+            "pap_prefill_kv_handle": "session-a",
+            "pap_import_prefill_kv_to_attention": True,
+            "pap_attention_kv_installed": True,
+        },
+    )
+    positions = object()
+
+    assert select_projection_request_ids(
+        store,
+        ("req-a", "req-b"),
+        globally_enabled=False,
+    ) == {"req-a"}
+    assert select_projection_request_ids(
+        store,
+        ("req-a", "req-b"),
+        globally_enabled=True,
+    ) == {"req-a", "req-b"}
+
+    context = build_projection_forward_context(
+        store,
+        request_ids=("req-a", "req-b"),
+        num_scheduled_tokens=(1, 2),
+        num_actual_tokens=3,
+        positions=positions,
+        seq_lens_cpu_upper_bound=(17, 9),
+        pap_enabled=True,
+        attention_tcp_endpoint=None,
+        block_size=16,
+        finished_request_ids=("req-z",),
+    )
+
+    assert context["pap_positions"] is positions
+    assert context["pap_prefill_kv_handle_by_request"] == {
+        "req-a": "session-a"
+    }
+    assert context["pap_attention_kv_installed_by_request"] == {"req-a"}
+    assert context["pap_offload_exec_route_groups"][0]["steps"] == (17,)
+    assert context["pap_finished_request_ids"] == ("req-z",)
 
 
 def test_v2_runner_flushes_decode_tokens_before_removing_request() -> None:
