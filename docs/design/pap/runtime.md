@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260715-VLLM-INTEGRATION-BOUNDARY
   - PAP-20260715-ARCHITECTURE-MILESTONE
   - PAP-20260715-RUNTIME-BOUNDARY-E2E
   - PAP-20260715-MODEL-ADAPTER-E2E
@@ -12,7 +13,7 @@ related_experiments:
   - PAP-20260713-ASYNC-DECODE-TOKEN-D2H
   - PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: 9fb642937d27f8871ce653216f8b70d64176679a
+last_validated_commit: 9efa92dc60434cf5d5f171374bbacdb17fd3c449
 ---
 
 # PAP runtime

@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "kind": "pap-experiment-record",
+  "status": "current",
+  "experiment_id": "PAP-20260715-VLLM-INTEGRATION-BOUNDARY",
+  "title": "PAP vLLM integration-boundary milestone",
+  "recorded_at": "2026-07-15",
+  "hypothesis": "Moving PAP-to-vLLM glue behind owner-specific integration adapters at commit 9efa92dc6 preserves the frozen P17 1PA1P behavior and remains within the 5% performance regression gate.",
+  "evidence": "formal-clean",
+  "decision": "accepted",
+  "validity": {
+    "status": "valid",
+    "reasons": []
+  },
+  "baseline": {
+    "status": "not-applicable",
+    "description": "The independently owned PAP-20260715-ARCHITECTURE-MILESTONE record supplies the comparison values.",
+    "run_ids": []
+  },
+  "treatment": {
+    "status": "present",
+    "description": "Tracked-clean P17 formal run after gateway, Attention, model, and vLLM integration ownership boundaries were made explicit.",
+    "run_ids": [
+      "20260715_9efa92dc6_vllm_integration_boundary_formal"
+    ]
+  },
+  "primary_variable": {
+    "name": "vllm_integration_boundary",
+    "baseline": "converged-owner-architecture",
+    "treatment": "owner-specific-integration-adapters"
+  },
+  "run_ids": [
+    "20260715_9efa92dc6_vllm_integration_boundary_formal"
+  ],
+  "aggregation_method": "Pooled request-level samples across three milestone repetitions; median and nearest-rank p90. The conclusion compares this record with the independently registered architecture milestone.",
+  "metrics": [
+    {
+      "name": "ttft_ms",
+      "scope": "round_1",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 10516.68447550037,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "tpot_ms",
+      "scope": "round_1",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 39.21060847254314,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "ttft_ms",
+      "scope": "steady_rounds_2_5",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 201.9189160055248,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "tpot_ms",
+      "scope": "steady_rounds_2_5",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 50.354924725537536,
+      "direction": "lower-is-better"
+    }
+  ],
+  "conclusion": "All three repetitions completed 20 of 20 requests and passed client, cache, Attention-statistics, correctness, decode-token join, routing, commit, lease, static-MPS, and session-drain gates on clean commit 9efa92dc6. Relative to PAP-20260715-ARCHITECTURE-MILESTONE, changes were -0.12% R1 TTFT, -0.02% R1 TPOT, -2.83% steady TTFT, and -0.15% steady TPOT, so the 5% release gate passed. xPAyP and cross-host NIXL remain preserved-unverified.",
+  "supersedes": [
+    "PAP-20260715-ARCHITECTURE-MILESTONE"
+  ],
+  "superseded_by": null,
+  "raw_artifacts": [
+    {
+      "name": "aggregate",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9efa92dc6_vllm_integration_boundary_formal/aggregate.json"
+      },
+      "sha256": "c11118b932361d1a7e1b94803f09c0a31a8c8da16bc017b77cb16e1d014429a4"
+    },
+    {
+      "name": "rep1_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9efa92dc6_vllm_integration_boundary_formal/rep1/result.json"
+      },
+      "sha256": "f9073f8ea0e12fc5a5fdedfff38e79aadb8f04b413ba323e3b6a7ede00bdf636"
+    },
+    {
+      "name": "rep2_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9efa92dc6_vllm_integration_boundary_formal/rep2/result.json"
+      },
+      "sha256": "39292b11e72e48fd083bb2c9874cce5039a8cc0c3654b205f86f96e9123b9413"
+    },
+    {
+      "name": "rep3_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260715_9efa92dc6_vllm_integration_boundary_formal/rep3/result.json"
+      },
+      "sha256": "a354aa4d38c159bd208108f44c55fb0187bf8d66ee33c2315428f82e62286f15"
+    }
+  ],
+  "tags": [
+    "p17",
+    "vllm-integration-boundary",
+    "architecture-milestone",
+    "formal-freeze",
+    "1pa1p",
+    "local-fast"
+  ]
+}

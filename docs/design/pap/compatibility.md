@@ -4,10 +4,11 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260715-VLLM-INTEGRATION-BOUNDARY
   - PAP-20260715-ARCHITECTURE-MILESTONE
   - PAP-20260715-RUNTIME-BOUNDARY-E2E
   - PAP-20260715-INTEGRATION-E2E
-last_validated_commit: 9fb642937d27f8871ce653216f8b70d64176679a
+last_validated_commit: 9efa92dc60434cf5d5f171374bbacdb17fd3c449
 ---
 
 # PAP compatibility retirement record
@@ -76,3 +77,13 @@ Against the preceding post-refactor formal baseline, R1 TTFT changed by
 -0.16%, R1 TPOT by -0.10%, steady TTFT by +1.98%, and steady TPOT by +0.06%.
 The clean milestone therefore passes the 5% regression gate and supersedes the
 controlled result as the current release evidence.
+
+## vLLM integration-boundary evidence
+
+The next tracked-clean freeze moved PAP glue behind the owner-specific
+`vllm/pap/integration/` adapters on commit
+`9efa92dc60434cf5d5f171374bbacdb17fd3c449`. Its three P17 C4 repetitions
+completed 60/60 requests and 48/48 cache transitions with all strict gates
+passing. Compared with the architecture milestone, changes were -0.12% R1
+TTFT, -0.02% R1 TPOT, -2.83% steady TTFT, and -0.15% steady TPOT. The current
+record is `PAP-20260715-VLLM-INTEGRATION-BOUNDARY`.

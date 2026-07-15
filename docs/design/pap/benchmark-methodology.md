@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260715-VLLM-INTEGRATION-BOUNDARY
   - PAP-20260715-ARCHITECTURE-MILESTONE
   - PAP-20260715-RUNTIME-BOUNDARY-E2E
   - PAP-20260715-MODEL-ADAPTER-E2E
@@ -12,7 +13,7 @@ related_experiments:
   - PAP-20260713-PD-THREE-LANE-C4
   - PAP-20260714-P17-PRE-REFACTOR
   - PAP-20260715-P17-POST-REFACTOR
-last_validated_commit: 9fb642937d27f8871ce653216f8b70d64176679a
+last_validated_commit: 9efa92dc60434cf5d5f171374bbacdb17fd3c449
 ---
 
 # PAP benchmark methodology
@@ -45,9 +46,19 @@ cannot be labeled `formal-clean`.
 
 P17 reports R1 TTFT/TPOT separately from steady rounds 2–5. Aggregation uses
 request-level samples across repetitions and nearest-rank p90 where applicable.
-At milestone freeze, R1 TTFT, R1 TPOT, steady TTFT, and steady TPOT are compared
-with the pre-refactor formal record. A metric over 5% worse is rerun once and,
-if repeated, blocks the freeze.
+At each milestone freeze, R1 TTFT, R1 TPOT, steady TTFT, and steady TPOT are
+compared with the immediately preceding accepted formal record. A metric over
+5% worse is rerun once and, if repeated, blocks the freeze.
+
+## Current formal evidence
+
+`PAP-20260715-VLLM-INTEGRATION-BOUNDARY` validates clean commit
+`9efa92dc60434cf5d5f171374bbacdb17fd3c449`. Three C4 repetitions completed
+60/60 requests and 48/48 multi-turn cache transitions with every strict gate
+passing. Relative to `PAP-20260715-ARCHITECTURE-MILESTONE`, R1 TTFT changed by
+-0.12%, R1 TPOT by -0.02%, steady TTFT by -2.83%, and steady TPOT by -0.15%.
+The raw run remains at
+`test/baseline/pap/results/runs/20260715_9efa92dc6_vllm_integration_boundary_formal/`.
 
 ## Evidence and decisions
 

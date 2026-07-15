@@ -43,6 +43,7 @@ def test_current_registry_validates() -> None:
         "20260715_3bfa8d15d_p17_post_refactor_formal",
         "20260715_7f732f5be_p17_runtime_boundary_formal",
         "20260715_9fb642937_pap_milestone_formal",
+        "20260715_9efa92dc6_vllm_integration_boundary_formal",
         "20260715_b695efe69_p17_integration_formal",
     }
     assert set(snapshot.experiments) == {
@@ -52,6 +53,7 @@ def test_current_registry_validates() -> None:
         "PAP-20260715-MODEL-ADAPTER-E2E",
         "PAP-20260715-P17-POST-REFACTOR",
         "PAP-20260715-RUNTIME-BOUNDARY-E2E",
+        "PAP-20260715-VLLM-INTEGRATION-BOUNDARY",
     }
     assert snapshot.experiments["PAP-20260714-P17-PRE-REFACTOR"]["status"] == (
         "archived"
@@ -61,9 +63,10 @@ def test_current_registry_validates() -> None:
     )
     assert snapshot.experiments["PAP-20260715-ARCHITECTURE-MILESTONE"][
         "status"
-    ] == (
-        "current"
-    )
+    ] == "archived"
+    assert snapshot.experiments["PAP-20260715-VLLM-INTEGRATION-BOUNDARY"][
+        "status"
+    ] == "current"
     assert len(snapshot.historical_experiments) == 43
     assert len(snapshot.negative_results) == 15
 
