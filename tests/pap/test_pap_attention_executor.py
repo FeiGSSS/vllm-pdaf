@@ -1591,6 +1591,40 @@ def test_decode_token_batch_http_endpoint_records_one_forward() -> None:
     }
 
 
+def test_decode_token_endpoint_accepts_released_handle_only() -> None:
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    session = registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-a",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+        )
+    )
+    client = _ASGITestClient(create_app(registry))
+
+    assert registry.release_session("req-a")
+    released = client.post(
+        "/v1/pap/attention/decode-tokens",
+        json={
+            "tokens": [
+                {
+                    "request_id": session.prefill_kv_handle,
+                    "new_seq_len": 2,
+                    "token_id": 42,
+                }
+            ]
+        },
+    )
+    unknown = client.post(
+        "/v1/pap/attention/decode-token",
+        json={"request_id": "never-seen", "new_seq_len": 2, "token_id": 42},
+    )
+
+    assert released.status_code == 200
+    assert released.json()["results"][0]["status"] == "released"
+    assert unknown.status_code == 404
+
+
 def test_attention_release_waits_for_kv_ready_token_but_not_final_token(
     monkeypatch,
 ) -> None:

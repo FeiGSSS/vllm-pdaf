@@ -76,6 +76,8 @@ _DECODE_COMMIT_PATH = "/v1/pap/prefill/decode-commit"
 
 _LEASE_RELEASE_PATH = "/v1/pap/prefill/lease-release"
 
+_RELEASED_SESSION_ALIAS_LIMIT = 4096
+
 
 def _prefill_control_endpoint(prefill_endpoint: str, path: str) -> str:
     return f"{str(prefill_endpoint).rstrip('/')}{path}"
@@ -140,6 +142,7 @@ class PAPAttentionRegistry:
         self._session_manifest_claimed: set[str] = set()
         self._prefill_readiness: dict[str, dict[str, PAPPrefillLayerReadiness]] = {}
         self._request_id_resolution_cache: dict[str, str] = {}
+        self._released_session_aliases: OrderedDict[str, str] = OrderedDict()
         self._session_lease_ids: dict[str, str] = {}
         self._session_leased_block_ids: dict[str, tuple[int, ...]] = {}
         self._session_lease_capacity_tokens: dict[str, int] = {}
@@ -189,14 +192,24 @@ class PAPAttentionRegistry:
         new_seq_len: int,
         token_id: int,
     ) -> str:
-        session_request_id = self.resolve_session_request_id(request_id)
-        if session_request_id is None:
-            raise KeyError(request_id)
-        return self._decode_token_committer.record_token(
+        request_id = str(request_id)
+        with self._lock:
+            session_request_id = self._resolve_session_request_id_locked(request_id)
+            if session_request_id is None:
+                if request_id in self._released_session_aliases:
+                    self._released_session_aliases.move_to_end(request_id)
+                    return "released"
+                raise KeyError(request_id)
+        status = self._decode_token_committer.record_token(
             request_id=session_request_id,
             new_seq_len=new_seq_len,
             token_ids=(token_id,),
         )
+        with self._lock:
+            if session_request_id not in self._sessions:
+                self._decode_token_committer.forget_request(session_request_id)
+                return "released"
+        return status
 
     def record_decode_kv_ready(
         self,
@@ -398,6 +411,23 @@ class PAPAttentionRegistry:
         session = self._sessions.pop(request_id, None)
         existed = session is not None
         prefill_endpoint = None if session is None else session.prefill_endpoint
+        if session is not None:
+            released_aliases = {request_id, session.prefill_kv_handle}
+            released_aliases.update(
+                cached_request_id
+                for cached_request_id, cached_session_id in (
+                    self._request_id_resolution_cache.items()
+                )
+                if cached_session_id == request_id
+            )
+            for alias in released_aliases:
+                self._released_session_aliases[alias] = request_id
+                self._released_session_aliases.move_to_end(alias)
+            while (
+                len(self._released_session_aliases)
+                > _RELEASED_SESSION_ALIAS_LIMIT
+            ):
+                self._released_session_aliases.popitem(last=False)
         self._session_manifest_prefix_lens.pop(request_id, None)
         self._session_manifest_events.pop(request_id, None)
         self._session_manifest_event_waited.discard(request_id)
@@ -1098,6 +1128,11 @@ class PAPAttentionRegistry:
             replaced_lease_id, replaced_prefill_endpoint = (
                 self._replace_existing_session_locked(registration.request_id)
             )
+            for alias, released_request_id in list(
+                self._released_session_aliases.items()
+            ):
+                if released_request_id == registration.request_id:
+                    self._released_session_aliases.pop(alias, None)
             session_epoch = self._next_session_epoch
             session.prefill_kv_handle = (
                 f"{registration.request_id}@pap-session-{session_epoch}"
