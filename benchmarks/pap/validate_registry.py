@@ -43,6 +43,10 @@ REQUIRED_AUDITS = {
     "session_drain",
     "mps",
 }
+P17_STATIC_MPS_LAYOUTS = {
+    "baseline_static_64_28": (64, 28),
+    "baseline_static_72_20": (72, 20),
+}
 
 
 @dataclass(frozen=True)
@@ -153,6 +157,7 @@ def _nested(profile: dict[str, Any], dotted_key: str) -> object:
 def _validate_p17_profile(profile: dict[str, Any]) -> list[str]:
     expected = {
         "schema_version": 1,
+        "profile_version": 2,
         "status": "canonical",
         "architecture": "pap",
         "release_gate": True,
@@ -174,8 +179,15 @@ def _validate_p17_profile(profile: dict[str, Any]) -> list[str]:
         "transport.offload_exec": "local_fast",
         "transport.offload_kv": "cuda_ipc",
         "mps.mode": "static",
-        "mps.prefill_visible_sms": 64,
-        "mps.attention_visible_sms": 28,
+        "mps.profile_id": "baseline_static_72_20",
+        "mps.prefill_requested_percent": 80,
+        "mps.attention_requested_percent": 20,
+        "mps.prefill_chunks": 18,
+        "mps.attention_chunks": 5,
+        "mps.prefill_visible_sms": 72,
+        "mps.attention_visible_sms": 20,
+        "audit.prefill_visible_sms": 72,
+        "audit.attention_visible_sms": 20,
         "runtime.decode_token_delivery": "async",
         "runtime.prefill_kv_import": "async",
         "runtime.kv_handoff": "sealed_manifest",
@@ -250,11 +262,6 @@ def _validate_p17_run_contract(
         "transport.offload_kv": profile["transport"]["offload_kv"],
         "transport.same_host": profile["transport"]["same_host"],
         "mps.mode": profile["mps"]["mode"],
-        "mps.profile_id": profile["mps"]["profile_id"],
-        "mps.prefill_visible_sms": profile["mps"]["prefill_visible_sms"],
-        "mps.attention_visible_sms": profile["mps"][
-            "attention_visible_sms"
-        ],
         "repetitions.count": profile["repetitions"],
         "fingerprints.profile": profile["baseline_fingerprints"][
             "workload_profile"
@@ -269,6 +276,23 @@ def _validate_p17_run_contract(
         for key, wanted in expected.items()
         if _nested(run, key) != wanted
     ]
+    mps_profile_id = _nested(run, "mps.profile_id")
+    mps_layout = P17_STATIC_MPS_LAYOUTS.get(str(mps_profile_id))
+    if mps_layout is None:
+        errors.append(
+            f"{run['run_id']}: P17 mps.profile_id is not recognized: "
+            f"{mps_profile_id!r}"
+        )
+    else:
+        for key, wanted in zip(
+            ("mps.prefill_visible_sms", "mps.attention_visible_sms"),
+            mps_layout,
+        ):
+            if _nested(run, key) != wanted:
+                errors.append(
+                    f"{run['run_id']}: P17 {key} must be {wanted!r}, "
+                    f"got {_nested(run, key)!r}"
+                )
     parameter_keys = (
         "document_tokens",
         "append_tokens_per_later_round",

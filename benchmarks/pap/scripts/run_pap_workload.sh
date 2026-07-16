@@ -45,7 +45,7 @@ for removed_flag in \
         experiment_id="PAP-20260711-ATTENTION-COMBINE"
         ;;
       PAP_MPS_MODE | PAP_BENCH_MPS_PROFILE)
-        replacement="the P17 static 64/28 MPS partition"
+        replacement="the P17 static 72/20 MPS partition"
         experiment_id="PAP-20260714-ASYNC-STATIC-BASELINE"
         ;;
       PAP_*_SYNC_ONLY_BARRIER)
@@ -1649,9 +1649,9 @@ elif [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" ]]; then
     || die "multiturn_load requires prompt details and forbids cache audit"
   [[ "${PAP_ENABLE_MPS}" == "1" ]] \
     || die "multiturn_load requires PAP MPS"
-  [[ "${PAP_STATIC_PREFILL_CHUNKS}" == "16" \
-    && "${PAP_STATIC_ATTENTION_CHUNKS}" == "7" ]] \
-    || die "P17 static MPS requires 16/7 chunks"
+  [[ "${PAP_STATIC_PREFILL_CHUNKS}" == "18" \
+    && "${PAP_STATIC_ATTENTION_CHUNKS}" == "5" ]] \
+    || die "P17 static MPS requires 18/5 chunks"
   (( PAP_MULTITURN_LOAD_ROUNDS >= 4 )) \
     || die "multiturn_load requires at least four rounds"
   (( PAP_MULTITURN_LOAD_CONVERSATIONS <= MAX_NUM_SEQS )) \

@@ -49,7 +49,7 @@ def test_runtime_config_preserves_python_defaults() -> None:
     assert config.offload_kv_transport is PAPOffloadKVTransport.CUDA_IPC
     assert config.same_host is False
     assert config.mps.mode is PAPMPSMode.STATIC
-    assert config.mps.profile_id == "baseline_static_64_28"
+    assert config.mps.profile_id == "baseline_static_72_20"
     runtime_contract = config.p17_profile_contract()["runtime"]
     assert runtime_contract["decode_token_delivery"] == "async"
     assert runtime_contract["prefill_kv_import"] == "async"

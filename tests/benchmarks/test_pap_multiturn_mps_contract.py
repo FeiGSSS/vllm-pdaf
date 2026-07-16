@@ -25,13 +25,13 @@ def test_pap_only_runner_rejects_removed_mps_selectors() -> None:
     assert "PAP_LOAD_MPS_PROFILE was removed" in result.stderr
 
 
-def test_pap_only_runner_has_one_static_64_28_profile() -> None:
+def test_pap_only_runner_has_one_static_72_20_profile() -> None:
     environment = runner_environment(load_profile(P17_PROFILE))
 
-    assert environment["PAP_STATIC_PREFILL_CHUNKS"] == "16"
-    assert environment["PAP_STATIC_ATTENTION_CHUNKS"] == "7"
-    assert environment["PAP_STATIC_PREFILL_EXPECTED_SMS"] == "64"
-    assert environment["PAP_STATIC_ATTENTION_EXPECTED_SMS"] == "28"
+    assert environment["PAP_STATIC_PREFILL_CHUNKS"] == "18"
+    assert environment["PAP_STATIC_ATTENTION_CHUNKS"] == "5"
+    assert environment["PAP_STATIC_PREFILL_EXPECTED_SMS"] == "72"
+    assert environment["PAP_STATIC_ATTENTION_EXPECTED_SMS"] == "20"
 
 
 def test_static_mps_lifecycle_is_partitioned_and_audited() -> None:

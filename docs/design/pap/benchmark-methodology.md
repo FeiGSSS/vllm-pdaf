@@ -22,7 +22,7 @@ last_validated_commit: 9efa92dc60434cf5d5f171374bbacdb17fd3c449
 
 `benchmarks/pap/profiles/p17_1pa1p.toml` is the single release-gate profile. It
 freezes Qwen3-8B FP16, 1PA1P/TP1, GPUs 1/2, same-host `local_fast`, static MPS
-64/28, a 16K exact-token initial context, five rounds, C4, and 256 output tokens
+72/20, a 16K exact-token initial context, five rounds, C4, and 256 output tokens
 per round. The runner reads these fields rather than maintaining a second set
 of workload defaults.
 

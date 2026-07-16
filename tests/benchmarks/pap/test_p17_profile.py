@@ -32,8 +32,8 @@ def test_p17_profile_freezes_the_accepted_release_path() -> None:
     assert profile["topology"]["name"] == "1pa1p"
     assert profile["transport"]["offload_exec"] == "local_fast"
     assert profile["mps"]["mode"] == "static"
-    assert profile["mps"]["prefill_visible_sms"] == 64
-    assert profile["mps"]["attention_visible_sms"] == 28
+    assert profile["mps"]["prefill_visible_sms"] == 72
+    assert profile["mps"]["attention_visible_sms"] == 20
 
 
 def test_p17_profile_has_no_absolute_artifact_paths() -> None:
@@ -84,12 +84,12 @@ def test_p17_profile_is_the_runner_configuration_source() -> None:
         "PAP_OFFLOAD_EXEC_TRANSPORT": "local_fast",
         "PAP_OFFLOAD_KV_TRANSPORT": "cuda_ipc",
         "PAP_ROUTING_POLICY": "round_robin",
-        "PAP_PREFILL_MPS_PERCENT": "70",
-        "PAP_ATTENTION_MPS_PERCENT": "30",
-        "PAP_STATIC_PREFILL_CHUNKS": "16",
-        "PAP_STATIC_ATTENTION_CHUNKS": "7",
-        "PAP_STATIC_PREFILL_EXPECTED_SMS": "64",
-        "PAP_STATIC_ATTENTION_EXPECTED_SMS": "28",
+        "PAP_PREFILL_MPS_PERCENT": "80",
+        "PAP_ATTENTION_MPS_PERCENT": "20",
+        "PAP_STATIC_PREFILL_CHUNKS": "18",
+        "PAP_STATIC_ATTENTION_CHUNKS": "5",
+        "PAP_STATIC_PREFILL_EXPECTED_SMS": "72",
+        "PAP_STATIC_ATTENTION_EXPECTED_SMS": "20",
         "PAP_DIRECT_MAILBOX_OUTPUT": "1",
         "PAP_LOCAL_FAST_STREAM_ORDERED": "1",
         "PAP_LOCAL_FAST_SLOT_COUNT": "2",

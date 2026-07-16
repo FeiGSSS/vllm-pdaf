@@ -342,7 +342,7 @@ PAP_RETIRED_FLAGS = (
     PAPRetiredFlag(
         name="PAP_MPS_MODE",
         p17_values=frozenset({"static"}),
-        replacement="P17 static 64/28 MPS partition",
+        replacement="P17 static 72/20 MPS partition",
         experiment_id="PAP-20260714-ASYNC-STATIC-BASELINE",
         removed=True,
     ),
@@ -505,13 +505,13 @@ class PAPRuntimeConfig:
 
         mps = PAPMPSConfig(
             mode=PAPMPSMode.STATIC,
-            profile_id="baseline_static_64_28",
-            prefill_requested_percent=70,
-            attention_requested_percent=30,
-            prefill_chunks=16,
-            attention_chunks=7,
-            prefill_visible_sms=64,
-            attention_visible_sms=28,
+            profile_id="baseline_static_72_20",
+            prefill_requested_percent=80,
+            attention_requested_percent=20,
+            prefill_chunks=18,
+            attention_chunks=5,
+            prefill_visible_sms=72,
+            attention_visible_sms=20,
         )
 
         features = PAPRuntimeFeatures(

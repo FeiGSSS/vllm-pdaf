@@ -218,7 +218,7 @@ routing, lifecycle, and fatal-log gates.
 For the five-turn 16K C4 PAP optimization lane, use
 `run_pap_multiturn_load.sh`. On the local R595/L20 host its accepted development
 default is asynchronous decode-token delivery without the Projection step
-barrier plus static MPS `64/28` SM partitions:
+barrier plus static MPS `72/20` SM partitions:
 
 ```bash
 bash .claude/skills/vllm-pap-benchmark/scripts/run_pap_multiturn_load.sh quick c4
@@ -226,7 +226,7 @@ bash .claude/skills/vllm-pap-benchmark/scripts/run_pap_multiturn_load.sh quick c
 
 Sampled-token delivery and Prefill KV import are unconditionally asynchronous;
 the retired `PAP_ASYNC_DECODE_TOKEN` and `PAP_PREFILL_KV_ASYNC` switches now
-fail closed. P17 has one static `64/28` MPS profile; dynamic/profile selectors
+fail closed. P17 has one static `72/20` MPS profile; dynamic/profile selectors
 are historical evidence only. Static MPS is host-specific and must pass the
 recorded visible-SM and cleanup audits.
 

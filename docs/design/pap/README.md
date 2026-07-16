@@ -39,7 +39,7 @@ Its normalized status index is generated at
 ## Current boundary
 
 The accepted runtime path is Qwen3-8B FP16, 1PA1P/TP1, same-host
-`local_fast`, static MPS 64/28, asynchronous decode-token delivery,
+`local_fast`, static MPS 72/20, asynchronous decode-token delivery,
 asynchronous Prefill KV import, sealed manifest handoff, and Prefill-owned
 unified KV. This is the only end-to-end release gate for the frozen milestone.
 PAP-to-vLLM glue is isolated behind owner-specific adapters in

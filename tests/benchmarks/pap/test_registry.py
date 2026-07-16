@@ -36,7 +36,7 @@ def _write(path: Path, value: dict[str, object]) -> None:
 def test_current_registry_validates() -> None:
     snapshot = validate_registry()
 
-    assert set(snapshot.profiles) == {"p17_1pa1p"}
+    assert set(snapshot.profiles) == {"p17_1pa1p", "paged_fa_sm_probe"}
     assert set(snapshot.runs) == {
         "20260714_dd2073bcf_p17_pre_refactor_formal",
         "20260715_003029a77_p17_model_adapter_formal",
@@ -45,6 +45,8 @@ def test_current_registry_validates() -> None:
         "20260715_9fb642937_pap_milestone_formal",
         "20260715_9efa92dc6_vllm_integration_boundary_formal",
         "20260715_b695efe69_p17_integration_formal",
+        "20260715_e5a6711f0_paged_fa_full92_diagnostic",
+        "20260715_e5a6711f0_paged_fa_mps28_diagnostic",
     }
     assert set(snapshot.experiments) == {
         "PAP-20260714-P17-PRE-REFACTOR",
@@ -52,6 +54,7 @@ def test_current_registry_validates() -> None:
         "PAP-20260715-INTEGRATION-E2E",
         "PAP-20260715-MODEL-ADAPTER-E2E",
         "PAP-20260715-P17-POST-REFACTOR",
+        "PAP-20260715-PAGED-FA-SM-PROBE",
         "PAP-20260715-RUNTIME-BOUNDARY-E2E",
         "PAP-20260715-VLLM-INTEGRATION-BOUNDARY",
     }

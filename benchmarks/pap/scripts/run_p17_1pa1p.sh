@@ -62,7 +62,7 @@ case "${LOAD_SHAPE}" in
 esac
 
 if [[ -v PAP_LOAD_MPS_PROFILE ]]; then
-  echo "PAP_LOAD_MPS_PROFILE was removed; P17 always uses static 64/28 MPS" >&2
+  echo "PAP_LOAD_MPS_PROFILE was removed; P17 always uses static 72/20 MPS" >&2
   exit 2
 fi
 REPETITIONS="${PAP_LOAD_REPETITIONS:-${DEFAULT_REPETITIONS}}"

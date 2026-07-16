@@ -23,7 +23,7 @@ directories.
 - `validate_registry.py` applies schema and cross-record fail-closed checks.
 
 The P17 profile freezes Qwen3-8B FP16, 1PA1P/TP1, same-host `local_fast`,
-static MPS with 64 Prefill and 28 Attention SMs, async decode-token delivery,
+static MPS with 72 Prefill and 20 Attention SMs, async decode-token delivery,
 async Prefill KV import, sealed handoff, Prefill-owned unified KV, and the 16K
 five-turn C4 workload with 256 output tokens per turn. xPAyP and cross-host NIXL
 remain `preserved-unverified`; they are not runtime release gates in this
