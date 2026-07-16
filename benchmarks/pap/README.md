@@ -40,6 +40,12 @@ The runner loads its model, workload, placement, transport, MPS, and audit
 values from `profiles/p17_1pa1p.toml`. Machine-specific model and corpus roots
 remain local overrides (`PAP_MODEL_ROOT` and `PAP_CORPUS_ROOT`).
 
+The current accepted formal baseline is
+[`PAP-20260716-TRITON-72-20-BASELINE`](registry/experiments/PAP-20260716-TRITON-72-20-BASELINE.json).
+Its three C4 repetitions passed all gates on clean commit `3a6fe93d1`, with
+9386.68 ms R1 TTFT, 35.00 ms R1 TPOT, 198.21 ms steady TTFT, and 41.28 ms
+steady TPOT.
+
 ### Standalone paged-FlashAttention SM probe
 
 The paged-FA probe reproduces the P17 C4 Attention shape without launching PAP
@@ -86,8 +92,7 @@ the PD control is 41.97 ms. All 20 requests, token digests, cache checks,
 lifecycle audits, static-MPS checks, and session drain passed. Preserve the
 [C1](../../test/baseline/pap/results/runs/20260716_triton_decode_c1_quick/aggregate.json)
 and [C4](../../test/baseline/pap/results/runs/20260716_triton_decode_c4_quick/aggregate.json)
-raw results; run the three-repetition clean gate only when fixing the next
-milestone commit.
+raw diagnostic results; the accepted three-repetition result is linked above.
 
 #### Deferred alternative: low-smem FA2 decode specialization
 

@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "kind": "pap-experiment-record",
-  "status": "current",
+  "status": "archived",
   "experiment_id": "PAP-20260715-VLLM-INTEGRATION-BOUNDARY",
   "title": "PAP vLLM integration-boundary milestone",
   "recorded_at": "2026-07-15",
   "hypothesis": "Moving PAP-to-vLLM glue behind owner-specific integration adapters at commit 9efa92dc6 preserves the frozen P17 1PA1P behavior and remains within the 5% performance regression gate.",
   "evidence": "formal-clean",
-  "decision": "accepted",
+  "decision": "superseded",
   "validity": {
     "status": "valid",
     "reasons": []
@@ -75,7 +75,7 @@
   "supersedes": [
     "PAP-20260715-ARCHITECTURE-MILESTONE"
   ],
-  "superseded_by": null,
+  "superseded_by": "PAP-20260716-TRITON-72-20-BASELINE",
   "raw_artifacts": [
     {
       "name": "aggregate",

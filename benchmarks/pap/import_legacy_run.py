@@ -21,6 +21,10 @@ EVIDENCE_GRADES = (
 )
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"0", "false", "no", "off"})
+_P17_STATIC_MPS_PROFILES = {
+    (64, 28): "baseline_static_64_28",
+    (72, 20): "baseline_static_72_20",
+}
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -211,7 +215,7 @@ def _required_artifact_paths(rep_dir: Path) -> list[Path]:
     missing = [path for path in paths if not path.is_file()]
     if missing:
         raise FileNotFoundError(f"missing legacy artifacts: {missing}")
-    return sorted(path for path in rep_dir.rglob("*") if path.is_file())
+    return sorted(paths)
 
 
 def _status(value: object) -> str:
@@ -445,12 +449,28 @@ def import_legacy_run(
     drain_status = _status(external_gates.get("session_drain"))
     attention_status = _status(external_gates.get("attention_stats_capture"))
     mps_status = "passed"
+    expected_mps_layout = (
+        mps.get("PREFILL_VISIBLE_SMS"),
+        mps.get("ATTENTION_VISIBLE_SMS"),
+    )
+    known_p17_layouts = {
+        (str(prefill), str(attention))
+        for prefill, attention in _P17_STATIC_MPS_PROFILES
+    }
+    if (
+        profile_id == "p17_1pa1p"
+        and expected_mps_layout not in known_p17_layouts
+    ):
+        mps_status = "failed"
     for payload in rep_payloads:
         rep_mps = payload["mps"]
         if (
             _mps_mode(rep_mps) != "static"
-            or rep_mps.get("PREFILL_VISIBLE_SMS") != "64"
-            or rep_mps.get("ATTENTION_VISIBLE_SMS") != "28"
+            or (
+                rep_mps.get("PREFILL_VISIBLE_SMS"),
+                rep_mps.get("ATTENTION_VISIBLE_SMS"),
+            )
+            != expected_mps_layout
         ):
             mps_status = "failed"
 
@@ -548,7 +568,12 @@ def import_legacy_run(
         ),
         "mps": _gate(
             mps_status,
-            "Static MPS exposes 64 Prefill and 28 Attention SMs.",
+            (
+                "Static MPS exposes "
+                f"{mps.get('PREFILL_VISIBLE_SMS', 'missing')} Prefill and "
+                f"{mps.get('ATTENTION_VISIBLE_SMS', 'missing')} Attention "
+                "SMs."
+            ),
             mps_paths,
             artifact_root_id,
             artifact_root,
@@ -568,14 +593,16 @@ def import_legacy_run(
 
     mps_mode = _mps_mode(mps)
     mps_profile_id = effective.get("PAP_BENCH_MPS_PROFILE", "missing")
-    if (
-        mps_profile_id == "missing"
-        and profile_id == "p17_1pa1p"
-        and mps_mode == "static"
-        and mps.get("PREFILL_VISIBLE_SMS") == "64"
-        and mps.get("ATTENTION_VISIBLE_SMS") == "28"
-    ):
-        mps_profile_id = "baseline_static_64_28"
+    if mps_profile_id == "missing" and profile_id == "p17_1pa1p":
+        visible_sms = (
+            int(mps.get("PREFILL_VISIBLE_SMS", 0)),
+            int(mps.get("ATTENTION_VISIBLE_SMS", 0)),
+        )
+        if mps_mode == "static":
+            mps_profile_id = _P17_STATIC_MPS_PROFILES.get(
+                visible_sms,
+                "missing",
+            )
     unified_kv_fallback: bool | str = (
         True if profile_id == "p17_1pa1p" else "missing"
     )

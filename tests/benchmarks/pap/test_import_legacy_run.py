@@ -176,6 +176,10 @@ def test_legacy_import_is_read_only_and_uses_root_references(
         and not Path(artifact["path"]["relative_path"]).is_absolute()
         for artifact in manifest["artifacts"]
     )
+    assert not any(
+        "service_logs" in artifact["path"]["relative_path"]
+        for artifact in manifest["artifacts"]
+    )
     schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     errors = list(
         Draft202012Validator(
@@ -246,4 +250,36 @@ def test_p17_import_reads_converged_metadata_and_mps_audit(tmp_path: Path) -> No
     assert (
         manifest["runtime"]["settings"]["attention_dispatch_mode"]
         == "legacy"
+    )
+
+
+def test_p17_import_infers_current_static_mps_profile(tmp_path: Path) -> None:
+    source = _make_legacy_run(tmp_path)
+    rep = source / "rep1"
+    (rep / "effective_config.env").write_text("", encoding="utf-8")
+    (rep / "mps_static_audit_pa_0.env").write_text(
+        "MPS_MODE=static\n"
+        "PREFILL_VISIBLE_SMS=72\n"
+        "ATTENTION_VISIBLE_SMS=20\n",
+        encoding="utf-8",
+    )
+
+    manifest = import_legacy_run(
+        source,
+        experiment_id="PAP-20260716-P17-IMPORT-TEST",
+        run_id="p17_current_mps_import_test_run",
+        profile_id="p17_1pa1p",
+        evidence="formal-clean",
+        artifact_root_id="raw-root",
+        roots={"raw-root": tmp_path},
+    )
+
+    assert manifest["mps"] == {
+        "mode": "static",
+        "profile_id": "baseline_static_72_20",
+        "prefill_visible_sms": 72,
+        "attention_visible_sms": 20,
+    }
+    assert manifest["audits"]["mps"]["detail"] == (
+        "Static MPS exposes 72 Prefill and 20 Attention SMs."
     )

@@ -4,11 +4,12 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260716-TRITON-72-20-BASELINE
   - PAP-20260715-VLLM-INTEGRATION-BOUNDARY
   - PAP-20260715-ARCHITECTURE-MILESTONE
   - PAP-20260715-RUNTIME-BOUNDARY-E2E
   - PAP-20260715-INTEGRATION-E2E
-last_validated_commit: 9efa92dc60434cf5d5f171374bbacdb17fd3c449
+last_validated_commit: 3a6fe93d11245c1137d3ea6767cd5e27b3e88156
 ---
 
 # PAP compatibility retirement record
@@ -85,5 +86,6 @@ The next tracked-clean freeze moved PAP glue behind the owner-specific
 `9efa92dc60434cf5d5f171374bbacdb17fd3c449`. Its three P17 C4 repetitions
 completed 60/60 requests and 48/48 cache transitions with all strict gates
 passing. Compared with the architecture milestone, changes were -0.12% R1
-TTFT, -0.02% R1 TPOT, -2.83% steady TTFT, and -0.15% steady TPOT. The current
-record is `PAP-20260715-VLLM-INTEGRATION-BOUNDARY`.
+TTFT, -0.02% R1 TPOT, -2.83% steady TTFT, and -0.15% steady TPOT. That record
+is retained as the integration-boundary evidence and is superseded as the
+performance baseline by `PAP-20260716-TRITON-72-20-BASELINE`.

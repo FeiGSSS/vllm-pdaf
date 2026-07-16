@@ -47,6 +47,7 @@ def test_current_registry_validates() -> None:
         "20260715_b695efe69_p17_integration_formal",
         "20260715_e5a6711f0_paged_fa_full92_diagnostic",
         "20260715_e5a6711f0_paged_fa_mps28_diagnostic",
+        "20260716_3a6fe93d1_p17_mps_72_20_formal",
     }
     assert set(snapshot.experiments) == {
         "PAP-20260714-P17-PRE-REFACTOR",
@@ -57,6 +58,7 @@ def test_current_registry_validates() -> None:
         "PAP-20260715-PAGED-FA-SM-PROBE",
         "PAP-20260715-RUNTIME-BOUNDARY-E2E",
         "PAP-20260715-VLLM-INTEGRATION-BOUNDARY",
+        "PAP-20260716-TRITON-72-20-BASELINE",
     }
     assert snapshot.experiments["PAP-20260714-P17-PRE-REFACTOR"]["status"] == (
         "archived"
@@ -68,6 +70,9 @@ def test_current_registry_validates() -> None:
         "status"
     ] == "archived"
     assert snapshot.experiments["PAP-20260715-VLLM-INTEGRATION-BOUNDARY"][
+        "status"
+    ] == "archived"
+    assert snapshot.experiments["PAP-20260716-TRITON-72-20-BASELINE"][
         "status"
     ] == "current"
     assert len(snapshot.historical_experiments) == 43

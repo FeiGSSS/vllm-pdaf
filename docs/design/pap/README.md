@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260716-TRITON-72-20-BASELINE
   - PAP-20260715-VLLM-INTEGRATION-BOUNDARY
   - PAP-20260715-ARCHITECTURE-MILESTONE
   - PAP-20260715-RUNTIME-BOUNDARY-E2E
@@ -12,7 +13,7 @@ related_experiments:
   - PAP-20260714-P17-PRE-REFACTOR
   - PAP-20260715-P17-POST-REFACTOR
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: 9efa92dc60434cf5d5f171374bbacdb17fd3c449
+last_validated_commit: 3a6fe93d11245c1137d3ea6767cd5e27b3e88156
 ---
 
 # PAP documentation

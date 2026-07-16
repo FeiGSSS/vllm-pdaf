@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260716-TRITON-72-20-BASELINE
   - PAP-20260715-VLLM-INTEGRATION-BOUNDARY
   - PAP-20260715-ARCHITECTURE-MILESTONE
   - PAP-20260715-RUNTIME-BOUNDARY-E2E
@@ -13,7 +14,7 @@ related_experiments:
   - PAP-20260713-PD-THREE-LANE-C4
   - PAP-20260714-P17-PRE-REFACTOR
   - PAP-20260715-P17-POST-REFACTOR
-last_validated_commit: 9efa92dc60434cf5d5f171374bbacdb17fd3c449
+last_validated_commit: 3a6fe93d11245c1137d3ea6767cd5e27b3e88156
 ---
 
 # PAP benchmark methodology
@@ -52,13 +53,13 @@ compared with the immediately preceding accepted formal record. A metric over
 
 ## Current formal evidence
 
-`PAP-20260715-VLLM-INTEGRATION-BOUNDARY` validates clean commit
-`9efa92dc60434cf5d5f171374bbacdb17fd3c449`. Three C4 repetitions completed
+`PAP-20260716-TRITON-72-20-BASELINE` validates clean commit
+`3a6fe93d11245c1137d3ea6767cd5e27b3e88156`. Three C4 repetitions completed
 60/60 requests and 48/48 multi-turn cache transitions with every strict gate
-passing. Relative to `PAP-20260715-ARCHITECTURE-MILESTONE`, R1 TTFT changed by
--0.12%, R1 TPOT by -0.02%, steady TTFT by -2.83%, and steady TPOT by -0.15%.
-The raw run remains at
-`test/baseline/pap/results/runs/20260715_9efa92dc6_vllm_integration_boundary_formal/`.
+passing and no warnings. Relative to the preceding accepted formal record,
+R1 TTFT changed by -10.74%, R1 TPOT by -10.75%, steady TTFT by -1.84%, and
+steady TPOT by -18.02%. The raw run remains at
+`test/baseline/pap/results/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/`.
 
 ## Evidence and decisions
 

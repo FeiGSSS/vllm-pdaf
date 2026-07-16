@@ -1,0 +1,122 @@
+{
+  "schema_version": 1,
+  "kind": "pap-experiment-record",
+  "status": "current",
+  "experiment_id": "PAP-20260716-TRITON-72-20-BASELINE",
+  "title": "PAP Triton decode and 72/20 performance baseline",
+  "recorded_at": "2026-07-16",
+  "hypothesis": "The optimized P17 runtime at commit 3a6fe93d1 can replace the preceding formal baseline without regressing any release-gate metric.",
+  "evidence": "formal-clean",
+  "decision": "accepted",
+  "validity": {
+    "status": "valid",
+    "reasons": []
+  },
+  "baseline": {
+    "status": "not-applicable",
+    "description": "PAP-20260715-VLLM-INTEGRATION-BOUNDARY supplies the independently registered preceding formal values.",
+    "run_ids": []
+  },
+  "treatment": {
+    "status": "present",
+    "description": "Tracked-clean P17 formal run with Triton paged decode and the static 72-Prefill/20-Attention SM layout.",
+    "run_ids": [
+      "20260716_3a6fe93d1_p17_mps_72_20_formal"
+    ]
+  },
+  "primary_variable": {
+    "name": "performance_baseline",
+    "baseline": "9efa92dc6",
+    "treatment": "3a6fe93d1"
+  },
+  "run_ids": [
+    "20260716_3a6fe93d1_p17_mps_72_20_formal"
+  ],
+  "aggregation_method": "Pooled request-level samples across three formal repetitions; median and nearest-rank p90. The conclusion compares this freeze with the independently registered preceding formal baseline.",
+  "metrics": [
+    {
+      "name": "ttft_ms",
+      "scope": "round_1",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 9386.680480500218,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "tpot_ms",
+      "scope": "round_1",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 34.99732627653215,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "ttft_ms",
+      "scope": "steady_rounds_2_5",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 198.21099301043432,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "tpot_ms",
+      "scope": "steady_rounds_2_5",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 41.28042120981834,
+      "direction": "lower-is-better"
+    }
+  ],
+  "conclusion": "All three repetitions completed 60 of 60 requests and 48 of 48 cache transitions with every strict gate passing on clean commit 3a6fe93d1. Relative to PAP-20260715-VLLM-INTEGRATION-BOUNDARY, changes were -10.74% R1 TTFT, -10.75% R1 TPOT, -1.84% steady TTFT, and -18.02% steady TPOT. No release metric regressed, so this record becomes the P17 performance baseline. xPAyP and cross-host NIXL remain preserved-unverified.",
+  "supersedes": [
+    "PAP-20260715-VLLM-INTEGRATION-BOUNDARY"
+  ],
+  "superseded_by": null,
+  "raw_artifacts": [
+    {
+      "name": "aggregate",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/aggregate.json"
+      },
+      "sha256": "8b11ce2bd66f533e6ac5def8e5bc7bd223e5b07ef3534072432d4173bfa4c8db"
+    },
+    {
+      "name": "rep1_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/rep1/result.json"
+      },
+      "sha256": "5ff42adf84a4a2af6e280a3b8bd319fcabbfe8f2b5350ab60dd9be984bbf2fd3"
+    },
+    {
+      "name": "rep2_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/rep2/result.json"
+      },
+      "sha256": "d3b92f2d4c29fcf578d39b0a35c5244c9c224bf26871f885c08f427d1cea3276"
+    },
+    {
+      "name": "rep3_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "test/baseline/pap/results/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/rep3/result.json"
+      },
+      "sha256": "87bb2fc3f01189e1da4eae946d0851de5fb8d402c0640c059c32b8acb33af4f8"
+    }
+  ],
+  "tags": [
+    "p17",
+    "triton-decode",
+    "static-mps-72-20",
+    "performance-baseline",
+    "formal-freeze",
+    "1pa1p",
+    "local-fast"
+  ]
+}
