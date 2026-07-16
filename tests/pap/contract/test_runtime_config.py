@@ -12,6 +12,7 @@ from vllm.pap.config import (
     PAPMPSMode,
     PAPOffloadExecTransport,
     PAPOffloadKVTransport,
+    PAPRoutingPolicy,
     PAPRuntimeConfig,
     PAP_RETIRED_FLAGS,
 )
@@ -87,6 +88,14 @@ def test_runtime_config_supports_arbitrary_xpayp_and_tp() -> None:
     assert config.attention.dispatch_mode is PAPAttentionDispatchMode.CENTRAL_COMBINE
     assert config.attention.combine_wait_us == 1000.0
     assert config.attention.active_peer_tracking is True
+
+
+def test_runtime_config_accepts_conversation_affinity() -> None:
+    config = PAPRuntimeConfig.from_env(
+        {"PAP_ROUTING_POLICY": "conversation_affinity"}
+    )
+
+    assert config.routing_policy is PAPRoutingPolicy.CONVERSATION_AFFINITY
 
 
 @pytest.mark.parametrize(

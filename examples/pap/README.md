@@ -4,11 +4,11 @@ This directory contains thin launchers and request examples for the
 Prefill-Attention-Projection service. Gateway implementation lives in
 `vllm/pap/gateway/`; Attention implementation lives in `vllm/pap/attention/`.
 The current release gate is the P17 Qwen3-8B, same-host `1PA1P` path, validated
-through the owner-specific `vllm/pap/integration/` boundary. Same-host and
-cross-host `xPAyP` implementations remain available but are not revalidated by
-this milestone. The validated multi-turn path reuses Prefill-owned KV through
-vLLM's native prefix cache; it does not keep an Attention session resident
-between turns.
+through the owner-specific `vllm/pap/integration/` boundary. Same-host `xPAyP`
+has a controlled correctness smoke; cross-host `xPAyP` remains available but is
+not an E2E gate in this milestone. The validated multi-turn path reuses
+Prefill-owned KV through vLLM's native prefix cache; it does not keep an
+Attention session resident between turns.
 
 See [`docs/design/pap/`](../../docs/design/pap/README.md) for the canonical
 architecture, runtime, and validation boundary.
@@ -28,7 +28,11 @@ Prefill in its own PA group. Attention creates a separate lazy mailbox
 transport for every Projection peer, so PA and Projection counts do not need to
 match. The default independent round-robin policy uses all configured nodes;
 `PAP_ROUTING_POLICY=projection_affinity` remains available for a static
-PA-to-Projection mapping.
+PA-to-Projection mapping. `PAP_ROUTING_POLICY=conversation_affinity` assigns a
+new conversation ID to the next PA and pins later turns to that PA. For each
+PA, the Gateway admits requests from one Projection source at a time and
+switches sources only after that request wave drains. Separate PA groups
+continue independently.
 
 Run a local PAP service:
 
@@ -72,3 +76,24 @@ bash benchmarks/pap/scripts/run_pap_workload.sh
 
 Each run records `topology_manifest.json`, `routing_audit.json`, strict log
 audit results, and an all-Attention session-drain result.
+
+The four-GPU long-suffix comparison uses 12 conversations, five rounds, a 4K
+first prompt, 3K appended tokens per later round, and 256 output tokens. PAP is
+fixed at `3PA1P`; PD uses the standard oneway P→D flow and can be swept with
+the project-owned topology runner:
+
+```bash
+PD_LOAD_TOPOLOGY=1p3d bash \
+  benchmarks/pap/scripts/run_pd_multiturn_topology.sh oneway
+PD_LOAD_TOPOLOGY=2p2d bash \
+  benchmarks/pap/scripts/run_pd_multiturn_topology.sh oneway
+PD_LOAD_TOPOLOGY=3p1d bash \
+  benchmarks/pap/scripts/run_pd_multiturn_topology.sh oneway
+```
+
+The runner still accepts `twoway` for diagnostics, but bidirectional D→P is
+not a four-GPU milestone baseline.
+
+The exact PAP environment and the current controlled comparison are recorded
+in
+[`pap-pd-four-gpu-conversation-affinity-results-20260716.md`](../../docs/design/pap-pd-four-gpu-conversation-affinity-results-20260716.md).

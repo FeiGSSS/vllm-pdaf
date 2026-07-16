@@ -885,6 +885,7 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
 | `PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION` | M5/M6/M7 | 活跃 CUDA context audit；R1 Projection gate barrier A/B；Decode commit gate vs 正常 async control | `cbcbfabcb` + 默认关闭 diagnostic patch；四个 trace-off strict run | 真实 Prefill/Attention context 为 `64/28` SM 且 `lspart clients=Yes`；无 Decode 时 barrier 对四个 R1 Prefill 仅有 `-1/-7/-14/-16 ms` 差异；commit gate 相对正常只改善 `-1/120/146/142 ms`，但没有切断 descriptor 对 Attention registry 锁的依赖；**diagnostic，排除性结论保留；gate 路径已被 `PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC` supersede** | [因果报告第 7 节](pap-async-decode-token-ttft-root-cause-20260714.md)；`$PAP_REPO_RESULTS/20260714_strict_isolation_{projection_gate_async,projection_gate_sync,commit_gate_async,normal_async}_c4` |
 | `PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC` | M4/M5/M6/M7 | pure-Prefill/正常 Decode bounded Torch trace；sync/async IPC profile；registry 缩锁；完整-prefix readiness；同一 C4 三次 | `bd164d8ff` | dominant stream kernel 数相同，GPU busy 仅 `+158 ms`，host-unsubmitted gap `+2809 ms`；descriptor wait 与 gap 同量级；修复后三次 R1 第 4 个 Prefill `15321--15433 ms`（旧 `18007`），吞吐 `60.15--60.57 token/s`（旧 `58.54`）；20/20 requests、16/16 transitions、digest/join/routing/drain 全过；默认 async C1 smoke 5/5、4/4 也全过并记录 implementation fingerprint；**接受安全异步为唯一路径，sync paged IPC arm 已 superseded** | [最终根因与修复](pap-async-decode-token-ttft-root-cause-20260714.md)；`$PAP_REPO_RESULTS/20260714_{prefill_torch_profile_*,prefill_ipc_profile_*,registry_lock_narrow_*,registry_lock_default_async_fingerprint_c1}` |
 | `PAP-20260714-SEAL-HANDOFF-KV` | M4/M5/M6/M7 | per-layer/per-chunk descriptor + CPU sync → static catalog + request manifest + CUDA IPC event；C1/C2 与同提交 C4 A/B | `bef48f04b`、`25c8723de`；clean C1/C4、controlled C2 | C1 5/5、C2 10/10、C4 两侧 20/20，cache/digest/join/routing/drain 全过；C4 R1 TTFT `10938.780 -> 10514.883 ms`，steady TTFT `236.289 -> 208.346 ms`，steady TPOT `50.320 -> 50.296 ms`；**接受并收敛为 P17 唯一路径，旧 descriptor 路径 superseded** | [阶段结果](pap-seal-and-handoff-kv-results-20260714.md)；`$PAP_REPO_RESULTS/20260714_{25c8723de_default_sealed_c1_quick,25c8723de_c4_layer_descriptor_quick,25c8723de_c4_sealed_manifest_quick}`；C2 `$PAP_REPO_RESULTS/20260714_sealed_manifest_c2_quick` |
+| `PAP-20260716-4GPU-CONV-AFFINITY` | M6/M8/M10 | request round robin → 新会话按 PA 轮询、后续轮次固定 owner；4×L20、8B、4K 首轮 + 每轮 3K、5-turn/C12/o256；PAP 3PA1P vs PD 1P3D/2P2D/3P1D oneway | `83e8c80d5` + tracked-dirty routing/runner patch；各配置 controlled 一次 | PAP/最强 PD 3P1D output throughput `213.02/161.05 tok/s`、duration `72.11/95.38 s`、median TTFT `3012.52/4328.80 ms`；PAP 对三个 PD 配比吞吐均胜，但 TPOT 不胜 1P3D/2P2D；60/60 全部完成，PAP 48/48 cache transitions 通过；**接受 conversation-affinity、4K+3K capacity testbed 和 oneway PD 主基线，数字不晋升 formal** | [四卡结果](pap-pd-four-gpu-conversation-affinity-results-20260716.md)；`$PAP_REPO_RESULTS/20260716_4gpu_multiturn_{pap_3pa1p_c12_4k_plus3k_v3,pd_*}` |
 
 ## 7. 负结果、回滚与被替代路线
 
@@ -908,6 +909,7 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
 | `NEG-PROJECTION-ZEROBLOCK` | 通用 cache registration 对 Projection 0 local blocks fail closed | exact clean rep1 返回 500：“0 个本地块却缓存 8 个块” | **修复边界而非放宽检查**；Projection 跳过本地 cache registration | M3/M10；`558db3cdd`；`$PAP_RESULTS/20260711_043339691_multiturn_clean_rep1` |
 | `NEG-QWEN3-NONTHINK` | `enable_thinking=false` 的 Chat 多轮 token 历史 | 空 reasoning scaffold 不随 assistant content 回传，clean rep1 decode-derived hit `0` | **拒绝用于连续 token 复用验收**；thinking 模式保留完整 materialized LCP | M10；`848f321ab`；`$PAP_RESULTS/20260711_d5ea82ca3_chat_multiturn_clean_rep1` |
 | `NEG-MPS-STATIC-80-20` | 静态 Prefill/Attention MPS 80:20 | R1 Prefill median `-10.79%`、TTFT `-10.74%`，但 R1/steady TPOT `+24.26%/+24.09%`，steady TTFT `+8.22%` | **拒绝默认和继续扫描**；后续 TPOT 固定回 70:30 | `PAP-20260713-MPS-80-20-DIAG`；[诊断结果](pap-mps-80-20-diagnostic-results-20260713.md) |
+| `NEG-4GPU-3P1D-TWOWAY-CAPACITY` | 12 个长会话集中到单 Decode，并把生成侧 KV 双向保留 | 第 5 轮稳定为 `Running=0`、`Waiting=3`、KV usage `92.3%`、四卡 0% utilization，无结果文件 | **标记 invalid，不引用延迟**；同 workload 的最强有效 PD 基线使用 3P1D oneway | `PAP-20260716-4GPU-CONV-AFFINITY`；[四卡结果](pap-pd-four-gpu-conversation-affinity-results-20260716.md) |
 
 ## 8. 关键提交时间线
 
@@ -935,8 +937,10 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
 
 ## 9. 未完成问题与外部依赖
 
-- 多 PA 多轮 cache-aware routing 由未来 Dynamo 等外部路由框架负责；
-- arbitrary x:y 的连接/控制面已支持，但除 2PA2P 外主要是 correctness smoke；
+- Gateway 已支持新 conversation 按 PA 轮询、后续轮次保持 owner；未来 Dynamo 等
+  外部路由框架只需接管跨 Gateway 的全局 owner/容量决策与过期回收；
+- arbitrary x:y 的连接/控制面已支持，3PA1P 已有四卡多轮 controlled 性能证据；
+  其他比例和跨机路径仍主要是 correctness smoke 或 preserved-unverified；
 - cross-layer Attention batch 和同进程双 GPU executor 尚未通过 profiler gate；双侧
   Projection/Attention/PD timeline 与 async sampled-token handoff 已闭合，下一步是继续
   归因 PAP FlashAttention/metadata/调度的 steady TPOT 差额；

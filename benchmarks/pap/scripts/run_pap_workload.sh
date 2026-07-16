@@ -135,7 +135,6 @@ RESULTS_ROOT="${RESULTS_ROOT:-/home/fei/research/PD/test/baseline/pap/results}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
 RUN_ROOT="${RUN_ROOT:-${RESULTS_ROOT}/runs/${RUN_ID}}"
 RUN_LOG_DIR="${RUN_LOG_DIR:-${RUN_ROOT}/service_logs}"
-PAP_NORTH_STAR_HARDWARE_SIGNATURE="${PAP_NORTH_STAR_HARDWARE_SIGNATURE:-NVIDIA-L20x2}"
 PAP_NORTH_STAR_CONVERSATION_ID="${PAP_NORTH_STAR_CONVERSATION_ID:-${RUN_ID}-conversation-0}"
 PAP_NORTH_STAR_CACHE_SALT="${PAP_NORTH_STAR_CACHE_SALT:-${RUN_ID}-cache-salt}"
 
@@ -160,10 +159,15 @@ fi
 PAP_PREFILL_GPUS="${PAP_PREFILL_GPUS:-${DEFAULT_PREFILL_GPUS}}"
 PAP_PROJECTION_GPUS="${PAP_PROJECTION_GPUS:-${DEFAULT_PROJECTION_GPUS}}"
 PAP_TP_SIZE="${PAP_TP_SIZE:-1}"
+PAP_NORTH_STAR_HARDWARE_SIGNATURE="${PAP_NORTH_STAR_HARDWARE_SIGNATURE:-NVIDIA-L20x$(((PA_COUNT + PROJECTION_COUNT) * PAP_TP_SIZE))}"
 PAP_VLLM_DTYPE="${PAP_VLLM_DTYPE:-auto}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-512}"
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8192}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
+PAP_PREFILL_MAX_NUM_BATCHED_TOKENS="${PAP_PREFILL_MAX_NUM_BATCHED_TOKENS:-${MAX_NUM_BATCHED_TOKENS}}"
+PAP_PREFILL_MAX_NUM_SEQS="${PAP_PREFILL_MAX_NUM_SEQS:-${MAX_NUM_SEQS}}"
+PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS="${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS:-${MAX_NUM_BATCHED_TOKENS}}"
+PAP_PROJECTION_MAX_NUM_SEQS="${PAP_PROJECTION_MAX_NUM_SEQS:-${MAX_NUM_SEQS}}"
 PAP_PREFILL_GPU_MEMORY_UTILIZATION="${PAP_PREFILL_GPU_MEMORY_UTILIZATION:-0.76}"
 PAP_PROJECTION_GPU_MEMORY_UTILIZATION="${PAP_PROJECTION_GPU_MEMORY_UTILIZATION:-0.76}"
 PAP_PREFILL_MPS_PERCENT="${PAP_PREFILL_MPS_PERCENT:-70}"
@@ -1141,6 +1145,14 @@ write_effective_config() {
     printf 'MAX_MODEL_LEN=%q\n' "${MAX_MODEL_LEN}"
     printf 'MAX_NUM_BATCHED_TOKENS=%q\n' "${MAX_NUM_BATCHED_TOKENS}"
     printf 'MAX_NUM_SEQS=%q\n' "${MAX_NUM_SEQS}"
+    printf 'PAP_PREFILL_MAX_NUM_BATCHED_TOKENS=%q\n' \
+      "${PAP_PREFILL_MAX_NUM_BATCHED_TOKENS}"
+    printf 'PAP_PREFILL_MAX_NUM_SEQS=%q\n' \
+      "${PAP_PREFILL_MAX_NUM_SEQS}"
+    printf 'PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS=%q\n' \
+      "${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS}"
+    printf 'PAP_PROJECTION_MAX_NUM_SEQS=%q\n' \
+      "${PAP_PROJECTION_MAX_NUM_SEQS}"
     printf 'CLUSTER_READY_WAIT_SECONDS=%q\n' "${CLUSTER_READY_WAIT_SECONDS}"
     printf 'PAP_BENCH_SESSION_DRAIN_TIMEOUT=%q\n' "${PAP_BENCH_SESSION_DRAIN_TIMEOUT}"
     printf 'PAP_DEFERRED_TRACE_FLUSH_TIMEOUT=%q\n' \
@@ -1392,6 +1404,7 @@ validate_multiturn_load_result() {
   local result_path="$1"
   PAP_MULTITURN_LOAD_ROUNDS="${PAP_MULTITURN_LOAD_ROUNDS}" \
   PAP_MULTITURN_LOAD_CONVERSATIONS="${PAP_MULTITURN_LOAD_CONVERSATIONS}" \
+  OUTPUT_LEN="${OUTPUT_LEN}" \
   "${PYTHON_BIN}" - "${result_path}" <<'PY'
 import json
 import math
@@ -1403,6 +1416,7 @@ with open(sys.argv[1], encoding="utf-8") as file_obj:
 
 rounds = int(os.environ["PAP_MULTITURN_LOAD_ROUNDS"])
 conversations = int(os.environ["PAP_MULTITURN_LOAD_CONVERSATIONS"])
+output_tokens = int(os.environ["OUTPUT_LEN"])
 if result.get("architecture") != "pap":
     raise SystemExit("multi-turn load architecture is not pap")
 validity = result.get("validity") or {}
@@ -1418,8 +1432,11 @@ if len(requests) != expected:
         f"multi-turn load request count mismatch: {len(requests)} != {expected}"
     )
 for request in requests:
-    if request.get("completion_tokens") != 256:
-        raise SystemExit("multi-turn load request did not return 256 tokens")
+    if request.get("completion_tokens") != output_tokens:
+        raise SystemExit(
+            "multi-turn load completion mismatch: "
+            f"{request.get('completion_tokens')} != {output_tokens}"
+        )
     if request.get("finish_reason") != "length":
         raise SystemExit("multi-turn load request did not finish by length")
     for metric in ("ttft_ms", "tpot_ms", "latency_ms", "eof_latency_ms"):
@@ -1467,6 +1484,9 @@ audit_xy_routes() {
     PREFILL_PORT_BASE="${PREFILL_PORT_BASE}" \
     PROJECTION_PORT_BASE="${PROJECTION_PORT_BASE}" \
     PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY}" \
+    PAP_BENCH_CLIENT_MODE="${PAP_BENCH_CLIENT_MODE}" \
+    PAP_MULTITURN_LOAD_ROUNDS="${PAP_MULTITURN_LOAD_ROUNDS}" \
+    PAP_MULTITURN_LOAD_CONVERSATIONS="${PAP_MULTITURN_LOAD_CONVERSATIONS}" \
     "${PYTHON_BIN}" - <<'PY'
 import json
 import os
@@ -1482,6 +1502,9 @@ projection_count = int(os.environ["PROJECTION_COUNT"])
 prefill_base = int(os.environ["PREFILL_PORT_BASE"])
 projection_base = int(os.environ["PROJECTION_PORT_BASE"])
 routing_policy = os.environ["PAP_ROUTING_POLICY"]
+client_mode = os.environ["PAP_BENCH_CLIENT_MODE"]
+load_rounds = int(os.environ["PAP_MULTITURN_LOAD_ROUNDS"])
+load_conversations = int(os.environ["PAP_MULTITURN_LOAD_CONVERSATIONS"])
 route_pattern = re.compile(
     r"request_id=\S+ pa=[^:\s]+:(\d+).* projection=[^:\s]+:(\d+)"
 )
@@ -1501,8 +1524,24 @@ expected_pa_routes = Counter()
 expected_projection_routes = Counter()
 expected_pair_routes = Counter()
 errors = []
-for request_number in range(expected_requests):
-    group_index = request_number % pa_count
+expected_group_indices = []
+if routing_policy == "conversation_affinity" and client_mode == "multiturn_load":
+    if projection_count != 1:
+        errors.append("conversation-affinity load audit requires one Projection")
+    expected_group_indices = [
+        conversation % pa_count
+        for _ in range(load_rounds)
+        for conversation in range(load_conversations)
+    ]
+elif routing_policy == "conversation_affinity":
+    expected_group_indices = [
+        request_number % pa_count for request_number in range(expected_requests)
+    ]
+else:
+    expected_group_indices = [
+        request_number % pa_count for request_number in range(expected_requests)
+    ]
+for request_number, group_index in enumerate(expected_group_indices):
     projection_index = request_number % projection_count
     if routing_policy == "crossbar_round_robin":
         projection_index = (
@@ -1518,7 +1557,7 @@ for request_number in range(expected_requests):
         )
     elif routing_policy == "projection_sticky":
         group_index = projection_index % pa_count
-    elif routing_policy != "round_robin":
+    elif routing_policy not in ("round_robin", "conversation_affinity"):
         errors.append(f"unsupported routing policy {routing_policy!r}")
         group_index = 0
         projection_index = 0
@@ -1632,16 +1671,6 @@ if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" ]]; then
   (( PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS >= OUTPUT_LEN )) \
     || die "PAP unified KV decode capacity is too small for north-star output"
 elif [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" ]]; then
-  [[ "${TOPOLOGY}" == "1pa1p" ]] \
-    || die "multiturn_load requires PAP_TOPOLOGY=1pa1p"
-  [[ "${INPUT_LEN}" == "16000" && "${OUTPUT_LEN}" == "256" ]] \
-    || die "multiturn_load requires INPUT_LEN=16000 and OUTPUT_LEN=256"
-  [[ "${MAX_MODEL_LEN}" == "20000" ]] \
-    || die "multiturn_load requires MAX_MODEL_LEN=20000"
-  [[ "${MAX_NUM_BATCHED_TOKENS}" == "4096" ]] \
-    || die "multiturn_load requires MAX_NUM_BATCHED_TOKENS=4096"
-  [[ "${MAX_NUM_SEQS}" == "4" ]] \
-    || die "multiturn_load requires MAX_NUM_SEQS=4"
   [[ "${PAP_VLLM_DTYPE}" == "float16" ]] \
     || die "multiturn_load requires PAP_VLLM_DTYPE=float16"
   [[ "${PAP_PREFIX_CACHE_AUDIT}" == "0" \
@@ -1652,10 +1681,20 @@ elif [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" ]]; then
   [[ "${PAP_STATIC_PREFILL_CHUNKS}" == "18" \
     && "${PAP_STATIC_ATTENTION_CHUNKS}" == "5" ]] \
     || die "P17 static MPS requires 18/5 chunks"
+  [[ "${PAP_ROUTING_POLICY}" == "conversation_affinity" ]] \
+    || die "multiturn_load requires conversation_affinity routing"
+  (( PROJECTION_COUNT == 1 )) \
+    || die "multiturn_load currently requires one Projection"
   (( PAP_MULTITURN_LOAD_ROUNDS >= 4 )) \
     || die "multiturn_load requires at least four rounds"
-  (( PAP_MULTITURN_LOAD_CONVERSATIONS <= MAX_NUM_SEQS )) \
-    || die "active conversations exceed MAX_NUM_SEQS"
+  (( PAP_MULTITURN_LOAD_CONVERSATIONS <= PAP_PROJECTION_MAX_NUM_SEQS )) \
+    || die "active conversations exceed Projection max_num_seqs"
+  (( (PAP_MULTITURN_LOAD_CONVERSATIONS + PA_COUNT - 1) / PA_COUNT \
+      <= PAP_PREFILL_MAX_NUM_SEQS )) \
+    || die "per-PA conversations exceed Prefill max_num_seqs"
+  (( INPUT_LEN > 0 && PAP_MULTITURN_APPEND_TOKENS > 0 \
+      && OUTPUT_LEN > 1 )) \
+    || die "multi-turn token counts must be positive"
   (( PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS >= OUTPUT_LEN )) \
     || die "PAP unified KV decode capacity is too small for load output"
 elif [[ "${PAP_BENCH_CLIENT_MODE}" != "canonical" ]]; then
@@ -1864,8 +1903,9 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       --enable-chunked-prefill \
       --block-size "${PAP_MULTITURN_BLOCK_SIZE}" \
       --max-model-len "${MAX_MODEL_LEN}" \
-      --max-num-seqs "${MAX_NUM_SEQS}" \
-      --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
+      --max-num-seqs "${PAP_PREFILL_MAX_NUM_SEQS}" \
+      --max-num-batched-tokens \
+        "${PAP_PREFILL_MAX_NUM_BATCHED_TOKENS}" \
       --tensor-parallel-size "${PAP_TP_SIZE}" \
       --gpu-memory-utilization "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}" \
       "${prefill_profiler_args[@]}" \
@@ -1915,8 +1955,9 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
       --enable-request-id-headers \
       --block-size "${PAP_MULTITURN_BLOCK_SIZE}" \
       --max-model-len "${MAX_MODEL_LEN}" \
-      --max-num-seqs "${MAX_NUM_SEQS}" \
-      --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
+      --max-num-seqs "${PAP_PROJECTION_MAX_NUM_SEQS}" \
+      --max-num-batched-tokens \
+        "${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS}" \
       --tensor-parallel-size "${PAP_TP_SIZE}" \
       --gpu-memory-utilization "${PAP_PROJECTION_GPU_MEMORY_UTILIZATION}" \
       > "${RUN_LOG_DIR}/projection_${idx}.log" 2>&1 &
@@ -2071,8 +2112,9 @@ case "${PAP_BENCH_CLIENT_MODE}" in
       --dtype "${PAP_VLLM_DTYPE}" \
       --tensor-parallel-size "${PAP_TP_SIZE}" \
       --max-model-len "${MAX_MODEL_LEN}" \
-      --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
-      --max-num-seqs "${MAX_NUM_SEQS}" \
+      --max-num-batched-tokens \
+        "${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS}" \
+      --max-num-seqs "${PAP_PROJECTION_MAX_NUM_SEQS}" \
       2>&1 | tee "${RUN_ROOT}/${TAG}.log"
     validate_multiturn_load_result "${RUN_ROOT}/result.json"
     ;;

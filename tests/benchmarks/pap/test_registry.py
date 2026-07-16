@@ -75,8 +75,8 @@ def test_current_registry_validates() -> None:
     assert snapshot.experiments["PAP-20260716-TRITON-72-20-BASELINE"][
         "status"
     ] == "current"
-    assert len(snapshot.historical_experiments) == 43
-    assert len(snapshot.negative_results) == 15
+    assert len(snapshot.historical_experiments) == 44
+    assert len(snapshot.negative_results) == 16
 
 
 def test_formal_clean_run_rejects_dirty_worktree(tmp_path: Path) -> None:

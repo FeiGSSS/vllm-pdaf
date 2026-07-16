@@ -64,6 +64,7 @@
 | PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION | archived | diagnostic | superseded | history §6.3 | PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC |
 | PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC | archived | controlled | accepted | history §6.3 | — |
 | PAP-20260714-SEAL-HANDOFF-KV | archived | controlled | accepted | history §6.3 | — |
+| PAP-20260716-4GPU-CONV-AFFINITY | archived | controlled | accepted | history §6.3 | — |
 
 ### Reviewed negative results
 
@@ -71,6 +72,7 @@
 | --- | --- | --- | --- |
 | NEG-1PA2P-SPLIT-PEER | archived | superseded | history §7 |
 | NEG-3WAY-GENERAL | archived | rejected | history §7 |
+| NEG-4GPU-3P1D-TWOWAY-CAPACITY | archived | rejected | history §7 |
 | NEG-ADAPTIVE-COALESCE | archived | rolled-back | history §7 |
 | NEG-ASYNC-PREFILL-NO-READINESS | archived | rejected | history §7 |
 | NEG-ATTENTION-LOCAL-KV | archived | superseded | history §7 |

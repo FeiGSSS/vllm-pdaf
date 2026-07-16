@@ -5,13 +5,14 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import logging
 import os
 import time
 import uuid
 from collections import Counter
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from itertools import count
 from typing import Any
 
@@ -159,6 +160,153 @@ class ProjectionInstance:
         return f"http://{self.host}:{self.port}"
 
 
+class PAPConversationRouter:
+    """Keep a conversation on one PA while balancing new conversations."""
+
+    def __init__(self, groups: list[PAPGroup]) -> None:
+        if not groups:
+            raise ValueError("PAP conversation routing requires a PA group")
+        self._groups = groups
+        self._group_indices = {
+            group: index for index, group in enumerate(groups)
+        }
+        self._next_group = count()
+        self._assignments: dict[str, PAPGroup] = {}
+        self._request_counts: Counter[PAPGroup] = Counter()
+
+    def select_group(
+        self,
+        conversation_id: str,
+        *,
+        request_number: int,
+    ) -> PAPGroup:
+        """Return the resident PA or round-robin a new conversation."""
+        if conversation_id:
+            group = self._assignments.get(conversation_id)
+            if group is None:
+                group = self._groups[next(self._next_group) % len(self._groups)]
+                self._assignments[conversation_id] = group
+        else:
+            group = self._groups[request_number % len(self._groups)]
+        self._request_counts[group] += 1
+        return group
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return token-free assignment and request counts by PA."""
+        assignment_counts = Counter(self._assignments.values())
+        return {
+            "conversations": len(self._assignments),
+            "pa_assignments": {
+                str(self._group_indices[group]): assignment_counts[group]
+                for group in self._groups
+            },
+            "pa_requests": {
+                str(self._group_indices[group]): self._request_counts[group]
+                for group in self._groups
+            },
+        }
+
+
+@dataclass
+class _PAPProjectionAdmissionState:
+    owner: ProjectionInstance | None = None
+    active_requests: int = 0
+    waiters: list[tuple[object, ProjectionInstance]] = field(
+        default_factory=list
+    )
+
+
+class PAPProjectionAdmission:
+    """Keep each PA on one Projection source for a complete request wave."""
+
+    def __init__(self, groups: list[PAPGroup]) -> None:
+        self._condition = asyncio.Condition()
+        self._states = {
+            group: _PAPProjectionAdmissionState() for group in groups
+        }
+        self._group_indices = {group: index for index, group in enumerate(groups)}
+
+    async def acquire(
+        self,
+        group: PAPGroup,
+        projection: ProjectionInstance,
+    ) -> None:
+        """Admit a request without changing the PA owner mid-wave."""
+        ticket = object()
+        async with self._condition:
+            state = self._states[group]
+            state.waiters.append((ticket, projection))
+            try:
+                while True:
+                    if state.owner is None:
+                        state.owner = state.waiters[0][1]
+                        self._condition.notify_all()
+                    if state.owner == projection and self._is_next_owner_ticket(
+                        state,
+                        ticket,
+                    ):
+                        state.waiters = [
+                            item for item in state.waiters if item[0] is not ticket
+                        ]
+                        state.active_requests += 1
+                        self._condition.notify_all()
+                        return
+                    await self._condition.wait()
+            except BaseException:
+                state.waiters = [
+                    item for item in state.waiters if item[0] is not ticket
+                ]
+                if state.active_requests == 0 and not any(
+                    waiting_projection == state.owner
+                    for _, waiting_projection in state.waiters
+                ):
+                    state.owner = None
+                self._condition.notify_all()
+                raise
+
+    @staticmethod
+    def _is_next_owner_ticket(
+        state: _PAPProjectionAdmissionState,
+        ticket: object,
+    ) -> bool:
+        for waiting_ticket, waiting_projection in state.waiters:
+            if waiting_ticket is ticket:
+                return True
+            if waiting_projection != state.owner:
+                return False
+        return False
+
+    async def release(
+        self,
+        group: PAPGroup,
+        projection: ProjectionInstance,
+    ) -> None:
+        """Release one request and hand the idle PA to the next source."""
+        async with self._condition:
+            state = self._states[group]
+            if state.owner != projection or state.active_requests <= 0:
+                raise RuntimeError("invalid PAP Projection admission release")
+            state.active_requests -= 1
+            if state.active_requests == 0:
+                state.owner = None
+            self._condition.notify_all()
+
+    async def snapshot(self) -> list[dict[str, int | None]]:
+        """Return the current PA admission state for audits."""
+        async with self._condition:
+            return [
+                {
+                    "pa_index": self._group_indices[group],
+                    "projection_port": (
+                        None if state.owner is None else state.owner.port
+                    ),
+                    "active_requests": state.active_requests,
+                    "waiting_requests": len(state.waiters),
+                }
+                for group, state in self._states.items()
+            ]
+
+
 def _parse_host_port(value: str, *, expected_parts: int, kind: str) -> list[str]:
     parts = value.split(":")
     if len(parts) != expected_parts or any(part == "" for part in parts):
@@ -220,6 +368,8 @@ def select_instances(
     projections: list[ProjectionInstance],
     *,
     routing_policy: str = "round_robin",
+    conversation_id: str = "",
+    conversation_router: PAPConversationRouter | None = None,
 ) -> tuple[PAPGroup, ProjectionInstance]:
     group_index = request_number % len(groups)
     group = groups[group_index]
@@ -239,6 +389,16 @@ def select_instances(
         projection_index = request_number % len(projections)
         group_index = projection_index % len(groups)
         group = groups[group_index]
+    elif routing_policy == "conversation_affinity":
+        if conversation_router is None:
+            raise ValueError(
+                "conversation_affinity requires a PAPConversationRouter"
+            )
+        group = conversation_router.select_group(
+            conversation_id,
+            request_number=request_number,
+        )
+        projection_index = request_number % len(projections)
     else:
         raise ValueError(f"unsupported PAP routing policy: {routing_policy}")
     return group, projections[projection_index]
@@ -406,12 +566,39 @@ async def _stream_projection_with_cleanup(
     payload: dict[str, Any],
     request_id: str,
     attention_clients: list[PAPServiceClient],
+    admission: PAPProjectionAdmission,
+    group: PAPGroup,
+    projection: ProjectionInstance,
 ):
+    terminal_marker = b"data: [DONE]"
+    pending = b""
+    terminal_chunks: list[bytes] = []
     try:
         async for chunk in _stream_projection(client, endpoint, payload, request_id):
-            yield chunk
+            if terminal_chunks:
+                terminal_chunks.append(chunk)
+                continue
+            pending += chunk
+            marker_index = pending.find(terminal_marker)
+            if marker_index < 0:
+                safe_length = len(pending) - len(terminal_marker) + 1
+                if safe_length > 0:
+                    yield pending[:safe_length]
+                    pending = pending[safe_length:]
+                continue
+            if marker_index:
+                yield pending[:marker_index]
+            terminal_chunks.append(pending[marker_index:])
+            pending = b""
+        if pending:
+            yield pending
     finally:
-        await _cleanup_attention_sessions(attention_clients, request_id)
+        try:
+            await _cleanup_attention_sessions(attention_clients, request_id)
+        finally:
+            await admission.release(group, projection)
+    for chunk in terminal_chunks:
+        yield chunk
 
 
 @asynccontextmanager
@@ -439,6 +626,8 @@ async def lifespan(app: FastAPI):
         projection: _make_client(projection.host, projection.port, "projection")
         for projection in app.state.projections
     }
+    app.state.conversation_router = PAPConversationRouter(app.state.groups)
+    app.state.projection_admission = PAPProjectionAdmission(app.state.groups)
     yield
     attention_clients = [
         client for clients in app.state.attention_clients.values() for client in clients
@@ -459,7 +648,10 @@ async def _handle_openai_request(api_path: str, request: Request):
     request_start = time.perf_counter() if profile else 0.0
     req_data = await request.json()
     request_id = request.headers.get("X-Request-Id", uuid.uuid4().hex)
-    conversation_id = str(req_data.pop("conversation_id", ""))
+    raw_conversation_id = req_data.pop("conversation_id", "")
+    conversation_id = (
+        "" if raw_conversation_id is None else str(raw_conversation_id)
+    )
     client_stream = bool(req_data.get("stream", False))
     request_number = next(request.app.state.request_counter)
     group, projection = select_instances(
@@ -467,6 +659,8 @@ async def _handle_openai_request(api_path: str, request: Request):
         request.app.state.groups,
         request.app.state.projections,
         routing_policy=request.app.state.args.routing_policy,
+        conversation_id=conversation_id,
+        conversation_router=request.app.state.conversation_router,
     )
     prefill = request.app.state.prefill_clients[group]
     attention_clients = request.app.state.attention_clients[group]
@@ -478,6 +672,7 @@ async def _handle_openai_request(api_path: str, request: Request):
 
     attention_sessions: list[dict[str, Any]] | None = None
     handed_off_stream_cleanup = False
+    projection_admitted = False
     try:
         register_start = time.perf_counter() if profile else 0.0
         attention_sessions = await register_attention_handles(
@@ -584,8 +779,13 @@ async def _handle_openai_request(api_path: str, request: Request):
         }
         response_headers.update(_prefill_usage_headers(prefill_resp))
 
+        admission = request.app.state.projection_admission
+        await admission.acquire(group, projection)
+        projection_admitted = True
+
         if client_stream:
             handed_off_stream_cleanup = True
+            projection_admitted = False
             return StreamingResponse(
                 _stream_projection_with_cleanup(
                     projection_client,
@@ -593,6 +793,9 @@ async def _handle_openai_request(api_path: str, request: Request):
                     projection_payload,
                     request_id,
                     attention_clients,
+                    admission,
+                    group,
+                    projection,
                 ),
                 media_type="text/event-stream",
                 headers=response_headers,
@@ -609,8 +812,19 @@ async def _handle_openai_request(api_path: str, request: Request):
             headers=response_headers,
         )
     finally:
-        if attention_sessions is not None and not handed_off_stream_cleanup:
-            await _cleanup_attention_sessions(attention_clients, request_id)
+        if not handed_off_stream_cleanup:
+            try:
+                if attention_sessions is not None:
+                    await _cleanup_attention_sessions(
+                        attention_clients,
+                        request_id,
+                    )
+            finally:
+                if projection_admitted:
+                    await request.app.state.projection_admission.release(
+                        group,
+                        projection,
+                    )
 
 
 @app.post("/v1/completions")
@@ -632,6 +846,8 @@ async def health() -> dict[str, Any]:
         "projections": len(app.state.projections),
         "routing_policy": app.state.args.routing_policy,
         "pair_counts": dict(sorted(app.state.pair_counts.items())),
+        "conversation_routing": app.state.conversation_router.snapshot(),
+        "projection_admission": await app.state.projection_admission.snapshot(),
     }
 
 
@@ -644,6 +860,8 @@ async def topology_stats() -> dict[str, Any]:
         "routing_policy": app.state.args.routing_policy,
         "total_requests": sum(pair_counts.values()),
         "pair_counts": pair_counts,
+        "conversation_routing": app.state.conversation_router.snapshot(),
+        "projection_admission": await app.state.projection_admission.snapshot(),
     }
 
 
@@ -673,6 +891,7 @@ def parse_args() -> argparse.Namespace:
             "crossbar_round_robin",
             "projection_affinity",
             "projection_sticky",
+            "conversation_affinity",
         ),
     )
     return parser.parse_args()

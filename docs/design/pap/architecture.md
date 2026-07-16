@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260716-4GPU-CONV-AFFINITY
   - PAP-20260716-TRITON-72-20-BASELINE
   - PAP-20260715-VLLM-INTEGRATION-BOUNDARY
   - PAP-20260715-ARCHITECTURE-MILESTONE
@@ -44,17 +45,26 @@ Prefill-owned state, not a second durable KV owner.
 
 `PAPTopology` accepts any positive `<x>pa<y>p` shape. One PA group contains a
 Prefill role and its Attention service; Projection count is independent.
-Request routing selects a stable `(PA, Projection)` pair for a turn.
+The normal round-robin policy balances requests. The
+`conversation_affinity` policy instead assigns each new conversation to the
+next PA and reuses that PA for every later turn; Projection selection remains
+independent.
 
-- One Projection source uses direct Attention execution.
-- Multiple active Projection sources use topology-derived combine/scatter.
-- Active membership is request-cohort state; removed global dispatch and
-  adaptive-coalescing selectors are not supported runtime modes.
+- The Gateway admits each PA to one Projection source for a complete request
+  wave. Requests from that source may batch; another source takes ownership
+  only after the active wave drains.
+- Different PA groups remain independent, so x:y routing does not serialize
+  unrelated Attention services.
+- Conversation-affinity state lives in the Gateway and contains only the
+  conversation-to-PA owner plus token-free counters. KV locality and physical
+  ownership remain inside the selected PA.
+- Attention retains topology-derived combine/scatter mechanics, but the current
+  Gateway path does not use opportunistic cross-source per-layer cohorts.
 
 | Capability | Implementation | Milestone validation |
 | --- | --- | --- |
 | 1PA1P, same host | `local_fast` + CUDA IPC | P17 release gate |
-| xPAyP, same host | direct/combine over `local_fast` | Preserved, contract only |
+| xPAyP, same host | Gateway wave admission over `local_fast` | Controlled smoke |
 | xPAyP, cross host | NIXL mailbox/backend | Preserved, contract only |
 | TP or other models | Existing integration boundary | Outside P17 gate |
 
@@ -63,8 +73,9 @@ Request routing selects a stable `(PA, Projection)` pair for a turn.
 - `config.py`: typed topology, placement, transport, MPS, lifecycle, and
   feature configuration; retired selectors fail closed.
 - `gateway/`: the OpenAI-compatible request boundary, role clients, payload
-  construction, topology selection, and Prefill–Attention–Projection request
-  orchestration. `1PA1P` is the `x=1, y=1` form of the same gateway path.
+  construction, topology selection, Projection wave admission, and
+  Prefill–Attention–Projection request orchestration. `1PA1P` is the `x=1,
+  y=1` form of the same gateway path.
 - `integration/`: the only PAP-to-vLLM glue boundary. `scheduler.py`,
   `engine.py`, `worker.py`, `kv_cache.py`, and `api.py` translate PAP state for
   their matching vLLM owners; `runner.py` owns Projection request state,

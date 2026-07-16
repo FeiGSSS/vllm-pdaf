@@ -50,6 +50,7 @@ class PAPRoutingPolicy(str, Enum):
     CROSSBAR_ROUND_ROBIN = "crossbar_round_robin"
     PROJECTION_AFFINITY = "projection_affinity"
     PROJECTION_STICKY = "projection_sticky"
+    CONVERSATION_AFFINITY = "conversation_affinity"
 
 
 class PAPMPSMode(str, Enum):

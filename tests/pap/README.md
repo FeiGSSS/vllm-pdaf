@@ -13,9 +13,9 @@ surviving test covers the same behavior.
   invalid lifecycle transitions;
 - stable xPAyP and cross-host NIXL configuration and wire contracts.
 
-xPAyP and cross-host execution remain supported but are
-`preserved-unverified` during this milestone: they are not part of the fresh
-end-to-end runtime gate.
+Same-host xPAyP has a small controlled E2E smoke for `1PA2P`, `2PA1P`, and
+`2PA2P`. It is not a performance or release gate. Cross-host execution remains
+supported but `preserved-unverified` during this milestone.
 
 ## Refactor validation
 

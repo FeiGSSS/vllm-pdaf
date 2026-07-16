@@ -46,6 +46,14 @@ Its three C4 repetitions passed all gates on clean commit `3a6fe93d1`, with
 9386.68 ms R1 TTFT, 35.00 ms R1 TPOT, 198.21 ms steady TTFT, and 41.28 ms
 steady TPOT.
 
+The accepted four-GPU capacity milestone is
+[`PAP-20260716-4GPU-CONV-AFFINITY`](../../docs/design/pap-pd-four-gpu-conversation-affinity-results-20260716.md).
+It fixes PAP at 3PA1P and compares it with 1P3D, 2P2D, and 3P1D using the
+standard one-way P→D NIXL flow. This is controlled dirty-worktree evidence,
+not a replacement for the formal P17 release baseline. Bidirectional D→P is
+retained only as an optional diagnostic path and is not part of this milestone
+gate.
+
 ### Standalone paged-FlashAttention SM probe
 
 The paged-FA probe reproduces the P17 C4 Attention shape without launching PAP

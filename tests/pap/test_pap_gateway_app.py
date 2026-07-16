@@ -2,8 +2,13 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """PAP gateway topology and routing tests."""
 
+import asyncio
+
+import vllm.pap.gateway.app as gateway_app
 from vllm.pap.gateway.app import (
+    PAPConversationRouter,
     PAPGroup,
+    PAPProjectionAdmission,
     ProjectionInstance,
     _prefill_usage_headers,
     build_projection_payload_for_group,
@@ -313,6 +318,46 @@ def test_select_instances_can_stick_pa_to_projection() -> None:
     ]
 
 
+def test_conversation_affinity_round_robins_new_conversations() -> None:
+    groups = [
+        PAPGroup("127.0.0.1", 8100 + idx, 5559 + idx, "127.0.0.1", 8300 + idx)
+        for idx in range(3)
+    ]
+    projections = [ProjectionInstance("127.0.0.1", 8200)]
+    router = PAPConversationRouter(groups)
+
+    first_round = [
+        select_instances(
+            index,
+            groups,
+            projections,
+            routing_policy="conversation_affinity",
+            conversation_id=f"conv-{index}",
+            conversation_router=router,
+        )[0].prefill_port
+        for index in range(6)
+    ]
+    second_round = [
+        select_instances(
+            6 + index,
+            groups,
+            projections,
+            routing_policy="conversation_affinity",
+            conversation_id=f"conv-{index}",
+            conversation_router=router,
+        )[0].prefill_port
+        for index in reversed(range(6))
+    ]
+
+    assert first_round == [8100, 8101, 8102, 8100, 8101, 8102]
+    assert second_round == [8102, 8101, 8100, 8102, 8101, 8100]
+    assert router.snapshot() == {
+        "conversations": 6,
+        "pa_assignments": {"0": 2, "1": 2, "2": 2},
+        "pa_requests": {"0": 4, "1": 4, "2": 4},
+    }
+
+
 def test_build_projection_payload_for_group_keeps_kv_uninstalled() -> None:
     group = PAPGroup("127.0.0.1", 8103, 5562, "127.0.0.1", 8303, 9303, 10303)
     kv_params = {
@@ -354,3 +399,177 @@ def test_build_projection_payload_for_group_attaches_prefill_kv_handle() -> None
     )
 
     assert payload["kv_transfer_params"]["pap_prefill_kv_handle"] == "req-9"
+
+
+def test_projection_admission_switches_pa_owner_only_between_waves() -> None:
+    async def run() -> None:
+        group = PAPGroup("127.0.0.1", 8100, 5559, "127.0.0.1", 8300)
+        projection_0 = ProjectionInstance("127.0.0.1", 8200)
+        projection_1 = ProjectionInstance("127.0.0.1", 8201)
+        admission = PAPProjectionAdmission([group])
+
+        await admission.acquire(group, projection_0)
+        projection_1_admitted = asyncio.Event()
+        late_projection_0_admitted = asyncio.Event()
+
+        async def acquire(
+            projection: ProjectionInstance,
+            admitted: asyncio.Event,
+        ) -> None:
+            await admission.acquire(group, projection)
+            admitted.set()
+
+        projection_1_task = asyncio.create_task(
+            acquire(projection_1, projection_1_admitted)
+        )
+        await asyncio.sleep(0)
+        late_projection_0_task = asyncio.create_task(
+            acquire(projection_0, late_projection_0_admitted)
+        )
+        await asyncio.sleep(0)
+        assert not projection_1_admitted.is_set()
+        assert not late_projection_0_admitted.is_set()
+
+        await admission.release(group, projection_0)
+        await asyncio.wait_for(projection_1_admitted.wait(), timeout=1)
+        assert not late_projection_0_admitted.is_set()
+        await admission.release(group, projection_1)
+        await asyncio.wait_for(late_projection_0_admitted.wait(), timeout=1)
+        await admission.release(group, projection_0)
+        await asyncio.gather(projection_1_task, late_projection_0_task)
+
+        assert await admission.snapshot() == [
+            {
+                "pa_index": 0,
+                "projection_port": None,
+                "active_requests": 0,
+                "waiting_requests": 0,
+            }
+        ]
+
+    asyncio.run(run())
+
+
+def test_projection_admission_batches_same_source_until_handoff_waits() -> None:
+    async def run() -> None:
+        group = PAPGroup("127.0.0.1", 8100, 5559, "127.0.0.1", 8300)
+        projection_0 = ProjectionInstance("127.0.0.1", 8200)
+        admission = PAPProjectionAdmission([group])
+
+        await admission.acquire(group, projection_0)
+        await admission.acquire(group, projection_0)
+        assert await admission.snapshot() == [
+            {
+                "pa_index": 0,
+                "projection_port": 8200,
+                "active_requests": 2,
+                "waiting_requests": 0,
+            }
+        ]
+        await admission.release(group, projection_0)
+        await admission.release(group, projection_0)
+
+    asyncio.run(run())
+
+
+def test_stream_cleanup_precedes_done_event(monkeypatch) -> None:
+    events: list[object] = []
+
+    async def fake_stream(*args, **kwargs):
+        del args, kwargs
+        yield b'data: {"token":1}\n\n'
+        yield b"data: [DONE]\n\n"
+
+    async def fake_cleanup(*args, **kwargs) -> None:
+        del args, kwargs
+        events.append("cleanup")
+
+    class FakeAdmission:
+        async def release(self, group, projection) -> None:
+            del group, projection
+            events.append("release")
+
+    async def run() -> None:
+        group = PAPGroup("127.0.0.1", 8100, 5559, "127.0.0.1", 8300)
+        projection = ProjectionInstance("127.0.0.1", 8200)
+        stream = gateway_app._stream_projection_with_cleanup(
+            None,
+            "/v1/completions",
+            {},
+            "request-0",
+            [],
+            FakeAdmission(),
+            group,
+            projection,
+        )
+        async for chunk in stream:
+            events.append(chunk)
+
+    monkeypatch.setattr(gateway_app, "_stream_projection", fake_stream)
+    monkeypatch.setattr(
+        gateway_app,
+        "_cleanup_attention_sessions",
+        fake_cleanup,
+    )
+    asyncio.run(run())
+
+    assert events == [
+        b'data: {"',
+        b'token":1}\n\n',
+        "cleanup",
+        "release",
+        b"data: [DONE]\n\n",
+    ]
+
+
+def test_stream_cleanup_detects_done_split_across_chunks(monkeypatch) -> None:
+    events: list[object] = []
+
+    async def fake_stream(*args, **kwargs):
+        del args, kwargs
+        yield b'data: {"token":1}\n\ndata: [DO'
+        yield b'NE]\n\n'
+
+    async def fake_cleanup(*args, **kwargs) -> None:
+        del args, kwargs
+        events.append("cleanup")
+
+    class FakeAdmission:
+        async def release(self, group, projection) -> None:
+            del group, projection
+            events.append("release")
+
+    async def run() -> None:
+        group = PAPGroup("127.0.0.1", 8100, 5559, "127.0.0.1", 8300)
+        projection = ProjectionInstance("127.0.0.1", 8200)
+        stream = gateway_app._stream_projection_with_cleanup(
+            None,
+            "/v1/completions",
+            {},
+            "request-0",
+            [],
+            FakeAdmission(),
+            group,
+            projection,
+        )
+        async for chunk in stream:
+            events.append(chunk)
+
+    monkeypatch.setattr(gateway_app, "_stream_projection", fake_stream)
+    monkeypatch.setattr(
+        gateway_app,
+        "_cleanup_attention_sessions",
+        fake_cleanup,
+    )
+    asyncio.run(run())
+
+    cleanup_index = events.index("cleanup")
+    release_index = events.index("release")
+    before_cleanup = b"".join(
+        event for event in events[:cleanup_index] if isinstance(event, bytes)
+    )
+    after_release = b"".join(
+        event for event in events[release_index + 1 :] if isinstance(event, bytes)
+    )
+    assert before_cleanup == b'data: {"token":1}\n\n'
+    assert after_release == b"data: [DONE]\n\n"

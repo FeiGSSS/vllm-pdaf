@@ -190,6 +190,39 @@ class ServiceClient:
     id: int
 
 
+class ConversationInstanceRouter:
+    """Round-robin new conversations and retain their instance owner."""
+
+    def __init__(self, clients: list[ServiceClient]) -> None:
+        if not clients:
+            raise ValueError("conversation routing requires a service client")
+        self._clients = clients
+        self._iterator = itertools.cycle(range(len(clients)))
+        self._assignments: dict[str, ServiceClient] = {}
+        self._request_counts = [0 for _ in clients]
+
+    def select(self, conversation_id: str) -> ServiceClient:
+        """Return a stable owner or the next instance for a new conversation."""
+        client = self._assignments.get(conversation_id) if conversation_id else None
+        if client is None:
+            client = self._clients[next(self._iterator)]
+            if conversation_id:
+                self._assignments[conversation_id] = client
+        self._request_counts[client.id] += 1
+        return client
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return token-free assignment and request counts by instance."""
+        assignment_counts = [0 for _ in self._clients]
+        for client in self._assignments.values():
+            assignment_counts[client.id] += 1
+        return {
+            "conversations": len(self._assignments),
+            "assignments": assignment_counts,
+            "requests": list(self._request_counts),
+        }
+
+
 def _make_headers(request_id: str) -> dict[str, str]:
     """Build HTTP headers for upstream requests."""
     headers = {"X-Request-Id": request_id}
@@ -362,8 +395,12 @@ async def lifespan(app: FastAPI):
             )
         )
 
-    app.state.prefill_iter = itertools.cycle(range(len(app.state.prefill_clients)))
-    app.state.decode_iter = itertools.cycle(range(len(app.state.decode_clients)))
+    app.state.prefill_router = ConversationInstanceRouter(
+        app.state.prefill_clients
+    )
+    app.state.decode_router = ConversationInstanceRouter(
+        app.state.decode_clients
+    )
 
     logger.info(
         "Ready: %d prefill, %d decode instances",
@@ -379,10 +416,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Disaggregated P/D Proxy (Multi-turn)", lifespan=lifespan)
 
 
-def _next_client(app_state, role: str) -> ServiceClient:
+def _next_client(
+    app_state: Any,
+    role: str,
+    conversation_id: str,
+) -> ServiceClient:
     if role == "prefill":
-        return app_state.prefill_clients[next(app_state.prefill_iter)]
-    return app_state.decode_clients[next(app_state.decode_iter)]
+        return app_state.prefill_router.select(conversation_id)
+    return app_state.decode_router.select(conversation_id)
 
 
 # Request handler
@@ -430,7 +471,11 @@ async def _handle_request(api_path: str, request: Request):
         logger.info("[%s] conv=%s: cache MISS", request_id, conversation_id)
 
     # Step 2: Send to Prefill node (non-streaming, max_tokens=1)
-    prefill_client = _next_client(request.app.state, "prefill")
+    prefill_client = _next_client(
+        request.app.state,
+        "prefill",
+        conversation_id,
+    )
     t0 = time.time()
     prefill_resp = await _send_to_prefill(
         prefill_client,
@@ -451,7 +496,11 @@ async def _handle_request(api_path: str, request: Request):
         req_data["kv_transfer_params"] = p_kv_params
 
     # Step 3: Stream from Decode node, capturing kv_transfer_params
-    decode_client = _next_client(request.app.state, "decode")
+    decode_client = _next_client(
+        request.app.state,
+        "decode",
+        conversation_id,
+    )
 
     if client_wants_stream:
         return StreamingResponse(
@@ -527,6 +576,8 @@ async def health():
         "status": "ok",
         "cached_conversations": kv_cache.size,
         "evicted_stale": evicted,
+        "prefill_routing": app.state.prefill_router.snapshot(),
+        "decode_routing": app.state.decode_router.snapshot(),
     }
 
 

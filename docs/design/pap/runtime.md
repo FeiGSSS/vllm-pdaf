@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260716-4GPU-CONV-AFFINITY
   - PAP-20260716-TRITON-72-20-BASELINE
   - PAP-20260715-VLLM-INTEGRATION-BOUNDARY
   - PAP-20260715-ARCHITECTURE-MILESTONE
@@ -47,6 +48,17 @@ non-unified ownership paths.
 
 ## Decode-step lifecycle
 
+For multi-turn traffic, `conversation_affinity` round-robins only when a
+conversation is first observed. Later turns return to the same PA, so native
+prefix-cache locality follows the Prefill-owned KV. Requests without a
+conversation ID continue to use request-level round robin.
+
+Before Projection decode begins, the Gateway acquires the selected PA for that
+Projection source. One source owns the PA until all requests admitted in its
+wave finish; waiting sources hand off only between complete request waves. This
+keeps the step cohort stable across every model layer without restoring the
+retired per-layer fallback. Admission is independent per PA.
+
 For every active step:
 
 1. Projection builds the topology-derived route plan and sends Q/K/V.
@@ -59,6 +71,10 @@ For every active step:
 6. Lease release happens after the committed tail is safe to release.
 7. Shutdown/drain requires no pending token, commit, lease, or Attention
    session state.
+
+For streaming responses, the Gateway withholds the terminal SSE `[DONE]`
+event until Attention cleanup and Projection-admission release complete. The
+next turn therefore cannot race the preceding turn's commit/lease flush.
 
 Session release retains a bounded tombstone for known generation-bound handles.
 This makes a queued late sampled-token notification idempotent after DELETE,

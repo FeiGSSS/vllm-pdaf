@@ -15,8 +15,8 @@ STATUS_PATH = ROOT / "benchmarks/pap/registry/history_status.toml"
 def test_history_catalog_covers_every_reviewed_row() -> None:
     catalog = load_history_catalog(INDEX_PATH, STATUS_PATH)
 
-    assert len(catalog.experiments) == 43
-    assert len(catalog.negative_results) == 15
+    assert len(catalog.experiments) == 44
+    assert len(catalog.negative_results) == 16
     root_cause = catalog.experiments["PAP-20260714-ASYNC-TTFT-ROOTCAUSE"]
     assert root_cause.status == "archived"
     assert root_cause.evidence == "diagnostic"
@@ -29,6 +29,12 @@ def test_history_catalog_covers_every_reviewed_row() -> None:
         "rolled-back"
     )
     assert catalog.negative_results["NEG-ADAPTIVE-COALESCE"].status == "archived"
+    capacity = catalog.experiments["PAP-20260716-4GPU-CONV-AFFINITY"]
+    assert capacity.evidence == "controlled"
+    assert capacity.decision == "accepted"
+    assert catalog.negative_results[
+        "NEG-4GPU-3P1D-TWOWAY-CAPACITY"
+    ].decision == "rejected"
 
 
 def test_history_catalog_rejects_an_unclassified_row(tmp_path: Path) -> None:
