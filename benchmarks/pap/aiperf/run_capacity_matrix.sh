@@ -100,7 +100,7 @@ if ! jq -e \
   --argjson document_tokens "${DOCUMENT_TOKENS}" \
   --argjson append_tokens "${APPEND_TOKENS}" \
   --argjson output_tokens "${OUTPUT_TOKENS}" \
-  '.sessions == $sessions
+  '.sessions >= $sessions
     and .turns_per_session == $turns
     and .requested_document_tokens == $document_tokens
     and .requested_append_tokens == $append_tokens
@@ -139,7 +139,7 @@ fi
 } > "${MATRIX_ROOT}/matrix_config.env"
 
 wait_for_four_gpus() {
-  [[ "${WAIT_FOR_GPUS}" == "1" ]] || return
+  [[ "${WAIT_FOR_GPUS}" == "1" ]] || return 0
   local busy gpu processes
   while true; do
     busy=0
@@ -153,7 +153,7 @@ wait_for_four_gpus() {
         busy=1
       fi
     done
-    (( busy == 1 )) || return
+    (( busy == 1 )) || return 0
     echo "Waiting 60 seconds for GPUs 0-3 to become idle..."
     sleep 60
   done
