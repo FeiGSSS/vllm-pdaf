@@ -298,12 +298,13 @@ run_point() {
   set +e
   if [[ "${architecture}" == "pap" ]]; then
     run_pap_point "${concurrency}" "${run_root}" \
-      2>&1 | tee "${run_root}/launcher.log"
+      > "${run_root}/launcher.log" 2>&1
+    launcher_code="$?"
   else
     run_pd_point "${topology}" "${concurrency}" "${run_root}" \
-      2>&1 | tee "${run_root}/launcher.log"
+      > "${run_root}/launcher.log" 2>&1
+    launcher_code="$?"
   fi
-  launcher_code="${PIPESTATUS[0]}"
   set -e
   printf '%s\n' "${launcher_code}" > "${run_root}/launcher_exit_code.txt"
   summarize_point \
