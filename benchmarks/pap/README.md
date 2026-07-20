@@ -8,10 +8,12 @@ think and 1-second tool delays, pure concurrency, three request-level SLO tiers,
 96 fixed conversations per point, and a topology-specific ten-point scan.
 The initial integration result is documented in
 [`pap-pd-aiperf-four-gpu-results-20260716.md`](../../docs/design/pap-pd-aiperf-four-gpu-results-20260716.md).
-The current clean capacity scan is documented in
+The historical cohort-sized capacity scan is documented in
 [`pap-pd-aiperf-capacity-results-20260720.md`](../../docs/design/pap-pd-aiperf-capacity-results-20260720.md).
-The corresponding think/tool result is documented in
+The corresponding historical think/tool result is documented in
 [`pap-pd-aiperf-think-tool-results-20260720.md`](../../docs/design/pap-pd-aiperf-think-tool-results-20260720.md).
+The current fixed-96-session result is documented in
+[`pap-pd-aiperf-fixed-session-results-20260720.md`](../../docs/design/pap-pd-aiperf-fixed-session-results-20260720.md).
 
 This directory defines the canonical PAP benchmark profile and the tracked
 metadata layer above immutable raw results. It does not move or rewrite raw run

@@ -169,7 +169,9 @@ resuming a matrix ID, and writes `matrix_config.env`, per-run
 
 The initial AIPerf integration comparison is recorded in
 [`pap-pd-aiperf-four-gpu-results-20260716.md`](../../../docs/design/pap-pd-aiperf-four-gpu-results-20260716.md).
-The fixed clean capacity scan is recorded in
+The historical cohort-sized capacity scan is recorded in
 [`pap-pd-aiperf-capacity-results-20260720.md`](../../../docs/design/pap-pd-aiperf-capacity-results-20260720.md).
-The fixed think/tool scan is recorded in
+The historical think/tool scan is recorded in
 [`pap-pd-aiperf-think-tool-results-20260720.md`](../../../docs/design/pap-pd-aiperf-think-tool-results-20260720.md).
+The current fixed-96-session scan is recorded in
+[`pap-pd-aiperf-fixed-session-results-20260720.md`](../../../docs/design/pap-pd-aiperf-fixed-session-results-20260720.md).
