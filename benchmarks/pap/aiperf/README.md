@@ -144,5 +144,7 @@ resuming a matrix ID, and writes `matrix_config.env`, per-run
 `capacity_summary.json`, `capacity_results.tsv`, `capacity_results.md`, and
 `capacity_envelope.json` below one matrix directory.
 
-The first controlled four-GPU comparison is recorded in
+The initial AIPerf integration comparison is recorded in
 [`pap-pd-aiperf-four-gpu-results-20260716.md`](../../../docs/design/pap-pd-aiperf-four-gpu-results-20260716.md).
+The fixed clean capacity scan is recorded in
+[`pap-pd-aiperf-capacity-results-20260720.md`](../../../docs/design/pap-pd-aiperf-capacity-results-20260720.md).
