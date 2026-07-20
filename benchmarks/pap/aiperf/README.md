@@ -1,0 +1,148 @@
+# AIPerf benchmark lane
+
+This directory adds AIPerf as a standard serving-performance client. It does
+not replace the project-owned PAP E2E client:
+
+- AIPerf owns load scheduling, multi-turn session execution, per-request
+  records, TTFT/ITL/latency/throughput metrics, time slices, and sweeps.
+- The PAP E2E client remains the release gate for exact token continuity,
+  cache-hit accounting, routing audits, lifecycle drain, and token correctness.
+
+PAP and the four-GPU PD proxy accept AIPerf's default `X-Correlation-ID` as a
+conversation identifier when the request body has no `conversation_id`. A body
+value still takes priority. This lets AIPerf carry live assistant responses into
+later turns without a custom AIPerf fork.
+
+## Install
+
+Keep AIPerf outside the vLLM environment:
+
+```bash
+git clone https://github.com/ai-dynamo/aiperf.git "$AIPERF_ROOT"
+cd "$AIPERF_ROOT"
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -e .
+```
+
+The first local installation used AIPerf 0.11.0. Every run records the exact
+AIPerf commit and version in its artifact directory.
+
+## Fixed four-GPU capacity testbed
+
+The long-lived comparison workload is pure concurrency, not an arrival-rate
+test. AIPerf keeps at most `C` sessions active; a session retains its slot from
+its first request through its final turn. No separate Prefill concurrency cap
+is applied.
+
+The frozen request shape is:
+
+| Field | Value |
+| --- | ---: |
+| Turns per session | 10 |
+| Initial user document | 8192 tokens |
+| New user text on turns 2-10 | 512 tokens/turn |
+| Assistant output | 256 tokens/turn |
+| Maximum model length | 20000 tokens |
+
+Chat-template text and prior 256-token assistant responses also enter the
+later-turn context. The requested user-token shape reaches 12,800 tokens; the
+complete final prompt remains below the fixed 20K model limit.
+
+The generator defaults to 32 sessions with this shape:
+
+```bash
+.venv/bin/python benchmarks/pap/aiperf/generate_multiturn_dataset.py \
+  --model /data/ssd1/llm-models/Qwen3-8B \
+  --corpus /path/to/sonnet_4x.txt \
+  --output /tmp/pap-aiperf-8k-plus512-o256-t10.jsonl
+```
+
+The generator gives every session a stable, unique `cache_salt`, preventing
+cross-session prefix sharing while preserving reuse across that session's
+turns. The adjacent manifest records requested and actual text-token counts.
+Chat-template overhead and prior assistant outputs are intentionally additional
+context and are visible in server-reported input token counts.
+
+## SLOs and correctness gate
+
+Each completed request is evaluated against TTFT and its request-level mean
+ITL. A tier passes only when at least 95% of all expected requests meet both
+limits. Missing requests remain in the denominator. In addition, every tier
+fails unless all sessions complete all ten turns with exactly 256 output
+tokens, AIPerf reports no error/cancellation, runtime audits pass, and both
+Prefill/PA and Decode/Projection routing retain one owner per conversation.
+
+| Tier | TTFT | ITL | Required good-request fraction |
+| --- | ---: | ---: | ---: |
+| Strict | <= 5 s | <= 50 ms | >= 95% |
+| Standard | <= 10 s | <= 75 ms | >= 95% |
+| Relaxed | <= 20 s | <= 100 ms | >= 95% |
+
+`summarize_capacity_run.py` emits one compact JSON result per run.
+`summarize_capacity_matrix.py` emits a TSV, a Markdown table, and the tested
+PAP-versus-best-PD capacity envelope.
+
+## Run against an already-started gateway
+
+```bash
+AIPERF_INPUT_FILE=/tmp/pap-aiperf-8k-plus512-o256-t10.jsonl \
+AIPERF_TARGET_URL=http://127.0.0.1:9460 \
+AIPERF_OUTPUT_DIR=/path/to/run/aiperf \
+AIPERF_SESSIONS=12 \
+AIPERF_CONCURRENCY=12 \
+AIPERF_TIMING_MODE=concurrency \
+AIPERF_REQUEST_RATE= \
+  bash benchmarks/pap/aiperf/run_profile.sh
+```
+
+The project launchers can start the services and run the same AIPerf dataset:
+
+```bash
+PAP_BENCH_CLIENT_MODE=aiperf_multiturn \
+AIPERF_INPUT_FILE=/tmp/pap-aiperf-8k-plus512-o256-t10.jsonl \
+PAP_MULTITURN_LOAD_CONVERSATIONS=12 \
+PAP_AIPERF_TIMING_MODE=concurrency \
+  bash benchmarks/pap/scripts/run_pap_workload.sh
+
+PD_LOAD_CLIENT_MODE=aiperf_multiturn \
+AIPERF_INPUT_FILE=/tmp/pap-aiperf-8k-plus512-o256-t10.jsonl \
+PD_LOAD_TOPOLOGY=2p2d \
+PD_AIPERF_TIMING_MODE=concurrency \
+  bash benchmarks/pap/scripts/run_pd_multiturn_topology.sh oneway
+```
+
+Supply the normal PAP topology variables alongside the first command. Use the
+identical generated file for PAP 3PA1P and PD 1P3D/2P2D/3P1D one-way runs.
+Restart the services for every matrix point so each point starts with cold
+caches. A comma-separated AIPerf sweep intentionally runs points in one process
+and is suitable only when warm-cache carryover is part of the experiment.
+
+The default `records` export retains aggregate and per-request metrics without
+duplicating every long prompt and response. Set `AIPERF_EXPORT_LEVEL=raw` only
+when wire-level debugging is required.
+
+## Run the lean fixed matrix
+
+The matrix fixes PAP at 3PA1P and PD at one-way 1P3D, 2P2D, and 3P1D. PAP uses
+the accepted static 72/20-SM path and `gpu_memory_utilization=0.76`; PD uses
+`0.90`. Scheduler limits, batching, model length, dtype, data, and AIPerf
+settings remain unchanged across concurrency points. Projection does not own
+prompt KV, so increasing only its memory reservation would not increase PAP
+session capacity.
+
+The default one-repetition scan tests `C=4,8,12,16,24,32` and stops an
+architecture after its first relaxed-SLO failure. Every point restarts all
+services. This is deliberately a lean boundary scan; set
+`PAP_CAPACITY_REPETITIONS=3` only for a later confirmation run.
+
+```bash
+bash benchmarks/pap/aiperf/run_capacity_matrix.sh
+```
+
+The runner waits in 60-second intervals when GPUs 0-3 are occupied, supports
+resuming a matrix ID, and writes `matrix_config.env`, per-run
+`capacity_summary.json`, `capacity_results.tsv`, `capacity_results.md`, and
+`capacity_envelope.json` below one matrix directory.
+
+The first controlled four-GPU comparison is recorded in
+[`pap-pd-aiperf-four-gpu-results-20260716.md`](../../../docs/design/pap-pd-aiperf-four-gpu-results-20260716.md).

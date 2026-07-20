@@ -1,5 +1,13 @@
 # PAP benchmark and experiment governance
 
+The optional [AIPerf lane](aiperf/README.md) provides standardized serving
+load generation and metrics alongside the project-owned correctness gates. Its
+fixed four-GPU capacity testbed uses ten turns, 8K initial user input, 512 new
+user tokens and 256 output tokens per later turn, pure session concurrency,
+three request-level SLO tiers, and a lean `C=4,8,12,16,24,32` scan.
+Its first controlled four-GPU result is documented in
+[`pap-pd-aiperf-four-gpu-results-20260716.md`](../../docs/design/pap-pd-aiperf-four-gpu-results-20260716.md).
+
 This directory defines the canonical PAP benchmark profile and the tracked
 metadata layer above immutable raw results. It does not move or rewrite raw run
 directories.

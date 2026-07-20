@@ -28,6 +28,7 @@ def build_prefill_payload(req_data: dict[str, Any]) -> dict[str, Any]:
         "remote_port": None,
     }
     payload.pop("max_completion_tokens", None)
+    payload.pop("min_tokens", None)
     payload.pop("stream_options", None)
     return payload
 

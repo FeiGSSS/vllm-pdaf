@@ -643,14 +643,28 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="PAP Gateway", lifespan=lifespan)
 
 
+def _pop_conversation_id(
+    req_data: dict[str, Any],
+    correlation_id: str | None,
+) -> str:
+    """Return the body conversation id or a session-header fallback."""
+
+    raw_conversation_id = req_data.pop("conversation_id", None)
+    if raw_conversation_id is not None:
+        conversation_id = str(raw_conversation_id)
+        if conversation_id:
+            return conversation_id
+    return correlation_id or ""
+
+
 async def _handle_openai_request(api_path: str, request: Request):
     profile = _pap_prefill_ipc_profile_enabled()
     request_start = time.perf_counter() if profile else 0.0
     req_data = await request.json()
     request_id = request.headers.get("X-Request-Id", uuid.uuid4().hex)
-    raw_conversation_id = req_data.pop("conversation_id", "")
-    conversation_id = (
-        "" if raw_conversation_id is None else str(raw_conversation_id)
+    conversation_id = _pop_conversation_id(
+        req_data,
+        request.headers.get("X-Correlation-ID"),
     )
     client_stream = bool(req_data.get("stream", False))
     request_number = next(request.app.state.request_counter)

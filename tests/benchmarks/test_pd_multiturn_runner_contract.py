@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from examples.disaggregated.disaggregated_serving.disagg_proxy_multiturn import (
     ConversationInstanceRouter,
+    _pop_conversation_id,
 )
 
 
@@ -12,6 +13,14 @@ RUNNER = (
     / ".claude/skills/vllm-pap-benchmark/scripts/run_pd_multiturn_load.sh"
 )
 TOPOLOGY_RUNNER = ROOT / "benchmarks/pap/scripts/run_pd_multiturn_topology.sh"
+AIPERF_RUNNER = ROOT / "benchmarks/pap/aiperf/run_profile.sh"
+CAPACITY_RUNNER = ROOT / "benchmarks/pap/aiperf/run_capacity_matrix.sh"
+
+
+def test_pd_proxy_accepts_aiperf_session_header() -> None:
+    payload = {"model": "qwen"}
+
+    assert _pop_conversation_id(payload, "aiperf-session") == "aiperf-session"
 
 
 def test_pd_runner_uses_one_official_connector_for_both_modes() -> None:
@@ -78,3 +87,25 @@ def test_four_gpu_topology_runner_has_bounded_conversation_load() -> None:
     assert '--request-timeout-seconds "${REQUEST_TIMEOUT_SECONDS}"' in text
     assert "disagg_proxy_multiturn.py" in text
     assert "ensure_gpus_idle" in text
+
+
+def test_aiperf_capacity_lane_uses_concurrency_without_request_rate() -> None:
+    profile_text = AIPERF_RUNNER.read_text(encoding="utf-8")
+    capacity_text = CAPACITY_RUNNER.read_text(encoding="utf-8")
+
+    assert 'AIPERF_TIMING_MODE="${AIPERF_TIMING_MODE:-concurrency}"' in profile_text
+    assert 'AIPERF_TIMING_MODE=concurrency' in capacity_text
+    assert 'PAP_AIPERF_REQUEST_RATE=' in capacity_text
+    assert 'PD_AIPERF_REQUEST_RATE=' in capacity_text
+
+
+def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
+    text = CAPACITY_RUNNER.read_text(encoding="utf-8")
+
+    assert "TURNS=10" in text
+    assert "DOCUMENT_TOKENS=8192" in text
+    assert "APPEND_TOKENS=512" in text
+    assert "OUTPUT_TOKENS=256" in text
+    assert "PAP_GPU_MEMORY_UTILIZATION=0.76" in text
+    assert "PD_GPU_MEMORY_UTILIZATION=0.90" in text
+    assert "PAP_CAPACITY_POINTS:-4,8,12,16,24,32" in text

@@ -31,9 +31,10 @@ Per-request flow:
     8. Proxy returns D's response to the client.
 
 Conversation isolation:
-    Each request must include a ``conversation_id`` field (top-level in
-    the JSON body) to scope the KV cache across turns. Without it, the
-    proxy cannot link turns and falls back to no-cache behavior.
+    Each request identifies its conversation with a top-level
+    ``conversation_id`` field or the ``X-Correlation-ID`` session header.
+    Without either, the proxy cannot link turns and falls back to no-cache
+    behavior.
 
     ``conversation_id`` is a non-standard extension to the OpenAI Chat
     Completions schema, consumed by this proxy and not forwarded to the
@@ -427,18 +428,35 @@ def _next_client(
 
 
 # Request handler
+def _pop_conversation_id(
+    req_data: dict[str, Any],
+    correlation_id: str | None,
+) -> str:
+    """Return the body conversation id or a session-header fallback."""
+
+    raw_conversation_id = req_data.pop("conversation_id", None)
+    if raw_conversation_id is not None:
+        conversation_id = str(raw_conversation_id)
+        if conversation_id:
+            return conversation_id
+    return correlation_id or ""
+
+
 async def _handle_request(api_path: str, request: Request):
     """Core request handler for both /v1/chat/completions and /v1/completions."""
     req_data = await request.json()
     request_id = str(uuid.uuid4())
-    conversation_id: str = req_data.pop("conversation_id", "")
+    conversation_id = _pop_conversation_id(
+        req_data,
+        request.headers.get("X-Correlation-ID"),
+    )
     client_wants_stream = req_data.get("stream", False)
 
     if not conversation_id:
         logger.warning(
             "[%s] No conversation_id provided — KV cache reuse disabled "
-            "for this request. Add a 'conversation_id' field to enable "
-            "cross-turn KV sharing. When using "
+            "for this request. Add a 'conversation_id' field or an "
+            "X-Correlation-ID header to enable cross-turn KV sharing. When using "
             "benchmarks/multi_turn/benchmark_serving_multi_turn.py, pass "
             "--send-conversation-id (off by default).",
             request_id,

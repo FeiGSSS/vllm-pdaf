@@ -10,12 +10,26 @@ from vllm.pap.gateway.app import (
     PAPGroup,
     PAPProjectionAdmission,
     ProjectionInstance,
+    _pop_conversation_id,
     _prefill_usage_headers,
     build_projection_payload_for_group,
     parse_pap_groups,
     parse_projection_instances,
     select_instances,
 )
+
+
+def test_conversation_id_body_takes_priority_over_session_header() -> None:
+    payload = {"conversation_id": "body-session", "model": "qwen"}
+
+    assert _pop_conversation_id(payload, "header-session") == "body-session"
+    assert payload == {"model": "qwen"}
+
+
+def test_conversation_id_falls_back_to_aiperf_session_header() -> None:
+    payload = {"model": "qwen"}
+
+    assert _pop_conversation_id(payload, "aiperf-session") == "aiperf-session"
 
 
 def test_parse_pap_groups_from_compact_spec() -> None:

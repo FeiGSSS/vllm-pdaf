@@ -18,6 +18,7 @@ def test_build_prefill_payload_sets_native_nixl_pd_flags() -> None:
             "stream": True,
             "max_tokens": 32,
             "max_completion_tokens": 32,
+            "min_tokens": 32,
             "stream_options": {"include_usage": True},
         }
     )
@@ -33,6 +34,7 @@ def test_build_prefill_payload_sets_native_nixl_pd_flags() -> None:
         "remote_port": None,
     }
     assert "max_completion_tokens" not in payload
+    assert "min_tokens" not in payload
     assert "stream_options" not in payload
 
 

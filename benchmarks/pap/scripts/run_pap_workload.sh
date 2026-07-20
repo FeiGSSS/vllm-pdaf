@@ -67,12 +67,16 @@ PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 VLLM_BIN="${VLLM_BIN:-${ROOT_DIR}/.venv/bin/vllm}"
 NORTH_STAR_FINALIZER="${ROOT_DIR}/benchmarks/multi_turn/finalize_pap_pd_multiturn.py"
 DEFERRED_TRACE_VALIDATOR="${ROOT_DIR}/benchmarks/multi_turn/validate_deferred_trace.py"
+AIPERF_RUNNER="${ROOT_DIR}/benchmarks/pap/aiperf/run_profile.sh"
+AIPERF_DATASET_GENERATOR="${ROOT_DIR}/benchmarks/pap/aiperf/generate_multiturn_dataset.py"
+AIPERF_ROOT="${AIPERF_ROOT:-/home/fei/research/PD/refer_codes/aiperf}"
+AIPERF_BIN="${AIPERF_BIN:-${AIPERF_ROOT}/.venv/bin/aiperf}"
 PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE="${PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE:-0}"
 PAP_BENCH_STRICT_CORRECTNESS_AUDIT="${PAP_BENCH_STRICT_CORRECTNESS_AUDIT:-1}"
 PAP_BENCH_CLIENT_MODE="${PAP_BENCH_CLIENT_MODE:-canonical}"
 case "${PAP_BENCH_CLIENT_MODE}" in
   canonical | multiturn_prefix_cache | multiturn_chat_prefix_cache \
-    | multiturn_north_star | multiturn_load) ;;
+    | multiturn_north_star | multiturn_load | aiperf_multiturn) ;;
   *)
     echo "ERROR: unsupported PAP_BENCH_CLIENT_MODE=${PAP_BENCH_CLIENT_MODE}" >&2
     exit 2
@@ -97,7 +101,8 @@ PAP_MULTITURN_LOAD_ROUNDS="${PAP_MULTITURN_LOAD_ROUNDS:-5}"
 PAP_MULTITURN_LOAD_CONVERSATIONS="${PAP_MULTITURN_LOAD_CONVERSATIONS:-4}"
 PAP_MULTITURN_LOAD_REQUEST_RATE="${PAP_MULTITURN_LOAD_REQUEST_RATE:-2}"
 PAP_MULTITURN_APPEND_TOKENS="${PAP_MULTITURN_APPEND_TOKENS:-120}"
-if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" ]]; then
+if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" \
+  || "${PAP_BENCH_CLIENT_MODE}" == "aiperf_multiturn" ]]; then
   if ! [[ "${PAP_MULTITURN_LOAD_ROUNDS}" =~ ^[1-9][0-9]*$ \
     && "${PAP_MULTITURN_LOAD_CONVERSATIONS}" =~ ^[1-9][0-9]*$ ]]; then
     echo "ERROR: multi-turn load rounds/conversations must be positive" >&2
@@ -135,6 +140,19 @@ RESULTS_ROOT="${RESULTS_ROOT:-/home/fei/research/PD/test/baseline/pap/results}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
 RUN_ROOT="${RUN_ROOT:-${RESULTS_ROOT}/runs/${RUN_ID}}"
 RUN_LOG_DIR="${RUN_LOG_DIR:-${RUN_ROOT}/service_logs}"
+AIPERF_INPUT_FILE_PROVIDED=0
+if [[ -n "${PAP_AIPERF_INPUT_FILE:-${AIPERF_INPUT_FILE:-}}" ]]; then
+  AIPERF_INPUT_FILE_PROVIDED=1
+fi
+PAP_AIPERF_INPUT_FILE="${PAP_AIPERF_INPUT_FILE:-${AIPERF_INPUT_FILE:-${RUN_ROOT}/aiperf_multiturn.jsonl}}"
+PAP_AIPERF_OUTPUT_DIR="${PAP_AIPERF_OUTPUT_DIR:-${RUN_ROOT}/aiperf}"
+PAP_AIPERF_CONCURRENCY="${PAP_AIPERF_CONCURRENCY:-${PAP_MULTITURN_LOAD_CONVERSATIONS}}"
+PAP_AIPERF_TIMING_MODE="${PAP_AIPERF_TIMING_MODE:-concurrency}"
+PAP_AIPERF_REQUEST_RATE="${PAP_AIPERF_REQUEST_RATE-}"
+if [[ "${PAP_AIPERF_TIMING_MODE}" == "request_rate" \
+  && -z "${PAP_AIPERF_REQUEST_RATE}" ]]; then
+  PAP_AIPERF_REQUEST_RATE="${PAP_MULTITURN_LOAD_REQUEST_RATE}"
+fi
 PAP_NORTH_STAR_CONVERSATION_ID="${PAP_NORTH_STAR_CONVERSATION_ID:-${RUN_ID}-conversation-0}"
 PAP_NORTH_STAR_CACHE_SALT="${PAP_NORTH_STAR_CACHE_SALT:-${RUN_ID}-cache-salt}"
 
@@ -995,6 +1013,31 @@ ensure_dataset() {
   done
 }
 
+prepare_aiperf_dataset() {
+  [[ "${PAP_BENCH_CLIENT_MODE}" == "aiperf_multiturn" ]] || return
+  [[ -x "${AIPERF_BIN}" ]] \
+    || die "AIPerf is not installed at ${AIPERF_BIN}"
+  [[ -x "${AIPERF_RUNNER}" ]] \
+    || die "Missing AIPerf runner: ${AIPERF_RUNNER}"
+  [[ -f "${AIPERF_DATASET_GENERATOR}" ]] \
+    || die "Missing AIPerf dataset generator: ${AIPERF_DATASET_GENERATOR}"
+  if [[ "${AIPERF_INPUT_FILE_PROVIDED}" == "1" ]]; then
+    [[ -f "${PAP_AIPERF_INPUT_FILE}" ]] \
+      || die "Missing AIPerf input file: ${PAP_AIPERF_INPUT_FILE}"
+    return
+  fi
+  "${PYTHON_BIN}" "${AIPERF_DATASET_GENERATOR}" \
+    --model "${MODEL_PATH}" \
+    --corpus "${DATASET_PATH}" \
+    --output "${PAP_AIPERF_INPUT_FILE}" \
+    --sessions "${PAP_MULTITURN_LOAD_CONVERSATIONS}" \
+    --turns "${PAP_MULTITURN_LOAD_ROUNDS}" \
+    --document-tokens "${INPUT_LEN}" \
+    --append-tokens "${PAP_MULTITURN_APPEND_TOKENS}" \
+    --output-tokens "${OUTPUT_LEN}" \
+    --session-prefix "${RUN_ID}-aiperf"
+}
+
 capture_git_state() {
   GIT_COMMIT="$(git rev-parse HEAD)"
   GIT_COMMIT_SHORT="$(git rev-parse --short HEAD)"
@@ -1037,6 +1080,13 @@ write_effective_config() {
       "${PAP_MULTITURN_LOAD_REQUEST_RATE}"
     printf 'PAP_MULTITURN_APPEND_TOKENS=%q\n' \
       "${PAP_MULTITURN_APPEND_TOKENS}"
+    printf 'AIPERF_ROOT=%q\n' "${AIPERF_ROOT}"
+    printf 'AIPERF_BIN=%q\n' "${AIPERF_BIN}"
+    printf 'PAP_AIPERF_INPUT_FILE=%q\n' "${PAP_AIPERF_INPUT_FILE}"
+    printf 'PAP_AIPERF_OUTPUT_DIR=%q\n' "${PAP_AIPERF_OUTPUT_DIR}"
+    printf 'PAP_AIPERF_CONCURRENCY=%q\n' "${PAP_AIPERF_CONCURRENCY}"
+    printf 'PAP_AIPERF_TIMING_MODE=%q\n' "${PAP_AIPERF_TIMING_MODE}"
+    printf 'PAP_AIPERF_REQUEST_RATE=%q\n' "${PAP_AIPERF_REQUEST_RATE}"
     printf 'INPUT_LENS_CSV=%q\n' "${INPUT_LEN}"
     printf 'OUTPUT_LENS_CSV=%q\n' "${OUTPUT_LEN}"
     printf 'QPS_CSV=%q\n' "${QPS}"
@@ -1670,7 +1720,8 @@ if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" ]]; then
     || die "multiturn_north_star requires PAP MPS 70/30"
   (( PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS >= OUTPUT_LEN )) \
     || die "PAP unified KV decode capacity is too small for north-star output"
-elif [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" ]]; then
+elif [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" \
+  || "${PAP_BENCH_CLIENT_MODE}" == "aiperf_multiturn" ]]; then
   [[ "${PAP_VLLM_DTYPE}" == "float16" ]] \
     || die "multiturn_load requires PAP_VLLM_DTYPE=float16"
   [[ "${PAP_PREFIX_CACHE_AUDIT}" == "0" \
@@ -1721,6 +1772,7 @@ fi
 ensure_dataset
 mkdir -p "${RUN_ROOT}" "${RUN_LOG_DIR}"
 capture_git_state
+prepare_aiperf_dataset
 split_csv "${PAP_PREFILL_GPUS}" PREFILL_GPUS
 split_csv "${PAP_PROJECTION_GPUS}" PROJECTION_GPUS
 require_count "PAP_PREFILL_GPUS" "${#PREFILL_GPUS[@]}" "${PA_COUNT}"
@@ -2117,6 +2169,29 @@ case "${PAP_BENCH_CLIENT_MODE}" in
       --max-num-seqs "${PAP_PROJECTION_MAX_NUM_SEQS}" \
       2>&1 | tee "${RUN_ROOT}/${TAG}.log"
     validate_multiturn_load_result "${RUN_ROOT}/result.json"
+    ;;
+  aiperf_multiturn)
+    TAG="${TOPOLOGY_TAG}_aiperf_multiturn"
+    echo "=== Running ${TAG} on port ${PAP_PROXY_PORT} ==="
+    timeout "${BENCH_TIMEOUT}" env \
+      PAP_ROOT="${ROOT_DIR}" \
+      AIPERF_ROOT="${AIPERF_ROOT}" \
+      AIPERF_BIN="${AIPERF_BIN}" \
+      MODEL_PATH="${MODEL_PATH}" \
+      AIPERF_INPUT_FILE="${PAP_AIPERF_INPUT_FILE}" \
+      AIPERF_TARGET_URL="http://127.0.0.1:${PAP_PROXY_PORT}" \
+      AIPERF_OUTPUT_DIR="${PAP_AIPERF_OUTPUT_DIR}" \
+      AIPERF_SESSIONS="${PAP_MULTITURN_LOAD_CONVERSATIONS}" \
+      AIPERF_CONCURRENCY="${PAP_AIPERF_CONCURRENCY}" \
+      AIPERF_TIMING_MODE="${PAP_AIPERF_TIMING_MODE}" \
+      AIPERF_REQUEST_RATE="${PAP_AIPERF_REQUEST_RATE}" \
+      AIPERF_REQUEST_TIMEOUT_SECONDS="${BENCH_TIMEOUT}" \
+      "${AIPERF_RUNNER}" \
+      2>&1 | tee "${RUN_ROOT}/${TAG}.log"
+    if [[ -z "$(find "${PAP_AIPERF_OUTPUT_DIR}" -type f \
+      -name 'profile*.json' -size +0c -print -quit)" ]]; then
+      die "AIPerf produced no profile JSON under ${PAP_AIPERF_OUTPUT_DIR}"
+    fi
     ;;
 esac
 
