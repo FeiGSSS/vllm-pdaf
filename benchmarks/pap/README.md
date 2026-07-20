@@ -10,6 +10,8 @@ The initial integration result is documented in
 [`pap-pd-aiperf-four-gpu-results-20260716.md`](../../docs/design/pap-pd-aiperf-four-gpu-results-20260716.md).
 The current clean capacity scan is documented in
 [`pap-pd-aiperf-capacity-results-20260720.md`](../../docs/design/pap-pd-aiperf-capacity-results-20260720.md).
+The corresponding think/tool result is documented in
+[`pap-pd-aiperf-think-tool-results-20260720.md`](../../docs/design/pap-pd-aiperf-think-tool-results-20260720.md).
 
 This directory defines the canonical PAP benchmark profile and the tracked
 metadata layer above immutable raw results. It does not move or rewrite raw run

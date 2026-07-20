@@ -158,3 +158,5 @@ The initial AIPerf integration comparison is recorded in
 [`pap-pd-aiperf-four-gpu-results-20260716.md`](../../../docs/design/pap-pd-aiperf-four-gpu-results-20260716.md).
 The fixed clean capacity scan is recorded in
 [`pap-pd-aiperf-capacity-results-20260720.md`](../../../docs/design/pap-pd-aiperf-capacity-results-20260720.md).
+The fixed think/tool scan is recorded in
+[`pap-pd-aiperf-think-tool-results-20260720.md`](../../../docs/design/pap-pd-aiperf-think-tool-results-20260720.md).
