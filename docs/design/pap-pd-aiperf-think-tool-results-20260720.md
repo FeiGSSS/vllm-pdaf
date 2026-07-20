@@ -6,6 +6,10 @@ This clean controlled scan adds deterministic inter-turn waiting to the fixed
 four-GPU AIPerf workload. It retains burst admission for the first request of
 every session and changes only continuation timing.
 
+This historical scan used `total sessions = C`, so each point contained one
+cohort. It is superseded as the long-running goodput methodology by the fixed
+96-session scan; the measurements remain useful pilot evidence.
+
 - vLLM/PAP commit: `62dc45439dc066c74532a2a4a5fde0f04fc26b5a`
 - Model and hardware: Qwen3-8B FP16 on four NVIDIA L20 GPUs
 - Workload: ten turns, 8K initial user text, +512 user tokens per turn,

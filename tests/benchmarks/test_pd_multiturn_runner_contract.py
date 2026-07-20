@@ -13,6 +13,7 @@ RUNNER = (
     / ".claude/skills/vllm-pap-benchmark/scripts/run_pd_multiturn_load.sh"
 )
 TOPOLOGY_RUNNER = ROOT / "benchmarks/pap/scripts/run_pd_multiturn_topology.sh"
+PAP_RUNNER = ROOT / "benchmarks/pap/scripts/run_pap_workload.sh"
 AIPERF_RUNNER = ROOT / "benchmarks/pap/aiperf/run_profile.sh"
 CAPACITY_RUNNER = ROOT / "benchmarks/pap/aiperf/run_capacity_matrix.sh"
 
@@ -109,6 +110,32 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     assert "THINK_TIME_MS=3000" in text
     assert "TOOL_TIME_MS=1000" in text
     assert "TOOL_EVERY=3" in text
+    assert "PAP_CAPACITY_SESSIONS:-96" in text
     assert "PAP_GPU_MEMORY_UTILIZATION=0.76" in text
     assert "PD_GPU_MEMORY_UTILIZATION=0.90" in text
-    assert "PAP_CAPACITY_POINTS:-4,8,12,16,24,32" in text
+    assert "PAP_CAPACITY_PAP_3PA1P_POINTS:-16,24,32" in text
+    assert "PAP_CAPACITY_PD_1P3D_POINTS:-8" in text
+    assert "PAP_CAPACITY_PD_2P2D_POINTS:-12,16" in text
+    assert "PAP_CAPACITY_PD_3P1D_POINTS:-4,8,12,16" in text
+    assert '--sessions "${TOTAL_SESSIONS}"' in text
+    assert 'PAP_MULTITURN_LOAD_CONVERSATIONS="${TOTAL_SESSIONS}"' in text
+    assert 'PD_LOAD_CONVERSATIONS="${TOTAL_SESSIONS}"' in text
+    assert '--sessions "${concurrency}"' not in text
+
+
+def test_aiperf_capacity_checks_use_live_concurrency_not_total_sessions() -> None:
+    pap_text = PAP_RUNNER.read_text(encoding="utf-8")
+    pd_text = TOPOLOGY_RUNNER.read_text(encoding="utf-8")
+
+    assert (
+        'PAP_MULTITURN_ACTIVE_CONVERSATIONS="${PAP_AIPERF_CONCURRENCY}"'
+        in pap_text
+    )
+    assert (
+        "PAP_MULTITURN_ACTIVE_CONVERSATIONS + PA_COUNT - 1" in pap_text
+    )
+    assert (
+        "PAP_MULTITURN_LOAD_CONVERSATIONS + PA_COUNT - 1" not in pap_text
+    )
+    assert 'ACTIVE_CONVERSATIONS="${PD_AIPERF_CONCURRENCY}"' in pd_text
+    assert 'TOTAL_CONVERSATIONS=%q' in pd_text

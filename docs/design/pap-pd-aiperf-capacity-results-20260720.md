@@ -7,6 +7,10 @@ testbed. It compares PAP 3PA1P with every one-way PD split on four NVIDIA L20
 GPUs. The scan uses one repetition per point, so it is controlled capacity
 evidence rather than a formal three-repetition release result.
 
+This historical scan used `total sessions = C`, so each point contained one
+cohort. The later fixed-session testbed supersedes that methodology for goodput
+comparisons while preserving this result as pilot capacity evidence.
+
 - vLLM/PAP commit: `c86d601e49f35739d4953b6f88bd73b53da69e94`
 - Tracked worktree at launch: clean
 - AIPerf: 0.11.0 at `854ff91a4a221f899b806e7660a89b41b80d5689`

@@ -39,6 +39,7 @@ The frozen request shape is:
 | Field | Value |
 | --- | ---: |
 | Turns per session | 10 |
+| Total sessions per matrix point | 96 |
 | Initial user document | 8192 tokens |
 | New user text on turns 2-10 | 512 tokens/turn |
 | Assistant output | 256 tokens/turn |
@@ -57,12 +58,13 @@ in total while retaining its concurrency slot. Previous capacity-boundary runs
 spent 11.5-15.8 seconds per request on average, so these delays desynchronize
 sessions without making waiting time dominate serving time.
 
-The generator defaults to 32 sessions with this shape:
+The capacity runner generates 96 sessions with this shape:
 
 ```bash
 .venv/bin/python benchmarks/pap/aiperf/generate_multiturn_dataset.py \
   --model /data/ssd1/llm-models/Qwen3-8B \
   --corpus /path/to/sonnet_4x.txt \
+  --sessions 96 \
   --think-time-ms 3000 --tool-time-ms 1000 --tool-every 3 \
   --output /tmp/pap-aiperf-8k-plus512-o256-t10.jsonl
 ```
@@ -140,9 +142,20 @@ settings remain unchanged across concurrency points. Projection does not own
 prompt KV, so increasing only its memory reservation would not increase PAP
 session capacity.
 
-The default one-repetition scan tests `C=4,8,12,16,24,32` and stops an
-architecture after its first relaxed-SLO failure. Every point restarts all
-services. This is deliberately a lean boundary scan; set
+Every point processes the same 96 conversations and 960 requests. Concurrency
+only limits the number of live sessions; when one ten-turn session finishes,
+the next conversation takes its slot. The topology-specific scan retains only
+the previously observed useful region:
+
+| Topology | Concurrency points |
+| --- | --- |
+| PAP 3PA1P | 16, 24, 32 |
+| PD 1P3D | 8 |
+| PD 2P2D | 12, 16 |
+| PD 3P1D | 4, 8, 12, 16 |
+
+Every point restarts all services. This is deliberately a lean boundary scan;
+set
 `PAP_CAPACITY_REPETITIONS=3` only for a later confirmation run.
 
 ```bash

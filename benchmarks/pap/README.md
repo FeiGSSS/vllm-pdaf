@@ -5,7 +5,7 @@ load generation and metrics alongside the project-owned correctness gates. Its
 fixed four-GPU capacity testbed uses ten turns, 8K initial user input, 512 new
 user tokens per later turn, 256 output tokens per turn, deterministic 3-second
 think and 1-second tool delays, pure concurrency, three request-level SLO tiers,
-and a lean `C=4,8,12,16,24,32` scan.
+96 fixed conversations per point, and a topology-specific ten-point scan.
 The initial integration result is documented in
 [`pap-pd-aiperf-four-gpu-results-20260716.md`](../../docs/design/pap-pd-aiperf-four-gpu-results-20260716.md).
 The current clean capacity scan is documented in

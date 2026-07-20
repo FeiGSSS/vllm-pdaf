@@ -47,6 +47,18 @@ PD_AIPERF_OUTPUT_DIR="${PD_AIPERF_OUTPUT_DIR:-${RUN_ROOT}/aiperf}"
 PD_AIPERF_CONCURRENCY="${PD_AIPERF_CONCURRENCY:-${CONVERSATIONS}}"
 PD_AIPERF_TIMING_MODE="${PD_AIPERF_TIMING_MODE:-concurrency}"
 PD_AIPERF_REQUEST_RATE="${PD_AIPERF_REQUEST_RATE-}"
+ACTIVE_CONVERSATIONS="${CONVERSATIONS}"
+if [[ "${CLIENT_MODE}" == "aiperf_multiturn" ]]; then
+  if [[ ! "${PD_AIPERF_CONCURRENCY}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "PD_AIPERF_CONCURRENCY must be positive" >&2
+    exit 2
+  fi
+  ACTIVE_CONVERSATIONS="${PD_AIPERF_CONCURRENCY}"
+  if (( ACTIVE_CONVERSATIONS > CONVERSATIONS )); then
+    echo "AIPerf concurrency exceeds total conversations" >&2
+    exit 2
+  fi
+fi
 if [[ "${PD_AIPERF_TIMING_MODE}" == "request_rate" \
   && -z "${PD_AIPERF_REQUEST_RATE}" ]]; then
   PD_AIPERF_REQUEST_RATE="${REQUEST_RATE}"
@@ -226,8 +238,9 @@ HOSTS_DECODE=()
 {
   printf 'MODE=pd\nTOPOLOGY=%q\nPD_TRANSFER_MODE=%q\n' \
     "${TOPOLOGY}" "${TRANSFER_MODE}"
-  printf 'MODEL_PATH=%q\nROUNDS=%q\nACTIVE_CONVERSATIONS=%q\n' \
+  printf 'MODEL_PATH=%q\nROUNDS=%q\nTOTAL_CONVERSATIONS=%q\n' \
     "${MODEL_PATH}" "${ROUNDS}" "${CONVERSATIONS}"
+  printf 'ACTIVE_CONVERSATIONS=%q\n' "${ACTIVE_CONVERSATIONS}"
   printf 'REQUEST_RATE=%q\nDOCUMENT_TOKENS=%q\nAPPEND_TOKENS=%q\n' \
     "${REQUEST_RATE}" "${DOCUMENT_TOKENS}" "${APPEND_TOKENS}"
   printf 'OUTPUT_TOKENS=%q\nMAX_MODEL_LEN=%q\n' \

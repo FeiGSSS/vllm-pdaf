@@ -18,10 +18,14 @@ MATRIX_SUMMARIZER="${ROOT_DIR}/benchmarks/pap/aiperf/summarize_capacity_matrix.p
 RESULTS_ROOT="${RESULTS_ROOT:-${ROOT_DIR}/test/baseline/pap/results}"
 MATRIX_ID="${PAP_CAPACITY_MATRIX_ID:-$(date +%Y%m%d_%H%M%S)_aiperf_capacity}"
 MATRIX_ROOT="${PAP_CAPACITY_MATRIX_ROOT:-${RESULTS_ROOT}/capacity/${MATRIX_ID}}"
-POINTS_CSV="${PAP_CAPACITY_POINTS:-4,8,12,16,24,32}"
 ARCHITECTURES_CSV="${PAP_CAPACITY_ARCHITECTURES:-pap_3pa1p,pd_1p3d,pd_2p2d,pd_3p1d}"
+TOTAL_SESSIONS="${PAP_CAPACITY_SESSIONS:-96}"
+PAP_POINTS_CSV="${PAP_CAPACITY_PAP_3PA1P_POINTS:-16,24,32}"
+PD_1P3D_POINTS_CSV="${PAP_CAPACITY_PD_1P3D_POINTS:-8}"
+PD_2P2D_POINTS_CSV="${PAP_CAPACITY_PD_2P2D_POINTS:-12,16}"
+PD_3P1D_POINTS_CSV="${PAP_CAPACITY_PD_3P1D_POINTS:-4,8,12,16}"
 REPETITIONS="${PAP_CAPACITY_REPETITIONS:-1}"
-STOP_AFTER_RELAXED_FAIL="${PAP_CAPACITY_STOP_AFTER_RELAXED_FAIL:-1}"
+STOP_AFTER_RELAXED_FAIL="${PAP_CAPACITY_STOP_AFTER_RELAXED_FAIL:-0}"
 RESUME="${PAP_CAPACITY_RESUME:-1}"
 WAIT_FOR_GPUS="${PAP_CAPACITY_WAIT_FOR_GPUS:-1}"
 
@@ -47,7 +51,6 @@ PAP_ATTENTION_PERCENT=20
 REQUEST_TIMEOUT_SECONDS=600
 PAP_RUN_TIMEOUT_SECONDS=3600
 
-IFS=, read -r -a POINTS <<< "${POINTS_CSV}"
 IFS=, read -r -a ARCHITECTURES <<< "${ARCHITECTURES_CSV}"
 
 die() {
@@ -62,16 +65,18 @@ for required in "${PYTHON_BIN}" "${AIPERF_BIN}" "${MODEL_PATH}" \
 done
 [[ "${REPETITIONS}" =~ ^[1-9][0-9]*$ ]] \
   || die "PAP_CAPACITY_REPETITIONS must be positive"
+[[ "${TOTAL_SESSIONS}" =~ ^[1-9][0-9]*$ ]] \
+  || die "PAP_CAPACITY_SESSIONS must be positive"
 
-MAX_SESSIONS=0
-for concurrency in "${POINTS[@]}"; do
+ALL_POINTS_CSV="${PAP_POINTS_CSV},${PD_1P3D_POINTS_CSV},${PD_2P2D_POINTS_CSV},${PD_3P1D_POINTS_CSV}"
+IFS=, read -r -a ALL_POINTS <<< "${ALL_POINTS_CSV}"
+for concurrency in "${ALL_POINTS[@]}"; do
   [[ "${concurrency}" =~ ^[1-9][0-9]*$ ]] \
     || die "invalid concurrency point: ${concurrency}"
   (( concurrency <= MAX_NUM_SEQS )) \
     || die "concurrency ${concurrency} exceeds fixed max_num_seqs"
-  if (( concurrency > MAX_SESSIONS )); then
-    MAX_SESSIONS="${concurrency}"
-  fi
+  (( concurrency <= TOTAL_SESSIONS )) \
+    || die "concurrency ${concurrency} exceeds total sessions"
 done
 
 for architecture in "${ARCHITECTURES[@]}"; do
@@ -82,14 +87,14 @@ for architecture in "${ARCHITECTURES[@]}"; do
 done
 
 mkdir -p "${MATRIX_ROOT}/dataset" "${MATRIX_ROOT}/runs"
-DATASET_FILE="${MATRIX_ROOT}/dataset/multiturn_8k_plus512_o256_t10_delayed.jsonl"
+DATASET_FILE="${MATRIX_ROOT}/dataset/multiturn_s${TOTAL_SESSIONS}_8k_plus512_o256_t10_delayed.jsonl"
 
 if [[ ! -f "${DATASET_FILE}" ]]; then
   "${PYTHON_BIN}" "${DATASET_GENERATOR}" \
     --model "${MODEL_PATH}" \
     --corpus "${CORPUS_PATH}" \
     --output "${DATASET_FILE}" \
-    --sessions "${MAX_SESSIONS}" \
+    --sessions "${TOTAL_SESSIONS}" \
     --turns "${TURNS}" \
     --document-tokens "${DOCUMENT_TOKENS}" \
     --append-tokens "${APPEND_TOKENS}" \
@@ -101,7 +106,7 @@ if [[ ! -f "${DATASET_FILE}" ]]; then
 fi
 DATASET_MANIFEST="${DATASET_FILE}.manifest.json"
 if ! jq -e \
-  --argjson sessions "${MAX_SESSIONS}" \
+  --argjson sessions "${TOTAL_SESSIONS}" \
   --argjson turns "${TURNS}" \
   --argjson document_tokens "${DOCUMENT_TOKENS}" \
   --argjson append_tokens "${APPEND_TOKENS}" \
@@ -109,7 +114,7 @@ if ! jq -e \
   --argjson think_time_ms "${THINK_TIME_MS}" \
   --argjson tool_time_ms "${TOOL_TIME_MS}" \
   --argjson tool_every "${TOOL_EVERY}" \
-  '.sessions >= $sessions
+  '.sessions == $sessions
     and .turns_per_session == $turns
     and .requested_document_tokens == $document_tokens
     and .requested_append_tokens == $append_tokens
@@ -126,11 +131,15 @@ fi
   printf 'MODEL_PATH=%q\nCORPUS_PATH=%q\n' \
     "${MODEL_PATH}" "${CORPUS_PATH}"
   printf 'AIPERF_TIMING_MODE=concurrency\nAIPERF_REQUEST_RATE=\n'
-  printf 'CONCURRENCY_POINTS=%q\nARCHITECTURES=%q\n' \
-    "${POINTS_CSV}" "${ARCHITECTURES_CSV}"
+  printf 'ARCHITECTURES=%q\nTOTAL_SESSIONS=%q\n' \
+    "${ARCHITECTURES_CSV}" "${TOTAL_SESSIONS}"
+  printf 'POINTS_PAP_3PA1P=%q\nPOINTS_PD_1P3D=%q\n' \
+    "${PAP_POINTS_CSV}" "${PD_1P3D_POINTS_CSV}"
+  printf 'POINTS_PD_2P2D=%q\nPOINTS_PD_3P1D=%q\n' \
+    "${PD_2P2D_POINTS_CSV}" "${PD_3P1D_POINTS_CSV}"
   printf 'REPETITIONS=%q\nSTOP_AFTER_RELAXED_FAIL=%q\n' \
     "${REPETITIONS}" "${STOP_AFTER_RELAXED_FAIL}"
-  printf 'SESSIONS_MAX=%q\nTURNS=%q\n' "${MAX_SESSIONS}" "${TURNS}"
+  printf 'TURNS=%q\n' "${TURNS}"
   printf 'DOCUMENT_TOKENS=%q\nAPPEND_TOKENS=%q\nOUTPUT_TOKENS=%q\n' \
     "${DOCUMENT_TOKENS}" "${APPEND_TOKENS}" "${OUTPUT_TOKENS}"
   printf 'THINK_TIME_MS=%q\nTOOL_TIME_MS=%q\nTOOL_EVERY=%q\n' \
@@ -184,7 +193,7 @@ summarize_point() {
     --architecture "${architecture}" \
     --topology "${topology}" \
     --concurrency "${concurrency}" \
-    --sessions "${concurrency}" \
+    --sessions "${TOTAL_SESSIONS}" \
     --turns "${TURNS}" \
     --output-tokens "${OUTPUT_TOKENS}" \
     --repetition "${repetition}"
@@ -223,7 +232,7 @@ run_pap_point() {
     PAP_STATIC_PREFILL_EXPECTED_SMS="${PAP_PREFILL_SMS}" \
     PAP_STATIC_ATTENTION_EXPECTED_SMS="${PAP_ATTENTION_SMS}" \
     PAP_MULTITURN_LOAD_ROUNDS="${TURNS}" \
-    PAP_MULTITURN_LOAD_CONVERSATIONS="${concurrency}" \
+    PAP_MULTITURN_LOAD_CONVERSATIONS="${TOTAL_SESSIONS}" \
     PAP_MULTITURN_APPEND_TOKENS="${APPEND_TOKENS}" \
     INPUT_LEN="${DOCUMENT_TOKENS}" \
     OUTPUT_LEN="${OUTPUT_TOKENS}" \
@@ -264,7 +273,7 @@ run_pd_point() {
     PD_LOAD_CLIENT_MODE=aiperf_multiturn \
     PD_LOAD_TOPOLOGY="${topology}" \
     PD_LOAD_ROUNDS="${TURNS}" \
-    PD_LOAD_CONVERSATIONS="${concurrency}" \
+    PD_LOAD_CONVERSATIONS="${TOTAL_SESSIONS}" \
     PD_LOAD_DOCUMENT_TOKENS="${DOCUMENT_TOKENS}" \
     PD_LOAD_APPEND_TOKENS="${APPEND_TOKENS}" \
     PD_LOAD_OUTPUT_TOKENS="${OUTPUT_TOKENS}" \
@@ -327,8 +336,15 @@ run_point() {
 }
 
 for architecture in "${ARCHITECTURES[@]}"; do
+  case "${architecture}" in
+    pap_3pa1p) points_csv="${PAP_POINTS_CSV}" ;;
+    pd_1p3d) points_csv="${PD_1P3D_POINTS_CSV}" ;;
+    pd_2p2d) points_csv="${PD_2P2D_POINTS_CSV}" ;;
+    pd_3p1d) points_csv="${PD_3P1D_POINTS_CSV}" ;;
+  esac
+  IFS=, read -r -a architecture_points <<< "${points_csv}"
   relaxed_failed=0
-  for concurrency in "${POINTS[@]}"; do
+  for concurrency in "${architecture_points[@]}"; do
     if (( relaxed_failed == 1 )) && [[ "${STOP_AFTER_RELAXED_FAIL}" == "1" ]]; then
       echo "Skipping ${architecture} above its first relaxed-SLO failure"
       break

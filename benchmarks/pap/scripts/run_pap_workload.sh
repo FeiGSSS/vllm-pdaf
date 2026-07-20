@@ -149,6 +149,19 @@ PAP_AIPERF_OUTPUT_DIR="${PAP_AIPERF_OUTPUT_DIR:-${RUN_ROOT}/aiperf}"
 PAP_AIPERF_CONCURRENCY="${PAP_AIPERF_CONCURRENCY:-${PAP_MULTITURN_LOAD_CONVERSATIONS}}"
 PAP_AIPERF_TIMING_MODE="${PAP_AIPERF_TIMING_MODE:-concurrency}"
 PAP_AIPERF_REQUEST_RATE="${PAP_AIPERF_REQUEST_RATE-}"
+PAP_MULTITURN_ACTIVE_CONVERSATIONS="${PAP_MULTITURN_LOAD_CONVERSATIONS}"
+if [[ "${PAP_BENCH_CLIENT_MODE}" == "aiperf_multiturn" ]]; then
+  if [[ ! "${PAP_AIPERF_CONCURRENCY}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "ERROR: PAP_AIPERF_CONCURRENCY must be positive" >&2
+    exit 2
+  fi
+  PAP_MULTITURN_ACTIVE_CONVERSATIONS="${PAP_AIPERF_CONCURRENCY}"
+  if (( PAP_MULTITURN_ACTIVE_CONVERSATIONS \
+    > PAP_MULTITURN_LOAD_CONVERSATIONS )); then
+    echo "ERROR: AIPerf concurrency exceeds total conversations" >&2
+    exit 2
+  fi
+fi
 if [[ "${PAP_AIPERF_TIMING_MODE}" == "request_rate" \
   && -z "${PAP_AIPERF_REQUEST_RATE}" ]]; then
   PAP_AIPERF_REQUEST_RATE="${PAP_MULTITURN_LOAD_REQUEST_RATE}"
@@ -1076,6 +1089,8 @@ write_effective_config() {
       "${PAP_MULTITURN_LOAD_ROUNDS}"
     printf 'PAP_MULTITURN_LOAD_CONVERSATIONS=%q\n' \
       "${PAP_MULTITURN_LOAD_CONVERSATIONS}"
+    printf 'PAP_MULTITURN_ACTIVE_CONVERSATIONS=%q\n' \
+      "${PAP_MULTITURN_ACTIVE_CONVERSATIONS}"
     printf 'PAP_MULTITURN_LOAD_REQUEST_RATE=%q\n' \
       "${PAP_MULTITURN_LOAD_REQUEST_RATE}"
     printf 'PAP_MULTITURN_APPEND_TOKENS=%q\n' \
@@ -1741,9 +1756,10 @@ elif [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" \
     || die "multiturn_load currently requires one Projection"
   (( PAP_MULTITURN_LOAD_ROUNDS >= 4 )) \
     || die "multiturn_load requires at least four rounds"
-  (( PAP_MULTITURN_LOAD_CONVERSATIONS <= PAP_PROJECTION_MAX_NUM_SEQS )) \
+  (( PAP_MULTITURN_ACTIVE_CONVERSATIONS \
+      <= PAP_PROJECTION_MAX_NUM_SEQS )) \
     || die "active conversations exceed Projection max_num_seqs"
-  (( (PAP_MULTITURN_LOAD_CONVERSATIONS + PA_COUNT - 1) / PA_COUNT \
+  (( (PAP_MULTITURN_ACTIVE_CONVERSATIONS + PA_COUNT - 1) / PA_COUNT \
       <= PAP_PREFILL_MAX_NUM_SEQS )) \
     || die "per-PA conversations exceed Prefill max_num_seqs"
   (( INPUT_LEN > 0 && PAP_MULTITURN_APPEND_TOKENS > 0 \
