@@ -26,6 +26,34 @@ def _decode_tokens(tokenizer: Any, token_ids: list[int]) -> str:
     )
 
 
+def build_delay_schedule(
+    turns: int,
+    *,
+    think_time_ms: int,
+    tool_time_ms: int,
+    tool_every: int,
+) -> list[int]:
+    """Return per-turn delays; the first turn never waits."""
+
+    if turns <= 0:
+        raise ValueError("turns must be positive")
+    if min(think_time_ms, tool_time_ms) < 0:
+        raise ValueError("think and tool delays must be non-negative")
+    if tool_every <= 0:
+        raise ValueError("tool_every must be positive")
+
+    return [
+        0
+        if turn_index == 0
+        else (
+            tool_time_ms
+            if turn_index % tool_every == 0
+            else think_time_ms
+        )
+        for turn_index in range(turns)
+    ]
+
+
 def build_records(
     tokenizer: Any,
     corpus: str,
@@ -36,6 +64,9 @@ def build_records(
     append_tokens: int,
     output_tokens: int,
     session_prefix: str,
+    think_time_ms: int = 0,
+    tool_time_ms: int = 0,
+    tool_every: int = 3,
 ) -> tuple[list[dict[str, object]], dict[str, int]]:
     """Build deterministic conversations with long per-turn user deltas."""
 
@@ -65,6 +96,12 @@ def build_records(
         )
         for index in range(turns - 1)
     ]
+    delay_schedule = build_delay_schedule(
+        turns,
+        think_time_ms=think_time_ms,
+        tool_time_ms=tool_time_ms,
+        tool_every=tool_every,
+    )
 
     records: list[dict[str, object]] = []
     for session_index in range(sessions):
@@ -76,22 +113,16 @@ def build_records(
             "seed": 0,
             "temperature": 0,
         }
+        turn_texts = [initial_text, *followup_texts]
         turn_records = [
             {
-                "text": initial_text,
+                "text": text,
                 "role": "user",
                 "output_length": output_tokens,
+                "delay": delay_schedule[turn_index],
                 "extra": extra,
-            },
-            *[
-                {
-                    "text": text,
-                    "role": "user",
-                    "output_length": output_tokens,
-                    "extra": extra,
-                }
-                for text in followup_texts
-            ],
+            }
+            for turn_index, text in enumerate(turn_texts)
         ]
         records.append(
             {
@@ -125,6 +156,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--append-tokens", type=int, default=512)
     parser.add_argument("--output-tokens", type=int, default=256)
     parser.add_argument("--session-prefix", default="pap-aiperf-session")
+    parser.add_argument("--think-time-ms", type=int, default=0)
+    parser.add_argument("--tool-time-ms", type=int, default=0)
+    parser.add_argument("--tool-every", type=int, default=3)
     return parser.parse_args()
 
 
@@ -147,6 +181,15 @@ def main() -> None:
         append_tokens=args.append_tokens,
         output_tokens=args.output_tokens,
         session_prefix=args.session_prefix,
+        think_time_ms=args.think_time_ms,
+        tool_time_ms=args.tool_time_ms,
+        tool_every=args.tool_every,
+    )
+    delay_schedule = build_delay_schedule(
+        args.turns,
+        think_time_ms=args.think_time_ms,
+        tool_time_ms=args.tool_time_ms,
+        tool_every=args.tool_every,
     )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -165,6 +208,13 @@ def main() -> None:
         "requested_document_tokens": args.document_tokens,
         "requested_append_tokens": args.append_tokens,
         "output_tokens": args.output_tokens,
+        "delay_profile": {
+            "think_time_ms": args.think_time_ms,
+            "tool_time_ms": args.tool_time_ms,
+            "tool_every": args.tool_every,
+            "schedule_ms": delay_schedule,
+            "total_delay_per_session_ms": sum(delay_schedule),
+        },
         "actual_text_token_counts": actual_counts,
         "dataset_sha256": hashlib.sha256(encoded).hexdigest(),
     }

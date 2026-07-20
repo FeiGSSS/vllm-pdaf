@@ -1,6 +1,11 @@
 import json
 from pathlib import Path
 
+import pytest
+
+from benchmarks.pap.aiperf.generate_multiturn_dataset import (
+    build_delay_schedule,
+)
 from benchmarks.pap.aiperf.summarize_capacity_matrix import (
     build_envelope,
     build_rows,
@@ -11,6 +16,51 @@ from benchmarks.pap.aiperf.summarize_capacity_run import summarize_run
 def _write_json(path: Path, value: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(value) + "\n", encoding="utf-8")
+
+
+def test_delay_schedule_mixes_think_and_tool_waits() -> None:
+    schedule = build_delay_schedule(
+        10,
+        think_time_ms=3_000,
+        tool_time_ms=1_000,
+        tool_every=3,
+    )
+
+    assert schedule == [
+        0,
+        3_000,
+        3_000,
+        1_000,
+        3_000,
+        3_000,
+        1_000,
+        3_000,
+        3_000,
+        1_000,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"turns": 0}, "turns must be positive"),
+        ({"think_time_ms": -1}, "delays must be non-negative"),
+        ({"tool_every": 0}, "tool_every must be positive"),
+    ],
+)
+def test_delay_schedule_rejects_invalid_values(
+    kwargs: dict[str, int],
+    message: str,
+) -> None:
+    values = {
+        "turns": 10,
+        "think_time_ms": 3_000,
+        "tool_time_ms": 1_000,
+        "tool_every": 3,
+        **kwargs,
+    }
+    with pytest.raises(ValueError, match=message):
+        build_delay_schedule(**values)
 
 
 def _write_pd_run(run_root: Path, ttfts: list[float]) -> None:

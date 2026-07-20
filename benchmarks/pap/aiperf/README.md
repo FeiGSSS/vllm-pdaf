@@ -42,11 +42,20 @@ The frozen request shape is:
 | Initial user document | 8192 tokens |
 | New user text on turns 2-10 | 512 tokens/turn |
 | Assistant output | 256 tokens/turn |
+| Normal think time | 3 seconds |
+| Tool execution time | 1 second every third continuation |
 | Maximum model length | 20000 tokens |
 
 Chat-template text and prior 256-token assistant responses also enter the
 later-turn context. The requested user-token shape reaches 12,800 tokens; the
 complete final prompt remains below the fixed 20K model limit.
+
+The deterministic delay schedule is `0,3,3,1,3,3,1,3,3,1` seconds. The first
+turn has no delay; ordinary continuations model user think time, while turns 4,
+7, and 10 model a faster external-tool return. Each session waits for 21 seconds
+in total while retaining its concurrency slot. Previous capacity-boundary runs
+spent 11.5-15.8 seconds per request on average, so these delays desynchronize
+sessions without making waiting time dominate serving time.
 
 The generator defaults to 32 sessions with this shape:
 
@@ -54,6 +63,7 @@ The generator defaults to 32 sessions with this shape:
 .venv/bin/python benchmarks/pap/aiperf/generate_multiturn_dataset.py \
   --model /data/ssd1/llm-models/Qwen3-8B \
   --corpus /path/to/sonnet_4x.txt \
+  --think-time-ms 3000 --tool-time-ms 1000 --tool-every 3 \
   --output /tmp/pap-aiperf-8k-plus512-o256-t10.jsonl
 ```
 

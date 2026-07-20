@@ -29,6 +29,9 @@ TURNS=10
 DOCUMENT_TOKENS=8192
 APPEND_TOKENS=512
 OUTPUT_TOKENS=256
+THINK_TIME_MS=3000
+TOOL_TIME_MS=1000
+TOOL_EVERY=3
 MAX_MODEL_LEN=20000
 MAX_NUM_BATCHED_TOKENS=8192
 MAX_NUM_SEQS=32
@@ -79,7 +82,7 @@ for architecture in "${ARCHITECTURES[@]}"; do
 done
 
 mkdir -p "${MATRIX_ROOT}/dataset" "${MATRIX_ROOT}/runs"
-DATASET_FILE="${MATRIX_ROOT}/dataset/multiturn_8k_plus512_o256_t10.jsonl"
+DATASET_FILE="${MATRIX_ROOT}/dataset/multiturn_8k_plus512_o256_t10_delayed.jsonl"
 
 if [[ ! -f "${DATASET_FILE}" ]]; then
   "${PYTHON_BIN}" "${DATASET_GENERATOR}" \
@@ -91,6 +94,9 @@ if [[ ! -f "${DATASET_FILE}" ]]; then
     --document-tokens "${DOCUMENT_TOKENS}" \
     --append-tokens "${APPEND_TOKENS}" \
     --output-tokens "${OUTPUT_TOKENS}" \
+    --think-time-ms "${THINK_TIME_MS}" \
+    --tool-time-ms "${TOOL_TIME_MS}" \
+    --tool-every "${TOOL_EVERY}" \
     --session-prefix "${MATRIX_ID}-session"
 fi
 DATASET_MANIFEST="${DATASET_FILE}.manifest.json"
@@ -100,11 +106,17 @@ if ! jq -e \
   --argjson document_tokens "${DOCUMENT_TOKENS}" \
   --argjson append_tokens "${APPEND_TOKENS}" \
   --argjson output_tokens "${OUTPUT_TOKENS}" \
+  --argjson think_time_ms "${THINK_TIME_MS}" \
+  --argjson tool_time_ms "${TOOL_TIME_MS}" \
+  --argjson tool_every "${TOOL_EVERY}" \
   '.sessions >= $sessions
     and .turns_per_session == $turns
     and .requested_document_tokens == $document_tokens
     and .requested_append_tokens == $append_tokens
-    and .output_tokens == $output_tokens' \
+    and .output_tokens == $output_tokens
+    and .delay_profile.think_time_ms == $think_time_ms
+    and .delay_profile.tool_time_ms == $tool_time_ms
+    and .delay_profile.tool_every == $tool_every' \
   "${DATASET_MANIFEST}" >/dev/null; then
   die "dataset manifest does not match the fixed testbed"
 fi
@@ -121,6 +133,8 @@ fi
   printf 'SESSIONS_MAX=%q\nTURNS=%q\n' "${MAX_SESSIONS}" "${TURNS}"
   printf 'DOCUMENT_TOKENS=%q\nAPPEND_TOKENS=%q\nOUTPUT_TOKENS=%q\n' \
     "${DOCUMENT_TOKENS}" "${APPEND_TOKENS}" "${OUTPUT_TOKENS}"
+  printf 'THINK_TIME_MS=%q\nTOOL_TIME_MS=%q\nTOOL_EVERY=%q\n' \
+    "${THINK_TIME_MS}" "${TOOL_TIME_MS}" "${TOOL_EVERY}"
   printf 'MAX_MODEL_LEN=%q\nMAX_NUM_BATCHED_TOKENS=%q\n' \
     "${MAX_MODEL_LEN}" "${MAX_NUM_BATCHED_TOKENS}"
   printf 'MAX_NUM_SEQS=%q\nPAP_PA_MAX_NUM_SEQS=%q\n' \

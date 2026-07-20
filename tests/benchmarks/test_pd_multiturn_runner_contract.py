@@ -106,6 +106,9 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     assert "DOCUMENT_TOKENS=8192" in text
     assert "APPEND_TOKENS=512" in text
     assert "OUTPUT_TOKENS=256" in text
+    assert "THINK_TIME_MS=3000" in text
+    assert "TOOL_TIME_MS=1000" in text
+    assert "TOOL_EVERY=3" in text
     assert "PAP_GPU_MEMORY_UTILIZATION=0.76" in text
     assert "PD_GPU_MEMORY_UTILIZATION=0.90" in text
     assert "PAP_CAPACITY_POINTS:-4,8,12,16,24,32" in text
