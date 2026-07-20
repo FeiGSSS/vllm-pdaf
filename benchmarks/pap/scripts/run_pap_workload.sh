@@ -1575,7 +1575,10 @@ expected_projection_routes = Counter()
 expected_pair_routes = Counter()
 errors = []
 expected_group_indices = []
-if routing_policy == "conversation_affinity" and client_mode == "multiturn_load":
+if routing_policy == "conversation_affinity" and client_mode in (
+    "multiturn_load",
+    "aiperf_multiturn",
+):
     if projection_count != 1:
         errors.append("conversation-affinity load audit requires one Projection")
     expected_group_indices = [

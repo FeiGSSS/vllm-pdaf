@@ -46,6 +46,14 @@ def test_static_mps_lifecycle_is_partitioned_and_audited() -> None:
     assert "mps_static_audit_pa_" in runner
 
 
+def test_conversation_affinity_audit_counts_sessions_for_aiperf() -> None:
+    runner = PAP_RUNNER.read_text(encoding="utf-8")
+
+    assert 'client_mode in (' in runner
+    assert '"multiturn_load",' in runner
+    assert '"aiperf_multiturn",' in runner
+
+
 def test_three_lane_runner_does_not_select_diagnostic_mps() -> None:
     orchestrator = (
         ROOT
