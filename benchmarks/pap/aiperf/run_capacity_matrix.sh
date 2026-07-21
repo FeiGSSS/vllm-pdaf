@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Fixed four-GPU PAP/PD capacity comparison. Every point restarts all services.
+# Four-GPU PAP/PD randomized-length comparison. Every point restarts services.
 
 ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
@@ -9,6 +9,7 @@ MODEL_PATH="${MODEL_PATH:-/data/ssd1/llm-models/Qwen3-8B}"
 CORPUS_PATH="${DATASET_PATH:-/home/fei/research/PD/refer_codes/vllm/benchmarks/sonnet_4x.txt}"
 AIPERF_ROOT="${AIPERF_ROOT:-/home/fei/research/PD/refer_codes/aiperf}"
 AIPERF_BIN="${AIPERF_BIN:-${AIPERF_ROOT}/.venv/bin/aiperf}"
+AIPERF_PYTHON="${AIPERF_PYTHON:-${AIPERF_ROOT}/.venv/bin/python}"
 PAP_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_pap_workload.sh"
 PD_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_pd_multiturn_topology.sh"
 DATASET_GENERATOR="${ROOT_DIR}/benchmarks/pap/aiperf/generate_multiturn_dataset.py"
@@ -17,24 +18,34 @@ MATRIX_SUMMARIZER="${ROOT_DIR}/benchmarks/pap/aiperf/summarize_capacity_matrix.p
 
 EXPERIMENTS_ROOT="${PAP_EXPERIMENTS_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments}"
 RESULTS_ROOT="${RESULTS_ROOT:-${EXPERIMENTS_ROOT}/_staging}"
-OUTPUT_TOKENS="${PAP_CAPACITY_OUTPUT_TOKENS:-256}"
-MATRIX_ID="${PAP_CAPACITY_MATRIX_ID:-$(date +%Y%m%d_%H%M%S)_aiperf_capacity_o${OUTPUT_TOKENS}}"
+OUTPUT_TOKENS="${PAP_CAPACITY_OUTPUT_TOKENS_MEAN:-${PAP_CAPACITY_OUTPUT_TOKENS:-32}}"
+OUTPUT_TOKENS_MEDIAN="${PAP_CAPACITY_OUTPUT_TOKENS_MEDIAN:-$((OUTPUT_TOKENS * 15 / 16))}"
+OUTPUT_TOKENS_MIN="${PAP_CAPACITY_OUTPUT_TOKENS_MIN:-$((OUTPUT_TOKENS / 2))}"
+OUTPUT_TOKENS_MAX="${PAP_CAPACITY_OUTPUT_TOKENS_MAX:-$((OUTPUT_TOKENS * 2))}"
+RANDOM_SEED="${PAP_CAPACITY_RANDOM_SEED:-42}"
+MATRIX_ID="${PAP_CAPACITY_MATRIX_ID:-$(date +%Y%m%d_%H%M%S)_aiperf_capacity_random_o${OUTPUT_TOKENS}}"
 MATRIX_ROOT="${PAP_CAPACITY_MATRIX_ROOT:-${RESULTS_ROOT}/capacity/${MATRIX_ID}}"
 ARCHITECTURES_CSV="${PAP_CAPACITY_ARCHITECTURES:-pap_3pa1p,pd_1p3d,pd_2p2d,pd_3p1d}"
 TOTAL_SESSIONS="${PAP_CAPACITY_SESSIONS:-96}"
-PAP_POINTS_CSV="${PAP_CAPACITY_PAP_3PA1P_POINTS:-16,24,32}"
+PAP_POINTS_CSV="${PAP_CAPACITY_PAP_3PA1P_POINTS:-12,20,28,32}"
 PD_1P3D_POINTS_CSV="${PAP_CAPACITY_PD_1P3D_POINTS:-8}"
-PD_2P2D_POINTS_CSV="${PAP_CAPACITY_PD_2P2D_POINTS:-12,16}"
-PD_3P1D_POINTS_CSV="${PAP_CAPACITY_PD_3P1D_POINTS:-4,8,12,16}"
+PD_2P2D_POINTS_CSV="${PAP_CAPACITY_PD_2P2D_POINTS:-10,16,20,24}"
+PD_3P1D_POINTS_CSV="${PAP_CAPACITY_PD_3P1D_POINTS:-8,14,20}"
 REPETITIONS="${PAP_CAPACITY_REPETITIONS:-1}"
-STOP_AFTER_RELAXED_FAIL="${PAP_CAPACITY_STOP_AFTER_RELAXED_FAIL:-0}"
+STOP_AFTER_RELAXED_FAIL="${PAP_CAPACITY_STOP_AFTER_RELAXED_FAIL:-1}"
 RESUME="${PAP_CAPACITY_RESUME:-1}"
 WAIT_FOR_GPUS="${PAP_CAPACITY_WAIT_FOR_GPUS:-1}"
 GPU_IDLE_STABILITY_SECONDS="${PAP_CAPACITY_GPU_IDLE_STABILITY_SECONDS:-15}"
 
 TURNS=10
 DOCUMENT_TOKENS=8192
+DOCUMENT_TOKENS_MEDIAN=8000
+DOCUMENT_TOKENS_MIN=4096
+DOCUMENT_TOKENS_MAX=11264
 APPEND_TOKENS=512
+APPEND_TOKENS_MEDIAN=500
+APPEND_TOKENS_MIN=256
+APPEND_TOKENS_MAX=768
 THINK_TIME_MS=3000
 TOOL_TIME_MS=1000
 TOOL_EVERY=3
@@ -60,7 +71,7 @@ die() {
   exit 2
 }
 
-for required in "${PYTHON_BIN}" "${AIPERF_BIN}" "${MODEL_PATH}" \
+for required in "${PYTHON_BIN}" "${AIPERF_BIN}" "${AIPERF_PYTHON}" "${MODEL_PATH}" \
   "${CORPUS_PATH}" "${PAP_RUNNER}" "${PD_RUNNER}" \
   "${DATASET_GENERATOR}" "${RUN_SUMMARIZER}" "${MATRIX_SUMMARIZER}"; do
   [[ -e "${required}" ]] || die "required path is missing: ${required}"
@@ -71,6 +82,15 @@ done
   || die "PAP_CAPACITY_SESSIONS must be positive"
 [[ "${OUTPUT_TOKENS}" =~ ^[1-9][0-9]*$ ]] \
   || die "PAP_CAPACITY_OUTPUT_TOKENS must be positive"
+for value in "${OUTPUT_TOKENS_MEDIAN}" "${OUTPUT_TOKENS_MIN}" \
+  "${OUTPUT_TOKENS_MAX}"; do
+  [[ "${value}" =~ ^[1-9][0-9]*$ ]] \
+    || die "output length distribution values must be positive"
+done
+(( OUTPUT_TOKENS_MEDIAN <= OUTPUT_TOKENS )) \
+  || die "output token median must not exceed its mean"
+(( OUTPUT_TOKENS_MIN <= OUTPUT_TOKENS_MAX )) \
+  || die "output token minimum exceeds its maximum"
 [[ "${GPU_IDLE_STABILITY_SECONDS}" =~ ^[0-9]+$ ]] \
   || die "PAP_CAPACITY_GPU_IDLE_STABILITY_SECONDS must be non-negative"
 
@@ -93,7 +113,7 @@ for architecture in "${ARCHITECTURES[@]}"; do
 done
 
 mkdir -p "${MATRIX_ROOT}/dataset" "${MATRIX_ROOT}/runs"
-DATASET_FILE="${MATRIX_ROOT}/dataset/multiturn_s${TOTAL_SESSIONS}_8k_plus512_o${OUTPUT_TOKENS}_t10_delayed.jsonl"
+DATASET_FILE="${MATRIX_ROOT}/dataset/multiturn_s${TOTAL_SESSIONS}_8k_plus512_random_o${OUTPUT_TOKENS}_t10_seed${RANDOM_SEED}.jsonl"
 
 if [[ ! -f "${DATASET_FILE}" ]]; then
   "${PYTHON_BIN}" "${DATASET_GENERATOR}" \
@@ -103,8 +123,19 @@ if [[ ! -f "${DATASET_FILE}" ]]; then
     --sessions "${TOTAL_SESSIONS}" \
     --turns "${TURNS}" \
     --document-tokens "${DOCUMENT_TOKENS}" \
+    --document-tokens-median "${DOCUMENT_TOKENS_MEDIAN}" \
+    --document-tokens-min "${DOCUMENT_TOKENS_MIN}" \
+    --document-tokens-max "${DOCUMENT_TOKENS_MAX}" \
     --append-tokens "${APPEND_TOKENS}" \
+    --append-tokens-median "${APPEND_TOKENS_MEDIAN}" \
+    --append-tokens-min "${APPEND_TOKENS_MIN}" \
+    --append-tokens-max "${APPEND_TOKENS_MAX}" \
     --output-tokens "${OUTPUT_TOKENS}" \
+    --output-tokens-median "${OUTPUT_TOKENS_MEDIAN}" \
+    --output-tokens-min "${OUTPUT_TOKENS_MIN}" \
+    --output-tokens-max "${OUTPUT_TOKENS_MAX}" \
+    --random-seed "${RANDOM_SEED}" \
+    --max-model-len "${MAX_MODEL_LEN}" \
     --think-time-ms "${THINK_TIME_MS}" \
     --tool-time-ms "${TOOL_TIME_MS}" \
     --tool-every "${TOOL_EVERY}" \
@@ -115,25 +146,82 @@ if ! jq -e \
   --argjson sessions "${TOTAL_SESSIONS}" \
   --argjson turns "${TURNS}" \
   --argjson document_tokens "${DOCUMENT_TOKENS}" \
+  --argjson document_median "${DOCUMENT_TOKENS_MEDIAN}" \
+  --argjson document_min "${DOCUMENT_TOKENS_MIN}" \
+  --argjson document_max "${DOCUMENT_TOKENS_MAX}" \
   --argjson append_tokens "${APPEND_TOKENS}" \
+  --argjson append_median "${APPEND_TOKENS_MEDIAN}" \
+  --argjson append_min "${APPEND_TOKENS_MIN}" \
+  --argjson append_max "${APPEND_TOKENS_MAX}" \
   --argjson output_tokens "${OUTPUT_TOKENS}" \
+  --argjson output_median "${OUTPUT_TOKENS_MEDIAN}" \
+  --argjson output_min "${OUTPUT_TOKENS_MIN}" \
+  --argjson output_max "${OUTPUT_TOKENS_MAX}" \
+  --argjson random_seed "${RANDOM_SEED}" \
   --argjson think_time_ms "${THINK_TIME_MS}" \
   --argjson tool_time_ms "${TOOL_TIME_MS}" \
   --argjson tool_every "${TOOL_EVERY}" \
-  '.sessions == $sessions
+  '.schema_version == 2
+    and .sessions == $sessions
     and .turns_per_session == $turns
     and .requested_document_tokens == $document_tokens
     and .requested_append_tokens == $append_tokens
     and .output_tokens == $output_tokens
+    and .distribution_semantics == "aiperf_lognormal_mean_median"
+    and .random_seed == $random_seed
+    and .length_distributions.document_content_tokens.configured.median == $document_median
+    and .length_distributions.document_content_tokens.configured.min == $document_min
+    and .length_distributions.document_content_tokens.configured.max == $document_max
+    and .length_distributions.append_content_tokens.configured.median == $append_median
+    and .length_distributions.append_content_tokens.configured.min == $append_min
+    and .length_distributions.append_content_tokens.configured.max == $append_max
+    and .length_distributions.output_tokens.configured.median == $output_median
+    and .length_distributions.output_tokens.configured.min == $output_min
+    and .length_distributions.output_tokens.configured.max == $output_max
+    and .length_distributions.document_content_tokens.sampled.min
+      < .length_distributions.document_content_tokens.sampled.max
+    and .length_distributions.append_content_tokens.sampled.min
+      < .length_distributions.append_content_tokens.sampled.max
+    and .length_distributions.output_tokens.sampled.min
+      < .length_distributions.output_tokens.sampled.max
+    and .validation.status == "passed"
     and .delay_profile.think_time_ms == $think_time_ms
     and .delay_profile.tool_time_ms == $tool_time_ms
     and .delay_profile.tool_every == $tool_every' \
   "${DATASET_MANIFEST}" >/dev/null; then
-  die "dataset manifest does not match the fixed testbed"
+  die "dataset manifest does not match the randomized testbed"
 fi
 
+"${AIPERF_PYTHON}" - "${DATASET_FILE}" "${TOTAL_SESSIONS}" "${TURNS}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+from aiperf.dataset.loader.models import MultiTurn
+
+path = Path(sys.argv[1])
+expected_sessions = int(sys.argv[2])
+expected_turns = int(sys.argv[3])
+records = [
+    MultiTurn.model_validate(json.loads(line))
+    for line in path.read_text(encoding="utf-8").splitlines()
+    if line.strip()
+]
+if len(records) != expected_sessions:
+    raise SystemExit("AIPerf dataset session count mismatch")
+for record in records:
+    if len(record.turns) != expected_turns:
+        raise SystemExit(f"AIPerf dataset turn count mismatch: {record.session_id}")
+    for turn in record.turns:
+        if turn.extra.get("ignore_eos") is not True:
+            raise SystemExit("AIPerf dataset does not force exact output")
+        if turn.extra.get("min_tokens") != turn.output_length:
+            raise SystemExit("AIPerf min_tokens/output_length mismatch")
+print(f"AIPerf validated {len(records)} randomized multi-turn sessions")
+PY
+
 {
-  printf 'SCHEMA_VERSION=1\nMATRIX_ID=%q\n' "${MATRIX_ID}"
+  printf 'SCHEMA_VERSION=2\nMATRIX_ID=%q\n' "${MATRIX_ID}"
   printf 'MODEL_PATH=%q\nCORPUS_PATH=%q\n' \
     "${MODEL_PATH}" "${CORPUS_PATH}"
   printf 'AIPERF_TIMING_MODE=concurrency\nAIPERF_REQUEST_RATE=\n'
@@ -148,8 +236,20 @@ fi
   printf 'GPU_IDLE_STABILITY_SECONDS=%q\n' \
     "${GPU_IDLE_STABILITY_SECONDS}"
   printf 'TURNS=%q\n' "${TURNS}"
-  printf 'DOCUMENT_TOKENS=%q\nAPPEND_TOKENS=%q\nOUTPUT_TOKENS=%q\n' \
-    "${DOCUMENT_TOKENS}" "${APPEND_TOKENS}" "${OUTPUT_TOKENS}"
+  printf 'LENGTH_DISTRIBUTION=aiperf_lognormal_mean_median\nRANDOM_SEED=%q\n' \
+    "${RANDOM_SEED}"
+  printf 'DOCUMENT_TOKENS_MEAN=%q\nDOCUMENT_TOKENS_MEDIAN=%q\n' \
+    "${DOCUMENT_TOKENS}" "${DOCUMENT_TOKENS_MEDIAN}"
+  printf 'DOCUMENT_TOKENS_MIN=%q\nDOCUMENT_TOKENS_MAX=%q\n' \
+    "${DOCUMENT_TOKENS_MIN}" "${DOCUMENT_TOKENS_MAX}"
+  printf 'APPEND_TOKENS_MEAN=%q\nAPPEND_TOKENS_MEDIAN=%q\n' \
+    "${APPEND_TOKENS}" "${APPEND_TOKENS_MEDIAN}"
+  printf 'APPEND_TOKENS_MIN=%q\nAPPEND_TOKENS_MAX=%q\n' \
+    "${APPEND_TOKENS_MIN}" "${APPEND_TOKENS_MAX}"
+  printf 'OUTPUT_TOKENS_MEAN=%q\nOUTPUT_TOKENS_MEDIAN=%q\n' \
+    "${OUTPUT_TOKENS}" "${OUTPUT_TOKENS_MEDIAN}"
+  printf 'OUTPUT_TOKENS_MIN=%q\nOUTPUT_TOKENS_MAX=%q\n' \
+    "${OUTPUT_TOKENS_MIN}" "${OUTPUT_TOKENS_MAX}"
   printf 'THINK_TIME_MS=%q\nTOOL_TIME_MS=%q\nTOOL_EVERY=%q\n' \
     "${THINK_TIME_MS}" "${TOOL_TIME_MS}" "${TOOL_EVERY}"
   printf 'MAX_MODEL_LEN=%q\nMAX_NUM_BATCHED_TOKENS=%q\n' \
@@ -212,6 +312,7 @@ summarize_point() {
     --sessions "${TOTAL_SESSIONS}" \
     --turns "${TURNS}" \
     --output-tokens "${OUTPUT_TOKENS}" \
+    --dataset-file "${DATASET_FILE}" \
     --repetition "${repetition}"
 }
 
@@ -257,6 +358,7 @@ run_pap_point() {
     PAP_AIPERF_CONCURRENCY="${concurrency}" \
     PAP_AIPERF_TIMING_MODE=concurrency \
     PAP_AIPERF_REQUEST_RATE= \
+    AIPERF_RANDOM_SEED="${RANDOM_SEED}" \
     AIPERF_EXPORT_LEVEL=records \
     MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
     MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS}" \
@@ -303,6 +405,7 @@ run_pd_point() {
     PD_AIPERF_CONCURRENCY="${concurrency}" \
     PD_AIPERF_TIMING_MODE=concurrency \
     PD_AIPERF_REQUEST_RATE= \
+    AIPERF_RANDOM_SEED="${RANDOM_SEED}" \
     AIPERF_EXPORT_LEVEL=records \
     "${PD_RUNNER}" oneway
 }

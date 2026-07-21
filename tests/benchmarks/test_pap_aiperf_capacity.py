@@ -1,9 +1,11 @@
 import json
+import random
 from pathlib import Path
 
 import pytest
 
 from benchmarks.pap.aiperf.generate_multiturn_dataset import (
+    TokenLengthDistribution,
     build_delay_schedule,
 )
 from benchmarks.pap.aiperf.summarize_capacity_matrix import (
@@ -64,9 +66,37 @@ def test_delay_schedule_rejects_invalid_values(
         build_delay_schedule(**values)
 
 
-def _write_pd_run(run_root: Path, ttfts: list[float]) -> None:
+def test_lognormal_lengths_use_distinct_mean_and_median() -> None:
+    distribution = TokenLengthDistribution(
+        mean=32,
+        median=30,
+        minimum=16,
+        maximum=64,
+    )
+    rng = random.Random(42)
+    values = [distribution.sample(rng) for _ in range(1_000)]
+
+    assert min(values) >= 16
+    assert max(values) <= 64
+    assert len(set(values)) > 1
+    assert abs(sum(values) / len(values) - 32) < 2
+
+
+def test_lognormal_lengths_reject_median_above_mean() -> None:
+    with pytest.raises(ValueError, match="median must not exceed mean"):
+        TokenLengthDistribution(mean=32, median=33)
+
+
+def _write_pd_run(
+    run_root: Path,
+    ttfts: list[float],
+    output_tokens: list[int] | None = None,
+) -> None:
+    output_tokens = output_tokens or [256] * len(ttfts)
     records = []
-    for index, ttft in enumerate(ttfts):
+    for index, (ttft, output_length) in enumerate(
+        zip(ttfts, output_tokens, strict=True)
+    ):
         records.append(
             {
                 "metadata": {
@@ -77,7 +107,7 @@ def _write_pd_run(run_root: Path, ttfts: list[float]) -> None:
                 "metrics": {
                     "time_to_first_token": {"value": ttft},
                     "inter_token_latency": {"value": 40.0},
-                    "output_token_count": {"value": 256},
+                    "output_token_count": {"value": output_length},
                 },
             }
         )
@@ -120,6 +150,29 @@ def _write_pd_run(run_root: Path, ttfts: list[float]) -> None:
     )
 
 
+def _write_dataset(path: Path, output_tokens: list[int]) -> None:
+    conversations = []
+    for session_index in range(2):
+        turns = []
+        for output_length in output_tokens[session_index * 2 : (session_index + 1) * 2]:
+            turns.append(
+                {
+                    "text": "prompt",
+                    "role": "user",
+                    "output_length": output_length,
+                    "extra": {
+                        "ignore_eos": True,
+                        "min_tokens": output_length,
+                    },
+                }
+            )
+        conversations.append({"session_id": f"session-{session_index}", "turns": turns})
+    path.write_text(
+        "".join(json.dumps(value) + "\n" for value in conversations),
+        encoding="utf-8",
+    )
+
+
 def test_capacity_summary_applies_three_request_level_slos(tmp_path: Path) -> None:
     _write_pd_run(tmp_path, [1_000.0, 2_000.0, 3_000.0, 6_000.0])
 
@@ -141,6 +194,30 @@ def test_capacity_summary_applies_three_request_level_slos(tmp_path: Path) -> No
     assert summary["slo"]["standard"]["passed"] is True
     assert summary["slo"]["relaxed"]["passed"] is True
     assert summary["slo"]["standard"]["goodput_requests_per_second"] == 2.0
+
+
+def test_capacity_summary_audits_per_request_output_lengths(
+    tmp_path: Path,
+) -> None:
+    output_tokens = [16, 24, 32, 56]
+    _write_pd_run(tmp_path, [1_000.0] * 4, output_tokens)
+    dataset = tmp_path / "dataset.jsonl"
+    _write_dataset(dataset, output_tokens)
+
+    summary = summarize_run(
+        tmp_path,
+        architecture="pd",
+        topology="2p2d",
+        concurrency=2,
+        sessions=2,
+        turns=2,
+        output_tokens=32,
+        dataset_file=dataset,
+    )
+
+    assert summary["correctness"]["passed"] is True
+    assert summary["workload"]["output_tokens_per_turn"] is None
+    assert summary["workload"]["requested_output_tokens"]["mean"] == 32
 
 
 def test_correctness_failure_fails_every_slo(tmp_path: Path) -> None:

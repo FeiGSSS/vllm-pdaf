@@ -27,29 +27,32 @@ uv pip install --python .venv/bin/python -e .
 The first local installation used AIPerf 0.11.0. Every run records the exact
 AIPerf commit and version in its artifact directory.
 
-## Fixed four-GPU capacity testbed
+## Randomized four-GPU capacity testbed
 
 The long-lived comparison workload is pure concurrency, not an arrival-rate
 test. AIPerf keeps at most `C` sessions active; a session retains its slot from
 its first request through its final turn. No separate Prefill concurrency cap
 is applied.
 
-The frozen request shape is:
+The workload contract fixes the conversation structure while sampling token
+lengths reproducibly:
 
-| Field | Value |
-| --- | ---: |
+| Field | Distribution |
+| --- | --- |
 | Turns per session | 10 |
 | Total sessions per matrix point | 96 |
-| Initial user document | 8192 tokens |
-| New user text on turns 2-10 | 512 tokens/turn |
-| Assistant output | 256 tokens/turn |
+| Initial user document | log-normal: mean 8192, median 8000, range 4096-11264 |
+| New user text on turns 2-10 | log-normal: mean 512, median 500, range 256-768 |
+| Assistant output | log-normal: mean 32, median 30, range 16-64 |
 | Normal think time | 3 seconds |
 | Tool execution time | 1 second every third continuation |
 | Maximum model length | 20000 tokens |
 
-Chat-template text and prior 256-token assistant responses also enter the
-later-turn context. The requested user-token shape reaches 12,800 tokens; the
-complete final prompt remains below the fixed 20K model limit.
+AIPerf treats `{mean, stddev}` as a truncated normal distribution and
+`{mean, median}` as a right-skewed log-normal distribution. This testbed uses
+the latter semantics explicitly. The manifest reports both parameters and the
+sampled arithmetic mean and median; the configured mean must not be confused
+with a finite dataset's measured median. Bounds protect the 20K context limit.
 
 The deterministic delay schedule is `0,3,3,1,3,3,1,3,3,1` seconds. The first
 turn has no delay; ordinary continuations model user think time, while turns 4,
@@ -58,33 +61,44 @@ in total while retaining its concurrency slot. Previous capacity-boundary runs
 spent 11.5-15.8 seconds per request on average, so these delays desynchronize
 sessions without making waiting time dominate serving time.
 
-The capacity runner generates 96 sessions with this shape:
+The capacity runner generates 96 sessions with this shape. For a short
+development comparison, set `PAP_CAPACITY_SESSIONS=32` without changing the
+length distributions:
 
 ```bash
 .venv/bin/python benchmarks/pap/aiperf/generate_multiturn_dataset.py \
   --model /data/ssd1/llm-models/Qwen3-8B \
   --corpus /path/to/sonnet_4x.txt \
   --sessions 96 \
+  --document-tokens 8192 --document-tokens-median 8000 \
+  --document-tokens-min 4096 --document-tokens-max 11264 \
+  --append-tokens 512 --append-tokens-median 500 \
+  --append-tokens-min 256 --append-tokens-max 768 \
+  --output-tokens 32 --output-tokens-median 30 \
+  --output-tokens-min 16 --output-tokens-max 64 \
+  --random-seed 42 --max-model-len 20000 \
   --think-time-ms 3000 --tool-time-ms 1000 --tool-every 3 \
-  --output /tmp/pap-aiperf-8k-plus512-o256-t10.jsonl
+  --output /tmp/pap-aiperf-8k-plus512-random-o32-t10.jsonl
 ```
 
 The generator gives every session a stable, unique `cache_salt`, preventing
 cross-session prefix sharing while preserving reuse across that session's
-turns. The adjacent manifest records requested and actual text-token counts.
-Chat-template overhead and prior assistant outputs are intentionally additional
-context and are visible in server-reported input token counts.
+turns. Each length dimension has an independently derived random stream, so the
+same seed reproduces the same dataset. The adjacent manifest records target and
+sampled statistics, tokenizer-measured text lengths, cumulative input estimates,
+and context headroom. Small decode/re-tokenize boundary differences are
+expected and recorded; they are not forced away.
 
 ## SLOs and correctness gate
 
 Each completed request is evaluated against TTFT and its request-level mean
 ITL. A tier passes only when at least 95% of all expected requests meet both
 limits. Missing requests remain in the denominator. A run is eligible for an
-SLO pass/fail result only when all sessions complete all ten turns with exactly
-256 output tokens, AIPerf reports no error/cancellation, runtime audits pass,
-and both Prefill/PA and Decode/Projection routing retain one owner per
-conversation. Incomplete or invalid runs are reported as `ineligible`, not as
-ordinary SLO failures.
+SLO pass/fail result only when all sessions complete all ten turns, every
+response exactly matches that request's sampled output length, AIPerf reports
+no error/cancellation, runtime audits pass, and both Prefill/PA and
+Decode/Projection routing retain one owner per conversation. Incomplete or
+invalid runs are reported as `ineligible`, not as ordinary SLO failures.
 
 | Tier | TTFT | ITL | Required good-request fraction |
 | --- | ---: | ---: | ---: |
@@ -112,31 +126,16 @@ diagnostic only and never contribute eligible goodput.
 `summarize_capacity_matrix.py` emits a TSV, a Markdown table, and the tested
 PAP-versus-best-PD capacity envelope.
 
-## Companion short-decode shape
+## Fixed-length historical shapes
 
-The frozen 256-token output is a sustained-decode capacity workload, not an
-unusually large generation by itself. It does, however, combine two effects:
-Decode execution lasts long enough to maintain overlap, and prior assistant
-outputs add about 2,304 tokens to the final-turn KV footprint.
-
-Use a 128-token output as the first companion diagnostic rather than replacing
-the frozen testbed. It halves Decode steps while reducing the final prompt by
-only about 1,152 tokens. The 8K initial document and nine 512-token follow-ups
-still create strong KV pressure: 3P1D C16 remains beyond one L20's 173,200-token
-KV capacity, while C12 moves close to the boundary. Keep all other fields,
-delays, SLOs, and the 96-session total unchanged.
-
-The first short-decode comparison should contain only PAP C16/C24 and PD 2P2D
-C12/C16. If PAP retains its advantage, the result supports a KV-capacity and
-scheduling explanation. If the advantage appears only at 256 output tokens,
-the existing result is partly a sustained-Decode throughput advantage. Report
-request goodput and output-token goodput within each shape; do not compare raw
-token throughput between the 128- and 256-token profiles.
+The former O256 and partial O128 scans are preserved for diagnostics but are no
+longer baselines because every input delta and output had one fixed length. See
+the [archive notice](../experiments/legacy/reports/pap-pd-aiperf-fixed-length-preliminary-20260721.md).
 
 ## Run against an already-started gateway
 
 ```bash
-AIPERF_INPUT_FILE=/tmp/pap-aiperf-8k-plus512-o256-t10.jsonl \
+AIPERF_INPUT_FILE=/tmp/pap-aiperf-8k-plus512-random-o32-t10.jsonl \
 AIPERF_TARGET_URL=http://127.0.0.1:9460 \
 AIPERF_OUTPUT_DIR=/path/to/run/aiperf \
 AIPERF_SESSIONS=12 \
@@ -150,13 +149,13 @@ The project launchers can start the services and run the same AIPerf dataset:
 
 ```bash
 PAP_BENCH_CLIENT_MODE=aiperf_multiturn \
-AIPERF_INPUT_FILE=/tmp/pap-aiperf-8k-plus512-o256-t10.jsonl \
+AIPERF_INPUT_FILE=/tmp/pap-aiperf-8k-plus512-random-o32-t10.jsonl \
 PAP_MULTITURN_LOAD_CONVERSATIONS=12 \
 PAP_AIPERF_TIMING_MODE=concurrency \
   bash benchmarks/pap/scripts/run_pap_workload.sh
 
 PD_LOAD_CLIENT_MODE=aiperf_multiturn \
-AIPERF_INPUT_FILE=/tmp/pap-aiperf-8k-plus512-o256-t10.jsonl \
+AIPERF_INPUT_FILE=/tmp/pap-aiperf-8k-plus512-random-o32-t10.jsonl \
 PD_LOAD_TOPOLOGY=2p2d \
 PD_AIPERF_TIMING_MODE=concurrency \
   bash benchmarks/pap/scripts/run_pd_multiturn_topology.sh oneway
@@ -172,7 +171,7 @@ The default `records` export retains aggregate and per-request metrics without
 duplicating every long prompt and response. Set `AIPERF_EXPORT_LEVEL=raw` only
 when wire-level debugging is required.
 
-## Run the lean fixed matrix
+## Run the lean randomized matrix
 
 The matrix fixes PAP at 3PA1P and PD at one-way 1P3D, 2P2D, and 3P1D. PAP uses
 the accepted static 72/20-SM path and `gpu_memory_utilization=0.76`; PD uses
@@ -188,23 +187,24 @@ the previously observed useful region:
 
 | Topology | Concurrency points |
 | --- | --- |
-| PAP 3PA1P | 16, 24, 32 |
+| PAP 3PA1P | 12, 20, 28, 32 |
 | PD 1P3D | 8 |
-| PD 2P2D | 12, 16 |
-| PD 3P1D | 4, 8, 12, 16 |
+| PD 2P2D | 10, 16, 20, 24 |
+| PD 3P1D | 8, 14, 20 |
 
-Every point restarts all services. This is deliberately a lean boundary scan;
-set
+Every point restarts all services. Once a valid point fails the relaxed SLO,
+higher points for that topology are skipped. This is deliberately a lean
+boundary scan; set
 `PAP_CAPACITY_REPETITIONS=3` only for a later confirmation run.
 
 ```bash
 bash benchmarks/pap/aiperf/run_capacity_matrix.sh
 ```
 
-The output length defaults to 256 tokens. Set
-`PAP_CAPACITY_OUTPUT_TOKENS=128` for the companion short-decode testbed; the
-value is encoded in the default matrix ID, dataset filename, and matrix
-configuration.
+The output distribution defaults to mean 32, median 30, and range 16-64. The
+mean is encoded in the default matrix ID and dataset filename; all four values,
+the seed, and the actual sampled statistics are recorded in the matrix and
+dataset manifests.
 
 The runner waits in 60-second intervals when GPUs 0-3 are occupied, supports
 resuming a matrix ID, and writes `matrix_config.env`, per-run
@@ -223,3 +223,6 @@ The historical think/tool scan is recorded in
 [`pap-pd-aiperf-think-tool-results-20260720.md`](../experiments/legacy/reports/pap-pd-aiperf-think-tool-results-20260720.md).
 The current fixed-96-session scan is recorded in
 [`PAP-20260720-AIPERF-FIXED96`](../experiments/PAP-20260720-AIPERF-FIXED96/report.md).
+It is historical fixed-length evidence rather than the current baseline. The
+2026-07-21 fixed-length runs and their replacement decision are recorded in the
+[archive notice](../experiments/legacy/reports/pap-pd-aiperf-fixed-length-preliminary-20260721.md).

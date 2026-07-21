@@ -9,7 +9,6 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-
 SLO_TIERS = {
     "strict": {"ttft_ms": 5_000.0, "itl_ms": 50.0},
     "standard": {"ttft_ms": 10_000.0, "itl_ms": 75.0},
@@ -67,6 +66,58 @@ def _percentile(values: list[float], quantile: float) -> float | None:
     return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
 
 
+def _numeric_summary(values: list[int]) -> dict[str, int | float | None]:
+    return {
+        "count": len(values),
+        "mean": sum(values) / len(values) if values else None,
+        "median": _percentile([float(value) for value in values], 0.5),
+        "min": min(values) if values else None,
+        "p95": _percentile([float(value) for value in values], 0.95),
+        "max": max(values) if values else None,
+    }
+
+
+def _load_expected_output_lengths(
+    path: Path,
+) -> dict[tuple[str, int], int]:
+    expected: dict[tuple[str, int], int] = {}
+    for conversation in _load_jsonl(path):
+        session_id = conversation.get("session_id")
+        turns = conversation.get("turns")
+        if not isinstance(session_id, str) or not session_id:
+            raise ValueError("dataset conversation has no session_id")
+        if not isinstance(turns, list):
+            raise ValueError(f"dataset session {session_id} has no turns")
+        for turn_index, turn in enumerate(turns):
+            if not isinstance(turn, dict):
+                raise ValueError(f"dataset session {session_id} turn is not an object")
+            output_length = turn.get("output_length")
+            if not isinstance(output_length, int) or output_length <= 0:
+                raise ValueError(
+                    f"dataset session {session_id} turn {turn_index} "
+                    "has an invalid output length"
+                )
+            extra = turn.get("extra")
+            if not isinstance(extra, dict):
+                raise ValueError(
+                    f"dataset session {session_id} turn {turn_index} "
+                    "has no exact-output settings"
+                )
+            if (
+                extra.get("ignore_eos") is not True
+                or extra.get("min_tokens") != output_length
+            ):
+                raise ValueError(
+                    f"dataset session {session_id} turn {turn_index} "
+                    "does not force its requested output length"
+                )
+            key = (session_id, turn_index)
+            if key in expected:
+                raise ValueError(f"duplicate dataset request: {key}")
+            expected[key] = output_length
+    return expected
+
+
 def _read_status(path: Path) -> str | None:
     if not path.is_file():
         return None
@@ -106,9 +157,7 @@ def _classify_run_status(
     launcher_exit_code: int,
 ) -> dict[str, Any]:
     request_errors = _request_error_counts(records)
-    minimum_good_requests = math.ceil(
-        expected_requests * MIN_GOOD_REQUEST_FRACTION
-    )
+    minimum_good_requests = math.ceil(expected_requests * MIN_GOOD_REQUEST_FRACTION)
     maximum_bad_requests = expected_requests - minimum_good_requests
     observed_bad_requests = len(records) - relaxed_good_requests
     relaxed_pass_still_possible = observed_bad_requests <= maximum_bad_requests
@@ -280,12 +329,8 @@ def _check_pd_routing(
         "passed": health.get("status") == "ok" and len(errors) == before,
         "conversations": sessions if affinity_passed else None,
         "migration_count": 0 if affinity_passed else None,
-        "prefill_assignments": health.get("prefill_routing", {}).get(
-            "assignments"
-        ),
-        "decode_assignments": health.get("decode_routing", {}).get(
-            "assignments"
-        ),
+        "prefill_assignments": health.get("prefill_routing", {}).get("assignments"),
+        "decode_assignments": health.get("decode_routing", {}).get("assignments"),
     }
 
 
@@ -330,7 +375,8 @@ def summarize_run(
     concurrency: int,
     sessions: int,
     turns: int,
-    output_tokens: int,
+    output_tokens: int | None,
+    dataset_file: Path | None = None,
     repetition: int = 1,
     launcher_exit_code: int = 0,
 ) -> dict[str, Any]:
@@ -340,6 +386,24 @@ def summarize_run(
     errors: list[str] = []
     if launcher_exit_code != 0:
         errors.append(f"launcher exited with code {launcher_exit_code}")
+
+    expected_output_lengths: dict[tuple[str, int], int] = {}
+    if dataset_file is not None:
+        try:
+            expected_output_lengths = _load_expected_output_lengths(dataset_file)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            errors.append(f"invalid or missing workload dataset: {exc}")
+        if len(expected_output_lengths) != expected_requests:
+            errors.append(
+                "workload dataset request count does not match expected requests"
+            )
+    elif output_tokens is not None:
+        expected_output_lengths = {
+            (f"__index__{index}", 0): output_tokens
+            for index in range(expected_requests)
+        }
+    else:
+        errors.append("no expected output lengths were provided")
 
     records_path = run_root / "aiperf/profile.jsonl"
     profile_path = run_root / "aiperf/profile.json"
@@ -391,10 +455,22 @@ def summarize_run(
             errors.append(f"record {index} was cancelled")
             record_valid = False
 
+        if dataset_file is None:
+            expected_output_tokens = output_tokens
+        elif isinstance(conversation_id, str) and isinstance(turn_index, int):
+            expected_output_tokens = expected_output_lengths.get(
+                (conversation_id, turn_index)
+            )
+        else:
+            expected_output_tokens = None
         actual_output_tokens = _metric(record, "output_token_count")
-        if actual_output_tokens != output_tokens:
+        if expected_output_tokens is None:
+            errors.append(f"record {index} has no matching dataset request")
+            record_valid = False
+        elif actual_output_tokens != expected_output_tokens:
             errors.append(
-                f"record {index} output tokens are {actual_output_tokens!r}"
+                f"record {index} output tokens are {actual_output_tokens!r}; "
+                f"expected {expected_output_tokens}"
             )
             record_valid = False
         ttft = _metric(record, "time_to_first_token")
@@ -409,9 +485,7 @@ def summarize_run(
             valid_request_indices.add(index)
 
     if len(turns_by_conversation) != sessions:
-        errors.append(
-            "completed conversation count does not match expected sessions"
-        )
+        errors.append("completed conversation count does not match expected sessions")
     expected_turns = list(range(turns))
     for conversation_id, observed_turns in turns_by_conversation.items():
         if sorted(observed_turns) != expected_turns:
@@ -461,8 +535,7 @@ def summarize_run(
                 if request_throughput is not None
                 else None
             ),
-            "passed": correctness_passed
-            and fraction >= MIN_GOOD_REQUEST_FRACTION,
+            "passed": correctness_passed and fraction >= MIN_GOOD_REQUEST_FRACTION,
         }
 
     run_status = _classify_run_status(
@@ -470,6 +543,12 @@ def summarize_run(
         expected_requests=expected_requests,
         relaxed_good_requests=tiers["relaxed"]["good_requests"],
         launcher_exit_code=launcher_exit_code,
+    )
+    requested_output_values = list(expected_output_lengths.values())
+    fixed_output_tokens = (
+        requested_output_values[0]
+        if requested_output_values and len(set(requested_output_values)) == 1
+        else None
     )
 
     return {
@@ -482,7 +561,8 @@ def summarize_run(
         "workload": {
             "sessions": sessions,
             "turns_per_session": turns,
-            "output_tokens_per_turn": output_tokens,
+            "output_tokens_per_turn": fixed_output_tokens,
+            "requested_output_tokens": _numeric_summary(requested_output_values),
             "expected_requests": expected_requests,
         },
         "correctness": {
@@ -495,15 +575,11 @@ def summarize_run(
         "routing": routing,
         "metrics": {
             "ttft_ms": {
-                "average": sum(ttft_values) / len(ttft_values)
-                if ttft_values
-                else None,
+                "average": sum(ttft_values) / len(ttft_values) if ttft_values else None,
                 "p95": _percentile(ttft_values, 0.95),
             },
             "itl_ms": {
-                "average": sum(itl_values) / len(itl_values)
-                if itl_values
-                else None,
+                "average": sum(itl_values) / len(itl_values) if itl_values else None,
                 "p95": _percentile(itl_values, 0.95),
             },
             "request_throughput_per_second": request_throughput,
@@ -527,6 +603,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sessions", type=int)
     parser.add_argument("--turns", type=int, default=10)
     parser.add_argument("--output-tokens", type=int, default=256)
+    parser.add_argument("--dataset-file", type=Path)
     parser.add_argument("--repetition", type=int, default=1)
     parser.add_argument("--launcher-exit-code", type=int)
     parser.add_argument("--output", type=Path)
@@ -551,6 +628,7 @@ def main() -> None:
         sessions=args.sessions or args.concurrency,
         turns=args.turns,
         output_tokens=args.output_tokens,
+        dataset_file=args.dataset_file,
         repetition=args.repetition,
         launcher_exit_code=launcher_exit_code,
     )

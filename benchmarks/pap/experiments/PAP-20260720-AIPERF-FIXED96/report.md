@@ -1,5 +1,11 @@
 # PAP versus PD: fixed-session AIPerf capacity scan
 
+> Historical fixed-length evidence only. The input deltas and outputs were
+> deterministic, so this report is no longer the capacity baseline. Preserve
+> its raw evidence, but use the randomized-length successor for new PAP/PD
+> claims. See the
+> [2026-07-21 methodology notice](../legacy/reports/pap-pd-aiperf-fixed-length-preliminary-20260721.md).
+
 ## Scope
 
 This clean controlled scan fixes the amount of work at every matrix point:
