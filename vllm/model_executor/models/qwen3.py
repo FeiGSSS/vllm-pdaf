@@ -66,6 +66,11 @@ from vllm.pap.integration.settings import (
     pap_projection_critical_trace_enabled,
 )
 from vllm.pap.mode import pap_request_ids_are_routable
+from vllm.pap.model.cudagraph import (
+    bind_pap_cudagraph_adapters,
+    pap_cudagraph_role,
+    pap_model_hooks_enabled,
+)
 from vllm.pap.model.prefill import PAPPrefillKVPublisher
 from vllm.pap.model.projection import PAPProjectionAttentionAdapter
 from vllm.sequence import IntermediateTensors
@@ -142,11 +147,7 @@ def _qwen3_deferred_qkv_trace_selected_role(
 
     if trace_role == "projection" and pap_attention_enabled:
         return trace_role
-    if (
-        trace_role == "pd_decode"
-        and not pap_attention_enabled
-        and max_query_len == 1
-    ):
+    if trace_role == "pd_decode" and not pap_attention_enabled and max_query_len == 1:
         return trace_role
     return ""
 
@@ -466,25 +467,36 @@ class Qwen3Attention(nn.Module):
             is_last_layer=bool(is_last_layer),
             expected_layer_count=int(num_hidden_layers or 0),
         )
+        self._pap_cudagraph_role = pap_cudagraph_role()
+        self._pap_model_hooks_enabled = pap_model_hooks_enabled()
+        bind_pap_cudagraph_adapters(
+            self.attn,
+            projection_adapter=self._pap_projection_adapter,
+            prefill_publisher=self._pap_prefill_publisher,
+        )
 
     def forward(
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
     ) -> torch.Tensor:
-        self._pap_projection_adapter.begin_step()
+        if self._pap_model_hooks_enabled:
+            self._pap_projection_adapter.begin_step()
 
         layer_name = self.attn.layer_name
-        pap_attention_enabled = self._pap_projection_adapter.should_execute()
+        if not self._pap_model_hooks_enabled:
+            pap_attention_enabled = False
+        elif self._pap_cudagraph_role is None:
+            pap_attention_enabled = self._pap_projection_adapter.should_execute()
+        else:
+            pap_attention_enabled = self._pap_cudagraph_role == "projection"
         deferred_qkv_role = ""
         if deferred_cuda_trace_enabled():
             deferred_metadata = _qwen3_profile_attn_metadata(layer_name)
             deferred_qkv_role = _qwen3_deferred_qkv_trace_selected_role(
                 trace_role=deferred_trace_role(),
                 pap_attention_enabled=pap_attention_enabled,
-                max_query_len=int(
-                    getattr(deferred_metadata, "max_query_len", 0)
-                ),
+                max_query_len=int(getattr(deferred_metadata, "max_query_len", 0)),
             )
         qkv_trace = None
         if deferred_qkv_role:
@@ -540,9 +552,7 @@ class Qwen3Attention(nn.Module):
                     torch.cuda.current_stream(hidden_states.device),
                 )
             try:
-                qkv[:, : self.q_size].copy_(
-                    q.reshape(qkv.shape[0], self.q_size)
-                )
+                qkv[:, : self.q_size].copy_(q.reshape(qkv.shape[0], self.q_size))
                 qkv[:, self.q_size : self.q_size + self.kv_size].copy_(
                     k.reshape(qkv.shape[0], self.kv_size)
                 )
@@ -555,6 +565,23 @@ class Qwen3Attention(nn.Module):
             if trace_offload_exec
             else 0.0
         )
+        if self._pap_cudagraph_role == "projection":
+            attn_output = torch.empty_like(q)
+            torch.ops.vllm.pap_projection_attention_with_output(
+                q,
+                k,
+                v,
+                attn_output,
+                direct_qkv_send_buffer,
+                layer_name,
+            )
+            output, _ = self.o_proj(attn_output)
+            return output
+        if self._pap_cudagraph_role == "prefill":
+            attn_output = self.attn(q, k, v)
+            torch.ops.vllm.pap_publish_prefill_kv(attn_output, layer_name)
+            output, _ = self.o_proj(attn_output)
+            return output
         if pap_attention_enabled:
             projection_timeline: dict[str, Any] | None = (
                 {} if trace_offload_exec else None
@@ -644,7 +671,8 @@ class Qwen3Attention(nn.Module):
             hidden_states=hidden_states,
         ):
             attn_output = self.attn(q, k, v)
-        self._pap_prefill_publisher.publish(self.attn)
+        if self._pap_model_hooks_enabled:
+            self._pap_prefill_publisher.publish(self.attn)
         with _qwen3_profile_context(
             layer_name=layer_name,
             layer_index=self.layer_index,

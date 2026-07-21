@@ -7,10 +7,7 @@ from examples.disaggregated.disaggregated_serving.disagg_proxy_multiturn import 
 )
 
 ROOT = Path(__file__).parents[2]
-RUNNER = (
-    ROOT
-    / ".claude/skills/vllm-pap-benchmark/scripts/run_pd_multiturn_load.sh"
-)
+RUNNER = ROOT / ".claude/skills/vllm-pap-benchmark/scripts/run_pd_multiturn_load.sh"
 TOPOLOGY_RUNNER = ROOT / "benchmarks/pap/scripts/run_pd_multiturn_topology.sh"
 PAP_RUNNER = ROOT / "benchmarks/pap/scripts/run_pap_workload.sh"
 AIPERF_RUNNER = ROOT / "benchmarks/pap/aiperf/run_profile.sh"
@@ -65,9 +62,7 @@ def test_pd_proxy_balances_and_retains_conversation_owners() -> None:
     router = ConversationInstanceRouter(clients)  # type: ignore[arg-type]
 
     first = [router.select(f"conv-{index}").id for index in range(6)]
-    second = [
-        router.select(f"conv-{index}").id for index in reversed(range(6))
-    ]
+    second = [router.select(f"conv-{index}").id for index in reversed(range(6))]
 
     assert first == [0, 1, 2, 0, 1, 2]
     assert second == [2, 1, 0, 2, 1, 0]
@@ -81,9 +76,9 @@ def test_pd_proxy_balances_and_retains_conversation_owners() -> None:
 def test_four_gpu_topology_runner_has_bounded_conversation_load() -> None:
     text = TOPOLOGY_RUNNER.read_text(encoding="utf-8")
 
-    assert 'PD_LOAD_TOPOLOGY:-3p1d' in text
-    assert 'PREFILL_COUNT + DECODE_COUNT != 4' in text
-    assert 'PD_LOAD_REQUEST_TIMEOUT_SECONDS:-180' in text
+    assert "PD_LOAD_TOPOLOGY:-3p1d" in text
+    assert "PREFILL_COUNT + DECODE_COUNT != 4" in text
+    assert "PD_LOAD_REQUEST_TIMEOUT_SECONDS:-180" in text
     assert '--request-timeout-seconds "${REQUEST_TIMEOUT_SECONDS}"' in text
     assert "disagg_proxy_multiturn.py" in text
     assert "ensure_gpus_idle" in text
@@ -100,14 +95,33 @@ def test_pd_runner_uses_role_specific_scheduler_limits() -> None:
     assert '--max-num-batched-tokens "${DECODE_MAX_NUM_BATCHED_TOKENS}"' in text
 
 
+def test_pap_and_pd_runners_make_piecewise_graph_role_specific() -> None:
+    pap_text = PAP_RUNNER.read_text(encoding="utf-8")
+    pd_text = TOPOLOGY_RUNNER.read_text(encoding="utf-8")
+
+    assert 'PAP_EXECUTION_MODE="${PAP_EXECUTION_MODE:-eager}"' in pap_text
+    assert "PAP_CUDAGRAPH_COMPATIBLE" in pap_text
+    assert "PAP_CUDAGRAPH_ROLE=prefill" in pap_text
+    assert "PAP_CUDAGRAPH_ROLE=projection" in pap_text
+    assert r"\"cudagraph_mode\":\"PIECEWISE\"" in pap_text
+    assert "PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES" in pap_text
+    assert "PAP_PROJECTION_CUDAGRAPH_CAPTURE_SIZES" in pap_text
+
+    assert 'EXECUTION_MODE="${PD_LOAD_EXECUTION_MODE:-eager}"' in pd_text
+    assert r"\"cudagraph_mode\":\"PIECEWISE\"" in pd_text
+    assert "PREFILL_CUDAGRAPH_CAPTURE_SIZES" in pd_text
+    assert "DECODE_CUDAGRAPH_CAPTURE_SIZES" in pd_text
+    assert "PAP_CUDAGRAPH_COMPATIBLE=0" in pd_text
+
+
 def test_aiperf_capacity_lane_uses_concurrency_without_request_rate() -> None:
     profile_text = AIPERF_RUNNER.read_text(encoding="utf-8")
     capacity_text = CAPACITY_RUNNER.read_text(encoding="utf-8")
 
     assert 'AIPERF_TIMING_MODE="${AIPERF_TIMING_MODE:-concurrency}"' in profile_text
-    assert 'AIPERF_TIMING_MODE=concurrency' in capacity_text
-    assert 'PAP_AIPERF_REQUEST_RATE=' in capacity_text
-    assert 'PD_AIPERF_REQUEST_RATE=' in capacity_text
+    assert "AIPERF_TIMING_MODE=concurrency" in capacity_text
+    assert "PAP_AIPERF_REQUEST_RATE=" in capacity_text
+    assert "PD_AIPERF_REQUEST_RATE=" in capacity_text
 
 
 def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
@@ -116,8 +130,8 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     assert "TURNS=10" in text
     assert "DOCUMENT_TOKENS=8192" in text
     assert "APPEND_TOKENS=512" in text
-    assert 'PAP_CAPACITY_OUTPUT_TOKENS:-32' in text
-    assert 'multiturn_s${TOTAL_SESSIONS}_8k_plus512_random_o' in text
+    assert "PAP_CAPACITY_OUTPUT_TOKENS:-32" in text
+    assert "multiturn_s${TOTAL_SESSIONS}_8k_plus512_random_o" in text
     assert "THINK_TIME_MS=3000" in text
     assert "TOOL_TIME_MS=1000" in text
     assert "TOOL_EVERY=3" in text
@@ -130,6 +144,9 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     assert "MAX_NUM_PARTIAL_PREFILLS=default_1" in text
     assert "--max-num-partial-prefills" not in text
     assert "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS=64" in text
+    assert "PAP_CAPACITY_EXECUTION_MODE" in text
+    assert 'PAP_EXECUTION_MODE="${EXECUTION_MODE}"' in text
+    assert 'PD_LOAD_EXECUTION_MODE="${EXECUTION_MODE}"' in text
     assert "PAP_CAPACITY_PAP_3PA1P_POINTS:-12,20,28,32" in text
     assert "PAP_CAPACITY_PD_1P3D_POINTS:-8" in text
     assert "PAP_CAPACITY_PD_2P2D_POINTS:-10,16,20,24" in text
@@ -154,11 +171,8 @@ def test_aiperf_capacity_does_not_reject_load_above_scheduler_batch_size() -> No
     pap_text = PAP_RUNNER.read_text(encoding="utf-8")
     pd_text = TOPOLOGY_RUNNER.read_text(encoding="utf-8")
 
-    assert (
-        'PAP_MULTITURN_ACTIVE_CONVERSATIONS="${PAP_AIPERF_CONCURRENCY}"'
-        in pap_text
-    )
+    assert 'PAP_MULTITURN_ACTIVE_CONVERSATIONS="${PAP_AIPERF_CONCURRENCY}"' in pap_text
     assert "active conversations exceed Projection max_num_seqs" not in pap_text
     assert "per-PA conversations exceed Prefill max_num_seqs" not in pap_text
     assert 'ACTIVE_CONVERSATIONS="${PD_AIPERF_CONCURRENCY}"' in pd_text
-    assert 'TOTAL_CONVERSATIONS=%q' in pd_text
+    assert "TOTAL_CONVERSATIONS=%q" in pd_text

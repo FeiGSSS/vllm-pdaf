@@ -51,6 +51,9 @@ Useful environment overrides:
   request.
 - `PAP_SKIP_SMOKE_REQUEST=1` to skip the launcher request.
 - `PAP_PROXY_PORT=9000` to choose the OpenAI-compatible proxy port.
+- `PAP_EXECUTION_MODE=piecewise` in the benchmark runner to enable the
+  experimental piecewise CUDA Graph path. Eager remains the default; PAP
+  transport and KV-publication operations stay outside captured regions.
 
 Send one request through the proxy:
 

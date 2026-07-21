@@ -222,6 +222,28 @@ larger number as automatically safer:
   are introduced and measured separately so graph effects are not conflated
   with scheduler-capacity changes.
 
+### Piecewise CUDA Graph lane
+
+Set `PAP_CAPACITY_EXECUTION_MODE=piecewise` to run the same matrix with
+piecewise CUDA Graphs on both PAP and PD. The default remains `eager`, so an
+existing result never changes execution mode implicitly. PAP keeps NIXL
+OFFLOAD_EXEC and Prefill KV publication outside the captured regions; QKV,
+MLP, normalization, and other graph-safe model work remain eligible for
+capture. Full-model CUDA Graph is intentionally unsupported because replaying
+host transport side effects would be incorrect.
+
+Capture sizes are role-specific and describe scheduled tokens, not admitted
+sessions. Prefill captures `1,2,4,8,16,32,64,128`; larger Prefill steps execute
+normally without a graph. Projection and PD Decode capture
+`1,2,4,8,12,16,20,24,28,32`, matching the maximum 32 live sessions. Falling
+outside these sizes selects eager execution for that step; it does not cap
+`max_num_seqs`, `max_num_batched_tokens`, KV capacity, or request admission.
+
+```bash
+PAP_CAPACITY_EXECUTION_MODE=piecewise \
+  bash benchmarks/pap/aiperf/run_capacity_matrix.sh
+```
+
 Every point processes the same 32 conversations and 320 requests. Concurrency
 only limits the number of live sessions; when one ten-turn session finishes,
 the next conversation takes its slot. The topology-specific scan retains only

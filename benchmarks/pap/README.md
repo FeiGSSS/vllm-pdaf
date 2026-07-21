@@ -18,6 +18,13 @@ The corresponding historical think/tool result is documented in
 The current fixed-96-session result is documented in
 [`PAP-20260720-AIPERF-FIXED96`](experiments/PAP-20260720-AIPERF-FIXED96/report.md).
 
+The workload launchers default to eager execution. Their optional `piecewise`
+mode uses vLLM's token-count CUDA Graph dispatch while keeping PAP transport
+and KV-publication side effects outside captured regions. Role-specific graph
+sizes are bounded by the 32-session testbed and never act as admission limits;
+uncaptured shapes fall back to normal execution. See the
+[AIPerf lane](aiperf/README.md#piecewise-cuda-graph-lane) for the exact contract.
+
 This directory defines the canonical PAP benchmark profile and experiment
 storage. Repository-local raw results are colocated below `experiments/`;
 machine-shared historical results stay external until their ownership is

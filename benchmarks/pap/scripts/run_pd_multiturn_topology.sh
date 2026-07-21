@@ -28,6 +28,9 @@ PREFILL_MAX_NUM_BATCHED_TOKENS="${PD_LOAD_PREFILL_MAX_NUM_BATCHED_TOKENS:-${MAX_
 PREFILL_MAX_NUM_SEQS="${PD_LOAD_PREFILL_MAX_NUM_SEQS:-${MAX_NUM_SEQS}}"
 DECODE_MAX_NUM_BATCHED_TOKENS="${PD_LOAD_DECODE_MAX_NUM_BATCHED_TOKENS:-${MAX_NUM_BATCHED_TOKENS}}"
 DECODE_MAX_NUM_SEQS="${PD_LOAD_DECODE_MAX_NUM_SEQS:-${MAX_NUM_SEQS}}"
+EXECUTION_MODE="${PD_LOAD_EXECUTION_MODE:-eager}"
+PREFILL_CUDAGRAPH_CAPTURE_SIZES="${PD_LOAD_PREFILL_CUDAGRAPH_CAPTURE_SIZES:-1,2,4,8,16,32,64,128}"
+DECODE_CUDAGRAPH_CAPTURE_SIZES="${PD_LOAD_DECODE_CUDAGRAPH_CAPTURE_SIZES:-1,2,4,8,12,16,20,24,28,32}"
 GPU_MEMORY_UTILIZATION="${PD_LOAD_GPU_MEMORY_UTILIZATION:-0.90}"
 REQUEST_TIMEOUT_SECONDS="${PD_LOAD_REQUEST_TIMEOUT_SECONDS:-180}"
 CLIENT_MODE="${PD_LOAD_CLIENT_MODE:-canonical}"
@@ -38,6 +41,36 @@ case "${CLIENT_MODE}" in
     exit 2
     ;;
 esac
+case "${EXECUTION_MODE}" in
+  eager | piecewise) ;;
+  *)
+    echo "PD_LOAD_EXECUTION_MODE must be eager or piecewise" >&2
+    exit 2
+    ;;
+esac
+for capture_sizes in \
+  "${PREFILL_CUDAGRAPH_CAPTURE_SIZES}" \
+  "${DECODE_CUDAGRAPH_CAPTURE_SIZES}"; do
+  if ! [[ "${capture_sizes}" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]]; then
+    echo "CUDA Graph capture sizes must be comma-separated positive integers" >&2
+    exit 2
+  fi
+done
+
+PREFILL_EXECUTION_ARGS=(--enforce-eager)
+DECODE_EXECUTION_ARGS=(--enforce-eager)
+PREFILL_COMPILATION_CONFIG=""
+DECODE_COMPILATION_CONFIG=""
+if [[ "${EXECUTION_MODE}" == "piecewise" ]]; then
+  PREFILL_COMPILATION_CONFIG="{\"mode\":\"VLLM_COMPILE\",\"cudagraph_mode\":\"PIECEWISE\",\"cudagraph_capture_sizes\":[${PREFILL_CUDAGRAPH_CAPTURE_SIZES}]}"
+  DECODE_COMPILATION_CONFIG="{\"mode\":\"VLLM_COMPILE\",\"cudagraph_mode\":\"PIECEWISE\",\"cudagraph_capture_sizes\":[${DECODE_CUDAGRAPH_CAPTURE_SIZES}]}"
+  PREFILL_EXECUTION_ARGS=(
+    --compilation-config "${PREFILL_COMPILATION_CONFIG}"
+  )
+  DECODE_EXECUTION_ARGS=(
+    --compilation-config "${DECODE_COMPILATION_CONFIG}"
+  )
+fi
 EXPERIMENTS_ROOT="${PAP_EXPERIMENTS_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments}"
 RESULTS_ROOT="${RESULTS_ROOT:-${EXPERIMENTS_ROOT}/_staging}"
 RUN_ID="${PD_LOAD_RUN_ID:-$(date +%Y%m%d_%H%M%S)_pd_${TOPOLOGY}_${TRANSFER_MODE}}"
@@ -256,7 +289,15 @@ HOSTS_DECODE=()
     "${PREFILL_MAX_NUM_BATCHED_TOKENS}" "${PREFILL_MAX_NUM_SEQS}"
   printf 'DECODE_MAX_NUM_BATCHED_TOKENS=%q\nDECODE_MAX_NUM_SEQS=%q\n' \
     "${DECODE_MAX_NUM_BATCHED_TOKENS}" "${DECODE_MAX_NUM_SEQS}"
-  printf 'EXECUTION_MODE=eager\n'
+  printf 'EXECUTION_MODE=%q\n' "${EXECUTION_MODE}"
+  printf 'PREFILL_CUDAGRAPH_CAPTURE_SIZES=%q\n' \
+    "${PREFILL_CUDAGRAPH_CAPTURE_SIZES}"
+  printf 'DECODE_CUDAGRAPH_CAPTURE_SIZES=%q\n' \
+    "${DECODE_CUDAGRAPH_CAPTURE_SIZES}"
+  printf 'PREFILL_COMPILATION_CONFIG=%q\n' \
+    "${PREFILL_COMPILATION_CONFIG}"
+  printf 'DECODE_COMPILATION_CONFIG=%q\n' \
+    "${DECODE_COMPILATION_CONFIG}"
   printf 'GPU_MEMORY_UTILIZATION=%q\nPREFILL_GPUS=%q\nDECODE_GPUS=%q\n' \
     "${GPU_MEMORY_UTILIZATION}" "${PREFILL_GPUS_CSV}" \
     "${DECODE_GPUS_CSV}"
@@ -286,8 +327,11 @@ for (( index=0; index<PREFILL_COUNT; index++ )); do
     VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
     VLLM_NIXL_SIDE_CHANNEL_PORT="${side_port}" \
     VLLM_KV_CACHE_LAYOUT=HND \
+    PAP_MODEL_HOOKS=0 \
+    PAP_CUDAGRAPH_COMPATIBLE=0 \
     "${VLLM_BIN}" serve "${MODEL_PATH}" \
-      --host 127.0.0.1 --port "${port}" --enforce-eager \
+      --host 127.0.0.1 --port "${port}" \
+      "${PREFILL_EXECUTION_ARGS[@]}" \
       --generation-config vllm --dtype float16 --tensor-parallel-size 1 \
       --max-model-len "${MAX_MODEL_LEN}" \
       --max-num-batched-tokens "${PREFILL_MAX_NUM_BATCHED_TOKENS}" \
@@ -313,8 +357,11 @@ for (( index=0; index<DECODE_COUNT; index++ )); do
     VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
     VLLM_NIXL_SIDE_CHANNEL_PORT="${side_port}" \
     VLLM_KV_CACHE_LAYOUT=HND \
+    PAP_MODEL_HOOKS=0 \
+    PAP_CUDAGRAPH_COMPATIBLE=0 \
     "${VLLM_BIN}" serve "${MODEL_PATH}" \
-      --host 127.0.0.1 --port "${port}" --enforce-eager \
+      --host 127.0.0.1 --port "${port}" \
+      "${DECODE_EXECUTION_ARGS[@]}" \
       --generation-config vllm --dtype float16 --tensor-parallel-size 1 \
       --max-model-len "${MAX_MODEL_LEN}" \
       --max-num-batched-tokens "${DECODE_MAX_NUM_BATCHED_TOKENS}" \

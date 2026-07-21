@@ -200,6 +200,9 @@ PAP_PREFILL_MAX_NUM_BATCHED_TOKENS="${PAP_PREFILL_MAX_NUM_BATCHED_TOKENS:-${MAX_
 PAP_PREFILL_MAX_NUM_SEQS="${PAP_PREFILL_MAX_NUM_SEQS:-${MAX_NUM_SEQS}}"
 PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS="${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS:-${MAX_NUM_BATCHED_TOKENS}}"
 PAP_PROJECTION_MAX_NUM_SEQS="${PAP_PROJECTION_MAX_NUM_SEQS:-${MAX_NUM_SEQS}}"
+PAP_EXECUTION_MODE="${PAP_EXECUTION_MODE:-eager}"
+PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES="${PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES:-1,2,4,8,16,32,64,128}"
+PAP_PROJECTION_CUDAGRAPH_CAPTURE_SIZES="${PAP_PROJECTION_CUDAGRAPH_CAPTURE_SIZES:-1,2,4,8,12,16,20,24,28,32}"
 PAP_PREFILL_GPU_MEMORY_UTILIZATION="${PAP_PREFILL_GPU_MEMORY_UTILIZATION:-0.76}"
 PAP_PROJECTION_GPU_MEMORY_UTILIZATION="${PAP_PROJECTION_GPU_MEMORY_UTILIZATION:-0.76}"
 PAP_PREFILL_MPS_PERCENT="${PAP_PREFILL_MPS_PERCENT:-70}"
@@ -321,6 +324,52 @@ fi
 if ! [[ "${PAP_DEFERRED_TRACE_FLUSH_TIMEOUT}" =~ ^[1-9][0-9]*$ ]]; then
   echo "PAP_DEFERRED_TRACE_FLUSH_TIMEOUT must be a positive integer" >&2
   exit 2
+fi
+
+case "${PAP_EXECUTION_MODE}" in
+  eager | piecewise) ;;
+  *)
+    echo "ERROR: PAP_EXECUTION_MODE must be eager or piecewise" >&2
+    exit 2
+    ;;
+esac
+for capture_sizes in \
+  "${PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES}" \
+  "${PAP_PROJECTION_CUDAGRAPH_CAPTURE_SIZES}"; do
+  if ! [[ "${capture_sizes}" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]]; then
+    echo "ERROR: CUDA Graph capture sizes must be comma-separated positive integers" >&2
+    exit 2
+  fi
+done
+
+PAP_CUDAGRAPH_COMPATIBLE=0
+PREFILL_EXECUTION_ARGS=(--enforce-eager)
+PROJECTION_EXECUTION_ARGS=(--enforce-eager)
+PAP_PREFILL_COMPILATION_CONFIG=""
+PAP_PROJECTION_COMPILATION_CONFIG=""
+if [[ "${PAP_EXECUTION_MODE}" == "piecewise" ]]; then
+  for incompatible_flag in \
+    PAP_OFFLOAD_EXEC_TRACE \
+    PAP_DEFERRED_CUDA_TRACE \
+    PAP_PREFILL_TORCH_PROFILE \
+    PAP_PROJECTION_CRITICAL_TRACE \
+    VLLM_QWEN3_LAYER_PROFILE; do
+    case "${!incompatible_flag:-0}" in
+      1 | true | True | TRUE | yes | Yes | YES | on | On | ON)
+        echo "ERROR: ${incompatible_flag} is incompatible with PAP piecewise CUDA Graph" >&2
+        exit 2
+        ;;
+    esac
+  done
+  PAP_CUDAGRAPH_COMPATIBLE=1
+  PAP_PREFILL_COMPILATION_CONFIG="{\"mode\":\"VLLM_COMPILE\",\"cudagraph_mode\":\"PIECEWISE\",\"cudagraph_capture_sizes\":[${PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES}]}"
+  PAP_PROJECTION_COMPILATION_CONFIG="{\"mode\":\"VLLM_COMPILE\",\"cudagraph_mode\":\"PIECEWISE\",\"cudagraph_capture_sizes\":[${PAP_PROJECTION_CUDAGRAPH_CAPTURE_SIZES}]}"
+  PREFILL_EXECUTION_ARGS=(
+    --compilation-config "${PAP_PREFILL_COMPILATION_CONFIG}"
+  )
+  PROJECTION_EXECUTION_ARGS=(
+    --compilation-config "${PAP_PROJECTION_COMPILATION_CONFIG}"
+  )
 fi
 
 export PAP_OFFLOAD_EXEC_TRACE
@@ -1221,7 +1270,17 @@ write_effective_config() {
       "${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS}"
     printf 'PAP_PROJECTION_MAX_NUM_SEQS=%q\n' \
       "${PAP_PROJECTION_MAX_NUM_SEQS}"
-    printf 'EXECUTION_MODE=%q\n' "eager"
+    printf 'EXECUTION_MODE=%q\n' "${PAP_EXECUTION_MODE}"
+    printf 'PAP_CUDAGRAPH_COMPATIBLE=%q\n' \
+      "${PAP_CUDAGRAPH_COMPATIBLE}"
+    printf 'PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES=%q\n' \
+      "${PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES}"
+    printf 'PAP_PROJECTION_CUDAGRAPH_CAPTURE_SIZES=%q\n' \
+      "${PAP_PROJECTION_CUDAGRAPH_CAPTURE_SIZES}"
+    printf 'PAP_PREFILL_COMPILATION_CONFIG=%q\n' \
+      "${PAP_PREFILL_COMPILATION_CONFIG}"
+    printf 'PAP_PROJECTION_COMPILATION_CONFIG=%q\n' \
+      "${PAP_PROJECTION_COMPILATION_CONFIG}"
     printf 'CLUSTER_READY_WAIT_SECONDS=%q\n' "${CLUSTER_READY_WAIT_SECONDS}"
     printf 'PAP_BENCH_SESSION_DRAIN_TIMEOUT=%q\n' "${PAP_BENCH_SESSION_DRAIN_TIMEOUT}"
     printf 'PAP_DEFERRED_TRACE_FLUSH_TIMEOUT=%q\n' \
@@ -1957,13 +2016,16 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       fi
     )" \
     PAP_RUNTIME_CUDA_CONTEXT_ROLE=prefill \
+    PAP_MODEL_HOOKS=1 \
+    PAP_CUDAGRAPH_COMPATIBLE="${PAP_CUDAGRAPH_COMPATIBLE}" \
+    PAP_CUDAGRAPH_ROLE=prefill \
     PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS}" \
     VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
     VLLM_NIXL_SIDE_CHANNEL_PORT="${prefill_nixl_port}" \
     "${VLLM_BIN}" serve "${MODEL_PATH}" \
       --port "${prefill_port}" \
       --host 127.0.0.1 \
-      --enforce-eager \
+      "${PREFILL_EXECUTION_ARGS[@]}" \
       --generation-config vllm \
       --dtype "${PAP_VLLM_DTYPE}" \
       --enable-request-id-headers \
@@ -2014,11 +2076,14 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     PAP_ATTENTION_PORT_BASE="${ATTENTION_PORT_BASE}" \
     PAP_TP_SIZE="${PAP_TP_SIZE}" \
     PAP_PROJECTION_KV_UNAWARE=1 \
+    PAP_MODEL_HOOKS=1 \
+    PAP_CUDAGRAPH_COMPATIBLE="${PAP_CUDAGRAPH_COMPATIBLE}" \
+    PAP_CUDAGRAPH_ROLE=projection \
     PAP_REMOTE_ATTENTION_PARALLELISM="${PAP_REMOTE_ATTENTION_PARALLELISM}" \
     "${VLLM_BIN}" serve "${MODEL_PATH}" \
       --port "${projection_port}" \
       --host 127.0.0.1 \
-      --enforce-eager \
+      "${PROJECTION_EXECUTION_ARGS[@]}" \
       --generation-config vllm \
       --dtype "${PAP_VLLM_DTYPE}" \
       --enable-request-id-headers \
