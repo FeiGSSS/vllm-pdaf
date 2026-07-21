@@ -9,6 +9,7 @@ from benchmarks.pap.aiperf.generate_multiturn_dataset import (
 from benchmarks.pap.aiperf.summarize_capacity_matrix import (
     build_envelope,
     build_rows,
+    write_markdown,
 )
 from benchmarks.pap.aiperf.summarize_capacity_run import summarize_run
 
@@ -133,6 +134,7 @@ def test_capacity_summary_applies_three_request_level_slos(tmp_path: Path) -> No
     )
 
     assert summary["correctness"]["passed"] is True
+    assert summary["run_status"]["state"] == "completed"
     assert summary["routing"]["migration_count"] == 0
     assert summary["slo"]["strict"]["good_request_fraction"] == 0.75
     assert summary["slo"]["strict"]["passed"] is False
@@ -163,6 +165,44 @@ def test_correctness_failure_fails_every_slo(tmp_path: Path) -> None:
 
     assert summary["correctness"]["passed"] is False
     assert all(not tier["passed"] for tier in summary["slo"].values())
+
+
+def test_partial_timeout_records_early_stopped_slo_impossible(
+    tmp_path: Path,
+) -> None:
+    _write_pd_run(tmp_path, [1_000.0] * 4)
+    profile_path = tmp_path / "aiperf/profile.jsonl"
+    records = [json.loads(line) for line in profile_path.read_text().splitlines()]
+    records = records[:3]
+    records[-1]["metrics"] = {}
+    records[-1]["error"] = {
+        "type": "TimeoutError",
+        "message": "TimeoutError()",
+    }
+    profile_path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+
+    summary = summarize_run(
+        tmp_path,
+        architecture="pd",
+        topology="2p2d",
+        concurrency=2,
+        sessions=2,
+        turns=2,
+        output_tokens=256,
+        launcher_exit_code=143,
+    )
+
+    status = summary["run_status"]
+    assert status["state"] == "early_stopped_slo_impossible"
+    assert status["request_error_counts"] == {"TimeoutError": 1}
+    assert status["relaxed_slo"] == {
+        "observed_bad_requests": 1,
+        "maximum_bad_requests": 0,
+        "pass_still_possible": False,
+    }
 
 
 def test_matrix_envelope_uses_best_pd_topology() -> None:
@@ -202,3 +242,38 @@ def test_matrix_envelope_uses_best_pd_topology() -> None:
     assert envelope["pap_3pa1p"] == 24
     assert envelope["best_pd"] == {"topology": "2p2d", "concurrency": 20}
     assert envelope["pap_minus_best_pd"] == 4
+
+
+def test_matrix_marks_incomplete_run_as_ineligible(tmp_path: Path) -> None:
+    tiers = {
+        name: {"passed": False, "good_request_fraction": 0.5}
+        for name in ("strict", "standard", "relaxed")
+    }
+    rows = build_rows(
+        [
+            {
+                "architecture": "pd",
+                "topology": "2p2d",
+                "concurrency": 16,
+                "run_status": {"state": "early_stopped_slo_impossible"},
+                "workload": {"expected_requests": 960},
+                "correctness": {
+                    "passed": False,
+                    "completed_requests": 628,
+                },
+                "metrics": {
+                    "ttft_ms": {"p95": 315_940.0},
+                    "itl_ms": {"p95": 43.0},
+                    "request_throughput_per_second": None,
+                },
+                "slo": tiers,
+            }
+        ]
+    )
+    output = tmp_path / "capacity.md"
+    write_markdown(rows, build_envelope(rows), output)
+    text = output.read_text(encoding="utf-8")
+
+    assert "early-stopped: SLO impossible" in text
+    assert "628/960" in text
+    assert text.count("ineligible") == 4

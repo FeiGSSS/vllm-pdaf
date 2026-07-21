@@ -59,8 +59,10 @@ PD 2P2D C16 and PD 3P1D C16 entered severe overload. They were stopped once a
 95% relaxed-SLO result was mathematically impossible: a 960-request point can
 contain at most 48 bad requests, while the partial records already contained
 147 and 49 relaxed-SLO violations, respectively. Their missing aggregate
-throughput and failed correctness/routing fields are therefore intentional
-fail-closed results, not successful partial measurements.
+throughput and incomplete correctness/routing fields are therefore intentional
+fail-closed results, not successful partial measurements. Their normalized run
+state is `early_stopped_slo_impossible`; their SLO result is `ineligible`, not
+an ordinary latency failure.
 
 ## Results
 
@@ -68,18 +70,18 @@ A request meets an SLO only when both TTFT and request-level mean ITL are below
 the tier limits. A point passes only when at least 95% of all 960 expected
 requests meet the SLO and the complete correctness and routing gate passes.
 
-| Architecture | Topology | C | Completed | TTFT p95 ms | ITL p95 ms | Req/s | Strict | Standard | Relaxed |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |
-| PAP | 3PA1P | 16 | 960/960 | 2,005.49 | 49.45 | 1.087 | fail | pass | pass |
-| PAP | 3PA1P | 24 | 960/960 | 17,280.20 | 60.76 | 1.309 | fail | fail | pass |
-| PAP | 3PA1P | 32 | 960/960 | 32,026.78 | 80.50 | 0.986 | fail | fail | fail |
-| PD | 1P3D | 8 | 960/960 | 129,626.26 | 32.77 | 0.275 | fail | fail | fail |
-| PD | 2P2D | 12 | 960/960 | 4,912.91 | 38.76 | 0.904 | pass | pass | pass |
-| PD | 2P2D | 16 | 628/960 | 315,940.39 | 43.02 | - | fail | fail | fail |
-| PD | 3P1D | 4 | 960/960 | 3,883.02 | 33.80 | 0.369 | pass | pass | pass |
-| PD | 3P1D | 8 | 960/960 | 4,050.72 | 43.23 | 0.604 | pass | pass | pass |
-| PD | 3P1D | 12 | 960/960 | 4,918.19 | 52.29 | 0.768 | fail | pass | pass |
-| PD | 3P1D | 16 | 339/960 | 28,843.76 | 53.36 | - | fail | fail | fail |
+| Architecture | Topology | C | Run status | Completed | TTFT p95 ms | ITL p95 ms | Req/s | Strict | Standard | Relaxed |
+| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | --- | --- | --- |
+| PAP | 3PA1P | 16 | completed | 960/960 | 2,005.49 | 49.45 | 1.087 | fail | pass | pass |
+| PAP | 3PA1P | 24 | completed | 960/960 | 17,280.20 | 60.76 | 1.309 | fail | fail | pass |
+| PAP | 3PA1P | 32 | completed | 960/960 | 32,026.78 | 80.50 | 0.986 | fail | fail | fail |
+| PD | 1P3D | 8 | completed | 960/960 | 129,626.26 | 32.77 | 0.275 | fail | fail | fail |
+| PD | 2P2D | 12 | completed | 960/960 | 4,912.91 | 38.76 | 0.904 | pass | pass | pass |
+| PD | 2P2D | 16 | early-stopped: SLO impossible | 628/960 | 315,940.39 | 43.02 | - | ineligible | ineligible | ineligible |
+| PD | 3P1D | 4 | completed | 960/960 | 3,883.02 | 33.80 | 0.369 | pass | pass | pass |
+| PD | 3P1D | 8 | completed | 960/960 | 4,050.72 | 43.23 | 0.604 | pass | pass | pass |
+| PD | 3P1D | 12 | completed | 960/960 | 4,918.19 | 52.29 | 0.768 | fail | pass | pass |
+| PD | 3P1D | 16 | early-stopped: SLO impossible | 339/960 | 28,843.76 | 53.36 | - | ineligible | ineligible | ineligible |
 
 ## Compliant goodput
 

@@ -79,10 +79,12 @@ context and are visible in server-reported input token counts.
 
 Each completed request is evaluated against TTFT and its request-level mean
 ITL. A tier passes only when at least 95% of all expected requests meet both
-limits. Missing requests remain in the denominator. In addition, every tier
-fails unless all sessions complete all ten turns with exactly 256 output
-tokens, AIPerf reports no error/cancellation, runtime audits pass, and both
-Prefill/PA and Decode/Projection routing retain one owner per conversation.
+limits. Missing requests remain in the denominator. A run is eligible for an
+SLO pass/fail result only when all sessions complete all ten turns with exactly
+256 output tokens, AIPerf reports no error/cancellation, runtime audits pass,
+and both Prefill/PA and Decode/Projection routing retain one owner per
+conversation. Incomplete or invalid runs are reported as `ineligible`, not as
+ordinary SLO failures.
 
 | Tier | TTFT | ITL | Required good-request fraction |
 | --- | ---: | ---: | ---: |
@@ -90,9 +92,46 @@ Prefill/PA and Decode/Projection routing retain one owner per conversation.
 | Standard | <= 10 s | <= 75 ms | >= 95% |
 | Relaxed | <= 20 s | <= 100 ms | >= 95% |
 
+The per-run summary also records an explicit execution state:
+
+| State | Meaning |
+| --- | --- |
+| `completed` | All expected requests were observed; inspect SLO columns for pass/fail. |
+| `early_stopped_slo_impossible` | The run received SIGINT/SIGTERM after the relaxed tier could no longer reach 95%. |
+| `incomplete_slo_impossible` | The run ended incomplete after the relaxed tier could no longer reach 95%. |
+| `request_timeout` | Request timeouts occurred, but the observed records had not yet made the relaxed tier mathematically impossible. |
+| `service_failed` | The launcher failed before producing a complete result. |
+| `incomplete` | The workload ended without enough evidence for a more specific state. |
+
+Request error counts, launcher exit code, and the relaxed tier's observed and
+maximum bad-request counts remain in `capacity_summary.json`. Matrix tables
+show completion as `observed/expected`; partial TTFT and ITL values are
+diagnostic only and never contribute eligible goodput.
+
 `summarize_capacity_run.py` emits one compact JSON result per run.
 `summarize_capacity_matrix.py` emits a TSV, a Markdown table, and the tested
 PAP-versus-best-PD capacity envelope.
+
+## Companion short-decode shape
+
+The frozen 256-token output is a sustained-decode capacity workload, not an
+unusually large generation by itself. It does, however, combine two effects:
+Decode execution lasts long enough to maintain overlap, and prior assistant
+outputs add about 2,304 tokens to the final-turn KV footprint.
+
+Use a 128-token output as the first companion diagnostic rather than replacing
+the frozen testbed. It halves Decode steps while reducing the final prompt by
+only about 1,152 tokens. The 8K initial document and nine 512-token follow-ups
+still create strong KV pressure: 3P1D C16 remains beyond one L20's 173,200-token
+KV capacity, while C12 moves close to the boundary. Keep all other fields,
+delays, SLOs, and the 96-session total unchanged.
+
+The first short-decode comparison should contain only PAP C16/C24 and PD 2P2D
+C12/C16. If PAP retains its advantage, the result supports a KV-capacity and
+scheduling explanation. If the advantage appears only at 256 output tokens,
+the existing result is partly a sustained-Decode throughput advantage. Report
+request goodput and output-token goodput within each shape; do not compare raw
+token throughput between the 128- and 256-token profiles.
 
 ## Run against an already-started gateway
 

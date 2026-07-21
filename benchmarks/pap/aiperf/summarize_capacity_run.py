@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
-from collections import defaultdict
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +16,7 @@ SLO_TIERS = {
     "relaxed": {"ttft_ms": 20_000.0, "itl_ms": 100.0},
 }
 MIN_GOOD_REQUEST_FRACTION = 0.95
+EARLY_STOP_EXIT_CODES = {130, 143}
 
 
 def _load_json(path: Path) -> Any:
@@ -82,6 +83,67 @@ def _read_env(path: Path) -> dict[str, str]:
         if separator:
             values[key] = value
     return values
+
+
+def _request_error_counts(records: list[dict[str, Any]]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for record in records:
+        error = record.get("error")
+        if isinstance(error, dict):
+            error_type = error.get("type")
+            if isinstance(error_type, str) and error_type:
+                counts[error_type] += 1
+        if record.get("metadata", {}).get("was_cancelled"):
+            counts["Cancelled"] += 1
+    return dict(sorted(counts.items()))
+
+
+def _classify_run_status(
+    *,
+    records: list[dict[str, Any]],
+    expected_requests: int,
+    relaxed_good_requests: int,
+    launcher_exit_code: int,
+) -> dict[str, Any]:
+    request_errors = _request_error_counts(records)
+    minimum_good_requests = math.ceil(
+        expected_requests * MIN_GOOD_REQUEST_FRACTION
+    )
+    maximum_bad_requests = expected_requests - minimum_good_requests
+    observed_bad_requests = len(records) - relaxed_good_requests
+    relaxed_pass_still_possible = observed_bad_requests <= maximum_bad_requests
+    completed = len(records) == expected_requests
+
+    if completed:
+        if request_errors:
+            state = "completed_with_errors"
+        elif launcher_exit_code != 0:
+            state = "completed_launcher_failed"
+        else:
+            state = "completed"
+    elif not relaxed_pass_still_possible:
+        state = (
+            "early_stopped_slo_impossible"
+            if launcher_exit_code in EARLY_STOP_EXIT_CODES
+            else "incomplete_slo_impossible"
+        )
+    elif request_errors.get("TimeoutError"):
+        state = "request_timeout"
+    elif launcher_exit_code != 0:
+        state = "service_failed"
+    else:
+        state = "incomplete"
+
+    return {
+        "state": state,
+        "launcher_exit_code": launcher_exit_code,
+        "request_error_counts": request_errors,
+        "relaxed_slo": {
+            "observed_bad_requests": observed_bad_requests,
+            "maximum_bad_requests": maximum_bad_requests,
+            "pass_still_possible": relaxed_pass_still_possible,
+        },
+    }
 
 
 def _check_status(
@@ -403,12 +465,20 @@ def summarize_run(
             and fraction >= MIN_GOOD_REQUEST_FRACTION,
         }
 
+    run_status = _classify_run_status(
+        records=records,
+        expected_requests=expected_requests,
+        relaxed_good_requests=tiers["relaxed"]["good_requests"],
+        launcher_exit_code=launcher_exit_code,
+    )
+
     return {
         "schema_version": 1,
         "architecture": architecture,
         "topology": topology,
         "concurrency": concurrency,
         "repetition": repetition,
+        "run_status": run_status,
         "workload": {
             "sessions": sessions,
             "turns_per_session": turns,
@@ -487,14 +557,24 @@ def main() -> None:
     output = args.output or args.run_root / "capacity_summary.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(summary, indent=2) + "\n", encoding="utf-8")
+    eligible = summary["correctness"]["passed"]
+    state = summary["run_status"]["state"]
+    if eligible:
+        validation = "pass"
+    elif state == "completed":
+        validation = "fail"
+    else:
+        validation = "ineligible"
     statuses = "/".join(
-        "pass" if summary["slo"][tier]["passed"] else "fail"
+        ("pass" if summary["slo"][tier]["passed"] else "fail")
+        if eligible
+        else "ineligible"
         for tier in SLO_TIERS
     )
     print(
         f"{summary['architecture']} {summary['topology']} "
-        f"C={summary['concurrency']} correctness="
-        f"{'pass' if summary['correctness']['passed'] else 'fail'} "
+        f"C={summary['concurrency']} state={state} "
+        f"validation={validation} "
         f"SLO(strict/standard/relaxed)={statuses}"
     )
 

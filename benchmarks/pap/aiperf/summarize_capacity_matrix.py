@@ -10,6 +10,16 @@ from pathlib import Path
 from typing import Any
 
 SLO_TIER_NAMES = ("strict", "standard", "relaxed")
+RUN_STATUS_LABELS = {
+    "completed": "completed",
+    "completed_with_errors": "completed with request errors",
+    "completed_launcher_failed": "completed; launcher failed",
+    "early_stopped_slo_impossible": "early-stopped: SLO impossible",
+    "incomplete_slo_impossible": "incomplete: SLO impossible",
+    "request_timeout": "incomplete: request timeout",
+    "service_failed": "service failed",
+    "incomplete": "incomplete",
+}
 
 
 def _fmt(value: Any, digits: int = 2) -> str:
@@ -18,6 +28,45 @@ def _fmt(value: Any, digits: int = 2) -> str:
     if isinstance(value, float):
         return f"{value:.{digits}f}"
     return str(value)
+
+
+def _summary_run_state(summary: dict[str, Any]) -> str:
+    state = summary.get("run_status", {}).get("state")
+    if isinstance(state, str) and state:
+        return state
+    completed = summary.get("correctness", {}).get("completed_requests")
+    expected = summary.get("workload", {}).get("expected_requests")
+    if completed == expected and expected is not None:
+        return "completed"
+    return "incomplete"
+
+
+def _run_status_label(row: dict[str, Any]) -> str:
+    states = row["run_statuses"]
+    labels = [RUN_STATUS_LABELS.get(state, state) for state in states]
+    return labels[0] if len(labels) == 1 else "mixed: " + ", ".join(labels)
+
+
+def _completion_label(row: dict[str, Any]) -> str:
+    completed = row["completed_requests"]
+    expected = row["expected_requests"]
+    if completed is None or expected is None:
+        return "-"
+    return f"{completed}/{expected}"
+
+
+def _validation_label(row: dict[str, Any]) -> str:
+    if row["correctness"]:
+        return "pass"
+    if any(state != "completed" for state in row["run_statuses"]):
+        return "ineligible"
+    return "fail"
+
+
+def _slo_label(row: dict[str, Any], tier: str) -> str:
+    if not row["correctness"]:
+        return "ineligible"
+    return "pass" if row[tier] else "fail"
 
 
 def load_summaries(matrix_root: Path) -> list[dict[str, Any]]:
@@ -43,6 +92,21 @@ def build_rows(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     rows = []
     for (architecture, topology, concurrency), repetitions in grouped.items():
+        run_statuses = sorted({_summary_run_state(item) for item in repetitions})
+        completed_requests = [
+            item.get("correctness", {}).get("completed_requests")
+            for item in repetitions
+        ]
+        completed_requests = [
+            value for value in completed_requests if isinstance(value, int)
+        ]
+        expected_requests = [
+            item.get("workload", {}).get("expected_requests")
+            for item in repetitions
+        ]
+        expected_requests = [
+            value for value in expected_requests if isinstance(value, int)
+        ]
         ttft_p95 = [
             item["metrics"]["ttft_ms"]["p95"]
             for item in repetitions
@@ -63,6 +127,16 @@ def build_rows(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "topology": topology,
             "concurrency": concurrency,
             "repetitions": len(repetitions),
+            "run_status": run_statuses[0]
+            if len(run_statuses) == 1
+            else "mixed",
+            "run_statuses": run_statuses,
+            "completed_requests": min(completed_requests)
+            if completed_requests
+            else None,
+            "expected_requests": max(expected_requests)
+            if expected_requests
+            else None,
             "correctness": all(
                 item["correctness"]["passed"] for item in repetitions
             ),
@@ -138,6 +212,9 @@ def write_tsv(rows: list[dict[str, Any]], path: Path) -> None:
         "topology",
         "concurrency",
         "repetitions",
+        "run_status",
+        "completed_requests",
+        "expected_requests",
         "correctness",
         "ttft_p95_ms",
         "itl_p95_ms",
@@ -150,7 +227,12 @@ def write_tsv(rows: list[dict[str, Any]], path: Path) -> None:
         "relaxed_good_fraction",
     ]
     with path.open("w", encoding="utf-8", newline="") as output:
-        writer = csv.DictWriter(output, fieldnames=fieldnames, delimiter="\t")
+        writer = csv.DictWriter(
+            output,
+            fieldnames=fieldnames,
+            delimiter="\t",
+            extrasaction="ignore",
+        )
         writer.writeheader()
         writer.writerows(rows)
 
@@ -163,25 +245,29 @@ def write_markdown(
     lines = [
         "# PAP/PD four-GPU AIPerf capacity matrix",
         "",
-        "| Architecture | Topology | C | Correct | TTFT p95 ms | "
-        "ITL p95 ms | Req/s | Strict | Standard | Relaxed |",
-        "| --- | --- | ---: | --- | ---: | ---: | ---: | --- | --- | --- |",
+        "| Architecture | Topology | C | Run status | Completed (worst) | "
+        "Validation | TTFT p95 ms | ITL p95 ms | Req/s | Strict | "
+        "Standard | Relaxed |",
+        "| --- | --- | ---: | --- | ---: | --- | ---: | ---: | ---: | "
+        "--- | --- | --- |",
     ]
     for row in rows:
         lines.append(
-            "| {architecture} | {topology} | {concurrency} | {correctness} | "
-            "{ttft} | {itl} | {throughput} | {strict} | {standard} | "
-            "{relaxed} |".format(
+            "| {architecture} | {topology} | {concurrency} | {run_status} | "
+            "{completed} | {validation} | {ttft} | {itl} | {throughput} | "
+            "{strict} | {standard} | {relaxed} |".format(
                 architecture=row["architecture"].upper(),
                 topology=row["topology"],
                 concurrency=row["concurrency"],
-                correctness="pass" if row["correctness"] else "fail",
+                run_status=_run_status_label(row),
+                completed=_completion_label(row),
+                validation=_validation_label(row),
                 ttft=_fmt(row["ttft_p95_ms"]),
                 itl=_fmt(row["itl_p95_ms"]),
                 throughput=_fmt(row["request_throughput_per_second"], 3),
-                strict="pass" if row["strict"] else "fail",
-                standard="pass" if row["standard"] else "fail",
-                relaxed="pass" if row["relaxed"] else "fail",
+                strict=_slo_label(row, "strict"),
+                standard=_slo_label(row, "standard"),
+                relaxed=_slo_label(row, "relaxed"),
             )
         )
     lines.extend(
