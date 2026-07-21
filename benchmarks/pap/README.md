@@ -8,7 +8,7 @@ output tokens, deterministic 3-second think and 1-second tool delays, pure
 conversation concurrency, three request-level SLO tiers, 32 conversations per
 point, and a lean topology-specific boundary scan. The current result is
 documented in
-[`PAP-20260721-AIPERF-RANDOM-O32`](experiments/PAP-20260721-AIPERF-RANDOM-O32/report.md).
+[`PAP-20260721-AIPERF-AUDITED-CAPACITY`](experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md).
 The initial integration result is documented in
 [`pap-pd-aiperf-four-gpu-results-20260716.md`](experiments/legacy/reports/pap-pd-aiperf-four-gpu-results-20260716.md).
 The historical cohort-sized capacity scan is documented in

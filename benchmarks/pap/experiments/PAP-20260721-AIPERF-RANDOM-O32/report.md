@@ -1,5 +1,10 @@
 # PAP versus PD: randomized-length AIPerf capacity scan
 
+> Superseded for current capacity claims by the
+> [audited-capacity eager baseline](../PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md),
+> which uses the fixed 32-conversation testbed and source-audited scheduler
+> limits.
+
 ## Scope
 
 This controlled four-GPU scan is the first PAP/PD capacity comparison using

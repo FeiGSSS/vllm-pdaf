@@ -268,5 +268,7 @@ The current fixed-96-session scan is recorded in
 It is historical fixed-length evidence rather than the current baseline. The
 2026-07-21 fixed-length runs and their replacement decision are recorded in the
 [archive notice](../experiments/legacy/reports/pap-pd-aiperf-fixed-length-preliminary-20260721.md).
-The randomized-length O32 successor is recorded in
+The current source-audited randomized O32 baseline is recorded in
+[`PAP-20260721-AIPERF-AUDITED-CAPACITY`](../experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md).
+Its predecessor remains in
 [`PAP-20260721-AIPERF-RANDOM-O32`](../experiments/PAP-20260721-AIPERF-RANDOM-O32/report.md).
