@@ -128,6 +128,25 @@ def test_runtime_settings_are_parsed_once_per_owner() -> None:
     assert worker.runner_microbatch_count == 4
 
 
+def test_request_decode_capacity_overrides_environment_fallback() -> None:
+    scheduler = PAPSchedulerAdapter(
+        PAPRuntimeSettings.from_environ(
+            {"PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS": "64"}
+        )
+    )
+    request = _scheduler_request(
+        {
+            "pap_import_prefill_kv_to_attention": True,
+            "pap_decode_capacity_tokens": 24,
+        }
+    )
+
+    assert scheduler.decode_capacity_tokens(request) == 24
+
+    request.kv_transfer_params.pop("pap_decode_capacity_tokens")
+    assert scheduler.decode_capacity_tokens(request) == 64
+
+
 def test_engine_adapter_recognizes_metadata_only_request() -> None:
     assert PAPEngineAdapter.is_metadata_only_request(
         {"pap_projection_kv_unaware": True}
@@ -161,6 +180,7 @@ def _v2_runner_for_removal(
             "pap_attention_endpoint": "http",
             "pap_offload_exec_zmq_endpoint": "zmq",
             "pap_remote_prefix_len": 16,
+            "pap_decode_capacity_tokens": 24,
             "pap_prefill_kv_handle": "session-a",
             "pap_import_prefill_kv_to_attention": True,
             "pap_attention_kv_installed": True,
@@ -215,6 +235,7 @@ def test_projection_batch_adapter_builds_filtered_forward_context() -> None:
             "pap_attention_endpoint": "http://attention",
             "pap_offload_exec_zmq_endpoint": "tcp://mailbox",
             "pap_remote_prefix_len": 16,
+            "pap_decode_capacity_tokens": 24,
             "pap_prefill_kv_handle": "session-a",
             "pap_import_prefill_kv_to_attention": True,
             "pap_attention_kv_installed": True,
@@ -250,6 +271,7 @@ def test_projection_batch_adapter_builds_filtered_forward_context() -> None:
     assert context["pap_prefill_kv_handle_by_request"] == {
         "req-a": "session-a"
     }
+    assert context["pap_decode_capacity_tokens_by_request"] == {"req-a": 24}
     assert context["pap_attention_kv_installed_by_request"] == {"req-a"}
     assert context["pap_offload_exec_route_groups"][0]["steps"] == (17,)
     assert context["pap_finished_request_ids"] == ("req-z",)

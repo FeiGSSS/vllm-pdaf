@@ -16,8 +16,8 @@ import torch
 from torch.multiprocessing.reductions import reduce_tensor
 
 if TYPE_CHECKING:
-    from vllm.pap.protocol import PAPCudaIPCTensorHandle
     from vllm.pap.kv.registry import PAPAttentionRegistry
+    from vllm.pap.protocol import PAPCudaIPCTensorHandle
 
 logger = logging.getLogger(__name__)
 
@@ -237,6 +237,7 @@ def publish_prefill_kv_session_manifest(
     ready_event_handle: bytes | None,
     tcp_endpoint: str | None = None,
     timeout: float | None = None,
+    decode_capacity_tokens: int | None = None,
 ) -> int:
     """Atomically publish one request's sealed Prefill KV layout."""
 
@@ -283,8 +284,11 @@ def publish_prefill_kv_session_manifest(
         raise RuntimeError(f"PAP sealed KV lease missing for request_id={request_id}")
 
     block_capacity = len(normalized_block_ids) * int(block_size)
+    if decode_capacity_tokens is None:
+        decode_capacity_tokens = _pap_unified_kv_decode_capacity_tokens()
+    decode_capacity_tokens = max(0, int(decode_capacity_tokens))
     planned_capacity = min(
-        int(prefix_len) + _pap_unified_kv_decode_capacity_tokens(),
+        int(prefix_len) + decode_capacity_tokens,
         block_capacity,
     )
     manifest = PAPPrefillKVSessionManifest(

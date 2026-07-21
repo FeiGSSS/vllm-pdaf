@@ -87,6 +87,8 @@ class PAPSchedulerAdapter:
         metadata = PAPRequestMetadata.from_mapping(request.kv_transfer_params)
         if not metadata.import_prefill_kv_to_attention:
             return 0
+        if metadata.decode_capacity_tokens is not None:
+            return metadata.decode_capacity_tokens
         return self.settings.unified_kv_decode_capacity_tokens
 
     @staticmethod

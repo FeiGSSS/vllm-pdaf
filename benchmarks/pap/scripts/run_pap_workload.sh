@@ -1175,6 +1175,8 @@ write_effective_config() {
     printf 'PROJECTION_PORT_BASE=%q\n' "${PROJECTION_PORT_BASE}"
     printf 'ATTENTION_PORT_BASE=%q\n' "${ATTENTION_PORT_BASE}"
     printf 'PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS=%q\n' "${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}"
+    printf 'PAP_DECODE_CAPACITY_SOURCE=%q\n' \
+      "request_max_tokens_with_environment_fallback"
     printf 'PAP_DECODE_COMMIT_ENDPOINT=%q\n' "${PAP_DECODE_COMMIT_ENDPOINT}"
     printf 'PAP_DECODE_COMMIT_FAIL_CLOSED=%q\n' "${PAP_DECODE_COMMIT_FAIL_CLOSED}"
     printf 'PAP_DECODE_COMMIT_TIMEOUT=%q\n' "${PAP_DECODE_COMMIT_TIMEOUT}"
@@ -1219,6 +1221,7 @@ write_effective_config() {
       "${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS}"
     printf 'PAP_PROJECTION_MAX_NUM_SEQS=%q\n' \
       "${PAP_PROJECTION_MAX_NUM_SEQS}"
+    printf 'EXECUTION_MODE=%q\n' "eager"
     printf 'CLUSTER_READY_WAIT_SECONDS=%q\n' "${CLUSTER_READY_WAIT_SECONDS}"
     printf 'PAP_BENCH_SESSION_DRAIN_TIMEOUT=%q\n' "${PAP_BENCH_SESSION_DRAIN_TIMEOUT}"
     printf 'PAP_DEFERRED_TRACE_FLUSH_TIMEOUT=%q\n' \
@@ -1757,12 +1760,6 @@ elif [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" \
     || die "multiturn_load currently requires one Projection"
   (( PAP_MULTITURN_LOAD_ROUNDS >= 4 )) \
     || die "multiturn_load requires at least four rounds"
-  (( PAP_MULTITURN_ACTIVE_CONVERSATIONS \
-      <= PAP_PROJECTION_MAX_NUM_SEQS )) \
-    || die "active conversations exceed Projection max_num_seqs"
-  (( (PAP_MULTITURN_ACTIVE_CONVERSATIONS + PA_COUNT - 1) / PA_COUNT \
-      <= PAP_PREFILL_MAX_NUM_SEQS )) \
-    || die "per-PA conversations exceed Prefill max_num_seqs"
   (( INPUT_LEN > 0 && PAP_MULTITURN_APPEND_TOKENS > 0 \
       && OUTPUT_LEN > 1 )) \
     || die "multi-turn token counts must be positive"

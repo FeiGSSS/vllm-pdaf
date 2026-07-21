@@ -9,7 +9,6 @@ from vllm.pap.protocol import (
     PAPOffloadExecDescriptor,
     PAPPrefillKVCacheCatalogDescriptor,
     PAPPrefillKVSessionManifest,
-    PAPTensorTransport,
 )
 from vllm.pap.protocol.offload_exec import (
     _offload_exec_batch_descriptor_from_metadata,
@@ -410,17 +409,21 @@ def test_prefill_kv_session_manifest_requires_blocks_covering_writable_end() -> 
         _session_manifest(block_ids=(0,), leased_block_ids=(0,))
 
 
+@pytest.mark.parametrize(
+    ("decode_capacity_tokens", "expected_writable_end"),
+    [(None, 8), (2, 7)],
+)
 def test_sealed_prefill_kv_handoff_posts_catalog_and_manifest_without_sync(
-    monkeypatch,
+    monkeypatch, decode_capacity_tokens, expected_writable_end
 ) -> None:
+    from vllm.pap.kv.handoff import (
+        publish_prefill_kv_session_manifest,
+        register_prefill_kv_catalog,
+    )
     from vllm.pap.lifecycle.lease import reset_global_kv_lease_registry
     from vllm.pap.protocol.wire import (
         deserialize_tensor_bundle,
         serialize_tensor_bundle,
-    )
-    from vllm.pap.kv.handoff import (
-        publish_prefill_kv_session_manifest,
-        register_prefill_kv_catalog,
     )
 
     reset_global_kv_lease_registry()
@@ -473,6 +476,7 @@ def test_sealed_prefill_kv_handoff_posts_catalog_and_manifest_without_sync(
             expected_layer_count=1,
             ready_event_handle=b"event-handle",
             tcp_endpoint="127.0.0.1:8300",
+            decode_capacity_tokens=decode_capacity_tokens,
         ) == 5
     finally:
         reset_global_kv_lease_registry()
@@ -488,5 +492,5 @@ def test_sealed_prefill_kv_handoff_posts_catalog_and_manifest_without_sync(
     assert manifest["session_handle"] == "cmpl-sealed@pap-session-1"
     assert manifest["prefix_len"] == 5
     assert manifest["writable_start_token"] == 5
-    assert manifest["writable_end_token"] == 8
+    assert manifest["writable_end_token"] == expected_writable_end
     assert manifest["ready_event_handle"] is not None

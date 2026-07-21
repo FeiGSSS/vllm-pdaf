@@ -15,7 +15,23 @@ _PREFILL_KV_TRANSPORT_KEYS = {
 }
 
 
+def _requested_decode_capacity(req_data: dict[str, Any]) -> int | None:
+    value = req_data.get("max_completion_tokens")
+    if value is None:
+        value = req_data.get("max_tokens")
+    if value is None:
+        return None
+    try:
+        capacity = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("decode token limit must be an integer") from exc
+    if capacity <= 0:
+        raise ValueError("decode token limit must be positive")
+    return capacity
+
+
 def build_prefill_payload(req_data: dict[str, Any]) -> dict[str, Any]:
+    decode_capacity = _requested_decode_capacity(req_data)
     payload = req_data.copy()
     payload["stream"] = False
     payload["max_tokens"] = 1
@@ -27,6 +43,10 @@ def build_prefill_payload(req_data: dict[str, Any]) -> dict[str, Any]:
         "remote_host": None,
         "remote_port": None,
     }
+    if decode_capacity is not None:
+        payload["kv_transfer_params"]["pap_decode_capacity_tokens"] = (
+            decode_capacity
+        )
     payload.pop("max_completion_tokens", None)
     payload.pop("min_tokens", None)
     payload.pop("stream_options", None)

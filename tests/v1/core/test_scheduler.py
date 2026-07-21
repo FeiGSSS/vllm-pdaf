@@ -146,6 +146,43 @@ def test_pap_unified_kv_decode_reservation_reaches_model_runner(
     assert len(output.scheduled_new_reqs[0].block_ids[0]) == 12
 
 
+def test_pap_request_decode_reservation_overrides_global_fallback(
+    monkeypatch, tmp_path
+):
+    from unittest.mock import patch
+
+    from transformers import OPTConfig
+
+    from vllm.platforms.cpu import CpuPlatform
+
+    OPTConfig(
+        hidden_size=64,
+        ffn_dim=128,
+        num_attention_heads=4,
+        num_hidden_layers=2,
+        max_position_embeddings=512,
+    ).save_pretrained(tmp_path)
+    monkeypatch.setenv("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "64")
+    with patch("vllm.platforms.current_platform", CpuPlatform()):
+        scheduler = create_scheduler(
+            model=str(tmp_path),
+            enable_prefix_caching=True,
+            block_size=16,
+            max_model_len=512,
+            skip_tokenizer_init=True,
+        )
+    (request,) = create_requests(num_requests=1, num_tokens=128)
+    request.kv_transfer_params = {
+        "pap_import_prefill_kv_to_attention": True,
+        "pap_decode_capacity_tokens": 32,
+    }
+    scheduler.add_request(request)
+
+    output = scheduler.schedule()
+
+    assert len(output.scheduled_new_reqs[0].block_ids[0]) == 10
+
+
 def test_pap_unified_kv_decode_reservation_skips_non_pap_requests(
     monkeypatch, tmp_path
 ):

@@ -40,7 +40,7 @@ lengths reproducibly:
 | Field | Distribution |
 | --- | --- |
 | Turns per session | 10 |
-| Total sessions per matrix point | 96 |
+| Total sessions per matrix point | 32 |
 | Initial user document | log-normal: mean 8192, median 8000, range 4096-11264 |
 | New user text on turns 2-10 | log-normal: mean 512, median 500, range 256-768 |
 | Assistant output | log-normal: mean 32, median 30, range 16-64 |
@@ -61,15 +61,13 @@ in total while retaining its concurrency slot. Previous capacity-boundary runs
 spent 11.5-15.8 seconds per request on average, so these delays desynchronize
 sessions without making waiting time dominate serving time.
 
-The capacity runner generates 96 sessions with this shape. For a short
-development comparison, set `PAP_CAPACITY_SESSIONS=32` without changing the
-length distributions:
+The capacity runner always generates 32 sessions with this shape:
 
 ```bash
 .venv/bin/python benchmarks/pap/aiperf/generate_multiturn_dataset.py \
   --model /data/ssd1/llm-models/Qwen3-8B \
   --corpus /path/to/sonnet_4x.txt \
-  --sessions 96 \
+  --sessions 32 \
   --document-tokens 8192 --document-tokens-median 8000 \
   --document-tokens-min 4096 --document-tokens-max 11264 \
   --append-tokens 512 --append-tokens-median 500 \
@@ -180,7 +178,51 @@ settings remain unchanged across concurrency points. Projection does not own
 prompt KV, so increasing only its memory reservation would not increase PAP
 session capacity.
 
-Every point processes the same 96 conversations and 960 requests. Concurrency
+### Capacity-parameter audit
+
+The matrix uses role-specific scheduler limits. These values follow the
+current scheduler and model-runner implementation rather than treating a
+larger number as automatically safer:
+
+| Role | `max_num_seqs` | `max_num_batched_tokens` |
+| --- | ---: | ---: |
+| PAP PA / PD Prefill | 64 | 16384 |
+| PAP Projection / PD Decode | 64 | 64 |
+
+- AIPerf can have at most 32 live sessions, with one request per live session.
+  Therefore 64 sequences cannot be the admission bottleneck. It also avoids
+  sizing persistent request buffers and future default graph-capture ranges
+  for 256 requests that this testbed cannot generate.
+- vLLM defines `max_num_batched_tokens` as the per-iteration compute-token
+  budget and recommends values above 8192 for throughput on small models and
+  large GPUs. A 16384 Prefill budget holds roughly two mean 8K prompts.
+- Decode and PAP Projection execute at most one new model token per live
+  request. KV-connector prompt tokens are externally computed, and PAP
+  Projection owns no local prompt slots. A budget of 64 therefore covers the
+  32-session testbed while avoiding an 8192-token dummy profile on decode-only
+  workers.
+- Concurrent partial Prefill is left at the vLLM default
+  `max_num_partial_prefills=1`. On this source revision, setting it above one
+  also changes `long_prefill_token_threshold` to four percent of
+  `max_model_len` (800 tokens here), fragmenting every 8K prompt. It is not a
+  neutral capacity increase.
+- `max_model_len=20000` retains more than 3.7K tokens of measured headroom over
+  this dataset's longest online request. Chunked Prefill remains enabled.
+- The scheduler keeps its default full-input admission check and zero
+  watermark. Requests wait when their complete prompt does not fit, without a
+  separate reserved fraction or first-chunk over-admission.
+- PAP reserves writable unified KV from each request's output limit. The
+  environment value is only a 64-token compatibility fallback; the former
+  fixed 512-token reservation no longer reduces PA capacity for this 16-64
+  token output distribution.
+- PAP keeps `gpu_memory_utilization=0.76` because each PA GPU also owns the
+  Attention runtime. PD keeps the established `0.90`. Projection allocates no
+  local request KV, so its nominal KV arena is not a PAP conversation limit.
+- This revised baseline remains eager. CUDA Graph support and its memory budget
+  are introduced and measured separately so graph effects are not conflated
+  with scheduler-capacity changes.
+
+Every point processes the same 32 conversations and 320 requests. Concurrency
 only limits the number of live sessions; when one ten-turn session finishes,
 the next conversation takes its slot. The topology-specific scan retains only
 the previously observed useful region:

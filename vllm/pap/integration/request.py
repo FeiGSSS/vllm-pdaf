@@ -13,6 +13,18 @@ def _optional_text(value: object) -> str | None:
     return str(value) if value else None
 
 
+def _optional_positive_int(value: object, *, name: str) -> int | None:
+    if value is None:
+        return None
+    try:
+        result = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be an integer") from exc
+    if result <= 0:
+        raise ValueError(f"{name} must be positive")
+    return result
+
+
 @dataclass(frozen=True, slots=True)
 class PAPRequestMetadata:
     """PAP fields carried through vLLM ``kv_transfer_params``."""
@@ -22,6 +34,7 @@ class PAPRequestMetadata:
     attention_endpoint: str | None = None
     offload_exec_zmq_endpoint: str | None = None
     remote_prefix_len: int | None = None
+    decode_capacity_tokens: int | None = None
     prefill_kv_handle: str | None = None
     import_prefill_kv_to_attention: bool = False
     attention_kv_installed: bool = False
@@ -49,6 +62,10 @@ class PAPRequestMetadata:
             remote_prefix_len=(
                 int(remote_prefix_len) if remote_prefix_len is not None else None
             ),
+            decode_capacity_tokens=_optional_positive_int(
+                params.get("pap_decode_capacity_tokens"),
+                name="pap_decode_capacity_tokens",
+            ),
             prefill_kv_handle=_optional_text(params.get("pap_prefill_kv_handle")),
             import_prefill_kv_to_attention=bool(
                 params.get("pap_import_prefill_kv_to_attention")
@@ -67,6 +84,9 @@ class PAPProjectionRequestStore:
         default_factory=dict
     )
     prefill_prefix_len_by_request: dict[str, int] = field(default_factory=dict)
+    decode_capacity_tokens_by_request: dict[str, int] = field(
+        default_factory=dict
+    )
     prefill_kv_handle_by_request: dict[str, str] = field(default_factory=dict)
     import_prefill_kv_to_attention_requests: set[str] = field(default_factory=set)
     attention_kv_installed_requests: set[str] = field(default_factory=set)
@@ -94,6 +114,10 @@ class PAPProjectionRequestStore:
             self.prefill_prefix_len_by_request[request_id] = (
                 metadata.remote_prefix_len
             )
+        if metadata.decode_capacity_tokens is not None:
+            self.decode_capacity_tokens_by_request[request_id] = (
+                metadata.decode_capacity_tokens
+            )
         if metadata.prefill_kv_handle is not None:
             self.prefill_kv_handle_by_request[request_id] = (
                 metadata.prefill_kv_handle
@@ -110,6 +134,7 @@ class PAPProjectionRequestStore:
         self.attention_endpoint_by_request.pop(request_id, None)
         self.offload_exec_zmq_endpoint_by_request.pop(request_id, None)
         self.prefill_prefix_len_by_request.pop(request_id, None)
+        self.decode_capacity_tokens_by_request.pop(request_id, None)
         self.prefill_kv_handle_by_request.pop(request_id, None)
         self.import_prefill_kv_to_attention_requests.discard(request_id)
         self.attention_kv_installed_requests.discard(request_id)
@@ -131,6 +156,9 @@ def bind_projection_request_store(
         store.offload_exec_zmq_endpoint_by_request
     )
     owner.pap_prefill_prefix_len_by_req_id = store.prefill_prefix_len_by_request
+    owner.pap_decode_capacity_tokens_by_req_id = (
+        store.decode_capacity_tokens_by_request
+    )
     owner.pap_prefill_kv_handle_by_req_id = store.prefill_kv_handle_by_request
     owner.pap_import_prefill_kv_to_attention_by_req_id = (
         store.import_prefill_kv_to_attention_requests

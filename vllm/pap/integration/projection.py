@@ -104,6 +104,9 @@ def build_projection_forward_context(
         "pap_prefill_prefix_len_by_request": _filter_mapping(
             store.prefill_prefix_len_by_request, normalized_ids
         ),
+        "pap_decode_capacity_tokens_by_request": _filter_mapping(
+            store.decode_capacity_tokens_by_request, normalized_ids
+        ),
         "pap_prefill_kv_handle_by_request": _filter_mapping(
             store.prefill_kv_handle_by_request, normalized_ids
         ),

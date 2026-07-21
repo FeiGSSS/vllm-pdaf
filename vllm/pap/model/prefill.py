@@ -122,6 +122,9 @@ class PAPPrefillKVPublisher:
         prefill_kv_handle_by_request = (
             additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
         )
+        decode_capacity_tokens_by_request = (
+            additional_kwargs.get("pap_decode_capacity_tokens_by_request") or {}
+        )
         import_request_ids = set(
             additional_kwargs.get(
                 "pap_import_prefill_kv_to_attention_by_request"
@@ -165,6 +168,7 @@ class PAPPrefillKVPublisher:
             num_reqs=batch.num_reqs,
             num_scheduled_tokens=batch.num_scheduled_tokens,
             prefill_kv_handle_by_request=prefill_kv_handle_by_request,
+            decode_capacity_tokens_by_request=decode_capacity_tokens_by_request,
             import_request_ids=import_request_ids,
             tcp_endpoint_by_request=tcp_endpoint_by_request,
             default_tcp_endpoint=default_tcp_endpoint,
@@ -182,6 +186,7 @@ class PAPPrefillKVPublisher:
         num_reqs: int,
         num_scheduled_tokens: tuple[int, ...],
         prefill_kv_handle_by_request: dict[Any, Any],
+        decode_capacity_tokens_by_request: dict[Any, Any],
         import_request_ids: set[Any],
         tcp_endpoint_by_request: dict[Any, Any],
         default_tcp_endpoint: Any,
@@ -251,21 +256,25 @@ class PAPPrefillKVPublisher:
             prefix_len = int(seq_lens_cpu[req_index].item())
             if prefix_len <= 1:
                 continue
+            decode_capacity_tokens = decode_capacity_tokens_by_request.get(
+                request_id
+            )
+            if decode_capacity_tokens is None:
+                decode_capacity_tokens = (
+                    _pap_unified_kv_export_decode_capacity_tokens()
+                )
+            decode_capacity_tokens = max(0, int(decode_capacity_tokens))
             import_key = (
                 request_id,
                 "sealed_manifest",
                 prefix_len,
+                decode_capacity_tokens,
                 prefill_kv_handle,
                 tcp_endpoint,
             )
             if import_key in self.imported_prefill_kv:
                 continue
-            block_seq_len = prefix_len
-            unified_capacity_tokens = (
-                _pap_unified_kv_export_decode_capacity_tokens()
-            )
-            if unified_capacity_tokens > 0:
-                block_seq_len += unified_capacity_tokens
+            block_seq_len = prefix_len + decode_capacity_tokens
             block_ids = _pap_block_ids_from_block_table(
                 block_table=block_table[req_index : req_index + 1],
                 seq_len=block_seq_len,
@@ -281,6 +290,7 @@ class PAPPrefillKVPublisher:
                 expected_layer_count=self.expected_layer_count,
                 ready_event_handle=ready_event_handle,
                 tcp_endpoint=tcp_endpoint,
+                decode_capacity_tokens=decode_capacity_tokens,
             )
             self.imported_prefill_kv.add(import_key)
             self.manifest_ready_events[(request_id, prefix_len)] = ready_event

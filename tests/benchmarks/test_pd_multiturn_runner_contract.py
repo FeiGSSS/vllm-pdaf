@@ -6,7 +6,6 @@ from examples.disaggregated.disaggregated_serving.disagg_proxy_multiturn import 
     _pop_conversation_id,
 )
 
-
 ROOT = Path(__file__).parents[2]
 RUNNER = (
     ROOT
@@ -90,6 +89,17 @@ def test_four_gpu_topology_runner_has_bounded_conversation_load() -> None:
     assert "ensure_gpus_idle" in text
 
 
+def test_pd_runner_uses_role_specific_scheduler_limits() -> None:
+    text = TOPOLOGY_RUNNER.read_text(encoding="utf-8")
+
+    assert "PD_LOAD_PREFILL_MAX_NUM_BATCHED_TOKENS" in text
+    assert "PD_LOAD_PREFILL_MAX_NUM_SEQS" in text
+    assert "PD_LOAD_DECODE_MAX_NUM_BATCHED_TOKENS" in text
+    assert "PD_LOAD_DECODE_MAX_NUM_SEQS" in text
+    assert '--max-num-batched-tokens "${PREFILL_MAX_NUM_BATCHED_TOKENS}"' in text
+    assert '--max-num-batched-tokens "${DECODE_MAX_NUM_BATCHED_TOKENS}"' in text
+
+
 def test_aiperf_capacity_lane_uses_concurrency_without_request_rate() -> None:
     profile_text = AIPERF_RUNNER.read_text(encoding="utf-8")
     capacity_text = CAPACITY_RUNNER.read_text(encoding="utf-8")
@@ -106,18 +116,24 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     assert "TURNS=10" in text
     assert "DOCUMENT_TOKENS=8192" in text
     assert "APPEND_TOKENS=512" in text
-    assert 'PAP_CAPACITY_OUTPUT_TOKENS:-256' in text
-    assert 'o${OUTPUT_TOKENS}_t10_delayed.jsonl' in text
+    assert 'PAP_CAPACITY_OUTPUT_TOKENS:-32' in text
+    assert 'multiturn_s${TOTAL_SESSIONS}_8k_plus512_random_o' in text
     assert "THINK_TIME_MS=3000" in text
     assert "TOOL_TIME_MS=1000" in text
     assert "TOOL_EVERY=3" in text
-    assert "PAP_CAPACITY_SESSIONS:-96" in text
+    assert "PAP_CAPACITY_SESSIONS:-32" in text
     assert "PAP_GPU_MEMORY_UTILIZATION=0.76" in text
     assert "PD_GPU_MEMORY_UTILIZATION=0.90" in text
-    assert "PAP_CAPACITY_PAP_3PA1P_POINTS:-16,24,32" in text
+    assert "PREFILL_MAX_NUM_BATCHED_TOKENS=16384" in text
+    assert "DECODE_MAX_NUM_BATCHED_TOKENS=64" in text
+    assert "MAX_NUM_SEQS=64" in text
+    assert "MAX_NUM_PARTIAL_PREFILLS=default_1" in text
+    assert "--max-num-partial-prefills" not in text
+    assert "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS=64" in text
+    assert "PAP_CAPACITY_PAP_3PA1P_POINTS:-12,20,28,32" in text
     assert "PAP_CAPACITY_PD_1P3D_POINTS:-8" in text
-    assert "PAP_CAPACITY_PD_2P2D_POINTS:-12,16" in text
-    assert "PAP_CAPACITY_PD_3P1D_POINTS:-4,8,12,16" in text
+    assert "PAP_CAPACITY_PD_2P2D_POINTS:-10,16,20,24" in text
+    assert "PAP_CAPACITY_PD_3P1D_POINTS:-8,14,20" in text
     assert '--sessions "${TOTAL_SESSIONS}"' in text
     assert 'PAP_MULTITURN_LOAD_CONVERSATIONS="${TOTAL_SESSIONS}"' in text
     assert 'PD_LOAD_CONVERSATIONS="${TOTAL_SESSIONS}"' in text
@@ -134,7 +150,7 @@ def test_capacity_lane_only_prunes_eligible_slo_failures() -> None:
     assert "PAP_CAPACITY_GPU_IDLE_STABILITY_SECONDS:-15" in text
 
 
-def test_aiperf_capacity_checks_use_live_concurrency_not_total_sessions() -> None:
+def test_aiperf_capacity_does_not_reject_load_above_scheduler_batch_size() -> None:
     pap_text = PAP_RUNNER.read_text(encoding="utf-8")
     pd_text = TOPOLOGY_RUNNER.read_text(encoding="utf-8")
 
@@ -142,11 +158,7 @@ def test_aiperf_capacity_checks_use_live_concurrency_not_total_sessions() -> Non
         'PAP_MULTITURN_ACTIVE_CONVERSATIONS="${PAP_AIPERF_CONCURRENCY}"'
         in pap_text
     )
-    assert (
-        "PAP_MULTITURN_ACTIVE_CONVERSATIONS + PA_COUNT - 1" in pap_text
-    )
-    assert (
-        "PAP_MULTITURN_LOAD_CONVERSATIONS + PA_COUNT - 1" not in pap_text
-    )
+    assert "active conversations exceed Projection max_num_seqs" not in pap_text
+    assert "per-PA conversations exceed Prefill max_num_seqs" not in pap_text
     assert 'ACTIVE_CONVERSATIONS="${PD_AIPERF_CONCURRENCY}"' in pd_text
     assert 'TOTAL_CONVERSATIONS=%q' in pd_text

@@ -32,10 +32,24 @@ def test_build_prefill_payload_sets_native_nixl_pd_flags() -> None:
         "remote_block_ids": None,
         "remote_host": None,
         "remote_port": None,
+        "pap_decode_capacity_tokens": 32,
     }
     assert "max_completion_tokens" not in payload
     assert "min_tokens" not in payload
     assert "stream_options" not in payload
+
+
+def test_build_prefill_payload_prefers_max_completion_tokens() -> None:
+    payload = build_prefill_payload(
+        {
+            "model": "qwen",
+            "prompt": "hello",
+            "max_tokens": 16,
+            "max_completion_tokens": 48,
+        }
+    )
+
+    assert payload["kv_transfer_params"]["pap_decode_capacity_tokens"] == 48
 
 
 def test_build_decode_payload_attaches_prefill_kv_params_without_aliasing() -> None:

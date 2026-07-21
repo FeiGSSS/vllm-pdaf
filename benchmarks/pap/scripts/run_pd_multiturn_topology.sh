@@ -24,6 +24,10 @@ OUTPUT_TOKENS="${PD_LOAD_OUTPUT_TOKENS:-256}"
 MAX_MODEL_LEN="${PD_LOAD_MAX_MODEL_LEN:-20000}"
 MAX_NUM_BATCHED_TOKENS="${PD_LOAD_MAX_NUM_BATCHED_TOKENS:-8192}"
 MAX_NUM_SEQS="${PD_LOAD_MAX_NUM_SEQS:-12}"
+PREFILL_MAX_NUM_BATCHED_TOKENS="${PD_LOAD_PREFILL_MAX_NUM_BATCHED_TOKENS:-${MAX_NUM_BATCHED_TOKENS}}"
+PREFILL_MAX_NUM_SEQS="${PD_LOAD_PREFILL_MAX_NUM_SEQS:-${MAX_NUM_SEQS}}"
+DECODE_MAX_NUM_BATCHED_TOKENS="${PD_LOAD_DECODE_MAX_NUM_BATCHED_TOKENS:-${MAX_NUM_BATCHED_TOKENS}}"
+DECODE_MAX_NUM_SEQS="${PD_LOAD_DECODE_MAX_NUM_SEQS:-${MAX_NUM_SEQS}}"
 GPU_MEMORY_UTILIZATION="${PD_LOAD_GPU_MEMORY_UTILIZATION:-0.90}"
 REQUEST_TIMEOUT_SECONDS="${PD_LOAD_REQUEST_TIMEOUT_SECONDS:-180}"
 CLIENT_MODE="${PD_LOAD_CLIENT_MODE:-canonical}"
@@ -248,6 +252,11 @@ HOSTS_DECODE=()
     "${OUTPUT_TOKENS}" "${MAX_MODEL_LEN}"
   printf 'MAX_NUM_BATCHED_TOKENS=%q\nMAX_NUM_SEQS=%q\n' \
     "${MAX_NUM_BATCHED_TOKENS}" "${MAX_NUM_SEQS}"
+  printf 'PREFILL_MAX_NUM_BATCHED_TOKENS=%q\nPREFILL_MAX_NUM_SEQS=%q\n' \
+    "${PREFILL_MAX_NUM_BATCHED_TOKENS}" "${PREFILL_MAX_NUM_SEQS}"
+  printf 'DECODE_MAX_NUM_BATCHED_TOKENS=%q\nDECODE_MAX_NUM_SEQS=%q\n' \
+    "${DECODE_MAX_NUM_BATCHED_TOKENS}" "${DECODE_MAX_NUM_SEQS}"
+  printf 'EXECUTION_MODE=eager\n'
   printf 'GPU_MEMORY_UTILIZATION=%q\nPREFILL_GPUS=%q\nDECODE_GPUS=%q\n' \
     "${GPU_MEMORY_UTILIZATION}" "${PREFILL_GPUS_CSV}" \
     "${DECODE_GPUS_CSV}"
@@ -281,8 +290,8 @@ for (( index=0; index<PREFILL_COUNT; index++ )); do
       --host 127.0.0.1 --port "${port}" --enforce-eager \
       --generation-config vllm --dtype float16 --tensor-parallel-size 1 \
       --max-model-len "${MAX_MODEL_LEN}" \
-      --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
-      --max-num-seqs "${MAX_NUM_SEQS}" --enable-chunked-prefill \
+      --max-num-batched-tokens "${PREFILL_MAX_NUM_BATCHED_TOKENS}" \
+      --max-num-seqs "${PREFILL_MAX_NUM_SEQS}" --enable-chunked-prefill \
       --enable-prefix-caching --block-size 16 \
       --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}" \
       --kv-transfer-config "${config}" \
@@ -308,8 +317,8 @@ for (( index=0; index<DECODE_COUNT; index++ )); do
       --host 127.0.0.1 --port "${port}" --enforce-eager \
       --generation-config vllm --dtype float16 --tensor-parallel-size 1 \
       --max-model-len "${MAX_MODEL_LEN}" \
-      --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
-      --max-num-seqs "${MAX_NUM_SEQS}" --enable-chunked-prefill \
+      --max-num-batched-tokens "${DECODE_MAX_NUM_BATCHED_TOKENS}" \
+      --max-num-seqs "${DECODE_MAX_NUM_SEQS}" --enable-chunked-prefill \
       --enable-prefix-caching --block-size 16 \
       --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}" \
       --kv-transfer-config "${config}" \
