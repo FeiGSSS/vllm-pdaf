@@ -234,8 +234,15 @@ hip_compat.h
 # Benchmark dataset
 benchmarks/**/*.json
 !benchmarks/pap/schemas/*.schema.json
-!benchmarks/pap/registry/runs/*.json
-!benchmarks/pap/registry/experiments/*.json
+!benchmarks/pap/experiments/**/experiment.json
+!benchmarks/pap/experiments/**/run.json
+
+# PAP experiment artifacts are colocated with tracked records, but raw output
+# remains local unless it is explicitly promoted to a small summary.
+benchmarks/pap/experiments/**/raw/
+benchmarks/pap/experiments/_staging/
+benchmarks/pap/experiments/legacy/capacity/
+benchmarks/pap/experiments/legacy/runs/
 
 # Linting
 actionlint

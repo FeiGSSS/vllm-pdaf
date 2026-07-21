@@ -34,7 +34,8 @@ case "${CLIENT_MODE}" in
     exit 2
     ;;
 esac
-RESULTS_ROOT="${RESULTS_ROOT:-${ROOT_DIR}/test/baseline/pap/results}"
+EXPERIMENTS_ROOT="${PAP_EXPERIMENTS_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments}"
+RESULTS_ROOT="${RESULTS_ROOT:-${EXPERIMENTS_ROOT}/_staging}"
 RUN_ID="${PD_LOAD_RUN_ID:-$(date +%Y%m%d_%H%M%S)_pd_${TOPOLOGY}_${TRANSFER_MODE}}"
 RUN_ROOT="${PD_LOAD_RUN_ROOT:-${RESULTS_ROOT}/runs/${RUN_ID}}"
 LOG_ROOT="${RUN_ROOT}/service_logs"

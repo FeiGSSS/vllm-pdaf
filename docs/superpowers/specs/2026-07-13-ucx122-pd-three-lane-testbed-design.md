@@ -270,11 +270,11 @@ quick，最后 C4 formal。
 
 完成后更新：
 
-1. `docs/design/pd-same-node-nixl-transfer-root-cause-20260713.md`：加入大白话根因、
+1. `benchmarks/pap/experiments/legacy/reports/pd-same-node-nixl-transfer-root-cause-20260713.md`：加入大白话根因、
    UCX 1.22 修复、为何与 `nvidia_peermem` 无关，以及旧 Push-only 决策被新证据修正；
 2. 新建三模式实验结果报告，保存 workload、Git/环境版本、每次 repetition、聚合表、
    correctness warning 和结论；
-3. `docs/design/pap-experiment-history-index.md`：登记 UCX 1.22 GET A/B、流式 metadata
+3. `benchmarks/pap/experiments/HISTORY.md`：登记 UCX 1.22 GET A/B、流式 metadata
    修复和三模式 formal 实验，链接原始结果目录。
 
 ## 11. 完成标准

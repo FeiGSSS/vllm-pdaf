@@ -215,7 +215,7 @@ Expected: syntax and diff checks exit zero; PAP tests pass with existing skips.
 ### Task 3: Clean experiment and evidence
 
 **Files:**
-- Modify: `docs/design/pap-xpayp-multiturn-kv-affinity-20260710.md`
+- Modify: `benchmarks/pap/experiments/legacy/reports/pap-xpayp-multiturn-kv-affinity-20260710.md`
 - Generate outside git:
   `/home/fei/research/PD/test/baseline/pap/results/runs/<RUN_ID>/`
 

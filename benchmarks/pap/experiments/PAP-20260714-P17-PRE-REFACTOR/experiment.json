@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "kind": "pap-experiment-record",
+  "status": "archived",
+  "experiment_id": "PAP-20260714-P17-PRE-REFACTOR",
+  "title": "P17 pre-refactor milestone freeze",
+  "recorded_at": "2026-07-14",
+  "hypothesis": "A tracked-clean three-repetition P17 1PA1P run can freeze the accepted PAP behavior and performance before runtime convergence begins.",
+  "evidence": "formal-clean",
+  "decision": "accepted",
+  "validity": {
+    "status": "valid",
+    "reasons": []
+  },
+  "baseline": {
+    "status": "present",
+    "description": "P17 1PA1P local_fast at dd2073bcf before runtime and existing-test refactoring.",
+    "run_ids": [
+      "20260714_dd2073bcf_p17_pre_refactor_formal"
+    ]
+  },
+  "treatment": {
+    "status": "not-applicable",
+    "description": "This record freezes a baseline and makes no causal treatment comparison.",
+    "run_ids": []
+  },
+  "primary_variable": {
+    "name": "milestone_state",
+    "baseline": "pre-refactor",
+    "treatment": "not-applicable"
+  },
+  "run_ids": [
+    "20260714_dd2073bcf_p17_pre_refactor_formal"
+  ],
+  "aggregation_method": "Pooled request-level samples across three repetitions; median and nearest-rank p90.",
+  "metrics": [
+    {
+      "name": "ttft_ms",
+      "scope": "round_1",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": 10527.16322150809,
+      "treatment_value": "not-applicable",
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "tpot_ms",
+      "scope": "round_1",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": 39.310184905879595,
+      "treatment_value": "not-applicable",
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "ttft_ms",
+      "scope": "steady_rounds_2_5",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": 208.21628900012,
+      "treatment_value": "not-applicable",
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "tpot_ms",
+      "scope": "steady_rounds_2_5",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": 50.48090203527667,
+      "treatment_value": "not-applicable",
+      "direction": "lower-is-better"
+    }
+  ],
+  "conclusion": "All three repetitions completed 20 of 20 requests, passed strict client, cache, Attention-stat, correctness, async decode-token join, routing, commit, lease, MPS, and zero-session-drain gates, and used one clean commit with empty tracked patches. This run is the accepted pre-refactor P17 baseline; it does not validate xPAyP or cross-host NIXL.",
+  "supersedes": [],
+  "superseded_by": null,
+  "raw_artifacts": [
+    {
+      "name": "aggregate",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/aggregate.json"
+      },
+      "sha256": "e55fc0bbc0bd7047c05fe229ebffc080b40568157be67171ccecad4dfe45027d"
+    },
+    {
+      "name": "rep1_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/result.json"
+      },
+      "sha256": "0628e3ebc672f942da42ba9490a46f8fd94a1954f9a861f35f8edbcc619baa9a"
+    },
+    {
+      "name": "rep2_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/result.json"
+      },
+      "sha256": "552ba069921eb12e98465c32dde65cf27436d3bb0a66f821ca7a40e7f6250be9"
+    },
+    {
+      "name": "rep3_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/result.json"
+      },
+      "sha256": "0d62fff5c55037308dacdf31b3fddd3bc3f4220ba85455278114f9514602bb02"
+    }
+  ],
+  "tags": [
+    "p17",
+    "pre-refactor",
+    "milestone-freeze",
+    "1pa1p",
+    "local-fast"
+  ]
+}

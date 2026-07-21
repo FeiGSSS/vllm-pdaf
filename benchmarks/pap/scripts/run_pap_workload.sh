@@ -136,7 +136,8 @@ if [[ ! "${PA_COUNT}" =~ ^[1-9][0-9]*$ \
   exit 2
 fi
 TOPOLOGY_TAG="$(printf '%s' "${TOPOLOGY}" | tr '[:lower:]' '[:upper:]')"
-RESULTS_ROOT="${RESULTS_ROOT:-/home/fei/research/PD/test/baseline/pap/results}"
+EXPERIMENTS_ROOT="${PAP_EXPERIMENTS_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments}"
+RESULTS_ROOT="${RESULTS_ROOT:-${EXPERIMENTS_ROOT}/_staging}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
 RUN_ROOT="${RUN_ROOT:-${RESULTS_ROOT}/runs/${RUN_ID}}"
 RUN_LOG_DIR="${RUN_LOG_DIR:-${RUN_ROOT}/service_logs}"

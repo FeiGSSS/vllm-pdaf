@@ -7,17 +7,18 @@ user tokens per later turn, 256 output tokens per turn, deterministic 3-second
 think and 1-second tool delays, pure concurrency, three request-level SLO tiers,
 96 fixed conversations per point, and a topology-specific ten-point scan.
 The initial integration result is documented in
-[`pap-pd-aiperf-four-gpu-results-20260716.md`](../../docs/design/pap-pd-aiperf-four-gpu-results-20260716.md).
+[`pap-pd-aiperf-four-gpu-results-20260716.md`](experiments/legacy/reports/pap-pd-aiperf-four-gpu-results-20260716.md).
 The historical cohort-sized capacity scan is documented in
-[`pap-pd-aiperf-capacity-results-20260720.md`](../../docs/design/pap-pd-aiperf-capacity-results-20260720.md).
+[`pap-pd-aiperf-capacity-results-20260720.md`](experiments/legacy/reports/pap-pd-aiperf-capacity-results-20260720.md).
 The corresponding historical think/tool result is documented in
-[`pap-pd-aiperf-think-tool-results-20260720.md`](../../docs/design/pap-pd-aiperf-think-tool-results-20260720.md).
+[`pap-pd-aiperf-think-tool-results-20260720.md`](experiments/legacy/reports/pap-pd-aiperf-think-tool-results-20260720.md).
 The current fixed-96-session result is documented in
-[`pap-pd-aiperf-fixed-session-results-20260720.md`](../../docs/design/pap-pd-aiperf-fixed-session-results-20260720.md).
+[`PAP-20260720-AIPERF-FIXED96`](experiments/PAP-20260720-AIPERF-FIXED96/report.md).
 
-This directory defines the canonical PAP benchmark profile and the tracked
-metadata layer above immutable raw results. It does not move or rewrite raw run
-directories.
+This directory defines the canonical PAP benchmark profile and experiment
+storage. Repository-local raw results are colocated below `experiments/`;
+machine-shared historical results stay external until their ownership is
+resolved.
 
 ## Layout
 
@@ -25,14 +26,13 @@ directories.
 - `tooling/` contains offline trace summaries and remote-Attention diagnostics;
   runtime code under `vllm/pap/` does not import it.
 - `schemas/` defines versioned run-manifest and experiment-record contracts.
-- `registry/runs/` records what happened in a run without copying raw data.
-- `registry/experiments/` records hypotheses, evidence, conclusions, decisions,
-  and supersede relationships.
-- `registry/history_status.toml` assigns normalized evidence, decision, and
+- `experiments/` colocates each experiment's metadata, conclusion, run
+  manifests, and ignored raw artifacts.
+- `experiments/history_status.toml` assigns normalized evidence, decision, and
   successor states to every reviewed row in the historical ledger without
   duplicating its metrics, conclusions, or raw paths into dozens of JSON files.
-- `registry/INDEX.md` is generated from full records and the compact history
-  status overlay.
+- `experiments/INDEX.md` is generated from full records and the compact history
+  status overlay; `experiments/HISTORY.md` retains the detailed ledger.
 - `import_legacy_run.py` converts a reviewed legacy formal directory into a new
   manifest without writing to the source directory.
 - `validate_registry.py` applies schema and cross-record fail-closed checks.
@@ -56,13 +56,13 @@ values from `profiles/p17_1pa1p.toml`. Machine-specific model and corpus roots
 remain local overrides (`PAP_MODEL_ROOT` and `PAP_CORPUS_ROOT`).
 
 The current accepted formal baseline is
-[`PAP-20260716-TRITON-72-20-BASELINE`](registry/experiments/PAP-20260716-TRITON-72-20-BASELINE.json).
+[`PAP-20260716-TRITON-72-20-BASELINE`](experiments/PAP-20260716-TRITON-72-20-BASELINE/experiment.json).
 Its three C4 repetitions passed all gates on clean commit `3a6fe93d1`, with
 9386.68 ms R1 TTFT, 35.00 ms R1 TPOT, 198.21 ms steady TTFT, and 41.28 ms
 steady TPOT.
 
 The accepted four-GPU capacity milestone is
-[`PAP-20260716-4GPU-CONV-AFFINITY`](../../docs/design/pap-pd-four-gpu-conversation-affinity-results-20260716.md).
+[`PAP-20260716-4GPU-CONV-AFFINITY`](experiments/PAP-20260716-4GPU-CONV-AFFINITY/report.md).
 It fixes PAP at 3PA1P and compares it with 1P3D, 2P2D, and 3P1D using the
 standard one-way P→D NIXL flow. This is controlled dirty-worktree evidence,
 not a replacement for the formal P17 release baseline. Bidirectional D→P is
@@ -107,20 +107,20 @@ evidence rather than a formal release record:
 
 | Condition | FA2 | PAP Triton split-4 | Max error vs FA2 |
 | --- | ---: | ---: | ---: |
-| [full 92 SM](../../test/baseline/pap/results/runs/20260716_paged_decode_backend_probe/full92.json) | 0.3511 ms | 0.3313 ms | 1.91e-6 |
-| [static-MPS 28 SM](../../test/baseline/pap/results/runs/20260716_paged_decode_backend_probe/mps28.json) | 0.5727 ms | 0.3383 ms | 1.91e-6 |
+| [full 92 SM](experiments/legacy/runs/20260716_paged_decode_backend_probe/full92.json) | 0.3511 ms | 0.3313 ms | 1.91e-6 |
+| [static-MPS 28 SM](experiments/legacy/runs/20260716_paged_decode_backend_probe/mps28.json) | 0.5727 ms | 0.3383 ms | 1.91e-6 |
 
 The matching P17 C4 quick run reduced steady TPOT from 49.75 ms to 42.47 ms;
 the PD control is 41.97 ms. All 20 requests, token digests, cache checks,
 lifecycle audits, static-MPS checks, and session drain passed. Preserve the
-[C1](../../test/baseline/pap/results/runs/20260716_triton_decode_c1_quick/aggregate.json)
-and [C4](../../test/baseline/pap/results/runs/20260716_triton_decode_c4_quick/aggregate.json)
+[C1](experiments/legacy/runs/20260716_triton_decode_c1_quick/aggregate.json)
+and [C4](experiments/legacy/runs/20260716_triton_decode_c4_quick/aggregate.json)
 raw diagnostic results; the accepted three-repetition result is linked above.
 
 #### Deferred alternative: low-smem FA2 decode specialization
 
 This is no longer a current P17 blocker. The accepted diagnostic
-[`PAP-20260715-PAGED-FA-SM-PROBE`](registry/experiments/PAP-20260715-PAGED-FA-SM-PROBE.json)
+[`PAP-20260715-PAGED-FA-SM-PROBE`](experiments/PAP-20260715-PAGED-FA-SM-PROBE/experiment.json)
 shows that the current FA2 kernel uses about 82 KiB of shared memory per CTA,
 limiting residency to one CTA per SM. P17 instead uses vLLM's existing Triton
 paged-decode kernel with four KV splits; matched-shape and C4 E2E measurements
@@ -142,12 +142,12 @@ path is represented as:
 ```json
 {
   "root_id": "pap-worktree",
-  "relative_path": "test/baseline/pap/results/runs/example/result.json"
+  "relative_path": "benchmarks/pap/experiments/PAP-ID/runs/RUN-ID/raw/result.json"
 }
 ```
 
 Root IDs are resolved only by the command performing local verification. The
-initial registry uses:
+experiment records use:
 
 | Root ID | Local meaning |
 | --- | --- |
@@ -160,9 +160,9 @@ omitted or reconstructed by guesswork. `null` and `not-applicable` express a
 known absence; they do not mean missing evidence.
 
 Full JSON run/experiment records are required for the current milestone and
-all new experiments. The 43 pre-milestone experiments and 15 negative results
-remain detailed in `docs/design/pap-experiment-history-index.md`; the compact
-status overlay makes their coverage and lifecycle machine-checkable. A legacy
+all new experiments. The 44 reviewed historical experiments and 16 negative
+results remain detailed in `experiments/HISTORY.md`; the compact status overlay
+makes their coverage and lifecycle machine-checkable. A legacy
 row is promoted to a full JSON record only when its raw artifacts are reviewed
 and the additional metadata is useful, so migration does not fabricate fields
 or duplicate prose.
@@ -212,15 +212,15 @@ Import a reviewed legacy run into a new output file:
 
 The importer reads the raw directory and writes only the requested output. A
 human must review the resulting evidence grade, conclusion, metrics, missing
-fields, and decision before adding it to the registry.
+fields, and decision before adding it to an experiment bundle.
 
 Regenerate or check the deterministic index:
 
 ```bash
 .venv/bin/python benchmarks/pap/generate_experiment_index.py \
-  --output benchmarks/pap/registry/INDEX.md
+  --output benchmarks/pap/experiments/INDEX.md
 .venv/bin/python benchmarks/pap/generate_experiment_index.py \
-  --output benchmarks/pap/registry/INDEX.md --check
+  --output benchmarks/pap/experiments/INDEX.md --check
 ```
 
 Run offline diagnostics through the stable tool entry points:

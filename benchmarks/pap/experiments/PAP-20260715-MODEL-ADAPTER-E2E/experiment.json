@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "kind": "pap-experiment-record",
+  "status": "current",
+  "experiment_id": "PAP-20260715-MODEL-ADAPTER-E2E",
+  "title": "P17 model-adapter extraction regression gate",
+  "recorded_at": "2026-07-15",
+  "hypothesis": "Moving the Qwen3 PAP forward-batch, Projection Attention, and Prefill KV publication logic into vllm.pap.model preserves the accepted P17 behavior and performance.",
+  "evidence": "formal-clean",
+  "decision": "accepted",
+  "validity": {
+    "status": "valid",
+    "reasons": []
+  },
+  "baseline": {
+    "status": "not-applicable",
+    "description": "The independently registered PAP-20260715-INTEGRATION-E2E record supplies the comparison values; registry ownership keeps that run with its original experiment.",
+    "run_ids": []
+  },
+  "treatment": {
+    "status": "present",
+    "description": "Three clean P17 repetitions after extracting typed forward context, Projection Attention execution, and Prefill sealed-KV publication into vllm.pap.model.",
+    "run_ids": [
+      "20260715_003029a77_p17_model_adapter_formal"
+    ]
+  },
+  "primary_variable": {
+    "name": "model_boundary",
+    "baseline": "embedded_qwen3_pap_logic",
+    "treatment": "vllm_pap_model_adapters"
+  },
+  "run_ids": [
+    "20260715_003029a77_p17_model_adapter_formal"
+  ],
+  "aggregation_method": "Pooled request-level samples across three repetitions per run; median comparison with a 5% regression threshold.",
+  "metrics": [
+    {
+      "name": "ttft_ms",
+      "scope": "round_1",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": 10538.119413002278,
+      "treatment_value": 10528.011343500111,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "tpot_ms",
+      "scope": "round_1",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": 39.20242429802801,
+      "treatment_value": 39.231980954897224,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "ttft_ms",
+      "scope": "steady_rounds_2_5",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": 206.69669449853245,
+      "treatment_value": 203.37082199694123,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "tpot_ms",
+      "scope": "steady_rounds_2_5",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": 50.33614597646816,
+      "treatment_value": 50.348064986282424,
+      "direction": "lower-is-better"
+    }
+  ],
+  "conclusion": "All three clean repetitions at 003029a77 completed 20 of 20 requests and passed client, cache, Attention-stat, correctness, async decode-token join, routing, commit, lease, MPS, and zero-session-drain gates. Relative changes versus b695efe69 were -0.10% R1 TTFT, +0.08% R1 TPOT, -1.61% steady TTFT, and +0.02% steady TPOT; all passed the 5% regression gate. xPAyP and cross-host NIXL remain preserved-unverified.",
+  "supersedes": [],
+  "superseded_by": null,
+  "raw_artifacts": [
+    {
+      "name": "aggregate",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260715-MODEL-ADAPTER-E2E/runs/20260715_003029a77_p17_model_adapter_formal/raw/aggregate.json"
+      },
+      "sha256": "0ba1046fd9a7d812f6aa5422fb0edc8617ebf5f80db94a0442d2bffec512e6a6"
+    },
+    {
+      "name": "rep1_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260715-MODEL-ADAPTER-E2E/runs/20260715_003029a77_p17_model_adapter_formal/raw/rep1/result.json"
+      },
+      "sha256": "ff712a00dfc38b15ff22317b52de067fd4da663b00bf115f512261a4acea04b1"
+    },
+    {
+      "name": "rep2_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260715-MODEL-ADAPTER-E2E/runs/20260715_003029a77_p17_model_adapter_formal/raw/rep2/result.json"
+      },
+      "sha256": "76b59460ea5dbf30f453f212dbaff95b1a80aeac0e85daefc0986a9da231a163"
+    },
+    {
+      "name": "rep3_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260715-MODEL-ADAPTER-E2E/runs/20260715_003029a77_p17_model_adapter_formal/raw/rep3/result.json"
+      },
+      "sha256": "78b0a629c1ad3e2a86e35b7c37d00aade5c93f70c86e1eb8c897cd4fec43f1a9"
+    }
+  ],
+  "tags": [
+    "p17",
+    "model-adapter",
+    "qwen3",
+    "regression-gate",
+    "1pa1p",
+    "local-fast"
+  ]
+}

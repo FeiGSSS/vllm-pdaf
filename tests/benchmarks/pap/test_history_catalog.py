@@ -8,8 +8,8 @@ from benchmarks.pap.history_catalog import load_history_catalog
 
 
 ROOT = Path(__file__).parents[3]
-INDEX_PATH = ROOT / "docs/design/pap-experiment-history-index.md"
-STATUS_PATH = ROOT / "benchmarks/pap/registry/history_status.toml"
+INDEX_PATH = ROOT / "benchmarks/pap/experiments/HISTORY.md"
+STATUS_PATH = ROOT / "benchmarks/pap/experiments/history_status.toml"
 
 
 def test_history_catalog_covers_every_reviewed_row() -> None:

@@ -2,7 +2,7 @@
 
 This directory is the Git-tracked control plane for the fixed 1P1D PD versus
 1PA1P PAP multi-turn comparison. Raw service logs and metrics remain under
-`test/baseline/pap/results/runs/`.
+`benchmarks/pap/experiments/legacy/runs/`.
 
 The frozen workload is described by `profile.json`. Each formal reference is
 the cross-run median of three serial repetitions with a full service restart.
@@ -19,7 +19,7 @@ schema-v2 comparison rejects them.
 `pd_reference.json` was created from:
 
 ```text
-test/baseline/pap/results/runs/
+benchmarks/pap/experiments/legacy/runs/
   20260712_161402_7e81e2d10_pd_multiturn_formal/
 ```
 
@@ -45,7 +45,7 @@ The formal medians are:
 `pap_reference.json` was created from:
 
 ```text
-test/baseline/pap/results/runs/
+benchmarks/pap/experiments/legacy/runs/
   20260712_201947_0727ed946_pap_multiturn_formal/
 ```
 
@@ -65,7 +65,8 @@ the three repetitions; the output signatures and exact `16272`-token hit were
 identical in all three.
 
 The first controlled quick A/B at
-`results/runs/20260712_north_star_local_fast_quick` changed the PAP
+`benchmarks/pap/experiments/legacy/runs/20260712_north_star_local_fast_quick`
+changed the PAP
 OFFLOAD_EXEC bundle from NIXL mailbox/direct-output-off to same-node
 `local_fast`/direct-output-on. It reduced
 round-two TTFT/TPOT from `278.483/55.967 ms` to `246.587/38.603 ms`, preserved
@@ -74,11 +75,13 @@ gates. The runner now fixes `local_fast`; promotion still requires a clean
 three-repetition formal result. The v2 formal above completes that promotion.
 
 The original v2 local-fast control at commit `7e81e2d10` remains archived at
-`results/runs/20260712_162130_7e81e2d10_pap_multiturn_formal`. It measured
+`benchmarks/pap/experiments/legacy/runs/20260712_162130_7e81e2d10_pap_multiturn_formal`.
+It measured
 round-two TTFT/TPOT `235.388/39.128 ms`. Stage A commit `6bc383dab` replaced
 per-element CUDA writes on paged-FA metadata misses with bulk construction,
 preserving key/LRU/padding semantics. Its clean formal result remains archived
-at `results/runs/20260712_171755_6bc383dab_pap_multiturn_formal`; it improved
+at `benchmarks/pap/experiments/legacy/runs/20260712_171755_6bc383dab_pap_multiturn_formal`;
+it improved
 round-two TTFT by `7.28%` and TPOT by `21.83%` over the original v2 control.
 
 Stage B commit `c134bc3d9` made slot-plan keys generation-aware. Legal
@@ -110,7 +113,8 @@ as a statistically large performance win.
 
 Stage D diagnostic commit `ad95c8c12` adds deferred CUDA-event timing without
 changing the default path. The quick run at
-`results/runs/20260712_stagec_deferred_gpu_trace_v1` increased round-one and
+`benchmarks/pap/experiments/legacy/runs/20260712_stagec_deferred_gpu_trace_v1`
+increased round-one and
 round-two TPOT by only `2.12%/1.77%`, versus roughly 22% for the old
 per-layer-synchronize trace. It recorded exact span counts with zero pending,
 drop, or error records. Per-layer p50 durations were `0.567 ms` for QKV ready

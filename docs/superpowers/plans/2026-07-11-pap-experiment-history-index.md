@@ -38,9 +38,9 @@ PAP benchmark metadata. No runtime code or dependencies are added.
 ### Task 1: Build the evidence inventory and index skeleton
 
 **Files:**
-- Create: `docs/design/pap-experiment-history-index.md`
+- Create: `benchmarks/pap/experiments/HISTORY.md`
 - Read: `docs/superpowers/specs/2026-07-11-pap-experiment-history-index-design.md`
-- Read: all tracked `docs/design/pap-*.md` and `docs/superpowers/*/*pap*.md`
+- Read: all tracked `benchmarks/pap/experiments/legacy/reports/pap-*.md` and `docs/superpowers/*/*pap*.md`
 - Read: `$PAP_RESULTS`, `$PAP_REPO_RESULTS`, `$PD_RESULTS`, and
   `$PAP_PROFILES`
 
@@ -109,7 +109,7 @@ repo-untracked/external/temporary artifacts.
 Run:
 
 ```bash
-rg -n '^## |^### M[0-9]+\.' docs/design/pap-experiment-history-index.md
+rg -n '^## |^### M[0-9]+\.' benchmarks/pap/experiments/HISTORY.md
 git diff --check
 ```
 
@@ -119,7 +119,7 @@ present; diff check exits zero.
 ### Task 2: Populate the phase timeline and module dossiers
 
 **Files:**
-- Modify: `docs/design/pap-experiment-history-index.md`
+- Modify: `benchmarks/pap/experiments/HISTORY.md`
 - Reference: all tracked PAP design/spec/plan documents
 
 **Interfaces:**
@@ -175,10 +175,10 @@ Run:
 
 ```bash
 for id in M1 M2 M3 M4 M5 M6 M7 M8 M9 M10; do
-  rg -q "^### ${id}\." docs/design/pap-experiment-history-index.md
+  rg -q "^### ${id}\." benchmarks/pap/experiments/HISTORY.md
 done
 rg -n '^#### (问题与动机|设计与机制|关键实现提交|关键实验与证据|负结果与被替代方案|当前结论与边界|深入阅读与原始证据)$' \
-  docs/design/pap-experiment-history-index.md
+  benchmarks/pap/experiments/HISTORY.md
 git diff --check
 ```
 
@@ -188,7 +188,7 @@ disclosure headings.
 ### Task 3: Populate the experiment ledger and negative-result registry
 
 **Files:**
-- Modify: `docs/design/pap-experiment-history-index.md`
+- Modify: `benchmarks/pap/experiments/HISTORY.md`
 - Read: representative run metadata, benchmark JSON, audit files, and design
   result tables
 
@@ -271,10 +271,10 @@ for id in \
   PAP-20260711-ROUTE-COPY \
   PAP-20260711-MULTITURN-EXACT \
   PAP-20260711-MULTITURN-CHAT; do
-  rg -q "$id" docs/design/pap-experiment-history-index.md
+  rg -q "$id" benchmarks/pap/experiments/HISTORY.md
 done
 rg -n 'reject|回滚|被替代|invalid|退化|负结果' \
-  docs/design/pap-experiment-history-index.md
+  benchmarks/pap/experiments/HISTORY.md
 git diff --check
 ```
 
@@ -284,7 +284,7 @@ negative decisions are discoverable; diff check exits zero.
 ### Task 4: Verify provenance, links, and commit the index
 
 **Files:**
-- Modify: `docs/design/pap-experiment-history-index.md`
+- Modify: `benchmarks/pap/experiments/HISTORY.md`
 - Modify: `docs/superpowers/plans/2026-07-11-pap-experiment-history-index.md`
 
 **Interfaces:**
@@ -298,7 +298,7 @@ Extract backticked 9-character hexadecimal hashes and verify each object:
 
 ```bash
 for commit in $(rg -o '`[0-9a-f]{9}`' \
-  docs/design/pap-experiment-history-index.md | tr -d '`' | sort -u); do
+  benchmarks/pap/experiments/HISTORY.md | tr -d '`' | sort -u); do
   git cat-file -e "${commit}^{commit}"
 done
 ```
@@ -312,7 +312,7 @@ broken links; do not replace them with opaque prose references.
 
 ```bash
 rg -o '\[[^]]+\]\(([^)]+\.md)\)' \
-  docs/design/pap-experiment-history-index.md
+  benchmarks/pap/experiments/HISTORY.md
 git diff --check
 ```
 
@@ -330,8 +330,8 @@ Check:
 
 ```bash
 rg -n 'T[B]D|T[O]DO|F[I]XME|unknown without explanation' \
-  docs/design/pap-experiment-history-index.md || true
-rg -n '^## |^### M[0-9]+\.' docs/design/pap-experiment-history-index.md
+  benchmarks/pap/experiments/HISTORY.md || true
+rg -n '^## |^### M[0-9]+\.' benchmarks/pap/experiments/HISTORY.md
 git diff --check
 ```
 
@@ -344,7 +344,7 @@ Stage only the index and this plan, then commit with hooks disabled:
 
 ```bash
 git add \
-  docs/design/pap-experiment-history-index.md \
+  benchmarks/pap/experiments/HISTORY.md \
   docs/superpowers/plans/2026-07-11-pap-experiment-history-index.md
 git commit --no-verify -m "Index PAP development and experiment history"
 ```

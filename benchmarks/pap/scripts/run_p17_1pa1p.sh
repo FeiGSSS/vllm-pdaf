@@ -7,7 +7,8 @@ PROFILE_PATH="${PAP_PROFILE_PATH:-${ROOT_DIR}/benchmarks/pap/profiles/p17_1pa1p.
 PROFILE_LOADER="${ROOT_DIR}/benchmarks/pap/profile_env.py"
 RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_pap_workload.sh"
 COMPARER="${ROOT_DIR}/benchmarks/multi_turn/compare_pap_pd_multiturn_load.py"
-RESULTS_ROOT="${RESULTS_ROOT:-${ROOT_DIR}/test/baseline/pap/results}"
+EXPERIMENTS_ROOT="${PAP_EXPERIMENTS_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments}"
+RESULTS_ROOT="${RESULTS_ROOT:-${EXPERIMENTS_ROOT}/_staging}"
 MODE="${1:-quick}"
 LOAD_SHAPE="${2:-c4}"
 

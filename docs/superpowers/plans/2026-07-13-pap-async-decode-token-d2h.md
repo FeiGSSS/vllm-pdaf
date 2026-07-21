@@ -3,8 +3,8 @@
 Status update (2026-07-14): implementation and C2/C4 validation completed.
 The checklist below is retained as the original development plan; measured
 results and the later default-enable decision are recorded in
-`docs/design/pap-async-decode-token-d2h-results-20260713.md` and
-`docs/design/pap-async-static-mps-c4-ab-results-20260714.md`.
+`benchmarks/pap/experiments/legacy/reports/pap-async-decode-token-d2h-results-20260713.md` and
+`benchmarks/pap/experiments/legacy/reports/pap-async-static-mps-c4-ab-results-20260714.md`.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use
 > superpowers:subagent-driven-development (recommended) or
@@ -63,7 +63,7 @@ and the fixed five-round C2/C4 benchmark scripts.
   tests for all new behavior.
 - Modify `tests/pap/test_pap_attention_executor.py`: compute-path join and
   release/drain tests.
-- Modify `docs/design/pap-experiment-history-index.md` and create a result note
+- Modify `benchmarks/pap/experiments/HISTORY.md` and create a result note
   after the measured A/B.
 
 ---
@@ -184,8 +184,8 @@ and the fixed five-round C2/C4 benchmark scripts.
 ### Task 6: C2 correctness canary and C4 70:30 performance A/B
 
 **Files:**
-- Create: `docs/design/pap-async-decode-token-d2h-results-20260713.md`
-- Modify: `docs/design/pap-experiment-history-index.md`
+- Create: `benchmarks/pap/experiments/legacy/reports/pap-async-decode-token-d2h-results-20260713.md`
+- Modify: `benchmarks/pap/experiments/HISTORY.md`
 
 **Interfaces:**
 - OFF and ON use the same commit, workload, GPUs 1/2, model, exact-token

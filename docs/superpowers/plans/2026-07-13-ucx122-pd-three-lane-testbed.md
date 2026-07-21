@@ -303,9 +303,9 @@ bash -n .claude/skills/vllm-pap-benchmark/scripts/run_pd_pap_multiturn_load.sh
 ### Task 5: Run staged GPU validation and archive evidence
 
 **Files:**
-- Modify: `docs/design/pd-same-node-nixl-transfer-root-cause-20260713.md`
-- Create: `docs/design/pd-oneway-twoway-pap-five-turn-results-20260713.md`
-- Modify: `docs/design/pap-experiment-history-index.md`
+- Modify: `benchmarks/pap/experiments/legacy/reports/pd-same-node-nixl-transfer-root-cause-20260713.md`
+- Create: `benchmarks/pap/experiments/legacy/reports/pd-oneway-twoway-pap-five-turn-results-20260713.md`
+- Modify: `benchmarks/pap/experiments/HISTORY.md`
 - Modify: `.codex/skills/vllm-pap-benchmark/SKILL.md`
 
 **Interfaces:**

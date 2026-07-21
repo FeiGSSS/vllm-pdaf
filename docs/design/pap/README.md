@@ -33,9 +33,9 @@ Prefill–Attention–Projection implementation. Read these documents in order:
    decisions, and the frozen validation result.
 
 The detailed historical ledger remains at
-[PAP development and experiment history](../pap-experiment-history-index.md).
+[PAP development and experiment history](../../../benchmarks/pap/experiments/HISTORY.md).
 Its normalized status index is generated at
-[the PAP experiment registry](../../../benchmarks/pap/registry/INDEX.md).
+[the PAP experiment index](../../../benchmarks/pap/experiments/INDEX.md).
 
 ## Current boundary
 
@@ -52,10 +52,11 @@ validation for them.
 
 ## Legacy documents
 
-The `docs/design/pap-*.md` files contain historical designs, experiments, root
-cause reports, and handoffs. They remain evidence, but they are not the source
-of current runtime defaults. When a historical statement conflicts with this
-directory or the experiment registry, the current docs and registry win.
+The [`benchmarks/pap/experiments/legacy/reports/`](../../../benchmarks/pap/experiments/legacy/reports/)
+directory contains historical designs, experiments, root-cause reports, and
+handoffs. They remain evidence, but they are not the source of current runtime
+defaults. When a historical statement conflicts with this directory or the
+experiment index, the current docs and experiment records win.
 
 `docs/superpowers/` contains historical implementation plans/specifications.
 They are retained temporarily for traceability, are not an active workflow,

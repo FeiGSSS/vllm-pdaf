@@ -15,7 +15,8 @@ DATASET_GENERATOR="${ROOT_DIR}/benchmarks/pap/aiperf/generate_multiturn_dataset.
 RUN_SUMMARIZER="${ROOT_DIR}/benchmarks/pap/aiperf/summarize_capacity_run.py"
 MATRIX_SUMMARIZER="${ROOT_DIR}/benchmarks/pap/aiperf/summarize_capacity_matrix.py"
 
-RESULTS_ROOT="${RESULTS_ROOT:-${ROOT_DIR}/test/baseline/pap/results}"
+EXPERIMENTS_ROOT="${PAP_EXPERIMENTS_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments}"
+RESULTS_ROOT="${RESULTS_ROOT:-${EXPERIMENTS_ROOT}/_staging}"
 MATRIX_ID="${PAP_CAPACITY_MATRIX_ID:-$(date +%Y%m%d_%H%M%S)_aiperf_capacity}"
 MATRIX_ROOT="${PAP_CAPACITY_MATRIX_ROOT:-${RESULTS_ROOT}/capacity/${MATRIX_ID}}"
 ARCHITECTURES_CSV="${PAP_CAPACITY_ARCHITECTURES:-pap_3pa1p,pd_1p3d,pd_2p2d,pd_3p1d}"

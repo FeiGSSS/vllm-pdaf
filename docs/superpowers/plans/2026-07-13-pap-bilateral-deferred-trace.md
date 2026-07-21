@@ -323,8 +323,8 @@ pre-existing untracked artifacts.
 ### Task 7: Fixed C4 Diagnostic Matrix and Result Report
 
 **Files:**
-- Create after measurement: `docs/design/pap-bilateral-deferred-trace-results-20260713.md`
-- Modify after measurement: `docs/design/pap-experiment-history-index.md`
+- Create after measurement: `benchmarks/pap/experiments/legacy/reports/pap-bilateral-deferred-trace-results-20260713.md`
+- Modify after measurement: `benchmarks/pap/experiments/HISTORY.md`
 
 **Interfaces:**
 - Consumes the PAP and PD C4 runners.

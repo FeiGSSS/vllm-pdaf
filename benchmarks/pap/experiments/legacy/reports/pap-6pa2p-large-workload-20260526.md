@@ -1,0 +1,1340 @@
+# PAP 6PA2P Large Workload Matrix Attempt
+
+Date: 2026-05-26
+
+## Purpose
+
+This note records the first large-workload matrix attempt for comparing:
+
+- Native disaggregated `6P2D`
+- PAP `6PA2P` serial Projection/Attention
+- PAP `6PA2P` runner-level 3-way microbatch pipeline
+
+The intended workload was Qwen3-8B, `num_prompts=600`, input length `1024`,
+output length `64`, and offered QPS `32` and `64`. The goal was to increase
+scheduler batch pressure enough for the 3-way Projection/Attention overlap to
+show a clearer advantage over serial PAP.
+
+## Environment Notes
+
+The interactive shell had HTTP proxy variables set:
+
+```bash
+HTTP_PROXY=http://localhost:3128
+HTTPS_PROXY=http://localhost:3128
+```
+
+All valid benchmark attempts must clear these variables:
+
+```bash
+env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+    -u http_proxy -u https_proxy -u all_proxy \
+    NO_PROXY=127.0.0.1,localhost \
+    no_proxy=127.0.0.1,localhost \
+    ...
+```
+
+The first `6P2D` run without clearing the proxy was invalid: all requests failed
+with HTTP 403 and local service logs did not receive benchmark POST traffic.
+
+## Common PAP Configuration
+
+PAP attempts used the following overrides:
+
+```bash
+BENCH_TIMEOUT=1800
+SERVER_START_TIMEOUT=900
+CLUSTER_READY_WAIT_SECONDS=15
+PAP_MODE=pap
+PAP_OFFLOAD_EXEC_TRANSPORT=nixl_mailbox
+PAP_DIRECT_MAILBOX_OUTPUT=1
+PAP_OFFLOAD_EXEC_MICROBATCH_COUNT=0
+PAP_NIXL_MAILBOX_SLOT_COUNT=8
+PAP_NIXL_MAILBOX_RECV_SLOT_COUNT=8
+PAP_NIXL_MAILBOX_ASYNC_SEND_SLOTS=4
+PAP_Q_FIRST_KV_LATER=0
+PAP_Q_FIRST_PROJECTION=0
+PAP_ATTENTION_Q_FIRST_PARTIAL=0
+PAP_PREFILL_MPS_PERCENT=30
+PAP_ATTENTION_MPS_PERCENT=70
+PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.60
+PAP_PROJECTION_GPU_MEMORY_UTILIZATION=0.80
+```
+
+The serial PAP attempt set `PAP_RUNNER_MICROBATCH_COUNT=0`; the pipeline attempt
+set `PAP_RUNNER_MICROBATCH_COUNT=3` and
+`PAP_RUNNER_MICROBATCH_DECODE_THRESHOLD=12`.
+
+## Results
+
+| Architecture | QPS | Run directory | Result status | Completed | Failed | Mean TTFT | Mean TPOT | P99 TPOT | Notes |
+| --- | ---: | --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| `6P2D` | 32 | `/home/fei/research/PD/test/baseline/disaggregated/results/runs/20260526_145306` | valid | 600 | 0 | 437.15 ms | 37.83 ms | 40.43 ms | Request throughput 28.71 req/s; total throughput 30804.95 tok/s. |
+| `6P2D` | 64 | `/home/fei/research/PD/test/baseline/disaggregated/results/runs/20260526_145306` | invalid | 461 | 139 | 3905.25 ms | 40.72 ms | 44.57 ms | Prefill worker OOM; do not use as a performance point. |
+| `6PA2P` serial | 32 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_145603` | invalid/stuck | 0 | n/a | n/a | n/a | n/a | Benchmark stayed at 0 completed while GPUs became idle; run was terminated. |
+| `6PA2P` 3-way | 32 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_150828` | invalid/failed | 0 | 600 | 0.00 ms | 0.00 ms | 0.00 ms | Same stuck pattern before termination; after termination benchmark reported incomplete streaming payloads for all requests. |
+
+## Failure Details
+
+The valid `6P2D` qps32 result is the only usable performance point from this
+matrix attempt.
+
+The `6P2D` qps64 attempt is invalid because a prefill worker hit CUDA OOM. The
+benchmark JSON still contains partial metrics, but they mix 461 successes with
+139 failures and must not be used for speedup calculations.
+
+Both PAP `6PA2P` qps32 attempts reached the same failure mode:
+
+- Prefill and Attention workers accepted requests and imported paged KV into
+  Attention.
+- The proxy posted requests to Projection and saw HTTP 200 headers.
+- The benchmark did not receive completed streaming responses.
+- GPU utilization dropped back to 0% while Projection EngineCore processes
+  remained alive.
+
+For the 3-way run, after terminating the stuck service the benchmark reported
+`600` failed requests with `ClientPayloadError: Response payload is not
+completed`. This is consistent with the proxy/Projection streaming response
+being opened but never completed before shutdown. It is not a valid throughput
+measurement.
+
+## Interpretation
+
+The planned large-workload comparison cannot be used yet to show 3-way advantage.
+At `num_prompts=600`, input `1024`, output `64`, qps `32`, current PAP `6PA2P`
+does not complete either in serial mode or in 3-way runner-microbatch mode.
+
+The likely bottleneck is not simply lack of Projection/Attention overlap. The
+evidence points to a PAP serving-path liveness issue after prefill KV import and
+Projection streaming response setup. Because both serial and 3-way fail at the
+same boundary, further speedup experiments should first reduce or instrument this
+failure mode rather than treating the runs as slow-but-valid measurements.
+
+## Recommended Next Steps
+
+- Add PAP streaming diagnostics around `_stream_projection` to log first byte,
+  last byte, exceptions, and request completion for each Projection response.
+- Enable targeted `PAP_OFFLOAD_EXEC_TRACE=1` on a smaller reproduction to locate
+  whether Projection is blocked sending QKV, Attention is blocked computing, or
+  Projection is blocked receiving the Attention output.
+- Re-run `6P2D` qps64 with lower prefill memory utilization if qps64 remains a
+  desired comparison point.
+- Rebuild the PAP matrix from a smaller known-good PAP workload, then scale one
+  dimension at a time: `num_prompts`, qps, output length, and topology.
+
+## Follow-up Root Cause and Fix
+
+A follow-up investigation on the qps32 PAP failure found that the run was not
+slow; the Attention mailbox worker crashed early. The failing log was:
+
+```text
+Exception in thread pap-offload-exec-mailbox-loop:
+KeyError: 'cmpl-bench-df77fec6-2-0-a0acf7f7'
+```
+
+The root cause was Projection-side mailbox binding. A Projection process can
+batch requests that belong to different PA groups, but the NIXL mailbox
+transport was cached as one process-global singleton and bound only to the first
+Attention endpoint. Later QKV batches for other PA groups were delivered to the
+wrong Attention worker, which had no matching PAP session for those request ids.
+The mailbox loop then exited, Projection streams stopped completing, and GPU util
+fell to 0%.
+
+The fix is to keep NCCL transport behavior unchanged, but cache NIXL mailbox
+transports by Attention endpoint. Each Projection process now creates a separate
+mailbox actor per Attention endpoint and binds each actor to its own peer. The
+same fix is used by the normal PAP attention path, runner microbatch path, and
+Q-first path.
+
+## Valid qps32 Results After Fix
+
+All runs below used Qwen3-8B, `num_prompts=600`, input length `1024`, output
+length `64`, offered qps `32`, and the proxy variables were explicitly cleared.
+
+| Architecture | Run directory | Completed | Failed | Duration | Req/s | Output tok/s | Mean TTFT | Mean TPOT | P99 TPOT | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `6P2D` | `/home/fei/research/PD/test/baseline/disaggregated/results/runs/20260526_153852` | 600 | 0 | 20.90 s | 28.71 | 1837.20 | 451.00 ms | 37.93 ms | 40.58 ms | Fresh current-code baseline. |
+| `6PA2P` serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_153548` | 600 | 0 | 98.71 s | 6.08 | 389.00 | 32812.35 ms | 269.74 ms | 340.89 ms | `PAP_RUNNER_MICROBATCH_COUNT=0`. |
+| `6PA2P` 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_153245` | 600 | 0 | 93.81 s | 6.40 | 409.36 | 30644.56 ms | 262.13 ms | 322.07 ms | `PAP_RUNNER_MICROBATCH_COUNT=3`. |
+
+The 3-way runner pipeline is now a valid result and is modestly better than PAP
+serial on this workload: request throughput improves from `6.08` to `6.40` req/s
+(+5.2%), output throughput improves from `389.00` to `409.36` tok/s (+5.2%), and
+mean TPOT drops from `269.74` to `262.13` ms (-2.8%). Native `6P2D` is still much
+faster than both PAP variants for this parameter set, so this workload validates
+PAP liveness and shows a small 3-way benefit, but it does not yet demonstrate a
+large PAP-over-serial advantage.
+
+Verification commands:
+
+```bash
+.venv/bin/python -m pytest tests/pap/test_pap_contract.py -q
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_attention_executor.py::test_run_offload_exec_mailbox_loop_releases_qkv_message \
+  tests/pap/test_pap_data_plane.py::test_nixl_mailbox_transport_sends_query_then_kv_batch_messages -q
+.venv/bin/python -m py_compile vllm/model_executor/models/qwen3.py
+git diff --check -- \
+  vllm/model_executor/models/qwen3.py \
+  tests/pap/test_pap_contract.py \
+  benchmarks/pap/experiments/legacy/reports/pap-6pa2p-large-workload-20260526.md
+```
+
+`ruff` was not run because the active `.venv` does not provide the `ruff` module.
+
+## 6PA2P Trace Critical Path Follow-up
+
+After the valid qps32 runs, a follow-up checked the apparent `0%` GPU utilization
+state. At the time of that check there were no active `vllm`, `run_benchmark`,
+`launch_service`, or benchmark processes, and GPU memory was already released.
+The latest 600-prompt 3-way run had completed normally at `15:34:11`, so the
+`0%` utilization snapshot represented post-run idle state, not an in-flight
+benchmark.
+
+A running trace benchmark was then sampled with `nvidia-smi`. During the active
+decode phase, GPUs 0-5, which host the PA Prefill/Attention groups, were at
+`91-95%` utilization, while the Projection GPUs 6-7 were at `33-34%`.
+
+The trace run used the same Qwen3-8B, input length `1024`, output length `64`,
+qps `32`, 6PA2P topology, and 3-way runner microbatch configuration as the
+600-prompt run, but reduced `num_prompts` to `120` to avoid making trace logging
+itself dominate the experiment. Proxy variables were explicitly cleared.
+
+Trace run:
+
+- Run directory:
+  `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_155419`
+- Result: `120` completed, `0` failed.
+- Mean TPOT: `261.06 ms`; median TPOT: `262.46 ms`; p99 TPOT: `272.00 ms`.
+- Reference 600-prompt 3-way run mean TPOT: `262.13 ms`.
+- Parser:
+  `.venv/bin/python tools/pap_trace_summary.py /home/fei/research/PD/test/baseline/pap/results/runs/20260526_155419/service_logs`
+
+Median trace summary, excluding the parser default `>10 ms` warmup/outlier rows:
+
+| Trace point | Median | P99 | Interpretation |
+| --- | ---: | ---: | --- |
+| Projection offload `total_ms` | 5.584 ms | 7.533 ms | Main per-layer Projection-side offload boundary. |
+| Projection `send_ms` | 0.502 ms | 0.932 ms | Model-thread QKV mailbox publish/enqueue path. |
+| Projection `recv_ms` | 0.554 ms | 1.366 ms | Model-thread wait/read for Attention output after returning from the DBO yield point. |
+| Projection `trigger_ms` | 0.001 ms | 0.002 ms | Effectively absent on the direct mailbox path. |
+| Attention mailbox `total_ms` | 2.256 ms | 4.933 ms | Attention worker receives QKV, computes attention, and publishes output. |
+| Attention `recv_qkv_ms` | 1.460 ms | 3.430 ms | Wait/read for Projection QKV and scheduling skew. |
+| Attention `compute_ms` | 0.807 ms | 1.678 ms | Actual remote attention compute for the mailbox batch. |
+| Attention `send_output_ms` | 0.008 ms | 0.017 ms | Attention model-thread output enqueue is negligible. |
+| Attention NIXL read `total_ms` | 0.196 ms | 0.358 ms | Raw QKV mailbox transfer is much smaller than the layer boundary. |
+| Attention sender `total_ms` | 0.555 ms | 1.074 ms | Sender-thread publish plus ACK wait; not the whole TPOT gap. |
+
+The median Projection offload block alone accounts for about
+`5.584 ms * 36 = 201 ms` per token. This aligns with the measured
+`261 ms` TPOT: most of the decode time is spent walking 36 sequential layer
+boundaries where Projection publishes QKV, yields, waits for Attention output,
+and resumes the layer. The remaining roughly `60 ms` comes from non-offloaded
+Projection-side work and scheduler/runtime overhead.
+
+The important detail is that Projection `total_ms` is much larger than
+`send_ms + recv_ms`. In the current code, the trace timer starts before grouping
+and publishing QKV, then Projection can call `dbo_yield()` after sending and
+before `recv_output_batch_message()`. That gap is useful for overlap, but it is
+still part of the token layer-by-layer critical path. The trace therefore says
+the bottleneck is not bare NIXL copy latency. The critical path is the repeated
+Projection/Attention handoff plus per-slice compute and scheduling skew across
+all 36 transformer layers.
+
+This explains why the 3-way runner pipeline only modestly improves over serial
+PAP on this workload. It overlaps some work across runner microbatches, but it
+does not remove the per-layer synchronous dependency: layer `N+1` on Projection
+cannot proceed until layer `N` remote Attention output has returned for that
+microbatch.
+
+## 3-Way Wait/Read Trace Follow-up
+
+A follow-up trace added two missing fields:
+
+- Projection offload trace now records `yield_ms`, the time spent inside
+  `dbo_yield()` after Projection publishes QKV and before it starts receiving
+  Attention outputs.
+- NIXL mailbox trace now records `recv wait trace`, the time from an endpoint
+  calling `recv()` until the requested message is available in the local mailbox
+  incoming queue. This includes any time waiting for the notification and, when
+  the receiver thread has not already materialized the message, the NIXL read.
+
+Run:
+
+- `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_172715`
+- Qwen3-8B, `6PA2P`, input `1024`, output `64`, qps `32`,
+  `num_prompts=120`, `PAP_RUNNER_MICROBATCH_COUNT=3`.
+- Result: `120` completed, `0` failed, mean TPOT `271.29 ms`.
+- The extra per-message wait logging adds visible overhead compared with the
+  prior `261.06 ms` trace run, so use this run for path decomposition rather
+  than absolute TPOT.
+
+Median path decomposition with the parser's default `>10 ms` outlier cutoff:
+
+| Trace point | Median | Meaning |
+| --- | ---: | --- |
+| Projection `total_ms` | 6.091 ms | One layer's Projection-side offload span. |
+| Projection `send_ms` | 0.508 ms | Group by Attention endpoint and enqueue QKV batches. |
+| Projection `yield_ms` | 4.829 ms | Cooperative 3-way ubatch switch after sending QKV. |
+| Projection `recv_ms` | 0.724 ms | Receive all Attention output batches for this ubatch/layer. |
+| Projection residual `gap_ms` | 0.005 ms | Previously hidden time is now explained by `yield_ms`. |
+| Projection `batches` | 3 | Typical P0/P1 ubatch fans out to three Attention endpoints. |
+| Projection `calls` | 15 | Typical ubatch has about 15 requests total. |
+| Attention `calls` | 5 | Each Attention endpoint sees about one third of that ubatch. |
+| Attention `recv_qkv_ms` | 1.600 ms | Wait/read next QKV batch. |
+| Attention QKV mailbox wait | 1.565 ms | `recv()` wait until QKV message is locally available. |
+| Attention QKV NIXL read | 0.192 ms | Actual READ/materialize path for QKV. |
+| Attention QKV pure wait estimate | 1.373 ms | `recv wait - read`: Attention is mostly idle waiting for Projection. |
+| Attention `compute_ms` | 0.817 ms | Current per-item loop over the `calls` requests. |
+| Attention output send enqueue | 0.009 ms | Model-thread output enqueue is negligible. |
+| Projection output mailbox wait | 0.002 ms | Projection usually finds output already materialized after yield. |
+| Projection output NIXL read | 0.238 ms | Output READ/materialize path, mostly done by the receiver thread. |
+
+This resolves the earlier ambiguity: the old `Projection gap_ms ~= 4.5 ms` was
+almost entirely the 3-way `dbo_yield()` interval. During that interval the
+current ubatch is sleeping while the Projection worker runs other ubatches and
+the Attention workers process previously sent QKV batches.
+
+The “who waits for whom” result is asymmetric:
+
+- Attention waits for Projection. The median Attention QKV `recv()` wait is
+  `1.565 ms`, while the actual QKV READ is only `0.192 ms`; the remaining
+  roughly `1.37 ms` is waiting for the next QKV message to arrive.
+- Projection usually does not wait for Attention at `recv()` time. The median
+  Projection output `recv()` wait is `0.002 ms`; the output is usually already
+  in the incoming queue because the receiver thread read it during
+  `dbo_yield()`.
+- Projection still pays the output materialization/read cost indirectly:
+  Projection output READ median is `0.238 ms`, but this is not showing up as
+  `recv()` blocking because it overlaps with the yield interval.
+
+Attention compute scaling by `calls`:
+
+| Attention calls | Median compute | Compute per call |
+| ---: | ---: | ---: |
+| 1 | 0.179 ms | 0.179 ms |
+| 3 | 0.458 ms | 0.153 ms |
+| 5 | 0.747 ms | 0.149 ms |
+| 7 | 1.021 ms | 0.146 ms |
+
+The current mailbox message is batched, but Attention compute still loops over
+items one request at a time. A fused batch attention kernel would mainly target
+this `0.7-1.0 ms` per Attention message compute component. For the median
+`calls=5` case, reducing compute from about `0.75-0.82 ms` to `0.3-0.4 ms` would
+save roughly `0.4-0.5 ms` on the Attention stage. Across 36 layers, that is a
+plausible `15-20 ms/token` TPOT opportunity before secondary queueing effects.
+
+The fused kernel is therefore a reasonable next implementation target, but it
+will not by itself remove the Projection `yield_ms` term. The larger system
+question after fused Attention is whether faster Attention reduces the
+`1.37 ms` QKV wait and the Projection `yield_ms`, or whether Projection-side
+ubatch scheduling remains the pacing source.
+
+## Projection Yield Critical Path Follow-up
+
+The previous wait/read trace showed that Projection usually does not block in
+`recv()` after returning from `dbo_yield()`, but that was still indirect
+evidence. A follow-up trace added stable per-batch trace keys plus monotonic
+timestamps on both sides:
+
+- Projection logs each output batch key, QKV send-done time, yield-start time,
+  yield-end/resume time, and recv-done time.
+- Attention logs the same batch key plus QKV recv-done, compute-done, and output
+  send-done time.
+- The parser correlates Projection ubatches with the max Attention output
+  send-done time across the fanout batches.
+
+Diagnostic run:
+
+- `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_180736`
+- Qwen3-8B, `6PA2P`, input `1024`, output `64`, qps `32`,
+  `num_prompts=60`, `PAP_RUNNER_MICROBATCH_COUNT=3`.
+- Result: `60` completed, `0` failed, mean TPOT `245.45 ms`.
+- This run is for critical-path attribution. The added timestamp logging makes
+  absolute TPOT less comparable with non-trace runs.
+
+Median correlated timing:
+
+| Trace point | Median | Meaning |
+| --- | ---: | --- |
+| Projection `total_ms` | 5.764 ms | One Projection-side ubatch offload span. |
+| Projection `send_ms` | 0.417 ms | Projection sends QKV fanout. |
+| Projection `yield_ms` | 4.560 ms | Current ubatch is suspended in DBO. |
+| Projection `recv_ms` | 0.760 ms | Projection resumes and consumes Attention outputs. |
+| Attention path after Projection send | 1.139 ms | Max Attention output send-done minus Projection QKV send-done. |
+| Projection resume after Attention ready | 3.381 ms | Projection resume time minus max Attention output send-done. |
+| Attention ready after Projection resume | 0.000 ms | Cases where Attention was still not ready when Projection resumed. |
+| Projection resume to recv done | 0.760 ms | Same interval as Projection `recv_ms`. |
+
+Classification across the diagnostic run:
+
+- Correlated Projection entries: `15048`.
+- P-critical entries: `14900` (`99.0%`), where Attention output was ready before
+  Projection resumed.
+- A-critical entries: `148` (`1.0%`), where Attention output became ready after
+  Projection resumed.
+- Entries with Attention more than `1 ms` late after Projection resume: `91`
+  (`0.6%`).
+
+Therefore the median `yield_ms` is not caused by the remote Attention path. The
+remote Attention path is usually complete around `1.1 ms` after Projection sends
+QKV, while the Projection ubatch is resumed about `3.4 ms` later. In the current
+3-way implementation, the dominant part of `yield_ms` is Projection-side DBO
+scheduling/resume latency: the Projection worker is executing other ubatches
+before returning to the current ubatch. Remote Attention is only the critical
+path for a small tail of cases.
+
+## High-QPS Short-Sequence Follow-up
+
+To test whether larger scheduler batches make 3-way more favorable, a short
+sequence/high-QPS workload was run:
+
+- Model: Qwen3-8B.
+- Workload: input `128`, output `32`, qps `256`, `num_prompts=1024`.
+- Topologies: `6P2D`, `6PA2P` serial, `6PA2P` 3-way.
+- PAP runs kept `PAP_OFFLOAD_EXEC_TRACE=1`, so compare PAP serial vs 3-way
+  directly; use the 6P2D number as an external baseline, not a trace-equivalent
+  PAP comparison.
+
+Benchmark results:
+
+| Architecture | Run root | Success | Mean TPOT | Median TPOT | P99 TPOT | Req/s | Output tok/s | Mean TTFT |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `6P2D` | `/home/fei/research/PD/test/baseline/disaggregated/results/runs/20260526_225458` | 1024/1024 | 31.42 ms | 31.48 ms | 34.29 ms | 88.87 | 2843.83 | 4120 ms |
+| `6PA2P` serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_225649` | 1024/1024 | 266.26 ms | 256.37 ms | 356.67 ms | 13.67 | 437.30 | 31694 ms |
+| `6PA2P` 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_225912` | 1024/1024 | 278.57 ms | 303.89 ms | 363.39 ms | 11.84 | 378.84 | 34065 ms |
+
+PAP trace medians:
+
+| Metric | Serial | 3-way | Interpretation |
+| --- | ---: | ---: | --- |
+| Projection total | 5.628 ms | 6.491 ms | 3-way is slower per ubatch. |
+| Projection send | 0.914 ms | 0.480 ms | 3-way sends smaller ubatches. |
+| Projection yield | 0.001 ms | 5.114 ms | 3-way adds DBO suspend/resume window. |
+| Projection recv | 4.645 ms | 0.827 ms | Serial waits for Attention in recv; 3-way overlaps most of it. |
+| Projection calls | 64 | 21 | 3-way cuts the macro batch into smaller Projection GEMMs. |
+| Projection fanout batches | 3 | 2 | High-QPS routing does not always fan out to all 3 Attention endpoints. |
+| Attention total | 6.685 ms | 3.281 ms | 3-way Attention tasks are smaller. |
+| Attention compute | 2.420 ms | 1.214 ms | Smaller attention batch reduces compute per message. |
+| Attention calls | 23 | 11 | Attention batch size roughly halves. |
+| Attention path after Projection send | 3.563 ms | 2.467 ms | 3-way does make the remote path shorter. |
+| Projection resume after Attention ready | 0.000 ms | 2.359 ms | 3-way still waits on P-side resume after A is ready. |
+| Attention ready after Projection resume | 3.558 ms | 0.000 ms | Serial is A-critical; 3-way is P-resume-critical. |
+
+This high-QPS experiment does not support the hypothesis that qps `256` and
+`1024` prompts are enough to make the current 3-way implementation faster. The
+larger macro batch helps serial PAP reach Projection `calls=64`, but 3-way
+splits that into median `calls=21`. That smaller ubatch reduces remote Attention
+latency, but it also lowers Projection arithmetic intensity and introduces a
+median `2.36 ms` P-side resume lag after Attention is already ready. The net
+effect is worse TPOT and lower output throughput than serial PAP.
+
+The batch-size hypothesis is still directionally useful, but the current
+implementation needs either larger per-ubatch Projection batches, lower
+Projection resume latency, or fewer pipeline ways. Under this workload, 2-way is
+a more plausible next sweep than 3-way because it may preserve more Projection
+batch density while still hiding part of the serial Attention wait.
+
+## High-QPS 2-Way Follow-up
+
+The same short-sequence/high-QPS workload was rerun with
+`PAP_RUNNER_MICROBATCH_COUNT=2`.
+
+- Run root: `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_230453`
+- Result: `1024` completed, `0` failed.
+- Mean TPOT: `264.07 ms`; median TPOT: `276.45 ms`; p99 TPOT: `308.31 ms`.
+- Request throughput: `13.34 req/s`; output throughput: `426.90 tok/s`.
+- Mean TTFT: `31048 ms`.
+
+Updated benchmark comparison:
+
+| Architecture | Mean TPOT | Median TPOT | P99 TPOT | Req/s | Output tok/s |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `6P2D` | 31.42 ms | 31.48 ms | 34.29 ms | 88.87 | 2843.83 |
+| `6PA2P` serial | 266.26 ms | 256.37 ms | 356.67 ms | 13.67 | 437.30 |
+| `6PA2P` 2-way | 264.07 ms | 276.45 ms | 308.31 ms | 13.34 | 426.90 |
+| `6PA2P` 3-way | 278.57 ms | 303.89 ms | 363.39 ms | 11.84 | 378.84 |
+
+Updated PAP trace medians:
+
+| Metric | Serial | 2-way | 3-way |
+| --- | ---: | ---: | ---: |
+| Projection total | 5.628 ms | 5.766 ms | 6.491 ms |
+| Projection send | 0.914 ms | 0.776 ms | 0.480 ms |
+| Projection yield | 0.001 ms | 3.591 ms | 5.114 ms |
+| Projection recv | 4.645 ms | 1.205 ms | 0.827 ms |
+| Projection calls | 64 | 32 | 21 |
+| Projection fanout batches | 3 | 2 | 2 |
+| Attention total | 6.685 ms | 4.105 ms | 3.281 ms |
+| Attention compute | 2.420 ms | 1.406 ms | 1.214 ms |
+| Attention calls | 23 | 13 | 11 |
+| Attention path after Projection send | 3.563 ms | 2.868 ms | 2.467 ms |
+| Projection resume after Attention ready | 0.000 ms | 0.677 ms | 2.359 ms |
+| Attention ready after Projection resume | 3.558 ms | 0.000 ms | 0.000 ms |
+
+2-way is the best PAP variant by mean TPOT in this noisy high-QPS run, but only
+by a small margin over serial. It behaves like the expected compromise:
+
+- It keeps a larger Projection batch than 3-way (`calls=32` vs `21`), so the
+  Projection arithmetic-density loss is smaller.
+- It hides most of the serial Attention wait: Projection `recv_ms` drops from
+  `4.645 ms` to `1.205 ms`.
+- It still introduces P-side resume lag after Attention is ready
+  (`0.677 ms` median), though much less than 3-way (`2.359 ms`).
+
+The result supports using 2-way as the next tuning baseline. 3-way over-splits
+the batch for this workload, while serial leaves the path A-critical. 2-way
+mostly removes the A-critical wait without paying as much P-side resume delay,
+but the current implementation still needs lower resume overhead or larger
+per-ubatch Projection batches to show a robust win.
+
+## 7PA1P Single-Projection Follow-up
+
+To test whether a single Projection node can build larger batches and make
+3-way useful, the following workload was run:
+
+- Topology: `7PA1P` (`7` PA nodes, `1` Projection node).
+- Model: Qwen3-8B.
+- Workload: input `1024`, output `64`, qps `256`, `num_prompts=1000`.
+- Compared PAP serial (`PAP_RUNNER_MICROBATCH_COUNT=1`) with PAP 3-way
+  (`PAP_RUNNER_MICROBATCH_COUNT=3`).
+- Both runs used `PAP_OFFLOAD_EXEC_TRACE=1`.
+
+Benchmark results:
+
+| Mode | Run root | Success | Mean TPOT | Median TPOT | P99 TPOT | Req/s | Output tok/s | Mean TTFT |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_232342` | 1000/1000 | 282.77 ms | 289.25 ms | 395.10 ms | 3.36 | 215.30 | 139003 ms |
+| 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_233059` | 1000/1000 | 832.84 ms | 727.94 ms | 1713.41 ms | 1.15 | 73.77 | 343134 ms |
+
+Trace medians with outliers included:
+
+| Metric | Serial | 3-way |
+| --- | ---: | ---: |
+| Projection total | 5.526 ms | 17.511 ms |
+| Projection send | 2.338 ms | 2.081 ms |
+| Projection yield | 0.001 ms | 12.827 ms |
+| Projection recv | 3.220 ms | 2.596 ms |
+| Projection calls | 64 | 21 |
+| Projection fanout batches | 7 | 7 |
+| Attention total | 7.268 ms | 6.420 ms |
+| Attention recv QKV | 5.805 ms | 5.866 ms |
+| Attention compute | 1.424 ms | 0.531 ms |
+| Attention calls | 9 | 3 |
+| Attention path after Projection send | 1.971 ms | 1.486 ms |
+| Projection resume after Attention ready | 0.000 ms | 11.309 ms |
+| Attention ready after Projection resume | 1.964 ms | 0.000 ms |
+
+This is the clearest negative result for 3-way so far. With one Projection
+node, serial does build the intended large Projection batch: median Projection
+`calls=64`, faning out to all 7 Attention endpoints. 3-way splits that same work
+into median `calls=21`, while each Attention endpoint only sees median
+`calls=3`.
+
+Using the Qwen3-8B projection arithmetic-density estimate, this means the
+Projection linear arithmetic intensity falls from roughly `64 flop/byte` in
+serial to roughly `21 flop/byte` in 3-way. The remote Attention path becomes
+slightly shorter (`1.97 ms` to `1.49 ms`), but the current Projection ubatch then
+waits a median `11.3 ms` after Attention is already ready before it resumes.
+
+Therefore, under `7PA1P`, `qps=256`, input `1024`, output `64`, the current
+3-way implementation is not beneficial. It over-splits the only Projection
+worker's batch, reduces Projection arithmetic density by about `3x`, and turns
+the path from A-critical serial waiting into P-side resume/queueing. The single
+Projection node amplifies the P-side scheduling bottleneck rather than creating
+a useful 3-way pipeline.
+
+## 7PA1P `MAX_NUM_SEQS` Sweep
+
+The previous `7PA1P` run was capped by `MAX_NUM_SEQS=64`, so qps `256` only
+created backlog and did not increase the Projection scheduler batch. A follow-up
+sweep varied `MAX_NUM_SEQS` while keeping the workload and topology fixed.
+
+- Topology: `7PA1P`.
+- Model: `/data/ssd1/llm-models/Qwen3-8B`.
+- Workload: `num_prompts=1000`, input `1024`, output `64`, qps `256`.
+- Common env: `PAP_OFFLOAD_EXEC_TRANSPORT=nixl_mailbox`,
+  `PAP_OFFLOAD_EXEC_TRACE=1`, `PAP_PREFILL_MPS_PERCENT=30`,
+  `PAP_ATTENTION_MPS_PERCENT=70`.
+- Serial uses `PAP_RUNNER_MICROBATCH_COUNT=1`; 3-way uses
+  `PAP_RUNNER_MICROBATCH_COUNT=3`.
+- HTTP proxy variables were unset for all runs.
+
+Benchmark results:
+
+| `MAX_NUM_SEQS` | Mode | Run root | Req/s | Output tok/s | Median TTFT | Median TPOT | P99 TPOT |
+| ---: | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| 64 | Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_232342` | 3.36 | 215.30 | n/a | 289.25 ms | 395.10 ms |
+| 64 | 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_233059` | 1.15 | 73.77 | n/a | 727.94 ms | 1713.41 ms |
+| 128 | Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_001212` | 3.13 | 200.10 | 111877.30 ms | 574.38 ms | 917.36 ms |
+| 128 | 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_001818` | 3.37 | 215.46 | 123530.27 ms | 551.19 ms | 617.47 ms |
+| 256 | Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_002400` | 4.81 | 307.88 | 73575.54 ms | 761.26 ms | 851.01 ms |
+| 256 | 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_002815` | 4.57 | 292.41 | 76429.69 ms | 773.76 ms | 896.45 ms |
+| 384 | Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_004506` | 3.07 | 196.76 | 137660.88 ms | 1894.36 ms | 2041.96 ms |
+| 384 | 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_005116` | 5.36 | 342.82 | 73164.88 ms | 930.69 ms | 1061.18 ms |
+| 512 | Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_003239` | 3.68 | 235.47 | 41837.59 ms | 1931.48 ms | 2220.93 ms |
+| 512 | 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_003758` | 5.84 | 374.02 | 38050.99 ms | 1102.47 ms | 1209.63 ms |
+| 1000 | Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260526_235637` | 4.82 | 308.39 | 39617.02 ms | 2341.94 ms | 2442.61 ms |
+| 1000 | 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_000103` | 5.19 | 332.42 | 38973.36 ms | 2102.74 ms | 2237.16 ms |
+| 1000 rerun | Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_010958` | 4.76 | 304.34 | 38790.36 ms | 2321.70 ms | 2481.92 ms |
+| 1000 rerun | 3-way | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_011432` | 5.35 | 342.47 | 39039.62 ms | 1967.84 ms | 2090.64 ms |
+
+Trace medians with outliers included:
+
+| `MAX_NUM_SEQS` | Mode | Proj calls | Attn calls | Proj total | Proj send | Proj yield | Proj recv | Attn total | Attn recv QKV | Attn compute | P resume after A ready |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 64 | Serial | 64 | 9 | 5.526 ms | 2.338 ms | 0.001 ms | 3.220 ms | 7.268 ms | 5.805 ms | 1.424 ms | 0.000 ms |
+| 64 | 3-way | 21 | 3 | 17.511 ms | 2.081 ms | 12.827 ms | 2.596 ms | 6.420 ms | 5.866 ms | 0.531 ms | 11.309 ms |
+| 128 | Serial | 128 | 18 | 11.106 ms | 5.389 ms | 0.001 ms | 5.665 ms | 15.113 ms | 12.110 ms | 2.906 ms | 0.000 ms |
+| 128 | 3-way | 42 | 6 | 13.330 ms | 1.120 ms | 9.894 ms | 2.285 ms | 4.895 ms | 3.801 ms | 1.040 ms | 8.200 ms |
+| 256 | Serial | 244 | 36 | 15.217 ms | 5.750 ms | 0.001 ms | 9.276 ms | 19.543 ms | 13.378 ms | 5.706 ms | 0.000 ms |
+| 256 | 3-way | 84 | 12 | 18.685 ms | 1.897 ms | 13.666 ms | 3.045 ms | 6.642 ms | 4.588 ms | 2.024 ms | 10.713 ms |
+| 384 | Serial | 370 | 53 | 26.302 ms | 11.962 ms | 0.001 ms | 13.969 ms | 37.053 ms | 28.401 ms | 8.170 ms | 0.000 ms |
+| 384 | 3-way | 123 | 17 | 21.835 ms | 2.512 ms | 15.856 ms | 3.155 ms | 7.448 ms | 4.608 ms | 2.864 ms | 11.638 ms |
+| 512 | Serial | 488 | 69 | 32.824 ms | 15.163 ms | 0.001 ms | 17.047 ms | 45.186 ms | 33.771 ms | 10.992 ms | 0.000 ms |
+| 512 | 3-way | 158 | 23 | 25.322 ms | 3.438 ms | 18.340 ms | 3.375 ms | 8.757 ms | 4.958 ms | 3.699 ms | 13.213 ms |
+| 1000 | Serial | 587 | 85 | 38.645 ms | 16.074 ms | 0.001 ms | 22.471 ms | 52.562 ms | 35.825 ms | 14.755 ms | 0.000 ms |
+| 1000 | 3-way | 197 | 28 | 39.195 ms | 4.778 ms | 28.351 ms | 5.665 ms | 13.933 ms | 8.779 ms | 4.784 ms | 22.034 ms |
+| 1000 rerun | Serial | 534.5 | 77 | 33.234 ms | 13.080 ms | 0.001 ms | 19.889 ms | 41.807 ms | 28.242 ms | 13.327 ms | 0.000 ms |
+| 1000 rerun | 3-way | 191 | 28 | 37.453 ms | 4.512 ms | 27.222 ms | 5.511 ms | 13.417 ms | 8.118 ms | 4.919 ms | n/a |
+
+Findings:
+
+- `MAX_NUM_SEQS=64` is too small for 3-way. The macro batch is only `64`, so
+  3-way reduces Projection calls to median `21` and each Attention endpoint sees
+  median `3` calls. The P-side resume lag dominates.
+- Increasing `MAX_NUM_SEQS` does make 3-way useful relative to serial once the
+  serial remote Attention path becomes large. The relative win is clearest at
+  `384` and `512`.
+- The best observed 3-way throughput for this workload is `MAX_NUM_SEQS=512`:
+  `5.84 req/s`, `374.02` output tok/s, median TPOT `1102.47 ms`. This is the
+  throughput-oriented sweet spot among the tested values.
+- The best observed latency among 3-way runs is `MAX_NUM_SEQS=128`: median TPOT
+  `551.19 ms`, but throughput is only `3.37 req/s`. This is the latency-oriented
+  operating point, not the throughput sweet spot.
+- `MAX_NUM_SEQS=1000` is too large. It preserves the relative 3-way advantage,
+  but both serial and 3-way become remote-attention burst dominated. Median TPOT
+  is near or above `2 s`. The rerun reproduced the relative direction:
+  3-way improved throughput from `4.76` to `5.35` req/s and reduced median TPOT
+  from `2321.70 ms` to `1967.84 ms`, but it remained slower than the
+  `MAX_NUM_SEQS=512` throughput point.
+- `MAX_NUM_SEQS=256` is a bad middle point in this run: 3-way is slightly worse
+  than serial by throughput and TPOT.
+
+The current 8B recommendation is therefore:
+
+- Use `MAX_NUM_SEQS=512` if the objective is maximum saturated throughput.
+- Use `MAX_NUM_SEQS=128` if the objective is lower TPOT while still keeping a
+  small 3-way win over serial.
+- Avoid treating qps as the batch-size knob. It only creates backlog; the actual
+  Projection batch is bounded by `MAX_NUM_SEQS` and then split by the 3-way
+  microbatcher.
+
+## Qwen3-30B-A3B-FP8 Follow-up Status
+
+The FP8 30B candidate is available locally at:
+
+`/data/ssd1/llm-models/Qwen3-30B-A3B-FP8`
+
+Its `config.json` reports:
+
+- Architecture: `Qwen3MoeForCausalLM`.
+- Model type: `qwen3_moe`.
+- Layers: `48`.
+- Hidden size: `2048`.
+- Attention heads: `32`; KV heads: `4`.
+- Quantization: fine-grained FP8, `quant_method=fp8`, `fmt=e4m3`,
+  `weight_block_size=[128, 128]`.
+
+Implementation update:
+
+1. `Qwen3MoeAttention` now reuses the dense `Qwen3Attention` PAP attention path.
+   This is valid because Qwen3-MoE has the same attention-side q/k/v projection,
+   q/k norm, RoPE, attention, and output projection structure; the MoE-specific
+   difference is in the MLP.
+2. FP8 30B uses the newer `vllm/v1/worker/gpu_model_runner.py` path, while the
+   earlier 8B PAP experiments used `vllm/v1/worker/gpu/model_runner.py`.
+   Per-request PAP endpoint forwarding was added to the newer runner as well.
+3. FlashInfer top-k/top-p sampler JIT failed locally with the CUDA/CUB toolchain,
+   so 30B smoke tests use `VLLM_USE_FLASHINFER_SAMPLER=0`.
+
+Validated 30B PAP smoke:
+
+- Run root:
+  `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_013700`.
+- Topology: `1PA1P`.
+- Workload: input `128`, output `4`, qps `1`, `num_prompts=1`.
+- Env: `VLLM_USE_FLASHINFER_SAMPLER=0`, `PAP_OFFLOAD_EXEC_TRACE=1`,
+  `PAP_OFFLOAD_EXEC_TRANSPORT=nixl_mailbox`, HTTP proxy variables unset.
+- Result: `1/1` successful request, median TTFT `1463.27 ms`, median TPOT
+  `46.34 ms`.
+- Trace: `192` projection batches and `192` attention batches, matching
+  `48` layers times `4` generated tokens, so the 30B MoE path is now exercising
+  remote PAP attention rather than silently falling back to local attention.
+- Trace medians: projection total `0.803 ms`, projection send `0.032 ms`,
+  projection recv `0.766 ms`; attention total `1.433 ms`, attention recv QKV
+  `1.301 ms`, attention compute `0.113 ms`.
+
+## Qwen3-30B-A3B-FP8 `7PA1P` MAX_NUM_SEQS=512 Comparison
+
+The first 30B full comparison used the 8B throughput-oriented candidate point:
+
+- Topology: `7PA1P`.
+- Model: `/data/ssd1/llm-models/Qwen3-30B-A3B-FP8`.
+- Workload: `num_prompts=1000`, input `1024`, output `64`, qps `256`.
+- Common env: `MAX_MODEL_LEN=2048`, `MAX_NUM_SEQS=512`,
+  `VLLM_USE_FLASHINFER_SAMPLER=0`, `PAP_OFFLOAD_EXEC_TRANSPORT=nixl_mailbox`,
+  `PAP_OFFLOAD_EXEC_TRACE=1`, `PAP_PREFILL_MPS_PERCENT=30`,
+  `PAP_ATTENTION_MPS_PERCENT=70`, `PAP_PROJECTION_GPU_MEMORY_UTILIZATION=0.95`.
+- HTTP proxy variables were unset for every run.
+
+An initial serial run with `PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.95` failed:
+
+- Run root:
+  `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_014142`.
+- Failure: Attention executor OOM in `remote_attention.py` while concatenating
+  KV segments; the PA GPU had only about `20 MiB` free.
+- Adjustment: reduce PA prefill memory utilization to `0.85` for 30B `7PA1P`.
+
+Benchmark results with `PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.85`:
+
+| Mode | Run root | Success | Req/s | Output tok/s | Median TTFT | Median TPOT | P99 TPOT | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_015214` | 1000/1000 | 4.26 | 272.50 | 18792.38 ms | 1722.74 ms | 1750.25 ms | `PAP_RUNNER_MICROBATCH_COUNT=1`. |
+| 3-way, before endpoint fix | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_015716` | 937/1000 | 3.26 | 208.65 | 19578.44 ms | 2245.91 ms | 2319.54 ms | Invalid as a speed point: Prefill EngineCore died with missing `pap_offload_exec_zmq_endpoint`. |
+| 3-way, after endpoint fix | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_020831` | 1000/1000 | 2.07 | 132.72 | 30167.35 ms | 4205.92 ms | 4253.43 ms | Stable but slower than serial. |
+
+Root cause of the invalid 3-way run:
+
+- The multi-PAP proxy passed `pap_offload_exec_zmq_endpoint` to Projection
+  payloads, but not to Prefill payloads.
+- Under 30B 3-way, Prefill can enter the PAP offload-exec decode path and needs
+  the same Attention ZMQ endpoint metadata.
+- The fix adds optional `pap_offload_exec_zmq_endpoint` support to
+  `attach_pap_prefill_attention_params()` and passes
+  `group.attention_zmq_endpoint` from the multi-PAP proxy.
+
+Trace medians for the valid serial and fixed 3-way runs:
+
+| Metric | Serial | Fixed 3-way |
+| --- | ---: | ---: |
+| Projection calls | 488 | 488 |
+| Projection fanout batches | 7 | 7 |
+| Projection total | 26.312 ms | 42.398 ms |
+| Projection send | 10.493 ms | 19.170 ms |
+| Projection yield | 0.001 ms | 0.001 ms |
+| Projection recv | 15.805 ms | 23.074 ms |
+| Attention total | 34.069 ms | 62.983 ms |
+| Attention recv QKV | 22.826 ms | 51.141 ms |
+| Attention compute | 11.153 ms | 11.049 ms |
+| Attention path after Projection send | 13.149 ms | 13.215 ms |
+| Projection resume after Attention ready | 0.000 ms | 0.000 ms |
+
+Interpretation:
+
+- The fixed 30B 3-way run is now correct and complete, but it is not faster at
+  `MAX_NUM_SEQS=512`.
+- Unlike the 8B sweep, the fixed 30B 3-way trace did not split Projection calls
+  down to roughly one third; median Projection calls stayed at `488`, matching
+  serial. This means the measured run did not realize the intended runner
+  microbatch overlap shape.
+- The critical difference is waiting/skew, not raw Attention compute. Attention
+  compute is nearly identical (`11.15 ms` serial vs `11.05 ms` 3-way), while
+  Attention `recv_qkv_ms` more than doubles (`22.83 ms` to `51.14 ms`) and
+  Projection send/recv both increase.
+- Therefore, for 30B FP8 at this high-QPS `7PA1P`, `MAX_NUM_SEQS=512` point,
+  serial PAP is currently the valid faster configuration. 3-way needs further
+  instrumentation or scheduling fixes before using 30B to claim overlap benefit.
+
+Verification for the endpoint fix:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pd_payloads.py \
+  tests/pap/test_multi_pap_proxy_server.py -q
+```
+
+Result: `17 passed`.
+
+## Qwen3-30B-A3B-FP8 Runner 3-Way Root Cause
+
+A follow-up focused on why the 30B `3-way` result above was much worse than
+serial. The key finding is that the measured 30B run did not actually realize
+the intended runner-level 3-way microbatch shape.
+
+Root causes found in the new runner path:
+
+1. The FP8 30B model uses `vllm/v1/worker/gpu_model_runner.py`, but the earlier
+   PAP runner microbatch implementation existed only in
+   `vllm/v1/worker/gpu/model_runner.py`. The new runner did not read
+   `PAP_RUNNER_MICROBATCH_COUNT`, did not wrap the model in `UBatchWrapper` for
+   PAP, and did not slice PAP endpoint/request metadata per ubatch.
+2. After adding new-runner PAP microbatching, the first runtime failure was an
+   Attention metadata builder assertion. The new runner had created only one
+   metadata builder when normal vLLM DBO was disabled, but PAP runner ubatching
+   can use ubatch ids `0..N-1` even when `parallel_config.use_ubatching` is
+   false.
+3. The next runtime failure was a PAP request/position mismatch. In eager mode
+   the model was given padded ubatch slices, while the Attention metadata path
+   used unpadded slices. PAP context slicing now follows the same slices passed
+   to the model for this path.
+4. The final blocker is architectural for this 30B model: Qwen3-30B-A3B-FP8 is
+   `qwen3_moe`, and its FP8 fused MoE kernel asserts `not dbo_enabled()`.
+   Whole-model `UBatchWrapper` enables the DBO context around the entire forward
+   pass, so forcing runner-level PAP microbatching reaches the MoE kernel and
+   crashes.
+
+Because of item 4, the current code disables PAP runner microbatching for
+`qwen3_moe` and logs a warning instead of silently producing a misleading
+`3-way` configuration. This preserves the new-runner PAP microbatch support for
+non-MoE models, while avoiding a known-invalid 30B MoE execution path.
+
+Validation smoke after the guard:
+
+- Run root:
+  `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_085321`.
+- Model: `/data/ssd1/llm-models/Qwen3-30B-A3B-FP8`.
+- Topology: `1PA1P`.
+- Workload: input `128`, output `4`, qps `64`, `num_prompts=6`,
+  `MAX_NUM_SEQS=6`.
+- Env included `PAP_RUNNER_MICROBATCH_COUNT=3`,
+  `PAP_RUNNER_MICROBATCH_DECODE_THRESHOLD=3`,
+  `PAP_OFFLOAD_EXEC_TRACE=1`, `PAP_OFFLOAD_EXEC_TRANSPORT=nixl_mailbox`,
+  `VLLM_USE_FLASHINFER_SAMPLER=0`, and proxy variables were unset.
+- Result: `6/6` successful requests, median TTFT `1640.94 ms`, median TPOT
+  `71.40 ms`, p99 TPOT `71.46 ms`.
+- Trace confirmed the guard: Projection and Attention `calls` median stayed at
+  `6`, not three ubatches of `2`. Projection `yield_ms` median was `0.001 ms`.
+
+Updated conclusion for the 30B question:
+
+- The bad 30B `3-way` result should not be read as "3-way overlap works but is
+  slower." It was a configuration/implementation mismatch: the new runner did
+  not implement PAP runner microbatching, and the direct whole-model port is not
+  compatible with Qwen3-MoE FP8 DBO.
+- The 8B dense-model result remains the valid evidence for the current
+  runner-level 2-way/3-way design. The 8B sweet spot from this sweep is
+  `MAX_NUM_SEQS=512` for saturated throughput, with 3-way improving request
+  throughput from `4.76` to `5.84` req/s versus serial. For lower latency while
+  keeping a small 3-way win, `MAX_NUM_SEQS=128` was the better point.
+- A real 30B solution should not be the current whole-model `UBatchWrapper`.
+  It needs a MoE-compatible PAP-specific pipeline that only overlaps the
+  Projection/remote-Attention boundary, or the next planned fused/batched remote
+  Attention kernel path.
+
+## Qwen3-30B MoE Attention-Boundary UBatch Follow-up
+
+The next implementation step added a MoE-compatible ubatch hook to
+`Qwen3MoeDecoderLayer`. It intentionally does not use whole-model
+`UBatchWrapper` or DBO. Instead, when
+`PAP_OFFLOAD_EXEC_MICROBATCH_OVERLAP_MLP=1` is set, the layer:
+
+1. runs input layernorm for the full decode batch;
+2. asks `Qwen3MoeAttention` to use the existing PAP attention-boundary
+   microbatch pipeline;
+3. for each returned attention/output-projection chunk, runs that chunk through
+   post-attention layernorm and the local MoE MLP synchronously;
+4. scatters chunk results back into the full batch output.
+
+This avoids the FP8 fused MoE `assert not dbo_enabled()` failure because the MoE
+MLP is not executed inside a DBO `UBatchContext`.
+
+Validation and first small-workload measurements:
+
+| Mode | Run root | Workload | Success | Median TPOT | Trace shape | Notes |
+| --- | --- | --- | ---: | ---: | --- | --- |
+| non-ubatch guard smoke | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_085321` | `1PA1P`, input `128`, output `4`, qps `64`, prompts `6` | 6/6 | 71.40 ms | Projection/Attention calls median `6` | Runner microbatch disabled for `qwen3_moe`; baseline safety smoke. |
+| attention ubatch + MoE chunk overlap | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_094726` | same | 6/6 | 110.63 ms | Attention calls median `2` | Runs without DBO/MoE assert, but chunk size `2` makes MoE MLP inefficient. |
+| attention ubatch only | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_094911` | same | 6/6 | 97.78 ms | Attention calls median `2` | Faster than chunked-MoE overlap, still slower than no ubatch at this small batch. |
+| non-ubatch B24 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_095042` | `1PA1P`, input `128`, output `4`, qps `64`, prompts `24` | 24/24 | 141.41 ms | Projection/Attention calls median `24` | Larger macro batch baseline. |
+| attention ubatch B24 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_095143` | same | 24/24 | 154.53 ms | Attention ubatch enabled | Still slower than non-ubatch in this 1PA1P short-output smoke. |
+
+Current interpretation:
+
+- 30B MoE can now execute PAP attention-boundary ubatch without entering DBO.
+  This is the correct compatibility direction for Qwen3-MoE FP8.
+- The current implementation is not yet the efficient final design. It still
+  has a layer barrier: all ubatches finish layer `i` before any ubatch advances
+  to layer `i+1`. That limits overlap to send/recv scheduling and optional
+  current-layer MLP work, rather than a full wavefront across layers.
+- `PAP_OFFLOAD_EXEC_MICROBATCH_OVERLAP_MLP=1` should not be used with tiny
+  chunks. It splits the MoE MLP and loses arithmetic density. For now, the safer
+  30B setting is attention-only ubatch with `PAP_OFFLOAD_EXEC_MICROBATCH_COUNT`
+  and `PAP_OFFLOAD_EXEC_MICROBATCH_FULL_QKV=1`; even that needs a larger
+  topology/workload sweep before it can be called faster than serial.
+- The next efficiency step is a true per-layer wavefront pipeline for PAP decode:
+  once ubatch `u0` receives layer `i` remote attention output, it should be able
+  to run local projection/MLP and advance to layer `i+1` while `u1/u2` are still
+  in layer `i` remote attention.
+
+## Qwen3-30B Attention-UBatch Trace Instrumentation
+
+The attention-boundary microbatch path originally lacked Projection-side trace
+rows, so `tools/pap_trace_summary.py` could only see Attention/mailbox events.
+The microbatch path now emits the same
+`PAP OFFLOAD_EXEC projection trace ...` log line as the serial offload path,
+aggregated per layer across all microbatches. This records:
+
+- `batches`: number of microbatch sends for the layer.
+- `calls`: total requests represented by those microbatches.
+- `send_ms`: cumulative local QKV preparation/send time across microbatches.
+- `recv_ms`: cumulative wait/read time for all microbatch attention outputs.
+- `total_ms`: full local layer attention-boundary microbatch interval.
+- `batch_keys`: all remote Attention batch ids, so the parser can correlate
+  Projection and Attention timings.
+
+Validation run:
+
+- Run root:
+  `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_095913`.
+- Workload: `1PA1P`, Qwen3-30B-A3B-FP8, input `128`, output `4`, qps `64`,
+  prompts `6`.
+- Env: `PAP_OFFLOAD_EXEC_MICROBATCH_COUNT=3`,
+  `PAP_OFFLOAD_EXEC_MICROBATCH_FULL_QKV=1`,
+  `PAP_OFFLOAD_EXEC_MICROBATCH_STREAMING=0`,
+  `PAP_OFFLOAD_EXEC_MICROBATCH_OVERLAP_MLP=0`, proxy variables unset.
+- Result: `6/6` successful requests, median TPOT `93.13 ms`.
+- Trace summary: Projection `batches=3`, `calls=6`, `send_ms=0.354 ms`,
+  `recv_ms=1.445 ms`, `total_ms=2.517 ms`; Attention `calls=2`,
+  `compute_ms=0.259 ms`, `total_ms=0.630 ms`.
+- Correlation is now meaningful: median Attention path after Projection send is
+  `1.536 ms`, and Projection resume-to-recv-done is `1.879 ms`.
+
+Additional B24 schedule check:
+
+- Non-streaming ubatch run:
+  `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_095724`.
+- Result: `24/24` successful requests, median TPOT `155.58 ms`.
+- Projection trace: `batches=3`, `calls=24`, `send_ms=0.638 ms`,
+  `recv_ms=2.939 ms`, `total_ms=4.329 ms`.
+- This is effectively tied with the prior streaming ubatch B24 run
+  (`154.53 ms`) and slower than non-ubatch B24 (`141.41 ms`). The schedule knob
+  is therefore not the main issue.
+
+Updated diagnosis:
+
+- The current attention-boundary ubatch implementation correctly avoids DBO and
+  gives useful trace visibility, but it mostly serializes the three remote
+  attention microbatches within the same layer boundary.
+- Splitting one `calls=24` remote Attention into three `calls=8` tasks reduces
+  per-task Attention compute, but adds three mailbox send/recv/ACK paths and
+  still waits at the layer boundary. With no cross-layer wavefront, this is not
+  enough to beat the serial path.
+- The next implementation should target cross-layer progress, not just
+  streaming order within one layer.
+
+## Qwen3-30B MoE Layer-Wavefront UBatch Prototype
+
+The next prototype added an opt-in Qwen3-MoE PAP layer-wavefront path guarded by
+`PAP_OFFLOAD_EXEC_LAYER_WAVEFRONT=1`. This path is separate from vLLM
+runner-level DBO microbatching:
+
+- It does not use `UBatchWrapper`.
+- It keeps whole-model DBO disabled for `qwen3_moe`, because the FP8 fused MoE
+  path still asserts when `dbo_enabled()` is true.
+- It splits only decode batches, and only when every scheduled request has one
+  decode token.
+- It starts remote Attention for all ubatches on the first layer, then advances
+  an ubatch to its next layer as soon as that ubatch's current-layer remote
+  Attention result returns. This removes the earlier all-ubatches layer barrier.
+- It currently requires direct `nixl_mailbox` transport, because the prototype
+  calls the mailbox send/recv primitives directly rather than the TCP-triggered
+  offload path.
+
+Validation commands:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_contract.py \
+  tests/pap/test_pd_payloads.py \
+  tests/pap/test_multi_pap_proxy_server.py \
+  tests/pap/test_pap_trace_summary.py -q
+pre-commit run ruff-check --files \
+  vllm/model_executor/models/qwen3.py \
+  vllm/model_executor/models/qwen3_moe.py \
+  tests/pap/test_pap_contract.py
+.venv/bin/python -m py_compile \
+  vllm/model_executor/models/qwen3.py \
+  vllm/model_executor/models/qwen3_moe.py
+git diff --check
+```
+
+All four checks passed locally.
+
+Small 30B smoke comparison, proxy variables unset:
+
+| Mode | Run root | Workload | Success | Median TPOT | Mean TPOT | Trace shape |
+| --- | --- | --- | ---: | ---: | ---: | --- |
+| serial PAP | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_101151` | `1PA1P`, Qwen3-30B-A3B-FP8, input `128`, output `4`, qps `64`, prompts `6` | 6/6 | 68.11 ms | 74.23 ms | Attention `calls` median `6`; mailbox task size mostly `nbytes=61440`. |
+| layer-wavefront ubatch | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_101013` | same | 6/6 | 96.18 ms | 104.14 ms | Attention `calls` median `2`; each full decode batch is split into three `B=2` ubatches. |
+
+Trace interpretation:
+
+- The wavefront prototype is functionally valid for this small 30B run: it runs
+  without the MoE/DBO assert and the logs show three `B=2` mailbox batches per
+  full `B=6` decode step.
+- It is not faster on this small batch. The number of mailbox send/read events
+  rises from `240` in serial PAP to `624` in wavefront. Per-message overhead
+  dominates the saved waiting time.
+- Serial PAP sends one larger layer task (`calls` median `6`, QKV task
+  `nbytes=61440`), while wavefront sends three smaller layer tasks (`calls`
+  median `2`, QKV task `nbytes=20480`). The smaller tasks reduce raw Attention
+  compute, but they also triple publish/ACK/read scheduling costs.
+- This result explains why "MoE does not support ubatch" was the wrong shorthand.
+  MoE does not support the current whole-model DBO ubatch path because FP8 fused
+  MoE assumes a normal forward context and rejects DBO. A PAP-specific ubatch can
+  run if it stays outside that DBO context, but it still has to preserve per-layer
+  Attention -> MoE dependency and avoid destroying MoE arithmetic density.
+
+Current conclusion:
+
+- The compatibility blocker is resolved only for an opt-in prototype path; this
+  is not yet the efficient 30B solution.
+- The remaining efficiency problem is granularity. At tiny `B=2` ubatches, the
+  mailbox/runtime overhead is larger than the overlap benefit. The next useful
+  experiment should use a larger macro batch where each of three ubatches is
+  large enough for Projection and MoE arithmetic density, or should reduce the
+  per-ubatch mailbox cost with a fused/batched remote Attention kernel.
+
+## Qwen3-30B Layer-Wavefront Batch-Size Sweep
+
+Follow-up runs used the same `1PA1P`, Qwen3-30B-A3B-FP8, input `128`, output
+`4`, direct `nixl_mailbox` transport, and proxy-cleared shell. The goal was to
+check whether the layer-wavefront path becomes useful once each ubatch is large
+enough to amortize mailbox overhead.
+
+| Macro batch | Mode | Run root | Success | Median TPOT | Mean TPOT | Notes |
+| ---: | --- | --- | ---: | ---: | ---: | --- |
+| 6 | serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_101151` | 6/6 | 68.11 ms | 74.23 ms | Baseline small batch. |
+| 6 | 3-way wavefront | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_101013` | 6/6 | 96.18 ms | 104.14 ms | Splits into `B=2`; slower. |
+| 24 | serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_101723` | 24/24 | 143.41 ms | 150.73 ms | Attention `calls` median `24`. |
+| 24 | 3-way wavefront | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_101829` | 24/24 | 113.31 ms | 121.87 ms | `B=8` ubatches; faster than serial. |
+| 24 | 2-way wavefront | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_102317` | 24/24 | 105.53 ms | 110.88 ms | `B=12` ubatches; best B24 point. |
+| 48 | serial | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_101957` | 48/48 | 234.36 ms | 253.13 ms | Attention `calls` median `48`. |
+| 48 | 3-way wavefront | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_102054` | 48/48 | 241.92 ms | 255.13 ms | `B=16` ubatches, but Projection send queue/ACK dominates. |
+| 48 | 2-way wavefront | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_102217` | 48/48 | 186.33 ms | 193.62 ms | `B=24` ubatches; best B48 point. |
+
+Interpretation:
+
+- The wavefront design is useful once ubatches are not too small. B24 2-way
+  improves median TPOT by `26.4%` versus serial (`143.41 -> 105.53 ms`).
+- B48 confirms the need for dynamic ubatch count. Fixed 3-way regresses
+  slightly versus serial (`234.36 -> 241.92 ms`), while 2-way improves median
+  TPOT by `20.5%` (`234.36 -> 186.33 ms`).
+- For B24, 3-way already hides most Projection wait, but 2-way wins because it
+  sends fewer mailbox tasks and keeps each ubatch larger.
+- For B48, 3-way's Projection-side `attention_task_batch` send cost becomes the
+  problem: median send total is `3.031 ms`, with queue median `1.1225 ms` and
+  ACK median `1.7245 ms`. The 2-way B48 run reduces median Projection task send
+  total to `1.968 ms`.
+
+Current 30B recommendation:
+
+- Use the MoE-specific layer-wavefront path, not whole-model DBO.
+- Prefer `PAP_OFFLOAD_EXEC_MICROBATCH_COUNT=2` for the current 30B
+  `nixl_mailbox` implementation. Fixed 3-way is only a narrow win at B24 and
+  loses at B48.
+- The next code change should add an `auto` or model-specific policy for
+  `PAP_OFFLOAD_EXEC_MICROBATCH_COUNT` on `qwen3_moe`, so users do not have to
+  know that this 30B path currently prefers 2-way.
+
+## Qwen3-30B Auto Wavefront Policy
+
+The follow-up code change adds a MoE-specific automatic policy for
+`PAP_OFFLOAD_EXEC_LAYER_WAVEFRONT=1`:
+
+- If `PAP_OFFLOAD_EXEC_MICROBATCH_COUNT` is explicitly set to an integer, the
+  explicit value is respected.
+- If `PAP_OFFLOAD_EXEC_MICROBATCH_COUNT` is unset or set to `auto`,
+  `qwen3_moe` uses 2-way layer-wavefront once the decode macro batch reaches
+  `PAP_OFFLOAD_EXEC_MICROBATCH_AUTO_MIN_BATCH`, default `16`.
+- Below that threshold it returns to the serial PAP path. This avoids the B6
+  regression where tiny ubatches lose to mailbox overhead.
+
+Runtime validation, with `PAP_OFFLOAD_EXEC_MICROBATCH_COUNT` unset:
+
+| Macro batch | Run root | Success | Median TPOT | Attention calls median | Interpretation |
+| ---: | --- | ---: | ---: | ---: | --- |
+| 6 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_102919` | 6/6 | 65.46 ms | 6 | Auto policy correctly keeps the serial path. |
+| 24 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_102801` | 24/24 | 106.14 ms | 12 | Auto policy selects 2-way and matches the manual 2-way result. |
+
+This turns the current 30B setting from "manually choose count=2" into a safer
+opt-in mode: enable `PAP_OFFLOAD_EXEC_LAYER_WAVEFRONT=1`, leave the count unset
+or set it to `auto`, and the MoE path avoids both the tiny-batch regression and
+the fixed-3-way B48 regression.
+
+## Qwen3-30B Target-Like `7PA1P` Validation
+
+The next check moved from short `1PA1P` smoke tests toward the intended
+single-Projection shape:
+
+- Topology: `7PA1P`.
+- Model: `/data/ssd1/llm-models/Qwen3-30B-A3B-FP8`.
+- Input/output: `1024/64`.
+- Offered qps: `256`.
+- Prompts: `128`.
+- `MAX_NUM_SEQS=128`, `MAX_NUM_BATCHED_TOKENS=8192`.
+- Proxy variables explicitly unset.
+- Trace disabled to avoid trace overhead.
+
+| Mode | Run root | Success | Duration | Req/s | Output tok/s | Median TTFT | Median TPOT | P99 TPOT |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| serial PAP | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_103239` | 128/128 | 99.22 s | 1.29 | 82.56 | 8479.52 ms | 1433.06 ms | 1475.17 ms |
+| layer-wavefront auto | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_103540` | 128/128 | 51.43 s | 2.49 | 159.28 | 7382.91 ms | 692.15 ms | 726.67 ms |
+
+Interpretation:
+
+- This target-like run confirms the important distinction: 30B MoE is not
+  fundamentally incompatible with PAP ubatch. It is incompatible with the old
+  whole-model DBO `UBatchWrapper` path, because the FP8 fused MoE execution path
+  rejects `dbo_enabled()` during the normal full forward.
+- The MoE-specific layer-wavefront path avoids that context and keeps ubatching
+  at the PAP remote-Attention boundary. In the `7PA1P` run, auto 2-way improves
+  median TPOT by `51.7%` (`1433.06 -> 692.15 ms`) and output throughput by
+  `92.9%` (`82.56 -> 159.28 tok/s`) versus serial PAP.
+- This does not yet prove the best global setting. The run used `128` prompts,
+  not the final `1000`-request target. It also used one Projection node, so the
+  Projection-side layer wavefront is still the central bottleneck. But it does
+  show that the 30B path can benefit materially once the macro batch is large
+  enough and the MoE-specific wavefront path is used.
+
+## Qwen3-30B `7PA1P` 1000-Request Validation
+
+The final target-scale check used the same `7PA1P`, Qwen3-30B-A3B-FP8,
+input/output `1024/64`, and qps `256` setting, but increased both prompt count
+and scheduler capacity:
+
+- Prompts: `1000`.
+- `MAX_NUM_SEQS=1000`.
+- `MAX_NUM_BATCHED_TOKENS=8192`.
+- Proxy variables explicitly unset.
+- Trace disabled.
+
+| Mode | Run root | Success | Duration | Req/s | Output tok/s | Median TTFT | Median TPOT | P99 TPOT |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| serial PAP | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_104616` | 1000/1000 | 496.36 s | 2.01 | 128.94 | 26530.44 ms | 7271.79 ms | 7388.45 ms |
+| layer-wavefront auto | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_104103` | 1000/1000 | 251.18 s | 3.98 | 254.80 | 19516.49 ms | 3236.58 ms | 3295.83 ms |
+
+Interpretation:
+
+- With `MAX_NUM_SEQS=1000`, Projection does schedule the full macro batch. The
+  Projection service log reached `Running: 1000 reqs`; the earlier low parallelism
+  behavior was a scheduler cap issue, not a fundamental qps limitation.
+- At the 1000-request target point, MoE layer-wavefront auto is materially faster
+  than serial PAP: median TPOT improves by `55.5%` (`7271.79 -> 3236.58 ms`),
+  p99 TPOT improves by `55.4%`, and output throughput improves by `97.6%`
+  (`128.94 -> 254.80 tok/s`).
+- This is the strongest current evidence that the 30B MoE path can efficiently
+  support PAP ubatch when the implementation avoids whole-model DBO and when the
+  scheduler is allowed to form a large enough Projection macro batch.
+
+## Qwen3-30B PD Baseline Follow-up
+
+The corresponding PD baseline uses the same model and workload:
+
+- Model: `/data/ssd1/llm-models/Qwen3-30B-A3B-FP8`.
+- Workload: `sonnet`, input/output `1024/64`, qps `256`, prompts `1000`.
+- Topology: `7P1D`.
+- Proxy variables explicitly unset.
+
+Native XPYD/P2P-NCCL PD attempts were not valid at this point:
+
+| Mode | Run root | Key settings | Result |
+| --- | --- | --- | --- |
+| XPYD PD | `/home/fei/research/PD/test/baseline/disaggregated/results/runs/20260527_105903` | `DECODE_MAX_NUM_SEQS=1000`, `DECODE_GPU_MEM_UTIL=0.95` | Invalid: decode OOM after 1 success, 999 failures. |
+| XPYD PD | `/home/fei/research/PD/test/baseline/disaggregated/results/runs/20260527_110059` | `DECODE_MAX_NUM_SEQS=128`, `DECODE_GPU_MEM_UTIL=0.95` | Invalid: decode OOM and peer out-of-threshold. |
+| XPYD PD | `/home/fei/research/PD/test/baseline/disaggregated/results/runs/20260527_110411` | `DECODE_MAX_NUM_SEQS=64`, `DECODE_GPU_MEM_UTIL=0.7` | Invalid: benchmark stalled at `820/1000`; decode log had repeated `kv_cache does not match, block_ids:65, num_block:64`. |
+| XPYD PD | `/home/fei/research/PD/test/baseline/disaggregated/results/runs/20260527_111043` | `PREFILL_MAX_NUM_SEQS=1`, `DECODE_MAX_NUM_SEQS=64`, `DECODE_GPU_MEM_UTIL=0.7` | Invalid: benchmark stalled at `959/1000`; decode log had repeated `kv_cache does not match, block_ids:64, num_block:63`. |
+
+The valid PD baseline therefore uses the NIXL disaggregated path:
+
+| Architecture | Run root | Success | Duration | Req/s | Output tok/s | Median TTFT | Median TPOT | P99 TPOT | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| NIXL PD `7P1D` | `/home/fei/research/PD/test/baseline/nixl_disaggregated/results/runs/20260527_111630` | 1000/1000 | 216.58 s | 4.62 | 295.51 | 106797.63 ms | 25.05 ms | 42.43 ms | `PREFILL_MAX_NUM_SEQS=1000`, `DECODE_MAX_NUM_SEQS=64`, `DECODE_GPU_MEM_UTIL=0.7`. |
+| PAP serial `7PA1P` | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_104616` | 1000/1000 | 496.36 s | 2.01 | 128.94 | 26530.44 ms | 7271.79 ms | 7388.45 ms | Single Projection, no layer-wavefront. |
+| PAP layer-wavefront auto `7PA1P` | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_104103` | 1000/1000 | 251.18 s | 3.98 | 254.80 | 19516.49 ms | 3236.58 ms | 3295.83 ms | MoE-specific layer-wavefront auto policy. |
+
+Interpretation:
+
+- The native XPYD baseline is not usable for this 30B, 1000-request point because
+  it either OOMs on the single decode GPU or leaves tail requests stuck behind a
+  P2P-NCCL KV block-count mismatch.
+- NIXL PD completes the target workload and is the valid PD baseline for this
+  comparison. It has higher output throughput than PAP auto (`295.51` vs
+  `254.80 tok/s`), but much higher TTFT because all requests pass through
+  prefill before decode service completion.
+- PAP auto closes most of the throughput gap to PD while keeping the PAP
+  attention/projection split: output throughput reaches `86.2%` of NIXL PD
+  (`254.80 / 295.51`) and is `97.6%` better than PAP serial.
+
+## Qwen3-30B Fixed-Workload PD/PAP Topology Sweep
+
+This sweep fixes the workload first, then chooses the best valid point inside
+each architecture. It is therefore an architecture-level comparison, not a
+single arbitrary topology comparison.
+
+- Date: 2026-05-27.
+- Code version before recording: `4ea358fc5`.
+- Model: `/data/ssd1/llm-models/Qwen3-30B-A3B-FP8`.
+- Workload: `sonnet`, input/output `1024/64`, qps `256`, prompts `2000`.
+- GPU budget: 8 L20 GPUs.
+- Proxy variables were explicitly unset for every run.
+- Selection rule: require `0` failed requests, then maximize output token
+  throughput. TTFT/TPOT are secondary diagnostics.
+
+Common PD-NIXL settings:
+
+```text
+MAX_MODEL_LEN=2048
+MAX_NUM_BATCHED_TOKENS=8192
+MAX_NUM_SEQS=2000
+PREFILL_MAX_NUM_BATCHED_TOKENS=8192
+PREFILL_MAX_NUM_SEQS=2000
+DECODE_MAX_NUM_BATCHED_TOKENS=8192
+DECODE_MAX_NUM_SEQS=64
+PREFILL_GPU_MEM_UTIL=0.85
+DECODE_GPU_MEM_UTIL=0.7
+```
+
+Common PAP settings:
+
+```text
+MAX_MODEL_LEN=2048
+MAX_NUM_BATCHED_TOKENS=8192
+MAX_NUM_SEQS=2000
+PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.85
+PAP_PROJECTION_GPU_MEMORY_UTILIZATION=0.95
+PAP_PREFILL_MPS_PERCENT=30
+PAP_ATTENTION_MPS_PERCENT=70
+PAP_OFFLOAD_EXEC_TRANSPORT=nixl_mailbox
+PAP_OFFLOAD_EXEC_LAYER_WAVEFRONT=1
+PAP_OFFLOAD_EXEC_MICROBATCH_COUNT=auto
+PAP_OFFLOAD_EXEC_MICROBATCH_AUTO_MIN_BATCH=16
+PAP_RUNNER_MICROBATCH_COUNT=0
+```
+
+Valid PD-NIXL results:
+
+| Topology | Run root | Success | Duration | Req/s | Output tok/s | Median TTFT | Median TPOT | P99 TPOT |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `7P1D` | `/home/fei/research/PD/test/baseline/nixl_disaggregated/results/runs/20260527_115332` | 2000/2000 | 432.56 s | 4.62 | 295.91 | 213496.94 ms | 26.94 ms | 45.83 ms |
+| `6P2D` | `/home/fei/research/PD/test/baseline/nixl_disaggregated/results/runs/20260527_120157` | 2000/2000 | 212.36 s | 9.42 | 602.74 | 102235.65 ms | 27.22 ms | 43.19 ms |
+| `5P3D` | `/home/fei/research/PD/test/baseline/nixl_disaggregated/results/runs/20260527_120643` | 2000/2000 | 140.74 s | 14.21 | 909.50 | 65392.79 ms | 26.33 ms | 39.03 ms |
+| `4P4D` | `/home/fei/research/PD/test/baseline/nixl_disaggregated/results/runs/20260527_121015` | 2000/2000 | 131.47 s | 15.21 | 973.63 | 58240.30 ms | 26.20 ms | 41.93 ms |
+
+Valid PAP results:
+
+| Topology | Run root | Success | Duration | Req/s | Output tok/s | Median TTFT | Median TPOT | P99 TPOT |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `7PA1P` | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_121356` | 2000/2000 | 592.40 s | 3.38 | 216.07 | 92943.27 ms | 7592.25 ms | 7834.18 ms |
+| `6PA2P` | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_122512` | 2000/2000 | 255.67 s | 7.82 | 500.65 | 95245.34 ms | 1201.16 ms | 1578.17 ms |
+| `4PA4P` | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_124150` | 2000/2000 | 390.99 s | 5.12 | 327.38 | 152197.49 ms | 1419.97 ms | 2240.68 ms |
+
+Invalid PAP result:
+
+| Topology | Run root | Result |
+| --- | --- | --- |
+| `5PA3P` | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_123036` | Invalid/stalled. The benchmark stayed at `0/2000`; projection logs reported `TimeoutError: timed out waiting for PAP NIXL mailbox ACK ... #qkv_batch` and `TimeoutError: timed out waiting for PAP NIXL receive slot ... #attn_out_batch`. The run was terminated and no result JSON was produced. |
+
+Projection-side batch evidence from the service logs:
+
+| Topology | Max observed Projection `Running` requests | Notes |
+| --- | --- | --- |
+| `7PA1P` | `2000` on the single Projection | Confirms that `MAX_NUM_SEQS=2000` allowed the Projection node to accept the full macro batch, but one Projection node remained the throughput bottleneck. |
+| `6PA2P` | `423`, `445` on the two Projection logs | Requests were distributed across two Projection nodes; this was the best valid PAP point. |
+| `5PA3P` | no steady `Running` sample before failure | Failed in mailbox ACK/receive-slot handling. |
+| `4PA4P` | `198`, `210`, `207`, `187` across four Projection logs | More Projection nodes did not help because only four PA nodes remained and the run became slower. |
+
+Best valid points:
+
+| Architecture | Best topology | Output tok/s | Req/s | Median TTFT | Median TPOT | P99 TPOT |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| PD-NIXL | `4P4D` | 973.63 | 15.21 | 58240.30 ms | 26.20 ms | 41.93 ms |
+| PAP layer-wavefront auto | `6PA2P` | 500.65 | 7.82 | 95245.34 ms | 1201.16 ms | 1578.17 ms |
+
+Interpretation:
+
+- Under this fixed workload, PD-NIXL is the clear winner. The best PAP point
+  reaches only `51.4%` of the best PD output throughput (`500.65 / 973.63`).
+- PD improves as decode nodes increase from `1` to `4`, while median TPOT stays
+  around `26-27 ms`. At `1024/64`, qps `256`, prompts `2000`, decode-side
+  capacity dominates the PD sweep more than prefill-side capacity.
+- PAP improves strongly from one to two Projection nodes (`216.07 -> 500.65
+  tok/s`), confirming that one Projection node is a bottleneck. However, adding
+  more Projection nodes is not monotonic: `5PA3P` hit mailbox ACK timeouts and
+  `4PA4P` was slower than `6PA2P`.
+- The current PAP implementation still has a large Projection/remote-Attention
+  loop cost at this scale. Even at the best PAP point, median TPOT is
+  `1201.16 ms`, far above PD's `26.20 ms`.
+- The Projection logs also emit `PAP runner microbatch is disabled for
+  qwen3_moe because the FP8 fused MoE path does not support DBO contexts`.
+  This is the normal whole-model runner microbatch warning for this model; the
+  tested PAP path is the NIXL-mailbox layer-wavefront offload path.
+
+Conclusion for this iteration:
+
+- For the current Qwen3-30B, `1024/64`, qps `256`, prompts `2000` point, the
+  architecture-level best comparison is `PD-NIXL 4P4D` versus `PAP 6PA2P`.
+- PAP's best valid topology is not competitive with PD-NIXL yet. The next
+  useful PAP work is not another topology sweep; it is improving the
+  Projection/Attention exchange path and making the multi-Projection mailbox
+  path stable. A fused batch attention kernel remains the next concrete
+  development target.
+
+## Qwen3-30B-A3B-FP8 `6PA2P` Concurrency Sweep
+
+The topology sweep above kept PAP instance concurrency fixed at
+`MAX_NUM_SEQS=2000`. A follow-up sweep varied `MAX_NUM_SEQS` only for the best
+valid PAP topology, `6PA2P`, to test whether the Projection-side arithmetic
+intensity improves enough to change the PAP optimum.
+
+- Date: 2026-05-27.
+- Model: `/data/ssd1/llm-models/Qwen3-30B-A3B-FP8`.
+- Workload: `sonnet`, input/output `1024/64`, qps `256`, prompts `2000`.
+- Topology: `6PA2P`.
+- Common env: `MAX_MODEL_LEN=2048`, `MAX_NUM_BATCHED_TOKENS=8192`,
+  `PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.85`,
+  `PAP_PROJECTION_GPU_MEMORY_UTILIZATION=0.95`,
+  `PAP_PREFILL_MPS_PERCENT=30`, `PAP_ATTENTION_MPS_PERCENT=70`,
+  `PAP_OFFLOAD_EXEC_TRANSPORT=nixl_mailbox`,
+  `PAP_OFFLOAD_EXEC_LAYER_WAVEFRONT=1`,
+  `PAP_OFFLOAD_EXEC_MICROBATCH_COUNT=auto`,
+  `PAP_OFFLOAD_EXEC_MICROBATCH_AUTO_MIN_BATCH=16`,
+  `PAP_RUNNER_MICROBATCH_COUNT=0`.
+- Shell HTTP proxy variables were explicitly unset for every measured run.
+- `VLLM_USE_FLASHINFER_SAMPLER=0` was required. Without it, the first
+  `MAX_NUM_SEQS=512` launch attempted FlashInfer sampler JIT compilation and
+  failed with `BlockAdjacentDifference<...> has no member "FlagHeads"`.
+
+Results:
+
+| `MAX_NUM_SEQS` | Run root | Success | Duration | Req/s | Output tok/s | Median TTFT | Median TPOT | P99 TPOT | Max Projection `Running` |
+| ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 320 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_134611` | 2000/2000 | 260.36 s | 7.68 | 491.62 | 96339.19 ms | 1153.02 ms | 1352.96 ms | `320`, `320` |
+| 384 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_133154` | 2000/2000 | 256.71 s | 7.79 | 498.63 | 98109.87 ms | 1330.89 ms | 1581.83 ms | `384`, `384` |
+| 448 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_133717` | 2000/2000 | 258.34 s | 7.74 | 495.48 | 88615.88 ms | 1581.14 ms | 1778.16 ms | `448`, `448` |
+| 512 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_132011` | 2000/2000 | 257.12 s | 7.78 | 497.82 | 64411.10 ms | 1702.64 ms | 2008.52 ms | `512`, `512` |
+| 1024 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_132539` | 2000/2000 | 259.45 s | 7.71 | 493.36 | 69171.97 ms | 2251.40 ms | 2608.24 ms | `787`, `787` |
+| 2000 | `/home/fei/research/PD/test/baseline/pap/results/runs/20260527_122512` | 2000/2000 | 255.67 s | 7.82 | 500.65 | 95245.34 ms | 1201.16 ms | 1578.17 ms | `423`, `445` |
+
+Findings:
+
+- The added concurrency points did not beat the existing `MAX_NUM_SEQS=2000`
+  result by throughput. The best throughput point remains `6PA2P`,
+  `MAX_NUM_SEQS=2000`, at `500.65` output tok/s and median TPOT
+  `1201.16 ms`.
+- The best latency point in this sweep is `MAX_NUM_SEQS=320`: median TPOT
+  `1153.02 ms` and p99 TPOT `1352.96 ms`, but it gives up throughput
+  (`491.62` output tok/s versus `500.65`).
+- Increasing the actual Projection running batch is not monotonic. The
+  `MAX_NUM_SEQS=1024` run reached `787` running requests per Projection
+  instance, but throughput dropped to `493.36` output tok/s and median TPOT
+  rose to `2251.40 ms`.
+- The good operating region appears to be roughly `300-450` active requests
+  per Projection instance for this model and workload. However, simply capping
+  `MAX_NUM_SEQS` in that range does not improve throughput, likely because the
+  run still pays the same Projection/Attention exchange overhead and shows
+  periodic wave stalls.
+- This narrows the current PAP bottleneck: scheduler concurrency alone is not
+  the missing knob for 30B `6PA2P`. The next optimization should target the
+  remote attention exchange path, especially fused batch attention and mailbox
+  batching/stability, before running a broader topology sweep again.

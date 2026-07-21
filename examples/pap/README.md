@@ -96,4 +96,4 @@ not a four-GPU milestone baseline.
 
 The exact PAP environment and the current controlled comparison are recorded
 in
-[`pap-pd-four-gpu-conversation-affinity-results-20260716.md`](../../docs/design/pap-pd-four-gpu-conversation-affinity-results-20260716.md).
+[`PAP-20260716-4GPU-CONV-AFFINITY`](../../benchmarks/pap/experiments/PAP-20260716-4GPU-CONV-AFFINITY/report.md).

@@ -58,7 +58,7 @@ For each implementation stage:
   - `run_metadata.json` with at least: stage, git short hash if committed or `dirty`, model, topology, transport, GPUs, input/output len, qps, max concurrency, num prompts, env flags, and known limitations;
   - optional profile output if enabled.
 - Summaries should be generated with `tools/pap_bench_summary.py` and must include model, TP size, dtype, prompt count, warmups, completed/failed, TTFT, TPOT, throughput, observed max concurrency, artifact path, and server-side batch evidence note.
-- Update `docs/design/pap-pd-comparison-methodology-20260701.md` only after a stage has at least one successful smoke or benchmark artifact. Mark failures as observations/blockers, not conclusions.
+- Update `benchmarks/pap/experiments/legacy/reports/pap-pd-comparison-methodology-20260701.md` only after a stage has at least one successful smoke or benchmark artifact. Mark failures as observations/blockers, not conclusions.
 
 ---
 
@@ -344,7 +344,7 @@ For each implementation stage:
 **Files:**
 - Use: `examples/pap/launch_pap_nixl.sh`
 - Use: `tools/pap_bench_summary.py`
-- Update after successful runs: `docs/design/pap-pd-comparison-methodology-20260701.md`
+- Update after successful runs: `benchmarks/pap/experiments/legacy/reports/pap-pd-comparison-methodology-20260701.md`
 
 - [ ] Run fresh PAP unified one-request smoke.
   - `PAP_UNIFIED_KV=1`

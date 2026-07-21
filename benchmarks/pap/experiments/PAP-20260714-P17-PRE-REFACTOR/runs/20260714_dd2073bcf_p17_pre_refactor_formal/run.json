@@ -1,0 +1,1134 @@
+{
+  "schema_version": 1,
+  "kind": "pap-run-manifest",
+  "run_id": "20260714_dd2073bcf_p17_pre_refactor_formal",
+  "experiment_id": "PAP-20260714-P17-PRE-REFACTOR",
+  "profile_id": "p17_1pa1p",
+  "architecture": "pap",
+  "mode": "formal",
+  "evidence": "formal-clean",
+  "provenance": {
+    "branch": "missing",
+    "commit": "dd2073bcf4637827d2adcd326a316b6b67af4fa4",
+    "tracked_worktree_dirty": false,
+    "tracked_worktree_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tracked_index_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "started_at": "2026-07-14T20:18:51+08:00"
+  },
+  "workload": {
+    "model": {
+      "path": {
+        "root_id": "model-store",
+        "relative_path": "Qwen3-8B"
+      },
+      "dtype": "float16",
+      "tensor_parallel_size": 1
+    },
+    "corpus": {
+      "path": {
+        "root_id": "reference-benchmarks",
+        "relative_path": "sonnet_4x.txt"
+      },
+      "sha256": "4a53bd26108f9193c693ab6a9482ee5ce5102b545b70a5ca3a8cb11ca1171859"
+    },
+    "parameters": {
+      "profile_id": "qwen3_8b_token_16k_5turn_o256_c4_v2",
+      "profile_version": 2,
+      "api": "/v1/completions",
+      "workload_semantics": "exact_token_continuous_multiturn",
+      "prompt_input": "token_ids",
+      "history_rule": "previous_prompt_plus_full_output_plus_suffix",
+      "document_tokens": 16000,
+      "append_tokens_per_later_round": 120,
+      "output_tokens_per_round": 256,
+      "rounds": 5,
+      "active_conversations": 4,
+      "request_rate_per_round": 2.0,
+      "arrival_mode": "fixed_rate_round_barrier_closed_loop",
+      "temperature": 0,
+      "seed": 0,
+      "ignore_eos": true,
+      "return_token_ids": true,
+      "block_size": 16,
+      "max_model_len": 20000,
+      "max_num_batched_tokens": 4096,
+      "max_num_seqs": 4
+    }
+  },
+  "topology": {
+    "name": "1pa1p",
+    "pa_count": 1,
+    "projection_count": 1,
+    "pd_prefill_count": 0,
+    "pd_decode_count": 0,
+    "routing_policy": "round_robin"
+  },
+  "placement": {
+    "prefill_devices": [
+      1
+    ],
+    "attention_devices": [
+      1
+    ],
+    "projection_devices": [
+      2
+    ],
+    "decode_devices": []
+  },
+  "transport": {
+    "offload_exec": "local_fast",
+    "offload_kv": "cuda_ipc",
+    "same_host": true
+  },
+  "mps": {
+    "mode": "static",
+    "profile_id": "baseline_static_64_28",
+    "prefill_visible_sms": 64,
+    "attention_visible_sms": 28
+  },
+  "runtime": {
+    "profile": "p17_1pa1p",
+    "settings": {
+      "offload_exec_transport": "local_fast",
+      "direct_mailbox_output": true,
+      "unified_md_fast_key": true,
+      "prefill_kv_async": true,
+      "prefill_ipc_profile": false,
+      "kv_handoff_mode": "sealed_manifest",
+      "async_decode_token": true,
+      "unified_kv": true,
+      "batched_route_copy": true,
+      "attention_dispatch_mode": "legacy"
+    }
+  },
+  "environment": {
+    "hardware_signature": "NVIDIA L20x2",
+    "software": {
+      "vllm": "0.23.1rc1.dev678+g4a7737647",
+      "cuda_driver": "missing",
+      "torch": "missing",
+      "nixl": "missing",
+      "ucx": "missing"
+    },
+    "fingerprint_basis": [
+      "hardware_signature",
+      "vllm_version",
+      "git_commit",
+      "implementation_fingerprint"
+    ]
+  },
+  "fingerprints": {
+    "profile": "1cabd2226607a6af2a4cbfcd70c1daada8c8272ceda757bb7cc6622569c9b533",
+    "implementation": "54eb60419dab3c5613b825d253f34c54ab0d41a4fb4fc94b0c0de3a92777924f",
+    "request_shape": "68c42d5ba9115b950afbe09feeb736f45280bca00b8bbade25bba3f06e0dfdae",
+    "hardware_runtime": "56c324764e4cb57effa6b91a506d970bf474e8072003639033f3be4d3a923e53"
+  },
+  "repetitions": {
+    "count": 3,
+    "order": [
+      1,
+      2,
+      3
+    ],
+    "aggregation_method": "pooled request-level samples across repetitions; nearest-rank p90",
+    "items": [
+      {
+        "index": 1,
+        "repetition_id": "content_sha256:f5bb30d0454f6568b1dc2a478e41b6138965161227f6f343b92e1f021d6dfff7",
+        "result_artifact": {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/result.json"
+        }
+      },
+      {
+        "index": 2,
+        "repetition_id": "content_sha256:a9bdda1217dcbeb0247fbd37254052944ad47a39bcac5c539e1dc0a3d86febce",
+        "result_artifact": {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/result.json"
+        }
+      },
+      {
+        "index": 3,
+        "repetition_id": "content_sha256:8ae490745811d0407a6849839c11fed04d8eda1b2a6c75f3776932ec5cd235ed",
+        "result_artifact": {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/result.json"
+        }
+      }
+    ]
+  },
+  "audits": {
+    "client": {
+      "status": "passed",
+      "detail": "All client request and shape checks pass.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/result.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/result.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/result.json"
+        }
+      ]
+    },
+    "cache": {
+      "status": "passed",
+      "detail": "All exact multi-turn cache checks pass.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/result.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/result.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/result.json"
+        }
+      ]
+    },
+    "attention_stats": {
+      "status": "passed",
+      "detail": "Runtime Attention statistics are captured for every repetition.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/attention_fast_path_stats.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/attention_fast_path_stats.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/attention_fast_path_stats.json"
+        }
+      ]
+    },
+    "correctness": {
+      "status": "passed",
+      "detail": "Strict service-log correctness audit has zero matches.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/correctness_audit.env"
+        }
+      ]
+    },
+    "decode_token_join": {
+      "status": "passed",
+      "detail": "Async decode-token join audit reports no errors.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/decode_token_join_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/decode_token_join_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/decode_token_join_audit.env"
+        }
+      ]
+    },
+    "routing": {
+      "status": "passed",
+      "detail": "All requests follow the expected 1PA1P route.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/routing_audit.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/routing_audit.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/routing_audit.json"
+        }
+      ]
+    },
+    "commit": {
+      "status": "passed",
+      "detail": "Strict logs contain no decode-commit error signatures.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/correctness_audit.env"
+        }
+      ]
+    },
+    "lease": {
+      "status": "passed",
+      "detail": "Strict logs and zero-session drain contain no lease failures.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/session_drain.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/session_drain.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/session_drain.env"
+        }
+      ]
+    },
+    "session_drain": {
+      "status": "passed",
+      "detail": "Attention drains to zero active sessions.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/session_drain.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/session_drain.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/session_drain.env"
+        }
+      ]
+    },
+    "mps": {
+      "status": "passed",
+      "detail": "Static MPS exposes 64 Prefill and 28 Attention SMs.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/mps_static_audit_pa_0.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/mps_static_audit_pa_0.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/mps_static_audit_pa_0.env"
+        }
+      ]
+    }
+  },
+  "metrics": {
+    "completed_requests": 60,
+    "failed_requests": 0,
+    "values": [
+      {
+        "name": "ttft_ms",
+        "scope": "round_1",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 10527.16322150809
+      },
+      {
+        "name": "tpot_ms",
+        "scope": "round_1",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 39.310184905879595
+      },
+      {
+        "name": "ttft_ms",
+        "scope": "steady_rounds_2_5",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 208.21628900012
+      },
+      {
+        "name": "tpot_ms",
+        "scope": "steady_rounds_2_5",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 50.48090203527667
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "name": "aggregate_aggregate.json",
+      "kind": "aggregate",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/aggregate.json"
+      },
+      "sha256": "e55fc0bbc0bd7047c05fe229ebffc080b40568157be67171ccecad4dfe45027d"
+    },
+    {
+      "name": "rep1_1PA1P_multiturn_load.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/1PA1P_multiturn_load.log"
+      },
+      "sha256": "e40daa21b7d88553e216649981a0dfa3e7d9dbf4bc6320167f2c353c01ac58c2"
+    },
+    {
+      "name": "rep1_attention_fast_path_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/attention_fast_path_stats.json"
+      },
+      "sha256": "377dee357dccfd01cbde10fa532a6754bc2162ef7f634982daf449eba1a02acb"
+    },
+    {
+      "name": "rep1_attention_fast_path_stats_0.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/attention_fast_path_stats_0.json"
+      },
+      "sha256": "377dee357dccfd01cbde10fa532a6754bc2162ef7f634982daf449eba1a02acb"
+    },
+    {
+      "name": "rep1_correctness_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/correctness_audit.env"
+      },
+      "sha256": "f9a3034cd98003be7d986a25059ba66e605c06c6ea3563409b324384d6c1911a"
+    },
+    {
+      "name": "rep1_correctness_audit_matches.log",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/correctness_audit_matches.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep1_decode_token_join_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/decode_token_join_audit.env"
+      },
+      "sha256": "1260242c0619cbcf209104db692db6b9cbd46b0667123c03aaf08a0ce228276d"
+    },
+    {
+      "name": "rep1_effective_config.env",
+      "kind": "configuration",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/effective_config.env"
+      },
+      "sha256": "44c24a876aee760d0062ea41b0c1766ee684036a69a79efe3e80c6e8d274c66b"
+    },
+    {
+      "name": "rep1_git_status.txt",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/git_status.txt"
+      },
+      "sha256": "b0512c223af7811797ef6ef25b8fb6347a6b80f65d4cd1d1a18f887cf54dbe4b"
+    },
+    {
+      "name": "rep1_mps_static_audit_pa_0.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/mps_static_audit_pa_0.env"
+      },
+      "sha256": "abe680e655df0e819930d147361c65d9b9a3e3e08cbfc5fb5bd1c55aa9c770d2"
+    },
+    {
+      "name": "rep1_result.json",
+      "kind": "result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/result.json"
+      },
+      "sha256": "0628e3ebc672f942da42ba9490a46f8fd94a1954f9a861f35f8edbcc619baa9a"
+    },
+    {
+      "name": "rep1_routing_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/routing_audit.env"
+      },
+      "sha256": "9e225a01e6f2c1dc484df4b96a5d30ddfc4da97106121f055fab132200c8359b"
+    },
+    {
+      "name": "rep1_routing_audit.json",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/routing_audit.json"
+      },
+      "sha256": "c18c332c40e8d21bda44d49c67453a1cfa6aa882a6807af3e82c2a6e30703d7c"
+    },
+    {
+      "name": "rep1_run_metadata.json",
+      "kind": "manifest",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/run_metadata.json"
+      },
+      "sha256": "bfdd0c8bbe86587cff39ae54ce46b9a5c6cf7c1b17a809b993b047dd8593d644"
+    },
+    {
+      "name": "rep1_attention_0_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/service_logs/attention_0_0.log"
+      },
+      "sha256": "4f3b70cee951e3d3e96d90b9c1c664e6c1f217dcb2409330cd9bb255fd5de979"
+    },
+    {
+      "name": "rep1_control.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/service_logs/mps-log/pa-0/control.log"
+      },
+      "sha256": "5262cf14905304c8b3cb3b319db93a199f515c85366d2b4853fae1707dfcaf9e"
+    },
+    {
+      "name": "rep1_server.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/service_logs/mps-log/pa-0/server.log"
+      },
+      "sha256": "0d4ee9686f99bcf2428e8039b0ba31bf533fc4a31ef5d4ecaaaebbcce1e910f5"
+    },
+    {
+      "name": "rep1_mps_static_0_attention_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/service_logs/mps_static_0_attention_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep1_mps_static_0_prefill_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/service_logs/mps_static_0_prefill_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep1_mps_static_cleanup_pa_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/service_logs/mps_static_cleanup_pa_0.log"
+      },
+      "sha256": "8b6e32c07b2b7e9eced784b80e7fc83957835b2f844ec738086705376008d43d"
+    },
+    {
+      "name": "rep1_prefill_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/service_logs/prefill_0.log"
+      },
+      "sha256": "9e47fe4b915d2105834c5b372ce4142372eed348e808db1723488e162c8671f6"
+    },
+    {
+      "name": "rep1_projection_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/service_logs/projection_0.log"
+      },
+      "sha256": "9d75f70cb0a92696193f570100b7514be806de9b1f851272ed006d71ade52acc"
+    },
+    {
+      "name": "rep1_proxy.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/service_logs/proxy.log"
+      },
+      "sha256": "9a91cb282df349bd19f8d36c28880bedf94966ee3e577597cd39ef9e9613be6e"
+    },
+    {
+      "name": "rep1_session_drain.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/session_drain.env"
+      },
+      "sha256": "e6ff9bb006a7fe1c28473ee20082c5a6894a3f5e28c4a841344f4fef8af72935"
+    },
+    {
+      "name": "rep1_topology_manifest.json",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/topology_manifest.json"
+      },
+      "sha256": "e7c36dcf9b9c1ee22bfd2b812c265e8eb90cba5606a64bb50603653c69064f3d"
+    },
+    {
+      "name": "rep1_topology_runtime_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/topology_runtime_stats.json"
+      },
+      "sha256": "38754ac2a34601cc1e17fb42ce6edab621933ac84aa87294564f81ccd9440d48"
+    },
+    {
+      "name": "rep1_tracked_index.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/tracked_index.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep1_tracked_worktree.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep1/tracked_worktree.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep2_1PA1P_multiturn_load.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/1PA1P_multiturn_load.log"
+      },
+      "sha256": "91eff6d0053278e68b015964c08deda10ebf87bbacae5c995ba4030f667b4807"
+    },
+    {
+      "name": "rep2_attention_fast_path_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/attention_fast_path_stats.json"
+      },
+      "sha256": "e077303af693e63a4bc9c42fd4fbdadad11b2ded562d77defa72e99f8e431ae6"
+    },
+    {
+      "name": "rep2_attention_fast_path_stats_0.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/attention_fast_path_stats_0.json"
+      },
+      "sha256": "e077303af693e63a4bc9c42fd4fbdadad11b2ded562d77defa72e99f8e431ae6"
+    },
+    {
+      "name": "rep2_correctness_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/correctness_audit.env"
+      },
+      "sha256": "f9a3034cd98003be7d986a25059ba66e605c06c6ea3563409b324384d6c1911a"
+    },
+    {
+      "name": "rep2_correctness_audit_matches.log",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/correctness_audit_matches.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep2_decode_token_join_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/decode_token_join_audit.env"
+      },
+      "sha256": "1260242c0619cbcf209104db692db6b9cbd46b0667123c03aaf08a0ce228276d"
+    },
+    {
+      "name": "rep2_effective_config.env",
+      "kind": "configuration",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/effective_config.env"
+      },
+      "sha256": "4dec27db0bf0d5991fdcdb0b79dd03e8a791109de675bf8ec28871fcf05192e6"
+    },
+    {
+      "name": "rep2_git_status.txt",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/git_status.txt"
+      },
+      "sha256": "b0512c223af7811797ef6ef25b8fb6347a6b80f65d4cd1d1a18f887cf54dbe4b"
+    },
+    {
+      "name": "rep2_mps_static_audit_pa_0.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/mps_static_audit_pa_0.env"
+      },
+      "sha256": "abe680e655df0e819930d147361c65d9b9a3e3e08cbfc5fb5bd1c55aa9c770d2"
+    },
+    {
+      "name": "rep2_result.json",
+      "kind": "result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/result.json"
+      },
+      "sha256": "552ba069921eb12e98465c32dde65cf27436d3bb0a66f821ca7a40e7f6250be9"
+    },
+    {
+      "name": "rep2_routing_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/routing_audit.env"
+      },
+      "sha256": "9e225a01e6f2c1dc484df4b96a5d30ddfc4da97106121f055fab132200c8359b"
+    },
+    {
+      "name": "rep2_routing_audit.json",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/routing_audit.json"
+      },
+      "sha256": "373dc1d85eabca93ed31f0ac2a39e9bcba2c5017c9c3d011b0bc3394999b9ae6"
+    },
+    {
+      "name": "rep2_run_metadata.json",
+      "kind": "manifest",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/run_metadata.json"
+      },
+      "sha256": "437befcee5ba3456a6e071728a19e1f6b9162f55af59041f11ee7a0639cde3eb"
+    },
+    {
+      "name": "rep2_attention_0_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/service_logs/attention_0_0.log"
+      },
+      "sha256": "1feb973ab34e88d022cc94eff9f83fe8b85120eb04b554d1875af5912a067531"
+    },
+    {
+      "name": "rep2_control.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/service_logs/mps-log/pa-0/control.log"
+      },
+      "sha256": "03b89d3ac10d1a58da6da67dfdd7fa9ff10b8eb2b95d065783c81b2bec203dad"
+    },
+    {
+      "name": "rep2_server.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/service_logs/mps-log/pa-0/server.log"
+      },
+      "sha256": "fe169cf67aa72a4cf3c8bfa02bfec63c2d462d0808b0286b02b3f804ae915e02"
+    },
+    {
+      "name": "rep2_mps_static_0_attention_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/service_logs/mps_static_0_attention_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep2_mps_static_0_prefill_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/service_logs/mps_static_0_prefill_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep2_mps_static_cleanup_pa_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/service_logs/mps_static_cleanup_pa_0.log"
+      },
+      "sha256": "8b6e32c07b2b7e9eced784b80e7fc83957835b2f844ec738086705376008d43d"
+    },
+    {
+      "name": "rep2_prefill_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/service_logs/prefill_0.log"
+      },
+      "sha256": "1b28cc594703b49b6254f026a5a002be8a819c26c38abe3b33b6c8829d76d392"
+    },
+    {
+      "name": "rep2_projection_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/service_logs/projection_0.log"
+      },
+      "sha256": "ac627a3d314ab84d2619e4cda7c1d4415a6c042a1048b589e286d6a2a4627ba0"
+    },
+    {
+      "name": "rep2_proxy.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/service_logs/proxy.log"
+      },
+      "sha256": "28db4de78cd08cb1de3bacae4cccf1d968094fe2fd24633a9364a2129246665b"
+    },
+    {
+      "name": "rep2_session_drain.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/session_drain.env"
+      },
+      "sha256": "e6ff9bb006a7fe1c28473ee20082c5a6894a3f5e28c4a841344f4fef8af72935"
+    },
+    {
+      "name": "rep2_topology_manifest.json",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/topology_manifest.json"
+      },
+      "sha256": "1245bf35dee9cc1f04e3a6c2845843ade9b28cdaee45b91b32253c80927b63d7"
+    },
+    {
+      "name": "rep2_topology_runtime_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/topology_runtime_stats.json"
+      },
+      "sha256": "38754ac2a34601cc1e17fb42ce6edab621933ac84aa87294564f81ccd9440d48"
+    },
+    {
+      "name": "rep2_tracked_index.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/tracked_index.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep2_tracked_worktree.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep2/tracked_worktree.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep3_1PA1P_multiturn_load.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/1PA1P_multiturn_load.log"
+      },
+      "sha256": "b3b2a3e8acfe21ed49c8c487c8561fd4016fbf9adf26d94878efdd8e388b16fa"
+    },
+    {
+      "name": "rep3_attention_fast_path_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/attention_fast_path_stats.json"
+      },
+      "sha256": "41dd31838e85779b496f5470e69b19978bf3da8ec3b408496a9000bb2faf2845"
+    },
+    {
+      "name": "rep3_attention_fast_path_stats_0.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/attention_fast_path_stats_0.json"
+      },
+      "sha256": "41dd31838e85779b496f5470e69b19978bf3da8ec3b408496a9000bb2faf2845"
+    },
+    {
+      "name": "rep3_correctness_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/correctness_audit.env"
+      },
+      "sha256": "f9a3034cd98003be7d986a25059ba66e605c06c6ea3563409b324384d6c1911a"
+    },
+    {
+      "name": "rep3_correctness_audit_matches.log",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/correctness_audit_matches.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep3_decode_token_join_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/decode_token_join_audit.env"
+      },
+      "sha256": "1260242c0619cbcf209104db692db6b9cbd46b0667123c03aaf08a0ce228276d"
+    },
+    {
+      "name": "rep3_effective_config.env",
+      "kind": "configuration",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/effective_config.env"
+      },
+      "sha256": "51a571b552e4060b852d94ab6dee7c87fc3f50955b782c0b8d5d9e321ff0671e"
+    },
+    {
+      "name": "rep3_git_status.txt",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/git_status.txt"
+      },
+      "sha256": "b0512c223af7811797ef6ef25b8fb6347a6b80f65d4cd1d1a18f887cf54dbe4b"
+    },
+    {
+      "name": "rep3_mps_static_audit_pa_0.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/mps_static_audit_pa_0.env"
+      },
+      "sha256": "abe680e655df0e819930d147361c65d9b9a3e3e08cbfc5fb5bd1c55aa9c770d2"
+    },
+    {
+      "name": "rep3_result.json",
+      "kind": "result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/result.json"
+      },
+      "sha256": "0d62fff5c55037308dacdf31b3fddd3bc3f4220ba85455278114f9514602bb02"
+    },
+    {
+      "name": "rep3_routing_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/routing_audit.env"
+      },
+      "sha256": "9e225a01e6f2c1dc484df4b96a5d30ddfc4da97106121f055fab132200c8359b"
+    },
+    {
+      "name": "rep3_routing_audit.json",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/routing_audit.json"
+      },
+      "sha256": "63938eb981bb4c5a6a97d758691718c06b7989b7650261fca0f29fcb26db360c"
+    },
+    {
+      "name": "rep3_run_metadata.json",
+      "kind": "manifest",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/run_metadata.json"
+      },
+      "sha256": "c0ac12dc30bb713f2380a8a82345c4496238468d120e903ceb9a20abbf8433d1"
+    },
+    {
+      "name": "rep3_attention_0_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/service_logs/attention_0_0.log"
+      },
+      "sha256": "0b000331939d6d7f9daa1520bd843d0fdc5421c3ea05aadb2bfcdedcef6e4449"
+    },
+    {
+      "name": "rep3_control.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/service_logs/mps-log/pa-0/control.log"
+      },
+      "sha256": "12831210d926f8ead92e5bdfe1517f4cbc6ab9ca3972f4ef743b42e623b783e9"
+    },
+    {
+      "name": "rep3_server.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/service_logs/mps-log/pa-0/server.log"
+      },
+      "sha256": "1dbb399b2349ef68e2a14d8022c94b3e4c47390b89b23e7352a7a98705f0e5c0"
+    },
+    {
+      "name": "rep3_mps_static_0_attention_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/service_logs/mps_static_0_attention_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep3_mps_static_0_prefill_probe.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/service_logs/mps_static_0_prefill_probe.log"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep3_mps_static_cleanup_pa_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/service_logs/mps_static_cleanup_pa_0.log"
+      },
+      "sha256": "8b6e32c07b2b7e9eced784b80e7fc83957835b2f844ec738086705376008d43d"
+    },
+    {
+      "name": "rep3_prefill_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/service_logs/prefill_0.log"
+      },
+      "sha256": "682192d0de4bffddbeb199e26d6c59bd221ab885f4fe1454939ea223b6b19956"
+    },
+    {
+      "name": "rep3_projection_0.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/service_logs/projection_0.log"
+      },
+      "sha256": "457a8fcc906f5961ac723e1d6932545dfdbda8d2aa1c0d954aba40aeb1df328a"
+    },
+    {
+      "name": "rep3_proxy.log",
+      "kind": "log",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/service_logs/proxy.log"
+      },
+      "sha256": "5db81e24255a699b81fa791003fd42d89cac5990e511725d2c2b133ccc7daa05"
+    },
+    {
+      "name": "rep3_session_drain.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/session_drain.env"
+      },
+      "sha256": "e6ff9bb006a7fe1c28473ee20082c5a6894a3f5e28c4a841344f4fef8af72935"
+    },
+    {
+      "name": "rep3_topology_manifest.json",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/topology_manifest.json"
+      },
+      "sha256": "86368d418fe8b6c90e6ec7473b3356bb4e66f2446067cb2790d4da4aae519824"
+    },
+    {
+      "name": "rep3_topology_runtime_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/topology_runtime_stats.json"
+      },
+      "sha256": "38754ac2a34601cc1e17fb42ce6edab621933ac84aa87294564f81ccd9440d48"
+    },
+    {
+      "name": "rep3_tracked_index.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/tracked_index.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep3_tracked_worktree.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260714-P17-PRE-REFACTOR/runs/20260714_dd2073bcf_p17_pre_refactor_formal/raw/rep3/tracked_worktree.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "validity": {
+    "status": "passed",
+    "reasons": []
+  },
+  "failure_reasons": []
+}

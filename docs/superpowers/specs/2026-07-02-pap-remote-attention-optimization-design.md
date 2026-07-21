@@ -4,7 +4,7 @@
 
 Use fine-grained PAP timing profiles to identify the current Attention↔Projection bottleneck, quantify the gap against a simple per-layer lower bound, and drive small A/B optimizations that reduce PAP TPOT toward the PD baseline.
 
-The first target is Qwen3-8B `1PA1P` vs `1P1D` on the warmed `i128/o32/q16/c64/w32` workload. The current reference is PD median TPOT `24.9 ms` and PAP median TPOT `294.8 ms` from `docs/design/pap-pd-comparison-methodology-20260701.md`.
+The first target is Qwen3-8B `1PA1P` vs `1P1D` on the warmed `i128/o32/q16/c64/w32` workload. The current reference is PD median TPOT `24.9 ms` and PAP median TPOT `294.8 ms` from `benchmarks/pap/experiments/legacy/reports/pap-pd-comparison-methodology-20260701.md`.
 
 ## Current Evidence
 

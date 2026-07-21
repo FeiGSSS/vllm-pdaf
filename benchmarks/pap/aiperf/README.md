@@ -168,10 +168,10 @@ resuming a matrix ID, and writes `matrix_config.env`, per-run
 `capacity_envelope.json` below one matrix directory.
 
 The initial AIPerf integration comparison is recorded in
-[`pap-pd-aiperf-four-gpu-results-20260716.md`](../../../docs/design/pap-pd-aiperf-four-gpu-results-20260716.md).
+[`pap-pd-aiperf-four-gpu-results-20260716.md`](../experiments/legacy/reports/pap-pd-aiperf-four-gpu-results-20260716.md).
 The historical cohort-sized capacity scan is recorded in
-[`pap-pd-aiperf-capacity-results-20260720.md`](../../../docs/design/pap-pd-aiperf-capacity-results-20260720.md).
+[`pap-pd-aiperf-capacity-results-20260720.md`](../experiments/legacy/reports/pap-pd-aiperf-capacity-results-20260720.md).
 The historical think/tool scan is recorded in
-[`pap-pd-aiperf-think-tool-results-20260720.md`](../../../docs/design/pap-pd-aiperf-think-tool-results-20260720.md).
+[`pap-pd-aiperf-think-tool-results-20260720.md`](../experiments/legacy/reports/pap-pd-aiperf-think-tool-results-20260720.md).
 The current fixed-96-session scan is recorded in
-[`pap-pd-aiperf-fixed-session-results-20260720.md`](../../../docs/design/pap-pd-aiperf-fixed-session-results-20260720.md).
+[`PAP-20260720-AIPERF-FIXED96`](../experiments/PAP-20260720-AIPERF-FIXED96/report.md).

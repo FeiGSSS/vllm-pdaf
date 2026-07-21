@@ -71,8 +71,8 @@ Expected: all tests pass and both syntax checks exit 0.
 
 **Files:**
 - Create: one run directory below `test/baseline/pap/results/runs/`
-- Modify: `docs/design/pap-experiment-history-index.md` only if the result is retained
-- Create: `docs/design/pap-mps-80-20-diagnostic-results-20260713.md` only after valid measurements exist
+- Modify: `benchmarks/pap/experiments/HISTORY.md` only if the result is retained
+- Create: `benchmarks/pap/experiments/legacy/reports/pap-mps-80-20-diagnostic-results-20260713.md` only after valid measurements exist
 
 **Interfaces:**
 - Consumes: `PAP_LOAD_MPS_PROFILE=diagnostic_80_20` and the frozen C4 workload.

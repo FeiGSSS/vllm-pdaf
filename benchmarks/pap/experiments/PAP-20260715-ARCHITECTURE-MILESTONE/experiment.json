@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "kind": "pap-experiment-record",
+  "status": "archived",
+  "experiment_id": "PAP-20260715-ARCHITECTURE-MILESTONE",
+  "title": "PAP architecture milestone freeze",
+  "recorded_at": "2026-07-15",
+  "hypothesis": "The converged PAP architecture at commit 9fb642937 preserves the frozen P17 1PA1P behavior and remains within the 5% performance regression gate.",
+  "evidence": "formal-clean",
+  "decision": "superseded",
+  "validity": {
+    "status": "valid",
+    "reasons": []
+  },
+  "baseline": {
+    "status": "not-applicable",
+    "description": "The independently owned PAP-20260715-P17-POST-REFACTOR record supplies the comparison values.",
+    "run_ids": []
+  },
+  "treatment": {
+    "status": "present",
+    "description": "Tracked-clean P17 formal run after compatibility retirement, core owner splits, test convergence, and experiment lifecycle normalization.",
+    "run_ids": [
+      "20260715_9fb642937_pap_milestone_formal"
+    ]
+  },
+  "primary_variable": {
+    "name": "architecture_milestone",
+    "baseline": "not-applicable",
+    "treatment": "converged-owner-architecture"
+  },
+  "run_ids": [
+    "20260715_9fb642937_pap_milestone_formal"
+  ],
+  "aggregation_method": "Pooled request-level samples across three milestone repetitions; median and nearest-rank p90. The conclusion compares this record with the independently registered post-refactor freeze.",
+  "metrics": [
+    {
+      "name": "ttft_ms",
+      "scope": "round_1",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 10529.052232508548,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "tpot_ms",
+      "scope": "round_1",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 39.21837421766409,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "ttft_ms",
+      "scope": "steady_rounds_2_5",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 207.80527750321198,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "tpot_ms",
+      "scope": "steady_rounds_2_5",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 50.429114168646805,
+      "direction": "lower-is-better"
+    }
+  ],
+  "conclusion": "All three repetitions completed 20 of 20 requests and passed client, cache, correctness, decode-token join, routing, and session-drain gates on clean commit 9fb642937. Relative changes were -0.16% R1 TTFT, -0.10% R1 TPOT, +1.98% steady TTFT, and +0.06% steady TPOT, so the 5% release gate passed. xPAyP and cross-host NIXL remain preserved-unverified.",
+  "supersedes": [
+    "PAP-20260715-P17-POST-REFACTOR"
+  ],
+  "superseded_by": "PAP-20260715-VLLM-INTEGRATION-BOUNDARY",
+  "raw_artifacts": [
+    {
+      "name": "aggregate",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260715-ARCHITECTURE-MILESTONE/runs/20260715_9fb642937_pap_milestone_formal/raw/aggregate.json"
+      },
+      "sha256": "83e11c0807e15a6d9d230fcecd3c447cbc83931d223bf444acc3a9db52ee303b"
+    },
+    {
+      "name": "rep1_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260715-ARCHITECTURE-MILESTONE/runs/20260715_9fb642937_pap_milestone_formal/raw/rep1/result.json"
+      },
+      "sha256": "3dc8a4f92f3ece93b58b86c152f77c3382ee4113a8c065bebdcbbdb869827626"
+    },
+    {
+      "name": "rep2_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260715-ARCHITECTURE-MILESTONE/runs/20260715_9fb642937_pap_milestone_formal/raw/rep2/result.json"
+      },
+      "sha256": "e4079ac09dd888b8e37a55f1256b4ee8ff0c5e5f6cd9c5d5813862ae1d060927"
+    },
+    {
+      "name": "rep3_result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260715-ARCHITECTURE-MILESTONE/runs/20260715_9fb642937_pap_milestone_formal/raw/rep3/result.json"
+      },
+      "sha256": "071d50ffd2b0a32d39e79fd15f461a1047ee2ec2032375f193f1c3a04793d74d"
+    }
+  ],
+  "tags": [
+    "p17",
+    "architecture-milestone",
+    "formal-freeze",
+    "1pa1p",
+    "local-fast"
+  ]
+}

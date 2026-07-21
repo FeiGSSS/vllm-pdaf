@@ -23,7 +23,7 @@ full content of existing design documents or raw logs.
 
 The main document will be:
 
-`docs/design/pap-experiment-history-index.md`
+`benchmarks/pap/experiments/HISTORY.md`
 
 It will be tracked on `feature/pap`. Existing design documents remain the
 authoritative detailed explanations for their modules; the index links to them

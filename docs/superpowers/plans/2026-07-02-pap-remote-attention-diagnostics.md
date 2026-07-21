@@ -18,7 +18,7 @@
   - Thin CLI wrapper around `vllm.pap.remote_attention_diagnostics.main`.
 - Create `tests/pap/test_pap_remote_attention_diagnostics.py`
   - Unit tests using synthetic JSON/log files.
-- Modify `docs/design/pap-pd-comparison-methodology-20260701.md`
+- Modify `benchmarks/pap/experiments/legacy/reports/pap-pd-comparison-methodology-20260701.md`
   - Append a short Phase A diagnostics section only after the offline CLI has been run.
 - Do not modify current profiling files in this phase:
   - `examples/pap/multi_pap_proxy_server.py`
@@ -600,11 +600,11 @@ Expected: rows for the 20260701 results. If PAP trace fields are zero for runs w
 ### Task 5: Record Phase 1 findings in the methodology note
 
 **Files:**
-- Modify: `docs/design/pap-pd-comparison-methodology-20260701.md`
+- Modify: `benchmarks/pap/experiments/legacy/reports/pap-pd-comparison-methodology-20260701.md`
 
 - [ ] **Step 1: Append the diagnostics section**
 
-Append this section to `docs/design/pap-pd-comparison-methodology-20260701.md` after the current interpretation section:
+Append this section to `benchmarks/pap/experiments/legacy/reports/pap-pd-comparison-methodology-20260701.md` after the current interpretation section:
 
 ```markdown
 
@@ -637,7 +637,7 @@ Run:
 ```bash
 .venv/bin/python - <<'PY'
 from pathlib import Path
-text = Path('docs/design/pap-pd-comparison-methodology-20260701.md').read_text()
+text = Path('benchmarks/pap/experiments/legacy/reports/pap-pd-comparison-methodology-20260701.md').read_text()
 assert text.count('```') % 2 == 0
 assert 'Phase A Remote-Attention Diagnostics' in text
 PY

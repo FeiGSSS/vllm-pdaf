@@ -668,7 +668,7 @@ V1 scheduler and NIXL connector, NVIDIA L20 GPUs.
 **Files:**
 - Create after evidence exists:
   `docs/experiments/pap-pd-multiturn-long-context-gate0-20260711.md`
-- Modify after evidence exists: `docs/design/pap-experiment-history-index.md`
+- Modify after evidence exists: `benchmarks/pap/experiments/HISTORY.md`
 - Raw output only:
   `/home/fei/research/PD/test/baseline/multiturn_pd_pap/results/runs/`
 
@@ -740,7 +740,7 @@ V1 scheduler and NIXL connector, NVIDIA L20 GPUs.
 
   ```bash
   git add docs/experiments/pap-pd-multiturn-long-context-gate0-20260711.md \
-    docs/design/pap-experiment-history-index.md
+    benchmarks/pap/experiments/HISTORY.md
   git commit --no-verify -m "Record PAP PD multi-turn long-context gates" \
     -m "Assisted-by: OpenAI Codex"
   ```

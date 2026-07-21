@@ -1,0 +1,729 @@
+{
+  "schema_version": 1,
+  "kind": "pap-run-manifest",
+  "run_id": "20260716_3a6fe93d1_p17_mps_72_20_formal",
+  "experiment_id": "PAP-20260716-TRITON-72-20-BASELINE",
+  "profile_id": "p17_1pa1p",
+  "architecture": "pap",
+  "mode": "formal",
+  "evidence": "formal-clean",
+  "provenance": {
+    "branch": "missing",
+    "commit": "3a6fe93d11245c1137d3ea6767cd5e27b3e88156",
+    "tracked_worktree_dirty": false,
+    "tracked_worktree_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tracked_index_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "started_at": "2026-07-16T12:16:12+08:00"
+  },
+  "workload": {
+    "model": {
+      "path": {
+        "root_id": "model-store",
+        "relative_path": "Qwen3-8B"
+      },
+      "dtype": "float16",
+      "tensor_parallel_size": 1
+    },
+    "corpus": {
+      "path": {
+        "root_id": "reference-benchmarks",
+        "relative_path": "sonnet_4x.txt"
+      },
+      "sha256": "4a53bd26108f9193c693ab6a9482ee5ce5102b545b70a5ca3a8cb11ca1171859"
+    },
+    "parameters": {
+      "profile_id": "qwen3_8b_token_16k_5turn_o256_c4_v2",
+      "profile_version": 2,
+      "api": "/v1/completions",
+      "workload_semantics": "exact_token_continuous_multiturn",
+      "prompt_input": "token_ids",
+      "history_rule": "previous_prompt_plus_full_output_plus_suffix",
+      "document_tokens": 16000,
+      "append_tokens_per_later_round": 120,
+      "output_tokens_per_round": 256,
+      "rounds": 5,
+      "active_conversations": 4,
+      "request_rate_per_round": 2.0,
+      "arrival_mode": "fixed_rate_round_barrier_closed_loop",
+      "temperature": 0,
+      "seed": 0,
+      "ignore_eos": true,
+      "return_token_ids": true,
+      "block_size": 16,
+      "max_model_len": 20000,
+      "max_num_batched_tokens": 4096,
+      "max_num_seqs": 4
+    }
+  },
+  "topology": {
+    "name": "1pa1p",
+    "pa_count": 1,
+    "projection_count": 1,
+    "pd_prefill_count": 0,
+    "pd_decode_count": 0,
+    "routing_policy": "round_robin"
+  },
+  "placement": {
+    "prefill_devices": [
+      1
+    ],
+    "attention_devices": [
+      1
+    ],
+    "projection_devices": [
+      2
+    ],
+    "decode_devices": []
+  },
+  "transport": {
+    "offload_exec": "local_fast",
+    "offload_kv": "cuda_ipc",
+    "same_host": true
+  },
+  "mps": {
+    "mode": "static",
+    "profile_id": "baseline_static_72_20",
+    "prefill_visible_sms": 72,
+    "attention_visible_sms": 20
+  },
+  "runtime": {
+    "profile": "p17_1pa1p",
+    "settings": {
+      "offload_exec_transport": "local_fast",
+      "direct_mailbox_output": true,
+      "unified_md_fast_key": true,
+      "prefill_kv_async": true,
+      "prefill_ipc_profile": false,
+      "kv_handoff_mode": "sealed_manifest",
+      "async_decode_token": true,
+      "unified_kv": true,
+      "batched_route_copy": true,
+      "attention_dispatch_mode": "direct"
+    }
+  },
+  "environment": {
+    "hardware_signature": "NVIDIA L20x2",
+    "software": {
+      "vllm": "0.23.1rc1.dev678+g4a7737647",
+      "cuda_driver": "missing",
+      "torch": "missing",
+      "nixl": "missing",
+      "ucx": "missing"
+    },
+    "fingerprint_basis": [
+      "hardware_signature",
+      "vllm_version",
+      "git_commit",
+      "implementation_fingerprint"
+    ]
+  },
+  "fingerprints": {
+    "profile": "1cabd2226607a6af2a4cbfcd70c1daada8c8272ceda757bb7cc6622569c9b533",
+    "implementation": "54eb60419dab3c5613b825d253f34c54ab0d41a4fb4fc94b0c0de3a92777924f",
+    "request_shape": "68c42d5ba9115b950afbe09feeb736f45280bca00b8bbade25bba3f06e0dfdae",
+    "hardware_runtime": "2250744e34742d3f2812f86fc1830869d4ead0a3f02fe2a48c15965da3d7bd0d"
+  },
+  "repetitions": {
+    "count": 3,
+    "order": [
+      1,
+      2,
+      3
+    ],
+    "aggregation_method": "pooled request-level samples across repetitions; nearest-rank p90",
+    "items": [
+      {
+        "index": 1,
+        "repetition_id": "content_sha256:691090ccfaac9de5bd9e925eb5386b3d05066b190a78f7d5ce5cd5e288d8b302",
+        "result_artifact": {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/result.json"
+        }
+      },
+      {
+        "index": 2,
+        "repetition_id": "content_sha256:f6fe86d35de49f8c7f60920fea7cf313d6dae6cb427ba95446b0db74364a1128",
+        "result_artifact": {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/result.json"
+        }
+      },
+      {
+        "index": 3,
+        "repetition_id": "content_sha256:32a572f2d5a0e956e7a6c7c3982630e58ff86af15c1c02cb22032ff1a2844334",
+        "result_artifact": {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/result.json"
+        }
+      }
+    ]
+  },
+  "audits": {
+    "client": {
+      "status": "passed",
+      "detail": "All client request and shape checks pass.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/result.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/result.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/result.json"
+        }
+      ]
+    },
+    "cache": {
+      "status": "passed",
+      "detail": "All exact multi-turn cache checks pass.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/result.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/result.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/result.json"
+        }
+      ]
+    },
+    "attention_stats": {
+      "status": "passed",
+      "detail": "Runtime Attention statistics are captured for every repetition.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/attention_fast_path_stats.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/attention_fast_path_stats.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/attention_fast_path_stats.json"
+        }
+      ]
+    },
+    "correctness": {
+      "status": "passed",
+      "detail": "Strict service-log correctness audit has zero matches.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/correctness_audit.env"
+        }
+      ]
+    },
+    "decode_token_join": {
+      "status": "passed",
+      "detail": "Async decode-token join audit reports no errors.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/decode_token_join_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/decode_token_join_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/decode_token_join_audit.env"
+        }
+      ]
+    },
+    "routing": {
+      "status": "passed",
+      "detail": "All requests follow the expected 1PA1P route.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/routing_audit.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/routing_audit.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/routing_audit.json"
+        }
+      ]
+    },
+    "commit": {
+      "status": "passed",
+      "detail": "Strict logs contain no decode-commit error signatures.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/correctness_audit.env"
+        }
+      ]
+    },
+    "lease": {
+      "status": "passed",
+      "detail": "Strict logs and zero-session drain contain no lease failures.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/correctness_audit.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/session_drain.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/session_drain.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/session_drain.env"
+        }
+      ]
+    },
+    "session_drain": {
+      "status": "passed",
+      "detail": "Attention drains to zero active sessions.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/session_drain.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/session_drain.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/session_drain.env"
+        }
+      ]
+    },
+    "mps": {
+      "status": "passed",
+      "detail": "Static MPS exposes 72 Prefill and 20 Attention SMs.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/mps_static_audit_pa_0.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/mps_static_audit_pa_0.env"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/mps_static_audit_pa_0.env"
+        }
+      ]
+    }
+  },
+  "metrics": {
+    "completed_requests": 60,
+    "failed_requests": 0,
+    "values": [
+      {
+        "name": "ttft_ms",
+        "scope": "round_1",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 9386.680480500218
+      },
+      {
+        "name": "tpot_ms",
+        "scope": "round_1",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 34.99732627653215
+      },
+      {
+        "name": "ttft_ms",
+        "scope": "steady_rounds_2_5",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 198.21099301043432
+      },
+      {
+        "name": "tpot_ms",
+        "scope": "steady_rounds_2_5",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 41.28042120981834
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "name": "aggregate_aggregate.json",
+      "kind": "aggregate",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/aggregate.json"
+      },
+      "sha256": "8b11ce2bd66f533e6ac5def8e5bc7bd223e5b07ef3534072432d4173bfa4c8db"
+    },
+    {
+      "name": "rep1_attention_fast_path_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/attention_fast_path_stats.json"
+      },
+      "sha256": "f0fb4697d2d28926048c3acfd42810bf81bda488342973f57c002a7b24ab52e0"
+    },
+    {
+      "name": "rep1_correctness_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/correctness_audit.env"
+      },
+      "sha256": "f9a3034cd98003be7d986a25059ba66e605c06c6ea3563409b324384d6c1911a"
+    },
+    {
+      "name": "rep1_decode_token_join_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/decode_token_join_audit.env"
+      },
+      "sha256": "6bffcdda621cdf7667525bde18b7896370990f00e200ac52cf2adf8503966e9c"
+    },
+    {
+      "name": "rep1_effective_config.env",
+      "kind": "configuration",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/effective_config.env"
+      },
+      "sha256": "b1ec38f6198140342eda741304c61c8467b251e7102db4324f5c8e78d097482c"
+    },
+    {
+      "name": "rep1_mps_static_audit_pa_0.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/mps_static_audit_pa_0.env"
+      },
+      "sha256": "c345c030458089fdecf17b69acb2d58549fa08cb08f9076d227b54a9745ee26a"
+    },
+    {
+      "name": "rep1_result.json",
+      "kind": "result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/result.json"
+      },
+      "sha256": "5ff42adf84a4a2af6e280a3b8bd319fcabbfe8f2b5350ab60dd9be984bbf2fd3"
+    },
+    {
+      "name": "rep1_routing_audit.json",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/routing_audit.json"
+      },
+      "sha256": "3febfbd81cdb365fa0dd09a9a1bf5a05a76d4ba1dc5ef7f43b71f7025c3a4318"
+    },
+    {
+      "name": "rep1_run_metadata.json",
+      "kind": "manifest",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/run_metadata.json"
+      },
+      "sha256": "4c8752f5ac5f024e66e8fa7b6ba75a8ba43c620b08933bcf07ab9599b8777aac"
+    },
+    {
+      "name": "rep1_session_drain.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/session_drain.env"
+      },
+      "sha256": "e6ff9bb006a7fe1c28473ee20082c5a6894a3f5e28c4a841344f4fef8af72935"
+    },
+    {
+      "name": "rep1_topology_manifest.json",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/topology_manifest.json"
+      },
+      "sha256": "e7c36dcf9b9c1ee22bfd2b812c265e8eb90cba5606a64bb50603653c69064f3d"
+    },
+    {
+      "name": "rep1_tracked_index.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/tracked_index.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep1_tracked_worktree.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep1/tracked_worktree.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep2_attention_fast_path_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/attention_fast_path_stats.json"
+      },
+      "sha256": "a5477dd055fd70203fce641c62173f24b45f90ea7344f32a271116c56fa7143c"
+    },
+    {
+      "name": "rep2_correctness_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/correctness_audit.env"
+      },
+      "sha256": "f9a3034cd98003be7d986a25059ba66e605c06c6ea3563409b324384d6c1911a"
+    },
+    {
+      "name": "rep2_decode_token_join_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/decode_token_join_audit.env"
+      },
+      "sha256": "6bffcdda621cdf7667525bde18b7896370990f00e200ac52cf2adf8503966e9c"
+    },
+    {
+      "name": "rep2_effective_config.env",
+      "kind": "configuration",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/effective_config.env"
+      },
+      "sha256": "aa6159b0623da0ea92a82fccce3ebcebbb5d55fa9788dfd43205b11f7d4a842d"
+    },
+    {
+      "name": "rep2_mps_static_audit_pa_0.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/mps_static_audit_pa_0.env"
+      },
+      "sha256": "c345c030458089fdecf17b69acb2d58549fa08cb08f9076d227b54a9745ee26a"
+    },
+    {
+      "name": "rep2_result.json",
+      "kind": "result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/result.json"
+      },
+      "sha256": "d3b92f2d4c29fcf578d39b0a35c5244c9c224bf26871f885c08f427d1cea3276"
+    },
+    {
+      "name": "rep2_routing_audit.json",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/routing_audit.json"
+      },
+      "sha256": "3af26e03969d204972d659ce329928e776069426f280eebf636445c09ef6da64"
+    },
+    {
+      "name": "rep2_run_metadata.json",
+      "kind": "manifest",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/run_metadata.json"
+      },
+      "sha256": "7c0b49917ec8d579c8efbd2aa291d2471d054153966895730ad53157deae458d"
+    },
+    {
+      "name": "rep2_session_drain.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/session_drain.env"
+      },
+      "sha256": "e6ff9bb006a7fe1c28473ee20082c5a6894a3f5e28c4a841344f4fef8af72935"
+    },
+    {
+      "name": "rep2_topology_manifest.json",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/topology_manifest.json"
+      },
+      "sha256": "1245bf35dee9cc1f04e3a6c2845843ade9b28cdaee45b91b32253c80927b63d7"
+    },
+    {
+      "name": "rep2_tracked_index.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/tracked_index.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep2_tracked_worktree.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep2/tracked_worktree.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep3_attention_fast_path_stats.json",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/attention_fast_path_stats.json"
+      },
+      "sha256": "565d5b98a0d89ee416183b9988eec3e2cc9a7565c1322c2286deb90364ff8a56"
+    },
+    {
+      "name": "rep3_correctness_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/correctness_audit.env"
+      },
+      "sha256": "f9a3034cd98003be7d986a25059ba66e605c06c6ea3563409b324384d6c1911a"
+    },
+    {
+      "name": "rep3_decode_token_join_audit.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/decode_token_join_audit.env"
+      },
+      "sha256": "6bffcdda621cdf7667525bde18b7896370990f00e200ac52cf2adf8503966e9c"
+    },
+    {
+      "name": "rep3_effective_config.env",
+      "kind": "configuration",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/effective_config.env"
+      },
+      "sha256": "5182c1b8b0a77a9a49b237dc8d2532a3261e3b14c3a1ca5b49f941c3a8bd3db6"
+    },
+    {
+      "name": "rep3_mps_static_audit_pa_0.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/mps_static_audit_pa_0.env"
+      },
+      "sha256": "c345c030458089fdecf17b69acb2d58549fa08cb08f9076d227b54a9745ee26a"
+    },
+    {
+      "name": "rep3_result.json",
+      "kind": "result",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/result.json"
+      },
+      "sha256": "87bb2fc3f01189e1da4eae946d0851de5fb8d402c0640c059c32b8acb33af4f8"
+    },
+    {
+      "name": "rep3_routing_audit.json",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/routing_audit.json"
+      },
+      "sha256": "85ef2aa67088926966ba1951f978d31811cb8bf0e8aee003318197080146ba05"
+    },
+    {
+      "name": "rep3_run_metadata.json",
+      "kind": "manifest",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/run_metadata.json"
+      },
+      "sha256": "d33cf0a5f04bcd4ab554bedd461699345c9de07679c95778863837d8b237f182"
+    },
+    {
+      "name": "rep3_session_drain.env",
+      "kind": "audit",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/session_drain.env"
+      },
+      "sha256": "e6ff9bb006a7fe1c28473ee20082c5a6894a3f5e28c4a841344f4fef8af72935"
+    },
+    {
+      "name": "rep3_topology_manifest.json",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/topology_manifest.json"
+      },
+      "sha256": "86368d418fe8b6c90e6ec7473b3356bb4e66f2446067cb2790d4da4aae519824"
+    },
+    {
+      "name": "rep3_tracked_index.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/tracked_index.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "name": "rep3_tracked_worktree.patch",
+      "kind": "patch",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/rep3/tracked_worktree.patch"
+      },
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "validity": {
+    "status": "passed",
+    "reasons": []
+  },
+  "failure_reasons": []
+}

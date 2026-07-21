@@ -25,11 +25,11 @@ ROOT = Path(__file__).parents[2]
 PAP_ROOT = Path(__file__).parent
 PROFILE_DIR = PAP_ROOT / "profiles"
 SCHEMA_DIR = PAP_ROOT / "schemas"
-REGISTRY_DIR = PAP_ROOT / "registry"
-RUN_DIR = REGISTRY_DIR / "runs"
-EXPERIMENT_DIR = REGISTRY_DIR / "experiments"
-HISTORY_STATUS_PATH = REGISTRY_DIR / "history_status.toml"
-HISTORY_INDEX_PATH = ROOT / "docs" / "design" / "pap-experiment-history-index.md"
+EXPERIMENT_ROOT = PAP_ROOT / "experiments"
+RUN_DIR = EXPERIMENT_ROOT
+EXPERIMENT_DIR = EXPERIMENT_ROOT
+HISTORY_STATUS_PATH = EXPERIMENT_ROOT / "history_status.toml"
+HISTORY_INDEX_PATH = EXPERIMENT_ROOT / "HISTORY.md"
 EMPTY_SHA256 = hashlib.sha256(b"").hexdigest()
 REQUIRED_AUDITS = {
     "client",
@@ -78,10 +78,18 @@ def _read_toml(path: Path) -> dict[str, Any]:
 def _load_keyed_documents(
     directory: Path,
     id_field: str,
+    patterns: tuple[str, ...],
 ) -> tuple[dict[str, dict[str, Any]], list[str]]:
     documents: dict[str, dict[str, Any]] = {}
     errors: list[str] = []
-    for path in sorted(directory.glob("*.json")):
+    paths = sorted(
+        {
+            path
+            for pattern in patterns
+            for path in directory.glob(pattern)
+        }
+    )
+    for path in paths:
         try:
             document = _read_json(path)
         except (OSError, ValueError, json.JSONDecodeError) as error:
@@ -94,9 +102,14 @@ def _load_keyed_documents(
         if document_id in documents:
             errors.append(f"duplicate {id_field}: {document_id}")
             continue
-        if path.stem != document_id:
+        expected_id = (
+            path.parent.name
+            if path.name in {"experiment.json", "run.json"}
+            else path.stem
+        )
+        if expected_id != document_id:
             errors.append(
-                f"{path}: filename must match {id_field} {document_id}"
+                f"{path}: containing path must match {id_field} {document_id}"
             )
         documents[document_id] = document
     return documents, errors
@@ -635,10 +648,15 @@ def validate_registry(
         ValueError: If any schema or cross-record invariant is violated.
     """
     profiles, errors = _load_profiles(profile_dir)
-    runs, run_errors = _load_keyed_documents(run_dir, "run_id")
+    runs, run_errors = _load_keyed_documents(
+        run_dir,
+        "run_id",
+        ("PAP-*/runs/*/run.json", "*.json"),
+    )
     experiments, experiment_errors = _load_keyed_documents(
         experiment_dir,
         "experiment_id",
+        ("PAP-*/experiment.json", "*.json"),
     )
     errors.extend(run_errors)
     errors.extend(experiment_errors)

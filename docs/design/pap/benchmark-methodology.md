@@ -59,7 +59,7 @@ compared with the immediately preceding accepted formal record. A metric over
 passing and no warnings. Relative to the preceding accepted formal record,
 R1 TTFT changed by -10.74%, R1 TPOT by -10.75%, steady TTFT by -1.84%, and
 steady TPOT by -18.02%. The raw run remains at
-`test/baseline/pap/results/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/`.
+`benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/`.
 
 ## Evidence and decisions
 
@@ -74,21 +74,21 @@ must not be described as freshly validated.
 ## Experiment records
 
 Current and future runs use a versioned run manifest plus experiment JSON under
-`benchmarks/pap/registry/`. Historical raw results remain immutable and outside
-Git when originally untracked or external.
+`benchmarks/pap/experiments/`. Raw results are colocated with their experiment
+when owned by this worktree, but remain ignored by Git.
 
-The 43 reviewed legacy experiments and 15 negative results retain their
+The 44 reviewed legacy experiments and 16 negative results retain their
 metrics, conclusions, and raw locations in the historical ledger. A compact
 status overlay normalizes their evidence, decision, and successor without
-duplicating 58 verbose JSON records. The registry validator checks complete ID
-coverage and the generated index combines both tiers.
+duplicating 60 verbose JSON records. The experiment validator checks complete
+ID coverage and the generated index combines both tiers.
 
 Useful commands:
 
 ```bash
 .venv/bin/python benchmarks/pap/validate_registry.py
 .venv/bin/python benchmarks/pap/generate_experiment_index.py \
-  --output benchmarks/pap/registry/INDEX.md --check
+  --output benchmarks/pap/experiments/INDEX.md --check
 ```
 
 Raw directories are never moved or rewritten by validation/import tools.

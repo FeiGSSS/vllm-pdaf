@@ -460,7 +460,7 @@ tokenizer, Bash, vLLM OpenAI-compatible streaming API, NIXL, JSON and Markdown.
 ### Task 6: Optimization Handoff
 
 **Files:**
-- Modify: `docs/design/pap-experiment-history-index.md`
+- Modify: `benchmarks/pap/experiments/HISTORY.md`
 - Create: a dated tracked experiment note under `test/baseline/pap/docs/`.
 
 - [ ] **Step 1: Record the north-star baseline**
@@ -478,7 +478,7 @@ tokenizer, Bash, vLLM OpenAI-compatible streaming API, NIXL, JSON and Markdown.
 - [ ] **Step 3: Commit the handoff note**
 
   ```bash
-  git add docs/design/pap-experiment-history-index.md test/baseline/pap/docs
+  git add benchmarks/pap/experiments/HISTORY.md test/baseline/pap/docs
   git commit --no-verify -m "Record multi-turn north-star baseline" \
     -m "Assisted-by: OpenAI Codex"
   ```

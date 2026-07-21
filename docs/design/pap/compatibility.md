@@ -48,7 +48,7 @@ the next internal module split. Three controlled repetitions completed 60/60
 requests and passed client, cache, Attention stats, correctness, async
 decode-token join, routing, commit, lease, static MPS, and session-drain gates.
 The raw results remain under
-`test/baseline/pap/results/runs/20260715_compat_facade_retirement_p17_c4_controlled/`.
+`benchmarks/pap/experiments/legacy/runs/20260715_compat_facade_retirement_p17_c4_controlled/`.
 
 The run used the same profile and implementation fingerprints as the tracked
 P17 post-refactor formal baseline. Because the tracked worktree contained the
@@ -72,7 +72,7 @@ on commit `9fb642937d27f8871ce653216f8b70d64176679a`. Three repetitions again
 completed 60/60 requests and 48/48 cache transitions with every strict gate
 passing. The canonical record is
 `PAP-20260715-ARCHITECTURE-MILESTONE`; raw evidence is under
-`test/baseline/pap/results/runs/20260715_9fb642937_pap_milestone_formal/`.
+`benchmarks/pap/experiments/PAP-20260715-ARCHITECTURE-MILESTONE/runs/20260715_9fb642937_pap_milestone_formal/raw/`.
 
 Against the preceding post-refactor formal baseline, R1 TTFT changed by
 -0.16%, R1 TPOT by -0.10%, steady TTFT by +1.98%, and steady TPOT by +0.06%.

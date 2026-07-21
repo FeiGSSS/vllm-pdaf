@@ -20,8 +20,17 @@ def _copy_registry(tmp_path: Path) -> tuple[Path, Path, Path]:
     run_dir = tmp_path / "runs"
     experiment_dir = tmp_path / "experiments"
     shutil.copytree(PAP_ROOT / "profiles", profile_dir)
-    shutil.copytree(PAP_ROOT / "registry" / "runs", run_dir)
-    shutil.copytree(PAP_ROOT / "registry" / "experiments", experiment_dir)
+    run_dir.mkdir()
+    experiment_dir.mkdir()
+    for path in (PAP_ROOT / "experiments").glob("PAP-*/runs/*/run.json"):
+        run = _load(path)
+        shutil.copy2(path, run_dir / f"{run['run_id']}.json")
+    for path in (PAP_ROOT / "experiments").glob("PAP-*/experiment.json"):
+        experiment = _load(path)
+        shutil.copy2(
+            path,
+            experiment_dir / f"{experiment['experiment_id']}.json",
+        )
     return profile_dir, run_dir, experiment_dir
 
 

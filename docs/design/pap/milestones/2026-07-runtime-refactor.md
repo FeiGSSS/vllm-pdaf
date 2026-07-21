@@ -411,12 +411,12 @@ Decision 枚举统一为：
 3. 第 1.2 节当前正式证据摘要引用、但尚未被前两项覆盖的 experiment ID。
 
 模块档案、时间线或背景段落中仅作为路径示例出现的其他 raw run 不在回填范围。
-历史账本已经逐行记录 metrics、commit/状态、结论和 raw evidence。为了避免为 43 个
-稳定实验和 15 个负结果再制造一套大而重复的 JSON/run manifest，legacy A 级迁移采用
+历史账本已经逐行记录 metrics、commit/状态、结论和 raw evidence。为了避免为 44 个
+稳定实验和 16 个负结果再制造一套大而重复的 JSON/run manifest，legacy A 级迁移采用
 两层格式：
 
 - 原历史账本行继续保存经人工复核的 workload、指标、结论和 raw evidence；
-- `benchmarks/pap/registry/history_status.toml` 为每一行统一 evidence、decision 和
+- `benchmarks/pap/experiments/history_status.toml` 为每一行统一 evidence、decision 和
   successor，并由 validator 检查全覆盖、唯一性和 successor 合法性。
 
 当前 milestone freeze 和以后新运行的实验仍使用完整 run manifest + experiment JSON。
@@ -429,8 +429,8 @@ Decision 枚举统一为：
 外部 raw 路径使用 `root_id + relative_path`。legacy importer 只生成新的 tracked
 record；新 runner 缺少 required metadata 或 strict audit 时 fail closed。
 
-生成的 `benchmarks/pap/registry/INDEX.md` 合并完整 records 与 compact history
-status。历史索引第 6、7 节保留为 legacy 详情源，不再复制成 58 组 JSON；validator
+生成的 `benchmarks/pap/experiments/INDEX.md` 合并完整 records 与 compact history
+status。历史索引第 6、7 节保留为 legacy 详情源，不再复制成 60 组 JSON；validator
 保证其 ID 集合与 status overlay 无漂移。人工维护的模块解释和时间线可以保留，但
 引用 experiment 状态和替代关系时必须来自 registry。纳入 A 级回填的旧结果文档增加
 统一状态头，包含当前状态、证据等级、canonical experiment ID 和 `superseded_by`。
@@ -608,7 +608,7 @@ join、routing、commit、lease、static MPS 64/28 和 zero-session-drain gate �
 | R2–5 TPOT median | 50.481 ms | 50.398 ms | -0.16% | 通过 |
 
 四项指标均未达到 5% regression 阈值，因此 milestone 冻结通过。原始结果保留在
-`test/baseline/pap/results/runs/20260715_3bfa8d15d_p17_post_refactor_formal/`，
+`benchmarks/pap/experiments/PAP-20260715-P17-POST-REFACTOR/runs/20260715_3bfa8d15d_p17_post_refactor_formal/raw/`，
 tracked 结论为 `PAP-20260715-P17-POST-REFACTOR`。
 
 任意 `xPAyP` 和跨机 NIXL 的接口与实现兼容性仍保留，但本 milestone 未重新进行
