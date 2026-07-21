@@ -210,6 +210,10 @@ The runner waits in 60-second intervals when GPUs 0-3 are occupied, supports
 resuming a matrix ID, and writes `matrix_config.env`, per-run
 `capacity_summary.json`, `capacity_results.tsv`, `capacity_results.md`, and
 `capacity_envelope.json` below one matrix directory.
+After GPUs first appear idle, it waits another 15 seconds and verifies them
+again so a preceding job can finish releasing ports and processes. Invalid
+startup or correctness failures are recorded but never treated as an SLO
+capacity boundary.
 
 The initial AIPerf integration comparison is recorded in
 [`pap-pd-aiperf-four-gpu-results-20260716.md`](../experiments/legacy/reports/pap-pd-aiperf-four-gpu-results-20260716.md).

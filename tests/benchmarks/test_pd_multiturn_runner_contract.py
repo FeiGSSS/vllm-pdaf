@@ -124,6 +124,16 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     assert '--sessions "${concurrency}"' not in text
 
 
+def test_capacity_lane_only_prunes_eligible_slo_failures() -> None:
+    text = CAPACITY_RUNNER.read_text(encoding="utf-8")
+
+    assert "point_has_eligible_run=0" in text
+    assert "point_has_relaxed_failure=0" in text
+    assert "'.correctness.passed'" in text
+    assert "Not using ineligible" in text
+    assert "PAP_CAPACITY_GPU_IDLE_STABILITY_SECONDS:-15" in text
+
+
 def test_aiperf_capacity_checks_use_live_concurrency_not_total_sessions() -> None:
     pap_text = PAP_RUNNER.read_text(encoding="utf-8")
     pd_text = TOPOLOGY_RUNNER.read_text(encoding="utf-8")

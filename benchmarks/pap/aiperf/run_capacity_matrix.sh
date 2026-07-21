@@ -30,6 +30,7 @@ REPETITIONS="${PAP_CAPACITY_REPETITIONS:-1}"
 STOP_AFTER_RELAXED_FAIL="${PAP_CAPACITY_STOP_AFTER_RELAXED_FAIL:-0}"
 RESUME="${PAP_CAPACITY_RESUME:-1}"
 WAIT_FOR_GPUS="${PAP_CAPACITY_WAIT_FOR_GPUS:-1}"
+GPU_IDLE_STABILITY_SECONDS="${PAP_CAPACITY_GPU_IDLE_STABILITY_SECONDS:-15}"
 
 TURNS=10
 DOCUMENT_TOKENS=8192
@@ -70,6 +71,8 @@ done
   || die "PAP_CAPACITY_SESSIONS must be positive"
 [[ "${OUTPUT_TOKENS}" =~ ^[1-9][0-9]*$ ]] \
   || die "PAP_CAPACITY_OUTPUT_TOKENS must be positive"
+[[ "${GPU_IDLE_STABILITY_SECONDS}" =~ ^[0-9]+$ ]] \
+  || die "PAP_CAPACITY_GPU_IDLE_STABILITY_SECONDS must be non-negative"
 
 ALL_POINTS_CSV="${PAP_POINTS_CSV},${PD_1P3D_POINTS_CSV},${PD_2P2D_POINTS_CSV},${PD_3P1D_POINTS_CSV}"
 IFS=, read -r -a ALL_POINTS <<< "${ALL_POINTS_CSV}"
@@ -142,6 +145,8 @@ fi
     "${PD_2P2D_POINTS_CSV}" "${PD_3P1D_POINTS_CSV}"
   printf 'REPETITIONS=%q\nSTOP_AFTER_RELAXED_FAIL=%q\n' \
     "${REPETITIONS}" "${STOP_AFTER_RELAXED_FAIL}"
+  printf 'GPU_IDLE_STABILITY_SECONDS=%q\n' \
+    "${GPU_IDLE_STABILITY_SECONDS}"
   printf 'TURNS=%q\n' "${TURNS}"
   printf 'DOCUMENT_TOKENS=%q\nAPPEND_TOKENS=%q\nOUTPUT_TOKENS=%q\n' \
     "${DOCUMENT_TOKENS}" "${APPEND_TOKENS}" "${OUTPUT_TOKENS}"
@@ -166,7 +171,7 @@ fi
 
 wait_for_four_gpus() {
   [[ "${WAIT_FOR_GPUS}" == "1" ]] || return 0
-  local busy gpu processes
+  local busy gpu processes stable=0
   while true; do
     busy=0
     for gpu in 0 1 2 3; do
@@ -179,9 +184,17 @@ wait_for_four_gpus() {
         busy=1
       fi
     done
-    (( busy == 1 )) || return 0
-    echo "Waiting 60 seconds for GPUs 0-3 to become idle..."
-    sleep 60
+    if (( busy == 1 )); then
+      stable=0
+      echo "Waiting 60 seconds for GPUs 0-3 to become idle..."
+      sleep 60
+    elif (( stable == 0 && GPU_IDLE_STABILITY_SECONDS > 0 )); then
+      stable=1
+      echo "GPUs 0-3 are idle; verifying for ${GPU_IDLE_STABILITY_SECONDS} seconds..."
+      sleep "${GPU_IDLE_STABILITY_SECONDS}"
+    else
+      return 0
+    fi
   done
 }
 
@@ -352,15 +365,21 @@ for architecture in "${ARCHITECTURES[@]}"; do
       echo "Skipping ${architecture} above its first relaxed-SLO failure"
       break
     fi
-    point_passed=1
+    point_has_eligible_run=0
+    point_has_relaxed_failure=0
     for (( repetition=1; repetition<=REPETITIONS; repetition++ )); do
       run_point "${architecture}" "${concurrency}" "${repetition}"
       summary="${MATRIX_ROOT}/runs/${architecture}_c${concurrency}_r${repetition}/capacity_summary.json"
-      if [[ "$(jq -r '.slo.relaxed.passed' "${summary}")" != "true" ]]; then
-        point_passed=0
+      if [[ "$(jq -r '.correctness.passed' "${summary}")" == "true" ]]; then
+        point_has_eligible_run=1
+        if [[ "$(jq -r '.slo.relaxed.passed' "${summary}")" != "true" ]]; then
+          point_has_relaxed_failure=1
+        fi
+      else
+        echo "Not using ineligible ${architecture} C=${concurrency} rep=${repetition} for SLO pruning"
       fi
     done
-    if (( point_passed == 0 )); then
+    if (( point_has_eligible_run == 1 && point_has_relaxed_failure == 1 )); then
       relaxed_failed=1
     fi
     "${PYTHON_BIN}" "${MATRIX_SUMMARIZER}" "${MATRIX_ROOT}"
