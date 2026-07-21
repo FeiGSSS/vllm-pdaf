@@ -2,10 +2,13 @@
 
 The optional [AIPerf lane](aiperf/README.md) provides standardized serving
 load generation and metrics alongside the project-owned correctness gates. Its
-fixed four-GPU capacity testbed uses ten turns, 8K initial user input, 512 new
-user tokens per later turn, 256 output tokens per turn, deterministic 3-second
-think and 1-second tool delays, pure concurrency, three request-level SLO tiers,
-96 fixed conversations per point, and a topology-specific ten-point scan.
+current four-GPU development testbed uses ten turns, randomized lognormal
+lengths around 8K initial input, 512 new user tokens per later turn, and 32
+output tokens, deterministic 3-second think and 1-second tool delays, pure
+conversation concurrency, three request-level SLO tiers, 32 conversations per
+point, and a lean topology-specific boundary scan. The current result is
+documented in
+[`PAP-20260721-AIPERF-RANDOM-O32`](experiments/PAP-20260721-AIPERF-RANDOM-O32/report.md).
 The initial integration result is documented in
 [`pap-pd-aiperf-four-gpu-results-20260716.md`](experiments/legacy/reports/pap-pd-aiperf-four-gpu-results-20260716.md).
 The historical cohort-sized capacity scan is documented in

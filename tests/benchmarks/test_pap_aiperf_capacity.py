@@ -290,7 +290,11 @@ def test_matrix_envelope_uses_best_pd_topology() -> None:
         standard: bool,
     ) -> dict[str, object]:
         tiers = {
-            name: {"passed": standard, "good_request_fraction": 1.0}
+            name: {
+                "passed": standard,
+                "good_request_fraction": 1.0,
+                "goodput_requests_per_second": 1.0,
+            }
             for name in ("strict", "standard", "relaxed")
         }
         return {
@@ -321,9 +325,65 @@ def test_matrix_envelope_uses_best_pd_topology() -> None:
     assert envelope["pap_minus_best_pd"] == 4
 
 
+def test_matrix_reports_best_compliant_goodput() -> None:
+    def summary(
+        architecture: str,
+        topology: str,
+        concurrency: int,
+        goodput: float,
+        passed: bool = True,
+    ) -> dict[str, object]:
+        tiers = {
+            name: {
+                "passed": passed,
+                "good_request_fraction": 1.0 if passed else 0.9,
+                "goodput_requests_per_second": goodput,
+            }
+            for name in ("strict", "standard", "relaxed")
+        }
+        return {
+            "architecture": architecture,
+            "topology": topology,
+            "concurrency": concurrency,
+            "correctness": {"passed": True},
+            "metrics": {
+                "ttft_ms": {"p95": 1.0},
+                "itl_ms": {"p95": 1.0},
+                "request_throughput_per_second": goodput,
+            },
+            "slo": tiers,
+        }
+
+    rows = build_rows(
+        [
+            summary("pap", "3pa1p", 12, 2.4),
+            summary("pap", "3pa1p", 20, 2.7, passed=False),
+            summary("pd", "2p2d", 10, 1.8),
+            summary("pd", "3p1d", 8, 1.7),
+        ]
+    )
+    goodput = build_envelope(rows)["compliant_goodput_by_slo"]["standard"]
+
+    assert goodput["pap"] == {
+        "topology": "3pa1p",
+        "concurrency": 12,
+        "requests_per_second": 2.4,
+    }
+    assert goodput["best_pd"] == {
+        "topology": "2p2d",
+        "concurrency": 10,
+        "requests_per_second": 1.8,
+    }
+    assert goodput["pap_over_pd_percent"] == pytest.approx(33.333333)
+
+
 def test_matrix_marks_incomplete_run_as_ineligible(tmp_path: Path) -> None:
     tiers = {
-        name: {"passed": False, "good_request_fraction": 0.5}
+        name: {
+            "passed": False,
+            "good_request_fraction": 0.5,
+            "goodput_requests_per_second": None,
+        }
         for name in ("strict", "standard", "relaxed")
     }
     rows = build_rows(

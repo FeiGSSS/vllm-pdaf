@@ -7,6 +7,7 @@ live under this directory. See [the storage contract](README.md) and the
 Current report bundles that have not yet been promoted to the strict P17
 registry schema:
 
+- [Current randomized-length AIPerf O32 scan](PAP-20260721-AIPERF-RANDOM-O32/report.md)
 - [Historical fixed 96-session AIPerf scan](PAP-20260720-AIPERF-FIXED96/report.md)
 - [Four-GPU conversation-affinity result](PAP-20260716-4GPU-CONV-AFFINITY/report.md)
 

@@ -101,8 +101,7 @@ def build_rows(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
             value for value in completed_requests if isinstance(value, int)
         ]
         expected_requests = [
-            item.get("workload", {}).get("expected_requests")
-            for item in repetitions
+            item.get("workload", {}).get("expected_requests") for item in repetitions
         ]
         expected_requests = [
             value for value in expected_requests if isinstance(value, int)
@@ -127,32 +126,31 @@ def build_rows(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "topology": topology,
             "concurrency": concurrency,
             "repetitions": len(repetitions),
-            "run_status": run_statuses[0]
-            if len(run_statuses) == 1
-            else "mixed",
+            "run_status": run_statuses[0] if len(run_statuses) == 1 else "mixed",
             "run_statuses": run_statuses,
             "completed_requests": min(completed_requests)
             if completed_requests
             else None,
-            "expected_requests": max(expected_requests)
-            if expected_requests
-            else None,
-            "correctness": all(
-                item["correctness"]["passed"] for item in repetitions
-            ),
+            "expected_requests": max(expected_requests) if expected_requests else None,
+            "correctness": all(item["correctness"]["passed"] for item in repetitions),
             "ttft_p95_ms": max(ttft_p95) if ttft_p95 else None,
             "itl_p95_ms": max(itl_p95) if itl_p95 else None,
-            "request_throughput_per_second": min(throughput)
-            if throughput
-            else None,
+            "request_throughput_per_second": min(throughput) if throughput else None,
         }
         for tier in SLO_TIER_NAMES:
             row[tier] = all(item["slo"][tier]["passed"] for item in repetitions)
             fractions = [
-                item["slo"][tier]["good_request_fraction"]
-                for item in repetitions
+                item["slo"][tier]["good_request_fraction"] for item in repetitions
             ]
             row[f"{tier}_good_fraction"] = min(fractions)
+            goodputs = [
+                item["slo"][tier].get("goodput_requests_per_second")
+                for item in repetitions
+            ]
+            goodputs = [value for value in goodputs if value is not None]
+            row[f"{tier}_goodput_requests_per_second"] = (
+                min(goodputs) if goodputs else None
+            )
         rows.append(row)
     return sorted(
         rows,
@@ -164,9 +162,41 @@ def build_rows(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
+def _best_compliant_goodput(
+    rows: list[dict[str, Any]],
+    tier: str,
+    architecture: str,
+) -> dict[str, Any]:
+    goodput_key = f"{tier}_goodput_requests_per_second"
+    eligible = [
+        row
+        for row in rows
+        if row["architecture"] == architecture
+        and row["correctness"]
+        and row[tier]
+        and row.get(goodput_key) is not None
+    ]
+    if not eligible:
+        return {
+            "topology": None,
+            "concurrency": None,
+            "requests_per_second": None,
+        }
+    best = max(
+        eligible,
+        key=lambda row: (row[goodput_key], row["concurrency"]),
+    )
+    return {
+        "topology": best["topology"],
+        "concurrency": best["concurrency"],
+        "requests_per_second": best[goodput_key],
+    }
+
+
 def build_envelope(rows: list[dict[str, Any]]) -> dict[str, Any]:
     configs = sorted({(row["architecture"], row["topology"]) for row in rows})
     capacity_by_slo = {}
+    compliant_goodput_by_slo = {}
     for tier in SLO_TIER_NAMES:
         capacities = {}
         for architecture, topology in configs:
@@ -192,9 +222,7 @@ def build_envelope(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "configurations": capacities,
             "pap_3pa1p": pap_capacity,
             "best_pd": {
-                "topology": pd_best_key.partition(":")[2]
-                if pd_best_key
-                else None,
+                "topology": pd_best_key.partition(":")[2] if pd_best_key else None,
                 "concurrency": pd_capacity,
             },
             "pap_minus_best_pd": (
@@ -203,7 +231,25 @@ def build_envelope(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 else None
             ),
         }
-    return {"schema_version": 1, "capacity_by_slo": capacity_by_slo}
+
+        pap_goodput = _best_compliant_goodput(rows, tier, "pap")
+        pd_goodput = _best_compliant_goodput(rows, tier, "pd")
+        pap_value = pap_goodput["requests_per_second"]
+        pd_value = pd_goodput["requests_per_second"]
+        compliant_goodput_by_slo[tier] = {
+            "pap": pap_goodput,
+            "best_pd": pd_goodput,
+            "pap_over_pd_percent": (
+                (pap_value / pd_value - 1) * 100
+                if pap_value is not None and pd_value is not None and pd_value > 0
+                else None
+            ),
+        }
+    return {
+        "schema_version": 2,
+        "capacity_by_slo": capacity_by_slo,
+        "compliant_goodput_by_slo": compliant_goodput_by_slo,
+    }
 
 
 def write_tsv(rows: list[dict[str, Any]], path: Path) -> None:
@@ -225,6 +271,9 @@ def write_tsv(rows: list[dict[str, Any]], path: Path) -> None:
         "strict_good_fraction",
         "standard_good_fraction",
         "relaxed_good_fraction",
+        "strict_goodput_requests_per_second",
+        "standard_goodput_requests_per_second",
+        "relaxed_goodput_requests_per_second",
     ]
     with path.open("w", encoding="utf-8", newline="") as output:
         writer = csv.DictWriter(
@@ -285,6 +334,30 @@ def write_markdown(
             f"{_fmt(value['best_pd']['topology'], 0)} | "
             f"{_fmt(value['best_pd']['concurrency'], 0)} | "
             f"{_fmt(value['pap_minus_best_pd'], 0)} |"
+        )
+    lines.extend(
+        [
+            "",
+            "## Best compliant request goodput",
+            "",
+            "Only complete, correct configurations with at least 95% of "
+            "requests meeting the tier are eligible.",
+            "",
+            "| SLO | PAP req/s | PAP C | Best PD topology | PD req/s | "
+            "PD C | PAP over PD |",
+            "| --- | ---: | ---: | --- | ---: | ---: | ---: |",
+        ]
+    )
+    for tier, value in envelope["compliant_goodput_by_slo"].items():
+        pap = value["pap"]
+        pd = value["best_pd"]
+        difference = value["pap_over_pd_percent"]
+        difference_label = f"{difference:+.1f}%" if difference is not None else "-"
+        lines.append(
+            f"| {tier} | {_fmt(pap['requests_per_second'], 3)} | "
+            f"{_fmt(pap['concurrency'], 0)} | {_fmt(pd['topology'], 0)} | "
+            f"{_fmt(pd['requests_per_second'], 3)} | "
+            f"{_fmt(pd['concurrency'], 0)} | {difference_label} |"
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
