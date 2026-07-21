@@ -112,6 +112,7 @@ def test_runtime_settings_are_parsed_once_per_owner() -> None:
     settings = PAPRuntimeSettings.from_environ(
         {
             "PAP_PROJECTION_KV_UNAWARE": "true",
+            "PAP_CUDAGRAPH_COMPATIBLE": "1",
             "PAP_PROJECTION_CRITICAL_TRACE": "on",
             "PAP_DEBUG_DECISION": "yes",
             "PAP_RUNNER_MICROBATCH_COUNT": "4",
@@ -125,14 +126,27 @@ def test_runtime_settings_are_parsed_once_per_owner() -> None:
     assert settings.debug_decision
     assert settings.unified_kv_decode_capacity_tokens == 64
     assert worker.projection_kv_unaware
+    assert worker.cudagraph_compatible
+    assert not worker.skip_model_warmup
+    assert worker.skip_local_attention_kernel_warmup
     assert worker.runner_microbatch_count == 4
+
+
+def test_eager_projection_skips_model_and_kernel_warmup() -> None:
+    worker = PAPWorkerAdapter.from_environ(
+        {
+            "PAP_PROJECTION_KV_UNAWARE": "1",
+            "PAP_CUDAGRAPH_COMPATIBLE": "0",
+        }
+    )
+
+    assert worker.skip_model_warmup
+    assert worker.skip_local_attention_kernel_warmup
 
 
 def test_request_decode_capacity_overrides_environment_fallback() -> None:
     scheduler = PAPSchedulerAdapter(
-        PAPRuntimeSettings.from_environ(
-            {"PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS": "64"}
-        )
+        PAPRuntimeSettings.from_environ({"PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS": "64"})
     )
     request = _scheduler_request(
         {
@@ -268,9 +282,7 @@ def test_projection_batch_adapter_builds_filtered_forward_context() -> None:
     )
 
     assert context["pap_positions"] is positions
-    assert context["pap_prefill_kv_handle_by_request"] == {
-        "req-a": "session-a"
-    }
+    assert context["pap_prefill_kv_handle_by_request"] == {"req-a": "session-a"}
     assert context["pap_decode_capacity_tokens_by_request"] == {"req-a": 24}
     assert context["pap_attention_kv_installed_by_request"] == {"req-a"}
     assert context["pap_offload_exec_route_groups"][0]["steps"] == (17,)

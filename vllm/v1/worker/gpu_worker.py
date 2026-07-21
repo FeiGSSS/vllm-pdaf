@@ -717,7 +717,7 @@ class Worker(WorkerBase):
 
     @instrument(span_name="Warmup (GPU)")
     def compile_or_warm_up_model(self) -> CompilationTimes:
-        if self.pap_worker.projection_kv_unaware:
+        if self.pap_worker.skip_model_warmup:
             logger.info(
                 "PAP Projection KV-unaware process skips local-attention warmup"
             )
@@ -758,9 +758,16 @@ class Worker(WorkerBase):
             self.model_runner._dummy_run(size, skip_eplb=True, remove_lora=False)
         self.model_runner.maybe_remove_all_loras(self.model_runner.lora_config)
 
-        # Warmup and tune the kernels used during model execution before
-        # cuda graph capture.
-        kernel_warmup(self)
+        # Projection owns no local KV cache. Its local-attention warmup cannot
+        # run against metadata-only KV placeholders, but CUDA Graph capture
+        # must still proceed when the PAP graph-compatible path is enabled.
+        if self.pap_worker.skip_local_attention_kernel_warmup:
+            logger.info(
+                "PAP Projection KV-unaware process skips local-attention "
+                "kernel warmup before CUDA Graph capture"
+            )
+        else:
+            kernel_warmup(self)
 
         cuda_graph_memory_bytes = 0
         if not self.model_config.enforce_eager:

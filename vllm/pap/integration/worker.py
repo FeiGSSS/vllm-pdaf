@@ -30,6 +30,20 @@ class PAPWorkerAdapter:
         return self.settings.projection_kv_unaware
 
     @property
+    def cudagraph_compatible(self) -> bool:
+        return self.settings.cudagraph_compatible
+
+    @property
+    def skip_model_warmup(self) -> bool:
+        """Return whether Projection can skip all model warmup work."""
+        return self.projection_kv_unaware and not self.cudagraph_compatible
+
+    @property
+    def skip_local_attention_kernel_warmup(self) -> bool:
+        """Return whether local-attention kernel warmup is inapplicable."""
+        return self.projection_kv_unaware
+
+    @property
     def critical_trace(self) -> bool:
         return self.settings.critical_trace
 

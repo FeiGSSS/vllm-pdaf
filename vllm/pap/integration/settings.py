@@ -43,6 +43,7 @@ class PAPRuntimeSettings:
     """PAP environment values consumed from vLLM-owned execution paths."""
 
     projection_kv_unaware: bool
+    cudagraph_compatible: bool
     critical_trace: bool
     debug_decision: bool
     runner_microbatch_count: int
@@ -62,6 +63,10 @@ class PAPRuntimeSettings:
         )
         return cls(
             projection_kv_unaware=projection_kv_unaware,
+            cudagraph_compatible=pap_env_enabled(
+                "PAP_CUDAGRAPH_COMPATIBLE",
+                values,
+            ),
             critical_trace=(
                 projection_kv_unaware
                 and pap_env_enabled("PAP_PROJECTION_CRITICAL_TRACE", values)
