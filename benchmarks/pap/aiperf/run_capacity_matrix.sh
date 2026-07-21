@@ -17,7 +17,8 @@ MATRIX_SUMMARIZER="${ROOT_DIR}/benchmarks/pap/aiperf/summarize_capacity_matrix.p
 
 EXPERIMENTS_ROOT="${PAP_EXPERIMENTS_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments}"
 RESULTS_ROOT="${RESULTS_ROOT:-${EXPERIMENTS_ROOT}/_staging}"
-MATRIX_ID="${PAP_CAPACITY_MATRIX_ID:-$(date +%Y%m%d_%H%M%S)_aiperf_capacity}"
+OUTPUT_TOKENS="${PAP_CAPACITY_OUTPUT_TOKENS:-256}"
+MATRIX_ID="${PAP_CAPACITY_MATRIX_ID:-$(date +%Y%m%d_%H%M%S)_aiperf_capacity_o${OUTPUT_TOKENS}}"
 MATRIX_ROOT="${PAP_CAPACITY_MATRIX_ROOT:-${RESULTS_ROOT}/capacity/${MATRIX_ID}}"
 ARCHITECTURES_CSV="${PAP_CAPACITY_ARCHITECTURES:-pap_3pa1p,pd_1p3d,pd_2p2d,pd_3p1d}"
 TOTAL_SESSIONS="${PAP_CAPACITY_SESSIONS:-96}"
@@ -33,7 +34,6 @@ WAIT_FOR_GPUS="${PAP_CAPACITY_WAIT_FOR_GPUS:-1}"
 TURNS=10
 DOCUMENT_TOKENS=8192
 APPEND_TOKENS=512
-OUTPUT_TOKENS=256
 THINK_TIME_MS=3000
 TOOL_TIME_MS=1000
 TOOL_EVERY=3
@@ -68,6 +68,8 @@ done
   || die "PAP_CAPACITY_REPETITIONS must be positive"
 [[ "${TOTAL_SESSIONS}" =~ ^[1-9][0-9]*$ ]] \
   || die "PAP_CAPACITY_SESSIONS must be positive"
+[[ "${OUTPUT_TOKENS}" =~ ^[1-9][0-9]*$ ]] \
+  || die "PAP_CAPACITY_OUTPUT_TOKENS must be positive"
 
 ALL_POINTS_CSV="${PAP_POINTS_CSV},${PD_1P3D_POINTS_CSV},${PD_2P2D_POINTS_CSV},${PD_3P1D_POINTS_CSV}"
 IFS=, read -r -a ALL_POINTS <<< "${ALL_POINTS_CSV}"
@@ -88,7 +90,7 @@ for architecture in "${ARCHITECTURES[@]}"; do
 done
 
 mkdir -p "${MATRIX_ROOT}/dataset" "${MATRIX_ROOT}/runs"
-DATASET_FILE="${MATRIX_ROOT}/dataset/multiturn_s${TOTAL_SESSIONS}_8k_plus512_o256_t10_delayed.jsonl"
+DATASET_FILE="${MATRIX_ROOT}/dataset/multiturn_s${TOTAL_SESSIONS}_8k_plus512_o${OUTPUT_TOKENS}_t10_delayed.jsonl"
 
 if [[ ! -f "${DATASET_FILE}" ]]; then
   "${PYTHON_BIN}" "${DATASET_GENERATOR}" \

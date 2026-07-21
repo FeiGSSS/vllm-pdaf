@@ -106,7 +106,8 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     assert "TURNS=10" in text
     assert "DOCUMENT_TOKENS=8192" in text
     assert "APPEND_TOKENS=512" in text
-    assert "OUTPUT_TOKENS=256" in text
+    assert 'PAP_CAPACITY_OUTPUT_TOKENS:-256' in text
+    assert 'o${OUTPUT_TOKENS}_t10_delayed.jsonl' in text
     assert "THINK_TIME_MS=3000" in text
     assert "TOOL_TIME_MS=1000" in text
     assert "TOOL_EVERY=3" in text

@@ -201,6 +201,11 @@ set
 bash benchmarks/pap/aiperf/run_capacity_matrix.sh
 ```
 
+The output length defaults to 256 tokens. Set
+`PAP_CAPACITY_OUTPUT_TOKENS=128` for the companion short-decode testbed; the
+value is encoded in the default matrix ID, dataset filename, and matrix
+configuration.
+
 The runner waits in 60-second intervals when GPUs 0-3 are occupied, supports
 resuming a matrix ID, and writes `matrix_config.env`, per-run
 `capacity_summary.json`, `capacity_results.tsv`, `capacity_results.md`, and
