@@ -11,17 +11,36 @@ surviving test covers the same behavior.
   transport behavior;
 - fail-closed validation for malformed descriptors, stale generations, and
   invalid lifecycle transitions;
+- eager and optional piecewise CUDA Graph role selection, graph boundaries,
+  capture-shape selection, and eager fallback;
 - stable xPAyP and cross-host NIXL configuration and wire contracts.
 
 Same-host xPAyP has a small controlled E2E smoke for `1PA2P`, `2PA1P`, and
 `2PA2P`. It is not a performance or release gate. Cross-host execution remains
 supported but `preserved-unverified` during this milestone.
 
-## Refactor validation
+## Current validation lanes
 
-During the refactor, run only the tests directly related to each change. Run
-the complete PAP CPU Gate once at final freeze, followed by one P17 1PA1P
-runtime comparison. Pre-commit is not required in this environment.
+Run tests directly related to each source change. Run the complete PAP CPU
+gate before a source milestone, and use a runtime lane only when the change
+crosses a runtime boundary:
+
+- P17 1PA1P is the release regression gate for lifecycle, transport, unified
+  KV, Attention, or scheduling changes.
+- The four-GPU AIPerf lane is for capacity, routing, and performance changes;
+  documentation-only or isolated unit changes do not require it.
+- Piecewise Graph changes require the focused graph/launcher tests and a
+  matched eager/Graph runtime point before a performance claim.
+
+Pre-commit is not required in this environment. A focused Graph check is:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/pap/test_model_cudagraph.py \
+  tests/pap/test_pap_launch_files.py -q
+```
+
+The complete PAP CPU gate is:
 
 ```bash
 .venv/bin/python -m pytest \
@@ -54,3 +73,6 @@ have intentionally similar setup.
 The post-façade audit removed the two exact duplicate cases it found. The
 remaining xPAyP and NIXL unit contracts are retained because those capabilities
 are supported, while their E2E lanes remain outside the P17 refactor gate.
+
+The current support and evidence boundary is summarized in the
+[PAP development status](../../docs/design/pap/status.md).

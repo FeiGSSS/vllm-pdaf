@@ -4,6 +4,8 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
+  - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260716-4GPU-CONV-AFFINITY
   - PAP-20260716-TRITON-72-20-BASELINE
   - PAP-20260715-VLLM-INTEGRATION-BOUNDARY
@@ -15,7 +17,7 @@ related_experiments:
   - PAP-20260713-ASYNC-DECODE-TOKEN-D2H
   - PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: 3a6fe93d11245c1137d3ea6767cd5e27b3e88156
+last_validated_commit: e5190a84e37124c893cf66d5b1bb94f9e31dc408
 ---
 
 # PAP runtime
@@ -84,6 +86,32 @@ Retries, bounded queues, timeouts, and failure propagation remain operational
 controls. Synchronous sampled-token D2H, synchronous Prefill KV import,
 diagnostic barriers, manual dispatch modes, dynamic MPS, and handoff mode
 selectors have been removed or explicitly rejected as retired flags.
+
+## Execution mode and CUDA Graph boundary
+
+Launchers default to eager execution. In optional piecewise mode, each process
+receives an explicit role before model construction:
+
+- Prefill executes normal local Attention and publishes Prefill-owned KV
+  through a graph-unsafe opaque operation.
+- Projection executes remote Attention through a graph-unsafe opaque operation
+  that writes into an owned, shape-stable output tensor. Message release stays
+  ordered after the output copy.
+- Standard PD disables PAP model hooks and uses the same vLLM piecewise mode
+  and role-appropriate capture sizes for a fair comparison.
+
+Projection owns no local request KV. Its eager path can skip model warmup, but
+piecewise mode skips only the inapplicable local-Attention kernel warmup and
+continues into `capture_model()`. Capture forwards contain no live PAP batch,
+so they size buffers without performing remote execution. Runtime forwards
+retain the normal request/session-generation checks.
+
+Capture sizes describe scheduled model tokens. They neither reserve
+conversation slots nor override `max_num_seqs`, `max_num_batched_tokens`, KV
+admission, or `max_model_len`; an uncaptured token count executes normally.
+Remote Attention, transport progress, sampled-token delivery, commit/lease
+traffic, and Prefill KV publication remain host-controlled and outside replay.
+This is the correctness boundary for current Graph support.
 
 ## Transport boundary
 

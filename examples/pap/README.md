@@ -10,7 +10,8 @@ not an E2E gate in this milestone. The validated multi-turn path reuses
 Prefill-owned KV through vLLM's native prefix cache; it does not keep an
 Attention session resident between turns.
 
-See [`docs/design/pap/`](../../docs/design/pap/README.md) for the canonical
+See the [current development status](../../docs/design/pap/status.md) and
+[`docs/design/pap/`](../../docs/design/pap/README.md) for the canonical
 architecture, runtime, and validation boundary.
 
 Roles:
@@ -52,8 +53,9 @@ Useful environment overrides:
 - `PAP_SKIP_SMOKE_REQUEST=1` to skip the launcher request.
 - `PAP_PROXY_PORT=9000` to choose the OpenAI-compatible proxy port.
 - `PAP_EXECUTION_MODE=piecewise` in the benchmark runner to enable the
-  experimental piecewise CUDA Graph path. Eager remains the default; PAP
-  transport and KV-publication operations stay outside captured regions.
+  validated development path for piecewise CUDA Graph. Eager remains the P17
+  release-gate default; PAP transport, remote Attention, and KV-publication
+  operations stay outside captured regions.
 
 Send one request through the proxy:
 
@@ -80,23 +82,31 @@ bash benchmarks/pap/scripts/run_pap_workload.sh
 Each run records `topology_manifest.json`, `routing_audit.json`, strict log
 audit results, and an all-Attention session-drain result.
 
-The four-GPU long-suffix comparison uses 12 conversations, five rounds, a 4K
-first prompt, 3K appended tokens per later round, and 256 output tokens. PAP is
-fixed at `3PA1P`; PD uses the standard oneway P→D flow and can be swept with
-the project-owned topology runner:
+The current four-GPU capacity comparison is driven by AIPerf. Every matrix
+point serves the same 32 conversations and 320 requests: ten turns per
+conversation, a randomized 8K initial input, roughly 512 appended input tokens
+on later turns, randomized 16-64-token outputs, and deterministic think/tool
+delays. Conversation concurrency limits live sessions while preserving PA or
+Prefill ownership across all turns.
+
+PAP is fixed at 3PA1P. PD uses the standard one-way P→D flow and compares
+1P3D, 2P2D, and 3P1D. Run the eager baseline or its matched piecewise CUDA
+Graph lane with:
 
 ```bash
-PD_LOAD_TOPOLOGY=1p3d bash \
-  benchmarks/pap/scripts/run_pd_multiturn_topology.sh oneway
-PD_LOAD_TOPOLOGY=2p2d bash \
-  benchmarks/pap/scripts/run_pd_multiturn_topology.sh oneway
-PD_LOAD_TOPOLOGY=3p1d bash \
-  benchmarks/pap/scripts/run_pd_multiturn_topology.sh oneway
+bash benchmarks/pap/aiperf/run_capacity_matrix.sh
+
+PAP_CAPACITY_EXECUTION_MODE=piecewise \
+  bash benchmarks/pap/aiperf/run_capacity_matrix.sh
 ```
 
-The runner still accepts `twoway` for diagnostics, but bidirectional D→P is
-not a four-GPU milestone baseline.
+The full default matrix is intentionally long. Use the point-selection and
+resume overrides documented in the
+[AIPerf testbed](../../benchmarks/pap/aiperf/README.md) when developing a
+single topology or concurrency point. The old fixed-length O256/O128 and
+12-conversation workloads remain historical evidence, not current defaults.
 
-The exact PAP environment and the current controlled comparison are recorded
-in
-[`PAP-20260716-4GPU-CONV-AFFINITY`](../../benchmarks/pap/experiments/PAP-20260716-4GPU-CONV-AFFINITY/report.md).
+Current results are recorded in the
+[audited eager report](../../benchmarks/pap/experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md)
+and the
+[piecewise CUDA Graph report](../../benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).

@@ -1,6 +1,16 @@
-# PAP experiment archive
+# Legacy PAP experiment archive
 
-This directory is the single place for PAP-related experiment evidence.
+This shared 27-GiB directory predates the tracked PAP experiment registry. It
+is retained in place because other worktrees may reference its raw runs; it is
+not the current source of benchmark defaults or conclusions. New experiments,
+metadata, reports, and repository-owned raw artifacts belong under
+[`benchmarks/pap/experiments/`](../../../benchmarks/pap/experiments/README.md).
+Use the [current development status](../../../docs/design/pap/status.md) for
+the active runtime and evidence boundary.
+
+The layout and commands below describe the historical archive. In particular,
+the `.claude/skills/` helper commands are preserved for provenance and are not
+current project entry points.
 
 ## Layout
 
@@ -29,7 +39,7 @@ because they were generated during the PAP comparison iterations. Older generic
 PD/NIXL runs that are not part of PAP comparison remain in the original
 baseline directories.
 
-## Current P17 release gate
+## Current tracked P17 release gate
 
 P17 is the current 1PA1P same-host release gate. Its tracked configuration is
 `benchmarks/pap/profiles/p17_1pa1p.toml`; the runner reads that file directly.

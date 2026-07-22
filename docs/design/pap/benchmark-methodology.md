@@ -5,6 +5,8 @@ canonical: null
 superseded_by: null
 related_experiments:
   - PAP-20260716-TRITON-72-20-BASELINE
+  - PAP-20260721-AIPERF-AUDITED-CAPACITY
+  - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260715-VLLM-INTEGRATION-BOUNDARY
   - PAP-20260715-ARCHITECTURE-MILESTONE
   - PAP-20260715-RUNTIME-BOUNDARY-E2E
@@ -14,7 +16,7 @@ related_experiments:
   - PAP-20260713-PD-THREE-LANE-C4
   - PAP-20260714-P17-PRE-REFACTOR
   - PAP-20260715-P17-POST-REFACTOR
-last_validated_commit: 3a6fe93d11245c1137d3ea6767cd5e27b3e88156
+last_validated_commit: e5190a84e37124c893cf66d5b1bb94f9e31dc408
 ---
 
 # PAP benchmark methodology
@@ -60,6 +62,42 @@ passing and no warnings. Relative to the preceding accepted formal record,
 R1 TTFT changed by -10.74%, R1 TPOT by -10.75%, steady TTFT by -1.84%, and
 steady TPOT by -18.02%. The raw run remains at
 `benchmarks/pap/experiments/PAP-20260716-TRITON-72-20-BASELINE/runs/20260716_3a6fe93d1_p17_mps_72_20_formal/raw/`.
+
+## Four-GPU capacity development lane
+
+The AIPerf capacity lane complements P17; it does not replace the release
+gate. It compares PAP 3PA1P with one-way PD 1P3D, 2P2D, and 3P1D on four L20
+GPUs. Every point processes the same 32 conversations and 320 requests under
+conversation concurrency. Each conversation has ten turns, a randomized 8K
+initial input, roughly 512 new input tokens on later turns, randomized 16-64
+token outputs, and deterministic think/tool delays.
+
+The source-audited scheduler settings are `max_num_seqs=64`, Prefill
+`max_num_batched_tokens=16384`, Decode/Projection
+`max_num_batched_tokens=64`, default `max_num_partial_prefills=1`, and
+`max_model_len=20000`. PAP uses `gpu_memory_utilization=0.76`; PD uses `0.90`.
+The full parameter rationale and reproducible commands live in the
+[AIPerf testbed documentation](../../../benchmarks/pap/aiperf/README.md).
+
+Best SLO-compliant goodput from the current single-repetition development
+scans is:
+
+| Mode | SLO | PAP | Best PD | PAP versus PD |
+| --- | --- | ---: | ---: | ---: |
+| Eager | Strict | 1.944 req/s | 1.761 req/s | +10.4% |
+| Eager | Standard | 2.461 req/s | 1.818 req/s | +35.3% |
+| Eager | Relaxed | 2.656 req/s | 2.690 req/s | -1.3% |
+| Piecewise Graph | Strict | 2.460 req/s | 1.833 req/s | +34.2% |
+| Piecewise Graph | Standard | 2.556 req/s | 1.904 req/s | +34.2% |
+| Piecewise Graph | Relaxed | 2.777 req/s | 2.591 req/s | +7.2% |
+
+All included points completed every request and passed routing, output, and
+runtime audits. The exact percentages are development evidence, not a formal
+release claim: each point has one repetition and Graph produced mixed
+per-configuration latency changes. See the
+[eager report](../../../benchmarks/pap/experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md)
+and the
+[piecewise Graph report](../../../benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
 
 ## Evidence and decisions
 

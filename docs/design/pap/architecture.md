@@ -4,6 +4,8 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
+  - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260716-4GPU-CONV-AFFINITY
   - PAP-20260716-TRITON-72-20-BASELINE
   - PAP-20260715-VLLM-INTEGRATION-BOUNDARY
@@ -15,7 +17,7 @@ related_experiments:
   - PAP-20260710-ARBITRARY-XY
   - PAP-20260711-ATTENTION-COMBINE
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: 3a6fe93d11245c1137d3ea6767cd5e27b3e88156
+last_validated_commit: e5190a84e37124c893cf66d5b1bb94f9e31dc408
 ---
 
 # PAP architecture
@@ -68,6 +70,31 @@ independent.
 | xPAyP, cross host | NIXL mailbox/backend | Preserved, contract only |
 | TP or other models | Existing integration boundary | Outside P17 gate |
 
+## Execution modes
+
+Eager execution is the default and remains the P17 release-gate mode. The
+optional `piecewise` mode reuses vLLM's compile and token-count CUDA Graph
+dispatch without attempting to capture PAP host side effects.
+
+- Prefill and Projection receive explicit process-static Graph roles. Model
+  code never selects a role from per-request Python metadata during capture or
+  replay.
+- Projection remote Attention and Prefill KV publication are registered as
+  graph-unsafe opaque operations. They divide graph-safe QKV, normalization,
+  output projection, residual, and MLP regions without replaying network or
+  lifecycle operations.
+- Synthetic capture forwards produce shape-correct Projection outputs but do
+  not open sessions or send transport messages.
+- Prefill captures scheduled-token sizes `1,2,4,8,16,32,64,128`; Projection
+  and PD Decode capture `1,2,4,8,12,16,20,24,28,32`. Other shapes fall back to
+  normal execution and are not rejected.
+
+Full-model CUDA Graph is unsupported because OFFLOAD_EXEC, remote Attention,
+KV publication, and request-generation state are dynamic host-controlled
+operations. The accepted boundary is implemented in `model/cudagraph.py` and
+connected to vLLM piecewise splitting operations; it is not a separate graph
+executor.
+
 ## Module ownership
 
 - `config.py`: typed topology, placement, transport, MPS, lifecycle, and
@@ -81,8 +108,9 @@ independent.
   their matching vLLM owners; `runner.py` owns Projection request state,
   forward-context construction, peer activity, and asynchronous sampled-token
   delivery. `settings.py` parses shared process settings once per owner.
-- `model/`: typed forward-batch access, Projection Attention execution, and
-  Prefill sealed-KV publication used by model implementations.
+- `model/`: typed forward-batch access, Projection Attention execution,
+  Prefill sealed-KV publication, and piecewise CUDA Graph boundaries used by
+  model implementations.
 - `protocol/`: wire models, descriptors, sealed KV codec, and transport
   contracts.
 - `topology/`: route groups and Projection peer membership.

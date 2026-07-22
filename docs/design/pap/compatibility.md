@@ -5,11 +5,12 @@ canonical: null
 superseded_by: null
 related_experiments:
   - PAP-20260716-TRITON-72-20-BASELINE
+  - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260715-VLLM-INTEGRATION-BOUNDARY
   - PAP-20260715-ARCHITECTURE-MILESTONE
   - PAP-20260715-RUNTIME-BOUNDARY-E2E
   - PAP-20260715-INTEGRATION-E2E
-last_validated_commit: 3a6fe93d11245c1137d3ea6767cd5e27b3e88156
+last_validated_commit: e5190a84e37124c893cf66d5b1bb94f9e31dc408
 ---
 
 # PAP compatibility retirement record
@@ -89,3 +90,11 @@ passing. Compared with the architecture milestone, changes were -0.12% R1
 TTFT, -0.02% R1 TPOT, -2.83% steady TTFT, and -0.15% steady TPOT. That record
 is retained as the integration-boundary evidence and is superseded as the
 performance baseline by `PAP-20260716-TRITON-72-20-BASELINE`.
+
+## Current revalidation
+
+At source milestone `e5190a84e`, none of the retired façades has returned.
+Piecewise CUDA Graph support is owned by `vllm/pap/model/cudagraph.py` and the
+existing `integration/` adapters; it did not add a new top-level forwarding
+module. The current module boundary and supported execution modes are recorded
+in the [development status](status.md).

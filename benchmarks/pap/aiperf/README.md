@@ -136,7 +136,7 @@ the [archive notice](../experiments/legacy/reports/pap-pd-aiperf-fixed-length-pr
 AIPERF_INPUT_FILE=/tmp/pap-aiperf-8k-plus512-random-o32-t10.jsonl \
 AIPERF_TARGET_URL=http://127.0.0.1:9460 \
 AIPERF_OUTPUT_DIR=/path/to/run/aiperf \
-AIPERF_SESSIONS=12 \
+AIPERF_SESSIONS=32 \
 AIPERF_CONCURRENCY=12 \
 AIPERF_TIMING_MODE=concurrency \
 AIPERF_REQUEST_RATE= \
@@ -148,13 +148,18 @@ The project launchers can start the services and run the same AIPerf dataset:
 ```bash
 PAP_BENCH_CLIENT_MODE=aiperf_multiturn \
 AIPERF_INPUT_FILE=/tmp/pap-aiperf-8k-plus512-random-o32-t10.jsonl \
-PAP_MULTITURN_LOAD_CONVERSATIONS=12 \
+PAP_MULTITURN_LOAD_ROUNDS=10 \
+PAP_MULTITURN_LOAD_CONVERSATIONS=32 \
+PAP_AIPERF_CONCURRENCY=12 \
 PAP_AIPERF_TIMING_MODE=concurrency \
   bash benchmarks/pap/scripts/run_pap_workload.sh
 
 PD_LOAD_CLIENT_MODE=aiperf_multiturn \
 AIPERF_INPUT_FILE=/tmp/pap-aiperf-8k-plus512-random-o32-t10.jsonl \
 PD_LOAD_TOPOLOGY=2p2d \
+PD_LOAD_ROUNDS=10 \
+PD_LOAD_CONVERSATIONS=32 \
+PD_AIPERF_CONCURRENCY=10 \
 PD_AIPERF_TIMING_MODE=concurrency \
   bash benchmarks/pap/scripts/run_pd_multiturn_topology.sh oneway
 ```

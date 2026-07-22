@@ -1,13 +1,18 @@
 # PAP benchmark and experiment governance
 
+The current runtime and evidence snapshot is summarized in
+[`docs/design/pap/status.md`](../../docs/design/pap/status.md). This directory
+owns benchmark methodology, tracked conclusions, manifests, and colocated raw
+artifacts; it does not define the runtime architecture.
+
 The optional [AIPerf lane](aiperf/README.md) provides standardized serving
 load generation and metrics alongside the project-owned correctness gates. Its
 current four-GPU development testbed uses ten turns, randomized lognormal
-lengths around 8K initial input, 512 new user tokens per later turn, and 32
-output tokens, deterministic 3-second think and 1-second tool delays, pure
-conversation concurrency, three request-level SLO tiers, 32 conversations per
-point, and a lean topology-specific boundary scan. The current eager baseline
-is documented in
+lengths around 8K initial input and 512 new user tokens per later turn, plus an
+output-length distribution with mean 32 tokens. It uses deterministic 3-second
+think and 1-second tool delays, pure conversation concurrency, three
+request-level SLO tiers, 32 conversations per point, and a lean
+topology-specific boundary scan. The current eager baseline is documented in
 [`PAP-20260721-AIPERF-AUDITED-CAPACITY`](experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md),
 and its matched piecewise CUDA Graph comparison is documented in
 [`PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH`](experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
@@ -17,14 +22,15 @@ The historical cohort-sized capacity scan is documented in
 [`pap-pd-aiperf-capacity-results-20260720.md`](experiments/legacy/reports/pap-pd-aiperf-capacity-results-20260720.md).
 The corresponding historical think/tool result is documented in
 [`pap-pd-aiperf-think-tool-results-20260720.md`](experiments/legacy/reports/pap-pd-aiperf-think-tool-results-20260720.md).
-The current fixed-96-session result is documented in
+The historical fixed-96-session result is documented in
 [`PAP-20260720-AIPERF-FIXED96`](experiments/PAP-20260720-AIPERF-FIXED96/report.md).
 
 The workload launchers default to eager execution. Their optional `piecewise`
 mode uses vLLM's token-count CUDA Graph dispatch while keeping PAP transport
 and KV-publication side effects outside captured regions. Role-specific graph
-sizes are bounded by the 32-session testbed and never act as admission limits;
-uncaptured shapes fall back to normal execution. See the
+sizes cover the scheduled-token shapes expected from the 32-session testbed
+and never act as admission limits; uncaptured shapes fall back to normal
+execution. See the
 [AIPerf lane](aiperf/README.md#piecewise-cuda-graph-lane) for the exact contract.
 
 This directory defines the canonical PAP benchmark profile and experiment
@@ -73,13 +79,13 @@ Its three C4 repetitions passed all gates on clean commit `3a6fe93d1`, with
 9386.68 ms R1 TTFT, 35.00 ms R1 TPOT, 198.21 ms steady TTFT, and 41.28 ms
 steady TPOT.
 
-The accepted four-GPU capacity milestone is
-[`PAP-20260716-4GPU-CONV-AFFINITY`](experiments/PAP-20260716-4GPU-CONV-AFFINITY/report.md).
-It fixes PAP at 3PA1P and compares it with 1P3D, 2P2D, and 3P1D using the
-standard one-way P→D NIXL flow. This is controlled dirty-worktree evidence,
-not a replacement for the formal P17 release baseline. Bidirectional D→P is
-retained only as an optional diagnostic path and is not part of this milestone
-gate.
+The current four-GPU development baseline is the randomized 32-conversation
+[audited eager scan](experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md),
+with a matched
+[piecewise CUDA Graph scan](experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
+Both fix PAP at 3PA1P and compare it with one-way PD 1P3D, 2P2D, and 3P1D.
+They are single-repetition capacity evidence, not replacements for the formal
+P17 release baseline. Earlier four-GPU reports remain historical evidence.
 
 ### Standalone paged-FlashAttention SM probe
 
