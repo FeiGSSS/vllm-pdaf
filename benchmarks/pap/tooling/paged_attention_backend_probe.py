@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Compare paged decode-attention kernels on the matched P17 shape."""
+"""Compare paged decode-attention kernels on an archived matched shape."""
 
 from __future__ import annotations
 

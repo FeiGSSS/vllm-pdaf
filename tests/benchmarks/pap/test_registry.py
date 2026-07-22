@@ -45,32 +45,20 @@ def _write(path: Path, value: dict[str, object]) -> None:
 def test_current_registry_validates() -> None:
     snapshot = validate_registry()
 
-    assert set(snapshot.profiles) == {"p17_1pa1p", "paged_fa_sm_probe"}
+    assert {
+        "aiperf_qwen3_8b_4gpu_o32",
+        "p17_1pa1p",
+        "paged_fa_sm_probe",
+    } <= set(snapshot.profiles)
+    assert snapshot.profiles["aiperf_qwen3_8b_4gpu_o32"]["status"] == "current"
     assert snapshot.profiles["p17_1pa1p"]["status"] == "archived"
     assert snapshot.profiles["p17_1pa1p"]["release_gate"] is False
-    assert set(snapshot.runs) == {
-        "20260714_dd2073bcf_p17_pre_refactor_formal",
-        "20260715_003029a77_p17_model_adapter_formal",
-        "20260715_3bfa8d15d_p17_post_refactor_formal",
-        "20260715_7f732f5be_p17_runtime_boundary_formal",
-        "20260715_9fb642937_pap_milestone_formal",
-        "20260715_9efa92dc6_vllm_integration_boundary_formal",
-        "20260715_b695efe69_p17_integration_formal",
-        "20260715_e5a6711f0_paged_fa_full92_diagnostic",
-        "20260715_e5a6711f0_paged_fa_mps28_diagnostic",
-        "20260716_3a6fe93d1_p17_mps_72_20_formal",
+    current_aiperf = {
+        "PAP-20260721-AIPERF-AUDITED-CAPACITY",
+        "PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH",
+        "PAP-20260722-AIPERF-CANONICAL-CUTOVER",
     }
-    assert set(snapshot.experiments) == {
-        "PAP-20260714-P17-PRE-REFACTOR",
-        "PAP-20260715-ARCHITECTURE-MILESTONE",
-        "PAP-20260715-INTEGRATION-E2E",
-        "PAP-20260715-MODEL-ADAPTER-E2E",
-        "PAP-20260715-P17-POST-REFACTOR",
-        "PAP-20260715-PAGED-FA-SM-PROBE",
-        "PAP-20260715-RUNTIME-BOUNDARY-E2E",
-        "PAP-20260715-VLLM-INTEGRATION-BOUNDARY",
-        "PAP-20260716-TRITON-72-20-BASELINE",
-    }
+    assert current_aiperf <= set(snapshot.experiments)
     assert snapshot.experiments["PAP-20260714-P17-PRE-REFACTOR"]["status"] == (
         "archived"
     )
@@ -83,10 +71,11 @@ def test_current_registry_validates() -> None:
     assert snapshot.experiments["PAP-20260715-VLLM-INTEGRATION-BOUNDARY"][
         "status"
     ] == "archived"
-    assert all(
-        experiment["status"] == "archived"
-        for experiment in snapshot.experiments.values()
-    )
+    assert {
+        experiment_id
+        for experiment_id, experiment in snapshot.experiments.items()
+        if experiment["status"] == "current"
+    } == current_aiperf
     assert len(snapshot.historical_experiments) == 44
     assert len(snapshot.negative_results) == 16
 

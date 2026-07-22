@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from examples.pap.pap_multiturn_prefix_cache import (
+from benchmarks.pap.tooling.prefix_cache_diagnostic import (
     expected_prefix_hit_tokens,
 )
 

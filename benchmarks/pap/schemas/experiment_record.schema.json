@@ -50,7 +50,10 @@
       "oneOf": [
         {
           "type": "string",
-          "format": "date"
+          "format": "date",
+          "not": {
+            "const": "missing"
+          }
         },
         {
           "const": "missing"

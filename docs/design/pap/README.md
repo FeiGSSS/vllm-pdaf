@@ -86,7 +86,8 @@ and normalized experiments rather than a repository skill plan.
 
 ## Operational entry points
 
-- Generic xPAyP workload runner: `benchmarks/pap/scripts/run_pap_workload.sh`
+- AIPerf PAP xPA1P workload runner:
+  `benchmarks/pap/scripts/run_pap_workload.sh`
 - Canonical four-GPU AIPerf matrix:
   `benchmarks/pap/aiperf/run_capacity_matrix.sh`
 - Current capacity reports:

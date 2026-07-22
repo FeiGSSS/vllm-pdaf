@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "kind": "pap-run-manifest",
+  "run_id": "20260721_d6d590bb5_aiperf_piecewise_pd",
+  "experiment_id": "PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH",
+  "profile_id": "aiperf_qwen3_8b_4gpu_o32",
+  "architecture": "pd",
+  "mode": "controlled",
+  "evidence": "controlled",
+  "provenance": {
+    "branch": "missing",
+    "commit": "d6d590bb53ab4a5375ec5597914024f2587dd587",
+    "tracked_worktree_dirty": false,
+    "tracked_worktree_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tracked_index_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "started_at": "missing"
+  },
+  "workload": {
+    "model": {"path": "missing", "dtype": "float16", "tensor_parallel_size": 1},
+    "corpus": {"path": "missing", "sha256": "a15096fadfe99615a64e1519c6acb8b94753f31bbe921b8e2edd3235f4c7b1ce"},
+    "parameters": {"client": "aiperf-0.11.0", "sessions": 32, "turns": 10, "requests_per_point": 320, "topologies": ["2p2d", "3p1d"], "execution_mode": "piecewise"}
+  },
+  "topology": {"name": "2p2d,3p1d", "pa_count": "missing", "projection_count": "missing", "pd_prefill_count": "missing", "pd_decode_count": "missing", "routing_policy": "conversation_affinity"},
+  "placement": {"prefill_devices": "missing", "attention_devices": "missing", "projection_devices": "missing", "decode_devices": "missing"},
+  "transport": {"offload_exec": "not-applicable", "offload_kv": "nixl", "same_host": true},
+  "mps": {"mode": "disabled", "profile_id": "missing", "prefill_visible_sms": "missing", "attention_visible_sms": "missing"},
+  "runtime": {"profile": "piecewise", "settings": {"max_num_seqs": 64, "prefill_token_budget": 16384, "decode_token_budget": 64}},
+  "environment": {
+    "hardware_signature": "4x NVIDIA L20",
+    "software": {"aiperf": "0.11.0", "vllm_commit": "d6d590bb53ab4a5375ec5597914024f2587dd587"},
+    "fingerprint_basis": ["report", "dataset_sha256", "commit"]
+  },
+  "fingerprints": {"profile": "missing", "implementation": "missing", "request_shape": "a15096fadfe99615a64e1519c6acb8b94753f31bbe921b8e2edd3235f4c7b1ce", "hardware_runtime": "missing"},
+  "repetitions": {
+    "count": 1,
+    "order": [1],
+    "aggregation_method": "best compliant point per SLO across the PD scan",
+    "items": [{"index": 1, "repetition_id": "piecewise-pd-matrix", "result_artifact": {"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md"}}]
+  },
+  "audits": {
+    "client": {"status": "passed", "detail": "All 960 PD requests completed", "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md"}]},
+    "correctness": {"status": "passed", "detail": "Output validation passed", "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md"}]},
+    "routing": {"status": "passed", "detail": "Conversation affinity passed", "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md"}]},
+    "runtime": {"status": "passed", "detail": "All PD model services completed piecewise graph capture", "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md"}]},
+    "session_drain": {"status": "passed", "detail": "Session drain passed", "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md"}]}
+  },
+  "metrics": {
+    "completed_requests": 960,
+    "failed_requests": 0,
+    "values": [
+      {"name": "strict_goodput_rps", "scope": "best-slo", "statistic": "maximum-compliant", "unit": "requests/s", "value": 1.8329022642217865},
+      {"name": "standard_goodput_rps", "scope": "best-slo", "statistic": "maximum-compliant", "unit": "requests/s", "value": 1.904314040749908},
+      {"name": "relaxed_goodput_rps", "scope": "best-slo", "statistic": "maximum-compliant", "unit": "requests/s", "value": 2.5913841242990565}
+    ]
+  },
+  "artifacts": [{"name": "report", "kind": "aggregate", "path": {"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md"}, "sha256": "e76c76a1827f0fed0e798d01b0b891c4d437a17c82ed2cbe28a83998252ae0a7"}],
+  "validity": {"status": "passed", "reasons": []},
+  "failure_reasons": []
+}

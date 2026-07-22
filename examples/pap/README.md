@@ -70,18 +70,20 @@ Send one request through the proxy:
 
 Runtime logs are written under `examples/pap/logs/`, which is ignored by git.
 
-The low-level service/debug runner accepts the same topology. Its built-in
-smoke request is not benchmark evidence:
+The canonical benchmark runner is intentionally limited to xPA1P and always
+drives it through AIPerf. Arbitrary xPAyP remains a service/debug capability,
+not a current benchmark lane:
 
 ```bash
-PAP_TOPOLOGY=3pa2p \
+PAP_TOPOLOGY=3pa1p \
 PAP_PREFILL_GPUS=0,1,2 \
-PAP_PROJECTION_GPUS=3,4 \
+PAP_PROJECTION_GPUS=3 \
 bash benchmarks/pap/scripts/run_pap_workload.sh
 ```
 
 Each run records `topology_manifest.json`, `routing_audit.json`, strict log
-audit results, and an all-Attention session-drain result.
+audit results, and an all-Attention session-drain result. One-off service smoke
+requests belong to `launch_pap_nixl.sh`, not the benchmark runner.
 
 The current four-GPU capacity comparison is driven by AIPerf. Every matrix
 point serves the same 32 conversations and 320 requests: ten turns per

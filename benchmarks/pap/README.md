@@ -42,10 +42,11 @@ resolved.
 ## Layout
 
 - `aiperf/run_capacity_matrix.sh` is the executable current testbed contract.
-- `profiles/p17_1pa1p.toml` is retained only to validate archived manifests;
+- `profiles/archived/p17_1pa1p.toml` validates archived manifests only;
   it is not runnable and has no release-gate status.
-- `tooling/` contains offline trace summaries and remote-Attention diagnostics;
-  runtime code under `vllm/pap/` does not import it.
+- `tooling/` contains offline trace summaries, remote-Attention diagnostics,
+  prefix-cache diagnostics, and deferred-trace validation; runtime code under
+  `vllm/pap/` does not import it.
 - `schemas/` defines versioned run-manifest and experiment-record contracts.
 - `experiments/` colocates each experiment's metadata, conclusion, run
   manifests, and ignored raw artifacts.
@@ -78,8 +79,9 @@ bash benchmarks/pap/aiperf/run_capacity_matrix.sh
 
 ### Standalone paged-FlashAttention SM probe
 
-The paged-FA probe reproduces the archived P17 C4 Attention shape without launching PAP
-services or importing code from `vllm/pap/`. It compares full 92-SM execution
+The paged-FA probe reproduces an archived long-context Attention shape without
+launching PAP services or importing code from `vllm/pap/`. It compares full
+92-SM execution
 with a static 28-SM MPS partition, and compares FA2 auto-split with fixed
 single-split. MPS counters come from NSYS GPU-wide sampling; NCU is used only
 after the MPS partition is removed because this installed NCU version does not

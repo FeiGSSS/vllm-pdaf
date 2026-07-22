@@ -150,15 +150,13 @@ AIPERF_REQUEST_RATE= \
 The project launchers can start the services and run the same AIPerf dataset:
 
 ```bash
-PAP_BENCH_CLIENT_MODE=aiperf_multiturn \
 AIPERF_INPUT_FILE=/tmp/pap-aiperf-8k-plus512-random-o32-t10.jsonl \
-PAP_MULTITURN_LOAD_ROUNDS=10 \
-PAP_MULTITURN_LOAD_CONVERSATIONS=32 \
+PAP_AIPERF_TURNS=10 \
+PAP_AIPERF_SESSIONS=32 \
 PAP_AIPERF_CONCURRENCY=12 \
 PAP_AIPERF_TIMING_MODE=concurrency \
   bash benchmarks/pap/scripts/run_pap_workload.sh
 
-PD_LOAD_CLIENT_MODE=aiperf_multiturn \
 AIPERF_INPUT_FILE=/tmp/pap-aiperf-8k-plus512-random-o32-t10.jsonl \
 PD_LOAD_TOPOLOGY=2p2d \
 PD_LOAD_ROUNDS=10 \

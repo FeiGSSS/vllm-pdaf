@@ -1,4 +1,4 @@
-from examples.pap.pap_multiturn_chat_prefix_cache import (
+from benchmarks.pap.tooling.chat_prefix_cache_diagnostic import (
     _render_chat_prompt_token_ids,
     build_chat_payload,
     build_second_turn_messages,

@@ -33,11 +33,12 @@ repetitions; it does not introduce a second client or load shape.
 
 ## Validity before performance
 
-A run is usable only after request completion, output-length validity,
-conversation ownership, Attention stats, correctness logs, asynchronous
-token/KV join, routing, decode commit, lease, MPS visibility, and zero-session
-drain all pass. Dirty worktrees,
-missing fingerprints, incomplete requests, failed audits, or mixed profiles
+A current AIPerf run records only the audits that apply to that architecture
+and experiment. Request completion, output validity, routing/ownership, and
+session drain must pass; PAP runs additionally record the runtime-specific
+joins, MPS, or Graph-capture audits exercised by that run. The archived P17
+profile alone retains its historical fixed ten-audit contract. Dirty
+worktrees, incomplete requests, failed applicable audits, or mixed profiles
 cannot be labeled `formal-clean`.
 
 Missing requests stay in the SLO denominator, and only complete, correct runs

@@ -313,7 +313,10 @@
           "oneOf": [
             {
               "type": "string",
-              "format": "date-time"
+              "format": "date-time",
+              "not": {
+                "const": "missing"
+              }
             },
             {
               "const": "missing"
@@ -682,19 +685,8 @@
     },
     "audits": {
       "type": "object",
+      "minProperties": 1,
       "additionalProperties": false,
-      "required": [
-        "client",
-        "cache",
-        "attention_stats",
-        "correctness",
-        "decode_token_join",
-        "routing",
-        "commit",
-        "lease",
-        "session_drain",
-        "mps"
-      ],
       "properties": {
         "client": {
           "$ref": "#/$defs/gate"
@@ -724,6 +716,9 @@
           "$ref": "#/$defs/gate"
         },
         "mps": {
+          "$ref": "#/$defs/gate"
+        },
+        "runtime": {
           "$ref": "#/$defs/gate"
         }
       }

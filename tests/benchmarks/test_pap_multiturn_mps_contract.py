@@ -19,4 +19,5 @@ def test_static_mps_lifecycle_is_partitioned_and_audited() -> None:
 def test_conversation_affinity_audit_counts_sessions_for_aiperf() -> None:
     runner = PAP_RUNNER.read_text(encoding="utf-8")
 
-    assert 'client_mode == "aiperf_multiturn"' in runner
+    assert 'load_rounds = int(os.environ["PAP_AIPERF_TURNS"])' in runner
+    assert 'load_conversations = int(os.environ["PAP_AIPERF_SESSIONS"])' in runner

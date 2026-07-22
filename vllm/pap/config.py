@@ -231,160 +231,99 @@ class PAPRuntimeFeatures:
 
 
 @dataclass(frozen=True)
-class PAPRetiredFlag:
-    """A selectable path scheduled for or already past removal."""
+class PAPRemovedFlag:
+    """A removed runtime selector and its accepted replacement."""
 
     name: str
-    p17_values: frozenset[str]
     replacement: str
     experiment_id: str
-    removed: bool = False
 
 
-@dataclass(frozen=True)
-class PAPRetiredFlagSetting:
-    """One explicitly configured flag scheduled for retirement."""
-
-    spec: PAPRetiredFlag
-    value: str
-
-    @property
-    def matches_p17(self) -> bool:
-        """Whether this setting selects the frozen P17 behavior."""
-        return _normalize_flag_value(self.value) in self.spec.p17_values
-
-
-PAP_RETIRED_FLAGS = (
-    PAPRetiredFlag(
+PAP_REMOVED_FLAGS = (
+    PAPRemovedFlag(
         name="PAP_ASYNC_DECODE_TOKEN",
-        p17_values=_TRUE_VALUES,
         replacement="unconditional asynchronous sampled-token delivery",
         experiment_id="PAP-20260713-ASYNC-DECODE-TOKEN-D2H",
-        removed=True,
     ),
-    PAPRetiredFlag(
+    PAPRemovedFlag(
         name="PAP_ASYNC_DECODE_TOKEN_SYNC_ONLY_BARRIER",
-        p17_values=_FALSE_VALUES,
         replacement="no sampled-token timing barrier",
         experiment_id="PAP-20260714-ASYNC-TTFT-ROOTCAUSE",
-        removed=True,
     ),
-    PAPRetiredFlag(
+    PAPRemovedFlag(
         name="PAP_PROJECTION_SYNC_ONLY_BARRIER",
-        p17_values=_FALSE_VALUES,
         replacement="no Projection timing barrier",
         experiment_id="PAP-20260714-ASYNC-TTFT-ROOTCAUSE",
-        removed=True,
     ),
-    PAPRetiredFlag(
+    PAPRemovedFlag(
         name="PAP_PREFILL_SYNC_ONLY_BARRIER",
-        p17_values=_FALSE_VALUES,
         replacement="no Prefill timing barrier",
         experiment_id="PAP-20260714-ASYNC-TTFT-ROOTCAUSE",
-        removed=True,
     ),
-    PAPRetiredFlag(
+    PAPRemovedFlag(
         name="PAP_PREFILL_KV_ASYNC",
-        p17_values=_TRUE_VALUES,
         replacement="unconditional safe asynchronous Prefill KV import",
         experiment_id="PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC",
-        removed=True,
     ),
-    PAPRetiredFlag(
+    PAPRemovedFlag(
         name="PAP_KV_HANDOFF_MODE",
-        p17_values=frozenset({"sealed_manifest"}),
         replacement="sealed catalog and request manifest handoff",
         experiment_id="PAP-20260714-SEAL-HANDOFF-KV",
-        removed=True,
     ),
-    PAPRetiredFlag(
+    PAPRemovedFlag(
         name="PAP_UNIFIED_KV",
-        p17_values=_TRUE_VALUES,
         replacement="Prefill-owned unified KV",
         experiment_id="PAP-20260703-UNIFIED-KV",
-        removed=True,
     ),
-    PAPRetiredFlag(
+    PAPRemovedFlag(
         name="PAP_BATCHED_ROUTE_COPY",
-        p17_values=_TRUE_VALUES,
         replacement="batched route copy with input-driven fallback",
         experiment_id="PAP-20260711-ROUTE-COPY",
-        removed=True,
     ),
-    PAPRetiredFlag(
+    PAPRemovedFlag(
         name="PAP_UNIFIED_MD_FAST_KEY",
-        p17_values=_TRUE_VALUES,
         replacement="unified metadata fast-key lookup",
         experiment_id="PAP-20260712-METADATA-FAST-KEY",
-        removed=True,
     ),
-    PAPRetiredFlag(
+    PAPRemovedFlag(
         name="PAP_ATTENTION_DISPATCH_MODE",
-        p17_values=frozenset({"legacy"}),
         replacement="topology-derived direct or combine execution",
         experiment_id="PAP-20260711-ATTENTION-COMBINE",
-        removed=True,
     ),
-    PAPRetiredFlag(
+    PAPRemovedFlag(
         name="PAP_ATTENTION_COMBINE_WAIT_US",
-        p17_values=frozenset({"0", "0.0"}),
         replacement="topology-derived combine wait",
         experiment_id="PAP-20260711-ATTENTION-COMBINE",
-        removed=True,
     ),
-    PAPRetiredFlag(
+    PAPRemovedFlag(
         name="PAP_ATTENTION_ACTIVE_PEER_TRACKING",
-        p17_values=_FALSE_VALUES,
         replacement="topology-derived peer membership tracking",
         experiment_id="PAP-20260711-ACTIVE-PEER",
-        removed=True,
     ),
-    PAPRetiredFlag(
+    PAPRemovedFlag(
         name="PAP_MPS_MODE",
-        p17_values=frozenset({"static"}),
-        replacement="P17 static 72/20 MPS partition",
+        replacement="the current static 72/20 MPS partition",
         experiment_id="PAP-20260714-ASYNC-STATIC-BASELINE",
-        removed=True,
     ),
-    PAPRetiredFlag(
-        name="PAP_PREFILL_IPC_PROFILE",
-        p17_values=_FALSE_VALUES,
-        replacement="non-blocking observability only",
-        experiment_id="PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC",
-    ),
-    PAPRetiredFlag(
-        name="PAP_PREFILL_TORCH_PROFILE",
-        p17_values=_FALSE_VALUES,
-        replacement="non-blocking observability only",
-        experiment_id="PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC",
-    ),
-    PAPRetiredFlag(
+    PAPRemovedFlag(
         name="PAP_DIAG_R1_PROJECTION_GATE_COUNT",
-        p17_values=frozenset({"0"}),
         replacement="no diagnostic Projection gate",
         experiment_id="PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
-        removed=True,
     ),
-    PAPRetiredFlag(
+    PAPRemovedFlag(
         name="PAP_DIAG_R1_COMMIT_GATE_COUNT",
-        p17_values=frozenset({"0"}),
         replacement="no diagnostic decode-commit gate",
         experiment_id="PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
-        removed=True,
     ),
-    PAPRetiredFlag(
+    PAPRemovedFlag(
         name="PAP_DIAG_DECODE_COMMIT_GATE_FILE",
-        p17_values=_FALSE_VALUES,
         replacement="unconditional decode-commit delivery",
         experiment_id="PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
-        removed=True,
     ),
-    PAPRetiredFlag(
+    PAPRemovedFlag(
         name="PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT",
-        p17_values=frozenset({"120"}),
         replacement="the normal decode-commit timeout and retry policy",
         experiment_id="PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
-        removed=True,
     ),
 )
 
@@ -502,7 +441,7 @@ class PAPRuntimeConfig:
 
         mps = PAPMPSConfig(
             mode=PAPMPSMode.STATIC,
-            profile_id="baseline_static_72_20",
+            profile_id="static_72_20",
             prefill_requested_percent=80,
             attention_requested_percent=20,
             prefill_chunks=18,
@@ -745,76 +684,6 @@ class PAPRuntimeConfig:
             lease_release=lease_release,
         )
 
-    def configured_retired_flags(
-        self,
-        environ: Mapping[str, str],
-    ) -> tuple[PAPRetiredFlagSetting, ...]:
-        """Return explicitly configured flags in the retirement registry.
-
-        Removed entries are rejected by :meth:`from_env`; this method remains
-        available for inventory and migration reporting.
-        """
-        del self
-        return tuple(
-            PAPRetiredFlagSetting(spec=spec, value=str(environ[spec.name]))
-            for spec in PAP_RETIRED_FLAGS
-            if spec.name in environ
-        )
-
-    def p17_profile_contract(self) -> dict[str, object]:
-        """Return config-owned sections in the canonical P17 profile."""
-        features = self.features
-        dispatch_mode = self.attention.dispatch_mode
-        if (
-            dispatch_mode is PAPAttentionDispatchMode.DIRECT
-            and self.topology.projection_count == 1
-        ):
-            attention_execution = "topology_derived_direct"
-        else:
-            attention_execution = dispatch_mode.value
-        return {
-            "topology": {
-                "name": self.topology.name,
-                "pa_count": self.topology.pa_count,
-                "projection_count": self.topology.projection_count,
-                "routing_policy": self.routing_policy.value,
-            },
-            "placement": {
-                "prefill_devices": list(self.placement.prefill_devices),
-                "attention_devices": list(self.placement.attention_devices),
-                "projection_devices": list(self.placement.projection_devices),
-            },
-            "transport": {
-                "offload_exec": self.offload_exec_transport.value,
-                "offload_kv": self.offload_kv_transport.value,
-                "same_host": self.same_host,
-            },
-            "mps": {
-                "mode": self.mps.mode.value,
-                "profile_id": self.mps.profile_id,
-                "prefill_requested_percent": self.mps.prefill_requested_percent,
-                "attention_requested_percent": (self.mps.attention_requested_percent),
-                "prefill_chunks": self.mps.prefill_chunks,
-                "attention_chunks": self.mps.attention_chunks,
-                "prefill_visible_sms": self.mps.prefill_visible_sms,
-                "attention_visible_sms": self.mps.attention_visible_sms,
-                "total_visible_sms": self.mps.total_visible_sms,
-            },
-            "runtime": {
-                "decode_token_delivery": "async",
-                "prefill_kv_import": "async",
-                "kv_handoff": "sealed_manifest",
-                "kv_ownership": "prefill_owned_unified",
-                "route_copy": "batched_with_input_fallback",
-                "metadata_lookup": "fast_key",
-                "attention_execution": attention_execution,
-                "direct_mailbox_output": features.direct_mailbox_output,
-                "local_fast_stream_ordered": (features.local_fast_stream_ordered),
-                "local_fast_slot_count": features.local_fast_slot_count,
-                "decode_slot_plan_cache_limit": (features.decode_slot_plan_cache_limit),
-            },
-        }
-
 
 def _normalize_flag_value(value: str) -> str:
     return str(value).strip().lower().replace("-", "_")
@@ -829,8 +698,8 @@ def reject_removed_pap_flags(environ: Mapping[str, str]) -> None:
     Raises:
         PAPConfigError: If a removed variable is explicitly present.
     """
-    for spec in PAP_RETIRED_FLAGS:
-        if spec.removed and spec.name in environ:
+    for spec in PAP_REMOVED_FLAGS:
+        if spec.name in environ:
             raise PAPConfigError(
                 f"{spec.name} was removed; use {spec.replacement}. "
                 f"Historical evidence: {spec.experiment_id}."

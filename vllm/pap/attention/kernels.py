@@ -93,7 +93,7 @@ def run_paged_decode_attention(
     scale: float,
     block_size: int,
 ) -> torch.Tensor:
-    """Run the P17 Triton paged decode kernel without a per-layer fallback."""
+    """Run the current Triton paged-decode kernel without a layer fallback."""
 
     from vllm.v1.attention.ops.triton_decode_attention import (
         decode_attention_fwd,

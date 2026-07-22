@@ -42,7 +42,10 @@ def test_four_gpu_topology_runner_has_bounded_conversation_load() -> None:
     assert "PD_LOAD_TOPOLOGY:-3p1d" in text
     assert "PREFILL_COUNT + DECODE_COUNT != 4" in text
     assert "PD_LOAD_REQUEST_TIMEOUT_SECONDS:-180" in text
-    assert "PD_LOAD_CLIENT_MODE:-aiperf_multiturn" in text
+    assert 'printf \'CLIENT=%q\\n\' "aiperf"' in text
+    assert "PD_LOAD_ROUNDS:-10" in text
+    assert "PD_LOAD_CONVERSATIONS:-32" in text
+    assert "PD_LOAD_OUTPUT_TOKENS:-32" in text
     assert "pap_pd_multiturn_load_client.py" not in text
     assert "disagg_proxy_multiturn.py" in text
     assert "ensure_gpus_idle" in text
@@ -93,9 +96,18 @@ def test_aiperf_is_the_only_performance_testbed() -> None:
     pd_text = TOPOLOGY_RUNNER.read_text(encoding="utf-8")
 
     assert not P17_RUNNER.exists()
-    assert "multiturn_load)" not in pap_text
+    assert 'case "${PAP_BENCH_CLIENT_MODE}"' not in pap_text
+    assert "bench serve" not in pap_text
+    assert "multiturn_prefix_cache)" not in pap_text
     assert "pap_pd_multiturn_load_client.py" not in pap_text
-    assert "PD_LOAD_CLIENT_MODE:-aiperf_multiturn" in pd_text
+    assert 'PAP_BENCH_CLIENT="aiperf"' in pap_text
+    assert "PD_LOAD_CLIENT_MODE:-aiperf_multiturn" not in pd_text
+    assert "the PD runner is AIPerf-only" in pd_text
+    for text in (pap_text, pd_text):
+        assert "--document-tokens-median" in text
+        assert "--output-tokens-median" in text
+        assert "--think-time-ms" in text
+        assert "--tool-time-ms" in text
 
 
 def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
@@ -126,7 +138,7 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     assert "PAP_CAPACITY_PD_2P2D_POINTS:-10,16,20,24" in text
     assert "PAP_CAPACITY_PD_3P1D_POINTS:-8,14,20" in text
     assert '--sessions "${TOTAL_SESSIONS}"' in text
-    assert 'PAP_MULTITURN_LOAD_CONVERSATIONS="${TOTAL_SESSIONS}"' in text
+    assert 'PAP_AIPERF_SESSIONS="${TOTAL_SESSIONS}"' in text
     assert 'PD_LOAD_CONVERSATIONS="${TOTAL_SESSIONS}"' in text
     assert '--sessions "${concurrency}"' not in text
 
@@ -145,7 +157,7 @@ def test_aiperf_capacity_does_not_reject_load_above_scheduler_batch_size() -> No
     pap_text = PAP_RUNNER.read_text(encoding="utf-8")
     pd_text = TOPOLOGY_RUNNER.read_text(encoding="utf-8")
 
-    assert 'PAP_MULTITURN_ACTIVE_CONVERSATIONS="${PAP_AIPERF_CONCURRENCY}"' in pap_text
+    assert "PAP_AIPERF_CONCURRENCY > PAP_AIPERF_SESSIONS" in pap_text
     assert "active conversations exceed Projection max_num_seqs" not in pap_text
     assert "per-PA conversations exceed Prefill max_num_seqs" not in pap_text
     assert 'ACTIVE_CONVERSATIONS="${PD_AIPERF_CONCURRENCY}"' in pd_text

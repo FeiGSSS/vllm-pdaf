@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from benchmarks.multi_turn.validate_deferred_trace import validate_trace
+from benchmarks.pap.tooling.validate_deferred_trace import validate_trace
 
 
 def _span(count: int) -> dict[str, float | int]:

@@ -21,7 +21,15 @@ for removed_flag in \
   PAP_DIAG_R1_PROJECTION_GATE_COUNT \
   PAP_DIAG_R1_COMMIT_GATE_COUNT \
   PAP_DIAG_DECODE_COMMIT_GATE_FILE \
-  PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT; do
+  PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT \
+  PAP_BENCH_CLIENT_MODE \
+  PAP_MULTITURN_LOAD_ROUNDS \
+  PAP_MULTITURN_LOAD_CONVERSATIONS \
+  PAP_MULTITURN_LOAD_REQUEST_RATE \
+  PAP_MULTITURN_APPEND_TOKENS \
+  PAP_MULTITURN_FIRST_OUTPUT_TOKENS \
+  PAP_MULTITURN_BLOCK_SIZE \
+  PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS; do
   if [[ -v "${removed_flag}" ]]; then
     case "${removed_flag}" in
       PAP_ASYNC_DECODE_TOKEN)
@@ -52,6 +60,10 @@ for removed_flag in \
         replacement="no Projection or Prefill timing barrier"
         experiment_id="PAP-20260714-ASYNC-TTFT-ROOTCAUSE"
         ;;
+      PAP_BENCH_CLIENT_MODE | PAP_MULTITURN_*)
+        replacement="the AIPerf-only PAP benchmark interface"
+        experiment_id="PAP-20260722-AIPERF-CANONICAL-CUTOVER"
+        ;;
       *)
         replacement="unconditional decode-commit delivery"
         experiment_id="PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION"
@@ -65,61 +77,54 @@ done
 ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 VLLM_BIN="${VLLM_BIN:-${ROOT_DIR}/.venv/bin/vllm}"
-DEFERRED_TRACE_VALIDATOR="${ROOT_DIR}/benchmarks/multi_turn/validate_deferred_trace.py"
+DEFERRED_TRACE_VALIDATOR="${ROOT_DIR}/benchmarks/pap/tooling/validate_deferred_trace.py"
 AIPERF_RUNNER="${ROOT_DIR}/benchmarks/pap/aiperf/run_profile.sh"
 AIPERF_DATASET_GENERATOR="${ROOT_DIR}/benchmarks/pap/aiperf/generate_multiturn_dataset.py"
 AIPERF_ROOT="${AIPERF_ROOT:-/home/fei/research/PD/refer_codes/aiperf}"
 AIPERF_BIN="${AIPERF_BIN:-${AIPERF_ROOT}/.venv/bin/aiperf}"
 PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE="${PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE:-0}"
 PAP_BENCH_STRICT_CORRECTNESS_AUDIT="${PAP_BENCH_STRICT_CORRECTNESS_AUDIT:-1}"
-PAP_BENCH_CLIENT_MODE="${PAP_BENCH_CLIENT_MODE:-canonical}"
-case "${PAP_BENCH_CLIENT_MODE}" in
-  canonical | multiturn_prefix_cache | multiturn_chat_prefix_cache \
-    | aiperf_multiturn) ;;
-  *)
-    echo "ERROR: unsupported PAP_BENCH_CLIENT_MODE=${PAP_BENCH_CLIENT_MODE}" >&2
-    exit 2
-    ;;
-esac
+PAP_BENCH_CLIENT="aiperf"
 
 GIT_COMMIT=""
 GIT_COMMIT_SHORT=""
 GIT_TRACKED_WORKTREE_DIRTY=0
 
 MODEL_PATH="${MODEL_PATH:-/data/ssd1/llm-models/Qwen3-8B}"
-DATASET_NAME="${DATASET_NAME:-sonnet}"
 BENCH_DIR="${BENCH_DIR:-/home/fei/research/PD/refer_codes/vllm/benchmarks}"
 DATASET_PATH="${DATASET_PATH:-${BENCH_DIR}/sonnet_4x.txt}"
 
-INPUT_LEN="${INPUT_LEN:-128}"
+INPUT_LEN="${INPUT_LEN:-8192}"
 OUTPUT_LEN="${OUTPUT_LEN:-32}"
-PREFIX_LEN="${PREFIX_LEN:-50}"
-QPS="${QPS:-16}"
-NUM_PROMPTS="${NUM_PROMPTS:-128}"
-PAP_MULTITURN_LOAD_ROUNDS="${PAP_MULTITURN_LOAD_ROUNDS:-5}"
-PAP_MULTITURN_LOAD_CONVERSATIONS="${PAP_MULTITURN_LOAD_CONVERSATIONS:-4}"
-PAP_MULTITURN_LOAD_REQUEST_RATE="${PAP_MULTITURN_LOAD_REQUEST_RATE:-2}"
-PAP_MULTITURN_APPEND_TOKENS="${PAP_MULTITURN_APPEND_TOKENS:-120}"
-if [[ "${PAP_BENCH_CLIENT_MODE}" == "aiperf_multiturn" ]]; then
-  if ! [[ "${PAP_MULTITURN_LOAD_ROUNDS}" =~ ^[1-9][0-9]*$ \
-    && "${PAP_MULTITURN_LOAD_CONVERSATIONS}" =~ ^[1-9][0-9]*$ ]]; then
-    echo "ERROR: multi-turn load rounds/conversations must be positive" >&2
-    exit 2
-  fi
-  NUM_PROMPTS=$((
-    PAP_MULTITURN_LOAD_ROUNDS * PAP_MULTITURN_LOAD_CONVERSATIONS
-  ))
-elif [[ "${PAP_BENCH_CLIENT_MODE}" != "canonical" ]]; then
-  NUM_PROMPTS=3
+PAP_AIPERF_TURNS="${PAP_AIPERF_TURNS:-10}"
+PAP_AIPERF_SESSIONS="${PAP_AIPERF_SESSIONS:-32}"
+PAP_AIPERF_APPEND_TOKENS="${PAP_AIPERF_APPEND_TOKENS:-512}"
+AIPERF_DOCUMENT_TOKENS_MEDIAN="${AIPERF_DOCUMENT_TOKENS_MEDIAN:-8000}"
+AIPERF_DOCUMENT_TOKENS_MIN="${AIPERF_DOCUMENT_TOKENS_MIN:-4096}"
+AIPERF_DOCUMENT_TOKENS_MAX="${AIPERF_DOCUMENT_TOKENS_MAX:-11264}"
+AIPERF_APPEND_TOKENS_MEDIAN="${AIPERF_APPEND_TOKENS_MEDIAN:-500}"
+AIPERF_APPEND_TOKENS_MIN="${AIPERF_APPEND_TOKENS_MIN:-256}"
+AIPERF_APPEND_TOKENS_MAX="${AIPERF_APPEND_TOKENS_MAX:-768}"
+AIPERF_OUTPUT_TOKENS_MEDIAN="${AIPERF_OUTPUT_TOKENS_MEDIAN:-30}"
+AIPERF_OUTPUT_TOKENS_MIN="${AIPERF_OUTPUT_TOKENS_MIN:-16}"
+AIPERF_OUTPUT_TOKENS_MAX="${AIPERF_OUTPUT_TOKENS_MAX:-64}"
+AIPERF_RANDOM_SEED="${AIPERF_RANDOM_SEED:-42}"
+AIPERF_THINK_TIME_MS="${AIPERF_THINK_TIME_MS:-3000}"
+AIPERF_TOOL_TIME_MS="${AIPERF_TOOL_TIME_MS:-1000}"
+AIPERF_TOOL_EVERY="${AIPERF_TOOL_EVERY:-3}"
+if ! [[ "${PAP_AIPERF_TURNS}" =~ ^[1-9][0-9]*$ \
+  && "${PAP_AIPERF_SESSIONS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: AIPerf turns/sessions must be positive" >&2
+  exit 2
 fi
-BENCH_NUM_WARMUPS="${BENCH_NUM_WARMUPS:-0}"
+NUM_PROMPTS=$((PAP_AIPERF_TURNS * PAP_AIPERF_SESSIONS))
 BENCH_TIMEOUT="${BENCH_TIMEOUT:-900}"
 SERVER_START_TIMEOUT="${SERVER_START_TIMEOUT:-900}"
 CLUSTER_READY_WAIT_SECONDS="${CLUSTER_READY_WAIT_SECONDS:-30}"
 PAP_BENCH_SESSION_DRAIN_TIMEOUT="${PAP_BENCH_SESSION_DRAIN_TIMEOUT:-15}"
 PAP_DEFERRED_TRACE_FLUSH_TIMEOUT="${PAP_DEFERRED_TRACE_FLUSH_TIMEOUT:-30}"
 
-TOPOLOGY="${PAP_TOPOLOGY:-1pa1p}"
+TOPOLOGY="${PAP_TOPOLOGY:-3pa1p}"
 if [[ ! "${TOPOLOGY}" =~ ^([0-9]+)pa([0-9]+)p$ ]]; then
   echo "ERROR: unsupported PAP topology: ${TOPOLOGY}" >&2
   exit 2
@@ -143,25 +148,21 @@ if [[ -n "${PAP_AIPERF_INPUT_FILE:-${AIPERF_INPUT_FILE:-}}" ]]; then
 fi
 PAP_AIPERF_INPUT_FILE="${PAP_AIPERF_INPUT_FILE:-${AIPERF_INPUT_FILE:-${RUN_ROOT}/aiperf_multiturn.jsonl}}"
 PAP_AIPERF_OUTPUT_DIR="${PAP_AIPERF_OUTPUT_DIR:-${RUN_ROOT}/aiperf}"
-PAP_AIPERF_CONCURRENCY="${PAP_AIPERF_CONCURRENCY:-${PAP_MULTITURN_LOAD_CONVERSATIONS}}"
+PAP_AIPERF_CONCURRENCY="${PAP_AIPERF_CONCURRENCY:-12}"
 PAP_AIPERF_TIMING_MODE="${PAP_AIPERF_TIMING_MODE:-concurrency}"
 PAP_AIPERF_REQUEST_RATE="${PAP_AIPERF_REQUEST_RATE-}"
-PAP_MULTITURN_ACTIVE_CONVERSATIONS="${PAP_MULTITURN_LOAD_CONVERSATIONS}"
-if [[ "${PAP_BENCH_CLIENT_MODE}" == "aiperf_multiturn" ]]; then
-  if [[ ! "${PAP_AIPERF_CONCURRENCY}" =~ ^[1-9][0-9]*$ ]]; then
-    echo "ERROR: PAP_AIPERF_CONCURRENCY must be positive" >&2
-    exit 2
-  fi
-  PAP_MULTITURN_ACTIVE_CONVERSATIONS="${PAP_AIPERF_CONCURRENCY}"
-  if (( PAP_MULTITURN_ACTIVE_CONVERSATIONS \
-    > PAP_MULTITURN_LOAD_CONVERSATIONS )); then
-    echo "ERROR: AIPerf concurrency exceeds total conversations" >&2
-    exit 2
-  fi
+if [[ ! "${PAP_AIPERF_CONCURRENCY}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: PAP_AIPERF_CONCURRENCY must be positive" >&2
+  exit 2
+fi
+if (( PAP_AIPERF_CONCURRENCY > PAP_AIPERF_SESSIONS )); then
+  echo "ERROR: AIPerf concurrency exceeds total sessions" >&2
+  exit 2
 fi
 if [[ "${PAP_AIPERF_TIMING_MODE}" == "request_rate" \
   && -z "${PAP_AIPERF_REQUEST_RATE}" ]]; then
-  PAP_AIPERF_REQUEST_RATE="${PAP_MULTITURN_LOAD_REQUEST_RATE}"
+  echo "ERROR: request_rate timing requires PAP_AIPERF_REQUEST_RATE" >&2
+  exit 2
 fi
 PAP_PROXY_PORT="${PAP_PROXY_PORT:-9460}"
 PREFILL_PORT_BASE="${PAP_PREFILL_PORT_BASE:-${PAP_PREFILL_PORT:-8100}}"
@@ -184,32 +185,32 @@ fi
 PAP_PREFILL_GPUS="${PAP_PREFILL_GPUS:-${DEFAULT_PREFILL_GPUS}}"
 PAP_PROJECTION_GPUS="${PAP_PROJECTION_GPUS:-${DEFAULT_PROJECTION_GPUS}}"
 PAP_TP_SIZE="${PAP_TP_SIZE:-1}"
-PAP_VLLM_DTYPE="${PAP_VLLM_DTYPE:-auto}"
-MAX_MODEL_LEN="${MAX_MODEL_LEN:-512}"
-MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8192}"
+PAP_VLLM_DTYPE="${PAP_VLLM_DTYPE:-float16}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-20000}"
+MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-16384}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
 PAP_PREFILL_MAX_NUM_BATCHED_TOKENS="${PAP_PREFILL_MAX_NUM_BATCHED_TOKENS:-${MAX_NUM_BATCHED_TOKENS}}"
 PAP_PREFILL_MAX_NUM_SEQS="${PAP_PREFILL_MAX_NUM_SEQS:-${MAX_NUM_SEQS}}"
-PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS="${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS:-${MAX_NUM_BATCHED_TOKENS}}"
+PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS="${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS:-64}"
 PAP_PROJECTION_MAX_NUM_SEQS="${PAP_PROJECTION_MAX_NUM_SEQS:-${MAX_NUM_SEQS}}"
 PAP_EXECUTION_MODE="${PAP_EXECUTION_MODE:-eager}"
 PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES="${PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES:-1,2,4,8,16,32,64,128}"
 PAP_PROJECTION_CUDAGRAPH_CAPTURE_SIZES="${PAP_PROJECTION_CUDAGRAPH_CAPTURE_SIZES:-1,2,4,8,12,16,20,24,28,32}"
 PAP_PREFILL_GPU_MEMORY_UTILIZATION="${PAP_PREFILL_GPU_MEMORY_UTILIZATION:-0.76}"
 PAP_PROJECTION_GPU_MEMORY_UTILIZATION="${PAP_PROJECTION_GPU_MEMORY_UTILIZATION:-0.76}"
-PAP_PREFILL_MPS_PERCENT="${PAP_PREFILL_MPS_PERCENT:-70}"
-PAP_ATTENTION_MPS_PERCENT="${PAP_ATTENTION_MPS_PERCENT:-30}"
-PAP_STATIC_PREFILL_CHUNKS="${PAP_STATIC_PREFILL_CHUNKS:-16}"
-PAP_STATIC_ATTENTION_CHUNKS="${PAP_STATIC_ATTENTION_CHUNKS:-7}"
-PAP_STATIC_PREFILL_EXPECTED_SMS="${PAP_STATIC_PREFILL_EXPECTED_SMS:-64}"
-PAP_STATIC_ATTENTION_EXPECTED_SMS="${PAP_STATIC_ATTENTION_EXPECTED_SMS:-28}"
+PAP_PREFILL_MPS_PERCENT="${PAP_PREFILL_MPS_PERCENT:-80}"
+PAP_ATTENTION_MPS_PERCENT="${PAP_ATTENTION_MPS_PERCENT:-20}"
+PAP_STATIC_PREFILL_CHUNKS="${PAP_STATIC_PREFILL_CHUNKS:-18}"
+PAP_STATIC_ATTENTION_CHUNKS="${PAP_STATIC_ATTENTION_CHUNKS:-5}"
+PAP_STATIC_PREFILL_EXPECTED_SMS="${PAP_STATIC_PREFILL_EXPECTED_SMS:-72}"
+PAP_STATIC_ATTENTION_EXPECTED_SMS="${PAP_STATIC_ATTENTION_EXPECTED_SMS:-20}"
 PAP_ENABLE_MPS=1
 if ! [[ "${PAP_STATIC_PREFILL_CHUNKS}" =~ ^[1-9][0-9]*$ \
   && "${PAP_STATIC_ATTENTION_CHUNKS}" =~ ^[1-9][0-9]*$ ]]; then
   echo "ERROR: static MPS chunk counts must be positive integers" >&2
   exit 2
 fi
-PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT:-nixl_mailbox}"
+PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT:-local_fast}"
 PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT:-cuda_ipc}"
 PAP_OFFLOAD_EXEC_TRACE="${PAP_OFFLOAD_EXEC_TRACE:-0}"
 PAP_DEFERRED_CUDA_TRACE="${PAP_DEFERRED_CUDA_TRACE:-0}"
@@ -244,19 +245,11 @@ PAP_LOCAL_FAST_YIELD_ITERS="${PAP_LOCAL_FAST_YIELD_ITERS:-64}"
 PAP_LOCAL_FAST_SLEEP_US="${PAP_LOCAL_FAST_SLEEP_US:-20}"
 PAP_LOCAL_FAST_SLEEP_AFTER_US="${PAP_LOCAL_FAST_SLEEP_AFTER_US:-50}"
 PAP_REMOTE_ATTENTION_PARALLELISM="${PAP_REMOTE_ATTENTION_PARALLELISM:-16}"
-PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-round_robin}"
-DEFAULT_DECODE_CAPACITY_TOKENS=32
-DEFAULT_PROMPT_TOKENS_DETAILS=0
-if [[ "${PAP_BENCH_CLIENT_MODE}" != "canonical" ]]; then
-  DEFAULT_DECODE_CAPACITY_TOKENS=64
-  DEFAULT_PROMPT_TOKENS_DETAILS=1
-fi
-PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-${DEFAULT_DECODE_CAPACITY_TOKENS}}"
-PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS:-${DEFAULT_PROMPT_TOKENS_DETAILS}}"
+PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-conversation_affinity}"
+PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-64}"
+PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS:-1}"
 PAP_PREFIX_CACHE_AUDIT="${PAP_PREFIX_CACHE_AUDIT:-0}"
-PAP_MULTITURN_FIRST_OUTPUT_TOKENS="${PAP_MULTITURN_FIRST_OUTPUT_TOKENS:-48}"
-PAP_MULTITURN_BLOCK_SIZE="${PAP_MULTITURN_BLOCK_SIZE:-16}"
-PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS="${PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS:-1}"
+PAP_BLOCK_SIZE="${PAP_BLOCK_SIZE:-16}"
 PAP_DECODE_COMMIT_ENDPOINT="${PAP_DECODE_COMMIT_ENDPOINT:-}"
 PAP_LEASE_RELEASE_ENDPOINT="${PAP_LEASE_RELEASE_ENDPOINT:-}"
 PAP_DECODE_COMMIT_FAIL_CLOSED="${PAP_DECODE_COMMIT_FAIL_CLOSED:-1}"
@@ -1065,7 +1058,6 @@ ensure_dataset() {
 }
 
 prepare_aiperf_dataset() {
-  [[ "${PAP_BENCH_CLIENT_MODE}" == "aiperf_multiturn" ]] || return 0
   [[ -x "${AIPERF_BIN}" ]] \
     || die "AIPerf is not installed at ${AIPERF_BIN}"
   [[ -x "${AIPERF_RUNNER}" ]] \
@@ -1081,11 +1073,25 @@ prepare_aiperf_dataset() {
     --model "${MODEL_PATH}" \
     --corpus "${DATASET_PATH}" \
     --output "${PAP_AIPERF_INPUT_FILE}" \
-    --sessions "${PAP_MULTITURN_LOAD_CONVERSATIONS}" \
-    --turns "${PAP_MULTITURN_LOAD_ROUNDS}" \
+    --sessions "${PAP_AIPERF_SESSIONS}" \
+    --turns "${PAP_AIPERF_TURNS}" \
     --document-tokens "${INPUT_LEN}" \
-    --append-tokens "${PAP_MULTITURN_APPEND_TOKENS}" \
+    --document-tokens-median "${AIPERF_DOCUMENT_TOKENS_MEDIAN}" \
+    --document-tokens-min "${AIPERF_DOCUMENT_TOKENS_MIN}" \
+    --document-tokens-max "${AIPERF_DOCUMENT_TOKENS_MAX}" \
+    --append-tokens "${PAP_AIPERF_APPEND_TOKENS}" \
+    --append-tokens-median "${AIPERF_APPEND_TOKENS_MEDIAN}" \
+    --append-tokens-min "${AIPERF_APPEND_TOKENS_MIN}" \
+    --append-tokens-max "${AIPERF_APPEND_TOKENS_MAX}" \
     --output-tokens "${OUTPUT_LEN}" \
+    --output-tokens-median "${AIPERF_OUTPUT_TOKENS_MEDIAN}" \
+    --output-tokens-min "${AIPERF_OUTPUT_TOKENS_MIN}" \
+    --output-tokens-max "${AIPERF_OUTPUT_TOKENS_MAX}" \
+    --random-seed "${AIPERF_RANDOM_SEED}" \
+    --max-model-len "${MAX_MODEL_LEN}" \
+    --think-time-ms "${AIPERF_THINK_TIME_MS}" \
+    --tool-time-ms "${AIPERF_TOOL_TIME_MS}" \
+    --tool-every "${AIPERF_TOOL_EVERY}" \
     --session-prefix "${RUN_ID}-aiperf"
 }
 
@@ -1108,31 +1114,21 @@ capture_git_state() {
 write_effective_config() {
   {
     printf 'MODE=%q\n' "pap"
-    printf 'PAP_BENCH_CLIENT_MODE=%q\n' "${PAP_BENCH_CLIENT_MODE}"
+    printf 'PAP_BENCH_CLIENT=%q\n' "${PAP_BENCH_CLIENT}"
     printf 'TOPOLOGY=%q\n' "${TOPOLOGY}"
     printf 'PA_COUNT=%q\n' "${PA_COUNT}"
     printf 'PROJECTION_COUNT=%q\n' "${PROJECTION_COUNT}"
     printf 'MODEL_PATH=%q\n' "${MODEL_PATH}"
-    printf 'DATASET_NAME=%q\n' "${DATASET_NAME}"
     printf 'DATASET_PATH=%q\n' "${DATASET_PATH}"
     printf 'BENCH_DIR=%q\n' "${BENCH_DIR}"
-    printf 'PREFIX_LEN=%q\n' "${PREFIX_LEN}"
     printf 'NUM_PROMPTS=%q\n' "${NUM_PROMPTS}"
     printf 'PAP_ENABLE_PROMPT_TOKENS_DETAILS=%q\n' "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}"
     printf 'PAP_PREFIX_CACHE_AUDIT=%q\n' "${PAP_PREFIX_CACHE_AUDIT}"
-    printf 'PAP_MULTITURN_FIRST_OUTPUT_TOKENS=%q\n' "${PAP_MULTITURN_FIRST_OUTPUT_TOKENS}"
-    printf 'PAP_MULTITURN_BLOCK_SIZE=%q\n' "${PAP_MULTITURN_BLOCK_SIZE}"
-    printf 'PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS=%q\n' "${PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS}"
-    printf 'PAP_MULTITURN_LOAD_ROUNDS=%q\n' \
-      "${PAP_MULTITURN_LOAD_ROUNDS}"
-    printf 'PAP_MULTITURN_LOAD_CONVERSATIONS=%q\n' \
-      "${PAP_MULTITURN_LOAD_CONVERSATIONS}"
-    printf 'PAP_MULTITURN_ACTIVE_CONVERSATIONS=%q\n' \
-      "${PAP_MULTITURN_ACTIVE_CONVERSATIONS}"
-    printf 'PAP_MULTITURN_LOAD_REQUEST_RATE=%q\n' \
-      "${PAP_MULTITURN_LOAD_REQUEST_RATE}"
-    printf 'PAP_MULTITURN_APPEND_TOKENS=%q\n' \
-      "${PAP_MULTITURN_APPEND_TOKENS}"
+    printf 'PAP_BLOCK_SIZE=%q\n' "${PAP_BLOCK_SIZE}"
+    printf 'PAP_AIPERF_TURNS=%q\n' "${PAP_AIPERF_TURNS}"
+    printf 'PAP_AIPERF_SESSIONS=%q\n' "${PAP_AIPERF_SESSIONS}"
+    printf 'PAP_AIPERF_APPEND_TOKENS=%q\n' \
+      "${PAP_AIPERF_APPEND_TOKENS}"
     printf 'AIPERF_ROOT=%q\n' "${AIPERF_ROOT}"
     printf 'AIPERF_BIN=%q\n' "${AIPERF_BIN}"
     printf 'PAP_AIPERF_INPUT_FILE=%q\n' "${PAP_AIPERF_INPUT_FILE}"
@@ -1142,8 +1138,6 @@ write_effective_config() {
     printf 'PAP_AIPERF_REQUEST_RATE=%q\n' "${PAP_AIPERF_REQUEST_RATE}"
     printf 'INPUT_LENS_CSV=%q\n' "${INPUT_LEN}"
     printf 'OUTPUT_LENS_CSV=%q\n' "${OUTPUT_LEN}"
-    printf 'QPS_CSV=%q\n' "${QPS}"
-    printf 'BENCH_NUM_WARMUPS=%q\n' "${BENCH_NUM_WARMUPS}"
     printf 'BENCH_TIMEOUT=%q\n' "${BENCH_TIMEOUT}"
     printf 'SERVER_START_TIMEOUT=%q\n' "${SERVER_START_TIMEOUT}"
     printf 'RESULTS_ROOT=%q\n' "${RESULTS_ROOT}"
@@ -1334,14 +1328,11 @@ PY
 
 write_run_metadata() {
   RUN_ROOT="${RUN_ROOT}" \
-  PAP_BENCH_CLIENT_MODE="${PAP_BENCH_CLIENT_MODE}" \
+  PAP_BENCH_CLIENT="${PAP_BENCH_CLIENT}" \
   INPUT_LEN="${INPUT_LEN}" \
   OUTPUT_LEN="${OUTPUT_LEN}" \
-  QPS="${QPS}" \
   NUM_PROMPTS="${NUM_PROMPTS}" \
   MODEL_PATH="${MODEL_PATH}" \
-  PREFIX_LEN="${PREFIX_LEN}" \
-  BENCH_NUM_WARMUPS="${BENCH_NUM_WARMUPS}" \
   MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
   MAX_NUM_SEQS="${MAX_NUM_SEQS}" \
   PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT}" \
@@ -1352,9 +1343,12 @@ write_run_metadata() {
   PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
   PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}" \
   PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" \
-  PAP_MULTITURN_LOAD_ROUNDS="${PAP_MULTITURN_LOAD_ROUNDS}" \
-  PAP_MULTITURN_LOAD_CONVERSATIONS="${PAP_MULTITURN_LOAD_CONVERSATIONS}" \
-  PAP_MULTITURN_LOAD_REQUEST_RATE="${PAP_MULTITURN_LOAD_REQUEST_RATE}" \
+  PAP_AIPERF_TURNS="${PAP_AIPERF_TURNS}" \
+  PAP_AIPERF_SESSIONS="${PAP_AIPERF_SESSIONS}" \
+  PAP_AIPERF_APPEND_TOKENS="${PAP_AIPERF_APPEND_TOKENS}" \
+  PAP_AIPERF_CONCURRENCY="${PAP_AIPERF_CONCURRENCY}" \
+  PAP_AIPERF_TIMING_MODE="${PAP_AIPERF_TIMING_MODE}" \
+  PAP_AIPERF_REQUEST_RATE="${PAP_AIPERF_REQUEST_RATE}" \
   PAP_VLLM_DTYPE="${PAP_VLLM_DTYPE}" \
   GIT_COMMIT="${GIT_COMMIT}" \
   GIT_COMMIT_SHORT="${GIT_COMMIT_SHORT}" \
@@ -1380,7 +1374,7 @@ attention_combine_wait_us = (
 )
 metadata = {
     "mode": "pap",
-    "client_mode": os.environ["PAP_BENCH_CLIENT_MODE"],
+    "client": os.environ["PAP_BENCH_CLIENT"],
     "topology": os.environ["TOPOLOGY"],
     "pa_count": pa_count,
     "projection_count": projection_count,
@@ -1389,11 +1383,8 @@ metadata = {
     "result_root": os.environ["RUN_ROOT"],
     "input_lens": [os.environ["INPUT_LEN"]],
     "output_lens": [os.environ["OUTPUT_LEN"]],
-    "qps": [os.environ["QPS"]],
-    "num_prompts": os.environ["NUM_PROMPTS"],
+    "expected_requests": int(os.environ["NUM_PROMPTS"]),
     "model_path": os.environ["MODEL_PATH"],
-    "prefix_len": os.environ["PREFIX_LEN"],
-    "num_warmups": os.environ["BENCH_NUM_WARMUPS"],
     "max_model_len": os.environ["MAX_MODEL_LEN"],
     "max_num_seqs": os.environ["MAX_NUM_SEQS"],
     "offload_exec_transport": os.environ["PAP_OFFLOAD_EXEC_TRANSPORT"],
@@ -1417,12 +1408,15 @@ metadata = {
     "prompt_tokens_details": (
         os.environ["PAP_ENABLE_PROMPT_TOKENS_DETAILS"] == "1"
     ),
-    "aiperf_turns": int(os.environ["PAP_MULTITURN_LOAD_ROUNDS"]),
-    "aiperf_sessions": int(
-        os.environ["PAP_MULTITURN_LOAD_CONVERSATIONS"]
-    ),
-    "aiperf_request_rate": float(
-        os.environ["PAP_MULTITURN_LOAD_REQUEST_RATE"]
+    "aiperf_turns": int(os.environ["PAP_AIPERF_TURNS"]),
+    "aiperf_sessions": int(os.environ["PAP_AIPERF_SESSIONS"]),
+    "aiperf_append_tokens": int(os.environ["PAP_AIPERF_APPEND_TOKENS"]),
+    "aiperf_concurrency": int(os.environ["PAP_AIPERF_CONCURRENCY"]),
+    "aiperf_timing_mode": os.environ["PAP_AIPERF_TIMING_MODE"],
+    "aiperf_request_rate": (
+        float(os.environ["PAP_AIPERF_REQUEST_RATE"])
+        if os.environ["PAP_AIPERF_REQUEST_RATE"]
+        else None
     ),
     "dtype": os.environ["PAP_VLLM_DTYPE"],
     "git_commit": os.environ["GIT_COMMIT"],
@@ -1438,27 +1432,6 @@ with open(os.path.join(os.environ["RUN_ROOT"], "run_metadata.json"), "w",
           encoding="utf-8") as f:
     json.dump(metadata, f, indent=2)
     f.write("\n")
-PY
-}
-
-validate_benchmark_result() {
-  local result_path="$1"
-  NUM_PROMPTS="${NUM_PROMPTS}" "${PYTHON_BIN}" - "${result_path}" <<'PY'
-import json
-import os
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as f:
-    result = json.load(f)
-
-expected = int(os.environ["NUM_PROMPTS"])
-completed = int(result.get("completed", 0))
-failed = int(result.get("failed", 0))
-if completed != expected or failed != 0:
-    raise SystemExit(
-        f"benchmark result is incomplete: completed={completed}, "
-        f"failed={failed}, expected={expected}"
-    )
 PY
 }
 
@@ -1499,9 +1472,8 @@ audit_xy_routes() {
     PREFILL_PORT_BASE="${PREFILL_PORT_BASE}" \
     PROJECTION_PORT_BASE="${PROJECTION_PORT_BASE}" \
     PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY}" \
-    PAP_BENCH_CLIENT_MODE="${PAP_BENCH_CLIENT_MODE}" \
-    PAP_MULTITURN_LOAD_ROUNDS="${PAP_MULTITURN_LOAD_ROUNDS}" \
-    PAP_MULTITURN_LOAD_CONVERSATIONS="${PAP_MULTITURN_LOAD_CONVERSATIONS}" \
+    PAP_AIPERF_TURNS="${PAP_AIPERF_TURNS}" \
+    PAP_AIPERF_SESSIONS="${PAP_AIPERF_SESSIONS}" \
     "${PYTHON_BIN}" - <<'PY'
 import json
 import os
@@ -1517,9 +1489,8 @@ projection_count = int(os.environ["PROJECTION_COUNT"])
 prefill_base = int(os.environ["PREFILL_PORT_BASE"])
 projection_base = int(os.environ["PROJECTION_PORT_BASE"])
 routing_policy = os.environ["PAP_ROUTING_POLICY"]
-client_mode = os.environ["PAP_BENCH_CLIENT_MODE"]
-load_rounds = int(os.environ["PAP_MULTITURN_LOAD_ROUNDS"])
-load_conversations = int(os.environ["PAP_MULTITURN_LOAD_CONVERSATIONS"])
+load_rounds = int(os.environ["PAP_AIPERF_TURNS"])
+load_conversations = int(os.environ["PAP_AIPERF_SESSIONS"])
 route_pattern = re.compile(
     r"request_id=\S+ pa=[^:\s]+:(\d+).* projection=[^:\s]+:(\d+)"
 )
@@ -1540,17 +1511,13 @@ expected_projection_routes = Counter()
 expected_pair_routes = Counter()
 errors = []
 expected_group_indices = []
-if routing_policy == "conversation_affinity" and client_mode == "aiperf_multiturn":
+if routing_policy == "conversation_affinity":
     if projection_count != 1:
         errors.append("conversation-affinity load audit requires one Projection")
     expected_group_indices = [
         conversation % pa_count
         for _ in range(load_rounds)
         for conversation in range(load_conversations)
-    ]
-elif routing_policy == "conversation_affinity":
-    expected_group_indices = [
-        request_number % pa_count for request_number in range(expected_requests)
     ]
 else:
     expected_group_indices = [
@@ -1659,44 +1626,30 @@ cd "${ROOT_DIR}"
 [[ "${PAP_TP_SIZE}" == "1" ]] || die "This runner is intentionally fixed to PAP_TP_SIZE=1"
 [[ "${PAP_ENABLE_MPS}" == "1" ]] \
   || die "the PAP benchmark runner requires static MPS"
-if [[ "${PAP_BENCH_CLIENT_MODE}" == "aiperf_multiturn" ]]; then
-  [[ "${PAP_VLLM_DTYPE}" == "float16" ]] \
-    || die "AIPerf requires PAP_VLLM_DTYPE=float16"
-  [[ "${PAP_PREFIX_CACHE_AUDIT}" == "0" \
-    && "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" == "1" ]] \
-    || die "AIPerf requires prompt details and forbids cache audit"
-  [[ "${PAP_ENABLE_MPS}" == "1" ]] \
-    || die "AIPerf requires PAP MPS"
-  [[ "${PAP_STATIC_PREFILL_CHUNKS}" == "18" \
-    && "${PAP_STATIC_ATTENTION_CHUNKS}" == "5" ]] \
-    || die "the AIPerf PAP path requires 18/5 static-MPS chunks"
-  if (( PA_COUNT > 1 )); then
-    [[ "${PAP_ROUTING_POLICY}" == "conversation_affinity" ]] \
-      || die "multi-PA AIPerf requires conversation_affinity routing"
-  else
-    [[ "${PAP_ROUTING_POLICY}" == "round_robin" \
-      || "${PAP_ROUTING_POLICY}" == "conversation_affinity" ]] \
-      || die "single-PA AIPerf requires round_robin or conversation_affinity"
-  fi
-  (( PROJECTION_COUNT == 1 )) \
-    || die "AIPerf currently requires one Projection"
-  (( PAP_MULTITURN_LOAD_ROUNDS >= 4 )) \
-    || die "AIPerf requires at least four rounds"
-  (( INPUT_LEN > 0 && PAP_MULTITURN_APPEND_TOKENS > 0 \
-      && OUTPUT_LEN > 1 )) \
-    || die "multi-turn token counts must be positive"
-  (( PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS >= OUTPUT_LEN )) \
-    || die "PAP unified KV decode capacity is too small for load output"
-elif [[ "${PAP_BENCH_CLIENT_MODE}" != "canonical" ]]; then
-  [[ "${PA_COUNT}" == "1" && "${PROJECTION_COUNT}" == "1" ]] \
-    || die "multi-turn prefix-cache modes require PAP_TOPOLOGY=1pa1p"
-  [[ "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" == "1" ]] \
-    || die "multi-turn prefix-cache modes require prompt token details"
-  [[ "${PAP_MULTITURN_FIRST_OUTPUT_TOKENS}" =~ ^[1-9][0-9]*$ ]] \
-    || die "PAP_MULTITURN_FIRST_OUTPUT_TOKENS must be positive"
-  (( PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS >= PAP_MULTITURN_FIRST_OUTPUT_TOKENS )) \
-    || die "PAP unified KV decode capacity is too small for first turn"
+[[ "${PAP_VLLM_DTYPE}" == "float16" ]] \
+  || die "AIPerf requires PAP_VLLM_DTYPE=float16"
+[[ "${PAP_PREFIX_CACHE_AUDIT}" == "0" \
+  && "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" == "1" ]] \
+  || die "AIPerf requires prompt details and forbids cache audit"
+[[ "${PAP_STATIC_PREFILL_CHUNKS}" == "18" \
+  && "${PAP_STATIC_ATTENTION_CHUNKS}" == "5" ]] \
+  || die "the AIPerf PAP path requires 18/5 static-MPS chunks"
+if (( PA_COUNT > 1 )); then
+  [[ "${PAP_ROUTING_POLICY}" == "conversation_affinity" ]] \
+    || die "multi-PA AIPerf requires conversation_affinity routing"
+else
+  [[ "${PAP_ROUTING_POLICY}" == "round_robin" \
+    || "${PAP_ROUTING_POLICY}" == "conversation_affinity" ]] \
+    || die "single-PA AIPerf requires round_robin or conversation_affinity"
 fi
+(( PROJECTION_COUNT == 1 )) \
+  || die "AIPerf currently requires one Projection"
+(( PAP_AIPERF_TURNS >= 4 )) \
+  || die "AIPerf requires at least four turns"
+(( INPUT_LEN > 0 && PAP_AIPERF_APPEND_TOKENS > 0 && OUTPUT_LEN > 1 )) \
+  || die "multi-turn token counts must be positive"
+(( PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS >= OUTPUT_LEN )) \
+  || die "PAP unified KV decode capacity is too small for load output"
 [[ -x "${PYTHON_BIN}" ]] || die "PYTHON_BIN is not executable: ${PYTHON_BIN}"
 [[ -x "${VLLM_BIN}" ]] || die "VLLM_BIN is not executable: ${VLLM_BIN}"
 [[ -f "${DEFERRED_TRACE_VALIDATOR}" ]] \
@@ -1893,7 +1846,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       "${PREFILL_OBSERVABILITY_ARGS[@]}" \
       --enable-prefix-caching \
       --enable-chunked-prefill \
-      --block-size "${PAP_MULTITURN_BLOCK_SIZE}" \
+      --block-size "${PAP_BLOCK_SIZE}" \
       --max-model-len "${MAX_MODEL_LEN}" \
       --max-num-seqs "${PAP_PREFILL_MAX_NUM_SEQS}" \
       --max-num-batched-tokens \
@@ -1948,7 +1901,7 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
       --generation-config vllm \
       --dtype "${PAP_VLLM_DTYPE}" \
       --enable-request-id-headers \
-      --block-size "${PAP_MULTITURN_BLOCK_SIZE}" \
+      --block-size "${PAP_BLOCK_SIZE}" \
       --max-model-len "${MAX_MODEL_LEN}" \
       --max-num-seqs "${PAP_PROJECTION_MAX_NUM_SEQS}" \
       --max-num-batched-tokens \
@@ -1994,83 +1947,27 @@ write_topology_manifest
 write_run_metadata
 start_prefill_torch_profiles
 
-case "${PAP_BENCH_CLIENT_MODE}" in
-  canonical)
-    TAG="${TOPOLOGY_TAG}_i${INPUT_LEN}_o${OUTPUT_LEN}_q${QPS}"
-    echo "=== Running ${TAG} on port ${PAP_PROXY_PORT} ==="
-    timeout "${BENCH_TIMEOUT}" "${VLLM_BIN}" bench serve \
-      --backend vllm \
-      --model "${MODEL_PATH}" \
-      --dataset-name "${DATASET_NAME}" \
-      --dataset-path "${DATASET_PATH}" \
-      --sonnet-input-len "${INPUT_LEN}" \
-      --sonnet-output-len "${OUTPUT_LEN}" \
-      --sonnet-prefix-len "${PREFIX_LEN}" \
-      --num-prompts "${NUM_PROMPTS}" \
-      --port "${PAP_PROXY_PORT}" \
-      --save-result \
-      --result-dir "${RUN_ROOT}" \
-      --result-filename "${TAG}.json" \
-      --request-rate "${QPS}" \
-      --num-warmups "${BENCH_NUM_WARMUPS}" \
-      2>&1 | tee "${RUN_ROOT}/${TAG}.log"
-
-    validate_benchmark_result "${RUN_ROOT}/${TAG}.json"
-    ;;
-  multiturn_prefix_cache)
-    TAG="${TOPOLOGY_TAG}_multiturn_prefix_cache"
-    echo "=== Running ${TAG} on port ${PAP_PROXY_PORT} ==="
-    timeout "${BENCH_TIMEOUT}" "${PYTHON_BIN}" \
-      examples/pap/pap_multiturn_prefix_cache.py \
-      --base-url "http://127.0.0.1:${PAP_PROXY_PORT}" \
-      --model "${MODEL_PATH}" \
-      --result-path "${RUN_ROOT}/multiturn_prefix_cache.json" \
-      --prompt-tokens "${INPUT_LEN}" \
-      --first-output-tokens "${PAP_MULTITURN_FIRST_OUTPUT_TOKENS}" \
-      --second-output-tokens "${OUTPUT_LEN}" \
-      --block-size "${PAP_MULTITURN_BLOCK_SIZE}" \
-      --min-decode-hit-blocks "${PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS}" \
-      2>&1 | tee "${RUN_ROOT}/${TAG}.log"
-    ;;
-  multiturn_chat_prefix_cache)
-    TAG="${TOPOLOGY_TAG}_multiturn_chat_prefix_cache"
-    echo "=== Running ${TAG} on port ${PAP_PROXY_PORT} ==="
-    timeout "${BENCH_TIMEOUT}" "${PYTHON_BIN}" \
-      examples/pap/pap_multiturn_chat_prefix_cache.py \
-      --base-url "http://127.0.0.1:${PAP_PROXY_PORT}" \
-      --model "${MODEL_PATH}" \
-      --result-path "${RUN_ROOT}/multiturn_chat_prefix_cache.json" \
-      --min-first-prompt-tokens "${INPUT_LEN}" \
-      --first-output-tokens "${PAP_MULTITURN_FIRST_OUTPUT_TOKENS}" \
-      --second-output-tokens "${OUTPUT_LEN}" \
-      --block-size "${PAP_MULTITURN_BLOCK_SIZE}" \
-      --min-decode-hit-blocks "${PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS}" \
-      2>&1 | tee "${RUN_ROOT}/${TAG}.log"
-    ;;
-  aiperf_multiturn)
-    TAG="${TOPOLOGY_TAG}_aiperf_multiturn"
-    echo "=== Running ${TAG} on port ${PAP_PROXY_PORT} ==="
-    timeout "${BENCH_TIMEOUT}" env \
-      PAP_ROOT="${ROOT_DIR}" \
-      AIPERF_ROOT="${AIPERF_ROOT}" \
-      AIPERF_BIN="${AIPERF_BIN}" \
-      MODEL_PATH="${MODEL_PATH}" \
-      AIPERF_INPUT_FILE="${PAP_AIPERF_INPUT_FILE}" \
-      AIPERF_TARGET_URL="http://127.0.0.1:${PAP_PROXY_PORT}" \
-      AIPERF_OUTPUT_DIR="${PAP_AIPERF_OUTPUT_DIR}" \
-      AIPERF_SESSIONS="${PAP_MULTITURN_LOAD_CONVERSATIONS}" \
-      AIPERF_CONCURRENCY="${PAP_AIPERF_CONCURRENCY}" \
-      AIPERF_TIMING_MODE="${PAP_AIPERF_TIMING_MODE}" \
-      AIPERF_REQUEST_RATE="${PAP_AIPERF_REQUEST_RATE}" \
-      AIPERF_REQUEST_TIMEOUT_SECONDS="${BENCH_TIMEOUT}" \
-      "${AIPERF_RUNNER}" \
-      2>&1 | tee "${RUN_ROOT}/${TAG}.log"
-    if [[ -z "$(find "${PAP_AIPERF_OUTPUT_DIR}" -type f \
-      -name 'profile*.json' -size +0c -print -quit)" ]]; then
-      die "AIPerf produced no profile JSON under ${PAP_AIPERF_OUTPUT_DIR}"
-    fi
-    ;;
-esac
+TAG="${TOPOLOGY_TAG}_aiperf"
+echo "=== Running ${TAG} on port ${PAP_PROXY_PORT} ==="
+timeout "${BENCH_TIMEOUT}" env \
+  PAP_ROOT="${ROOT_DIR}" \
+  AIPERF_ROOT="${AIPERF_ROOT}" \
+  AIPERF_BIN="${AIPERF_BIN}" \
+  MODEL_PATH="${MODEL_PATH}" \
+  AIPERF_INPUT_FILE="${PAP_AIPERF_INPUT_FILE}" \
+  AIPERF_TARGET_URL="http://127.0.0.1:${PAP_PROXY_PORT}" \
+  AIPERF_OUTPUT_DIR="${PAP_AIPERF_OUTPUT_DIR}" \
+  AIPERF_SESSIONS="${PAP_AIPERF_SESSIONS}" \
+  AIPERF_CONCURRENCY="${PAP_AIPERF_CONCURRENCY}" \
+  AIPERF_TIMING_MODE="${PAP_AIPERF_TIMING_MODE}" \
+  AIPERF_REQUEST_RATE="${PAP_AIPERF_REQUEST_RATE}" \
+  AIPERF_REQUEST_TIMEOUT_SECONDS="${BENCH_TIMEOUT}" \
+  "${AIPERF_RUNNER}" \
+  2>&1 | tee "${RUN_ROOT}/${TAG}.log"
+if [[ -z "$(find "${PAP_AIPERF_OUTPUT_DIR}" -type f \
+  -name 'profile*.json' -size +0c -print -quit)" ]]; then
+  die "AIPerf produced no profile JSON under ${PAP_AIPERF_OUTPUT_DIR}"
+fi
 
 wait_prefill_torch_profiles
 wait_attention_sessions_drained

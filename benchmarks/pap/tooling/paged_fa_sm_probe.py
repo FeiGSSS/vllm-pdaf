@@ -19,7 +19,7 @@ import torch
 
 @dataclass(frozen=True)
 class ProbeShape:
-    """P17 C4 Attention shape captured from the live decode path."""
+    """Archived C4 Attention shape captured from the live decode path."""
 
     seq_lens: tuple[int, ...] = (17344, 17334, 17324)
     num_q_heads: int = 32
@@ -98,7 +98,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def build_inputs(shape: ProbeShape, *, layer_index: int) -> ProbeInputs:
-    """Allocate the same cross-layer paged KV layout used by P17."""
+    """Allocate the archived cross-layer paged KV diagnostic layout."""
 
     if not 0 <= layer_index < shape.num_layers:
         raise ValueError(f"invalid layer index: {layer_index}")

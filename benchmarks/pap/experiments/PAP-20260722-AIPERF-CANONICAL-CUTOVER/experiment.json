@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "kind": "pap-experiment-record",
+  "status": "current",
+  "experiment_id": "PAP-20260722-AIPERF-CANONICAL-CUTOVER",
+  "title": "Canonical AIPerf runner cutover regression",
+  "recorded_at": "2026-07-22",
+  "hypothesis": "The AIPerf-only PAP runner completes the canonical four-GPU C12 regression with all correctness and SLO audits passing.",
+  "evidence": "controlled",
+  "decision": "accepted",
+  "validity": {"status": "valid", "reasons": []},
+  "baseline": {"status": "not-applicable", "description": "Runner cutover regression without an architecture comparison", "run_ids": []},
+  "treatment": {"status": "present", "description": "PAP 3PA1P C12 through the canonical AIPerf path", "run_ids": ["20260722_894b81ae9_aiperf_pap_c12_regression"]},
+  "primary_variable": {"name": "runner", "baseline": "not-applicable", "treatment": "aiperf"},
+  "run_ids": ["20260722_894b81ae9_aiperf_pap_c12_regression"],
+  "aggregation_method": "one clean committed regression point",
+  "metrics": [
+    {"name": "ttft_ms", "scope": "requests", "statistic": "p95", "unit": "ms", "baseline_value": "not-applicable", "treatment_value": 2080.841638400001, "direction": "lower-is-better"},
+    {"name": "itl_ms", "scope": "requests", "statistic": "p95", "unit": "ms", "baseline_value": "not-applicable", "treatment_value": 39.91933996341643, "direction": "lower-is-better"},
+    {"name": "request_throughput_rps", "scope": "run", "statistic": "mean", "unit": "requests/s", "baseline_value": "not-applicable", "treatment_value": 2.5927850193707855, "direction": "higher-is-better"},
+    {"name": "strict_goodput_rps", "scope": "run", "statistic": "slo-compliant", "unit": "requests/s", "baseline_value": "not-applicable", "treatment_value": 2.495555581144381, "direction": "higher-is-better"}
+  ],
+  "conclusion": "The clean cutover run completed 320 of 320 requests and passed strict, standard, and relaxed SLO tiers; it validates the AIPerf path but is not a new PAP-versus-PD claim.",
+  "supersedes": [],
+  "superseded_by": null,
+  "raw_artifacts": [{"name": "report", "path": {"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-CANONICAL-CUTOVER/report.md"}, "sha256": "2827c523c2ece0555be75d74da23cdb4bc53413470d5e0ea3380cb7ca44c8a9a"}],
+  "tags": ["aiperf", "canonical", "regression"]
+}

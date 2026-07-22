@@ -118,7 +118,7 @@ def _load_keyed_documents(
 def _load_profiles(directory: Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
     profiles: dict[str, dict[str, Any]] = {}
     errors: list[str] = []
-    for path in sorted(directory.glob("*.toml")):
+    for path in sorted(directory.rglob("*.toml")):
         try:
             profile = _read_toml(path)
         except (OSError, ValueError, tomllib.TOMLDecodeError) as error:
@@ -410,8 +410,11 @@ def _validate_run_semantics(
                 f"{run_id}: repetition {item['index']} result is not an artifact"
             )
 
-    if set(run["audits"]) != REQUIRED_AUDITS:
-        errors.append(f"{run_id}: audit set does not match the P17 contract")
+    if (
+        run["profile_id"] == "p17_1pa1p"
+        and set(run["audits"]) != REQUIRED_AUDITS
+    ):
+        errors.append(f"{run_id}: audit set does not match the archived P17 contract")
     for gate_name, gate in run["audits"].items():
         for reference in gate["evidence"]:
             if _artifact_key(reference) not in artifact_paths:

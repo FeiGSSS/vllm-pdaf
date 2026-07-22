@@ -1,4 +1,4 @@
-from examples.pap.pap_multiturn_prefix_cache import (
+from benchmarks.pap.tooling.prefix_cache_diagnostic import (
     build_second_prompt,
     expected_prefix_hit_tokens,
 )
