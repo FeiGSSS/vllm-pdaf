@@ -507,6 +507,7 @@ def main() -> None:
     manifest = {
         "schema_version": 2,
         "format": "aiperf_multi_turn_jsonl",
+        "session_prefix": args.session_prefix,
         "sessions": args.sessions,
         "turns_per_session": args.turns,
         "total_requests": args.sessions * args.turns,

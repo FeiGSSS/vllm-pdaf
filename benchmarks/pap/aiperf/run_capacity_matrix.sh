@@ -39,6 +39,7 @@ GPU_IDLE_STABILITY_SECONDS="${PAP_CAPACITY_GPU_IDLE_STABILITY_SECONDS:-15}"
 EXECUTION_MODE="${PAP_CAPACITY_EXECUTION_MODE:-eager}"
 
 TURNS=10
+DATASET_SESSION_PREFIX="pap-pd-s${TOTAL_SESSIONS}-t${TURNS}-seed${RANDOM_SEED}"
 DOCUMENT_TOKENS=8192
 DOCUMENT_TOKENS_MEDIAN=8000
 DOCUMENT_TOKENS_MIN=4096
@@ -143,10 +144,11 @@ if [[ ! -f "${DATASET_FILE}" ]]; then
     --think-time-ms "${THINK_TIME_MS}" \
     --tool-time-ms "${TOOL_TIME_MS}" \
     --tool-every "${TOOL_EVERY}" \
-    --session-prefix "${MATRIX_ID}-session"
+    --session-prefix "${DATASET_SESSION_PREFIX}"
 fi
 DATASET_MANIFEST="${DATASET_FILE}.manifest.json"
 if ! jq -e \
+  --arg session_prefix "${DATASET_SESSION_PREFIX}" \
   --argjson sessions "${TOTAL_SESSIONS}" \
   --argjson turns "${TURNS}" \
   --argjson document_tokens "${DOCUMENT_TOKENS}" \
@@ -166,6 +168,7 @@ if ! jq -e \
   --argjson tool_time_ms "${TOOL_TIME_MS}" \
   --argjson tool_every "${TOOL_EVERY}" \
   '.schema_version == 2
+    and .session_prefix == $session_prefix
     and .sessions == $sessions
     and .turns_per_session == $turns
     and .requested_document_tokens == $document_tokens
@@ -240,6 +243,7 @@ PY
   printf 'GPU_IDLE_STABILITY_SECONDS=%q\n' \
     "${GPU_IDLE_STABILITY_SECONDS}"
   printf 'TURNS=%q\n' "${TURNS}"
+  printf 'DATASET_SESSION_PREFIX=%q\n' "${DATASET_SESSION_PREFIX}"
   printf 'LENGTH_DISTRIBUTION=aiperf_lognormal_mean_median\nRANDOM_SEED=%q\n' \
     "${RANDOM_SEED}"
   printf 'DOCUMENT_TOKENS_MEAN=%q\nDOCUMENT_TOKENS_MEDIAN=%q\n' \

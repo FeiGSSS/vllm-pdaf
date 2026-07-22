@@ -85,11 +85,13 @@ The capacity runner always generates 32 sessions with this shape:
 
 The generator gives every session a stable, unique `cache_salt`, preventing
 cross-session prefix sharing while preserving reuse across that session's
-turns. Each length dimension has an independently derived random stream, so the
-same seed reproduces the same dataset. The adjacent manifest records target and
-sampled statistics, tokenizer-measured text lengths, cumulative input estimates,
-and context headroom. Small decode/re-tokenize boundary differences are
-expected and recorded; they are not forced away.
+turns. The capacity runner derives the session prefix from the workload and
+seed, never from the run or matrix ID. Each length dimension has an
+independently derived random stream, so the same configuration produces a
+byte-identical dataset across matrices. The adjacent manifest records the
+session prefix, target and sampled statistics, tokenizer-measured text lengths,
+cumulative input estimates, and context headroom. Small decode/re-tokenize
+boundary differences are expected and recorded; they are not forced away.
 
 ## SLOs and correctness gate
 
