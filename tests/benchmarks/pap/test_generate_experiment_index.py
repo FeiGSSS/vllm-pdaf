@@ -20,7 +20,7 @@ def test_generated_index_is_deterministic_and_contains_registry_record() -> None
     assert first == second
     assert first.startswith(BEGIN_MARKER)
     assert first.endswith(END_MARKER)
-    assert "PAP-20260722-AIPERF-CANONICAL-CUTOVER" in first
+    assert "PAP-20260722-AIPERF-CONVERGENCE" in first
     assert "PAP-20260714-P17-PRE-REFACTOR" in first
     assert "PAP-20260714-SEAL-HANDOFF-KV" in first
     assert "NEG-MPS-STATIC-80-20" in first

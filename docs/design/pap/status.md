@@ -4,10 +4,10 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
-  - PAP-20260722-AIPERF-CANONICAL-CUTOVER
+  - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
-last_validated_commit: 894b81ae9238373ac0950fc7932bed7bfb3dd74c
+last_validated_commit: aafcfb1ea1800b4dc0bcd1ea8299d9984e9624aa
 ---
 
 # Current PAP development status
@@ -15,7 +15,7 @@ last_validated_commit: 894b81ae9238373ac0950fc7932bed7bfb3dd74c
 Snapshot date: 2026-07-22.
 
 PAP has completed its runtime refactor and the first capacity-oriented
-performance milestone. The source milestone at `894b81ae9` has one accepted
+performance milestone. The source milestone at `aafcfb1ea` has one accepted
 runtime architecture, a source-audited long-context testbed, and an optional
 piecewise CUDA Graph execution mode. Historical experimental algorithms are
 not selectable branches in the current runtime.

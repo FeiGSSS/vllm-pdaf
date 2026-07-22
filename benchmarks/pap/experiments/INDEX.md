@@ -6,12 +6,13 @@ live under this directory. See [the storage contract](README.md) and the
 
 Current normalized AIPerf experiment bundles:
 
-- [Canonical AIPerf cutover regression](PAP-20260722-AIPERF-CANONICAL-CUTOVER/report.md)
+- [AIPerf-only convergence regression](PAP-20260722-AIPERF-CONVERGENCE/report.md)
 - [Current piecewise CUDA Graph AIPerf comparison](PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md)
 - [Current audited-capacity AIPerf eager baseline](PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md)
 
 Superseded or historical report bundles:
 
+- [Superseded canonical AIPerf cutover regression](PAP-20260722-AIPERF-CANONICAL-CUTOVER/report.md)
 - [Superseded randomized-length AIPerf O32 scan](PAP-20260721-AIPERF-RANDOM-O32/report.md)
 - [Historical fixed 96-session AIPerf scan](PAP-20260720-AIPERF-FIXED96/report.md)
 - [Historical four-GPU conversation-affinity result](PAP-20260716-4GPU-CONV-AFFINITY/report.md)
@@ -39,7 +40,8 @@ Archived methodology notices:
 | PAP-20260716-TRITON-72-20-BASELINE | archived | formal-clean | accepted | valid | 20260716_3a6fe93d1_p17_mps_72_20_formal | — | All three repetitions completed 60 of 60 requests and 48 of 48 cache transitions with every strict gate passing on clean commit 3a6fe93d1. Relative to PAP-20260715-VLLM-INTEGRATION-BOUNDARY, changes were -10.74% R1 TTFT, -10.75% R1 TPOT, -1.84% steady TTFT, and -18.02% steady TPOT. No release metric regressed, so this record becomes the P17 performance baseline. xPAyP and cross-host NIXL remain preserved-unverified. |
 | PAP-20260721-AIPERF-AUDITED-CAPACITY | current | controlled | accepted | valid | 20260721_79b31742f_aiperf_audited_eager_pd, 20260721_79b31742f_aiperf_audited_eager_pap | — | PAP leads PD goodput by 10.4% under strict and 35.3% under standard SLOs, while relaxed goodput is 1.3% lower in this one-repetition eager scan. |
 | PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH | current | controlled | accepted | valid | 20260721_d6d590bb5_aiperf_piecewise_pd, 20260721_d6d590bb5_aiperf_piecewise_pap | — | With piecewise CUDA Graph enabled on both sides, PAP leads the best PD goodput by 34.2% strict, 34.2% standard, and 7.2% relaxed in this one-repetition scan. |
-| PAP-20260722-AIPERF-CANONICAL-CUTOVER | current | controlled | accepted | valid | 20260722_894b81ae9_aiperf_pap_c12_regression | — | The clean cutover run completed 320 of 320 requests and passed strict, standard, and relaxed SLO tiers; it validates the AIPerf path but is not a new PAP-versus-PD claim. |
+| PAP-20260722-AIPERF-CANONICAL-CUTOVER | archived | controlled | superseded | valid | 20260722_894b81ae9_aiperf_pap_c12_regression | PAP-20260722-AIPERF-CONVERGENCE | The clean cutover run completed 320 of 320 requests and passed strict, standard, and relaxed SLO tiers; it validates the AIPerf path but is not a new PAP-versus-PD claim. |
+| PAP-20260722-AIPERF-CONVERGENCE | current | controlled | accepted | valid | 20260722_aafcfb1ea_aiperf_pap_c12_convergence | — | The clean convergence run completed 320 of 320 requests and passed correctness plus all three SLO tiers. ITL, throughput, and strict goodput remained within 2.2% of the preceding cutover point; the higher single-run TTFT tail remained within the strict SLO. |
 
 ### Reviewed historical experiments
 

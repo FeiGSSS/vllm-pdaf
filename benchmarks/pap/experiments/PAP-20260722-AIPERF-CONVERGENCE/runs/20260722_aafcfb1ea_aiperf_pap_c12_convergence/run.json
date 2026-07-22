@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "kind": "pap-run-manifest",
+  "run_id": "20260722_aafcfb1ea_aiperf_pap_c12_convergence",
+  "experiment_id": "PAP-20260722-AIPERF-CONVERGENCE",
+  "profile_id": "aiperf_qwen3_8b_4gpu_o32",
+  "architecture": "pap",
+  "mode": "controlled",
+  "evidence": "controlled",
+  "provenance": {
+    "branch": "feature/pap",
+    "commit": "aafcfb1ea1800b4dc0bcd1ea8299d9984e9624aa",
+    "tracked_worktree_dirty": false,
+    "tracked_worktree_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tracked_index_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "started_at": "missing"
+  },
+  "workload": {
+    "model": {"path": "missing", "dtype": "float16", "tensor_parallel_size": 1},
+    "corpus": {"path": "missing", "sha256": "7340d27ab601b4a77f14487b384d5ada5a61821dac6d890ab98d5bdfa8026318"},
+    "parameters": {"client": "aiperf-0.11.0", "sessions": 32, "turns": 10, "requests": 320, "concurrency": 12, "execution_mode": "eager"}
+  },
+  "topology": {"name": "3pa1p", "pa_count": 3, "projection_count": 1, "pd_prefill_count": "missing", "pd_decode_count": "missing", "routing_policy": "conversation_affinity"},
+  "placement": {"prefill_devices": [0, 1, 2], "attention_devices": [0, 1, 2], "projection_devices": [3], "decode_devices": "missing"},
+  "transport": {"offload_exec": "local_fast", "offload_kv": "cuda_ipc", "same_host": true},
+  "mps": {"mode": "static", "profile_id": "static_72_20", "prefill_visible_sms": 72, "attention_visible_sms": 20},
+  "runtime": {"profile": "eager", "settings": {"max_num_seqs": 64, "prefill_token_budget": 16384, "projection_token_budget": 64}},
+  "environment": {
+    "hardware_signature": "4x NVIDIA L20",
+    "software": {"aiperf": "0.11.0", "vllm_commit": "aafcfb1ea1800b4dc0bcd1ea8299d9984e9624aa"},
+    "fingerprint_basis": ["report", "dataset_sha256", "commit"]
+  },
+  "fingerprints": {"profile": "missing", "implementation": "missing", "request_shape": "7340d27ab601b4a77f14487b384d5ada5a61821dac6d890ab98d5bdfa8026318", "hardware_runtime": "missing"},
+  "repetitions": {
+    "count": 1,
+    "order": [1],
+    "aggregation_method": "one clean committed regression point",
+    "items": [{"index": 1, "repetition_id": "pap-3pa1p-c12", "result_artifact": {"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-CONVERGENCE/report.md"}}]
+  },
+  "audits": {
+    "client": {"status": "passed", "detail": "All 320 requests completed", "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-CONVERGENCE/report.md"}]},
+    "correctness": {"status": "passed", "detail": "Output and correctness-log validation passed", "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-CONVERGENCE/report.md"}]},
+    "decode_token_join": {"status": "passed", "detail": "Asynchronous decode-token join passed", "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-CONVERGENCE/report.md"}]},
+    "routing": {"status": "passed", "detail": "Conversation affinity across three PA nodes passed", "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-CONVERGENCE/report.md"}]},
+    "session_drain": {"status": "passed", "detail": "Zero-session drain passed", "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-CONVERGENCE/report.md"}]},
+    "mps": {"status": "passed", "detail": "All three static 72/20 MPS audits passed", "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-CONVERGENCE/report.md"}]}
+  },
+  "metrics": {
+    "completed_requests": 320,
+    "failed_requests": 0,
+    "values": [
+      {"name": "ttft_ms", "scope": "requests", "statistic": "p95", "unit": "ms", "value": 2904.0771364},
+      {"name": "itl_ms", "scope": "requests", "statistic": "p95", "unit": "ms", "value": 40.249748070689655},
+      {"name": "request_throughput_rps", "scope": "run", "statistic": "mean", "unit": "requests/s", "value": 2.563127403387096},
+      {"name": "strict_goodput_rps", "scope": "run", "statistic": "slo-compliant", "unit": "requests/s", "value": 2.442980806353326}
+    ]
+  },
+  "artifacts": [{"name": "report", "kind": "aggregate", "path": {"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-CONVERGENCE/report.md"}, "sha256": "c6200fffa92cf14eebe0b1bc433dbb69b728678ff05ca658ee7d82075e537333"}],
+  "validity": {"status": "passed", "reasons": []},
+  "failure_reasons": []
+}

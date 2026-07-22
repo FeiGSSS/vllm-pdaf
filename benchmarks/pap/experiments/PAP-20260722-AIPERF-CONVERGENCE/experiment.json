@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "kind": "pap-experiment-record",
+  "status": "current",
+  "experiment_id": "PAP-20260722-AIPERF-CONVERGENCE",
+  "title": "AIPerf-only PAP convergence regression",
+  "recorded_at": "2026-07-22",
+  "hypothesis": "The converged AIPerf-only benchmark and runtime configuration completes the canonical four-GPU PAP C12 point without correctness or SLO regression.",
+  "evidence": "controlled",
+  "decision": "accepted",
+  "validity": {"status": "valid", "reasons": []},
+  "baseline": {"status": "not-applicable", "description": "Post-commit runtime regression without an architecture comparison", "run_ids": []},
+  "treatment": {"status": "present", "description": "PAP 3PA1P C12 after AIPerf-only convergence", "run_ids": ["20260722_aafcfb1ea_aiperf_pap_c12_convergence"]},
+  "primary_variable": {"name": "milestone", "baseline": "pre-convergence", "treatment": "aiperf-convergence"},
+  "run_ids": ["20260722_aafcfb1ea_aiperf_pap_c12_convergence"],
+  "aggregation_method": "one clean committed regression point",
+  "metrics": [
+    {"name": "ttft_ms", "scope": "requests", "statistic": "p95", "unit": "ms", "baseline_value": "not-applicable", "treatment_value": 2904.0771364, "direction": "lower-is-better"},
+    {"name": "itl_ms", "scope": "requests", "statistic": "p95", "unit": "ms", "baseline_value": "not-applicable", "treatment_value": 40.249748070689655, "direction": "lower-is-better"},
+    {"name": "request_throughput_rps", "scope": "run", "statistic": "mean", "unit": "requests/s", "baseline_value": "not-applicable", "treatment_value": 2.563127403387096, "direction": "higher-is-better"},
+    {"name": "strict_goodput_rps", "scope": "run", "statistic": "slo-compliant", "unit": "requests/s", "baseline_value": "not-applicable", "treatment_value": 2.442980806353326, "direction": "higher-is-better"}
+  ],
+  "conclusion": "The clean convergence run completed 320 of 320 requests and passed correctness plus all three SLO tiers. ITL, throughput, and strict goodput remained within 2.2% of the preceding cutover point; the higher single-run TTFT tail remained within the strict SLO.",
+  "supersedes": ["PAP-20260722-AIPERF-CANONICAL-CUTOVER"],
+  "superseded_by": null,
+  "raw_artifacts": [{"name": "report", "path": {"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-CONVERGENCE/report.md"}, "sha256": "c6200fffa92cf14eebe0b1bc433dbb69b728678ff05ca658ee7d82075e537333"}],
+  "tags": ["aiperf", "canonical", "regression", "convergence"]
+}

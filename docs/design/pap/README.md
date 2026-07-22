@@ -4,10 +4,10 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
-  - PAP-20260722-AIPERF-CANONICAL-CUTOVER
+  - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
-last_validated_commit: 894b81ae9238373ac0950fc7932bed7bfb3dd74c
+last_validated_commit: aafcfb1ea1800b4dc0bcd1ea8299d9984e9624aa
 ---
 
 # PAP documentation

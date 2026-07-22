@@ -56,7 +56,7 @@ def test_current_registry_validates() -> None:
     current_aiperf = {
         "PAP-20260721-AIPERF-AUDITED-CAPACITY",
         "PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH",
-        "PAP-20260722-AIPERF-CANONICAL-CUTOVER",
+        "PAP-20260722-AIPERF-CONVERGENCE",
     }
     assert current_aiperf <= set(snapshot.experiments)
     assert snapshot.experiments["PAP-20260714-P17-PRE-REFACTOR"]["status"] == (
