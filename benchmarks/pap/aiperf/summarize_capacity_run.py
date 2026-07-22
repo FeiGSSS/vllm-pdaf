@@ -324,13 +324,21 @@ def _check_pd_routing(
         turns=turns,
         errors=errors,
     )
-    affinity_passed = prefill_passed and decode_passed
+    pair_passed = _check_owner_snapshot(
+        health.get("pair_routing", {}),
+        label="PD Prefill/Decode pair",
+        sessions=sessions,
+        turns=turns,
+        errors=errors,
+    )
+    affinity_passed = prefill_passed and decode_passed and pair_passed
     return {
         "passed": health.get("status") == "ok" and len(errors) == before,
         "conversations": sessions if affinity_passed else None,
         "migration_count": 0 if affinity_passed else None,
         "prefill_assignments": health.get("prefill_routing", {}).get("assignments"),
         "decode_assignments": health.get("decode_routing", {}).get("assignments"),
+        "pair_assignments": health.get("pair_routing", {}).get("assignments"),
     }
 
 

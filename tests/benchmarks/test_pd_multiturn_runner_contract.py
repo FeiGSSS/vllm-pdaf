@@ -2,8 +2,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from examples.disaggregated.disaggregated_serving.disagg_proxy_multiturn import (
-    ConversationInstanceRouter,
+    ConversationPairRouter,
     _pop_conversation_id,
+    _select_instance_pair,
 )
 
 ROOT = Path(__file__).parents[2]
@@ -20,20 +21,73 @@ def test_pd_proxy_accepts_aiperf_session_header() -> None:
     assert _pop_conversation_id(payload, "aiperf-session") == "aiperf-session"
 
 
-def test_pd_proxy_balances_and_retains_conversation_owners() -> None:
-    clients = [SimpleNamespace(id=index) for index in range(3)]
-    router = ConversationInstanceRouter(clients)  # type: ignore[arg-type]
+def test_pd_proxy_balances_and_retains_conversation_pairs() -> None:
+    router = ConversationPairRouter(
+        [SimpleNamespace(id=index) for index in range(2)],
+        [SimpleNamespace(id=index) for index in range(2)],
+    )  # type: ignore[arg-type]
 
-    first = [router.select(f"conv-{index}").id for index in range(6)]
-    second = [router.select(f"conv-{index}").id for index in reversed(range(6))]
+    first = [
+        tuple(client.id for client in router.select(f"conv-{index}"))
+        for index in range(4)
+    ]
+    second = [
+        tuple(client.id for client in router.select(f"conv-{index}"))
+        for index in reversed(range(4))
+    ]
 
-    assert first == [0, 1, 2, 0, 1, 2]
-    assert second == [2, 1, 0, 2, 1, 0]
+    assert first == [(0, 0), (1, 1), (0, 1), (1, 0)]
+    assert second == list(reversed(first))
     assert router.snapshot() == {
-        "conversations": 6,
-        "assignments": [2, 2, 2],
-        "requests": [4, 4, 4],
+        "prefill": {
+            "conversations": 4,
+            "assignments": [2, 2],
+            "requests": [4, 4],
+        },
+        "decode": {
+            "conversations": 4,
+            "assignments": [2, 2],
+            "requests": [4, 4],
+        },
+        "pairs": {
+            "conversations": 4,
+            "labels": ["p0:d0", "p1:d1", "p0:d1", "p1:d0"],
+            "assignments": [1, 1, 1, 1],
+            "requests": [2, 2, 2, 2],
+        },
     }
+
+
+def test_pd_proxy_selects_stable_prefill_decode_pairs() -> None:
+    state = SimpleNamespace(
+        instance_router=ConversationPairRouter(
+            [SimpleNamespace(id=index) for index in range(2)],
+            [SimpleNamespace(id=index) for index in range(2)],
+        ),
+    )
+
+    first = {
+        conversation_id: tuple(
+            client.id
+            for client in _select_instance_pair(state, conversation_id)
+        )
+        for conversation_id in ("conv-0", "conv-1", "conv-2", "conv-3")
+    }
+    repeated = {
+        conversation_id: tuple(
+            client.id
+            for client in _select_instance_pair(state, conversation_id)
+        )
+        for conversation_id in ("conv-3", "conv-1", "conv-0", "conv-2")
+    }
+
+    assert first == {
+        "conv-0": (0, 0),
+        "conv-1": (1, 1),
+        "conv-2": (0, 1),
+        "conv-3": (1, 0),
+    }
+    assert repeated == first
 
 
 def test_four_gpu_topology_runner_has_bounded_conversation_load() -> None:

@@ -146,6 +146,12 @@ def _write_pd_run(
                 "assignments": [1, 1],
                 "requests": [2, 2],
             },
+            "pair_routing": {
+                "conversations": 2,
+                "labels": ["p0:d0", "p1:d1", "p0:d1", "p1:d0"],
+                "assignments": [1, 1, 0, 0],
+                "requests": [2, 2, 0, 0],
+            },
         },
     )
 

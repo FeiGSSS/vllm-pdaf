@@ -36,6 +36,9 @@ Conversation isolation:
     Without either, the proxy cannot link turns and falls back to no-cache
     behavior.
 
+    New conversations are balanced across Prefill/Decode instance pairs and
+    retain the selected pair for every later turn.
+
     ``conversation_id`` is a non-standard extension to the OpenAI Chat
     Completions schema, consumed by this proxy and not forwarded to the
     vLLM engine. Strict OpenAI-compatible frontends reject unknown
@@ -191,36 +194,83 @@ class ServiceClient:
     id: int
 
 
-class ConversationInstanceRouter:
-    """Round-robin new conversations and retain their instance owner."""
+class ConversationPairRouter:
+    """Round-robin new conversations across stable Prefill/Decode pairs."""
 
-    def __init__(self, clients: list[ServiceClient]) -> None:
-        if not clients:
-            raise ValueError("conversation routing requires a service client")
-        self._clients = clients
-        self._iterator = itertools.cycle(range(len(clients)))
-        self._assignments: dict[str, ServiceClient] = {}
-        self._request_counts = [0 for _ in clients]
+    def __init__(
+        self,
+        prefill_clients: list[ServiceClient],
+        decode_clients: list[ServiceClient],
+    ) -> None:
+        if not prefill_clients or not decode_clients:
+            raise ValueError("conversation routing requires Prefill and Decode")
+        self._prefill_clients = prefill_clients
+        self._decode_clients = decode_clients
+        self._pairs = [
+            (prefill_index, (prefill_index + offset) % len(decode_clients))
+            for offset in range(len(decode_clients))
+            for prefill_index in range(len(prefill_clients))
+        ]
+        self._iterator = itertools.cycle(range(len(self._pairs)))
+        self._assignments: dict[str, int] = {}
+        self._request_counts = [0 for _ in self._pairs]
 
-    def select(self, conversation_id: str) -> ServiceClient:
-        """Return a stable owner or the next instance for a new conversation."""
-        client = self._assignments.get(conversation_id) if conversation_id else None
-        if client is None:
-            client = self._clients[next(self._iterator)]
+    def select(
+        self,
+        conversation_id: str,
+    ) -> tuple[ServiceClient, ServiceClient]:
+        """Return a stable pair or the next balanced pair for a conversation."""
+        pair_index = (
+            self._assignments.get(conversation_id) if conversation_id else None
+        )
+        if pair_index is None:
+            pair_index = next(self._iterator)
             if conversation_id:
-                self._assignments[conversation_id] = client
-        self._request_counts[client.id] += 1
-        return client
+                self._assignments[conversation_id] = pair_index
+        self._request_counts[pair_index] += 1
+        prefill_index, decode_index = self._pairs[pair_index]
+        return (
+            self._prefill_clients[prefill_index],
+            self._decode_clients[decode_index],
+        )
 
     def snapshot(self) -> dict[str, Any]:
-        """Return token-free assignment and request counts by instance."""
-        assignment_counts = [0 for _ in self._clients]
-        for client in self._assignments.values():
-            assignment_counts[client.id] += 1
+        """Return token-free routing counts by role and pair."""
+        pair_assignments = [0 for _ in self._pairs]
+        for pair_index in self._assignments.values():
+            pair_assignments[pair_index] += 1
+
+        prefill_assignments = [0 for _ in self._prefill_clients]
+        decode_assignments = [0 for _ in self._decode_clients]
+        prefill_requests = [0 for _ in self._prefill_clients]
+        decode_requests = [0 for _ in self._decode_clients]
+        for pair_index, (prefill_index, decode_index) in enumerate(self._pairs):
+            prefill_assignments[prefill_index] += pair_assignments[pair_index]
+            decode_assignments[decode_index] += pair_assignments[pair_index]
+            prefill_requests[prefill_index] += self._request_counts[pair_index]
+            decode_requests[decode_index] += self._request_counts[pair_index]
+
+        conversations = len(self._assignments)
         return {
-            "conversations": len(self._assignments),
-            "assignments": assignment_counts,
-            "requests": list(self._request_counts),
+            "prefill": {
+                "conversations": conversations,
+                "assignments": prefill_assignments,
+                "requests": prefill_requests,
+            },
+            "decode": {
+                "conversations": conversations,
+                "assignments": decode_assignments,
+                "requests": decode_requests,
+            },
+            "pairs": {
+                "conversations": conversations,
+                "labels": [
+                    f"p{prefill_index}:d{decode_index}"
+                    for prefill_index, decode_index in self._pairs
+                ],
+                "assignments": pair_assignments,
+                "requests": list(self._request_counts),
+            },
         }
 
 
@@ -396,11 +446,9 @@ async def lifespan(app: FastAPI):
             )
         )
 
-    app.state.prefill_router = ConversationInstanceRouter(
-        app.state.prefill_clients
-    )
-    app.state.decode_router = ConversationInstanceRouter(
-        app.state.decode_clients
+    app.state.instance_router = ConversationPairRouter(
+        app.state.prefill_clients,
+        app.state.decode_clients,
     )
 
     logger.info(
@@ -417,14 +465,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Disaggregated P/D Proxy (Multi-turn)", lifespan=lifespan)
 
 
-def _next_client(
+def _select_instance_pair(
     app_state: Any,
-    role: str,
     conversation_id: str,
-) -> ServiceClient:
-    if role == "prefill":
-        return app_state.prefill_router.select(conversation_id)
-    return app_state.decode_router.select(conversation_id)
+) -> tuple[ServiceClient, ServiceClient]:
+    """Select stable Prefill and Decode owners before either service runs."""
+    return app_state.instance_router.select(conversation_id)
 
 
 # Request handler
@@ -488,12 +534,21 @@ async def _handle_request(api_path: str, request: Request):
         }
         logger.info("[%s] conv=%s: cache MISS", request_id, conversation_id)
 
-    # Step 2: Send to Prefill node (non-streaming, max_tokens=1)
-    prefill_client = _next_client(
+    # Select both owners before awaiting Prefill. Otherwise Prefill completion
+    # order can make equal-size P/D deployments form random cross-pairs.
+    prefill_client, decode_client = _select_instance_pair(
         request.app.state,
-        "prefill",
         conversation_id,
     )
+    logger.info(
+        "[%s] conv=%s: route P%d->D%d",
+        request_id,
+        conversation_id,
+        prefill_client.id,
+        decode_client.id,
+    )
+
+    # Step 2: Send to Prefill node (non-streaming, max_tokens=1)
     t0 = time.time()
     prefill_resp = await _send_to_prefill(
         prefill_client,
@@ -514,12 +569,6 @@ async def _handle_request(api_path: str, request: Request):
         req_data["kv_transfer_params"] = p_kv_params
 
     # Step 3: Stream from Decode node, capturing kv_transfer_params
-    decode_client = _next_client(
-        request.app.state,
-        "decode",
-        conversation_id,
-    )
-
     if client_wants_stream:
         return StreamingResponse(
             _stream_from_decode_sse(
@@ -590,12 +639,14 @@ async def completions(request: Request):
 @app.get("/health")
 async def health():
     evicted = kv_cache.evict_stale()
+    routing = app.state.instance_router.snapshot()
     return {
         "status": "ok",
         "cached_conversations": kv_cache.size,
         "evicted_stale": evicted,
-        "prefill_routing": app.state.prefill_router.snapshot(),
-        "decode_routing": app.state.decode_router.snapshot(),
+        "prefill_routing": routing["prefill"],
+        "decode_routing": routing["decode"],
+        "pair_routing": routing["pairs"],
     }
 
 
