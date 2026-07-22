@@ -107,6 +107,8 @@ and the
    when they simplify a concrete feature; do not restore retired experiment
    selectors or per-layer scheduling paths.
 
-Historical plans under `docs/superpowers/` and dated milestone documents remain
-read-only development evidence. This page, the architecture/runtime documents,
-and the experiment index define the current state.
+Dated milestone documents and legacy experiment reports remain read-only
+development evidence. Skill-generated execution plans were removed after
+consolidation and remain available through Git history. This page, the
+architecture/runtime documents, and the experiment index define the current
+state.

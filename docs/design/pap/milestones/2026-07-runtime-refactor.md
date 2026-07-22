@@ -120,9 +120,9 @@ targeted tests；完整 PAP CPU suite 和 P17 留到 final freeze。
 
 ### 4.5 文档迁移
 
-建立 PAP canonical 文档入口，把现有 `docs/design` 和 `docs/superpowers` 内容分类为
-current、milestone、archived 或 superseded。旧 implementation plans/specs 作为历史
-记录保留，但不再作为 active workflow 或 canonical source。
+建立 PAP canonical 文档入口，把现有设计文档和 skill-generated plans 分类为
+current、milestone、archived 或 superseded。旧 implementation plans/specs 不再作为
+active workflow 或 canonical source，接受后的内容进入项目文档和实验记录。
 
 ### 4.6 Milestone freeze
 
@@ -490,24 +490,23 @@ archive 保留历史原文；除增加状态头、修复链接和明显的事实
 本设计在实施期间保持 `active`；只有 Final freeze 全部通过后才能改为
 `milestone`。
 
-### 10.3 `docs/superpowers` 迁移
+### 10.3 历史执行计划迁移
 
-本项目后续不再使用 Superpowers workflow，也不再创建
-`docs/superpowers/specs` 或 `docs/superpowers/plans`。
+本项目后续不再使用 Superpowers workflow，也不再创建 skill-owned specs 或 plans。
 
 - 仍有效的 spec 内容合并进 `architecture.md`、`runtime.md` 或 milestone 文档；
-- 已有 spec/plan 保留原文，统一视为 historical/non-canonical；
+- 已有 spec/plan 在完成合并后通过 Git history 回溯，不继续保留 tracked 副本；
 - implementation plan 中仍有价值的决策和验证结果可提取到 canonical 文档，但不
   要求批量重写或复制原文；
-- 若未来要移动或删除 `docs/superpowers/`，必须作为独立任务由用户再次确认。
+- 删除原 skill-generated plan 目录必须作为独立任务由用户再次确认。
 
-Git history 和保留的原文共同提供旧 implementation plans 的回溯入口。
+该删除已在 2026-07-22 获得用户确认。Git history 提供旧 implementation
+plans 的回溯入口，current 文档和实验记录承载接受后的结论与证据。
 
 ### 10.4 临时实施计划
 
-本 milestone 的 implementation plan 写入
-`dev-memory/2026-07-14_PAP_runtime重构实施计划.md`。它是未跟踪的本地执行清单，
-不得成为 canonical documentation，也不作为最终交付物。计划完成后可以删除。
+本 milestone 曾使用未跟踪的本地 implementation plan。它不属于 canonical
+documentation，也不作为最终交付物，完成后已经删除。
 
 ### 10.5 现有 `docs/design` 分类
 
@@ -531,8 +530,8 @@ canonical successor 和关联 experiment IDs。处理规则为：
 - current 事实、指标和决策只有一个 canonical source；
 - registry 生成的索引与 tracked records 一致；
 - 所有相对 Markdown 链接存在；
-- canonical 文档不依赖 `docs/superpowers` 才能解释当前实现；
-- `docs/superpowers/` 被明确标为 historical/non-canonical；
+- canonical 文档不依赖 skill-generated plans 才能解释当前实现；
+- tracked tree 不再依赖或保留原 skill-generated plan 目录；
 - 历史 raw data 未移动或改写。
 
 ## 11. 验收标准
@@ -585,7 +584,7 @@ pre-refactor baseline 回退超过 `5%` 时复跑一次；复跑仍超过即视�
 7. 自动生成和校验的实验索引；
 8. post-refactor formal 结果与前后对比报告；
 9. canonical PAP 文档、milestone/archive 分类和迁移清单；
-10. `docs/superpowers` 已退出 active workflow 并明确标为 historical；
+10. skill-generated plans 已退出 active workflow，并在结论迁移后删除；
 11. 当前能力、未验证能力和后续工作说明。
 
 ## 14. 风险与回退

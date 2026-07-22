@@ -49,8 +49,8 @@ Its normalized status index is generated at
   conclusions are not rewritten when the runtime changes.
 - `benchmarks/pap/experiments/PAP-*/` contains current or superseded experiment
   bundles; lifecycle is stated in each report and in `INDEX.md`.
-- `benchmarks/pap/experiments/legacy/`, `docs/superpowers/`, and
-  `test/baseline/pap/` contain historical evidence. Their dated “current”,
+- `benchmarks/pap/experiments/legacy/` and `test/baseline/pap/` contain
+  historical evidence. Their dated “current”,
   “default”, and “TODO” language applies only to the recorded snapshot.
 
 New architecture guidance belongs here, and new experimental evidence belongs
@@ -86,11 +86,11 @@ handoffs. They remain evidence, but they are not the source of current runtime
 defaults. When a historical statement conflicts with this directory or the
 experiment index, the current docs and experiment records win.
 
-`docs/superpowers/` contains historical implementation plans/specifications.
-They are retained for traceability, are not an active workflow, and must not
-be used as canonical PAP documentation. No new PAP plans belong there; current
-work is tracked by `status.md`, source changes, and normalized experiments
-rather than a repository skill plan.
+Skill-generated implementation plans were removed after their accepted
+decisions and evidence had been consolidated here, in the runtime-refactor
+milestone, and in the experiment history. Git history remains the source for
+those execution plans. Current work is tracked by `status.md`, source changes,
+and normalized experiments rather than a repository skill plan.
 
 ## Operational entry points
 

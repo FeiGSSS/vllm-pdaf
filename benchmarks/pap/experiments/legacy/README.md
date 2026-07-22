@@ -34,11 +34,11 @@ the [four-GPU pilot](reports/pap-pd-4gpu-3to1-pilot-20260716.md), and the
 They are retained for project narrative or experimental rationale, not as
 current conclusions.
 
-Historical design specifications and implementation plans remain under
-[`docs/superpowers/`](../../../../docs/superpowers/README.md). They explain
-how a decision was reached, but they are not active implementation plans.
-The former `.claude/skills/vllm-pap-benchmark/` directory has been deleted;
-historical command references resolve through Git history, not an active skill.
+Historical skill-generated specifications and implementation plans were
+removed after their accepted conclusions were consolidated into the current
+design, milestone, and experiment history. They remain available through Git
+history. Historical command references likewise resolve through Git history,
+not an active repository skill.
 
 ## Retention rules
 

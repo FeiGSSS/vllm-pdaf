@@ -28,9 +28,9 @@ TTFT/TPOT 优化的唯一北极星。长期 X:Y 扩展复用同一结果合同�
 - 第二轮必须精确命中 block-aligned materialized history，不能只凭 conversation ID
   推断命中。
 
-设计和命令见：
+设计合同和命令见：
 
-- `docs/superpowers/specs/2026-07-12-pap-pd-multiturn-north-star-testbed-design.md`；
+- 本报告第 1 节（冻结 workload 和比较口径）；
 - `test/baseline/pap/README.md`；
 - `test/baseline/pap/references/qwen3_8b_chat_16k_2turn_o256_c1_v1/`。
 

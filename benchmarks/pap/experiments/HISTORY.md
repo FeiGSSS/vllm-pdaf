@@ -389,12 +389,9 @@ candidate 保留；partial tail 和最后 sampled token 不保证命中。decode
 
 #### 深入阅读与原始证据
 
-- [KV residency/lease 计划](../../../docs/superpowers/plans/2026-07-02-pap-kv-residency-lease.md)
-  （`tracked`）；
-- [Unified KV 计划](../../../docs/superpowers/plans/2026-07-03-pap-unified-kv-cache.md)
-  （`tracked`）；
-- [IPC-only KV + commit 计划](../../../docs/superpowers/plans/2026-07-06-pap-ipc-only-kv-with-commit.md)
-  （`tracked`）；
+- [当前 PAP runtime](../../../docs/design/pap/runtime.md)（`tracked canonical`）；
+- [runtime refactor milestone](../../../docs/design/pap/milestones/2026-07-runtime-refactor.md)
+  （`tracked milestone`）；
 - `$PAP_REPO_RESULTS/20260703_unified_*`（`repo-untracked`）。
 
 ### M5. Decode Commit、Lease 与正确性闭环
@@ -451,10 +448,9 @@ KV 写入、token ledger、hash chain、APC registration 和 lease 生命周期�
 
 #### 深入阅读与原始证据
 
-- [Unified KV consistency closure](../../../docs/superpowers/plans/2026-07-06-pap-unified-kv-consistency-closure.md)
-  （`tracked`）；
-- [IPC-only KV + commit](../../../docs/superpowers/plans/2026-07-06-pap-ipc-only-kv-with-commit.md)
-  （`tracked`）；
+- [当前 PAP runtime](../../../docs/design/pap/runtime.md)（`tracked canonical`）；
+- [runtime refactor milestone](../../../docs/design/pap/milestones/2026-07-runtime-refactor.md)
+  （`tracked milestone`）；
 - `$PAP_REPO_RESULTS/20260710_ack_watermark_e2e*`（`repo-untracked`）；
 - `$PAP_REPO_RESULTS/20260710_e904_nixl_rep*`（`repo-untracked`）；
 - `$PAP_RESULTS/20260711_*multiturn*`（`external`）。
@@ -532,12 +528,11 @@ provenance 和严格审计；关键 baseline 还需要 clean 多轮。当前索�
   （`tracked`）；
 - [PAP/PD 双侧 Deferred Trace C4 结果](legacy/reports/pap-bilateral-deferred-trace-c4-results-20260713.md)
   （`tracked`）；
-- [Remote Attention 优化规格](../../../docs/superpowers/specs/2026-07-02-pap-remote-attention-optimization-design.md)
+- [Remote Attention trace archive](legacy/reports/pap-remote-attention-trace-20260702.md)
+  （`tracked historical diagnostic`）；
+- [Attention–Projection same-node 数据面](legacy/reports/pap-tpot-attention-projection-dataplane-20260710.md)
   （`tracked`）；
-- [Remote Attention 诊断计划](../../../docs/superpowers/plans/2026-07-02-pap-remote-attention-diagnostics.md)
-  （`tracked`）；
-- `$PAP_REPO/dev-memory/2026-07-10_PAP本周进展汇报.md`（`repo-untracked`）；
-- `$PAP_PROFILES/*`（`repo-untracked`）。
+- `$PAP_REPO_RESULTS/20260702_profile_output/*`（`repo-untracked`）。
 
 ### M7. Same-node Local-fast 与 TPOT 热路径
 
@@ -621,12 +616,10 @@ layer 混合 Attention batch。
 
 - [Attention–Projection same-node 数据面设计](legacy/reports/pap-tpot-attention-projection-dataplane-20260710.md)
   （`tracked`）；
-- [Remote Attention 诊断计划](../../../docs/superpowers/plans/2026-07-02-pap-remote-attention-diagnostics.md)
-  （`tracked`）；
-- [NIXL root-cause tracing 计划](../../../docs/superpowers/plans/2026-07-06-pap-nixl-root-cause-tracing.md)
+- [NIXL/NVLink 优化记录](legacy/reports/pap-nixl-nvlink-optimization-idea-book-20260707.md)
   （`tracked`）；
 - `$PAP_RESULTS/20260710_phase{1,2}_*`（`external`）；
-- `$PAP_PROFILES/pap_*`（`repo-untracked`）。
+- `$PAP_REPO_RESULTS/20260702_profile_output/*`（`repo-untracked`）。
 
 ### M8. 任意 x:y 拓扑与路由
 
@@ -744,8 +737,6 @@ mean/median/p99 TPOT。Projection 端仍按 same-layer cohort forward；新请�
 
 - [多对多 Cohort 与 Attention 聚合设计](legacy/reports/pap-many-to-many-cohort-scheduler-20260711.md)
   （`tracked`，包含 Phase 1–4 完整表格）；
-- [Central Dispatcher 实施计划](../../../docs/superpowers/plans/2026-07-11-pap-phase1-central-dispatcher.md)
-  （`tracked`）；
 - `$PAP_REPO_RESULTS/20260711_phase{0,1,2,3,4}_*`（`repo-untracked`）；
 - `$PAP_REPO_RESULTS/20260711_{d654f6011,12b689d1b,bdb7a7dc7}_*`
   （`repo-untracked`）；
@@ -817,8 +808,6 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
 
 - [多轮原生 Prefix Cache 设计与结果](legacy/reports/pap-xpayp-multiturn-kv-affinity-20260710.md)
   （`tracked`）；
-- [Chat 多轮实施计划](../../../docs/superpowers/plans/2026-07-11-pap-chat-multiturn-prefix-cache.md)
-  （`tracked`）；
 - [PD/PAP 五轮长上下文结果](legacy/reports/pd-pap-five-turn-load-results-20260713.md)
   （`tracked`）；
 - `$PAP_RESULTS/20260711_{fd723d_native_multiturn_diag1,native_multiturn_diag2,native_multiturn_diag3_audit,native_multiturn_diag4_reserved_slots}`
@@ -852,10 +841,10 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
 | --- | --- | --- | --- | --- | --- |
 | `PAP-20260701-PD-METHODOLOGY` | M6 | 不同口径历史结果 → 固定 model/input/output/QPS/concurrency/warmup；8B `i128/o32/q16/c64` | `4a7737647` 后的方法学基线 | 同口径旧点 PD/PAP median TPOT `24.9/294.8 ms`，暴露真实差距；`controlled`；**接受比较合同** | [PD/PAP 方法](legacy/reports/pap-pd-comparison-methodology-20260701.md)；`$PAP_REPO_RESULTS/pd_pap_methodology_20260701` |
 | `PAP-20260701-MAILBOX-HOTPATH` | M2/M7 | cached dlist/direct slot/piggyback/inline 等单变量开关；标准 1PA1P | `401ce1425`、`61848acf5` 周边；多组受控 A/B | 多个局部技巧无稳定收益或退化，raw copy 不是充分瓶颈解释；`controlled/diagnostic`；**保留 direct slot，拒绝退化微优化** | [NIXL/NVLink idea book](legacy/reports/pap-nixl-nvlink-optimization-idea-book-20260707.md)；`$PAP_RESULTS/20260701_*` |
-| `PAP-20260702-REMOTE-TRACE` | M2/M6/M7 | normal run → critical-path/Projection/Attention trace；1PA1P | `e89346dc8`、相关 trace patch；trace-on | 36 层逐层往返、Python/线程/调度交替累计主导，trace 本身扰动 TPOT；`diagnostic`；**接受瓶颈归因** | [Remote Attention 诊断计划](../../../docs/superpowers/plans/2026-07-02-pap-remote-attention-diagnostics.md)；`$PAP_PROFILES/*` |
-| `PAP-20260703-UNIFIED-KV` | M3/M4/M5 | Attention-local/copy-prefix → Prefill-owned unified KV/lease/remote append；1PA1P staged smoke | `214dff673`；提交后 smoke | 单一 paged-FA KV source 跑通，local pool/copy fallback 可删除；`smoke/controlled`；**接受** | [Unified KV 计划](../../../docs/superpowers/plans/2026-07-03-pap-unified-kv-cache.md)；`$PAP_REPO_RESULTS/20260703_unified_*` |
+| `PAP-20260702-REMOTE-TRACE` | M2/M6/M7 | normal run → critical-path/Projection/Attention trace；1PA1P | `e89346dc8`、相关 trace patch；trace-on | 36 层逐层往返、Python/线程/调度交替累计主导，trace 本身扰动 TPOT；`diagnostic`；**接受瓶颈归因** | [trace archive](legacy/reports/pap-remote-attention-trace-20260702.md)；`$PAP_REPO_RESULTS/20260702_profile_output/*` |
+| `PAP-20260703-UNIFIED-KV` | M3/M4/M5 | Attention-local/copy-prefix → Prefill-owned unified KV/lease/remote append；1PA1P staged smoke | `214dff673`；提交后 smoke | 单一 paged-FA KV source 跑通，local pool/copy fallback 可删除；`smoke/controlled`；**接受** | [当前 runtime](../../../docs/design/pap/runtime.md)；`$PAP_REPO_RESULTS/20260703_unified_*` |
 | `PAP-20260703-SLOTMAPPING` | M4/M7 | per-row → batched unified-KV slot mapping；相同 1PA1P decode workload | `960d3ab7d`；受控 A/B | TPOT 相对 per-row 降低约 `29%`；`controlled`；**接受 batched mapping** | Git commit；`$PAP_REPO_RESULTS/20260703_unified_batched_*` |
-| `PAP-20260706-DECODE-COMMIT` | M4/M5 | GPU 写 KV 但不推进 scheduler → commit token/hash/cache transaction；IPC-only smoke | `24361dd67`；实现/正确性 smoke | token propagation、hash advance、lease release 闭合；`smoke`；**接受，继续 ACK 加固** | [IPC-only KV + commit](../../../docs/superpowers/plans/2026-07-06-pap-ipc-only-kv-with-commit.md)；`$PAP_REPO_RESULTS/20260706_ipc_only_smoke*` |
+| `PAP-20260706-DECODE-COMMIT` | M4/M5 | GPU 写 KV 但不推进 scheduler → commit token/hash/cache transaction；IPC-only smoke | `24361dd67`；实现/正确性 smoke | token propagation、hash advance、lease release 闭合；`smoke`；**接受，继续 ACK 加固** | [当前 runtime](../../../docs/design/pap/runtime.md)；`$PAP_REPO_RESULTS/20260706_ipc_only_smoke*` |
 | `PAP-20260710-ACK-LEASE` | M5/M6 | fire-and-forget/原序释放 → ACK watermark/retry/drain/tail-first release；1PA1P E2E | `86a7c1273`；提交后 smoke/clean NIXL reps | commit queue 能 drain、session/lease 能释放，错误 fail closed；`controlled/smoke`；**接受** | `$PAP_REPO_RESULTS/20260710_ack_watermark_e2e*`、`20260710_e904_nixl_rep*_clean` |
 | `PAP-20260710-SLOTPLAN` | M4/M7 | stream ring `47.21 ms` → binary/descriptorless + all-active + cross-layer slot-plan；8B 1PA1P `i128/o32/q16/128` | `87bb1061f` 前受控实现；提交前 A/B | 三轮 median TPOT 中位数 `33.21 ms`；cache-off `42.12 ms`；`controlled`；**接受并提交** | [same-node 数据面](legacy/reports/pap-tpot-attention-projection-dataplane-20260710.md)；`$PAP_RESULTS/20260710_phase{1,2}_*` |
 | `PAP-20260710-QPS4-PD-AB` | M6/M7 | PD 1P1D vs PAP 1PA1P；8B `i128/o32/q4/128`，同 GPU 对、无 backlog | 同一 tracked-dirty PAP 状态，双方各三轮 | median TPOT `24.48/28.06 ms`（`1.146x`）；median TTFT `171.18/163.68 ms`；`controlled`；**接受“高 QPS TTFT 主要由排队放大”** | [same-node 数据面](legacy/reports/pap-tpot-attention-projection-dataplane-20260710.md)；`$PD_RESULTS/20260710_pd_qps4_rep*_current`、`$PAP_RESULTS/20260710_pap_slot_plan_qps4_rep*_current` |
@@ -885,7 +874,7 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
 | `PAP-20260713-MPS-80-20-DIAG` | M6/M7 | PAP Prefill/Attention 70:30 -> 80:20；同一 16K/5-turn/C4/o256/q2 | `ba17ea18c`；clean quick 一次 | R1 TTFT `11077.283 -> 9887.638 ms`（`-10.74%`），但 R1/steady TPOT `+24.26%/+24.09%`；strict/cache/routing/drain 全过；`diagnostic`；**拒绝静态 80:20 默认，TPOT 继续以 70:30 优化** | [80:20 诊断](legacy/reports/pap-mps-80-20-diagnostic-results-20260713.md)；`$PAP_REPO_RESULTS/20260713_ba17ea18c_pap_mps_80_20_c4_quick` |
 | `PAP-20260713-BILATERAL-TRACE-C4` | M6/M7 | PAP/PD-twoway 各自 trace-off/on；同一 16K/5-turn/C4/o256/q2，PAP 固定 70:30 | `e115fc86f`；clean diagnostic 各一次 | trace-off steady TPOT PD/PAP `42.179/51.098 ms`（`1.211x`）；QKV 只差 `0.264%`，PAP FA 慢 `28.7%`，raw copy 约 `0.583 ms/forward`，token D2H 暴露强制 stream barrier；PAP/PD trace 扰动 `+2.29%/+0.90%`；四组 strict/digest/count 全通过；**接受诊断工具，优先 deferred decode-token commit A/B** | [双侧 trace 结果](legacy/reports/pap-bilateral-deferred-trace-c4-results-20260713.md)；`$PAP_REPO_RESULTS/20260713_e115fc86f_{pap,pd_twoway}_bilateral_trace_{off,on}_c4` |
 | `PAP-20260713-ASYNC-DECODE-TOKEN-D2H` | M5/M6/M7 | 同一 C4 70:30、trace off；同步 descriptor token D2H vs AsyncOutput callback + Attention token/KV join | `4b30cc643` 后 dirty controlled patch；OFF/ON 各两次 | steady TPOT `51.029 -> 50.045 ms`（`-0.984 ms/-1.93%`），PAP/PD-twoway `1.210x -> 1.186x`；R1 TPOT `-7.17%`；steady TTFT `+95.438 ms/+38.91%`；全部 strict/cache/join/routing/drain passed；07-14 根因闭环后接受为唯一路径，sync descriptor-token arm 已 superseded | [实现与结果](legacy/reports/pap-async-decode-token-d2h-results-20260713.md)；`$PAP_REPO_RESULTS/20260713_async_d2h_{ab,batch}_c4_{off,on}_rep*` |
-| `PAP-20260714-ASYNC-STATIC-BASELINE` | M5/M6/M7 | C4 2×2：dynamic 70:30/static 64/28 × async off/on；同一 tracked patch | patch SHA-256 `45d4c8fe...f89a`；四格各一次 strict run | static 未解决 async TTFT：R1 async 代价 dynamic/static 为 `+888.6/+883.9 ms`；async static steady TPOT `50.773 -> 49.873 ms`（`-1.77%`），static 相对 dynamic async-on 再降 `0.419 ms/-0.83%`；四格 cache/join/routing/drain 全通过；**接受 async + static 为后续开发默认，TTFT 留作优化项** | [2×2 结果](legacy/reports/pap-async-static-mps-c4-ab-results-20260714.md)；[static 设计](../../../docs/superpowers/specs/2026-07-13-pap-static-mps-benchmark-design.md)；`$PAP_REPO_RESULTS/20260714_async_mps_ab_c4_{dynamic,static}_{off,on}` |
+| `PAP-20260714-ASYNC-STATIC-BASELINE` | M5/M6/M7 | C4 2×2：dynamic 70:30/static 64/28 × async off/on；同一 tracked patch | patch SHA-256 `45d4c8fe...f89a`；四格各一次 strict run | static 未解决 async TTFT：R1 async 代价 dynamic/static 为 `+888.6/+883.9 ms`；async static steady TPOT `50.773 -> 49.873 ms`（`-1.77%`），static 相对 dynamic async-on 再降 `0.419 ms/-0.83%`；四格 cache/join/routing/drain 全通过；**接受 async + static 为后续开发默认，TTFT 留作优化项** | [2×2 结果](legacy/reports/pap-async-static-mps-c4-ab-results-20260714.md)；`$PAP_REPO_RESULTS/20260714_async_mps_ab_c4_{dynamic,static}_{off,on}` |
 | `PAP-20260714-ASYNC-TTFT-ROOTCAUSE` | M5/M6/M7 | Projection/Prefill sync-only barrier 2×2；同一 C4 static 64/28、Prefill phase trace | `cbcbfabcb` + 临时 diagnostic patch；四格各一次 strict run，patch 已撤销 | 只有 Projection barrier 把 steady TTFT `335.19 -> 246.51 ms`、Prefill `216 -> 131 ms`、calls/layer `1835 -> 1738`；Prefill-only 基本不变；steady admission queue 小于 `0.1 ms`；**diagnostic，触发条件结论保留；控制路径与微观归因已被 `PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC` supersede** | [因果报告](legacy/reports/pap-async-decode-token-ttft-root-cause-20260714.md)；`$PAP_REPO_RESULTS/20260714_prefill_scope_ab_{none,projection_only,prefill_only,both}_c4`；旧 single-batch 证据 `$PAP_REPO_RESULTS/20260714_async_token_projection_single_batch_c4` |
 | `PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION` | M5/M6/M7 | 活跃 CUDA context audit；R1 Projection gate barrier A/B；Decode commit gate vs 正常 async control | `cbcbfabcb` + 默认关闭 diagnostic patch；四个 trace-off strict run | 真实 Prefill/Attention context 为 `64/28` SM 且 `lspart clients=Yes`；无 Decode 时 barrier 对四个 R1 Prefill 仅有 `-1/-7/-14/-16 ms` 差异；commit gate 相对正常只改善 `-1/120/146/142 ms`，但没有切断 descriptor 对 Attention registry 锁的依赖；**diagnostic，排除性结论保留；gate 路径已被 `PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC` supersede** | [因果报告第 7 节](legacy/reports/pap-async-decode-token-ttft-root-cause-20260714.md)；`$PAP_REPO_RESULTS/20260714_strict_isolation_{projection_gate_async,projection_gate_sync,commit_gate_async,normal_async}_c4` |
 | `PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC` | M4/M5/M6/M7 | pure-Prefill/正常 Decode bounded Torch trace；sync/async IPC profile；registry 缩锁；完整-prefix readiness；同一 C4 三次 | `bd164d8ff` | dominant stream kernel 数相同，GPU busy 仅 `+158 ms`，host-unsubmitted gap `+2809 ms`；descriptor wait 与 gap 同量级；修复后三次 R1 第 4 个 Prefill `15321--15433 ms`（旧 `18007`），吞吐 `60.15--60.57 token/s`（旧 `58.54`）；20/20 requests、16/16 transitions、digest/join/routing/drain 全过；默认 async C1 smoke 5/5、4/4 也全过并记录 implementation fingerprint；**接受安全异步为唯一路径，sync paged IPC arm 已 superseded** | [最终根因与修复](legacy/reports/pap-async-decode-token-ttft-root-cause-20260714.md)；`$PAP_REPO_RESULTS/20260714_{prefill_torch_profile_*,prefill_ipc_profile_*,registry_lock_narrow_*,registry_lock_default_async_fingerprint_c1}` |
