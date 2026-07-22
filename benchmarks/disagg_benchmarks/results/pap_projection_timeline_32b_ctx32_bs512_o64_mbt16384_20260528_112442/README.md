@@ -2,6 +2,11 @@
 
 Date: 2026-05-28
 
+> **Historical invalid diagnostic.** This partial run never completed and is
+> retained only for its batch-formation and mailbox-failure evidence. Its
+> proposed next steps are not current guidance. See the
+> [legacy evidence rules](../../../pap/experiments/legacy/README.md).
+
 ## Config
 
 - Model: `/data/ssd1/llm-models/Qwen3-32B`

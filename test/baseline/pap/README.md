@@ -8,9 +8,9 @@ metadata, reports, and repository-owned raw artifacts belong under
 Use the [current development status](../../../docs/design/pap/status.md) for
 the active runtime and evidence boundary.
 
-The layout and commands below describe the historical archive. In particular,
-the `.claude/skills/` helper commands are preserved for provenance and are not
-current project entry points.
+The layout below describes the historical archive. The former
+`.claude/skills/vllm-pap-benchmark/` implementation has been removed; command
+names are retained only in Git history and dated reports for provenance.
 
 ## Layout
 
@@ -58,9 +58,9 @@ but unverified in this milestone.
 The frozen profile `qwen3_8b_chat_16k_2turn_o256_c1_v1` compared official
 1P1D PD/NIXL with 1PA1P PAP on GPUs 1/2. It uses one two-turn conversation,
 a 16K first-turn document, a 120-token second-turn append, and 256 output
-tokens per turn. TTFT and TPOT are reported separately. The PAP north-star
-runner uses the same-node `local_fast` CUDA-IPC/P2P ring; the effective
-transport is always recorded in each run artifact.
+tokens per turn. TTFT and TPOT are reported separately. The retired PAP
+north-star runner used the same-node `local_fast` CUDA-IPC/P2P ring; the
+effective transport remains recorded in each run artifact.
 
 Timing uses `last_output_token_v2`: TTFT ends at the first output-token chunk,
 and TPOT spans the first through final output token. The client still consumes
@@ -68,41 +68,26 @@ the stream through `[DONE]` and HTTP EOF, but records that tail separately as
 `eof_latency_ms` and `post_token_stream_ms`; architecture-specific cleanup is
 therefore observable without contaminating TPOT.
 
-Run one diagnostic PAP repetition:
+The original workflow used `run_multiturn_north_star.sh` and
+`bootstrap_pd_multiturn_reference.sh` from the removed benchmark skill. These
+references are now immutable historical controls. New regression evidence uses
+the project-owned P17 runner, and new PAP/PD capacity evidence uses the AIPerf
+matrix under `benchmarks/pap/`.
 
-```bash
-bash .claude/skills/vllm-pap-benchmark/scripts/run_multiturn_north_star.sh quick
-```
+The PD lane deliberately ran the unchanged official streaming proxy. In the
+API state frozen by this reference, streaming chat chunks did not carry the
+Decode-side `kv_transfer_params`, so both proxy lookups were `MISS`. The lane
+therefore used the default one-way NIXL mode instead of paying for unreachable
+bidirectional pinning. Its validity gate captured P/D `/metrics` and checked
+exact two-round token-source conservation, exact local cache boundaries on
+both engines, and a second Prefill-to-Decode transfer. Results record this
+frozen behavior as `official_streaming_one_way`. A future upstream semantic
+change requires a new reference instead of silently mixing measurements.
 
-Run three serial PAP repetitions for an optimization verdict:
-
-```bash
-bash .claude/skills/vllm-pap-benchmark/scripts/run_multiturn_north_star.sh formal
-```
-
-Bootstrap a new official PD reference candidate only when the frozen PD
-reference must be refreshed:
-
-```bash
-bash \
-  .claude/skills/vllm-pap-benchmark/scripts/bootstrap_pd_multiturn_reference.sh
-```
-
-The PD lane deliberately runs the unchanged official streaming proxy. In the
-current API, streaming chat chunks do not carry the Decode-side
-`kv_transfer_params`, so both proxy lookups are `MISS`. The lane therefore uses
-the default one-way NIXL mode instead of paying for unreachable bidirectional
-pinning. The validity gate snapshots P/D `/metrics` and checks exact two-round
-token-source conservation, exact local cache boundaries on both engines, and a
-second Prefill-to-Decode transfer. Results record this frozen behavior as
-`official_streaming_one_way`. A future upstream semantic change requires a new
-reference instead of silently mixing measurements.
-
-The daily PAP commands never start PD and never update a reference. Raw run
-directories remain under `results/runs/`. Tracked references live under
-`references/qwen3_8b_chat_16k_2turn_o256_c1_v1/` and can only be updated with
-the comparison CLI's explicit `write-reference --allow-reference-write`
-operation.
+Raw run directories remain under `results/runs/`. Tracked references live
+under `references/qwen3_8b_chat_16k_2turn_o256_c1_v1/` and are no longer
+updated in place. A future comparison with different software semantics must
+create a normalized experiment instead of rewriting this reference.
 
 Verdicts have the following meanings:
 

@@ -290,7 +290,7 @@ The historical cohort-sized capacity scan is recorded in
 [`pap-pd-aiperf-capacity-results-20260720.md`](../experiments/legacy/reports/pap-pd-aiperf-capacity-results-20260720.md).
 The historical think/tool scan is recorded in
 [`pap-pd-aiperf-think-tool-results-20260720.md`](../experiments/legacy/reports/pap-pd-aiperf-think-tool-results-20260720.md).
-The current fixed-96-session scan is recorded in
+The historical fixed-96-session scan is recorded in
 [`PAP-20260720-AIPERF-FIXED96`](../experiments/PAP-20260720-AIPERF-FIXED96/report.md).
 It is historical fixed-length evidence rather than the current baseline. The
 2026-07-21 fixed-length runs and their replacement decision are recorded in the
@@ -299,5 +299,5 @@ The current source-audited randomized O32 baseline is recorded in
 [`PAP-20260721-AIPERF-AUDITED-CAPACITY`](../experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md).
 Its matched piecewise CUDA Graph comparison is recorded in
 [`PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH`](../experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
-Its predecessor remains in
+Its superseded predecessor remains in
 [`PAP-20260721-AIPERF-RANDOM-O32`](../experiments/PAP-20260721-AIPERF-RANDOM-O32/report.md).

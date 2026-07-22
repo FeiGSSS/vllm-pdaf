@@ -52,14 +52,3 @@ def test_conversation_affinity_audit_counts_sessions_for_aiperf() -> None:
     assert 'client_mode in (' in runner
     assert '"multiturn_load",' in runner
     assert '"aiperf_multiturn",' in runner
-
-
-def test_three_lane_runner_does_not_select_diagnostic_mps() -> None:
-    orchestrator = (
-        ROOT
-        / ".claude/skills/vllm-pap-benchmark/scripts/"
-        / "run_pd_pap_multiturn_load.sh"
-    ).read_text(encoding="utf-8")
-
-    assert "diagnostic_80_20" not in orchestrator
-    assert "diagnostic_static_64_28" not in orchestrator

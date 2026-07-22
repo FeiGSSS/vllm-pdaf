@@ -1,5 +1,11 @@
 # PAP 32B TPOT Breakdown - 2026-06-30
 
+> **Historical diagnostic bundle.** This report captures an early 32B
+> root-cause investigation. The later main-path refactor superseded its active
+> TODO list, while the colocated successful and failed runs remain useful
+> provenance. See the
+> [legacy evidence rules](../../../pap/experiments/legacy/README.md).
+
 ## Goal
 
 Break down the 4s-level PAP TPOT observed on Qwen3-32B TP=2 and identify the

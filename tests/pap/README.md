@@ -52,8 +52,12 @@ The complete PAP CPU gate is:
   tests/benchmarks/test_pap_multiturn_mps_contract.py \
   tests/benchmarks/test_pap_pd_multiturn_client.py \
   tests/benchmarks/test_pap_pd_multiturn_load_client.py \
-  tests/benchmarks/test_pd_three_lane_testbed_contract.py
+  tests/benchmarks/test_pd_multiturn_runner_contract.py
 ```
+
+All current launch contracts target project-owned entry points under
+`benchmarks/pap/` and `examples/pap/`; PAP tests do not depend on a repository
+skill directory.
 
 Prefer behavior and structured-config tests over source-text assertions. Keep
 shell tests for syntax and end-to-end assembly only; keep CUDA-dependent tests

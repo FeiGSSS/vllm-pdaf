@@ -2,6 +2,11 @@
 
 Date: 2026-05-28
 
+> **Historical diagnostic bundle.** This CUDA-event profile predates the
+> current PAP runtime and testbeds. Preserve its colocated trace evidence, but
+> do not use its settings or optimization targets as current guidance. See the
+> [legacy evidence rules](../../../pap/experiments/legacy/README.md).
+
 ## Config
 
 - Model: `/data/ssd1/llm-models/Qwen3-32B`

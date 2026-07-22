@@ -8,6 +8,11 @@
 
 用途：从时间、模块或指标出发，逐层回溯 PAP 的设计动机、实现、实验和决策。
 
+> **历史快照。** 本文的事实覆盖截止 2026-07-14。文中的“当前”“默认”与
+> “下一步”均指当时的开发状态，不是现在的运行配置或 TODO。当前实现、验证边界
+> 和后续工作以 [PAP 当前开发状态](../../../docs/design/pap/status.md)为准；
+> 2026-07-14 之后的实验从[生成索引](INDEX.md)进入。
+
 ## 0. 如何使用本索引
 
 本文件是 PAP 历史的导航和决策层，不替代已有设计文档、Git diff 或原始实验日志。
@@ -19,8 +24,8 @@
 | 某个模块为什么存在？ | [模块地图](#4-模块地图) | [模块档案](#5-模块档案)中的动机、机制和边界 |
 | 某个 TPOT/TTFT 数字来自哪里？ | [实验账本](#6-实验账本) | workload、commit、run 目录和 audit |
 | 某个优化为什么没有继续？ | [负结果登记](#7-负结果回滚与被替代路线) | rejecting A/B、回滚开关和替代方案 |
-| 当前哪些能力已经闭合？ | [当前状态](#1-当前状态与证据边界) | 正式 clean baseline 和未完成边界 |
-| 如何追加新实验？ | [记录模板](#10-新增实验记录模板) | 复制模板并同步更新模块和时间线 |
+| 截至 2026-07-14 哪些能力已经闭合？ | [历史状态快照](#1-2026-07-14-状态与证据边界) | 当时的 clean baseline 和未完成边界 |
+| 如何追加新实验？ | [当前记录流程](#10-新实验记录流程) | 使用 schema、manifest 和生成索引 |
 
 本索引采用三层渐进披露：
 
@@ -31,9 +36,9 @@
 结论标签统一为：`接受`、`保留为可选实验`、`拒绝`、`回滚`、`被替代`、
 `无结论`。证据等级统一见[第 2 节](#2-路径与存储类别)。
 
-## 1. 当前状态与证据边界
+## 1. 2026-07-14 状态与证据边界
 
-### 1.1 当前接受的架构
+### 1.1 当时接受的架构
 
 - Prefill 进程拥有 prompt 和 decode 的物理 paged KV blocks；
 - Projection 采用 KV-unaware 调度，不持有历史 KV；
@@ -49,7 +54,7 @@
 - 多 PA 多轮的 cache-aware routing 尚未在当前 Proxy 中实现，后续交给 Dynamo 等外部
   路由框架。
 
-### 1.2 当前正式证据摘要
+### 1.2 当时的正式证据摘要
 
 | 能力 | 正式/最高等级结果 | 结论 |
 | --- | --- | --- |
@@ -935,7 +940,10 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
 | P16 / 07-14 | `bd164d8ff` registry contention fix | 把 GPU copy/launch 移出全局锁，加入 generation-bound async import 和完整-prefix readiness，关闭 TTFT 累计回归且保持多轮正确性 | M4/M5/M6/M7；账本 P16 |
 | P17 / 07-14 | `bef48f04b` 设计；`25c8723de` 实现 | 用 static catalog + request manifest + CUDA IPC event 取代逐层 mutable descriptor；C4 quick steady TTFT -11.83%，TPOT neutral | M4/M5/M6/M7；账本 P17；[阶段结果](legacy/reports/pap-seal-and-handoff-kv-results-20260714.md) |
 
-## 9. 未完成问题与外部依赖
+## 9. 2026-07-14 未完成问题与外部依赖
+
+> 本节保留里程碑冻结时的 open questions，不再作为活动任务列表。
+> 当前剩余工作见 [PAP 当前开发状态](../../../docs/design/pap/status.md#remaining-work)。
 
 - Gateway 已支持新 conversation 按 PA 轮询、后续轮次保持 owner；未来 Dynamo 等
   外部路由框架只需接管跨 Gateway 的全局 owner/容量决策与过期回收；
@@ -958,64 +966,18 @@ candidate，高压力 eviction 时允许退化为重算，但不能影响输出�
   不同模型和更高并发的普适性仍需实验；
 - raw results、profiles 和 `/tmp` handoff 需要独立归档策略，Git 只追踪本索引和摘要。
 
-## 10. 新增实验记录模板
+## 10. 新实验记录流程
 
-未来实验复制以下模板。ID 一经引用不复用；重跑用同一 ID 下的 `rep`，改变 workload、
-核心变量或问题时新建 ID。不要把 raw 目录移动进 Git；只记录真实存储类别。
+旧的自由文本复制模板已移除；它无法保证 metadata、证据等级和索引一致。新实验使用
+[存储合同](README.md#experiment-layout)、
+[`experiment_record.schema.json`](../schemas/experiment_record.schema.json) 和
+[`run_manifest.schema.json`](../schemas/run_manifest.schema.json)：
 
-```markdown
-### PAP-YYYYMMDD-SHORT-NAME — 一句话问题
+1. 在 `_staging/` 完成运行并保留原始输出；
+2. 分配不可复用的稳定 experiment/run ID；
+3. 填写结构化 experiment/run manifest 和简洁 `report.md`；
+4. 人工确认 evidence、decision、validity、successor 与结论；
+5. 运行 registry validator 并重新生成 `INDEX.md`。
 
-- 日期/操作者：
-- 阶段/模块：P?；M?
-- 假设：
-- Baseline：
-- Treatment（只改变的主变量）：
-- Workload contract：model；dataset；input/output；QPS；prompts；warmup；
-  max concurrency；topology；TP；MPS；transport；GPU binding；proxy bypass
-- 代码与配置：branch；commit；tracked clean/dirty；dirty diff 说明；effective config
-- Repetitions/运行顺序：
-- 证据等级：formal-clean / controlled / diagnostic / smoke / historical / invalid
-
-#### 最小结果
-
-| 模式/rep | 完成/失败 | TTFT | TPOT mean/median/p99 | req/s | 关键内部指标 |
-| --- | --- | --- | --- | --- | --- |
-| baseline | | | | | |
-| treatment | | | | | |
-
-#### 严格审计
-
-- [ ] 输出 token / warm-cold token IDs 正确
-- [ ] PA/P pair routing 与要求的 crossbar coverage 正确
-- [ ] decode commit 数量、状态码、ACK watermark 和 queue drain 正确
-- [ ] KV lease release 数量、顺序和 block accounting 正确
-- [ ] Attention/Projection session drain，active peer set 最终为空
-- [ ] 无 OOM、timeout、dispatcher failure、stale update 或隐藏 server error
-- [ ] trace/diagnostic 数据没有被当成 normal baseline
-
-#### 决策
-
-- 结论：接受 / 保留为可选实验 / 拒绝 / 回滚 / 被替代 / 无结论
-- 决策门槛与实际值：
-- 机制解释与反证：
-- 当前默认/回退开关：
-- 下一步（若有）：
-
-#### Provenance 与原始证据
-
-- [ ] raw 路径已记录并确认存在
-- raw 路径：
-- 存储类别：tracked / repo-untracked / external / temporary / missing
-- benchmark JSON / metadata / audit：
-- service logs / trace / profile：
-- owning design/spec/plan：
-- implementation commit / reverting commit：
-
-#### 索引维护
-
-- [ ] 已向第 6 节实验账本追加或更新稳定 ID
-- [ ] 已更新所属模块的关键实验、负结果和当前边界
-- [ ] 若改变主决策，已更新第 3 节时间线和第 8 节关键提交
-- [ ] 若结果被拒绝/回滚/替代，已登记到第 7 节
-```
+详细命令与 evidence gate 见
+[benchmark methodology](../../../docs/design/pap/benchmark-methodology.md)。

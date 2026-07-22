@@ -2,6 +2,11 @@
 
 Date: 2026-05-28
 
+> **Historical diagnostic bundle.** This short-output profile predates the
+> current PAP runtime and testbeds. Preserve its colocated trace evidence, but
+> do not use its settings as current defaults. See the
+> [legacy evidence rules](../../../pap/experiments/legacy/README.md).
+
 ## Config
 
 - Model: `/data/ssd1/llm-models/Qwen3-32B`

@@ -2,8 +2,9 @@
 
 > Historical fixed-length evidence only. The input deltas and outputs were
 > deterministic, so this report is no longer the capacity baseline. Preserve
-> its raw evidence, but use the randomized-length successor for new PAP/PD
-> claims. See the
+> its raw evidence, but use the
+> [audited randomized-length baseline](../PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md)
+> for new PAP/PD claims. See also the
 > [2026-07-21 methodology notice](../legacy/reports/pap-pd-aiperf-fixed-length-preliminary-20260721.md).
 
 ## Scope

@@ -1,5 +1,10 @@
 # Qwen3-8B 16K two-turn north-star references
 
+> **Frozen historical reference.** These files preserve the July 12 two-turn
+> comparator and must not be promoted as the current P17 or four-GPU baseline.
+> Current validation lanes are listed in the
+> [PAP development status](../../../../../docs/design/pap/status.md).
+
 This directory is the Git-tracked control plane for the fixed 1P1D PD versus
 1PA1P PAP multi-turn comparison. Raw service logs and metrics remain under
 `benchmarks/pap/experiments/legacy/runs/`.
@@ -24,9 +29,10 @@ benchmarks/pap/experiments/legacy/runs/
 ```
 
 It uses the unchanged official multi-turn proxy and the default one-way NIXL
-producer/consumer path. The current streaming Chat API cannot return a
-Decode-side KV handle, so both proxy lookups are expected to miss. Every
-repetition proves the effective reuse path from exact token-source counters:
+producer/consumer path. In the frozen software version, the streaming Chat API
+could not return a Decode-side KV handle, so both proxy lookups were expected
+to miss. Every repetition proves the effective reuse path from exact
+token-source counters:
 
 - Prefill: `local_compute=16420`, `local_cache_hit=16016`, external `0`;
 - Decode: local cache `16272`, external NIXL `16164`, local compute `0`;
@@ -139,9 +145,7 @@ reported separately as a warning.
 
 ## Reference policy
 
-Daily PAP runs never update these files. Refresh PD with
-`bootstrap_pd_multiturn_reference.sh`, then use the comparison CLI's explicit
-`write-reference --allow-reference-write` operation. Promote a PAP reference
-only from a valid three-repetition formal aggregate. Any profile fingerprint,
-hardware, or effective cache-semantics change requires a new reference rather
-than an in-place mixed comparison.
+These files are immutable historical references. The former
+`bootstrap_pd_multiturn_reference.sh` and comparison skill have been removed.
+Any new profile fingerprint, hardware, or cache-semantics comparison must be a
+new normalized experiment rather than an in-place update.

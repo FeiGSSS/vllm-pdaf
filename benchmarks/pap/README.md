@@ -3,7 +3,8 @@
 The current runtime and evidence snapshot is summarized in
 [`docs/design/pap/status.md`](../../docs/design/pap/status.md). This directory
 owns benchmark methodology, tracked conclusions, manifests, and colocated raw
-artifacts; it does not define the runtime architecture.
+artifacts; it does not define the runtime architecture. PAP experiments use
+these project-owned entry points directly, without a repository skill layer.
 
 The optional [AIPerf lane](aiperf/README.md) provides standardized serving
 load generation and metrics alongside the project-owned correctness gates. Its
@@ -51,6 +52,8 @@ resolved.
   duplicating its metrics, conclusions, or raw paths into dozens of JSON files.
 - `experiments/INDEX.md` is generated from full records and the compact history
   status overlay; `experiments/HISTORY.md` retains the detailed ledger.
+- `experiments/legacy/README.md` classifies pre-schema reports and the few
+  pre-migration raw bundles that remain in their original directories.
 - `import_legacy_run.py` converts a reviewed legacy formal directory into a new
   manifest without writing to the source directory.
 - `validate_registry.py` applies schema and cross-record fail-closed checks.

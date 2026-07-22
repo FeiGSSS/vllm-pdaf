@@ -3,6 +3,12 @@
 Date: 2026-05-28
 Model: `/data/ssd1/llm-models/Qwen3-32B`
 
+> **Historical exploratory bundle.** This TP=2 comparison predates the current
+> runtime, scheduler settings, and PAP/PD testbeds. Preserve its colocated
+> evidence, but do not treat its “current conclusion” or next steps as active
+> guidance. See the
+> [legacy evidence rules](../../../pap/experiments/legacy/README.md).
+
 ## Target comparison
 
 The intended comparison was:

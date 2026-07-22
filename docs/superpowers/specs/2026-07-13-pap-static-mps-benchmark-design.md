@@ -13,7 +13,7 @@ steady TPOT 从 `50.292 ms` 降到 `49.873 ms`（`-0.419 ms/-0.83%`）。因此�
 使用，也保留 `baseline_70_30` 作为显式回退。
 
 完整 A/B 结果见
-[`pap-async-static-mps-c4-ab-results-20260714.md`](../../design/pap-async-static-mps-c4-ab-results-20260714.md)。
+[`pap-async-static-mps-c4-ab-results-20260714.md`](../../../benchmarks/pap/experiments/legacy/reports/pap-async-static-mps-c4-ab-results-20260714.md)。
 
 ## 目标
 

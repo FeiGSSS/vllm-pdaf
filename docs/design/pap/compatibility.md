@@ -78,7 +78,7 @@ passing. The canonical record is
 Against the preceding post-refactor formal baseline, R1 TTFT changed by
 -0.16%, R1 TPOT by -0.10%, steady TTFT by +1.98%, and steady TPOT by +0.06%.
 The clean milestone therefore passes the 5% regression gate and supersedes the
-controlled result as the current release evidence.
+controlled result as the release evidence for that stage.
 
 ## vLLM integration-boundary evidence
 

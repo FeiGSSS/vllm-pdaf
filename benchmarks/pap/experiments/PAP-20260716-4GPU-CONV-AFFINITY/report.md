@@ -1,5 +1,10 @@
 # PAP/PD 四卡多轮 conversation-affinity oneway milestone
 
+> **历史阶段性证据。** 本报告冻结 12 会话、5 轮、固定长度负载下的 controlled
+> 结论，不再定义当前四卡 testbed。当前对比使用 32 会话、10 轮随机长度 AIPerf
+> 负载，见[审计后的 eager baseline](../PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md)
+> 和 [PAP 当前开发状态](../../../../docs/design/pap/status.md)。
+
 日期：2026-07-16  
 状态：accepted controlled milestone、dirty worktree、每个配置单次；不是
 formal-clean release baseline

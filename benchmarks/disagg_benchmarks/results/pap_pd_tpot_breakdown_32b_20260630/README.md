@@ -2,6 +2,11 @@
 
 Date: 2026-06-30
 
+> **Historical diagnostic bundle.** This report freezes the June 2026 TP=2
+> optimization state. Its “default test bed”, bottleneck, and next-step text is
+> not current guidance. The colocated profiles remain unique evidence; see the
+> [legacy evidence rules](../../../pap/experiments/legacy/README.md).
+
 ## Goal
 
 Break down the roughly 1s PAP TPOT observed on dense Qwen3-32B, and compare it
@@ -63,11 +68,14 @@ bash /home/fei/research/PD/test/baseline/run_benchmark.sh \
   --proxy-port 9400
 ```
 
-Equivalent checked-in wrapper:
+The equivalent checked-in wrapper at the time was:
 
 ```bash
 bash benchmarks/disagg_benchmarks/run_pap_128_testbed.sh
 ```
+
+That wrapper has since been retired; use Git history only when reproducing
+this frozen diagnostic.
 
 Use `PAP_PROXY_PORT=<port>` to avoid a busy proxy port. Keep
 `PAP_ATTENTION_LOCAL_PAGED_NATIVE_CACHE_APPEND` unset for the default baseline;

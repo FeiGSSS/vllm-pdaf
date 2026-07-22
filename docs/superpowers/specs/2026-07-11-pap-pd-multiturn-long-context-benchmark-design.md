@@ -634,8 +634,8 @@ Git 追踪：
 
 ## 17. 参考实现与现有证据
 
-- [PAP 多轮原生 APC 设计](../../design/pap-xpayp-multiturn-kv-affinity-20260710.md)；
-- [PAP 实验历史索引](../../design/pap-experiment-history-index.md)；
+- [PAP 多轮原生 APC 设计](../../../benchmarks/pap/experiments/legacy/reports/pap-xpayp-multiturn-kv-affinity-20260710.md)；
+- [PAP 实验历史索引](../../../benchmarks/pap/experiments/INDEX.md)；
 - [NixlConnector 双向 KV 使用指南](../../features/nixl_connector_usage.md)；
 - `examples/pap/pap_multiturn_prefix_cache.py`；
 - `examples/pap/pap_multiturn_chat_prefix_cache.py`；

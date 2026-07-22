@@ -1,8 +1,9 @@
 # PAP experiment storage
 
-This directory is the single storage root for PAP experiment metadata,
-conclusions, and raw artifacts. Stable architecture documentation remains in
-`docs/design/pap/`; dated experimental evidence does not.
+This directory is the single storage root for new PAP experiment metadata,
+conclusions, and repository-owned raw artifacts. Stable architecture
+documentation remains in `docs/design/pap/`; dated experimental evidence does
+not.
 
 ## Experiment layout
 
@@ -32,6 +33,13 @@ run manifest, and regenerating `INDEX.md`.
 the normalized experiment record. `legacy/runs/` and `legacy/capacity/` hold
 the repository-local raw artifacts that have not yet been assigned to one
 normalized experiment. They remain local and Git-ignored.
+
+Several multi-gigabyte May/June diagnostic bundles predate this storage rule
+and remain under `benchmarks/disagg_benchmarks/results/pap_*` so their ignored
+logs and profiles are not moved behind other worktrees. Their locations,
+status, and retention rules are recorded in the
+[legacy evidence index](legacy/README.md). No new PAP result may be added
+there.
 
 The older shared raw root at
 `/home/fei/research/PD/test/baseline/pap/results/runs` is still external. It is
