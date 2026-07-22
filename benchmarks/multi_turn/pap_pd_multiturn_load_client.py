@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from benchmarks.multi_turn.pap_pd_multiturn_client import (
+from benchmarks.multi_turn.pap_multiturn_common import (
     block_aligned_prefix_metrics,
     consume_sse_lines,
     parse_prefill_headers,

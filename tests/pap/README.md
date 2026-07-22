@@ -46,12 +46,12 @@ The complete PAP CPU gate is:
 .venv/bin/python -m pytest \
   tests/pap \
   tests/benchmarks/pap \
-  tests/benchmarks/test_compare_pap_pd_multiturn.py \
   tests/benchmarks/test_compare_pap_pd_multiturn_load.py \
   tests/benchmarks/test_finalize_pap_pd_multiturn.py \
   tests/benchmarks/test_pap_multiturn_mps_contract.py \
-  tests/benchmarks/test_pap_pd_multiturn_client.py \
+  tests/benchmarks/test_pap_multiturn_common.py \
   tests/benchmarks/test_pap_pd_multiturn_load_client.py \
+  tests/benchmarks/test_pd_multiturn_load_reuse_metrics.py \
   tests/benchmarks/test_pd_multiturn_runner_contract.py
 ```
 

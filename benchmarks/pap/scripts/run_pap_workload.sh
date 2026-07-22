@@ -65,7 +65,7 @@ done
 ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 VLLM_BIN="${VLLM_BIN:-${ROOT_DIR}/.venv/bin/vllm}"
-NORTH_STAR_FINALIZER="${ROOT_DIR}/benchmarks/multi_turn/finalize_pap_pd_multiturn.py"
+MULTITURN_FINALIZER="${ROOT_DIR}/benchmarks/multi_turn/finalize_pap_pd_multiturn.py"
 DEFERRED_TRACE_VALIDATOR="${ROOT_DIR}/benchmarks/multi_turn/validate_deferred_trace.py"
 AIPERF_RUNNER="${ROOT_DIR}/benchmarks/pap/aiperf/run_profile.sh"
 AIPERF_DATASET_GENERATOR="${ROOT_DIR}/benchmarks/pap/aiperf/generate_multiturn_dataset.py"
@@ -76,7 +76,7 @@ PAP_BENCH_STRICT_CORRECTNESS_AUDIT="${PAP_BENCH_STRICT_CORRECTNESS_AUDIT:-1}"
 PAP_BENCH_CLIENT_MODE="${PAP_BENCH_CLIENT_MODE:-canonical}"
 case "${PAP_BENCH_CLIENT_MODE}" in
   canonical | multiturn_prefix_cache | multiturn_chat_prefix_cache \
-    | multiturn_north_star | multiturn_load | aiperf_multiturn) ;;
+    | multiturn_load | aiperf_multiturn) ;;
   *)
     echo "ERROR: unsupported PAP_BENCH_CLIENT_MODE=${PAP_BENCH_CLIENT_MODE}" >&2
     exit 2
@@ -111,8 +111,6 @@ if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" \
   NUM_PROMPTS=$((
     PAP_MULTITURN_LOAD_ROUNDS * PAP_MULTITURN_LOAD_CONVERSATIONS
   ))
-elif [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" ]]; then
-  NUM_PROMPTS=2
 elif [[ "${PAP_BENCH_CLIENT_MODE}" != "canonical" ]]; then
   NUM_PROMPTS=3
 fi
@@ -1476,52 +1474,6 @@ if completed != expected or failed != 0:
 PY
 }
 
-validate_north_star_result() {
-  local result_path="$1"
-  "${PYTHON_BIN}" - "${result_path}" <<'PY'
-import json
-import math
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as file_obj:
-    result = json.load(file_obj)
-
-if result.get("schema_version") != 2:
-    raise SystemExit(f"north-star schema mismatch: {result.get('schema_version')}")
-if result.get("metric_definition") != "last_output_token_v2":
-    raise SystemExit(
-        f"north-star metric definition mismatch: {result.get('metric_definition')}"
-    )
-if result.get("validity") != {"status": "passed", "cache_gate": "passed"}:
-    raise SystemExit(f"north-star validity failed: {result.get('validity')}")
-if result.get("architecture") != "pap":
-    raise SystemExit(f"north-star architecture is not pap: {result.get('architecture')}")
-if (result.get("topology") or {}).get("name") != "1pa1p":
-    raise SystemExit(f"north-star topology is not 1pa1p: {result.get('topology')}")
-rounds = result.get("rounds") or []
-if len(rounds) != 2:
-    raise SystemExit(f"north-star expected two rounds, got {len(rounds)}")
-for index, round_result in enumerate(rounds, start=1):
-    if round_result.get("completion_tokens") != 256:
-        raise SystemExit(f"round {index} did not return 256 tokens")
-    if round_result.get("finish_reason") != "length":
-        raise SystemExit(f"round {index} did not finish by length")
-    for metric in ("ttft_ms", "tpot_ms", "latency_ms", "eof_latency_ms"):
-        value = round_result.get(metric)
-        if not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
-            raise SystemExit(f"round {index} has invalid {metric}: {value}")
-cache = result.get("cache_validation") or {}
-if cache.get("status") != "passed":
-    raise SystemExit(f"north-star cache validation failed: {cache}")
-if int(cache.get("decode_derived_hit_tokens", 0)) < 16:
-    raise SystemExit("north-star second turn has no Decode-derived cache block")
-if not result.get("profile_fingerprint"):
-    raise SystemExit("north-star profile fingerprint is missing")
-if not result.get("implementation_fingerprint"):
-    raise SystemExit("north-star implementation fingerprint is missing")
-PY
-}
-
 validate_multiturn_load_result() {
   local result_path="$1"
   PAP_MULTITURN_LOAD_ROUNDS="${PAP_MULTITURN_LOAD_ROUNDS}" \
@@ -1769,33 +1721,7 @@ cd "${ROOT_DIR}"
 [[ "${PAP_TP_SIZE}" == "1" ]] || die "This runner is intentionally fixed to PAP_TP_SIZE=1"
 [[ "${PAP_ENABLE_MPS}" == "1" ]] \
   || die "P17 requires static MPS"
-if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" ]]; then
-  [[ "${TOPOLOGY}" == "1pa1p" ]] \
-    || die "multiturn_north_star requires PAP_TOPOLOGY=1pa1p"
-  [[ "${INPUT_LEN}" == "16000" ]] \
-    || die "multiturn_north_star requires INPUT_LEN=16000"
-  [[ "${OUTPUT_LEN}" == "256" ]] \
-    || die "multiturn_north_star requires OUTPUT_LEN=256"
-  [[ "${MAX_MODEL_LEN}" == "20000" ]] \
-    || die "multiturn_north_star requires MAX_MODEL_LEN=20000"
-  [[ "${MAX_NUM_BATCHED_TOKENS}" == "4096" ]] \
-    || die "multiturn_north_star requires MAX_NUM_BATCHED_TOKENS=4096"
-  [[ "${MAX_NUM_SEQS}" == "2" ]] \
-    || die "multiturn_north_star requires MAX_NUM_SEQS=2"
-  [[ "${PAP_VLLM_DTYPE}" == "float16" ]] \
-    || die "multiturn_north_star requires PAP_VLLM_DTYPE=float16"
-  [[ "${PAP_PREFIX_CACHE_AUDIT}" == "0" ]] \
-    || die "multiturn_north_star forbids PAP_PREFIX_CACHE_AUDIT"
-  [[ "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" == "1" ]] \
-    || die "multiturn_north_star requires prompt token details"
-  [[ "${PAP_ENABLE_MPS}" == "1" ]] \
-    || die "multiturn_north_star requires PAP_ENABLE_MPS=1"
-  [[ "${PAP_PREFILL_MPS_PERCENT}" == "70" \
-    && "${PAP_ATTENTION_MPS_PERCENT}" == "30" ]] \
-    || die "multiturn_north_star requires PAP MPS 70/30"
-  (( PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS >= OUTPUT_LEN )) \
-    || die "PAP unified KV decode capacity is too small for north-star output"
-elif [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" \
+if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" \
   || "${PAP_BENCH_CLIENT_MODE}" == "aiperf_multiturn" ]]; then
   [[ "${PAP_VLLM_DTYPE}" == "float16" ]] \
     || die "multiturn_load requires PAP_VLLM_DTYPE=float16"
@@ -1830,8 +1756,8 @@ elif [[ "${PAP_BENCH_CLIENT_MODE}" != "canonical" ]]; then
 fi
 [[ -x "${PYTHON_BIN}" ]] || die "PYTHON_BIN is not executable: ${PYTHON_BIN}"
 [[ -x "${VLLM_BIN}" ]] || die "VLLM_BIN is not executable: ${VLLM_BIN}"
-[[ -f "${NORTH_STAR_FINALIZER}" ]] \
-  || die "Missing north-star finalizer: ${NORTH_STAR_FINALIZER}"
+[[ -f "${MULTITURN_FINALIZER}" ]] \
+  || die "Missing multi-turn finalizer: ${MULTITURN_FINALIZER}"
 [[ -f "${DEFERRED_TRACE_VALIDATOR}" ]] \
   || die "Missing deferred trace validator: ${DEFERRED_TRACE_VALIDATOR}"
 [[ -d "${MODEL_PATH}" ]] || die "Model path does not exist: ${MODEL_PATH}"
@@ -2180,37 +2106,6 @@ case "${PAP_BENCH_CLIENT_MODE}" in
       --min-decode-hit-blocks "${PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS}" \
       2>&1 | tee "${RUN_ROOT}/${TAG}.log"
     ;;
-  multiturn_north_star)
-    TAG="${TOPOLOGY_TAG}_multiturn_north_star"
-    echo "=== Running ${TAG} on port ${PAP_PROXY_PORT} ==="
-    timeout "${BENCH_TIMEOUT}" "${PYTHON_BIN}" \
-      benchmarks/multi_turn/pap_pd_multiturn_client.py \
-      --base-url "http://127.0.0.1:${PAP_PROXY_PORT}" \
-      --model "${MODEL_PATH}" \
-      --corpus "${DATASET_PATH}" \
-      --result "${RUN_ROOT}/result.json" \
-      --architecture "pap" \
-      --topology "${TOPOLOGY}" \
-      --conversation-id "${PAP_NORTH_STAR_CONVERSATION_ID}" \
-      --cache-salt "${PAP_NORTH_STAR_CACHE_SALT}" \
-      --hardware-signature "${PAP_NORTH_STAR_HARDWARE_SIGNATURE}" \
-      --git-commit "${GIT_COMMIT}" \
-      --git-tracked-worktree-dirty "${GIT_TRACKED_WORKTREE_DIRTY}" \
-      --offload-exec-transport "${PAP_OFFLOAD_EXEC_TRANSPORT}" \
-      --direct-mailbox-output "${PAP_DIRECT_MAILBOX_OUTPUT}" \
-      --prefill-ipc-profile "${PAP_PREFILL_IPC_PROFILE}" \
-      --document-tokens "${INPUT_LEN}" \
-      --append-tokens "${PAP_MULTITURN_APPEND_TOKENS}" \
-      --output-tokens "${OUTPUT_LEN}" \
-      --block-size "${PAP_MULTITURN_BLOCK_SIZE}" \
-      --dtype "${PAP_VLLM_DTYPE}" \
-      --tensor-parallel-size "${PAP_TP_SIZE}" \
-      --max-model-len "${MAX_MODEL_LEN}" \
-      --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
-      --max-num-seqs "${MAX_NUM_SEQS}" \
-      2>&1 | tee "${RUN_ROOT}/${TAG}.log"
-    validate_north_star_result "${RUN_ROOT}/result.json"
-    ;;
   multiturn_load)
     TAG="${TOPOLOGY_TAG}_multiturn_load"
     echo "=== Running ${TAG} on port ${PAP_PROXY_PORT} ==="
@@ -2280,8 +2175,7 @@ capture_projection_deferred_traces
 audit_xy_routes
 audit_correctness_logs
 
-if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" \
-  || "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" ]]; then
+if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" ]]; then
   deferred_trace_artifact_args=()
   if deferred_trace_enabled; then
     deferred_trace_artifact_args+=(
@@ -2289,7 +2183,7 @@ if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_north_star" \
       "projection_deferred_trace=${RUN_ROOT}/projection_deferred_trace.json"
     )
   fi
-  "${PYTHON_BIN}" "${NORTH_STAR_FINALIZER}" \
+  "${PYTHON_BIN}" "${MULTITURN_FINALIZER}" \
     --result "${RUN_ROOT}/result.json" \
     --architecture pap \
     --passed-gate session_drain \

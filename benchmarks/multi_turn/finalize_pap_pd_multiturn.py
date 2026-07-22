@@ -1,4 +1,4 @@
-"""Attach post-client lifecycle evidence to a north-star repetition."""
+"""Attach post-client lifecycle evidence to a multi-turn repetition."""
 
 from __future__ import annotations
 
@@ -10,9 +10,6 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from benchmarks.multi_turn.pd_multiturn_reuse_metrics import (
-    validate_official_streaming_one_way,
-)
 from benchmarks.multi_turn.pd_multiturn_load_reuse_metrics import (
     STATUS as PD_LOAD_REUSE_STATUS,
     validate_pd_multiturn_load_reuse,
@@ -57,7 +54,6 @@ REQUIRED_ARTIFACTS = {
         }
     ),
 }
-PD_REUSE_STATUS = "official_streaming_one_way_metrics_passed"
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _DECODE_TOKEN_JOIN_ZERO_FIELDS = (
     "decode_token_pending_tokens",
@@ -403,40 +399,27 @@ def _validate_pd_evidence(
     reuse = result.get("pd_reuse_validation")
     if not isinstance(reuse, Mapping):
         raise ValueError(f"PD reuse validation did not pass: {reuse}")
-    reuse_status = reuse.get("status")
-    if reuse_status == PD_REUSE_STATUS:
-        fresh_reuse = validate_official_streaming_one_way(
-            result,
-            proxy_log=artifacts["proxy_log"].read_text(encoding="utf-8"),
-            prefill_metrics=artifacts["prefill_metrics"].read_text(
-                encoding="utf-8"
-            ),
-            decode_metrics=artifacts["decode_metrics"].read_text(
-                encoding="utf-8"
-            ),
-        )
-    elif reuse_status == PD_LOAD_REUSE_STATUS:
-        service_logs = tuple(
-            artifacts[name].read_text(encoding="utf-8")
-            for name in ("prefill_log", "decode_log")
-            if name in artifacts
-        )
-        fresh_reuse = validate_pd_multiturn_load_reuse(
-            result,
-            prefill_metrics=artifacts["prefill_metrics"].read_text(
-                encoding="utf-8"
-            ),
-            decode_metrics=artifacts["decode_metrics"].read_text(
-                encoding="utf-8"
-            ),
-            effective_config=artifacts["effective_config"].read_text(
-                encoding="utf-8"
-            ),
-            proxy_log=artifacts["proxy_log"].read_text(encoding="utf-8"),
-            service_logs=service_logs,
-        )
-    else:
+    if reuse.get("status") != PD_LOAD_REUSE_STATUS:
         raise ValueError(f"PD reuse validation did not pass: {reuse}")
+    service_logs = tuple(
+        artifacts[name].read_text(encoding="utf-8")
+        for name in ("prefill_log", "decode_log")
+        if name in artifacts
+    )
+    fresh_reuse = validate_pd_multiturn_load_reuse(
+        result,
+        prefill_metrics=artifacts["prefill_metrics"].read_text(
+            encoding="utf-8"
+        ),
+        decode_metrics=artifacts["decode_metrics"].read_text(
+            encoding="utf-8"
+        ),
+        effective_config=artifacts["effective_config"].read_text(
+            encoding="utf-8"
+        ),
+        proxy_log=artifacts["proxy_log"].read_text(encoding="utf-8"),
+        service_logs=service_logs,
+    )
     if dict(reuse) != fresh_reuse:
         raise ValueError("stored PD reuse evidence differs from fresh validation")
     _validate_correctness_artifact(

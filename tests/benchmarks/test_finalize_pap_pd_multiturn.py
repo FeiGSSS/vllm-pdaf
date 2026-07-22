@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from benchmarks.multi_turn import finalize_pap_pd_multiturn as finalizer_module
 from benchmarks.multi_turn.finalize_pap_pd_multiturn import finalize_result
 
 _DEFERRED_TRACE_SPANS = (
@@ -32,33 +33,9 @@ def _client_result(architecture: str = "pap") -> dict[str, object]:
         "cache_validation": {"status": "passed"},
     }
     if architecture == "pd":
-        result["profile"] = {"block_size": 16}
-        result["rounds"] = [
-            {"round": 1, "prompt_tokens": 16018},
-            {"round": 2, "prompt_tokens": 16418},
-        ]
-        result["cache_validation"] = {
-            "status": "official_streaming_one_way_metrics_passed",
-            "first_prompt_block_boundary": 16016,
-            "expected_cached_tokens": 16272,
-            "decode_derived_hit_tokens": 256,
-        }
         result["pd_reuse_validation"] = {
-            "status": "official_streaming_one_way_metrics_passed",
-            "mode": "official_streaming_one_way",
-            "proxy_cache_misses": 2,
-            "proxy_cache_hits": 0,
-            "total_prompt_tokens": 32436,
-            "prefill_prompt_tokens_by_source": {
-                "local_compute": 16420,
-                "local_cache_hit": 16016,
-                "external_kv_transfer": 0,
-            },
-            "decode_prompt_tokens_by_source": {
-                "local_compute": 0,
-                "local_cache_hit": 16272,
-                "external_kv_transfer": 16164,
-            },
+            "status": "pd_multiturn_load_reuse_metrics_passed",
+            "mode": "pd_multiturn_load",
         }
     return result
 
@@ -574,6 +551,7 @@ def test_finalize_result_rejects_failed_correctness_artifact(
 
 def test_finalize_pd_requires_reuse_evidence_and_clean_config(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     artifacts = {
         "proxy_log": tmp_path / "proxy.log",
@@ -627,8 +605,17 @@ def test_finalize_pd_requires_reuse_evidence_and_clean_config(
     artifacts["tracked_worktree_patch"].write_bytes(b"")
     artifacts["tracked_index_patch"].write_bytes(b"")
 
+    client_result = _client_result("pd")
+    expected_reuse = client_result["pd_reuse_validation"]
+    assert isinstance(expected_reuse, dict)
+    monkeypatch.setattr(
+        finalizer_module,
+        "validate_pd_multiturn_load_reuse",
+        lambda *args, **kwargs: dict(expected_reuse),
+    )
+
     result = finalize_result(
-        _client_result("pd"),
+        client_result,
         architecture="pd",
         passed_gates=("pd_reuse_metrics", "correctness_logs"),
         artifacts=artifacts,
