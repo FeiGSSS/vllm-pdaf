@@ -6,13 +6,13 @@ live under this directory. See [the storage contract](README.md) and the
 
 Current normalized AIPerf experiment bundles:
 
-- [Current 0.90-memory eager PAP/PD baseline](PAP-20260722-AIPERF-PA090-EAGER/report.md)
+- [Latest eager PAP/PD result](PAP-20260722-AIPERF-PA090-EAGER/report.md)
 
 Superseded or historical report bundles:
 
 - [Superseded AIPerf-only convergence regression](PAP-20260722-AIPERF-CONVERGENCE/report.md)
-- [Historical 0.76-memory piecewise CUDA Graph comparison](PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md)
-- [Superseded 0.76-memory audited-capacity eager baseline](PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md)
+- [Historical piecewise CUDA Graph comparison](PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md)
+- [Superseded audited-capacity eager baseline](PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md)
 - [Superseded canonical AIPerf cutover regression](PAP-20260722-AIPERF-CANONICAL-CUTOVER/report.md)
 - [Superseded randomized-length AIPerf O32 scan](PAP-20260721-AIPERF-RANDOM-O32/report.md)
 - [Historical fixed 96-session AIPerf scan](PAP-20260720-AIPERF-FIXED96/report.md)

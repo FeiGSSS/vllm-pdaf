@@ -52,6 +52,9 @@ Useful environment overrides:
   request.
 - `PAP_SKIP_SMOKE_REQUEST=1` to skip the launcher request.
 - `PAP_PROXY_PORT=9000` to choose the OpenAI-compatible proxy port.
+- `PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.90` is the PA default. Projection has
+  no memory-utilization override: the launcher reserves 120% of checkpoint
+  weight bytes per TP rank and does not allocate local KV tensors.
 - `PAP_EXECUTION_MODE=piecewise` in the benchmark runner to enable the
   validated development path for piecewise CUDA Graph. Eager remains the
   AIPerf default; PAP transport, remote Attention, and KV-publication
@@ -110,6 +113,6 @@ single topology or concurrency point. The old fixed-length O256/O128 and
 12-conversation workloads remain historical evidence, not current defaults.
 
 Current results are recorded in the
-[audited eager report](../../benchmarks/pap/experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md)
+[latest eager report](../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md)
 and the
-[piecewise CUDA Graph report](../../benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
+[archived piecewise CUDA Graph report](../../benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).

@@ -2,9 +2,9 @@
 
 ## Scope
 
-This four-GPU eager-mode scan refreshes the PAP-versus-PD baseline after
-raising the PAP Prefill executor's per-instance memory budget from 0.76 to
-0.90 and making the generated dataset identity independent of the matrix ID.
+This four-GPU eager-mode scan refreshes the PAP-versus-PD baseline with a 0.90
+PAP Prefill memory budget and generated dataset identity independent of the
+matrix ID.
 
 - vLLM/PAP commit: `7401e8e1260a81b4f7b73d9a6857052e65149791`
 - Tracked worktree at launch: clean
@@ -29,7 +29,7 @@ leaving 3,776 tokens below `max_model_len=20000`.
 | --- | ---: | ---: | ---: |
 | PAP Prefill on PA | 0.90 | 64 | 16,384 |
 | PAP Attention | colocated outside vLLM budget | - | - |
-| PAP Projection | 0.76 | 64 | 64 |
+| PAP Projection | legacy explicit budget | 64 | 64 |
 | PD Prefill | 0.90 | 64 | 16,384 |
 | PD Decode | 0.90 | 64 | 64 |
 
@@ -40,9 +40,10 @@ unchanged.
 
 Each PA Prefill executor obtained 22.97 GiB of KV cache, or 167,264 tokens.
 Peak observed PA KV usage rose from 60.8% at C12 to 89.0% at C32. All four PAP
-points started and completed without OOM, showing that 0.90 removes the former
-artificial KV constraint while retaining enough memory for colocated
-Attention.
+points started and completed without OOM, showing that 0.90 avoids an
+artificial PA KV constraint while retaining enough memory for colocated
+Attention. Automatic Projection sizing was introduced after this run; the
+superseded manual value is not a current configuration input.
 
 ## Validity
 
@@ -119,7 +120,7 @@ with available Decode KV and is caused by highly variable NIXL transfer time.
 PD 3P1D should therefore be treated as unstable until its transfer variance is
 diagnosed; this does not invalidate the conservative best-observed comparison.
 
-The complete local evidence is colocated under
-[`raw/main_matrix`](runs/20260722_7401e8e12_aiperf_pa090_eager_o32_s32/raw/main_matrix/capacity_results.md)
-and
-[`raw/pd3p1d_c8_repeat`](runs/20260722_7401e8e12_aiperf_pa090_eager_o32_s32/raw/pd3p1d_c8_repeat/capacity_results.md).
+The tracked PAP and PD run manifests preserve workload, topology, metrics, and
+artifact identities. Machine-local raw evidence remains colocated under the
+ignored `runs/` raw directory when available; this report does not link to an
+untracked path.

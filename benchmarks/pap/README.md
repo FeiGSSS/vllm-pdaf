@@ -13,9 +13,9 @@ lengths around 8K initial input and 512 new user tokens per later turn, plus an
 output-length distribution with mean 32 tokens. It uses deterministic 3-second
 think and 1-second tool delays, pure conversation concurrency, three
 request-level SLO tiers, 32 conversations per point, and a lean
-topology-specific boundary scan. The current eager baseline is documented in
-[`PAP-20260721-AIPERF-AUDITED-CAPACITY`](experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md),
-and its matched piecewise CUDA Graph comparison is documented in
+topology-specific boundary scan. The latest eager PAP/PD result is documented
+in [`PAP-20260722-AIPERF-PA090-EAGER`](experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md),
+and the archived piecewise CUDA Graph comparison is documented in
 [`PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH`](experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
 The initial integration result is documented in
 [`pap-pd-aiperf-four-gpu-results-20260716.md`](experiments/legacy/reports/pap-pd-aiperf-four-gpu-results-20260716.md).
@@ -61,14 +61,15 @@ resolved.
   manifest without writing to the source directory.
 - `validate_registry.py` applies schema and cross-record fail-closed checks.
 
-The current baseline is the randomized 32-conversation
-[audited eager scan](experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md),
-with a matched
-[piecewise CUDA Graph scan](experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
-Both fix PAP at 3PA1P and compare it with one-way PD 1P3D, 2P2D, and 3P1D.
-They are single-repetition development evidence; a release-level performance
-claim requires three repetitions of the same AIPerf testbed. P17 records and
-earlier four-GPU reports remain historical evidence only.
+The canonical runtime policy uses `0.90` for PAP Prefill and every PD executor.
+Projection is independent: `vllm/pap/model/memory.py` derives its budget from
+120% of checkpoint weight bytes per TP rank, and the PAP-vLLM integration
+plans no physical Projection KV tensors. The latest randomized
+32-conversation [eager scan](experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md)
+predates that automatic Projection policy, so it remains controlled
+performance evidence rather than a current memory-policy measurement. A
+release-level claim requires three repetitions of the same AIPerf testbed.
+P17 records and earlier four-GPU reports remain historical evidence only.
 
 Run the complete lean matrix, or select one topology and one concurrency point
 through the environment overrides documented in the AIPerf README:
@@ -116,15 +117,14 @@ evidence rather than a formal release record:
 
 | Condition | FA2 | PAP Triton split-4 | Max error vs FA2 |
 | --- | ---: | ---: | ---: |
-| [full 92 SM](experiments/legacy/runs/20260716_paged_decode_backend_probe/full92.json) | 0.3511 ms | 0.3313 ms | 1.91e-6 |
-| [static-MPS 28 SM](experiments/legacy/runs/20260716_paged_decode_backend_probe/mps28.json) | 0.5727 ms | 0.3383 ms | 1.91e-6 |
+| full 92 SM | 0.3511 ms | 0.3313 ms | 1.91e-6 |
+| static-MPS 28 SM | 0.5727 ms | 0.3383 ms | 1.91e-6 |
 
 The matching historical C4 quick run reduced steady TPOT from 49.75 ms to 42.47 ms;
 the PD control is 41.97 ms. All 20 requests, token digests, cache checks,
-lifecycle audits, static-MPS checks, and session drain passed. Preserve the
-[C1](experiments/legacy/runs/20260716_triton_decode_c1_quick/aggregate.json)
-and [C4](experiments/legacy/runs/20260716_triton_decode_c4_quick/aggregate.json)
-raw diagnostic results; the accepted three-repetition result is linked above.
+lifecycle audits, static-MPS checks, and session drain passed. C1/C4 raw
+diagnostics remain machine-local legacy artifacts; the tracked accepted
+experiment record is linked above.
 
 #### Deferred alternative: low-smem FA2 decode specialization
 

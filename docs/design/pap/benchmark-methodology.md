@@ -4,11 +4,12 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260722-AIPERF-PA090-EAGER
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260701-PD-METHODOLOGY
-last_validated_commit: aafcfb1ea1800b4dc0bcd1ea8299d9984e9624aa
+last_validated_commit: 6d8718aa83aa326960fc65a5ca3270f08fa4a528
 ---
 
 # PAP benchmark methodology
@@ -63,35 +64,40 @@ token outputs, and deterministic think/tool delays.
 The source-audited scheduler settings are `max_num_seqs=64`, Prefill
 `max_num_batched_tokens=16384`, Decode/Projection
 `max_num_batched_tokens=64`, default `max_num_partial_prefills=1`, and
-`max_model_len=20000`. PAP Prefill and PD use
-`gpu_memory_utilization=0.90`; PAP Projection remains at `0.76`. The setting
-applies per vLLM executor, so PAP reports must also record physical PA-GPU
-headroom for the colocated Attention runtime.
+`max_model_len=20000`. PAP Prefill and every PD executor use
+`gpu_memory_utilization=0.90`. PAP Projection derives its utilization from
+120% of checkpoint weight bytes per TP rank and the smallest selected
+Projection GPU, rounded upward to four decimals. Projection retains only KV
+metadata plus vLLM's null block; it allocates no local KV tensor. The Prefill
+setting applies per vLLM executor, so PAP reports must also record physical
+PA-GPU headroom for the colocated Attention runtime.
 The full parameter rationale and reproducible commands live in the
 [AIPerf testbed documentation](../../../benchmarks/pap/aiperf/README.md).
 
-The matched eager comparison now uses this `0.90` baseline. The older
-piecewise CUDA Graph result used PAP Prefill `0.76` and is retained only as
-historical development evidence.
+The latest four-GPU eager comparison uses the `0.90` PA/PD baseline but
+predates automatic Projection sizing. It remains controlled performance
+evidence; the current memory policy has a separate 128-request 1PA1P E2E and
+requires a fresh four-GPU run before it becomes a performance baseline. The
+older piecewise CUDA Graph result is historical development evidence.
 
 Best SLO-compliant goodput from the current single-repetition development
 scans is:
 
 | Mode | SLO | PAP | Best PD | PAP versus PD |
 | --- | --- | ---: | ---: | ---: |
-| Eager 0.90 | Strict | 2.455 req/s | 1.770 req/s | +38.7% |
-| Eager 0.90 | Standard | 3.277 req/s | 1.816 req/s | +80.4% |
-| Eager 0.90 | Relaxed | 5.000 req/s | 2.481 req/s | +101.5% |
-| Historical Graph 0.76 | Strict | 2.460 req/s | 1.833 req/s | +34.2% |
-| Historical Graph 0.76 | Standard | 2.556 req/s | 1.904 req/s | +34.2% |
-| Historical Graph 0.76 | Relaxed | 2.777 req/s | 2.591 req/s | +7.2% |
+| Recorded eager | Strict | 2.455 req/s | 1.770 req/s | +38.7% |
+| Recorded eager | Standard | 3.277 req/s | 1.816 req/s | +80.4% |
+| Recorded eager | Relaxed | 5.000 req/s | 2.481 req/s | +101.5% |
+| Archived Graph | Strict | 2.460 req/s | 1.833 req/s | +34.2% |
+| Archived Graph | Standard | 2.556 req/s | 1.904 req/s | +34.2% |
+| Archived Graph | Relaxed | 2.777 req/s | 2.591 req/s | +7.2% |
 
 All included points completed every request and passed routing, output, and
 runtime audits. The eager comparison uses the better of two valid PD 3P1D C8
 runs because that topology showed extreme transfer variance; the report
 preserves both observations. These are development results, not a formal
 three-repetition claim. See the
-[current eager report](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md)
+[latest eager report](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md)
 and the
 [historical Graph report](../../../benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
 

@@ -123,7 +123,7 @@
       "name": "report",
       "kind": "aggregate",
       "path": {"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md"},
-      "sha256": "345567fdca4997769591a89c44f6c266b5450cb3f31bc02a5eef6c3bb12b57fe"
+      "sha256": "289f6c70312c7dfa3709337bceead82ef89a0d74efe760f086a357f195afd6db"
     }
   ],
   "validity": {

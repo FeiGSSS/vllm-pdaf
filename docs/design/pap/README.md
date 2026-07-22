@@ -4,10 +4,11 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260722-AIPERF-PA090-EAGER
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
-last_validated_commit: aafcfb1ea1800b4dc0bcd1ea8299d9984e9624aa
+last_validated_commit: 6d8718aa83aa326960fc65a5ca3270f08fa4a528
 ---
 
 # PAP documentation
@@ -91,9 +92,9 @@ and normalized experiments rather than a repository skill plan.
 - Canonical four-GPU AIPerf matrix:
   `benchmarks/pap/aiperf/run_capacity_matrix.sh`
 - Current capacity reports:
-  [eager](../../../benchmarks/pap/experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md)
+  [latest eager](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md)
   and
-  [piecewise CUDA Graph](../../../benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md)
+  [archived piecewise CUDA Graph](../../../benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md)
 - Offline diagnostics: `benchmarks/pap/tooling/`, invoked through `tools/pap_*`
 - Test policy: [tests/pap/README.md](../../../tests/pap/README.md)
 - Runnable examples: [examples/pap/README.md](../../../examples/pap/README.md)

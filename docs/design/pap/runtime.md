@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260722-AIPERF-PA090-EAGER
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
@@ -11,7 +12,7 @@ related_experiments:
   - PAP-20260713-ASYNC-DECODE-TOKEN-D2H
   - PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: aafcfb1ea1800b4dc0bcd1ea8299d9984e9624aa
+last_validated_commit: 6d8718aa83aa326960fc65a5ca3270f08fa4a528
 ---
 
 # PAP runtime
@@ -94,11 +95,14 @@ receives an explicit role before model construction:
 - Standard PD disables PAP model hooks and uses the same vLLM piecewise mode
   and role-appropriate capture sizes for a fair comparison.
 
-Projection owns no local request KV. Its eager path can skip model warmup, but
-piecewise mode skips only the inapplicable local-Attention kernel warmup and
-continues into `capture_model()`. Capture forwards contain no live PAP batch,
-so they size buffers without performing remote execution. Runtime forwards
-retain the normal request/session-generation checks.
+Projection owns no local request KV. At launch, `model/memory.py` budgets 120%
+of checkpoint weight bytes per TP rank. Engine initialization keeps attention
+layer/group metadata and one null block, while creating no physical KV cache
+tensor or local max-context KV reservation. Its eager path can skip model
+warmup, but piecewise mode skips only the inapplicable local-Attention kernel
+warmup and continues into `capture_model()`. Capture forwards contain no live
+PAP batch, so they size buffers without performing remote execution. Runtime
+forwards retain the normal request/session-generation checks.
 
 Capture sizes describe scheduled model tokens. They neither reserve
 conversation slots nor override `max_num_seqs`, `max_num_batched_tokens`, KV

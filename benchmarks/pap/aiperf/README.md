@@ -182,13 +182,15 @@ when wire-level debugging is required.
 
 The matrix fixes PAP at 3PA1P and PD at one-way 1P3D, 2P2D, and 3P1D. PAP uses
 the accepted static 72/20-SM path. Its Prefill executor and every PD executor
-use `gpu_memory_utilization=0.90`; PAP Projection remains at `0.76` because it
-does not own prompt KV. Scheduler limits, batching, model length, dtype, data,
-and AIPerf settings remain unchanged across concurrency points.
+use `gpu_memory_utilization=0.90`. Projection is sized automatically to 120%
+of checkpoint weight bytes per TP rank on the smallest selected Projection
+GPU. Scheduler limits, batching, model length, dtype, data, and AIPerf settings
+remain unchanged across concurrency points.
 
-The matched `0.90` eager scan is recorded in
+The latest four-GPU eager scan is recorded in
 [`PAP-20260722-AIPERF-PA090-EAGER`](../experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md).
-The earlier `0.76` PAP scans remain valid historical measurements.
+It predates automatic Projection sizing and remains controlled historical
+performance evidence until the current policy is rerun on four GPUs.
 
 ### Capacity-parameter audit
 
@@ -232,7 +234,9 @@ larger number as automatically safer:
   `0.90`, matching PD and avoiding an artificial KV-capacity disadvantage.
   Attention remains an additional colocated allocation, so every new hardware
   baseline must record startup success and physical-GPU headroom. Projection
-  stays at `0.76`; it allocates no local request KV, so its nominal KV arena is
+  computes `ceil((checkpoint_bytes / TP) * 1.20 / gpu_total_bytes)` and rounds
+  utilization upward to four decimals. It retains layer/group metadata and
+  one null block but allocates no local KV tensor, so Projection KV capacity is
   not a PAP conversation limit.
 - This revised baseline remains eager. CUDA Graph support and its memory budget
   are introduced and measured separately so graph effects are not conflated
@@ -321,10 +325,9 @@ It is historical fixed-length evidence rather than the current baseline. The
 [archive notice](../experiments/legacy/reports/pap-pd-aiperf-fixed-length-preliminary-20260721.md).
 The current source-audited randomized O32 eager baseline is recorded in
 [`PAP-20260722-AIPERF-PA090-EAGER`](../experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md).
-The superseded `0.76` eager baseline remains in
+The superseded eager baseline remains in
 [`PAP-20260721-AIPERF-AUDITED-CAPACITY`](../experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md).
-The historical piecewise CUDA Graph comparison also used the `0.76` PAP
-Prefill budget and remains in
+The historical piecewise CUDA Graph comparison remains in
 [`PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH`](../experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
 The earlier superseded predecessor remains in
 [`PAP-20260721-AIPERF-RANDOM-O32`](../experiments/PAP-20260721-AIPERF-RANDOM-O32/report.md).

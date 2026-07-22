@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260722-AIPERF-PA090-EAGER
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
@@ -11,7 +12,7 @@ related_experiments:
   - PAP-20260710-ARBITRARY-XY
   - PAP-20260711-ATTENTION-COMBINE
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: aafcfb1ea1800b4dc0bcd1ea8299d9984e9624aa
+last_validated_commit: 6d8718aa83aa326960fc65a5ca3270f08fa4a528
 ---
 
 # PAP architecture
@@ -103,8 +104,8 @@ executor.
   forward-context construction, peer activity, and asynchronous sampled-token
   delivery. `settings.py` parses shared process settings once per owner.
 - `model/`: typed forward-batch access, Projection Attention execution,
-  Prefill sealed-KV publication, and piecewise CUDA Graph boundaries used by
-  model implementations.
+  Prefill sealed-KV publication, piecewise CUDA Graph boundaries, and the
+  Projection checkpoint-weight memory planner used by launchers.
 - `protocol/`: wire models, descriptors, sealed KV codec, and transport
   contracts.
 - `topology/`: route groups and Projection peer membership.
