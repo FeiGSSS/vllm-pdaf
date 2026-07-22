@@ -29,6 +29,10 @@ run manifest, and regenerating `INDEX.md`.
 
 ## Legacy evidence
 
+Normalized P17 experiment bundles remain in their existing `PAP-*`
+directories with `status=archived`; moving them would break recorded artifact
+paths. Their profile is a historical schema reference, not a runnable gate.
+
 `legacy/reports/` contains the preserved human-readable reports that predate
 the normalized experiment record. `legacy/runs/` and `legacy/capacity/` hold
 the repository-local raw artifacts that have not yet been assigned to one

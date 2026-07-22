@@ -39,19 +39,19 @@ because they were generated during the PAP comparison iterations. Older generic
 PD/NIXL runs that are not part of PAP comparison remain in the original
 baseline directories.
 
-## Current tracked P17 release gate
+## Current AIPerf testbed
 
-P17 is the current 1PA1P same-host release gate. Its tracked configuration is
-`benchmarks/pap/profiles/p17_1pa1p.toml`; the runner reads that file directly.
+All new PAP and PD runtime/performance evidence uses the four-GPU AIPerf
+capacity matrix:
 
 ```bash
-bash benchmarks/pap/scripts/run_p17_1pa1p.sh quick c1
-bash benchmarks/pap/scripts/run_p17_1pa1p.sh formal c4
+bash benchmarks/pap/aiperf/run_capacity_matrix.sh
 ```
 
-The C1 command is a smoke shape only. Performance comparison uses the C4
-formal shape and three repetitions. xPAyP and cross-host NIXL remain preserved
-but unverified in this milestone.
+The fixed testbed serves 32 conversations and 320 randomized multi-turn
+requests. Development may select one topology/concurrency point; milestone
+claims use three repetitions. The former P17 runner is removed, while its
+profile and results remain archived for provenance only.
 
 ## Historical two-turn comparison test bed
 
@@ -70,9 +70,8 @@ therefore observable without contaminating TPOT.
 
 The original workflow used `run_multiturn_north_star.sh` and
 `bootstrap_pd_multiturn_reference.sh` from the removed benchmark skill. These
-references are now immutable historical controls. New regression evidence uses
-the project-owned P17 runner, and new PAP/PD capacity evidence uses the AIPerf
-matrix under `benchmarks/pap/`.
+references are now immutable historical controls. New regression and capacity
+evidence uses the AIPerf matrix under `benchmarks/pap/aiperf/`.
 
 The PD lane deliberately ran the unchanged official streaming proxy. In the
 API state frozen by this reference, streaming chat chunks did not carry the

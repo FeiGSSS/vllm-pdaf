@@ -1,12 +1,16 @@
 # AIPerf benchmark lane
 
-This directory adds AIPerf as a standard serving-performance client. It does
-not replace the project-owned PAP E2E client:
+This directory defines the canonical PAP and PD serving testbed. All new
+performance, capacity, and runtime E2E comparisons use AIPerf:
 
 - AIPerf owns load scheduling, multi-turn session execution, per-request
   records, TTFT/ITL/latency/throughput metrics, time slices, and sweeps.
-- The PAP E2E client remains the release gate for exact token continuity,
-  cache-hit accounting, routing audits, lifecycle drain, and token correctness.
+- Project-owned launchers wrap AIPerf with output-length, routing, KV handoff,
+  correctness-log, decode-token, MPS, and lifecycle-drain audits.
+
+The former P17/custom-client lane is archived evidence and is not a current
+runner or release gate. Targeted pytest and one-request smoke checks remain for
+source-level diagnosis, but they do not define benchmark performance.
 
 PAP and the four-GPU PD proxy accept AIPerf's default `X-Correlation-ID` as a
 conversation identifier when the request body has no `conversation_id`. A body
@@ -269,6 +273,19 @@ boundary scan; set
 ```bash
 bash benchmarks/pap/aiperf/run_capacity_matrix.sh
 ```
+
+For a PAP runtime regression, run one complete canonical point instead of the
+whole comparison matrix:
+
+```bash
+PAP_CAPACITY_ARCHITECTURES=pap_3pa1p \
+PAP_CAPACITY_PAP_3PA1P_POINTS=12 \
+PAP_CAPACITY_REPETITIONS=1 \
+  bash benchmarks/pap/aiperf/run_capacity_matrix.sh
+```
+
+This still serves all 32 conversations and 320 randomized requests. It changes
+only the number of topology/concurrency points, not the workload definition.
 
 The output distribution defaults to mean 32, median 30, and range 16-64. The
 mean is encoded in the default matrix ID and dataset filename; all four values,

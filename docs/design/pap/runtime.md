@@ -7,13 +7,6 @@ related_experiments:
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260716-4GPU-CONV-AFFINITY
-  - PAP-20260716-TRITON-72-20-BASELINE
-  - PAP-20260715-VLLM-INTEGRATION-BOUNDARY
-  - PAP-20260715-ARCHITECTURE-MILESTONE
-  - PAP-20260715-RUNTIME-BOUNDARY-E2E
-  - PAP-20260715-MODEL-ADAPTER-E2E
-  - PAP-20260715-INTEGRATION-E2E
-  - PAP-20260715-P17-POST-REFACTOR
   - PAP-20260713-ASYNC-DECODE-TOKEN-D2H
   - PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC
   - PAP-20260714-SEAL-HANDOFF-KV
@@ -146,4 +139,4 @@ API, KV-cache, and model-runner glue from vLLM internals. One
 observability are separate from the registry. The remaining large state is the
 performance-sensitive unified-KV registry and the local-fast/NIXL backend
 internals. Further splits should be owner-driven; they must not reintroduce
-removed runtime selectors or broaden the P17 gate.
+removed runtime selectors or add a second runtime testbed beside AIPerf.

@@ -8,7 +8,6 @@ ROOT = Path(__file__).resolve().parents[2]
 PAP_SHELL_ENTRYPOINTS = (
     "benchmarks/pap/aiperf/run_capacity_matrix.sh",
     "benchmarks/pap/aiperf/run_profile.sh",
-    "benchmarks/pap/scripts/run_p17_1pa1p.sh",
     "benchmarks/pap/scripts/run_pap_workload.sh",
     "benchmarks/pap/scripts/run_pd_multiturn_topology.sh",
     "examples/pap/launch_pap_nixl.sh",

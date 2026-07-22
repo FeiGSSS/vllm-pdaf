@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Standalone P17 paged-FlashAttention SM/bandwidth experiment. This script
-# deliberately does not launch PAP services or modify the runtime data path.
+# Standalone archived-shape paged-FlashAttention SM/bandwidth diagnostic.
+# This script does not launch PAP services or define benchmark performance.
 
 ROOT_DIR="${PAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"

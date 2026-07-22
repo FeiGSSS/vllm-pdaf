@@ -7,13 +7,6 @@ related_experiments:
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260716-4GPU-CONV-AFFINITY
-  - PAP-20260716-TRITON-72-20-BASELINE
-  - PAP-20260715-VLLM-INTEGRATION-BOUNDARY
-  - PAP-20260715-ARCHITECTURE-MILESTONE
-  - PAP-20260715-RUNTIME-BOUNDARY-E2E
-  - PAP-20260715-MODEL-ADAPTER-E2E
-  - PAP-20260715-INTEGRATION-E2E
-  - PAP-20260715-P17-POST-REFACTOR
   - PAP-20260710-ARBITRARY-XY
   - PAP-20260711-ATTENTION-COMBINE
   - PAP-20260714-SEAL-HANDOFF-KV
@@ -65,14 +58,14 @@ independent.
 
 | Capability | Implementation | Milestone validation |
 | --- | --- | --- |
-| 1PA1P, same host | `local_fast` + CUDA IPC | P17 release gate |
-| xPAyP, same host | Gateway wave admission over `local_fast` | Controlled smoke |
+| 3PA1P, same host | `local_fast` + CUDA IPC | Current AIPerf matrix |
+| Other xPAyP, same host | Gateway wave admission over `local_fast` | Controlled smoke |
 | xPAyP, cross host | NIXL mailbox/backend | Preserved, contract only |
-| TP or other models | Existing integration boundary | Outside P17 gate |
+| TP or other models | Existing integration boundary | Outside the current matrix |
 
 ## Execution modes
 
-Eager execution is the default and remains the P17 release-gate mode. The
+Eager execution is the default AIPerf mode. The
 optional `piecewise` mode reuses vLLM's compile and token-count CUDA Graph
 dispatch without attempting to capture PAP host side effects.
 
@@ -149,7 +142,7 @@ tests import `attention/`, `gateway/`, `kv/`, `lifecycle/`, `protocol/`,
 Historical experimental branches are reproduced from their Git commits and raw
 artifacts, not from selectable code paths in the current runtime.
 
-The P17 kernel selection is one main path, not a runtime experiment switch.
+The Attention kernel selection is one main path, not a runtime experiment switch.
 `PAPAttentionStepContext` prepares block metadata and a fixed split-4 Triton
 workspace once per decode step, then reuses them across all model layers. The
 runtime does not retain the former per-layer FA2 fallback. Historical

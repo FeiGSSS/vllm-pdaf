@@ -1,9 +1,10 @@
+# Historical schema reference for archived P17 run manifests. Not runnable.
 schema_version = 1
 profile_id = "p17_1pa1p"
 profile_version = 2
-status = "canonical"
+status = "archived"
 architecture = "pap"
-release_gate = true
+release_gate = false
 mode = "formal"
 repetitions = 3
 metric_definition = "last_output_token_v2"

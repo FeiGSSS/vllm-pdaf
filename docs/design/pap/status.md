@@ -4,7 +4,6 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
-  - PAP-20260716-TRITON-72-20-BASELINE
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
 last_validated_commit: e5190a84e37124c893cf66d5b1bb94f9e31dc408
@@ -24,11 +23,11 @@ not selectable branches in the current runtime.
 
 | Capability | Source state | Current evidence |
 | --- | --- | --- |
-| Qwen3-8B, same-host 1PA1P/TP1 | Main path | P17 three-repetition release gate |
+| Qwen3-8B, same-host PAP | Main path | Four-GPU AIPerf matrix |
 | Same-host xPAyP | Implemented | Controlled correctness smoke; not a performance gate |
 | Cross-host xPAyP over NIXL | Preserved | Contract coverage only; no fresh E2E claim |
-| Prefill-owned unified KV | Main path | P17 lifecycle, commit, lease, and drain gates |
-| Triton split-4 paged decode | Main Attention kernel | P17 72/20-SM accepted baseline |
+| Prefill-owned unified KV | Main path | AIPerf runtime and lifecycle audits |
+| Triton split-4 paged decode | Main Attention kernel | AIPerf eager/Graph baselines |
 | Piecewise CUDA Graph | Optional development mode | Six valid PAP/PD four-GPU points |
 | Full-model CUDA Graph | Unsupported | Host transport and KV publication cannot be replayed safely |
 
@@ -58,15 +57,14 @@ or historical experiment implementations.
 
 ## Validation lanes
 
-The two active lanes answer different questions:
+The only active runtime lane is the **four-GPU AIPerf testbed**: 32
+conversations, ten turns, randomized 8K initial input, roughly 512 appended
+input tokens, randomized 16-64-token output, think/tool delays, and
+conversation concurrency. PAP is 3PA1P; PD compares one-way 1P3D, 2P2D, and
+3P1D.
 
-- **P17 release regression gate:** Qwen3-8B FP16, 1PA1P, same-host
-  `local_fast`, static MPS 72/20, five turns, C4, and 256 output tokens. The
-  accepted formal record remains `PAP-20260716-TRITON-72-20-BASELINE`.
-- **Four-GPU capacity development testbed:** 32 conversations, ten turns,
-  randomized 8K initial input, roughly 512 appended input tokens, randomized
-  16-64-token output, think/tool delays, and conversation concurrency. PAP is
-  3PA1P; PD compares one-way 1P3D, 2P2D, and 3P1D.
+The former P17 1PA1P client, runner, and release gate are retired. Its profile
+and results remain archived solely for historical manifest validation.
 
 The capacity lane deliberately avoids artificial scheduler limits:
 
@@ -97,7 +95,7 @@ and the
 
 ## Remaining work
 
-1. Run three repetitions only when promoting the four-GPU Graph result to a
+1. Run three AIPerf repetitions only when promoting a four-GPU result to a
    release-level performance claim.
 2. Profile the mixed Graph deltas, especially PAP C20 and PD 2P2D C16, before
    expanding capture shapes or attempting broader graph coverage.

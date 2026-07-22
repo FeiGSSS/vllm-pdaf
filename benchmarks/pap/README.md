@@ -6,9 +6,9 @@ owns benchmark methodology, tracked conclusions, manifests, and colocated raw
 artifacts; it does not define the runtime architecture. PAP experiments use
 these project-owned entry points directly, without a repository skill layer.
 
-The optional [AIPerf lane](aiperf/README.md) provides standardized serving
-load generation and metrics alongside the project-owned correctness gates. Its
-current four-GPU development testbed uses ten turns, randomized lognormal
+The canonical [AIPerf lane](aiperf/README.md) provides standardized serving
+load generation and metrics alongside project-owned runtime audits. Its
+four-GPU testbed uses ten turns, randomized lognormal
 lengths around 8K initial input and 512 new user tokens per later turn, plus an
 output-length distribution with mean 32 tokens. It uses deterministic 3-second
 think and 1-second tool delays, pure conversation concurrency, three
@@ -34,14 +34,16 @@ and never act as admission limits; uncaptured shapes fall back to normal
 execution. See the
 [AIPerf lane](aiperf/README.md#piecewise-cuda-graph-lane) for the exact contract.
 
-This directory defines the canonical PAP benchmark profile and experiment
+This directory defines the canonical PAP benchmark contract and experiment
 storage. Repository-local raw results are colocated below `experiments/`;
 machine-shared historical results stay external until their ownership is
 resolved.
 
 ## Layout
 
-- `profiles/p17_1pa1p.toml` is the only runtime release-gate profile.
+- `aiperf/run_capacity_matrix.sh` is the executable current testbed contract.
+- `profiles/p17_1pa1p.toml` is retained only to validate archived manifests;
+  it is not runnable and has no release-gate status.
 - `tooling/` contains offline trace summaries and remote-Attention diagnostics;
   runtime code under `vllm/pap/` does not import it.
 - `schemas/` defines versioned run-manifest and experiment-record contracts.
@@ -58,41 +60,25 @@ resolved.
   manifest without writing to the source directory.
 - `validate_registry.py` applies schema and cross-record fail-closed checks.
 
-The P17 profile freezes Qwen3-8B FP16, 1PA1P/TP1, same-host `local_fast`,
-static MPS with 72 Prefill and 20 Attention SMs, async decode-token delivery,
-async Prefill KV import, sealed handoff, Prefill-owned unified KV, and the 16K
-five-turn C4 workload with 256 output tokens per turn. xPAyP and cross-host NIXL
-remain `preserved-unverified`; they are not runtime release gates in this
-milestone.
-
-Run a one-conversation smoke check or the canonical three-repetition C4 gate:
-
-```bash
-bash benchmarks/pap/scripts/run_p17_1pa1p.sh quick c1
-bash benchmarks/pap/scripts/run_p17_1pa1p.sh formal c4
-```
-
-The runner loads its model, workload, placement, transport, MPS, and audit
-values from `profiles/p17_1pa1p.toml`. Machine-specific model and corpus roots
-remain local overrides (`PAP_MODEL_ROOT` and `PAP_CORPUS_ROOT`).
-
-The current accepted formal baseline is
-[`PAP-20260716-TRITON-72-20-BASELINE`](experiments/PAP-20260716-TRITON-72-20-BASELINE/experiment.json).
-Its three C4 repetitions passed all gates on clean commit `3a6fe93d1`, with
-9386.68 ms R1 TTFT, 35.00 ms R1 TPOT, 198.21 ms steady TTFT, and 41.28 ms
-steady TPOT.
-
-The current four-GPU development baseline is the randomized 32-conversation
+The current baseline is the randomized 32-conversation
 [audited eager scan](experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md),
 with a matched
 [piecewise CUDA Graph scan](experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
 Both fix PAP at 3PA1P and compare it with one-way PD 1P3D, 2P2D, and 3P1D.
-They are single-repetition capacity evidence, not replacements for the formal
-P17 release baseline. Earlier four-GPU reports remain historical evidence.
+They are single-repetition development evidence; a release-level performance
+claim requires three repetitions of the same AIPerf testbed. P17 records and
+earlier four-GPU reports remain historical evidence only.
+
+Run the complete lean matrix, or select one topology and one concurrency point
+through the environment overrides documented in the AIPerf README:
+
+```bash
+bash benchmarks/pap/aiperf/run_capacity_matrix.sh
+```
 
 ### Standalone paged-FlashAttention SM probe
 
-The paged-FA probe reproduces the P17 C4 Attention shape without launching PAP
+The paged-FA probe reproduces the archived P17 C4 Attention shape without launching PAP
 services or importing code from `vllm/pap/`. It compares full 92-SM execution
 with a static 28-SM MPS partition, and compares FA2 auto-split with fixed
 single-split. MPS counters come from NSYS GPU-wide sampling; NCU is used only
@@ -112,9 +98,9 @@ PAP_FA_PROBE_OUTPUT_ROOT=/path/to/run \
 
 The probe records CUDA-event timing, NVTX-scoped GPU metrics, main-kernel launch
 geometry, and raw NSYS/NCU/torch traces. It is a diagnostic experiment, not a
-P17 correctness or release gate.
+current correctness or release gate.
 
-The backend comparison tool reuses the same captured P17 shape and exact
+The backend comparison tool reuses the same archived shape and exact
 cross-layer KV stride to compare FA2 with the PAP-owned kernel integration:
 
 ```bash
@@ -131,7 +117,7 @@ evidence rather than a formal release record:
 | [full 92 SM](experiments/legacy/runs/20260716_paged_decode_backend_probe/full92.json) | 0.3511 ms | 0.3313 ms | 1.91e-6 |
 | [static-MPS 28 SM](experiments/legacy/runs/20260716_paged_decode_backend_probe/mps28.json) | 0.5727 ms | 0.3383 ms | 1.91e-6 |
 
-The matching P17 C4 quick run reduced steady TPOT from 49.75 ms to 42.47 ms;
+The matching historical C4 quick run reduced steady TPOT from 49.75 ms to 42.47 ms;
 the PD control is 41.97 ms. All 20 requests, token digests, cache checks,
 lifecycle audits, static-MPS checks, and session drain passed. Preserve the
 [C1](experiments/legacy/runs/20260716_triton_decode_c1_quick/aggregate.json)
@@ -140,20 +126,20 @@ raw diagnostic results; the accepted three-repetition result is linked above.
 
 #### Deferred alternative: low-smem FA2 decode specialization
 
-This is no longer a current P17 blocker. The accepted diagnostic
+This is an archived kernel diagnostic. The accepted diagnostic
 [`PAP-20260715-PAGED-FA-SM-PROBE`](experiments/PAP-20260715-PAGED-FA-SM-PROBE/experiment.json)
 shows that the current FA2 kernel uses about 82 KiB of shared memory per CTA,
-limiting residency to one CTA per SM. P17 instead uses vLLM's existing Triton
+limiting residency to one CTA per SM. PAP instead uses vLLM's existing Triton
 paged-decode kernel with four KV splits; matched-shape and C4 E2E measurements
 removed the measured FA2-related TPOT gap without adding a new CUDA kernel.
 Revisit a low-smem FA2 specialization only if a future shape cannot use the
 Triton path or new evidence puts FA2 back on the critical path.
 
 The future specialization should be narrow: SM89, BF16, head dimension 128,
-paged-KV decode, and the P17 GQA shape. Its acceptance gates are at most 50 KiB
+paged-KV decode, and the archived GQA shape. Its acceptance gates are at most 50 KiB
 shared memory per CTA, two resident CTAs per SM without a new register limit,
 output agreement with the current Triton path, lower 28-SM matched-shape
-latency, and no material full-92-SM or P17 E2E regression.
+latency, and no material full-92-SM or matched AIPerf-point regression.
 
 ## Paths and missing metadata
 
@@ -180,10 +166,12 @@ Unknown historical metadata is the literal string `missing`. It must not be
 omitted or reconstructed by guesswork. `null` and `not-applicable` express a
 known absence; they do not mean missing evidence.
 
-Full JSON run/experiment records are required for the current milestone and
-all new experiments. The 44 reviewed historical experiments and 16 negative
-results remain detailed in `experiments/HISTORY.md`; the compact status overlay
-makes their coverage and lifecycle machine-checkable. A legacy
+An AIPerf run remains in `_staging/` until its matrix config, summaries, raw
+artifacts, and reviewed conclusion are promoted into one experiment bundle.
+Release-level claims also require normalized JSON run/experiment records. The
+44 reviewed historical experiments and 16 negative results remain detailed in
+`experiments/HISTORY.md`; the compact status overlay makes their coverage and
+lifecycle machine-checkable. A legacy
 row is promoted to a full JSON record only when its raw artifacts are reviewed
 and the additional metadata is useful, so migration does not fabricate fields
 or duplicate prose.
@@ -194,11 +182,12 @@ Evidence grades are `formal-clean`, `controlled`, `diagnostic`, `smoke`,
 `historical`, and `invalid`. Decisions are `accepted`, `optional`, `rejected`,
 `rolled-back`, `superseded`, and `inconclusive`.
 
-A `formal-clean` run must have a full commit, a clean tracked worktree, empty
-tracked patches, at least three repetitions, zero failed requests, passing
-validity, complete fingerprints, and passing client, cache, Attention stats,
-correctness, decode-token join, routing, commit, lease, session-drain, and MPS
-gates. The validator rejects a weaker record labeled `formal-clean`.
+A release-level AIPerf point must have a full commit, a clean tracked worktree,
+at least three repetitions, all 320 expected requests, exact sampled output
+lengths, stable conversation owners, zero client/runtime errors, and passing
+Attention, decode-token, routing, commit, lease, session-drain, and MPS audits.
+The archived registry retains the older P17 `formal-clean` contract only to
+validate its historical records.
 
 ## Commands
 

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "kind": "pap-experiment-record",
-  "status": "current",
+  "status": "archived",
   "experiment_id": "PAP-20260716-TRITON-72-20-BASELINE",
   "title": "PAP Triton decode and 72/20 performance baseline",
   "recorded_at": "2026-07-16",

@@ -3,10 +3,10 @@
 This directory contains thin launchers and request examples for the
 Prefill-Attention-Projection service. Gateway implementation lives in
 `vllm/pap/gateway/`; Attention implementation lives in `vllm/pap/attention/`.
-The current release gate is the P17 Qwen3-8B, same-host `1PA1P` path, validated
-through the owner-specific `vllm/pap/integration/` boundary. Same-host `xPAyP`
-has a controlled correctness smoke; cross-host `xPAyP` remains available but is
-not an E2E gate in this milestone. The validated multi-turn path reuses
+The current runtime testbed is the four-GPU AIPerf matrix, validated through
+the owner-specific `vllm/pap/integration/` boundary. Same-host `xPAyP` has a
+controlled correctness smoke; cross-host `xPAyP` remains available but is not
+an active E2E lane. The validated multi-turn path reuses
 Prefill-owned KV through vLLM's native prefix cache; it does not keep an
 Attention session resident between turns.
 
@@ -19,7 +19,7 @@ Roles:
 - **Prefill** runs normal vLLM prompt processing and owns prompt paged KV blocks.
 - **Attention** is an internal service colocated with Prefill. It opens
   Prefill paged KV through CUDA IPC and appends decode K/V directly to those
-  Prefill-owned blocks. The P17 path runs vLLM's Triton paged-decode kernel
+  Prefill-owned blocks. The current path runs vLLM's Triton paged-decode kernel
   with one split-4 workspace shared by all layers in a decode step.
 - **Projection** runs the model decode path and sends current-token Q/K/V to
   Attention. It does not receive Prefill prompt KV bytes.
@@ -53,8 +53,8 @@ Useful environment overrides:
 - `PAP_SKIP_SMOKE_REQUEST=1` to skip the launcher request.
 - `PAP_PROXY_PORT=9000` to choose the OpenAI-compatible proxy port.
 - `PAP_EXECUTION_MODE=piecewise` in the benchmark runner to enable the
-  validated development path for piecewise CUDA Graph. Eager remains the P17
-  release-gate default; PAP transport, remote Attention, and KV-publication
+  validated development path for piecewise CUDA Graph. Eager remains the
+  AIPerf default; PAP transport, remote Attention, and KV-publication
   operations stay outside captured regions.
 
 Send one request through the proxy:
@@ -70,7 +70,8 @@ Send one request through the proxy:
 
 Runtime logs are written under `examples/pap/logs/`, which is ignored by git.
 
-The self-contained correctness/performance runner accepts the same topology:
+The low-level service/debug runner accepts the same topology. Its built-in
+smoke request is not benchmark evidence:
 
 ```bash
 PAP_TOPOLOGY=3pa2p \

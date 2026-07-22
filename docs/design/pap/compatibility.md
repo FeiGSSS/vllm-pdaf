@@ -15,6 +15,10 @@ last_validated_commit: e5190a84e37124c893cf66d5b1bb94f9e31dc408
 
 # PAP compatibility retirement record
 
+All P17 measurements below are frozen historical evidence. Current runtime
+validation uses the AIPerf matrix described in
+[benchmark-methodology.md](benchmark-methodology.md).
+
 The post-P17 cleanup removed every top-level PAP compatibility façade after all
 tracked runtime, launcher, test, and tool consumers moved to their owning
 modules. Historical documents retain their original paths for traceability.

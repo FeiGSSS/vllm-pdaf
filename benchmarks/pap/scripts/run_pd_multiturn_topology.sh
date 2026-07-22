@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 VLLM_BIN="${VLLM_BIN:-${ROOT_DIR}/.venv/bin/vllm}"
-CLIENT="${ROOT_DIR}/benchmarks/multi_turn/pap_pd_multiturn_load_client.py"
 PROXY="${ROOT_DIR}/examples/disaggregated/disaggregated_serving/disagg_proxy_multiturn.py"
 AIPERF_RUNNER="${ROOT_DIR}/benchmarks/pap/aiperf/run_profile.sh"
 AIPERF_DATASET_GENERATOR="${ROOT_DIR}/benchmarks/pap/aiperf/generate_multiturn_dataset.py"
@@ -33,9 +32,9 @@ PREFILL_CUDAGRAPH_CAPTURE_SIZES="${PD_LOAD_PREFILL_CUDAGRAPH_CAPTURE_SIZES:-1,2,
 DECODE_CUDAGRAPH_CAPTURE_SIZES="${PD_LOAD_DECODE_CUDAGRAPH_CAPTURE_SIZES:-1,2,4,8,12,16,20,24,28,32}"
 GPU_MEMORY_UTILIZATION="${PD_LOAD_GPU_MEMORY_UTILIZATION:-0.90}"
 REQUEST_TIMEOUT_SECONDS="${PD_LOAD_REQUEST_TIMEOUT_SECONDS:-180}"
-CLIENT_MODE="${PD_LOAD_CLIENT_MODE:-canonical}"
+CLIENT_MODE="${PD_LOAD_CLIENT_MODE:-aiperf_multiturn}"
 case "${CLIENT_MODE}" in
-  canonical | aiperf_multiturn) ;;
+  aiperf_multiturn) ;;
   *)
     echo "invalid PD_LOAD_CLIENT_MODE: ${CLIENT_MODE}" >&2
     exit 2
@@ -85,17 +84,14 @@ PD_AIPERF_OUTPUT_DIR="${PD_AIPERF_OUTPUT_DIR:-${RUN_ROOT}/aiperf}"
 PD_AIPERF_CONCURRENCY="${PD_AIPERF_CONCURRENCY:-${CONVERSATIONS}}"
 PD_AIPERF_TIMING_MODE="${PD_AIPERF_TIMING_MODE:-concurrency}"
 PD_AIPERF_REQUEST_RATE="${PD_AIPERF_REQUEST_RATE-}"
-ACTIVE_CONVERSATIONS="${CONVERSATIONS}"
-if [[ "${CLIENT_MODE}" == "aiperf_multiturn" ]]; then
-  if [[ ! "${PD_AIPERF_CONCURRENCY}" =~ ^[1-9][0-9]*$ ]]; then
-    echo "PD_AIPERF_CONCURRENCY must be positive" >&2
-    exit 2
-  fi
-  ACTIVE_CONVERSATIONS="${PD_AIPERF_CONCURRENCY}"
-  if (( ACTIVE_CONVERSATIONS > CONVERSATIONS )); then
-    echo "AIPerf concurrency exceeds total conversations" >&2
-    exit 2
-  fi
+if [[ ! "${PD_AIPERF_CONCURRENCY}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "PD_AIPERF_CONCURRENCY must be positive" >&2
+  exit 2
+fi
+ACTIVE_CONVERSATIONS="${PD_AIPERF_CONCURRENCY}"
+if (( ACTIVE_CONVERSATIONS > CONVERSATIONS )); then
+  echo "AIPerf concurrency exceeds total conversations" >&2
+  exit 2
 fi
 if [[ "${PD_AIPERF_TIMING_MODE}" == "request_rate" \
   && -z "${PD_AIPERF_REQUEST_RATE}" ]]; then
@@ -149,25 +145,23 @@ if (( ${#PREFILL_GPUS[@]} != PREFILL_COUNT \
   exit 2
 fi
 
-for required in "${PYTHON_BIN}" "${VLLM_BIN}" "${CLIENT}" \
-  "${PROXY}" "${DATASET_PATH}"; do
+for required in "${PYTHON_BIN}" "${VLLM_BIN}" "${PROXY}" \
+  "${DATASET_PATH}"; do
   [[ -e "${required}" ]] || {
     echo "required path is missing: ${required}" >&2
     exit 1
   }
 done
-if [[ "${CLIENT_MODE}" == "aiperf_multiturn" ]]; then
-  [[ -x "${AIPERF_BIN}" ]] || {
-    echo "AIPerf is not installed at ${AIPERF_BIN}" >&2
+[[ -x "${AIPERF_BIN}" ]] || {
+  echo "AIPerf is not installed at ${AIPERF_BIN}" >&2
+  exit 1
+}
+for required in "${AIPERF_RUNNER}" "${AIPERF_DATASET_GENERATOR}"; do
+  [[ -e "${required}" ]] || {
+    echo "required AIPerf path is missing: ${required}" >&2
     exit 1
   }
-  for required in "${AIPERF_RUNNER}" "${AIPERF_DATASET_GENERATOR}"; do
-    [[ -e "${required}" ]] || {
-      echo "required AIPerf path is missing: ${required}" >&2
-      exit 1
-    }
-  done
-fi
+done
 
 export VLLM_USE_FLASHINFER_SAMPLER=0
 export VLLM_USE_V1=1
@@ -245,22 +239,20 @@ GIT_TRACKED_WORKTREE_DIRTY=0
 if ! git diff --quiet || ! git diff --cached --quiet; then
   GIT_TRACKED_WORKTREE_DIRTY=1
 fi
-if [[ "${CLIENT_MODE}" == "aiperf_multiturn" ]]; then
-  if [[ "${AIPERF_INPUT_FILE_PROVIDED}" == "1" ]]; then
-    [[ -f "${PD_AIPERF_INPUT_FILE}" ]] || {
-      echo "AIPerf input file is missing: ${PD_AIPERF_INPUT_FILE}" >&2
-      exit 1
-    }
-  else
-    "${PYTHON_BIN}" "${AIPERF_DATASET_GENERATOR}" \
-      --model "${MODEL_PATH}" --corpus "${DATASET_PATH}" \
-      --output "${PD_AIPERF_INPUT_FILE}" \
-      --sessions "${CONVERSATIONS}" --turns "${ROUNDS}" \
-      --document-tokens "${DOCUMENT_TOKENS}" \
-      --append-tokens "${APPEND_TOKENS}" \
-      --output-tokens "${OUTPUT_TOKENS}" \
-      --session-prefix "${RUN_ID}-aiperf"
-  fi
+if [[ "${AIPERF_INPUT_FILE_PROVIDED}" == "1" ]]; then
+  [[ -f "${PD_AIPERF_INPUT_FILE}" ]] || {
+    echo "AIPerf input file is missing: ${PD_AIPERF_INPUT_FILE}" >&2
+    exit 1
+  }
+else
+  "${PYTHON_BIN}" "${AIPERF_DATASET_GENERATOR}" \
+    --model "${MODEL_PATH}" --corpus "${DATASET_PATH}" \
+    --output "${PD_AIPERF_INPUT_FILE}" \
+    --sessions "${CONVERSATIONS}" --turns "${ROUNDS}" \
+    --document-tokens "${DOCUMENT_TOKENS}" \
+    --append-tokens "${APPEND_TOKENS}" \
+    --output-tokens "${OUTPUT_TOKENS}" \
+    --session-prefix "${RUN_ID}-aiperf"
 fi
 
 PREFILL_PORT_BASE="${PD_PREFILL_PORT_BASE:-24100}"
@@ -397,50 +389,25 @@ PIDS+=("$!")
 PGIDS+=("$!")
 wait_for_http "http://127.0.0.1:${PROXY_PORT}/health" "PD proxy"
 
-if [[ "${CLIENT_MODE}" == "aiperf_multiturn" ]]; then
-  env \
-    PAP_ROOT="${ROOT_DIR}" \
-    AIPERF_ROOT="${AIPERF_ROOT}" \
-    AIPERF_BIN="${AIPERF_BIN}" \
-    MODEL_PATH="${MODEL_PATH}" \
-    AIPERF_INPUT_FILE="${PD_AIPERF_INPUT_FILE}" \
-    AIPERF_TARGET_URL="http://127.0.0.1:${PROXY_PORT}" \
-    AIPERF_OUTPUT_DIR="${PD_AIPERF_OUTPUT_DIR}" \
-    AIPERF_SESSIONS="${CONVERSATIONS}" \
-    AIPERF_CONCURRENCY="${PD_AIPERF_CONCURRENCY}" \
-    AIPERF_TIMING_MODE="${PD_AIPERF_TIMING_MODE}" \
-    AIPERF_REQUEST_RATE="${PD_AIPERF_REQUEST_RATE}" \
-    AIPERF_REQUEST_TIMEOUT_SECONDS="${REQUEST_TIMEOUT_SECONDS}" \
-    "${AIPERF_RUNNER}" \
-    2>&1 | tee "${RUN_ROOT}/client.log"
-  if [[ -z "$(find "${PD_AIPERF_OUTPUT_DIR}" -type f \
-    -name 'profile*.json' -size +0c -print -quit)" ]]; then
-    echo "AIPerf produced no profile JSON under ${PD_AIPERF_OUTPUT_DIR}" >&2
-    exit 1
-  fi
-else
-  "${PYTHON_BIN}" "${CLIENT}" \
-    --base-url "http://127.0.0.1:${PROXY_PORT}" \
-    --model "${MODEL_PATH}" --corpus "${DATASET_PATH}" \
-    --result "${RUN_ROOT}/result.json" --architecture pd \
-    --topology "${TOPOLOGY}" \
-    --conversation-id-prefix "${RUN_ID}-conversation" \
-    --cache-salt-prefix "${RUN_ID}-cache-salt" \
-    --hardware-signature "NVIDIA-L20x4" \
-    --git-commit "${GIT_COMMIT}" \
-    --git-tracked-worktree-dirty "${GIT_TRACKED_WORKTREE_DIRTY}" \
-    --offload-exec-transport "nixl-${TRANSFER_MODE}" \
-    --direct-mailbox-output 0 \
-    --document-tokens "${DOCUMENT_TOKENS}" \
-    --append-tokens "${APPEND_TOKENS}" \
-    --output-tokens "${OUTPUT_TOKENS}" --rounds "${ROUNDS}" \
-    --active-conversations "${CONVERSATIONS}" \
-    --request-rate "${REQUEST_RATE}" --block-size 16 --dtype float16 \
-    --tensor-parallel-size 1 --max-model-len "${MAX_MODEL_LEN}" \
-    --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
-    --max-num-seqs "${MAX_NUM_SEQS}" \
-    --request-timeout-seconds "${REQUEST_TIMEOUT_SECONDS}" \
-    2>&1 | tee "${RUN_ROOT}/client.log"
+env \
+  PAP_ROOT="${ROOT_DIR}" \
+  AIPERF_ROOT="${AIPERF_ROOT}" \
+  AIPERF_BIN="${AIPERF_BIN}" \
+  MODEL_PATH="${MODEL_PATH}" \
+  AIPERF_INPUT_FILE="${PD_AIPERF_INPUT_FILE}" \
+  AIPERF_TARGET_URL="http://127.0.0.1:${PROXY_PORT}" \
+  AIPERF_OUTPUT_DIR="${PD_AIPERF_OUTPUT_DIR}" \
+  AIPERF_SESSIONS="${CONVERSATIONS}" \
+  AIPERF_CONCURRENCY="${PD_AIPERF_CONCURRENCY}" \
+  AIPERF_TIMING_MODE="${PD_AIPERF_TIMING_MODE}" \
+  AIPERF_REQUEST_RATE="${PD_AIPERF_REQUEST_RATE}" \
+  AIPERF_REQUEST_TIMEOUT_SECONDS="${REQUEST_TIMEOUT_SECONDS}" \
+  "${AIPERF_RUNNER}" \
+  2>&1 | tee "${RUN_ROOT}/client.log"
+if [[ -z "$(find "${PD_AIPERF_OUTPUT_DIR}" -type f \
+  -name 'profile*.json' -size +0c -print -quit)" ]]; then
+  echo "AIPerf produced no profile JSON under ${PD_AIPERF_OUTPUT_DIR}" >&2
+  exit 1
 fi
 
 curl -fsS "http://127.0.0.1:${PROXY_PORT}/health" \

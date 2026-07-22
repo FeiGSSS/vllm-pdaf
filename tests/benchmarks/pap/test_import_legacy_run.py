@@ -253,7 +253,7 @@ def test_p17_import_reads_converged_metadata_and_mps_audit(tmp_path: Path) -> No
     )
 
 
-def test_p17_import_infers_current_static_mps_profile(tmp_path: Path) -> None:
+def test_p17_import_infers_archived_static_mps_profile(tmp_path: Path) -> None:
     source = _make_legacy_run(tmp_path)
     rep = source / "rep1"
     (rep / "effective_config.env").write_text("", encoding="utf-8")
@@ -267,7 +267,7 @@ def test_p17_import_infers_current_static_mps_profile(tmp_path: Path) -> None:
     manifest = import_legacy_run(
         source,
         experiment_id="PAP-20260716-P17-IMPORT-TEST",
-        run_id="p17_current_mps_import_test_run",
+        run_id="p17_archived_mps_import_test_run",
         profile_id="p17_1pa1p",
         evidence="formal-clean",
         artifact_root_id="raw-root",

@@ -37,7 +37,7 @@ for removed_flag in \
         experiment_id="PAP-20260714-SEAL-HANDOFF-KV"
         ;;
       PAP_UNIFIED_KV | PAP_BATCHED_ROUTE_COPY | PAP_UNIFIED_MD_FAST_KEY)
-        replacement="the frozen P17 data path"
+        replacement="the current PAP data path"
         experiment_id="PAP-20260703-UNIFIED-KV"
         ;;
       PAP_ATTENTION_*)
@@ -45,7 +45,7 @@ for removed_flag in \
         experiment_id="PAP-20260711-ATTENTION-COMBINE"
         ;;
       PAP_MPS_MODE | PAP_BENCH_MPS_PROFILE)
-        replacement="the P17 static 72/20 MPS partition"
+        replacement="the AIPerf static 72/20 MPS partition"
         experiment_id="PAP-20260714-ASYNC-STATIC-BASELINE"
         ;;
       PAP_*_SYNC_ONLY_BARRIER)
@@ -65,7 +65,6 @@ done
 ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 VLLM_BIN="${VLLM_BIN:-${ROOT_DIR}/.venv/bin/vllm}"
-MULTITURN_FINALIZER="${ROOT_DIR}/benchmarks/multi_turn/finalize_pap_pd_multiturn.py"
 DEFERRED_TRACE_VALIDATOR="${ROOT_DIR}/benchmarks/multi_turn/validate_deferred_trace.py"
 AIPERF_RUNNER="${ROOT_DIR}/benchmarks/pap/aiperf/run_profile.sh"
 AIPERF_DATASET_GENERATOR="${ROOT_DIR}/benchmarks/pap/aiperf/generate_multiturn_dataset.py"
@@ -76,7 +75,7 @@ PAP_BENCH_STRICT_CORRECTNESS_AUDIT="${PAP_BENCH_STRICT_CORRECTNESS_AUDIT:-1}"
 PAP_BENCH_CLIENT_MODE="${PAP_BENCH_CLIENT_MODE:-canonical}"
 case "${PAP_BENCH_CLIENT_MODE}" in
   canonical | multiturn_prefix_cache | multiturn_chat_prefix_cache \
-    | multiturn_load | aiperf_multiturn) ;;
+    | aiperf_multiturn) ;;
   *)
     echo "ERROR: unsupported PAP_BENCH_CLIENT_MODE=${PAP_BENCH_CLIENT_MODE}" >&2
     exit 2
@@ -101,8 +100,7 @@ PAP_MULTITURN_LOAD_ROUNDS="${PAP_MULTITURN_LOAD_ROUNDS:-5}"
 PAP_MULTITURN_LOAD_CONVERSATIONS="${PAP_MULTITURN_LOAD_CONVERSATIONS:-4}"
 PAP_MULTITURN_LOAD_REQUEST_RATE="${PAP_MULTITURN_LOAD_REQUEST_RATE:-2}"
 PAP_MULTITURN_APPEND_TOKENS="${PAP_MULTITURN_APPEND_TOKENS:-120}"
-if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" \
-  || "${PAP_BENCH_CLIENT_MODE}" == "aiperf_multiturn" ]]; then
+if [[ "${PAP_BENCH_CLIENT_MODE}" == "aiperf_multiturn" ]]; then
   if ! [[ "${PAP_MULTITURN_LOAD_ROUNDS}" =~ ^[1-9][0-9]*$ \
     && "${PAP_MULTITURN_LOAD_CONVERSATIONS}" =~ ^[1-9][0-9]*$ ]]; then
     echo "ERROR: multi-turn load rounds/conversations must be positive" >&2
@@ -165,9 +163,6 @@ if [[ "${PAP_AIPERF_TIMING_MODE}" == "request_rate" \
   && -z "${PAP_AIPERF_REQUEST_RATE}" ]]; then
   PAP_AIPERF_REQUEST_RATE="${PAP_MULTITURN_LOAD_REQUEST_RATE}"
 fi
-PAP_NORTH_STAR_CONVERSATION_ID="${PAP_NORTH_STAR_CONVERSATION_ID:-${RUN_ID}-conversation-0}"
-PAP_NORTH_STAR_CACHE_SALT="${PAP_NORTH_STAR_CACHE_SALT:-${RUN_ID}-cache-salt}"
-
 PAP_PROXY_PORT="${PAP_PROXY_PORT:-9460}"
 PREFILL_PORT_BASE="${PAP_PREFILL_PORT_BASE:-${PAP_PREFILL_PORT:-8100}}"
 PROJECTION_PORT_BASE="${PAP_PROJECTION_PORT_BASE:-${PAP_PROJECTION_PORT:-8200}}"
@@ -189,7 +184,6 @@ fi
 PAP_PREFILL_GPUS="${PAP_PREFILL_GPUS:-${DEFAULT_PREFILL_GPUS}}"
 PAP_PROJECTION_GPUS="${PAP_PROJECTION_GPUS:-${DEFAULT_PROJECTION_GPUS}}"
 PAP_TP_SIZE="${PAP_TP_SIZE:-1}"
-PAP_NORTH_STAR_HARDWARE_SIGNATURE="${PAP_NORTH_STAR_HARDWARE_SIGNATURE:-NVIDIA-L20x$(((PA_COUNT + PROJECTION_COUNT) * PAP_TP_SIZE))}"
 PAP_VLLM_DTYPE="${PAP_VLLM_DTYPE:-auto}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-512}"
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-8192}"
@@ -737,7 +731,7 @@ cleanup() {
         fi
       fi
   done
-  for pipe_dir in "${MPS_STARTED_DIRS[@]:-}"; do
+  for pipe_dir in "${MPS_STARTED_DIRS[@]}"; do
     if ! mps_control "${pipe_dir}" quit >/dev/null 2>&1; then
       echo "WARNING: failed to stop MPS daemon at ${pipe_dir}" >&2
       cleanup_failed=1
@@ -1071,7 +1065,7 @@ ensure_dataset() {
 }
 
 prepare_aiperf_dataset() {
-  [[ "${PAP_BENCH_CLIENT_MODE}" == "aiperf_multiturn" ]] || return
+  [[ "${PAP_BENCH_CLIENT_MODE}" == "aiperf_multiturn" ]] || return 0
   [[ -x "${AIPERF_BIN}" ]] \
     || die "AIPerf is not installed at ${AIPERF_BIN}"
   [[ -x "${AIPERF_RUNNER}" ]] \
@@ -1205,12 +1199,6 @@ write_effective_config() {
     printf 'PAP_PREFILL_GPUS=%q\n' "${PAP_PREFILL_GPUS}"
     printf 'PAP_PROJECTION_GPUS=%q\n' "${PAP_PROJECTION_GPUS}"
     printf 'PAP_VLLM_DTYPE=%q\n' "${PAP_VLLM_DTYPE}"
-    printf 'PAP_NORTH_STAR_HARDWARE_SIGNATURE=%q\n' \
-      "${PAP_NORTH_STAR_HARDWARE_SIGNATURE}"
-    printf 'PAP_NORTH_STAR_CONVERSATION_ID=%q\n' \
-      "${PAP_NORTH_STAR_CONVERSATION_ID}"
-    printf 'PAP_NORTH_STAR_CACHE_SALT=%q\n' \
-      "${PAP_NORTH_STAR_CACHE_SALT}"
     printf 'PAP_ROUTING_POLICY=%q\n' "${PAP_ROUTING_POLICY}"
     printf 'PREFILL_PORT_BASE=%q\n' "${PREFILL_PORT_BASE}"
     printf 'PROJECTION_PORT_BASE=%q\n' "${PROJECTION_PORT_BASE}"
@@ -1429,11 +1417,11 @@ metadata = {
     "prompt_tokens_details": (
         os.environ["PAP_ENABLE_PROMPT_TOKENS_DETAILS"] == "1"
     ),
-    "multiturn_load_rounds": int(os.environ["PAP_MULTITURN_LOAD_ROUNDS"]),
-    "multiturn_load_conversations": int(
+    "aiperf_turns": int(os.environ["PAP_MULTITURN_LOAD_ROUNDS"]),
+    "aiperf_sessions": int(
         os.environ["PAP_MULTITURN_LOAD_CONVERSATIONS"]
     ),
-    "multiturn_load_request_rate": float(
+    "aiperf_request_rate": float(
         os.environ["PAP_MULTITURN_LOAD_REQUEST_RATE"]
     ),
     "dtype": os.environ["PAP_VLLM_DTYPE"],
@@ -1443,7 +1431,7 @@ metadata = {
         os.environ["GIT_TRACKED_WORKTREE_DIRTY"] == "1"
     ),
     "proxy_port": os.environ["PAP_PROXY_PORT"],
-    "config_dir": "self-contained skill runner",
+    "config_dir": "project-owned PAP runner",
     "started_at": datetime.now().astimezone().isoformat(timespec="seconds"),
 }
 with open(os.path.join(os.environ["RUN_ROOT"], "run_metadata.json"), "w",
@@ -1471,53 +1459,6 @@ if completed != expected or failed != 0:
         f"benchmark result is incomplete: completed={completed}, "
         f"failed={failed}, expected={expected}"
     )
-PY
-}
-
-validate_multiturn_load_result() {
-  local result_path="$1"
-  PAP_MULTITURN_LOAD_ROUNDS="${PAP_MULTITURN_LOAD_ROUNDS}" \
-  PAP_MULTITURN_LOAD_CONVERSATIONS="${PAP_MULTITURN_LOAD_CONVERSATIONS}" \
-  OUTPUT_LEN="${OUTPUT_LEN}" \
-  "${PYTHON_BIN}" - "${result_path}" <<'PY'
-import json
-import math
-import os
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as file_obj:
-    result = json.load(file_obj)
-
-rounds = int(os.environ["PAP_MULTITURN_LOAD_ROUNDS"])
-conversations = int(os.environ["PAP_MULTITURN_LOAD_CONVERSATIONS"])
-output_tokens = int(os.environ["OUTPUT_LEN"])
-if result.get("architecture") != "pap":
-    raise SystemExit("multi-turn load architecture is not pap")
-validity = result.get("validity") or {}
-if validity.get("status") != "passed":
-    raise SystemExit(f"multi-turn load validity failed: {validity}")
-cache = result.get("cache_validation") or {}
-if cache.get("status") != "passed":
-    raise SystemExit(f"multi-turn load cache validation failed: {cache}")
-requests = result.get("requests") or []
-expected = rounds * conversations
-if len(requests) != expected:
-    raise SystemExit(
-        f"multi-turn load request count mismatch: {len(requests)} != {expected}"
-    )
-for request in requests:
-    if request.get("completion_tokens") != output_tokens:
-        raise SystemExit(
-            "multi-turn load completion mismatch: "
-            f"{request.get('completion_tokens')} != {output_tokens}"
-        )
-    if request.get("finish_reason") != "length":
-        raise SystemExit("multi-turn load request did not finish by length")
-    for metric in ("ttft_ms", "tpot_ms", "latency_ms", "eof_latency_ms"):
-        value = request.get(metric)
-        if not isinstance(value, (int, float)) or not math.isfinite(value) \
-            or value <= 0:
-            raise SystemExit(f"multi-turn load has invalid {metric}: {value}")
 PY
 }
 
@@ -1599,10 +1540,7 @@ expected_projection_routes = Counter()
 expected_pair_routes = Counter()
 errors = []
 expected_group_indices = []
-if routing_policy == "conversation_affinity" and client_mode in (
-    "multiturn_load",
-    "aiperf_multiturn",
-):
+if routing_policy == "conversation_affinity" and client_mode == "aiperf_multiturn":
     if projection_count != 1:
         errors.append("conversation-affinity load audit requires one Projection")
     expected_group_indices = [
@@ -1720,25 +1658,30 @@ cd "${ROOT_DIR}"
   || die "PAP topology must contain at least one PA and one Projection"
 [[ "${PAP_TP_SIZE}" == "1" ]] || die "This runner is intentionally fixed to PAP_TP_SIZE=1"
 [[ "${PAP_ENABLE_MPS}" == "1" ]] \
-  || die "P17 requires static MPS"
-if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" \
-  || "${PAP_BENCH_CLIENT_MODE}" == "aiperf_multiturn" ]]; then
+  || die "the PAP benchmark runner requires static MPS"
+if [[ "${PAP_BENCH_CLIENT_MODE}" == "aiperf_multiturn" ]]; then
   [[ "${PAP_VLLM_DTYPE}" == "float16" ]] \
-    || die "multiturn_load requires PAP_VLLM_DTYPE=float16"
+    || die "AIPerf requires PAP_VLLM_DTYPE=float16"
   [[ "${PAP_PREFIX_CACHE_AUDIT}" == "0" \
     && "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" == "1" ]] \
-    || die "multiturn_load requires prompt details and forbids cache audit"
+    || die "AIPerf requires prompt details and forbids cache audit"
   [[ "${PAP_ENABLE_MPS}" == "1" ]] \
-    || die "multiturn_load requires PAP MPS"
+    || die "AIPerf requires PAP MPS"
   [[ "${PAP_STATIC_PREFILL_CHUNKS}" == "18" \
     && "${PAP_STATIC_ATTENTION_CHUNKS}" == "5" ]] \
-    || die "P17 static MPS requires 18/5 chunks"
-  [[ "${PAP_ROUTING_POLICY}" == "conversation_affinity" ]] \
-    || die "multiturn_load requires conversation_affinity routing"
+    || die "the AIPerf PAP path requires 18/5 static-MPS chunks"
+  if (( PA_COUNT > 1 )); then
+    [[ "${PAP_ROUTING_POLICY}" == "conversation_affinity" ]] \
+      || die "multi-PA AIPerf requires conversation_affinity routing"
+  else
+    [[ "${PAP_ROUTING_POLICY}" == "round_robin" \
+      || "${PAP_ROUTING_POLICY}" == "conversation_affinity" ]] \
+      || die "single-PA AIPerf requires round_robin or conversation_affinity"
+  fi
   (( PROJECTION_COUNT == 1 )) \
-    || die "multiturn_load currently requires one Projection"
+    || die "AIPerf currently requires one Projection"
   (( PAP_MULTITURN_LOAD_ROUNDS >= 4 )) \
-    || die "multiturn_load requires at least four rounds"
+    || die "AIPerf requires at least four rounds"
   (( INPUT_LEN > 0 && PAP_MULTITURN_APPEND_TOKENS > 0 \
       && OUTPUT_LEN > 1 )) \
     || die "multi-turn token counts must be positive"
@@ -1756,8 +1699,6 @@ elif [[ "${PAP_BENCH_CLIENT_MODE}" != "canonical" ]]; then
 fi
 [[ -x "${PYTHON_BIN}" ]] || die "PYTHON_BIN is not executable: ${PYTHON_BIN}"
 [[ -x "${VLLM_BIN}" ]] || die "VLLM_BIN is not executable: ${VLLM_BIN}"
-[[ -f "${MULTITURN_FINALIZER}" ]] \
-  || die "Missing multi-turn finalizer: ${MULTITURN_FINALIZER}"
 [[ -f "${DEFERRED_TRACE_VALIDATOR}" ]] \
   || die "Missing deferred trace validator: ${DEFERRED_TRACE_VALIDATOR}"
 [[ -d "${MODEL_PATH}" ]] || die "Model path does not exist: ${MODEL_PATH}"
@@ -2106,41 +2047,6 @@ case "${PAP_BENCH_CLIENT_MODE}" in
       --min-decode-hit-blocks "${PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS}" \
       2>&1 | tee "${RUN_ROOT}/${TAG}.log"
     ;;
-  multiturn_load)
-    TAG="${TOPOLOGY_TAG}_multiturn_load"
-    echo "=== Running ${TAG} on port ${PAP_PROXY_PORT} ==="
-    timeout "${BENCH_TIMEOUT}" "${PYTHON_BIN}" \
-      benchmarks/multi_turn/pap_pd_multiturn_load_client.py \
-      --base-url "http://127.0.0.1:${PAP_PROXY_PORT}" \
-      --model "${MODEL_PATH}" \
-      --corpus "${DATASET_PATH}" \
-      --result "${RUN_ROOT}/result.json" \
-      --architecture pap \
-      --topology "${TOPOLOGY}" \
-      --conversation-id-prefix "${PAP_NORTH_STAR_CONVERSATION_ID}" \
-      --cache-salt-prefix "${PAP_NORTH_STAR_CACHE_SALT}" \
-      --hardware-signature "${PAP_NORTH_STAR_HARDWARE_SIGNATURE}" \
-      --git-commit "${GIT_COMMIT}" \
-      --git-tracked-worktree-dirty "${GIT_TRACKED_WORKTREE_DIRTY}" \
-      --offload-exec-transport "${PAP_OFFLOAD_EXEC_TRANSPORT}" \
-      --direct-mailbox-output "${PAP_DIRECT_MAILBOX_OUTPUT}" \
-      --prefill-ipc-profile "${PAP_PREFILL_IPC_PROFILE}" \
-      --document-tokens "${INPUT_LEN}" \
-      --append-tokens "${PAP_MULTITURN_APPEND_TOKENS}" \
-      --output-tokens "${OUTPUT_LEN}" \
-      --rounds "${PAP_MULTITURN_LOAD_ROUNDS}" \
-      --active-conversations "${PAP_MULTITURN_LOAD_CONVERSATIONS}" \
-      --request-rate "${PAP_MULTITURN_LOAD_REQUEST_RATE}" \
-      --block-size "${PAP_MULTITURN_BLOCK_SIZE}" \
-      --dtype "${PAP_VLLM_DTYPE}" \
-      --tensor-parallel-size "${PAP_TP_SIZE}" \
-      --max-model-len "${MAX_MODEL_LEN}" \
-      --max-num-batched-tokens \
-        "${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS}" \
-      --max-num-seqs "${PAP_PROJECTION_MAX_NUM_SEQS}" \
-      2>&1 | tee "${RUN_ROOT}/${TAG}.log"
-    validate_multiturn_load_result "${RUN_ROOT}/result.json"
-    ;;
   aiperf_multiturn)
     TAG="${TOPOLOGY_TAG}_aiperf_multiturn"
     echo "=== Running ${TAG} on port ${PAP_PROXY_PORT} ==="
@@ -2174,36 +2080,5 @@ audit_decode_token_join
 capture_projection_deferred_traces
 audit_xy_routes
 audit_correctness_logs
-
-if [[ "${PAP_BENCH_CLIENT_MODE}" == "multiturn_load" ]]; then
-  deferred_trace_artifact_args=()
-  if deferred_trace_enabled; then
-    deferred_trace_artifact_args+=(
-      --artifact \
-      "projection_deferred_trace=${RUN_ROOT}/projection_deferred_trace.json"
-    )
-  fi
-  "${PYTHON_BIN}" "${MULTITURN_FINALIZER}" \
-    --result "${RUN_ROOT}/result.json" \
-    --architecture pap \
-    --passed-gate session_drain \
-    --passed-gate routing \
-    --passed-gate correctness_logs \
-    --passed-gate attention_stats_capture \
-    --passed-gate decode_token_join \
-    --artifact "session_drain=${RUN_ROOT}/session_drain.env" \
-    --artifact "routing=${RUN_ROOT}/routing_audit.json" \
-    --artifact "correctness_logs=${RUN_ROOT}/correctness_audit.env" \
-    --artifact "run_metadata=${RUN_ROOT}/run_metadata.json" \
-    --artifact "effective_config=${RUN_ROOT}/effective_config.env" \
-    --artifact \
-      "tracked_worktree_patch=${RUN_ROOT}/tracked_worktree.patch" \
-    --artifact "tracked_index_patch=${RUN_ROOT}/tracked_index.patch" \
-    --artifact \
-      "attention_stats=${RUN_ROOT}/attention_fast_path_stats.json" \
-    --artifact \
-      "decode_token_join=${RUN_ROOT}/decode_token_join_audit.env" \
-    "${deferred_trace_artifact_args[@]}"
-fi
 
 echo "RUN_ROOT=${RUN_ROOT}"

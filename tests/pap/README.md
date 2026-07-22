@@ -7,8 +7,8 @@ surviving test covers the same behavior.
 
 ## What must remain covered
 
-- P17 1PA1P `local_fast` protocol, lifecycle, unified-KV, Attention, and
-  transport behavior;
+- current `local_fast` protocol, lifecycle, unified-KV, Attention, and
+  transport behavior used by the AIPerf PAP topology;
 - fail-closed validation for malformed descriptors, stale generations, and
   invalid lifecycle transitions;
 - eager and optional piecewise CUDA Graph role selection, graph boundaries,
@@ -25,10 +25,9 @@ Run tests directly related to each source change. Run the complete PAP CPU
 gate before a source milestone, and use a runtime lane only when the change
 crosses a runtime boundary:
 
-- P17 1PA1P is the release regression gate for lifecycle, transport, unified
-  KV, Attention, or scheduling changes.
-- The four-GPU AIPerf lane is for capacity, routing, and performance changes;
-  documentation-only or isolated unit changes do not require it.
+- The four-GPU AIPerf lane is the only runtime regression and performance
+  testbed. Select one relevant point during development and use the full lean
+  matrix for a milestone claim.
 - Piecewise Graph changes require the focused graph/launcher tests and a
   matched eager/Graph runtime point before a performance claim.
 
@@ -46,12 +45,8 @@ The complete PAP CPU gate is:
 .venv/bin/python -m pytest \
   tests/pap \
   tests/benchmarks/pap \
-  tests/benchmarks/test_compare_pap_pd_multiturn_load.py \
-  tests/benchmarks/test_finalize_pap_pd_multiturn.py \
+  tests/benchmarks/test_pap_aiperf_capacity.py \
   tests/benchmarks/test_pap_multiturn_mps_contract.py \
-  tests/benchmarks/test_pap_multiturn_common.py \
-  tests/benchmarks/test_pap_pd_multiturn_load_client.py \
-  tests/benchmarks/test_pd_multiturn_load_reuse_metrics.py \
   tests/benchmarks/test_pd_multiturn_runner_contract.py
 ```
 
@@ -76,7 +71,7 @@ have intentionally similar setup.
 
 The post-façade audit removed the two exact duplicate cases it found. The
 remaining xPAyP and NIXL unit contracts are retained because those capabilities
-are supported, while their E2E lanes remain outside the P17 refactor gate.
+are supported, while their E2E lanes remain outside the current AIPerf matrix.
 
 The current support and evidence boundary is summarized in the
 [PAP development status](../../docs/design/pap/status.md).

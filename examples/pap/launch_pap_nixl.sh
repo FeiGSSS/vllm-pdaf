@@ -19,7 +19,7 @@ for removed_flag in \
     PAP_ATTENTION_ACTIVE_PEER_TRACKING \
     PAP_MPS_MODE; do
     if [[ -v "${removed_flag}" ]]; then
-        echo "${removed_flag} was removed by the frozen P17 runtime contract" >&2
+        echo "${removed_flag} was removed by the current PAP runtime contract" >&2
         exit 2
     fi
 done

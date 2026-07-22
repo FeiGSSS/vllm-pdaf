@@ -43,7 +43,7 @@ REQUIRED_AUDITS = {
     "session_drain",
     "mps",
 }
-P17_STATIC_MPS_LAYOUTS = {
+ARCHIVED_P17_STATIC_MPS_LAYOUTS = {
     "baseline_static_64_28": (64, 28),
     "baseline_static_72_20": (72, 20),
 }
@@ -167,13 +167,13 @@ def _nested(profile: dict[str, Any], dotted_key: str) -> object:
     return value
 
 
-def _validate_p17_profile(profile: dict[str, Any]) -> list[str]:
+def _validate_archived_p17_profile(profile: dict[str, Any]) -> list[str]:
     expected = {
         "schema_version": 1,
         "profile_version": 2,
-        "status": "canonical",
+        "status": "archived",
         "architecture": "pap",
-        "release_gate": True,
+        "release_gate": False,
         "mode": "formal",
         "repetitions": 3,
         "model.dtype": "float16",
@@ -238,7 +238,7 @@ def _validate_p17_profile(profile: dict[str, Any]) -> list[str]:
     return errors
 
 
-def _validate_p17_run_contract(
+def _validate_archived_p17_run_contract(
     run: dict[str, Any],
     profile: dict[str, Any],
 ) -> list[str]:
@@ -290,7 +290,7 @@ def _validate_p17_run_contract(
         if _nested(run, key) != wanted
     ]
     mps_profile_id = _nested(run, "mps.profile_id")
-    mps_layout = P17_STATIC_MPS_LAYOUTS.get(str(mps_profile_id))
+    mps_layout = ARCHIVED_P17_STATIC_MPS_LAYOUTS.get(str(mps_profile_id))
     if mps_layout is None:
         errors.append(
             f"{run['run_id']}: P17 mps.profile_id is not recognized: "
@@ -351,16 +351,16 @@ def _validate_profiles(profiles: dict[str, dict[str, Any]]) -> list[str]:
         if profile.get("status") == "canonical"
         and profile.get("release_gate") is True
     ]
-    if canonical_release_profiles != ["p17_1pa1p"]:
+    if canonical_release_profiles:
         errors.append(
-            "the only canonical release profile must be p17_1pa1p: "
-            f"{canonical_release_profiles}"
+            "runtime release profiles are retired in favor of the AIPerf "
+            f"matrix: {canonical_release_profiles}"
         )
     p17 = profiles.get("p17_1pa1p")
     if p17 is None:
-        errors.append("missing p17_1pa1p profile")
+        errors.append("missing archived p17_1pa1p profile reference")
     else:
-        errors.extend(_validate_p17_profile(p17))
+        errors.extend(_validate_archived_p17_profile(p17))
     return errors
 
 
@@ -378,7 +378,7 @@ def _validate_run_semantics(
     if profile is None:
         errors.append(f"{run_id}: unknown profile_id {run['profile_id']}")
     elif run["profile_id"] == "p17_1pa1p":
-        errors.extend(_validate_p17_run_contract(run, profile))
+        errors.extend(_validate_archived_p17_run_contract(run, profile))
 
     provenance = run["provenance"]
     if provenance["tracked_worktree_dirty"] is True:

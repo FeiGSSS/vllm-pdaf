@@ -11,6 +11,7 @@ TOPOLOGY_RUNNER = ROOT / "benchmarks/pap/scripts/run_pd_multiturn_topology.sh"
 PAP_RUNNER = ROOT / "benchmarks/pap/scripts/run_pap_workload.sh"
 AIPERF_RUNNER = ROOT / "benchmarks/pap/aiperf/run_profile.sh"
 CAPACITY_RUNNER = ROOT / "benchmarks/pap/aiperf/run_capacity_matrix.sh"
+P17_RUNNER = ROOT / "benchmarks/pap/scripts/run_p17_1pa1p.sh"
 
 
 def test_pd_proxy_accepts_aiperf_session_header() -> None:
@@ -41,7 +42,8 @@ def test_four_gpu_topology_runner_has_bounded_conversation_load() -> None:
     assert "PD_LOAD_TOPOLOGY:-3p1d" in text
     assert "PREFILL_COUNT + DECODE_COUNT != 4" in text
     assert "PD_LOAD_REQUEST_TIMEOUT_SECONDS:-180" in text
-    assert '--request-timeout-seconds "${REQUEST_TIMEOUT_SECONDS}"' in text
+    assert "PD_LOAD_CLIENT_MODE:-aiperf_multiturn" in text
+    assert "pap_pd_multiturn_load_client.py" not in text
     assert "disagg_proxy_multiturn.py" in text
     assert "ensure_gpus_idle" in text
 
@@ -84,6 +86,16 @@ def test_aiperf_capacity_lane_uses_concurrency_without_request_rate() -> None:
     assert "AIPERF_TIMING_MODE=concurrency" in capacity_text
     assert "PAP_AIPERF_REQUEST_RATE=" in capacity_text
     assert "PD_AIPERF_REQUEST_RATE=" in capacity_text
+
+
+def test_aiperf_is_the_only_performance_testbed() -> None:
+    pap_text = PAP_RUNNER.read_text(encoding="utf-8")
+    pd_text = TOPOLOGY_RUNNER.read_text(encoding="utf-8")
+
+    assert not P17_RUNNER.exists()
+    assert "multiturn_load)" not in pap_text
+    assert "pap_pd_multiturn_load_client.py" not in pap_text
+    assert "PD_LOAD_CLIENT_MODE:-aiperf_multiturn" in pd_text
 
 
 def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:

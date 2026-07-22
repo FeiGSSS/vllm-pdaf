@@ -46,6 +46,8 @@ def test_current_registry_validates() -> None:
     snapshot = validate_registry()
 
     assert set(snapshot.profiles) == {"p17_1pa1p", "paged_fa_sm_probe"}
+    assert snapshot.profiles["p17_1pa1p"]["status"] == "archived"
+    assert snapshot.profiles["p17_1pa1p"]["release_gate"] is False
     assert set(snapshot.runs) == {
         "20260714_dd2073bcf_p17_pre_refactor_formal",
         "20260715_003029a77_p17_model_adapter_formal",
@@ -81,9 +83,10 @@ def test_current_registry_validates() -> None:
     assert snapshot.experiments["PAP-20260715-VLLM-INTEGRATION-BOUNDARY"][
         "status"
     ] == "archived"
-    assert snapshot.experiments["PAP-20260716-TRITON-72-20-BASELINE"][
-        "status"
-    ] == "current"
+    assert all(
+        experiment["status"] == "archived"
+        for experiment in snapshot.experiments.values()
+    )
     assert len(snapshot.historical_experiments) == 44
     assert len(snapshot.negative_results) == 16
 
@@ -133,7 +136,7 @@ def test_run_schema_rejects_short_commit(tmp_path: Path) -> None:
         )
 
 
-def test_p17_run_rejects_profile_drift(tmp_path: Path) -> None:
+def test_archived_p17_run_rejects_profile_drift(tmp_path: Path) -> None:
     profile_dir, run_dir, experiment_dir = _copy_registry(tmp_path)
     run_path = run_dir / BASELINE_RUN
     run = _load(run_path)
