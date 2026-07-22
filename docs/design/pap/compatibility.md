@@ -4,13 +4,14 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260722-AIPERF-CANONICAL-CUTOVER
   - PAP-20260716-TRITON-72-20-BASELINE
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260715-VLLM-INTEGRATION-BOUNDARY
   - PAP-20260715-ARCHITECTURE-MILESTONE
   - PAP-20260715-RUNTIME-BOUNDARY-E2E
   - PAP-20260715-INTEGRATION-E2E
-last_validated_commit: e5190a84e37124c893cf66d5b1bb94f9e31dc408
+last_validated_commit: 894b81ae9238373ac0950fc7932bed7bfb3dd74c
 ---
 
 # PAP compatibility retirement record
@@ -97,7 +98,7 @@ performance baseline by `PAP-20260716-TRITON-72-20-BASELINE`.
 
 ## Current revalidation
 
-At source milestone `e5190a84e`, none of the retired façades has returned.
+At source milestone `894b81ae9`, none of the retired façades has returned.
 Piecewise CUDA Graph support is owned by `vllm/pap/model/cudagraph.py` and the
 existing `integration/` adapters; it did not add a new top-level forwarding
 module. The current module boundary and supported execution modes are recorded

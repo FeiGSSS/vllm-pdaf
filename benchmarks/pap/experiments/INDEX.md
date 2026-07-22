@@ -7,6 +7,7 @@ live under this directory. See [the storage contract](README.md) and the
 Current AIPerf report bundles that have not yet been promoted to the normalized
 experiment registry schema:
 
+- [Canonical AIPerf cutover regression](PAP-20260722-AIPERF-CANONICAL-CUTOVER/report.md)
 - [Current piecewise CUDA Graph AIPerf comparison](PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md)
 - [Current audited-capacity AIPerf eager baseline](PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md)
 

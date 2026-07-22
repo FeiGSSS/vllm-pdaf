@@ -4,10 +4,11 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260722-AIPERF-CANONICAL-CUTOVER
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260701-PD-METHODOLOGY
-last_validated_commit: e5190a84e37124c893cf66d5b1bb94f9e31dc408
+last_validated_commit: 894b81ae9238373ac0950fc7932bed7bfb3dd74c
 ---
 
 # PAP benchmark methodology
