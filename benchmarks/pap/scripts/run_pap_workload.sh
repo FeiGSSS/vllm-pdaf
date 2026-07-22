@@ -78,6 +78,7 @@ ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 VLLM_BIN="${VLLM_BIN:-${ROOT_DIR}/.venv/bin/vllm}"
 DEFERRED_TRACE_VALIDATOR="${ROOT_DIR}/benchmarks/pap/tooling/validate_deferred_trace.py"
+PROJECTION_MEMORY_PLANNER="${ROOT_DIR}/vllm/pap/model/memory.py"
 AIPERF_RUNNER="${ROOT_DIR}/benchmarks/pap/aiperf/run_profile.sh"
 AIPERF_DATASET_GENERATOR="${ROOT_DIR}/benchmarks/pap/aiperf/generate_multiturn_dataset.py"
 AIPERF_ROOT="${AIPERF_ROOT:-/home/fei/research/PD/refer_codes/aiperf}"
@@ -196,8 +197,7 @@ PAP_PROJECTION_MAX_NUM_SEQS="${PAP_PROJECTION_MAX_NUM_SEQS:-${MAX_NUM_SEQS}}"
 PAP_EXECUTION_MODE="${PAP_EXECUTION_MODE:-eager}"
 PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES="${PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES:-1,2,4,8,16,32,64,128}"
 PAP_PROJECTION_CUDAGRAPH_CAPTURE_SIZES="${PAP_PROJECTION_CUDAGRAPH_CAPTURE_SIZES:-1,2,4,8,12,16,20,24,28,32}"
-PAP_PREFILL_GPU_MEMORY_UTILIZATION="${PAP_PREFILL_GPU_MEMORY_UTILIZATION:-0.76}"
-PAP_PROJECTION_GPU_MEMORY_UTILIZATION="${PAP_PROJECTION_GPU_MEMORY_UTILIZATION:-0.76}"
+PAP_PREFILL_GPU_MEMORY_UTILIZATION="${PAP_PREFILL_GPU_MEMORY_UTILIZATION:-0.90}"
 PAP_PREFILL_MPS_PERCENT="${PAP_PREFILL_MPS_PERCENT:-80}"
 PAP_ATTENTION_MPS_PERCENT="${PAP_ATTENTION_MPS_PERCENT:-20}"
 PAP_STATIC_PREFILL_CHUNKS="${PAP_STATIC_PREFILL_CHUNKS:-18}"
@@ -1156,7 +1156,17 @@ write_effective_config() {
     printf 'no_proxy=%q\n' "${no_proxy}"
     printf 'PAP_PROXY_PORT=%q\n' "${PAP_PROXY_PORT}"
     printf 'PAP_PREFILL_GPU_MEMORY_UTILIZATION=%q\n' "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}"
-    printf 'PAP_PROJECTION_GPU_MEMORY_UTILIZATION=%q\n' "${PAP_PROJECTION_GPU_MEMORY_UTILIZATION}"
+    printf 'PROJECTION_MEMORY_POLICY=%q\n' "model_weights_x1.20"
+    printf 'PROJECTION_GPU_MEMORY_UTILIZATION=%q\n' \
+      "${PROJECTION_GPU_MEMORY_UTILIZATION}"
+    printf 'PROJECTION_MODEL_WEIGHT_BYTES=%q\n' \
+      "${PROJECTION_MODEL_WEIGHT_BYTES}"
+    printf 'PROJECTION_PER_RANK_WEIGHT_BYTES=%q\n' \
+      "${PROJECTION_PER_RANK_WEIGHT_BYTES}"
+    printf 'PROJECTION_MEMORY_TARGET_BYTES=%q\n' \
+      "${PROJECTION_MEMORY_TARGET_BYTES}"
+    printf 'PROJECTION_GPU_TOTAL_BYTES=%q\n' \
+      "${PROJECTION_GPU_TOTAL_BYTES}"
     printf 'PAP_PREFILL_MPS_PERCENT=%q\n' "${PAP_PREFILL_MPS_PERCENT}"
     printf 'PAP_ATTENTION_MPS_PERCENT=%q\n' "${PAP_ATTENTION_MPS_PERCENT}"
     printf 'PAP_STATIC_PREFILL_CHUNKS=%q\n' \
@@ -1654,6 +1664,8 @@ fi
 [[ -x "${VLLM_BIN}" ]] || die "VLLM_BIN is not executable: ${VLLM_BIN}"
 [[ -f "${DEFERRED_TRACE_VALIDATOR}" ]] \
   || die "Missing deferred trace validator: ${DEFERRED_TRACE_VALIDATOR}"
+[[ -f "${PROJECTION_MEMORY_PLANNER}" ]] \
+  || die "Missing Projection memory planner: ${PROJECTION_MEMORY_PLANNER}"
 [[ -d "${MODEL_PATH}" ]] || die "Model path does not exist: ${MODEL_PATH}"
 
 "${PYTHON_BIN}" -c 'import nixl' >/dev/null 2>&1 \
@@ -1668,6 +1680,21 @@ split_csv "${PAP_PROJECTION_GPUS}" PROJECTION_GPUS
 require_count "PAP_PREFILL_GPUS" "${#PREFILL_GPUS[@]}" "${PA_COUNT}"
 require_count \
   "PAP_PROJECTION_GPUS" "${#PROJECTION_GPUS[@]}" "${PROJECTION_COUNT}"
+
+projection_memory_args=(
+  "${PROJECTION_MEMORY_PLANNER}"
+  --model-path "${MODEL_PATH}"
+  --tensor-parallel-size "${PAP_TP_SIZE}"
+)
+for gpu in "${PROJECTION_GPUS[@]}"; do
+  projection_memory_args+=(--gpu-id "${gpu}")
+done
+read -r PROJECTION_GPU_MEMORY_UTILIZATION PROJECTION_MODEL_WEIGHT_BYTES \
+  PROJECTION_PER_RANK_WEIGHT_BYTES PROJECTION_MEMORY_TARGET_BYTES \
+  PROJECTION_GPU_TOTAL_BYTES < <(
+    "${PYTHON_BIN}" "${projection_memory_args[@]}"
+  )
+echo "Projection memory budget: utilization=${PROJECTION_GPU_MEMORY_UTILIZATION}, target_bytes=${PROJECTION_MEMORY_TARGET_BYTES}"
 
 ports=("${PAP_PROXY_PORT}")
 for (( idx=0; idx<PA_COUNT; idx++ )); do
@@ -1907,7 +1934,7 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
       --max-num-batched-tokens \
         "${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS}" \
       --tensor-parallel-size "${PAP_TP_SIZE}" \
-      --gpu-memory-utilization "${PAP_PROJECTION_GPU_MEMORY_UTILIZATION}" \
+      --gpu-memory-utilization "${PROJECTION_GPU_MEMORY_UTILIZATION}" \
       > "${RUN_LOG_DIR}/projection_${idx}.log" 2>&1 &
   PIDS+=("$!")
 done

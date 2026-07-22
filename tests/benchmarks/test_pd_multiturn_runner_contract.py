@@ -126,7 +126,9 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     assert '--session-prefix "${DATASET_SESSION_PREFIX}"' in text
     assert '--session-prefix "${MATRIX_ID}-session"' not in text
     assert "PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.90" in text
-    assert "PAP_PROJECTION_GPU_MEMORY_UTILIZATION=0.76" in text
+    assert "PAP_PROJECTION_MEMORY_POLICY" in text
+    assert "model_weights_x1.20" in text
+    assert "PAP_PROJECTION_GPU_MEMORY_UTILIZATION=" not in text
     assert "PAP_GPU_MEMORY_UTILIZATION=" not in text
     assert "PD_GPU_MEMORY_UTILIZATION=0.90" in text
     assert "PREFILL_MAX_NUM_BATCHED_TOKENS=16384" in text
@@ -146,6 +148,19 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     assert 'PAP_AIPERF_SESSIONS="${TOTAL_SESSIONS}"' in text
     assert 'PD_LOAD_CONVERSATIONS="${TOTAL_SESSIONS}"' in text
     assert '--sessions "${concurrency}"' not in text
+
+
+def test_pap_launchers_compute_projection_memory_from_model_size() -> None:
+    pap_text = PAP_RUNNER.read_text(encoding="utf-8")
+    example_text = (ROOT / "examples/pap/launch_pap_nixl.sh").read_text(
+        encoding="utf-8"
+    )
+
+    for text in (pap_text, example_text):
+        assert 'PAP_PREFILL_GPU_MEMORY_UTILIZATION:-0.90' in text
+        assert "vllm/pap/model/memory.py" in text
+        assert "PROJECTION_GPU_MEMORY_UTILIZATION" in text
+        assert "PAP_PROJECTION_GPU_MEMORY_UTILIZATION:-" not in text
 
 
 def test_capacity_lane_only_prunes_eligible_slo_failures() -> None:

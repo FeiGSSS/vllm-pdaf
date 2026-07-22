@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+PROJECTION_MEMORY_PLANNER="$ROOT_DIR/vllm/pap/model/memory.py"
 if [[ -v PAP_ASYNC_DECODE_TOKEN ]]; then
     echo "PAP_ASYNC_DECODE_TOKEN was removed; sampled-token delivery is "\
 "unconditionally asynchronous. Historical evidence: "\
@@ -154,8 +155,7 @@ VLLM_PORT_BASE="${PAP_VLLM_PORT_BASE:-50000}"
 MAX_MODEL_LEN="${PAP_MAX_MODEL_LEN:-1024}"
 MAX_NUM_SEQS="${PAP_MAX_NUM_SEQS:-2}"
 MAX_NUM_BATCHED_TOKENS="${PAP_MAX_NUM_BATCHED_TOKENS:-8192}"
-PREFILL_GPU_MEMORY_UTILIZATION="${PAP_PREFILL_GPU_MEMORY_UTILIZATION:-0.80}"
-PROJECTION_GPU_MEMORY_UTILIZATION="${PAP_PROJECTION_GPU_MEMORY_UTILIZATION:-0.80}"
+PREFILL_GPU_MEMORY_UTILIZATION="${PAP_PREFILL_GPU_MEMORY_UTILIZATION:-0.90}"
 PREFILL_MPS_PERCENT="${PAP_PREFILL_MPS_PERCENT:-70}"
 ATTENTION_MPS_PERCENT="${PAP_ATTENTION_MPS_PERCENT:-30}"
 ENABLE_MPS="${PAP_ENABLE_MPS:-1}"
@@ -403,6 +403,10 @@ if [[ ! -d "$MODEL_PATH" ]]; then
     echo "Model path does not exist: $MODEL_PATH" >&2
     exit 1
 fi
+if [[ ! -f "$PROJECTION_MEMORY_PLANNER" ]]; then
+    echo "Projection memory planner does not exist: $PROJECTION_MEMORY_PLANNER" >&2
+    exit 1
+fi
 
 if ! "$ROOT_DIR/.venv/bin/python" -c 'import nixl' >/dev/null 2>&1; then
     echo "Python package 'nixl' is not installed in .venv; install it before running PAP NIXL." >&2
@@ -441,6 +445,20 @@ split_csv "$PREFILL_GPUS_CSV" PREFILL_GPUS
 split_csv "$PROJECTION_GPUS_CSV" PROJECTION_GPUS
 require_count "PAP_PREFILL_GPUS" "${#PREFILL_GPUS[@]}" "$PREFILL_GPU_COUNT"
 require_count "PAP_PROJECTION_GPUS" "${#PROJECTION_GPUS[@]}" "$PROJECTION_GPU_COUNT"
+projection_memory_args=(
+    "$PROJECTION_MEMORY_PLANNER"
+    --model-path "$MODEL_PATH"
+    --tensor-parallel-size "$PAP_TP_SIZE"
+)
+for gpu in "${PROJECTION_GPUS[@]}"; do
+    projection_memory_args+=(--gpu-id "$gpu")
+done
+read -r PROJECTION_GPU_MEMORY_UTILIZATION PROJECTION_MODEL_WEIGHT_BYTES \
+    PROJECTION_PER_RANK_WEIGHT_BYTES PROJECTION_MEMORY_TARGET_BYTES \
+    PROJECTION_GPU_TOTAL_BYTES < <(
+        "$ROOT_DIR/.venv/bin/python" "${projection_memory_args[@]}"
+    )
+echo "Projection memory budget: utilization=$PROJECTION_GPU_MEMORY_UTILIZATION, target_bytes=$PROJECTION_MEMORY_TARGET_BYTES"
 if (( PAP_TP_SIZE > 1 )) && [[ "$ENABLE_MPS" == "1" ]]; then
     echo "PAP_ENABLE_MPS=1 is not supported with PAP_TP_SIZE > 1; set PAP_ENABLE_MPS=0" >&2
     exit 1
