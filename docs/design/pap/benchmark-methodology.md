@@ -63,9 +63,16 @@ token outputs, and deterministic think/tool delays.
 The source-audited scheduler settings are `max_num_seqs=64`, Prefill
 `max_num_batched_tokens=16384`, Decode/Projection
 `max_num_batched_tokens=64`, default `max_num_partial_prefills=1`, and
-`max_model_len=20000`. PAP uses `gpu_memory_utilization=0.76`; PD uses `0.90`.
+`max_model_len=20000`. PAP Prefill and PD use
+`gpu_memory_utilization=0.90`; PAP Projection remains at `0.76`. The setting
+applies per vLLM executor, so PAP reports must also record physical PA-GPU
+headroom for the colocated Attention runtime.
 The full parameter rationale and reproducible commands live in the
 [AIPerf testbed documentation](../../../benchmarks/pap/aiperf/README.md).
+
+The published performance tables below used PAP Prefill `0.76`. They remain
+historical evidence and must not be presented as results from the new `0.90`
+baseline; the matched comparison still needs to be rerun.
 
 Best SLO-compliant goodput from the current single-repetition development
 scans is:

@@ -74,11 +74,17 @@ The capacity lane deliberately avoids artificial scheduler limits:
 | PAP PA / PD Prefill | 64 | 16384 |
 | PAP Projection / PD Decode | 64 | 64 |
 
-`max_num_partial_prefills` stays at its vLLM default of 1,
-`max_model_len=20000`, PAP uses `gpu_memory_utilization=0.76`, and PD uses
-`0.90`. These settings are justified from scheduler/model-runner source in the
-[AIPerf methodology](../../../benchmarks/pap/aiperf/README.md), rather than
-chosen by assuming larger values always improve capacity.
+`max_num_partial_prefills` stays at its vLLM default of 1 and
+`max_model_len=20000`. PAP Prefill and PD use
+`gpu_memory_utilization=0.90`, while PAP Projection remains at `0.76` because
+it owns no prompt KV. PAP must additionally report physical PA-GPU headroom
+because Attention is colocated outside the Prefill executor's budget. These
+settings are justified from scheduler/model-runner source in the
+[AIPerf methodology](../../../benchmarks/pap/aiperf/README.md).
+
+Existing performance reports used PAP Prefill `0.76`. They are retained as
+historical evidence; the `0.90` baseline is not a milestone until PAP startup,
+PA-GPU headroom, and a matched PAP/PD AIPerf comparison are recorded.
 
 ## Current performance milestone
 

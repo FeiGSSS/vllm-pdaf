@@ -179,11 +179,14 @@ when wire-level debugging is required.
 ## Run the lean randomized matrix
 
 The matrix fixes PAP at 3PA1P and PD at one-way 1P3D, 2P2D, and 3P1D. PAP uses
-the accepted static 72/20-SM path and `gpu_memory_utilization=0.76`; PD uses
-`0.90`. Scheduler limits, batching, model length, dtype, data, and AIPerf
-settings remain unchanged across concurrency points. Projection does not own
-prompt KV, so increasing only its memory reservation would not increase PAP
-session capacity.
+the accepted static 72/20-SM path. Its Prefill executor and every PD executor
+use `gpu_memory_utilization=0.90`; PAP Projection remains at `0.76` because it
+does not own prompt KV. Scheduler limits, batching, model length, dtype, data,
+and AIPerf settings remain unchanged across concurrency points.
+
+This role-specific memory default postdates the published `0.76` PAP scans.
+Those reports remain valid historical measurements, but a new PAP/PD baseline
+must rerun both sides before making a performance claim.
 
 ### Capacity-parameter audit
 
@@ -222,9 +225,13 @@ larger number as automatically safer:
   environment value is only a 64-token compatibility fallback; the former
   fixed 512-token reservation no longer reduces PA capacity for this 16-64
   token output distribution.
-- PAP keeps `gpu_memory_utilization=0.76` because each PA GPU also owns the
-  Attention runtime. PD keeps the established `0.90`. Projection allocates no
-  local request KV, so its nominal KV arena is not a PAP conversation limit.
+- `gpu_memory_utilization` is a per-vLLM-executor budget, not an aggregate cap
+  for every process on a physical GPU. The PAP Prefill executor now uses
+  `0.90`, matching PD and avoiding an artificial KV-capacity disadvantage.
+  Attention remains an additional colocated allocation, so every new hardware
+  baseline must record startup success and physical-GPU headroom. Projection
+  stays at `0.76`; it allocates no local request KV, so its nominal KV arena is
+  not a PAP conversation limit.
 - This revised baseline remains eager. CUDA Graph support and its memory budget
   are introduced and measured separately so graph effects are not conflated
   with scheduler-capacity changes.

@@ -122,7 +122,9 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     assert "TOOL_TIME_MS=1000" in text
     assert "TOOL_EVERY=3" in text
     assert "PAP_CAPACITY_SESSIONS:-32" in text
-    assert "PAP_GPU_MEMORY_UTILIZATION=0.76" in text
+    assert "PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.90" in text
+    assert "PAP_PROJECTION_GPU_MEMORY_UTILIZATION=0.76" in text
+    assert "PAP_GPU_MEMORY_UTILIZATION=" not in text
     assert "PD_GPU_MEMORY_UTILIZATION=0.90" in text
     assert "PREFILL_MAX_NUM_BATCHED_TOKENS=16384" in text
     assert "DECODE_MAX_NUM_BATCHED_TOKENS=64" in text
