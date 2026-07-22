@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import time
 from typing import Any
@@ -20,55 +19,16 @@ from vllm.pap.deferred_cuda_trace import (
     begin_deferred_cuda_span,
     end_deferred_cuda_span,
 )
+from vllm.pap.kv.decode_state import _DEFERRED_CUDA_TRACE_ENABLED
 from vllm.pap.kv.metadata import (
     PAPPagedFlashMetadata,
     build_unified_paged_flash_step_metadata,
 )
-from vllm.pap.kv.decode_state import _DEFERRED_CUDA_TRACE_ENABLED
-from vllm.pap.kv.models import PAPAttentionSession, PAPUnifiedPagedKVState
+from vllm.pap.kv.models import PAPUnifiedPagedKVState
 from vllm.pap.kv.observability import (
     log_kv_locality_profile as _log_kv_locality_profile,
 )
 from vllm.pap.kv.registry import PAPAttentionRegistry
-from vllm.pap.protocol import pap_offload_exec_trace_id
-
-logger = logging.getLogger("pap_attention")
-
-
-def _offload_exec_attention_shapes(
-    *,
-    session: PAPAttentionSession,
-) -> tuple[int, int, int, int, int]:
-    q_size = session.q_size or int(os.environ.get("PAP_OFFLOAD_EXEC_Q_SIZE", "0"))
-    kv_size = session.kv_size or int(os.environ.get("PAP_OFFLOAD_EXEC_KV_SIZE", "0"))
-    num_heads = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_HEADS", "0"))
-    num_kv_heads = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "0"))
-    head_dim = int(os.environ.get("PAP_OFFLOAD_EXEC_HEAD_DIM", "0"))
-    if q_size <= 0 or kv_size <= 0:
-        raise RuntimeError(
-            "PAP OFFLOAD_EXEC requires q_size and kv_size in attention "
-            "registration or PAP_OFFLOAD_EXEC_Q_SIZE/PAP_OFFLOAD_EXEC_KV_SIZE"
-        )
-    if num_heads <= 0 or num_kv_heads <= 0 or head_dim <= 0:
-        raise RuntimeError(
-            "PAP OFFLOAD_EXEC requires PAP_OFFLOAD_EXEC_NUM_HEADS, "
-            "PAP_OFFLOAD_EXEC_NUM_KV_HEADS, and PAP_OFFLOAD_EXEC_HEAD_DIM"
-        )
-    return q_size, kv_size, num_heads, num_kv_heads, head_dim
-
-
-def _offload_exec_session(
-    *,
-    registry: PAPAttentionRegistry,
-    request_id: str,
-) -> tuple[str, PAPAttentionSession]:
-    session_request_id = registry.resolve_session_request_id(request_id)
-    if session_request_id is None:
-        raise KeyError(request_id)
-    session = registry.get_session(session_request_id)
-    if session is None:
-        raise KeyError(request_id)
-    return session_request_id, session
 
 
 def _compute_unified_paged_attention_batch(
@@ -307,9 +267,7 @@ def compute_offload_exec_batch_output(
                 seq_lens=step_context.result_seq_lens,
                 device=query_batch.device,
             )
-            metadata_build_ms = (
-                time.perf_counter() - metadata_start
-            ) * 1000.0
+            metadata_build_ms = (time.perf_counter() - metadata_start) * 1000.0
             registry.record_attention_step_metadata_build()
         if trace_stats is not None:
             trace_stats["paged_metadata_ms"] += metadata_build_ms
@@ -369,195 +327,3 @@ def _finalize_offload_exec_compute_trace(
     )
     if float(trace_stats.get("compute_unaccounted_ms", 0.0)) <= 0.0:
         trace_stats["compute_unaccounted_ms"] = max(0.0, compute_ms - explained_ms)
-
-
-def _combine_offload_exec_outputs(outputs: list[torch.Tensor]) -> torch.Tensor:
-    if len(outputs) == 1:
-        return outputs[0]
-    return torch.cat(outputs, dim=0)
-
-
-def run_offload_exec_batch_once(
-    *,
-    registry: PAPAttentionRegistry,
-    transport: Any,
-    remote_address: str,
-    descriptor: Any,
-) -> None:
-    """Receive one batched QKV tensor and send one batched attention output."""
-
-    trace_offload_exec = os.environ.get("PAP_OFFLOAD_EXEC_TRACE", "").lower() in (
-        "1",
-        "true",
-        "yes",
-        "on",
-    )
-    trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
-    trace_recv_start_ns = 0
-    trace_recv_done_ns = 0
-    trace_compute_done_ns = 0
-    trace_send_start_ns = 0
-    trace_send_done_ns = 0
-    trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
-    if trace_offload_exec:
-        trace_recv_start_ns = time.perf_counter_ns()
-    qkv_batch = transport.recv_qkv_batch(
-        descriptor,
-        remote_address=remote_address,
-    )
-    trace_recv_ms = (
-        (time.perf_counter() - trace_recv_start) * 1000.0 if trace_offload_exec else 0.0
-    )
-    if trace_offload_exec:
-        trace_recv_done_ns = time.perf_counter_ns()
-    if int(qkv_batch.shape[0]) != descriptor.item_count:
-        raise RuntimeError(
-            "PAP OFFLOAD_EXEC batch QKV row count does not match descriptor"
-        )
-    trace_compute_start = time.perf_counter() if trace_offload_exec else 0.0
-    trace_compute_stats = (
-        {
-            "append_kv_ms": 0.0,
-            "pack_ms": 0.0,
-            "sdpa_ms": 0.0,
-            "reshape_ms": 0.0,
-            "paged_metadata_ms": 0.0,
-            "paged_flash_ms": 0.0,
-            "metadata_build_ms": 0.0,
-            "paged_flash_kernel_ms": 0.0,
-            "attention_output_reshape_ms": 0.0,
-            "compute_unaccounted_ms": 0.0,
-            "fallback_ms": 0.0,
-            "shape_lookup_ms": 0.0,
-            "qkv_split_ms": 0.0,
-            "query_move_ms": 0.0,
-            "query_cat_ms": 0.0,
-            "append_lock_wait_ms": 0.0,
-            "append_prepare_ms": 0.0,
-            "append_record_ms": 0.0,
-            "append_tensor_ms": 0.0,
-            "append_copy_ms": 0.0,
-            "append_state_ms": 0.0,
-            "pre_compute_start_ns": 0.0,
-            "pre_compute_done_ns": 0.0,
-            "paged_flash_done_ns": 0.0,
-            "post_compute_done_ns": 0.0,
-        }
-        if trace_offload_exec
-        else None
-    )
-    output_batch = compute_offload_exec_batch_output(
-        registry=registry,
-        descriptor=descriptor,
-        qkv_batch=qkv_batch,
-        trace_stats=trace_compute_stats,
-    )
-    trace_compute_ms = (
-        (time.perf_counter() - trace_compute_start) * 1000.0
-        if trace_offload_exec
-        else 0.0
-    )
-    _finalize_offload_exec_compute_trace(trace_compute_stats, trace_compute_ms)
-    if trace_offload_exec:
-        trace_compute_done_ns = time.perf_counter_ns()
-    trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
-    if trace_offload_exec:
-        trace_send_start_ns = time.perf_counter_ns()
-    transport.send_output_batch(
-        descriptor,
-        output_batch,
-        remote_address=remote_address,
-    )
-    if trace_offload_exec:
-        trace_send_done_ns = time.perf_counter_ns()
-        trace_send_ms = (time.perf_counter() - trace_send_start) * 1000.0
-        trace_total_ms = (time.perf_counter() - trace_total_start) * 1000.0
-        logger.info(
-            "PAP OFFLOAD_EXEC attention batch trace layer=%s calls=%d "
-            "recv_qkv_ms=%.3f compute_ms=%.3f send_output_ms=%.3f "
-            "total_ms=%.3f append_kv_ms=%.3f pack_ms=%.3f "
-            "sdpa_ms=%.3f reshape_ms=%.3f paged_metadata_ms=%.3f "
-            "paged_flash_ms=%.3f fallback_ms=%.3f shape_lookup_ms=%.3f "
-            "qkv_split_ms=%.3f query_move_ms=%.3f query_cat_ms=%.3f "
-            "append_lock_wait_ms=%.3f append_prepare_ms=%.3f "
-            "append_record_ms=%.3f append_tensor_ms=%.3f "
-            "append_copy_ms=%.3f append_state_ms=%.3f "
-            "metadata_build_ms=%.3f paged_flash_kernel_ms=%.3f "
-            "attention_output_reshape_ms=%.3f compute_unaccounted_ms=%.3f "
-            "qkv_shape=%s output_shape=%s batch_key=%s "
-            "recv_done_ns=%d compute_done_ns=%d send_done_ns=%d "
-            "recv_start_ns=%d pre_compute_start_ns=%d "
-            "pre_compute_done_ns=%d paged_flash_done_ns=%d reshape_done_ns=%d "
-            "send_start_ns=%d",
-            descriptor.layer_name,
-            descriptor.item_count,
-            trace_recv_ms,
-            trace_compute_ms,
-            trace_send_ms,
-            trace_total_ms,
-            trace_compute_stats["append_kv_ms"] if trace_compute_stats else 0.0,
-            trace_compute_stats["pack_ms"] if trace_compute_stats else 0.0,
-            trace_compute_stats["sdpa_ms"] if trace_compute_stats else 0.0,
-            trace_compute_stats["reshape_ms"] if trace_compute_stats else 0.0,
-            trace_compute_stats["paged_metadata_ms"] if trace_compute_stats else 0.0,
-            trace_compute_stats["paged_flash_ms"] if trace_compute_stats else 0.0,
-            trace_compute_stats["fallback_ms"] if trace_compute_stats else 0.0,
-            trace_compute_stats["shape_lookup_ms"] if trace_compute_stats else 0.0,
-            trace_compute_stats["qkv_split_ms"] if trace_compute_stats else 0.0,
-            trace_compute_stats["query_move_ms"] if trace_compute_stats else 0.0,
-            trace_compute_stats["query_cat_ms"] if trace_compute_stats else 0.0,
-            (
-                trace_compute_stats["append_lock_wait_ms"]
-                if trace_compute_stats
-                else 0.0
-            ),
-            (trace_compute_stats["append_prepare_ms"] if trace_compute_stats else 0.0),
-            (trace_compute_stats["append_record_ms"] if trace_compute_stats else 0.0),
-            (trace_compute_stats["append_tensor_ms"] if trace_compute_stats else 0.0),
-            (trace_compute_stats["append_copy_ms"] if trace_compute_stats else 0.0),
-            (trace_compute_stats["append_state_ms"] if trace_compute_stats else 0.0),
-            (trace_compute_stats["metadata_build_ms"] if trace_compute_stats else 0.0),
-            (
-                trace_compute_stats["paged_flash_kernel_ms"]
-                if trace_compute_stats
-                else 0.0
-            ),
-            (
-                trace_compute_stats["attention_output_reshape_ms"]
-                if trace_compute_stats
-                else 0.0
-            ),
-            (
-                trace_compute_stats["compute_unaccounted_ms"]
-                if trace_compute_stats
-                else 0.0
-            ),
-            tuple(qkv_batch.shape),
-            tuple(output_batch.shape),
-            pap_offload_exec_trace_id(descriptor.output_tensor_id),
-            trace_recv_done_ns,
-            trace_compute_done_ns,
-            trace_send_done_ns,
-            trace_recv_start_ns,
-            (
-                int(trace_compute_stats.get("pre_compute_start_ns", 0.0))
-                if trace_compute_stats
-                else 0
-            ),
-            (
-                int(trace_compute_stats.get("pre_compute_done_ns", 0.0))
-                if trace_compute_stats
-                else 0
-            ),
-            (
-                int(trace_compute_stats.get("paged_flash_done_ns", 0.0))
-                if trace_compute_stats
-                else 0
-            ),
-            (
-                int(trace_compute_stats.get("post_compute_done_ns", 0.0))
-                if trace_compute_stats
-                else 0
-            ),
-            trace_send_start_ns,
-        )

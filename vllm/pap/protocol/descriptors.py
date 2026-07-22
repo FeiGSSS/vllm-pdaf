@@ -19,18 +19,22 @@ class PAPDataPlaneRole(str, Enum):
     ATTENTION = "attention"
     PROJECTION = "projection"
 
+
 class PAPDataPlaneChannel(str, Enum):
     OFFLOAD_KV = "offload_kv"
     OFFLOAD_EXEC = "offload_exec"
+
 
 def pap_offload_exec_trace_id(value: str) -> str:
     """Short stable id for correlating Projection and Attention trace lines."""
 
     return hashlib.sha1(value.encode("utf-8")).hexdigest()[:16]
 
+
 class PAPTensorTransport(str, Enum):
     CUDA_IPC = "cuda_ipc"
     NIXL_MAILBOX = "nixl_mailbox"
+
 
 @dataclass(frozen=True)
 class PAPOffloadExecDescriptor:
@@ -41,13 +45,6 @@ class PAPOffloadExecDescriptor:
     step: int
     scale: float
 
-    @property
-    def qkv_tensor_id(self) -> str:
-        return f"{self.request_id}#{self.layer_name}#{self.step}#qkv"
-
-    @property
-    def output_tensor_id(self) -> str:
-        return f"{self.request_id}#{self.layer_name}#{self.step}#attn_out"
 
 @dataclass(frozen=True)
 class PAPOffloadExecBatchDescriptor:
@@ -89,9 +86,7 @@ class PAPOffloadExecBatchDescriptor:
             if "a" in normalized_template:
                 lengths.add(len(normalized_template["a"]))
             if len(lengths) != 1:
-                raise ValueError(
-                    "PAP OFFLOAD_EXEC metadata template length mismatch"
-                )
+                raise ValueError("PAP OFFLOAD_EXEC metadata template length mismatch")
             if not request_ids:
                 raise ValueError(
                     "PAP OFFLOAD_EXEC metadata template requires at least one item"
@@ -99,18 +94,13 @@ class PAPOffloadExecBatchDescriptor:
             object.__setattr__(self, "metadata_template", normalized_template)
         if not self.items:
             if self.metadata_template is None:
-                raise ValueError(
-                    "PAP OFFLOAD_EXEC batch requires at least one item"
-                )
+                raise ValueError("PAP OFFLOAD_EXEC batch requires at least one item")
             if "a" not in self.metadata_template:
-                raise ValueError(
-                    "template-only PAP OFFLOAD_EXEC batch requires scales"
-                )
+                raise ValueError("template-only PAP OFFLOAD_EXEC batch requires scales")
             return
-        if (
-            self.metadata_template is not None
-            and len(self.metadata_template["r"]) != len(self.items)
-        ):
+        if self.metadata_template is not None and len(
+            self.metadata_template["r"]
+        ) != len(self.items):
             raise ValueError("PAP OFFLOAD_EXEC batch template length mismatch")
         for item in self.items:
             if item.layer_name != self.layer_name:
@@ -136,16 +126,9 @@ class PAPOffloadExecBatchDescriptor:
         return f"{self.batch_id}#qkv_batch"
 
     @property
-    def query_tensor_id(self) -> str:
-        return f"{self.batch_id}#query_batch"
-
-    @property
-    def kv_tensor_id(self) -> str:
-        return f"{self.batch_id}#kv_batch"
-
-    @property
     def output_tensor_id(self) -> str:
         return f"{self.batch_id}#attn_out_batch"
+
 
 @dataclass(frozen=True)
 class PAPCudaIPCTensorHandle:
@@ -196,6 +179,7 @@ class PAPCudaIPCTensorHandle:
             },
         )
 
+
 @dataclass(frozen=True)
 class PAPPrefillKVCacheCatalogDescriptor:
     """Process-lifetime CUDA IPC metadata for one Prefill KV-cache layer."""
@@ -235,9 +219,7 @@ class PAPPrefillKVCacheCatalogDescriptor:
         }
 
     @classmethod
-    def from_dict(
-        cls, data: dict[str, Any]
-    ) -> PAPPrefillKVCacheCatalogDescriptor:
+    def from_dict(cls, data: dict[str, Any]) -> PAPPrefillKVCacheCatalogDescriptor:
         return cls(
             catalog_id=str(data["catalog_id"]),
             layer_name=str(data["layer_name"]),
@@ -246,6 +228,7 @@ class PAPPrefillKVCacheCatalogDescriptor:
             layout=str(data["layout"]),
             kv_cache=PAPCudaIPCTensorHandle.from_dict(data["kv_cache"]),
         )
+
 
 @dataclass(frozen=True)
 class PAPPrefillKVSessionManifest:
@@ -274,9 +257,7 @@ class PAPPrefillKVSessionManifest:
             self, "block_ids", tuple(int(block_id) for block_id in self.block_ids)
         )
         object.__setattr__(self, "block_size", int(self.block_size))
-        object.__setattr__(
-            self, "expected_layer_count", int(self.expected_layer_count)
-        )
+        object.__setattr__(self, "expected_layer_count", int(self.expected_layer_count))
         object.__setattr__(self, "lease_id", str(self.lease_id))
         object.__setattr__(
             self,
@@ -286,12 +267,8 @@ class PAPPrefillKVSessionManifest:
         object.__setattr__(
             self, "lease_capacity_tokens", int(self.lease_capacity_tokens)
         )
-        object.__setattr__(
-            self, "writable_start_token", int(self.writable_start_token)
-        )
-        object.__setattr__(
-            self, "writable_end_token", int(self.writable_end_token)
-        )
+        object.__setattr__(self, "writable_start_token", int(self.writable_start_token))
+        object.__setattr__(self, "writable_end_token", int(self.writable_end_token))
         if self.ready_event_handle is not None:
             object.__setattr__(
                 self,
@@ -372,40 +349,11 @@ class PAPPrefillKVSessionManifest:
             ),
         )
 
+
 class PAPOffloadExecTransport(Protocol):
     """Projection<->Attention QKV/O data-plane transport."""
 
     transport: PAPTensorTransport
-
-    def send_qkv(
-        self,
-        descriptor: PAPOffloadExecDescriptor,
-        qkv: torch.Tensor,
-        *,
-        remote_address: str,
-    ) -> None: ...
-
-    def recv_qkv(
-        self,
-        descriptor: PAPOffloadExecDescriptor,
-        *,
-        remote_address: str,
-    ) -> torch.Tensor: ...
-
-    def send_output(
-        self,
-        descriptor: PAPOffloadExecDescriptor,
-        output: torch.Tensor,
-        *,
-        remote_address: str,
-    ) -> None: ...
-
-    def recv_output(
-        self,
-        descriptor: PAPOffloadExecDescriptor,
-        *,
-        remote_address: str,
-    ) -> torch.Tensor: ...
 
     def send_qkv_batch(
         self,

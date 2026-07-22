@@ -1,24 +1,7 @@
 from vllm.pap.mode import (
-    is_pap_enabled,
     is_pap_request_id,
     pap_request_ids_are_routable,
 )
-
-
-def test_is_pap_enabled_false_for_none() -> None:
-    assert not is_pap_enabled(None)
-
-
-def test_is_pap_enabled_false_for_empty_dict() -> None:
-    assert not is_pap_enabled({})
-
-
-def test_is_pap_enabled_false_when_false() -> None:
-    assert not is_pap_enabled({"pap_enabled": False})
-
-
-def test_is_pap_enabled_true() -> None:
-    assert is_pap_enabled({"pap_enabled": True})
 
 
 def test_is_pap_request_id_accepts_openai_completion_ids() -> None:

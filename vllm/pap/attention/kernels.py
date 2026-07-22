@@ -10,7 +10,6 @@ import torch
 
 from vllm.pap.kv.metadata import PAPPagedFlashMetadata
 
-PAP_ATTENTION_KERNEL = "triton_decode_split4"
 PAP_TRITON_DECODE_NUM_SPLITS = 4
 
 
@@ -130,7 +129,6 @@ def run_paged_decode_attention(
 
 
 __all__ = [
-    "PAP_ATTENTION_KERNEL",
     "PAPPagedDecodeWorkspace",
     "build_paged_decode_workspace",
     "run_paged_decode_attention",

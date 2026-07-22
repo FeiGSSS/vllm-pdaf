@@ -8,16 +8,12 @@ from vllm.pap.topology.peer_activity import (
     pap_attention_endpoint_for_rank,
     sync_pap_projection_peer_activity,
 )
-from vllm.pap.topology.routing import (
-    build_offload_exec_route_groups,
-    filter_offload_exec_route_groups_for_request_slice,
-)
+from vllm.pap.topology.routing import build_offload_exec_route_groups
 
 __all__ = [
     "PAPProjectionPeerActivity",
     "active_pap_attention_endpoints",
     "build_offload_exec_route_groups",
-    "filter_offload_exec_route_groups_for_request_slice",
     "pap_attention_endpoint_for_rank",
     "sync_pap_projection_peer_activity",
 ]

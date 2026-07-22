@@ -12,16 +12,6 @@ from vllm.pap.protocol.descriptors import (
     PAPOffloadExecDescriptor,
 )
 
-def _offload_exec_descriptor_to_metadata(
-    descriptor: PAPOffloadExecDescriptor,
-) -> dict[str, Any]:
-    return {
-        "request_id": descriptor.request_id,
-        "layer_name": descriptor.layer_name,
-        "step": descriptor.step,
-        "scale": descriptor.scale,
-    }
-
 
 def _offload_exec_batch_descriptor_to_metadata(
     descriptor: PAPOffloadExecBatchDescriptor,

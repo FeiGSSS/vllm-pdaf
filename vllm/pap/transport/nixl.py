@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """NIXL-backed PAP bidirectional mailbox endpoint.
 
-Backend-neutral mailbox messages and actor lifecycle live in
+Backend-neutral mailbox messages live in
 ``vllm.pap.transport.mailbox``. This module owns NIXL agent metadata,
 registered tensor slots, notifications, and transfer progress.
 """
@@ -26,17 +26,11 @@ import msgspec
 import torch
 
 from vllm.pap.transport.mailbox import (
-    InProcessPAPMailboxBackend,
-    PAPMailboxActor,
-    PAPMailboxBackend,
     PAPMailboxMessage,
     _merge_message_recv_trace,
 )
 
 __all__ = [
-    "InProcessPAPMailboxBackend",
-    "PAPMailboxActor",
-    "PAPMailboxBackend",
     "PAPMailboxDirectSendPayload",
     "PAPMailboxMessage",
     "PAPNixlMailboxAgentMetadata",
@@ -914,9 +908,7 @@ class PAPNixlMailboxEndpoint:
             slot_id = 0
             slot_offset = 0
         slot_wait_ms = (
-            (time.perf_counter() - slot_wait_start) * 1000.0
-            if trace_enabled
-            else 0.0
+            (time.perf_counter() - slot_wait_start) * 1000.0 if trace_enabled else 0.0
         )
         piggybacked_recv_releases: list[dict[str, int | str]] = []
         pushed_recv_slot_id: int | None = None
@@ -984,9 +976,7 @@ class PAPNixlMailboxEndpoint:
                 payload["addr"] = int(self._send_buffer.data_ptr())
                 payload["device_id"] = self.device_id
             payload_ms = (
-                (time.perf_counter() - payload_start) * 1000.0
-                if trace_enabled
-                else 0.0
+                (time.perf_counter() - payload_start) * 1000.0 if trace_enabled else 0.0
             )
             piggyback_start = time.perf_counter() if trace_enabled else 0.0
             piggybacked_recv_releases = self._drain_pending_recv_releases()
@@ -1440,9 +1430,7 @@ class PAPNixlMailboxEndpoint:
                 remote_h=remote_h,
             )
             write_prepare_ms = (
-                (time.perf_counter() - prepare_start) * 1000.0
-                if trace_enabled
-                else 0.0
+                (time.perf_counter() - prepare_start) * 1000.0 if trace_enabled else 0.0
             )
             transfer_start = time.perf_counter() if trace_enabled else 0.0
             self._wrapper.transfer(xfer_h)

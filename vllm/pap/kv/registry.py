@@ -16,8 +16,8 @@ import torch
 from vllm.pap.config import PAPRuntimeConfig
 from vllm.pap.kv.decode_state import _PAPDecodeStateMixin
 from vllm.pap.kv.models import (
-    PAPAttentionStepContext,
     PAPAttentionSession,
+    PAPAttentionStepContext,
     PAPOffloadExecSessionEntry,
     PAPPrefillKVCacheCatalogEntry,
     PAPPrefillLayerReadiness,
@@ -194,24 +194,6 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                 return "released"
         return status
 
-    def record_decode_kv_ready(
-        self,
-        *,
-        request_id: str,
-        new_seq_len: int,
-        endpoint: str,
-    ) -> str:
-        commit_request_id = str(request_id)
-        session_request_id = self.resolve_session_request_id(commit_request_id)
-        if session_request_id is None:
-            raise KeyError(request_id)
-        return self._decode_token_committer.record_kv_ready(
-            request_id=session_request_id,
-            new_seq_len=new_seq_len,
-            endpoint=endpoint,
-            commit_request_id=commit_request_id,
-        )
-
     def decode_token_stats(self) -> dict[str, int]:
         return self._decode_token_committer.stats()
 
@@ -231,7 +213,6 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
     @property
     def storage_device(self) -> torch.device:
         return self._storage_device
-
 
     def _decode_slot_plan_cache_limit(self) -> int:
         return self._decode_slot_plan_cache_limit_value
@@ -254,10 +235,7 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
             for alias in released_aliases:
                 self._released_session_aliases[alias] = request_id
                 self._released_session_aliases.move_to_end(alias)
-            while (
-                len(self._released_session_aliases)
-                > _RELEASED_SESSION_ALIAS_LIMIT
-            ):
+            while len(self._released_session_aliases) > _RELEASED_SESSION_ALIAS_LIMIT:
                 self._released_session_aliases.popitem(last=False)
         self._session_manifest_prefix_lens.pop(request_id, None)
         self._session_manifest_events.pop(request_id, None)
@@ -575,9 +553,7 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                     session_request_id=session_request_id,
                     layer_name=layer_name,
                 )
-            self._session_manifest_prefix_lens[session_request_id] = (
-                manifest.prefix_len
-            )
+            self._session_manifest_prefix_lens[session_request_id] = manifest.prefix_len
             self._session_manifest_events[session_request_id] = ready_event
             self._session_manifest_event_waited.discard(session_request_id)
             self._prefill_condition.notify_all()
@@ -750,13 +726,10 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
             expected_layers: frozenset[str] | None = None
             for session_request_id in session_request_ids:
                 states = self._unified_paged_kv.get(session_request_id, {})
-                activation = self._unified_slot_activations.get(
-                    session_request_id
-                )
+                activation = self._unified_slot_activations.get(session_request_id)
                 session_layers = (
                     activation.expected_layers
-                    if activation is not None
-                    and activation.expected_layers is not None
+                    if activation is not None and activation.expected_layers is not None
                     else frozenset(states)
                 )
                 if not session_layers or layer_name not in session_layers:
@@ -772,15 +745,13 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                     )
             assert expected_layers is not None
 
-            layer_states: dict[
-                str, tuple[PAPUnifiedPagedKVState, ...]
-            ] = {}
+            layer_states: dict[str, tuple[PAPUnifiedPagedKVState, ...]] = {}
             for expected_layer in expected_layers:
                 row_states: list[PAPUnifiedPagedKVState] = []
                 for session_request_id in session_request_ids:
-                    state = self._unified_paged_kv.get(
-                        session_request_id, {}
-                    ).get(expected_layer)
+                    state = self._unified_paged_kv.get(session_request_id, {}).get(
+                        expected_layer
+                    )
                     if state is None:
                         raise RuntimeError(
                             "PAP Attention step is missing sealed layer state "
@@ -792,9 +763,7 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
 
             prior_seq_lens: list[int] = []
             topology_ids: list[int] = []
-            for row_index, session_request_id in enumerate(
-                session_request_ids
-            ):
+            for row_index, session_request_id in enumerate(session_request_ids):
                 row_seq_lens = {
                     int(layer_states[name][row_index].seq_len)
                     for name in expected_layers
@@ -813,8 +782,7 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                         str(state.layout),
                     )
                     for state in (
-                        layer_states[name][row_index]
-                        for name in expected_layers
+                        layer_states[name][row_index] for name in expected_layers
                     )
                 }
                 if len(row_topologies) != 1:
@@ -822,9 +790,7 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                         "PAP sealed step topology differs across layers "
                         f"request_id={session_request_id}"
                     )
-                activation = self._unified_slot_activations.get(
-                    session_request_id
-                )
+                activation = self._unified_slot_activations.get(session_request_id)
                 if activation is None:
                     topology_ids.append(0)
                     continue
@@ -839,8 +805,7 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                     state.slot_generation != activation.generation
                     or state.slot_topology_id != topology_id
                     for state in (
-                        layer_states[name][row_index]
-                        for name in expected_layers
+                        layer_states[name][row_index] for name in expected_layers
                     )
                 ):
                     raise RuntimeError(
@@ -861,9 +826,7 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                         f"{request_id} current_seq_len={prior_seq_len} "
                         f"decode_seq_len={decode_seq_len}"
                     )
-                result_seq_lens.append(
-                    max(int(prior_seq_len), int(decode_seq_len))
-                )
+                result_seq_lens.append(max(int(prior_seq_len), int(decode_seq_len)))
                 commit_new_seq_lens.append(
                     int(decode_seq_len)
                     if int(decode_seq_len) > int(prior_seq_len)
@@ -881,15 +844,11 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                 for entry in session_entries
             }
             if len(shapes) != 1 or not scales:
-                raise RuntimeError(
-                    "PAP OFFLOAD_EXEC batch has mixed shapes or scales"
-                )
+                raise RuntimeError("PAP OFFLOAD_EXEC batch has mixed shapes or scales")
             shape = next(iter(shapes))
             scale = float(scales[0])
             if any(float(value) != scale for value in scales):
-                raise RuntimeError(
-                    "PAP OFFLOAD_EXEC batch has mixed shapes or scales"
-                )
+                raise RuntimeError("PAP OFFLOAD_EXEC batch has mixed shapes or scales")
 
             context = PAPAttentionStepContext(
                 cache_key=cache_key,
@@ -946,11 +905,8 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                     f"PAP Attention step received unexpected layer {layer_name}"
                 )
             context.completed_layers.add(layer_name)
-            if (
-                context.kv_ready_published
-                or not context.expected_layers.issubset(
-                    context.completed_layers
-                )
+            if context.kv_ready_published or not context.expected_layers.issubset(
+                context.completed_layers
             ):
                 return 0
 
@@ -985,16 +941,10 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
             return {
                 "step_context_hits": self._attention_step_context_hits,
                 "step_context_misses": self._attention_step_context_misses,
-                "step_context_entries": len(
-                    self._attention_step_context_cache
-                ),
-                "step_slot_plan_builds": (
-                    self._attention_step_slot_plan_builds
-                ),
+                "step_context_entries": len(self._attention_step_context_cache),
+                "step_slot_plan_builds": (self._attention_step_slot_plan_builds),
                 "step_metadata_builds": self._attention_step_metadata_builds,
-                "step_kv_ready_publishes": (
-                    self._attention_step_kv_ready_publishes
-                ),
+                "step_kv_ready_publishes": (self._attention_step_kv_ready_publishes),
             }
 
     def offload_exec_batch_session_entries(
@@ -1057,15 +1007,10 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
             if cache_key[0] == session_request_id:
                 self._offload_exec_session_entry_cache.pop(cache_key, None)
 
-    def _drop_attention_step_contexts_locked(
-        self, session_request_id: str
-    ) -> None:
-        for cache_key, context in list(
-            self._attention_step_context_cache.items()
-        ):
+    def _drop_attention_step_contexts_locked(self, session_request_id: str) -> None:
+        for cache_key, context in list(self._attention_step_context_cache.items()):
             if session_request_id in context.session_request_ids:
                 self._attention_step_context_cache.pop(cache_key, None)
-
 
     def _resolve_session_request_id_locked(self, request_id: str) -> str | None:
         cached = self._request_id_resolution_cache.get(request_id)
@@ -1095,7 +1040,6 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                     return session_request_id
         return None
 
-
     def _prefill_readiness_locked(
         self,
         *,
@@ -1109,7 +1053,6 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                 layer_name=layer_name,
             ),
         )
-
 
     def _mark_prefill_ready_locked(
         self,
@@ -1130,22 +1073,6 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
         self._prefill_condition.notify_all()
         return readiness
 
-
-    def prefill_layer_readiness(
-        self,
-        *,
-        request_id: str,
-        layer_name: str,
-    ) -> PAPPrefillLayerReadiness | None:
-        with self._lock:
-            session_request_id = self._resolve_session_request_id_locked(request_id)
-            if session_request_id is None:
-                return None
-            readiness = self._prefill_readiness.setdefault(session_request_id, {}).get(
-                layer_name
-            )
-            return None if readiness is None else readiness.copy()
-
     def get_prefill_readiness(self, request_id: str) -> list[PAPPrefillLayerReadiness]:
         with self._lock:
             session_request_id = self._resolve_session_request_id_locked(request_id)
@@ -1156,7 +1083,6 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                 readiness.copy()
                 for _layer_name, readiness in sorted(readiness_by_layer.items())
             ]
-
 
     def size(self) -> int:
         with self._lock:

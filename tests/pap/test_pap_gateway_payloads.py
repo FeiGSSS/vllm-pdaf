@@ -3,7 +3,6 @@
 """PAP gateway request-payload tests."""
 
 from vllm.pap.gateway.payloads import (
-    build_decode_payload,
     build_prefill_payload,
     build_projection_kv_unaware_payload,
     enrich_prefill_kv_params,
@@ -52,19 +51,6 @@ def test_build_prefill_payload_prefers_max_completion_tokens() -> None:
     assert payload["kv_transfer_params"]["pap_decode_capacity_tokens"] == 48
 
 
-def test_build_decode_payload_attaches_prefill_kv_params_without_aliasing() -> None:
-    kv_params = {
-        "remote_engine_id": "prefill-0",
-        "remote_block_ids": [[4, 5]],
-    }
-
-    payload = build_decode_payload({"model": "qwen", "prompt": "hello"}, kv_params)
-    kv_params["remote_engine_id"] = "mutated"
-
-    assert payload["kv_transfer_params"]["remote_engine_id"] == "prefill-0"
-    assert payload["kv_transfer_params"]["remote_block_ids"] == [[4, 5]]
-
-
 def test_prefill_payload_marks_attention_kv_import() -> None:
     from vllm.pap.gateway.payloads import attach_pap_prefill_attention_params
 
@@ -76,23 +62,11 @@ def test_prefill_payload_marks_attention_kv_import() -> None:
         pap_mode="pap",
     )
 
-    assert (
-        payload["kv_transfer_params"]["pap_import_prefill_kv_to_attention"] is True
-    )
+    assert payload["kv_transfer_params"]["pap_import_prefill_kv_to_attention"] is True
     assert (
         payload["kv_transfer_params"]["pap_offload_exec_zmq_endpoint"]
         == "127.0.0.1:10300"
     )
-
-
-def test_build_decode_payload_can_mark_attention_kv_installed_after_prefill() -> None:
-    payload = build_decode_payload(
-        {"model": "qwen", "prompt": "hello"},
-        {"remote_engine_id": "prefill-0"},
-        pap_attention_kv_installed=True,
-    )
-
-    assert payload["kv_transfer_params"]["pap_attention_kv_installed"] is True
 
 
 def test_build_projection_kv_unaware_payload_strips_remote_kv_transport() -> None:

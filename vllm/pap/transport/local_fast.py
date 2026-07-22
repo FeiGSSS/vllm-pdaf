@@ -50,7 +50,6 @@ import torch
 from vllm.pap.cuda_stream_memops import (
     probe_stream_mem_ops,
 )
-
 from vllm.pap.deferred_cuda_trace import (
     deferred_cuda_trace_enabled,
 )
@@ -63,17 +62,17 @@ from vllm.pap.transport.local_fast_endpoint import (
     _pack_cuda_ipc_handle,
     _unpack_cuda_ipc_handle,
 )
+from vllm.pap.transport.local_fast_io import (
+    _PAPLocalFastIOMixin,
+    _PendingDoorbell,
+)
 from vllm.pap.transport.local_fast_protocol import (
     DIR_QKV,
-    _WireMetadata,
     _doorbell_bytes,
     _doorbell_read_header,
     _doorbell_record_offset,
     _doorbell_write,
-)
-from vllm.pap.transport.local_fast_io import (
-    _PAPLocalFastIOMixin,
-    _PendingDoorbell,
+    _WireMetadata,
 )
 
 # ---------------------------------------------------------------------------
@@ -619,90 +618,6 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
 
     def __setstate__(self, state: dict[str, Any]) -> None:
         raise TypeError("PAPLocalFastTransport is not picklable")
-
-    def debug_state(self) -> dict[str, Any]:
-        peer = self._peer
-        return {
-            "actor_id": self.actor_id,
-            "device": str(self.device),
-            "async_doorbell": self._async_doorbell,
-            "stream_ordered": self._stream_ordered,
-            "stream_ordered_available": self._stream_ordered_available,
-            "slot_count": self._slot_count,
-            "step_plan_builds": self._step_plan_builds,
-            "step_plan_refs": self._step_plan_refs,
-            "output_descriptor_elisions": self._output_descriptor_elisions,
-            "descriptorless_output_receives": (
-                self._descriptorless_output_receives
-            ),
-            "binary_qkv_refs": self._binary_qkv_refs,
-            "binary_outputs": self._binary_outputs,
-            "json_records": self._json_records,
-            "sent_step_plan_cache_entries": len(self._sent_step_plans),
-            "recv_step_plan_cache_entries": len(self._recv_batch_plans),
-            "started": self._started,
-            "bound": self._bound,
-            "notify_thread_alive": bool(
-                self._notify_thread is not None and self._notify_thread.is_alive()
-            ),
-            "pending_qkv_seq": int(peer.pending_qkv_seq) if peer is not None else 0,
-            "pending_output_seq": int(peer.pending_output_seq)
-            if peer is not None
-            else 0,
-            "notify_error": (
-                None if self._notify_error is None else str(self._notify_error)
-            ),
-        }
-
-    def sender_sync_mode(self) -> str:
-        if self._stream_ordered:
-            return "stream_ordered_ring"
-        return "async_event_notifier" if self._async_doorbell else "stream_synchronize"
-
-    def pending_async(self) -> bool:
-        peer = self._peer
-        if not self._async_doorbell or peer is None:
-            return False
-        return bool(peer.pending_qkv_seq != 0 or peer.pending_output_seq != 0)
-
-    def current_notify_error(self) -> str | None:
-        return None if self._notify_error is None else str(self._notify_error)
-
-    def notify_queue_size(self) -> int:
-        return 0 if self._notify_queue is None else int(self._notify_queue.qsize())
-
-    def assert_ready(self) -> None:
-        if self._doorbell_mm is None or self._recv_buffer is None:
-            raise RuntimeError("PAPLocalFastTransport is closed")
-        if not self._started or not self._bound or self._peer is None:
-            raise RuntimeError("PAPLocalFastTransport is not ready")
-        self._raise_if_notify_failed()
-
-    def describe(self) -> str:
-        return (
-            f"actor={self.actor_id} device={self.device} "
-            f"stream_ordered={self._stream_ordered} slots={self._slot_count} "
-            f"async={self._async_doorbell} started={self._started} "
-            f"bound={self._bound}"
-        )
-
-    def __str__(self) -> str:
-        return repr(self)
-
-    def __bool__(self) -> bool:
-        return True
-
-    def __len__(self) -> int:
-        return int(self.buffer_bytes)
-
-    def __hash__(self) -> int:
-        return id(self)
-
-    def __eq__(self, other: object) -> bool:
-        return self is other
-
-    def __ne__(self, other: object) -> bool:
-        return not self.__eq__(other)
 
 
 # ---------------------------------------------------------------------------

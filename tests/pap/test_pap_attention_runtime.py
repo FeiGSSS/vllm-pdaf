@@ -16,12 +16,11 @@ from httpx import ASGITransport, AsyncClient, Response
 
 from vllm.pap.attention import PAPAttentionDispatcher, PAPAttentionWorkItem
 from vllm.pap.attention import compute as attention_compute_module
-from vllm.pap.attention import peers as attention_peers_module
 from vllm.pap.attention import execution as attention_runtime_module
+from vllm.pap.attention import peers as attention_peers_module
 from vllm.pap.attention.compute import (
     _offload_exec_batch_rows,
     compute_offload_exec_batch_output,
-    run_offload_exec_batch_once,
 )
 from vllm.pap.attention.execution import (
     _execute_offload_exec_work_item,
@@ -34,7 +33,7 @@ from vllm.pap.config import PAPOffloadExecTransport
 from vllm.pap.kv import (
     PAPAttentionRegistry,
     PAPUnifiedPagedKVState,
-    build_unified_paged_flash_metadata,
+    build_unified_paged_flash_step_metadata,
 )
 from vllm.pap.kv import metadata as kv_metadata_module
 from vllm.pap.kv import registry as kv_registry_module
@@ -79,28 +78,6 @@ class _ASGITestClient:
         return self.request("DELETE", url, **kwargs)
 
 
-def _make_unified_state(
-    torch_module: Any,
-    *,
-    block_ids: tuple[int, ...],
-    seq_len: int,
-    lease_id: str,
-) -> PAPUnifiedPagedKVState:
-    return PAPUnifiedPagedKVState(
-        kv_cache=torch_module.zeros((1, 2, 1, 1, 1)),
-        block_ids=block_ids,
-        prefix_len=seq_len,
-        seq_len=seq_len,
-        capacity_tokens=seq_len + 1,
-        writable_start_token=seq_len,
-        writable_end_token=seq_len + 1,
-        lease_id=lease_id,
-        block_size=16,
-        num_kv_heads=1,
-        layout="NHD",
-    )
-
-
 def _install_unified_activation(
     registry: PAPAttentionRegistry,
     *,
@@ -115,9 +92,7 @@ def _install_unified_activation(
     assert session_request_id is not None
     capacity_tokens = len(block_ids) * block_size
     with registry._lock:
-        existing_activation = registry._unified_slot_activations.get(
-            session_request_id
-        )
+        existing_activation = registry._unified_slot_activations.get(session_request_id)
         if (
             existing_activation is not None
             and existing_activation.prefix_len == seq_len
@@ -183,6 +158,93 @@ def _catalog_descriptor(
     )
 
 
+def _step_metadata_state(
+    torch_module: Any,
+    *,
+    block_ids: tuple[int, ...],
+    topology_id: int,
+) -> PAPUnifiedPagedKVState:
+    return PAPUnifiedPagedKVState(
+        kv_cache=torch_module.zeros((2, 2, 4, 1, 2)),
+        block_ids=block_ids,
+        prefix_len=8,
+        seq_len=8,
+        capacity_tokens=32,
+        writable_start_token=8,
+        writable_end_token=32,
+        lease_id=f"lease-{topology_id}",
+        block_size=4,
+        num_kv_heads=1,
+        layout="NHD",
+        slot_generation=1 if topology_id else 0,
+        slot_topology_id=topology_id,
+    )
+
+
+def test_step_metadata_reuses_static_table_with_dynamic_sequence_lengths() -> None:
+    import torch
+
+    kv_metadata_module.reset_unified_paged_flash_metadata_cache()
+    states = [
+        _step_metadata_state(torch, block_ids=(3, 5), topology_id=101),
+        _step_metadata_state(torch, block_ids=(7,), topology_id=102),
+    ]
+
+    first = build_unified_paged_flash_step_metadata(
+        states=states,
+        seq_lens=(8, 12),
+        device=torch.device("cpu"),
+    )
+    second = build_unified_paged_flash_step_metadata(
+        states=states,
+        seq_lens=(9, 13),
+        device=torch.device("cpu"),
+    )
+
+    assert first.block_table.tolist() == [[3, 5], [7, 7]]
+    assert second.block_table.data_ptr() == first.block_table.data_ptr()
+    assert first.seq_lens.tolist() == [8, 12]
+    assert second.seq_lens.tolist() == [9, 13]
+    assert second.cu_seqlens_q.data_ptr() == first.cu_seqlens_q.data_ptr()
+    assert kv_metadata_module.unified_paged_flash_metadata_cache_stats() == {
+        "hits": 1,
+        "misses": 1,
+        "entries": 1,
+        "fast_key_lookups": 2,
+        "fast_key_hits": 1,
+        "full_key_scans": 1,
+        "block_ids_scanned": 3,
+    }
+
+
+def test_step_metadata_falls_back_for_unknown_ragged_topology() -> None:
+    import torch
+
+    kv_metadata_module.reset_unified_paged_flash_metadata_cache()
+    states = [
+        _step_metadata_state(torch, block_ids=(3,), topology_id=0),
+        _step_metadata_state(torch, block_ids=(7, 9), topology_id=0),
+    ]
+
+    first = build_unified_paged_flash_step_metadata(
+        states=states,
+        seq_lens=(8, 12),
+        device=torch.device("cpu"),
+    )
+    second = build_unified_paged_flash_step_metadata(
+        states=states,
+        seq_lens=(9, 13),
+        device=torch.device("cpu"),
+    )
+
+    assert first.block_table.tolist() == [[3, 3], [7, 9]]
+    assert second.block_table.data_ptr() == first.block_table.data_ptr()
+    stats = kv_metadata_module.unified_paged_flash_metadata_cache_stats()
+    assert stats["fast_key_lookups"] == 0
+    assert stats["full_key_scans"] == 2
+    assert stats["block_ids_scanned"] == 6
+
+
 def test_sealed_prefill_manifest_installs_all_layers_atomically() -> None:
     import torch
 
@@ -220,10 +282,13 @@ def test_sealed_prefill_manifest_installs_all_layers_atomically() -> None:
         writable_start_token=5,
         writable_end_token=9,
     )
-    assert registry.install_prefill_kv_session_manifest(
-        manifest=manifest,
-        ready_event=None,
-    ) == 5
+    assert (
+        registry.install_prefill_kv_session_manifest(
+            manifest=manifest,
+            ready_event=None,
+        )
+        == 5
+    )
 
     states = registry.get_unified_paged_states(
         session_request_ids=("req-sealed",),
@@ -344,10 +409,13 @@ def test_sealed_prefill_manifest_rejects_stale_session_generation() -> None:
             ready_event=None,
         )
 
-    assert registry.install_prefill_kv_session_manifest(
-        manifest=manifest(new_session.prefill_kv_handle, "lease-current"),
-        ready_event=None,
-    ) == 5
+    assert (
+        registry.install_prefill_kv_session_manifest(
+            manifest=manifest(new_session.prefill_kv_handle, "lease-current"),
+            ready_event=None,
+        )
+        == 5
+    )
     state = registry._unified_paged_kv[registration.request_id]["layer0"]
     assert state.lease_id == "lease-current"
 
@@ -481,464 +549,6 @@ def test_offload_exec_batch_rows_uses_template_without_items() -> None:
     )
 
 
-def test_unified_paged_flash_metadata_reuses_identical_decode_signature(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import torch
-
-
-    reset_cache = getattr(
-        kv_metadata_module,
-        "reset_unified_paged_flash_metadata_cache",
-        None,
-    )
-    cache_stats = getattr(
-        kv_metadata_module,
-        "unified_paged_flash_metadata_cache_stats",
-        None,
-    )
-    assert callable(reset_cache)
-    assert callable(cache_stats)
-    reset_cache()
-
-    arange_calls = 0
-    real_arange = torch.arange
-
-    def counted_arange(*args, **kwargs):
-        nonlocal arange_calls
-        arange_calls += 1
-        return real_arange(*args, **kwargs)
-
-    monkeypatch.setattr(kv_metadata_module.torch, "arange", counted_arange)
-    kv_cache = torch.zeros((4, 2, 4, 1, 2), dtype=torch.float32)
-    states = [
-        PAPUnifiedPagedKVState(
-            kv_cache=kv_cache,
-            block_ids=(0, 1),
-            prefix_len=5,
-            seq_len=6,
-            capacity_tokens=8,
-            writable_start_token=5,
-            writable_end_token=8,
-            lease_id="lease-a",
-            block_size=4,
-            num_kv_heads=1,
-            layout="NHD",
-        ),
-        PAPUnifiedPagedKVState(
-            kv_cache=kv_cache,
-            block_ids=(2, 3),
-            prefix_len=5,
-            seq_len=6,
-            capacity_tokens=8,
-            writable_start_token=5,
-            writable_end_token=8,
-            lease_id="lease-b",
-            block_size=4,
-            num_kv_heads=1,
-            layout="NHD",
-        ),
-    ]
-
-    first = build_unified_paged_flash_metadata(
-        states=states,
-        device=torch.device("cpu"),
-    )
-    second = build_unified_paged_flash_metadata(
-        states=states,
-        device=torch.device("cpu"),
-    )
-
-    assert cache_stats() == {
-        "hits": 1,
-        "misses": 1,
-        "entries": 1,
-        "fast_key_lookups": 0,
-        "fast_key_hits": 0,
-        "full_key_scans": 2,
-        "block_ids_scanned": 8,
-    }
-    assert arange_calls == 1
-    assert second.block_table.data_ptr() == first.block_table.data_ptr()
-    assert second.seq_lens.data_ptr() == first.seq_lens.data_ptr()
-    assert second.cu_seqlens_q.data_ptr() == first.cu_seqlens_q.data_ptr()
-
-
-def test_unified_paged_flash_metadata_fast_key_avoids_hit_block_scan(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import torch
-
-
-    kv_metadata_module.reset_unified_paged_flash_metadata_cache()
-    state = _make_unified_state(
-        torch,
-        block_ids=tuple(range(1024)),
-        seq_len=16384,
-        lease_id="lease-long",
-    )
-    state.slot_generation = 3
-    state.slot_topology_id = 41
-    coerce_calls = 0
-    real_coerce = kv_metadata_module._coerce_block_id
-
-    def counted_coerce(value: Any) -> int:
-        nonlocal coerce_calls
-        coerce_calls += 1
-        return real_coerce(value)
-
-    monkeypatch.setattr(kv_metadata_module, "_coerce_block_id", counted_coerce)
-    first = build_unified_paged_flash_metadata(
-        states=[state],
-        device=torch.device("cpu"),
-    )
-    second = build_unified_paged_flash_metadata(
-        states=[state],
-        device=torch.device("cpu"),
-    )
-
-    assert second.block_table.data_ptr() == first.block_table.data_ptr()
-    assert coerce_calls == 1024
-    assert kv_metadata_module.unified_paged_flash_metadata_cache_stats() == {
-        "hits": 1,
-        "misses": 1,
-        "entries": 1,
-        "fast_key_lookups": 2,
-        "fast_key_hits": 1,
-        "full_key_scans": 1,
-        "block_ids_scanned": 1024,
-    }
-
-
-def test_unified_paged_flash_metadata_fast_key_can_be_disabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("PAP_UNIFIED_MD_FAST_KEY", "0")
-    with pytest.raises(ValueError, match="was removed"):
-        create_app()
-
-
-def test_unified_paged_flash_metadata_fast_key_snapshots_sequence_length() -> None:
-    import torch
-
-
-    kv_metadata_module.reset_unified_paged_flash_metadata_cache()
-    state = _make_unified_state(
-        torch,
-        block_ids=(3, 5),
-        seq_len=17,
-        lease_id="lease-seq",
-    )
-    state.slot_generation = 2
-    state.slot_topology_id = 99
-
-    first = build_unified_paged_flash_metadata(
-        states=[state],
-        device=torch.device("cpu"),
-    )
-    state.seq_len = 18
-    second = build_unified_paged_flash_metadata(
-        states=[state],
-        device=torch.device("cpu"),
-    )
-    state.seq_len = 17
-    first_again = build_unified_paged_flash_metadata(
-        states=[state],
-        device=torch.device("cpu"),
-    )
-
-    assert first.seq_lens.tolist() == [17]
-    assert second.seq_lens.tolist() == [18]
-    assert second.seq_lens.data_ptr() != first.seq_lens.data_ptr()
-    assert first_again.seq_lens.data_ptr() == first.seq_lens.data_ptr()
-    stats = kv_metadata_module.unified_paged_flash_metadata_cache_stats()
-    assert stats["hits"] == 1
-    assert stats["misses"] == 2
-    assert stats["fast_key_lookups"] == 3
-    assert stats["full_key_scans"] == 2
-    assert stats["block_ids_scanned"] == 4
-
-
-def test_unified_paged_flash_metadata_fast_key_preserves_row_order() -> None:
-    import torch
-
-
-    kv_metadata_module.reset_unified_paged_flash_metadata_cache()
-    first_state = _make_unified_state(
-        torch,
-        block_ids=(3,),
-        seq_len=8,
-        lease_id="lease-a",
-    )
-    first_state.slot_generation = 1
-    first_state.slot_topology_id = 101
-    second_state = _make_unified_state(
-        torch,
-        block_ids=(7,),
-        seq_len=8,
-        lease_id="lease-b",
-    )
-    second_state.slot_generation = 1
-    second_state.slot_topology_id = 102
-
-    forward = build_unified_paged_flash_metadata(
-        states=[first_state, second_state],
-        device=torch.device("cpu"),
-    )
-    reverse = build_unified_paged_flash_metadata(
-        states=[second_state, first_state],
-        device=torch.device("cpu"),
-    )
-
-    assert forward.block_table.tolist() == [[3], [7]]
-    assert reverse.block_table.tolist() == [[7], [3]]
-    assert forward.block_table.data_ptr() != reverse.block_table.data_ptr()
-
-
-def test_unified_paged_flash_metadata_lru_hit_is_atomic_with_eviction(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import torch
-    from collections import OrderedDict
-
-
-    monkeypatch.setenv("PAP_UNIFIED_MD_CACHE_LIMIT", "1")
-    kv_metadata_module.reset_unified_paged_flash_metadata_cache()
-    first_state = _make_unified_state(
-        torch,
-        block_ids=(3,),
-        seq_len=8,
-        lease_id="lease-a",
-    )
-    first_state.slot_generation = 1
-    first_state.slot_topology_id = 201
-    second_state = _make_unified_state(
-        torch,
-        block_ids=(7,),
-        seq_len=8,
-        lease_id="lease-b",
-    )
-    second_state.slot_generation = 1
-    second_state.slot_topology_id = 202
-    build_unified_paged_flash_metadata(
-        states=[first_state],
-        device=torch.device("cpu"),
-    )
-    first_key = next(iter(kv_metadata_module._UNIFIED_MD_CACHE))
-    hit_read = Event()
-    first_evicted = Event()
-
-    class CoordinatedCache(OrderedDict):
-        def __init__(self, items):
-            super().__init__(items)
-            self.wait_once = True
-
-        def get(self, key, default=None):
-            value = super().get(key, default)
-            if key == first_key and value is not None and self.wait_once:
-                self.wait_once = False
-                hit_read.set()
-                first_evicted.wait(timeout=0.2)
-            return value
-
-        def popitem(self, last=True):
-            item = super().popitem(last=last)
-            if item[0] == first_key:
-                first_evicted.set()
-            return item
-
-    coordinated_cache = CoordinatedCache(kv_metadata_module._UNIFIED_MD_CACHE.items())
-    monkeypatch.setattr(kv_metadata_module, "_UNIFIED_MD_CACHE", coordinated_cache)
-    errors: list[BaseException] = []
-
-    def hit_first() -> None:
-        try:
-            build_unified_paged_flash_metadata(
-                states=[first_state],
-                device=torch.device("cpu"),
-            )
-        except BaseException as error:
-            errors.append(error)
-
-    def evict_first() -> None:
-        assert hit_read.wait(timeout=1.0)
-        build_unified_paged_flash_metadata(
-            states=[second_state],
-            device=torch.device("cpu"),
-        )
-
-    hit_thread = Thread(target=hit_first)
-    evict_thread = Thread(target=evict_first)
-    hit_thread.start()
-    evict_thread.start()
-    hit_thread.join(timeout=2.0)
-    evict_thread.join(timeout=2.0)
-
-    assert not hit_thread.is_alive()
-    assert not evict_thread.is_alive()
-    assert errors == []
-
-
-def test_unified_paged_flash_metadata_avoids_scalar_tensor_writes_on_miss(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import torch
-    from torch.utils._python_dispatch import TorchDispatchMode
-
-
-    class ScalarCopyCounter(TorchDispatchMode):
-        def __init__(self) -> None:
-            super().__init__()
-            self.scalar_tensor_writes = 0
-
-        def __torch_dispatch__(self, func, types, args=(), kwargs=None):
-            if kwargs is None:
-                kwargs = {}
-            if func is torch.ops.aten.copy_.default and args[0].ndim == 0:
-                self.scalar_tensor_writes += 1
-            return func(*args, **kwargs)
-
-    monkeypatch.setenv("PAP_UNIFIED_MD_CACHE_LIMIT", "0")
-    kv_metadata_module.reset_unified_paged_flash_metadata_cache()
-    block_ids = tuple(range(1024))
-    state = _make_unified_state(
-        torch,
-        block_ids=block_ids,
-        seq_len=16384,
-        lease_id="lease-long",
-    )
-    counter = ScalarCopyCounter()
-
-    with counter:
-        metadata = build_unified_paged_flash_metadata(
-            states=[state],
-            device=torch.device("cpu"),
-        )
-
-    assert counter.scalar_tensor_writes == 0
-    assert metadata.block_table.shape == (1, 1024)
-    assert metadata.block_table.dtype == torch.int32
-    assert metadata.seq_lens.dtype == torch.int32
-    assert metadata.cu_seqlens_q.dtype == torch.int32
-    assert metadata.block_table.device == torch.device("cpu")
-    assert metadata.block_table.is_contiguous()
-    assert metadata.block_table.tolist() == [list(block_ids)]
-    assert metadata.seq_lens.tolist() == [16384]
-    assert metadata.max_seq_len == 16384
-
-
-def test_unified_paged_flash_metadata_pads_ragged_rows() -> None:
-    import torch
-
-
-    kv_metadata_module.reset_unified_paged_flash_metadata_cache()
-    states = [
-        _make_unified_state(
-            torch,
-            block_ids=block_ids,
-            seq_len=seq_len,
-            lease_id=f"lease-{index}",
-        )
-        for index, (block_ids, seq_len) in enumerate(
-            (
-                ((3, 5, 7), 40),
-                ((11,), 11),
-                ((13, 17), 25),
-            )
-        )
-    ]
-
-    metadata = build_unified_paged_flash_metadata(
-        states=states,
-        device=torch.device("cpu"),
-    )
-
-    assert metadata.block_table.tolist() == [
-        [3, 5, 7],
-        [11, 11, 11],
-        [13, 17, 17],
-    ]
-    assert metadata.seq_lens.tolist() == [40, 11, 25]
-    assert metadata.cu_seqlens_q.tolist() == [0, 1, 2, 3]
-    assert metadata.max_seq_len == 40
-
-
-def test_unified_paged_flash_metadata_key_uses_unpadded_rows() -> None:
-    import torch
-
-
-    kv_metadata_module.reset_unified_paged_flash_metadata_cache()
-
-    def build(rows: tuple[tuple[int, ...], ...]):
-        states = [
-            _make_unified_state(
-                torch,
-                block_ids=row,
-                seq_len=8,
-                lease_id=f"lease-{index}",
-            )
-            for index, row in enumerate(rows)
-        ]
-        return build_unified_paged_flash_metadata(
-            states=states,
-            device=torch.device("cpu"),
-        )
-
-    first = build(((7,), (10, 11)))
-    second = build(((7, 7), (10, 11)))
-
-    assert torch.equal(first.block_table, second.block_table)
-    assert kv_metadata_module.unified_paged_flash_metadata_cache_stats() == {
-        "hits": 0,
-        "misses": 2,
-        "entries": 2,
-        "fast_key_lookups": 0,
-        "fast_key_hits": 0,
-        "full_key_scans": 2,
-        "block_ids_scanned": 7,
-    }
-    assert first.block_table.data_ptr() != second.block_table.data_ptr()
-
-
-def test_unified_paged_flash_metadata_preserves_lru_recency(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import torch
-
-
-    monkeypatch.setenv("PAP_UNIFIED_MD_CACHE_LIMIT", "2")
-    kv_metadata_module.reset_unified_paged_flash_metadata_cache()
-
-    def build(block_id: int):
-        state = _make_unified_state(
-            torch,
-            block_ids=(block_id,),
-            seq_len=8,
-            lease_id=f"lease-{block_id}",
-        )
-        return build_unified_paged_flash_metadata(
-            states=[state],
-            device=torch.device("cpu"),
-        )
-
-    build(1)
-    first_b = build(2)
-    build(1)
-    build(3)
-    second_b = build(2)
-
-    assert kv_metadata_module.unified_paged_flash_metadata_cache_stats() == {
-        "hits": 1,
-        "misses": 4,
-        "entries": 2,
-        "fast_key_lookups": 0,
-        "fast_key_hits": 0,
-        "full_key_scans": 5,
-        "block_ids_scanned": 5,
-    }
-    assert first_b.block_table.data_ptr() != second_b.block_table.data_ptr()
-
-
 def test_attention_service_parses_offload_exec_zmq_port(monkeypatch) -> None:
     monkeypatch.setattr(
         sys,
@@ -984,7 +594,6 @@ def test_attention_executor_starts_offload_exec_transport(monkeypatch) -> None:
 def test_attention_executor_binds_each_projection_to_distinct_transport(
     monkeypatch,
 ) -> None:
-
     class FakeTransport:
         def __init__(self, actor_id: str, local_rank: int) -> None:
             self.actor_id = actor_id
@@ -1067,7 +676,6 @@ def test_attention_executor_binds_each_projection_to_distinct_transport(
 def test_attention_executor_central_mode_shares_one_dispatcher(
     monkeypatch,
 ) -> None:
-
     class FakeTransport:
         def __init__(self, actor_id: str, local_rank: int) -> None:
             self.actor_id = actor_id
@@ -1362,77 +970,10 @@ def test_attention_executor_rejects_nccl_offload_exec_transport(monkeypatch) -> 
         create_app()
 
 
-def test_run_offload_exec_batch_once_uses_batched_compute(monkeypatch) -> None:
-    import torch
-
-    class FakeTransport:
-        def __init__(self):
-            self.sent = []
-
-        def recv_qkv_batch(self, descriptor, *, remote_address):
-            return torch.tensor(
-                [
-                    [1.0, 0.0, 1.0, 0.0, 2.0, 0.0],
-                    [0.0, 1.0, 0.0, 1.0, 0.0, 3.0],
-                ]
-            )
-
-        def send_output_batch(self, descriptor, output, *, remote_address):
-            self.sent.append((descriptor, output, remote_address))
-
-
-    calls = []
-
-    def fake_batch_compute(**kwargs):
-        calls.append(kwargs)
-        return torch.tensor([[2.0, 0.0], [0.0, 3.0]])
-
-    monkeypatch.setattr(
-        attention_compute_module,
-        "compute_offload_exec_batch_output",
-        fake_batch_compute,
-    )
-    registry = PAPAttentionRegistry(storage_device="cpu")
-    descriptor = PAPOffloadExecBatchDescriptor(
-        layer_name="layer0",
-        items=(
-            PAPOffloadExecDescriptor(
-                request_id="req-a",
-                layer_name="layer0",
-                step=1,
-                scale=1.0,
-            ),
-            PAPOffloadExecDescriptor(
-                request_id="req-b",
-                layer_name="layer0",
-                step=1,
-                scale=1.0,
-            ),
-        ),
-    )
-    transport = FakeTransport()
-
-    run_offload_exec_batch_once(
-        registry=registry,
-        transport=transport,
-        remote_address="127.0.0.1:11300",
-        descriptor=descriptor,
-    )
-
-    assert len(calls) == 1
-    assert calls[0]["registry"] is registry
-    assert calls[0]["descriptor"] is descriptor
-    assert calls[0]["qkv_batch"].shape == (2, 6)
-    assert len(transport.sent) == 1
-    _, output, _ = transport.sent[0]
-    torch.testing.assert_close(output, torch.tensor([[2.0, 0.0], [0.0, 3.0]]))
-
-
 def test_unified_offload_exec_commit_waits_for_async_decode_token(
     monkeypatch,
 ) -> None:
     import torch
-
 
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
@@ -1539,9 +1080,7 @@ def test_attention_step_context_reuses_plan_and_publishes_once(
 
     class FakeCommitClient:
         def commit(self, *, request_id, new_seq_len, new_token_ids, endpoint):
-            commits.append(
-                (request_id, new_seq_len, tuple(new_token_ids), endpoint)
-            )
+            commits.append((request_id, new_seq_len, tuple(new_token_ids), endpoint))
 
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
@@ -1574,9 +1113,7 @@ def test_attention_step_context_reuses_plan_and_publishes_once(
     workspace_builds = []
     workspaces = []
 
-    original_workspace_builder = (
-        attention_compute_module.build_paged_decode_workspace
-    )
+    original_workspace_builder = attention_compute_module.build_paged_decode_workspace
 
     def build_workspace(query):
         workspace = original_workspace_builder(query)
@@ -1753,7 +1290,6 @@ def test_decode_token_endpoint_accepts_released_handle_only() -> None:
 def test_attention_release_waits_for_kv_ready_token_but_not_final_token(
     monkeypatch,
 ) -> None:
-
     commits = []
 
     class FakeCommitClient:
@@ -1779,10 +1315,11 @@ def test_attention_release_waits_for_kv_ready_token_but_not_final_token(
             prefill_endpoint="http://localhost:8100",
         )
     )
-    registry.record_decode_kv_ready(
+    registry._decode_token_committer.record_kv_ready(
         request_id="req-a",
         new_seq_len=2,
         endpoint="http://localhost:8100/v1/pap/prefill/decode-commit",
+        commit_request_id="req-a",
     )
 
     released: list[bool] = []
@@ -1827,8 +1364,7 @@ def test_attention_release_endpoint_runs_in_fastapi_threadpool() -> None:
     release_endpoint = next(
         route.endpoint
         for route in app.routes
-        if getattr(route, "path", "")
-        == "/v1/pap/attention/sessions/{request_id}"
+        if getattr(route, "path", "") == "/v1/pap/attention/sessions/{request_id}"
         and "DELETE" in getattr(route, "methods", set())
     )
 
@@ -1839,7 +1375,6 @@ def test_unified_offload_exec_overlap_step_does_not_commit(
     monkeypatch,
 ) -> None:
     import torch
-
 
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
@@ -1927,7 +1462,6 @@ def test_unified_decode_append_all_active_reuses_inputs_and_scales(
 ) -> None:
     import torch
 
-
     registry = PAPAttentionRegistry(storage_device="cpu")
     kv_cache = torch.zeros((4, 2, 4, 1, 2))
     registry._unified_paged_kv = {
@@ -2003,7 +1537,6 @@ def test_unified_decode_append_does_not_hold_registry_lock_during_gpu_work(
 ) -> None:
     import torch
 
-
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
         PAPAttentionRegistration(
@@ -2075,7 +1608,6 @@ def test_unified_decode_append_reuses_slot_plan_across_layers(
 ) -> None:
     import torch
 
-
     registry = PAPAttentionRegistry(storage_device="cpu")
     for request_id in ("req-a", "req-b"):
         registry.register_prefill_kv(
@@ -2135,7 +1667,6 @@ def test_unified_decode_append_recovers_slot_plan_after_chunk_generations(
 ) -> None:
     import torch
 
-
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
         PAPAttentionRegistration(
@@ -2191,7 +1722,6 @@ def test_unified_decode_append_latches_same_generation_topology_conflict(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import torch
-
 
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
@@ -2249,7 +1779,6 @@ def test_unified_decode_append_waits_for_complete_new_generation(
 ) -> None:
     import torch
 
-
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
         PAPAttentionRegistration(
@@ -2304,7 +1833,6 @@ def test_unified_decode_append_batch_falls_back_for_incomplete_generation(
 ) -> None:
     import torch
 
-
     registry = PAPAttentionRegistry(storage_device="cpu")
     kv_cache = torch.zeros((8, 2, 4, 1, 2))
     for request_id, initial_blocks, next_blocks in (
@@ -2329,9 +1857,7 @@ def test_unified_decode_append_batch_falls_back_for_incomplete_generation(
         _install_unified_activation(
             registry,
             request_id=request_id,
-            layer_names=("layer0", "layer1")
-            if request_id == "req-a"
-            else ("layer0",),
+            layer_names=("layer0", "layer1") if request_id == "req-a" else ("layer0",),
             kv_cache=kv_cache,
             block_ids=next_blocks,
             seq_len=5,
@@ -2363,7 +1889,6 @@ def test_unified_slot_conflict_clears_only_on_new_activation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import torch
-
 
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
@@ -2576,93 +2101,10 @@ def test_unified_slot_topology_ids_are_unique_across_registries() -> None:
     assert topology_ids[1] > topology_ids[0]
 
 
-def test_unified_metadata_fast_key_rejects_reused_request_aba() -> None:
-    import torch
-
-
-    kv_metadata_module.reset_unified_paged_flash_metadata_cache()
-    registry = PAPAttentionRegistry(storage_device="cpu")
-
-    def install(block_id: int) -> PAPUnifiedPagedKVState:
-        registry.register_prefill_kv(
-            PAPAttentionRegistration(
-                request_id="req-a",
-                conversation_id="conv",
-                prefill_endpoint="http://localhost:8100",
-            )
-        )
-        _install_unified_activation(
-            registry,
-            request_id="req-a",
-            layer_names=("layer0",),
-            kv_cache=torch.zeros((2, 2, 4, 1, 2)),
-            block_ids=(block_id,),
-            seq_len=1,
-        )
-        return registry._unified_paged_kv["req-a"]["layer0"]
-
-    first_state = install(0)
-    first = build_unified_paged_flash_metadata(
-        states=[first_state],
-        device=torch.device("cpu"),
-    )
-    with registry._lock:
-        registry._release_session_locked("req-a")
-    second_state = install(1)
-    second = build_unified_paged_flash_metadata(
-        states=[second_state],
-        device=torch.device("cpu"),
-    )
-
-    assert second_state.slot_topology_id > first_state.slot_topology_id
-    assert first.block_table.tolist() == [[0]]
-    assert second.block_table.tolist() == [[1]]
-    assert second.block_table.data_ptr() != first.block_table.data_ptr()
-
-
-def test_unified_metadata_fast_key_mixed_unknown_batch_falls_back() -> None:
-    import torch
-
-
-    kv_metadata_module.reset_unified_paged_flash_metadata_cache()
-    states = [
-        _make_unified_state(
-            torch,
-            block_ids=(3,),
-            seq_len=8,
-            lease_id="lease-a",
-        ),
-        _make_unified_state(
-            torch,
-            block_ids=(7,),
-            seq_len=8,
-            lease_id="lease-b",
-        ),
-    ]
-    states[0].slot_generation = 1
-    states[0].slot_topology_id = 301
-
-    first = build_unified_paged_flash_metadata(
-        states=states,
-        device=torch.device("cpu"),
-    )
-    second = build_unified_paged_flash_metadata(
-        states=states,
-        device=torch.device("cpu"),
-    )
-
-    assert second.block_table.data_ptr() == first.block_table.data_ptr()
-    stats = kv_metadata_module.unified_paged_flash_metadata_cache_stats()
-    assert stats["fast_key_lookups"] == 0
-    assert stats["full_key_scans"] == 2
-    assert stats["block_ids_scanned"] == 4
-
-
 def test_unified_decode_append_disables_slot_plan_for_mixed_topology(
     monkeypatch,
 ) -> None:
     import torch
-
 
     registry = PAPAttentionRegistry(storage_device="cpu")
     registry.register_prefill_kv(
@@ -2713,7 +2155,6 @@ def test_unified_decode_append_slot_plan_uses_session_generation(
     monkeypatch,
 ) -> None:
     import torch
-
 
     registry = PAPAttentionRegistry(storage_device="cpu")
 
@@ -2775,7 +2216,6 @@ def test_unified_decode_append_partial_batch_uses_fallback_gather(
     monkeypatch,
 ) -> None:
     import torch
-
 
     registry = PAPAttentionRegistry(storage_device="cpu")
     kv_cache = torch.zeros((4, 2, 4, 1, 2))
@@ -2869,7 +2309,6 @@ def test_attention_registry_reports_active_session_count() -> None:
 
 
 def test_attention_fast_path_stats_endpoint() -> None:
-
     kv_metadata_module.reset_unified_paged_flash_metadata_cache()
     registry = PAPAttentionRegistry(storage_device="cpu")
     client = _ASGITestClient(create_app(registry=registry))
@@ -2929,7 +2368,6 @@ def test_attention_fast_path_stats_endpoint() -> None:
 def test_attention_registry_release_session_notifies_prefill_lease(
     monkeypatch,
 ) -> None:
-
     released = []
     events = []
 
@@ -2991,7 +2429,6 @@ def test_attention_registry_release_session_notifies_prefill_lease(
 def test_attention_registry_does_not_release_lease_before_commit_ack(
     monkeypatch,
 ) -> None:
-
     events = []
 
     class FakeCommitClient:
@@ -3036,7 +2473,6 @@ def test_attention_registry_does_not_release_lease_before_commit_ack(
 def test_attention_registry_reregister_releases_replaced_prefill_lease(
     monkeypatch,
 ) -> None:
-
     released = []
     events = []
 
@@ -3239,74 +2675,6 @@ def test_offload_exec_batch_session_entries_reuses_and_invalidates_cache() -> No
     assert after_release[0] is not first[0]
 
 
-def test_run_offload_exec_batch_once_single_item_avoids_output_cat(
-    monkeypatch,
-) -> None:
-    import torch
-
-    class FakeTransport:
-        def __init__(self):
-            self.sent = []
-
-        def recv_qkv_batch(self, descriptor, *, remote_address):
-            return torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]])
-
-        def send_output_batch(self, descriptor, output, *, remote_address):
-            self.sent.append((descriptor, output, remote_address))
-
-    registry = PAPAttentionRegistry(storage_device="cpu")
-    registry.register_prefill_kv(
-        PAPAttentionRegistration(
-            request_id="req-a",
-            conversation_id="conv",
-            prefill_endpoint="http://localhost:8100",
-            q_size=2,
-            kv_size=2,
-        )
-    )
-    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_HEADS", "1")
-    monkeypatch.setenv("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "1")
-    monkeypatch.setenv("PAP_OFFLOAD_EXEC_HEAD_DIM", "2")
-    descriptor = PAPOffloadExecBatchDescriptor(
-        layer_name="layer0",
-        items=(
-            PAPOffloadExecDescriptor(
-                request_id="req-a",
-                layer_name="layer0",
-                step=1,
-                scale=1.0,
-            ),
-        ),
-    )
-    transport = FakeTransport()
-
-
-    def fake_compute_offload_exec_batch_output(**kwargs):
-        return torch.tensor([[2.0, 0.0]])
-
-    def fail_cat(*args, **kwargs):
-        raise AssertionError("single-item OFFLOAD_EXEC batch should not cat output")
-
-    monkeypatch.setattr(
-        attention_compute_module,
-        "compute_offload_exec_batch_output",
-        fake_compute_offload_exec_batch_output,
-    )
-    monkeypatch.setattr(torch, "cat", fail_cat)
-
-    run_offload_exec_batch_once(
-        registry=registry,
-        transport=transport,
-        remote_address="127.0.0.1:11300",
-        descriptor=descriptor,
-    )
-
-    assert len(transport.sent) == 1
-    _, output, remote_address = transport.sent[0]
-    assert remote_address == "127.0.0.1:11300"
-    torch.testing.assert_close(output, torch.tensor([[2.0, 0.0]]))
-
-
 def test_run_offload_exec_mailbox_loop_releases_qkv_message(monkeypatch) -> None:
     import torch
 
@@ -3392,7 +2760,6 @@ def test_run_offload_exec_mailbox_loop_releases_qkv_message(monkeypatch) -> None
 
 def test_mailbox_receiver_enqueues_without_computing(monkeypatch) -> None:
     import torch
-
 
     released = []
 
@@ -3528,7 +2895,6 @@ def test_mailbox_receiver_waits_for_dispatch_before_busy_spinning_again() -> Non
 def test_central_dispatcher_computes_and_sends_to_each_source(monkeypatch) -> None:
     import torch
 
-
     events = []
 
     class FakeMessage:
@@ -3626,7 +2992,6 @@ def test_central_combine_executes_once_and_scatters_to_sources(
 ) -> None:
     import torch
 
-
     class FakeTransport:
         def __init__(self) -> None:
             self.sent = []
@@ -3718,7 +3083,6 @@ def test_central_combine_executes_once_and_scatters_to_sources(
 def test_central_combine_single_item_reuses_fifo_executor(monkeypatch) -> None:
     import torch
 
-
     descriptor = PAPOffloadExecBatchDescriptor(
         layer_name="layer0",
         items=(
@@ -3788,7 +3152,6 @@ def test_central_combine_compatibility_key_rejects_layer_or_scale() -> None:
 
 def test_central_dispatcher_preserves_cuda_ready_dependency(monkeypatch) -> None:
     import torch
-
 
     events = []
     ready_event = object()
@@ -3959,7 +3322,6 @@ def test_run_offload_exec_mailbox_loop_prefetches_next_qkv_message(
     monkeypatch,
 ) -> None:
     import torch
-
 
     events = []
     second_recv_started = Event()

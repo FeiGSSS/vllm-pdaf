@@ -8,10 +8,10 @@ from vllm.pap.integration import (
     PAPDecodeTokenBridge,
     PAPEngineAdapter,
     PAPModelRunnerAdapter,
+    PAPProjectionRequestStore,
     PAPRuntimeSettings,
     PAPSchedulerAdapter,
     PAPWorkerAdapter,
-    bind_projection_request_store,
     build_projection_forward_context,
     install_pap_control_routes,
     select_projection_request_ids,
@@ -240,8 +240,7 @@ def test_model_runners_share_one_pap_adapter_boundary(runner_type) -> None:
 
 
 def test_projection_batch_adapter_builds_filtered_forward_context() -> None:
-    owner = SimpleNamespace()
-    store = bind_projection_request_store(owner)
+    store = PAPProjectionRequestStore()
     store.update(
         "req-a",
         {

@@ -18,21 +18,6 @@ from vllm.pap.transport.mailbox import PAPMailboxMessage
 from vllm.pap.transport.nixl_offload import PAPNixlMailboxOffloadExecTransport
 
 
-def test_offload_exec_descriptor_uses_stable_tensor_ids() -> None:
-    descriptor = PAPOffloadExecDescriptor(
-        request_id="cmpl-1",
-        layer_name="model.layers.0.self_attn.attn",
-        step=7,
-        scale=0.125,
-    )
-
-    assert descriptor.qkv_tensor_id == "cmpl-1#model.layers.0.self_attn.attn#7#qkv"
-    assert (
-        descriptor.output_tensor_id
-        == "cmpl-1#model.layers.0.self_attn.attn#7#attn_out"
-    )
-
-
 def test_nixl_mailbox_sends_direct_qkv_batch_without_copy_payload() -> None:
     class ReservedPayload:
         def __init__(self, tensor: torch.Tensor, slot_id: int) -> None:
@@ -319,9 +304,9 @@ def test_prefill_kv_catalog_descriptor_roundtrip() -> None:
         kv_cache=_paged_ipc_handle(),
     )
 
-    assert PAPPrefillKVCacheCatalogDescriptor.from_dict(
-        descriptor.to_dict()
-    ) == descriptor
+    assert (
+        PAPPrefillKVCacheCatalogDescriptor.from_dict(descriptor.to_dict()) == descriptor
+    )
 
 
 def test_prefill_kv_session_manifest_roundtrip() -> None:
@@ -457,27 +442,33 @@ def test_sealed_prefill_kv_handoff_posts_catalog_and_manifest_without_sync(
 
     try:
         kv_cache = torch.zeros(2, 2, 4, 1, 2)
-        assert register_prefill_kv_catalog(
-            catalog_id="prefill-test",
-            layer_name="layer0",
-            kv_cache=kv_cache,
-            block_size=4,
-            num_kv_heads=1,
-            layout="NHD",
-            tcp_endpoint="127.0.0.1:8300",
-        ) == "registered"
-        assert publish_prefill_kv_session_manifest(
-            request_id="cmpl-sealed",
-            session_handle="cmpl-sealed@pap-session-1",
-            catalog_id="prefill-test",
-            block_ids=(0, 1),
-            prefix_len=5,
-            block_size=4,
-            expected_layer_count=1,
-            ready_event_handle=b"event-handle",
-            tcp_endpoint="127.0.0.1:8300",
-            decode_capacity_tokens=decode_capacity_tokens,
-        ) == 5
+        assert (
+            register_prefill_kv_catalog(
+                catalog_id="prefill-test",
+                layer_name="layer0",
+                kv_cache=kv_cache,
+                block_size=4,
+                num_kv_heads=1,
+                layout="NHD",
+                tcp_endpoint="127.0.0.1:8300",
+            )
+            == "registered"
+        )
+        assert (
+            publish_prefill_kv_session_manifest(
+                request_id="cmpl-sealed",
+                session_handle="cmpl-sealed@pap-session-1",
+                catalog_id="prefill-test",
+                block_ids=(0, 1),
+                prefix_len=5,
+                block_size=4,
+                expected_layer_count=1,
+                ready_event_handle=b"event-handle",
+                tcp_endpoint="127.0.0.1:8300",
+                decode_capacity_tokens=decode_capacity_tokens,
+            )
+            == 5
+        )
     finally:
         reset_global_kv_lease_registry()
 

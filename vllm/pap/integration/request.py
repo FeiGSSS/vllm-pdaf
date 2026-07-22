@@ -80,13 +80,9 @@ class PAPProjectionRequestStore:
 
     attention_tcp_endpoint_by_request: dict[str, str] = field(default_factory=dict)
     attention_endpoint_by_request: dict[str, str] = field(default_factory=dict)
-    offload_exec_zmq_endpoint_by_request: dict[str, str] = field(
-        default_factory=dict
-    )
+    offload_exec_zmq_endpoint_by_request: dict[str, str] = field(default_factory=dict)
     prefill_prefix_len_by_request: dict[str, int] = field(default_factory=dict)
-    decode_capacity_tokens_by_request: dict[str, int] = field(
-        default_factory=dict
-    )
+    decode_capacity_tokens_by_request: dict[str, int] = field(default_factory=dict)
     prefill_kv_handle_by_request: dict[str, str] = field(default_factory=dict)
     import_prefill_kv_to_attention_requests: set[str] = field(default_factory=set)
     attention_kv_installed_requests: set[str] = field(default_factory=set)
@@ -103,25 +99,19 @@ class PAPProjectionRequestStore:
                 metadata.attention_tcp_endpoint
             )
         if metadata.attention_endpoint is not None:
-            self.attention_endpoint_by_request[request_id] = (
-                metadata.attention_endpoint
-            )
+            self.attention_endpoint_by_request[request_id] = metadata.attention_endpoint
         if metadata.offload_exec_zmq_endpoint is not None:
             self.offload_exec_zmq_endpoint_by_request[request_id] = (
                 metadata.offload_exec_zmq_endpoint
             )
         if metadata.remote_prefix_len is not None:
-            self.prefill_prefix_len_by_request[request_id] = (
-                metadata.remote_prefix_len
-            )
+            self.prefill_prefix_len_by_request[request_id] = metadata.remote_prefix_len
         if metadata.decode_capacity_tokens is not None:
             self.decode_capacity_tokens_by_request[request_id] = (
                 metadata.decode_capacity_tokens
             )
         if metadata.prefill_kv_handle is not None:
-            self.prefill_kv_handle_by_request[request_id] = (
-                metadata.prefill_kv_handle
-            )
+            self.prefill_kv_handle_by_request[request_id] = metadata.prefill_kv_handle
         if metadata.import_prefill_kv_to_attention:
             self.import_prefill_kv_to_attention_requests.add(request_id)
         if metadata.attention_kv_installed:
@@ -138,32 +128,3 @@ class PAPProjectionRequestStore:
         self.prefill_kv_handle_by_request.pop(request_id, None)
         self.import_prefill_kv_to_attention_requests.discard(request_id)
         self.attention_kv_installed_requests.discard(request_id)
-
-
-def bind_projection_request_store(
-    owner: Any,
-    store: PAPProjectionRequestStore | None = None,
-) -> PAPProjectionRequestStore:
-    """Install a store and retain the model-runner compatibility attributes."""
-    if store is None:
-        store = PAPProjectionRequestStore()
-    owner.pap_projection_request_store = store
-    owner.pap_attention_tcp_endpoint_by_req_id = (
-        store.attention_tcp_endpoint_by_request
-    )
-    owner.pap_attention_endpoint_by_req_id = store.attention_endpoint_by_request
-    owner.pap_offload_exec_zmq_endpoint_by_req_id = (
-        store.offload_exec_zmq_endpoint_by_request
-    )
-    owner.pap_prefill_prefix_len_by_req_id = store.prefill_prefix_len_by_request
-    owner.pap_decode_capacity_tokens_by_req_id = (
-        store.decode_capacity_tokens_by_request
-    )
-    owner.pap_prefill_kv_handle_by_req_id = store.prefill_kv_handle_by_request
-    owner.pap_import_prefill_kv_to_attention_by_req_id = (
-        store.import_prefill_kv_to_attention_requests
-    )
-    owner.pap_attention_kv_installed_by_req_id = (
-        store.attention_kv_installed_requests
-    )
-    return store

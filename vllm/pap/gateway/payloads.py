@@ -44,9 +44,7 @@ def build_prefill_payload(req_data: dict[str, Any]) -> dict[str, Any]:
         "remote_port": None,
     }
     if decode_capacity is not None:
-        payload["kv_transfer_params"]["pap_decode_capacity_tokens"] = (
-            decode_capacity
-        )
+        payload["kv_transfer_params"]["pap_decode_capacity_tokens"] = decode_capacity
     payload.pop("max_completion_tokens", None)
     payload.pop("min_tokens", None)
     payload.pop("stream_options", None)
@@ -69,32 +67,12 @@ def attach_pap_prefill_attention_params(
     if pap_attention_tcp_endpoint:
         kv_params["pap_attention_tcp_endpoint"] = str(pap_attention_tcp_endpoint)
     if pap_offload_exec_zmq_endpoint:
-        kv_params["pap_offload_exec_zmq_endpoint"] = str(
-            pap_offload_exec_zmq_endpoint
-        )
+        kv_params["pap_offload_exec_zmq_endpoint"] = str(pap_offload_exec_zmq_endpoint)
     kv_params["pap_prefill_kv_handle"] = str(pap_prefill_kv_handle)
     kv_params["pap_import_prefill_kv_to_attention"] = True
     kv_params["pap_mode"] = str(pap_mode)
     updated["kv_transfer_params"] = kv_params
     return updated
-
-
-def build_decode_payload(
-    req_data: dict[str, Any],
-    kv_transfer_params: dict[str, Any],
-    *,
-    pap_prefill_kv_handle: str | None = None,
-    pap_attention_kv_installed: bool = False,
-) -> dict[str, Any]:
-    payload = req_data.copy()
-    payload["kv_transfer_params"] = dict(kv_transfer_params)
-    if pap_prefill_kv_handle:
-        payload["kv_transfer_params"]["pap_prefill_kv_handle"] = str(
-            pap_prefill_kv_handle
-        )
-    if pap_attention_kv_installed:
-        payload["kv_transfer_params"]["pap_attention_kv_installed"] = True
-    return payload
 
 
 def build_projection_kv_unaware_payload(
@@ -128,9 +106,7 @@ def build_projection_kv_unaware_payload(
     if pap_attention_tcp_endpoint:
         kv_params["pap_attention_tcp_endpoint"] = str(pap_attention_tcp_endpoint)
     if pap_offload_exec_zmq_endpoint:
-        kv_params["pap_offload_exec_zmq_endpoint"] = str(
-            pap_offload_exec_zmq_endpoint
-        )
+        kv_params["pap_offload_exec_zmq_endpoint"] = str(pap_offload_exec_zmq_endpoint)
     if pap_prefill_kv_handle:
         kv_params["pap_prefill_kv_handle"] = str(pap_prefill_kv_handle)
     if pap_attention_kv_installed:

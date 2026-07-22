@@ -11,14 +11,12 @@ import torch
 
 from vllm.pap.protocol import (
     PAPOffloadExecBatchDescriptor,
-    PAPOffloadExecDescriptor,
     PAPTensorTransport,
 )
 from vllm.pap.protocol.offload_exec import (
     _offload_exec_batch_descriptor_from_metadata,
     _offload_exec_batch_descriptor_to_metadata,
     _offload_exec_batch_descriptor_to_plan_metadata,
-    _offload_exec_descriptor_to_metadata,
 )
 from vllm.pap.transport.mailbox import PAPMailboxMessage
 
@@ -73,54 +71,6 @@ class PAPNixlMailboxOffloadExecTransport:
     def bind_peer(self, peer_agent_metadata: bytes) -> None:
         self.endpoint.bind_peer(peer_agent_metadata)
         self.endpoint.start()
-
-    def send_qkv(
-        self,
-        descriptor: PAPOffloadExecDescriptor,
-        qkv: torch.Tensor,
-        *,
-        remote_address: str,
-    ) -> None:
-        self._send_message(
-            msg_id=descriptor.qkv_tensor_id,
-            kind="attention_task",
-            metadata=_offload_exec_descriptor_to_metadata(descriptor),
-            tensor=qkv,
-        )
-
-    def recv_qkv(
-        self,
-        descriptor: PAPOffloadExecDescriptor,
-        *,
-        remote_address: str,
-    ) -> torch.Tensor:
-        return _clone_and_release_mailbox_message(
-            self.endpoint.recv(descriptor.qkv_tensor_id)
-        )
-
-    def send_output(
-        self,
-        descriptor: PAPOffloadExecDescriptor,
-        output: torch.Tensor,
-        *,
-        remote_address: str,
-    ) -> None:
-        self._send_message(
-            msg_id=descriptor.output_tensor_id,
-            kind="attention_result",
-            metadata=_offload_exec_descriptor_to_metadata(descriptor),
-            tensor=output,
-        )
-
-    def recv_output(
-        self,
-        descriptor: PAPOffloadExecDescriptor,
-        *,
-        remote_address: str,
-    ) -> torch.Tensor:
-        return _clone_and_release_mailbox_message(
-            self.endpoint.recv(descriptor.output_tensor_id)
-        )
 
     def send_qkv_batch(
         self,

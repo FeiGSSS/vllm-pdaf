@@ -13,7 +13,6 @@ from vllm.pap.integration.projection import (
 from vllm.pap.integration.request import (
     PAPProjectionRequestStore,
     PAPRequestMetadata,
-    bind_projection_request_store,
 )
 from vllm.pap.integration.runner import PAPModelRunnerAdapter
 from vllm.pap.integration.scheduler import (
@@ -34,7 +33,6 @@ __all__ = [
     "PAPRuntimeSettings",
     "PAPSchedulerAdapter",
     "PAPWorkerAdapter",
-    "bind_projection_request_store",
     "build_projection_forward_context",
     "install_pap_control_routes",
     "select_projection_request_ids",

@@ -22,10 +22,7 @@ from vllm.pap.deferred_cuda_trace import (
     end_deferred_cuda_span,
     record_deferred_host_duration,
 )
-from vllm.pap.protocol import (
-    PAPOffloadExecBatchDescriptor,
-    PAPOffloadExecDescriptor,
-)
+from vllm.pap.protocol import PAPOffloadExecBatchDescriptor
 from vllm.pap.protocol.offload_exec import (
     _offload_exec_batch_descriptor_from_metadata,
     _offload_exec_batch_descriptor_to_metadata,
@@ -33,15 +30,14 @@ from vllm.pap.protocol.offload_exec import (
     _offload_exec_batch_plan_payload,
 )
 from vllm.pap.transport.local_fast_protocol import (
+    _CODE_TO_DTYPE,
+    _DTYPE_TO_CODE,
     DIR_OUTPUT,
     DIR_QKV,
     RECORD_FLAG_FIXED_TENSOR,
     RECORD_FLAG_OUTPUT_DESCRIPTORLESS,
     RECORD_FLAG_PLAN_FULL,
     RECORD_FLAG_PLAN_REF,
-    _CODE_TO_DTYPE,
-    _DTYPE_TO_CODE,
-    _WireMetadata,
     _doorbell_ack,
     _doorbell_read_metadata,
     _doorbell_read_record,
@@ -52,6 +48,7 @@ from vllm.pap.transport.local_fast_protocol import (
     _layer_name_from_template,
     _payload_metadata,
     _signal_index,
+    _WireMetadata,
 )
 
 logger = logging.getLogger(__name__)
@@ -184,8 +181,7 @@ class _PAPLocalFastIOMixin:
                 shape=shape,
                 layer_index=layer_index,
                 dtype_code=dtype_code,
-                flags=RECORD_FLAG_FIXED_TENSOR
-                | RECORD_FLAG_OUTPUT_DESCRIPTORLESS,
+                flags=RECORD_FLAG_FIXED_TENSOR | RECORD_FLAG_OUTPUT_DESCRIPTORLESS,
             )
 
         metadata_version = int(descriptor_metadata.get("v", 0))
@@ -602,59 +598,7 @@ class _PAPLocalFastIOMixin:
     # Public transport API (mirrors PAPNixlMailboxOffloadExecTransport)
     # ------------------------------------------------------------------
 
-    # --- single-descriptor variants (unused on hot path, kept for API) ---
-
-    def send_qkv(
-        self,
-        descriptor: PAPOffloadExecDescriptor,
-        qkv: torch.Tensor,
-        *,
-        remote_address: str,
-    ) -> None:
-        batch = PAPOffloadExecBatchDescriptor(
-            layer_name=descriptor.layer_name,
-            items=(descriptor,),
-        )
-        self.send_qkv_batch(batch, qkv, remote_address=remote_address)
-
-    def recv_qkv(
-        self,
-        descriptor: PAPOffloadExecDescriptor,
-        *,
-        remote_address: str,
-    ) -> torch.Tensor:
-        batch = PAPOffloadExecBatchDescriptor(
-            layer_name=descriptor.layer_name,
-            items=(descriptor,),
-        )
-        return self.recv_qkv_batch(batch, remote_address=remote_address)
-
-    def send_output(
-        self,
-        descriptor: PAPOffloadExecDescriptor,
-        output: torch.Tensor,
-        *,
-        remote_address: str,
-    ) -> None:
-        batch = PAPOffloadExecBatchDescriptor(
-            layer_name=descriptor.layer_name,
-            items=(descriptor,),
-        )
-        self.send_output_batch(batch, output, remote_address=remote_address)
-
-    def recv_output(
-        self,
-        descriptor: PAPOffloadExecDescriptor,
-        *,
-        remote_address: str,
-    ) -> torch.Tensor:
-        batch = PAPOffloadExecBatchDescriptor(
-            layer_name=descriptor.layer_name,
-            items=(descriptor,),
-        )
-        return self.recv_output_batch(batch, remote_address=remote_address)
-
-    # --- batched variants (the actual hot path) ---
+    # --- batched data plane ---
 
     def send_qkv_batch(
         self,
@@ -794,8 +738,7 @@ class _PAPLocalFastIOMixin:
         nbytes = int(prod(shape) * torch.empty((), dtype=dtype).element_size())
         if nbytes > self._slot_bytes:
             raise RuntimeError(
-                f"PAP descriptorless output {nbytes}B exceeds slot "
-                f"{self._slot_bytes}B"
+                f"PAP descriptorless output {nbytes}B exceeds slot {self._slot_bytes}B"
             )
 
         record_offset = _doorbell_record_offset(
@@ -878,9 +821,7 @@ class _PAPLocalFastIOMixin:
             descriptor_metadata = dict(metadata["descriptor"])
             if fixed_flags & RECORD_FLAG_PLAN_FULL:
                 plan_id = str(descriptor_metadata["p"])
-                layer_info = _layer_index_and_template(
-                    str(descriptor_metadata["l"])
-                )
+                layer_info = _layer_index_and_template(str(descriptor_metadata["l"]))
                 if layer_info is None:
                     raise RuntimeError(
                         "PAP local fast step plan has an invalid layer name"

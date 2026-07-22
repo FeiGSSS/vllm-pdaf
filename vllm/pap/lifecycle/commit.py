@@ -94,10 +94,6 @@ class DecodeCommitClient:
         """Whether the client has a configured endpoint to talk to."""
         return bool(self.endpoint)
 
-    def enabled_for(self, endpoint: str | None = None) -> bool:
-        """Whether a default or per-session endpoint is available."""
-        return bool(endpoint or self.endpoint)
-
     def _ensure_worker(self) -> None:
         if self._worker is not None:
             return
@@ -303,9 +299,7 @@ class DecodeCommitClient:
         last_error: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
             try:
-                resp = httpx.post(
-                    endpoint, json=payload, timeout=self.timeout_s
-                )
+                resp = httpx.post(endpoint, json=payload, timeout=self.timeout_s)
                 resp.raise_for_status()
                 body = resp.json()
                 acked_commit_seq = int(body.get("acked_commit_seq", 0))

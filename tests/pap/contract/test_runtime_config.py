@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import tomllib
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
+import tomllib
 
 from vllm.pap.config import (
+    PAP_RETIRED_FLAGS,
     PAPAttentionDispatchMode,
     PAPConfigError,
     PAPMPSMode,
@@ -14,7 +15,6 @@ from vllm.pap.config import (
     PAPOffloadKVTransport,
     PAPRoutingPolicy,
     PAPRuntimeConfig,
-    PAP_RETIRED_FLAGS,
 )
 from vllm.pap.service import create_app
 
@@ -91,9 +91,7 @@ def test_runtime_config_supports_arbitrary_xpayp_and_tp() -> None:
 
 
 def test_runtime_config_accepts_conversation_affinity() -> None:
-    config = PAPRuntimeConfig.from_env(
-        {"PAP_ROUTING_POLICY": "conversation_affinity"}
-    )
+    config = PAPRuntimeConfig.from_env({"PAP_ROUTING_POLICY": "conversation_affinity"})
 
     assert config.routing_policy is PAPRoutingPolicy.CONVERSATION_AFFINITY
 
@@ -132,8 +130,6 @@ def test_runtime_config_rejects_invalid_values(
 def test_runtime_config_is_deeply_immutable_for_config_values() -> None:
     config = PAPRuntimeConfig.from_env(P17_PHASE0_ENV)
 
-    with pytest.raises(FrozenInstanceError):
-        config.protocol_version = 2  # type: ignore[misc]
     with pytest.raises(FrozenInstanceError):
         config.topology.pa_count = 2  # type: ignore[misc]
     with pytest.raises(TypeError):

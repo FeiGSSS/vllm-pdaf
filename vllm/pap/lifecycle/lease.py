@@ -176,12 +176,6 @@ class PAPKVLeaseRegistry:
         if _kv_lease_profile_enabled():
             logger.info("PAP KV lease stash deferred lease_id=%s", lease_id)
 
-    def pop_deferred_blocks(
-        self, lease_id: str
-    ) -> tuple[object, Callable[[object], None] | None] | None:
-        with self._lock:
-            return self._deferred_blocks.pop(lease_id, None)
-
     def has_active_lease(self, request_id: str) -> bool:
         with self._lock:
             lease_id = self._active_by_request.get(str(request_id))
@@ -320,12 +314,6 @@ def pap_stash_deferred_blocks(
     get_global_kv_lease_registry().stash_deferred_blocks(
         lease_id=lease_id, blocks=blocks, free_callback=free_callback
     )
-
-
-def pap_pop_deferred_blocks(
-    lease_id: str,
-) -> tuple[object, Callable[[object], None] | None] | None:
-    return get_global_kv_lease_registry().pop_deferred_blocks(lease_id)
 
 
 def pap_sweep_expired_leases() -> list[str]:

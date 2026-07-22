@@ -5,10 +5,7 @@ from vllm.pap.protocol import (
 from vllm.pap.protocol.offload_exec import (
     _offload_exec_batch_descriptor_to_metadata,
 )
-from vllm.pap.topology.routing import (
-    build_offload_exec_route_groups,
-    filter_offload_exec_route_groups_for_request_slice,
-)
+from vllm.pap.topology.routing import build_offload_exec_route_groups
 
 
 def test_build_offload_exec_route_groups_groups_by_attention_mailbox_pair() -> None:
@@ -49,41 +46,6 @@ def test_build_offload_exec_route_groups_groups_by_attention_mailbox_pair() -> N
             "request_ids": ("cmpl-b",),
             "steps": (18,),
             "batch_id_suffix": "cmpl-b@18",
-        },
-    )
-
-
-def test_filter_offload_exec_route_groups_rebases_to_ubatch_indices() -> None:
-    groups = (
-        {
-            "attention_endpoint": "http://a0:8300",
-            "offload_exec_zmq_endpoint": "nixl://a0-r0",
-            "req_indices": (0, 2, 3),
-            "request_ids": ("cmpl-a", "cmpl-c", "cmpl-d"),
-            "steps": (17, 19, 20),
-            "batch_id_suffix": "cmpl-a@17,cmpl-c@19,cmpl-d@20",
-        },
-        {
-            "attention_endpoint": "http://a1:8300",
-            "offload_exec_zmq_endpoint": "nixl://a1-r0",
-            "req_indices": (1,),
-            "request_ids": ("cmpl-b",),
-            "steps": (18,),
-            "batch_id_suffix": "cmpl-b@18",
-        },
-    )
-
-    assert filter_offload_exec_route_groups_for_request_slice(
-        groups,
-        slice(2, 4),
-    ) == (
-        {
-            "attention_endpoint": "http://a0:8300",
-            "offload_exec_zmq_endpoint": "nixl://a0-r0",
-            "req_indices": (0, 1),
-            "request_ids": ("cmpl-c", "cmpl-d"),
-            "steps": (19, 20),
-            "batch_id_suffix": "cmpl-c@19,cmpl-d@20",
         },
     )
 

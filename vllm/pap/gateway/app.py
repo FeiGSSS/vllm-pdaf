@@ -26,8 +26,10 @@ from vllm.pap.gateway.clients import (
     prefill_kv_handle_from_kv_params,
     prefill_prefix_len_from_kv_params,
     register_attention_handle,
-    request_headers as _headers,
     wait_attention_prefill_ready,
+)
+from vllm.pap.gateway.clients import (
+    request_headers as _headers,
 )
 from vllm.pap.gateway.payloads import (
     attach_pap_prefill_attention_params,
@@ -74,9 +76,7 @@ def _prefill_usage_headers(prefill_response: dict[str, Any]) -> dict[str, str]:
 
     headers["X-PAP-Prefill-Cached-Tokens"] = str(cached_tokens)
     if cached_tokens <= prompt_tokens:
-        headers["X-PAP-Prefill-Computed-Tokens"] = str(
-            prompt_tokens - cached_tokens
-        )
+        headers["X-PAP-Prefill-Computed-Tokens"] = str(prompt_tokens - cached_tokens)
     return headers
 
 
@@ -126,10 +126,6 @@ class PAPGroup:
         )
 
     @property
-    def attention_base_urls(self) -> tuple[str, ...]:
-        return tuple(self.attention_base_url.split(","))
-
-    @property
     def attention_tcp_endpoint(self) -> str | None:
         if self.attention_tcp_port is None:
             return None
@@ -167,9 +163,7 @@ class PAPConversationRouter:
         if not groups:
             raise ValueError("PAP conversation routing requires a PA group")
         self._groups = groups
-        self._group_indices = {
-            group: index for index, group in enumerate(groups)
-        }
+        self._group_indices = {group: index for index, group in enumerate(groups)}
         self._next_group = count()
         self._assignments: dict[str, PAPGroup] = {}
         self._request_counts: Counter[PAPGroup] = Counter()
@@ -211,9 +205,7 @@ class PAPConversationRouter:
 class _PAPProjectionAdmissionState:
     owner: ProjectionInstance | None = None
     active_requests: int = 0
-    waiters: list[tuple[object, ProjectionInstance]] = field(
-        default_factory=list
-    )
+    waiters: list[tuple[object, ProjectionInstance]] = field(default_factory=list)
 
 
 class PAPProjectionAdmission:
@@ -221,9 +213,7 @@ class PAPProjectionAdmission:
 
     def __init__(self, groups: list[PAPGroup]) -> None:
         self._condition = asyncio.Condition()
-        self._states = {
-            group: _PAPProjectionAdmissionState() for group in groups
-        }
+        self._states = {group: _PAPProjectionAdmissionState() for group in groups}
         self._group_indices = {group: index for index, group in enumerate(groups)}
 
     async def acquire(
@@ -376,9 +366,9 @@ def select_instances(
     if routing_policy == "round_robin":
         projection_index = request_number % len(projections)
     elif routing_policy == "crossbar_round_robin":
-        projection_index = (
-            request_number // len(groups) + group_index
-        ) % len(projections)
+        projection_index = (request_number // len(groups) + group_index) % len(
+            projections
+        )
     elif routing_policy == "projection_affinity":
         groups_per_projection = (len(groups) + len(projections) - 1) // len(projections)
         projection_index = min(
@@ -391,9 +381,7 @@ def select_instances(
         group = groups[group_index]
     elif routing_policy == "conversation_affinity":
         if conversation_router is None:
-            raise ValueError(
-                "conversation_affinity requires a PAPConversationRouter"
-            )
+            raise ValueError("conversation_affinity requires a PAPConversationRouter")
         group = conversation_router.select_group(
             conversation_id,
             request_number=request_number,

@@ -8,13 +8,6 @@ from collections.abc import Iterable
 PAP_REQUEST_ID_PREFIXES = ("cmpl-", "chatcmpl-")
 
 
-def is_pap_enabled(additional_kwargs: dict | None) -> bool:
-    """Return True when the PAP attention path should be used for this forward."""
-    if not additional_kwargs:
-        return False
-    return bool(additional_kwargs.get("pap_enabled"))
-
-
 def is_pap_request_id(request_id: object) -> bool:
     return str(request_id).startswith(PAP_REQUEST_ID_PREFIXES)
 

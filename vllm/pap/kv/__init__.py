@@ -4,13 +4,11 @@
 
 from vllm.pap.kv.metadata import (
     PAPPagedFlashMetadata,
-    build_unified_paged_flash_metadata,
     build_unified_paged_flash_step_metadata,
 )
-
 from vllm.pap.kv.models import (
-    PAPAttentionStepContext,
     PAPAttentionSession,
+    PAPAttentionStepContext,
     PAPPrefillKVCacheCatalogEntry,
     PAPPrefillLayerReadiness,
     PAPUnifiedPagedKVState,
@@ -25,6 +23,5 @@ __all__ = [
     "PAPPrefillKVCacheCatalogEntry",
     "PAPPrefillLayerReadiness",
     "PAPUnifiedPagedKVState",
-    "build_unified_paged_flash_metadata",
     "build_unified_paged_flash_step_metadata",
 ]

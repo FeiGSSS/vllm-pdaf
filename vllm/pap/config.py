@@ -112,8 +112,7 @@ class PAPTopology:
         match = _TOPOLOGY_PATTERN.fullmatch(normalized)
         if match is None:
             raise PAPConfigError(
-                "PAP_TOPOLOGY must use positive xPAyP syntax, "
-                f"got {value!r}"
+                f"PAP_TOPOLOGY must use positive xPAyP syntax, got {value!r}"
             )
         return cls(
             pa_count=int(match.group("pa")),
@@ -406,7 +405,6 @@ class PAPRuntimeConfig:
     decode_commit: PAPDecodeCommitConfig
     decode_token: PAPDecodeTokenConfig
     lease_release: PAPLeaseReleaseConfig
-    protocol_version: int
 
     def __post_init__(self) -> None:
         required_prefill = self.topology.prefill_device_count
@@ -428,8 +426,6 @@ class PAPRuntimeConfig:
             and not self.same_host
         ):
             raise PAPConfigError("PAP local_fast transport requires same-host peers")
-        if self.protocol_version < 1:
-            raise PAPConfigError("PAP protocol version must be positive")
 
     @classmethod
     def from_env(
@@ -747,12 +743,6 @@ class PAPRuntimeConfig:
             decode_commit=decode_commit,
             decode_token=decode_token,
             lease_release=lease_release,
-            protocol_version=_env_int(
-                env,
-                "PAP_PROTOCOL_VERSION",
-                1,
-                minimum=1,
-            ),
         )
 
     def configured_retired_flags(
@@ -803,9 +793,7 @@ class PAPRuntimeConfig:
                 "mode": self.mps.mode.value,
                 "profile_id": self.mps.profile_id,
                 "prefill_requested_percent": self.mps.prefill_requested_percent,
-                "attention_requested_percent": (
-                    self.mps.attention_requested_percent
-                ),
+                "attention_requested_percent": (self.mps.attention_requested_percent),
                 "prefill_chunks": self.mps.prefill_chunks,
                 "attention_chunks": self.mps.attention_chunks,
                 "prefill_visible_sms": self.mps.prefill_visible_sms,
@@ -821,13 +809,9 @@ class PAPRuntimeConfig:
                 "metadata_lookup": "fast_key",
                 "attention_execution": attention_execution,
                 "direct_mailbox_output": features.direct_mailbox_output,
-                "local_fast_stream_ordered": (
-                    features.local_fast_stream_ordered
-                ),
+                "local_fast_stream_ordered": (features.local_fast_stream_ordered),
                 "local_fast_slot_count": features.local_fast_slot_count,
-                "decode_slot_plan_cache_limit": (
-                    features.decode_slot_plan_cache_limit
-                ),
+                "decode_slot_plan_cache_limit": (features.decode_slot_plan_cache_limit),
             },
         }
 
@@ -950,9 +934,7 @@ def _parse_enum(enum_type: type[_EnumT], value: str, name: str) -> _EnumT:
         return enum_type(normalized)
     except ValueError as exc:
         choices = ", ".join(str(member.value) for member in enum_type)
-        raise PAPConfigError(
-            f"{name} must be one of {choices}, got {value!r}"
-        ) from exc
+        raise PAPConfigError(f"{name} must be one of {choices}, got {value!r}") from exc
 
 
 def parse_offload_exec_transport(
@@ -995,8 +977,7 @@ def _parse_kv_transport(value: str) -> PAPOffloadKVTransport:
         return PAPOffloadKVTransport(normalized)
     except ValueError as exc:
         raise PAPConfigError(
-            "PAP_OFFLOAD_KV_TRANSPORT must be cuda_ipc or nixl_mailbox, "
-            f"got {value!r}"
+            f"PAP_OFFLOAD_KV_TRANSPORT must be cuda_ipc or nixl_mailbox, got {value!r}"
         ) from exc
 
 

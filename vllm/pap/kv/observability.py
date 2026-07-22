@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 
 import torch
 
@@ -22,10 +21,6 @@ def pap_env_flag(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.lower() in {"1", "true", "yes", "on"}
-
-
-def pap_attention_pool_profile_enabled() -> bool:
-    return pap_env_flag("PAP_ATTENTION_POOL_PROFILE", False)
 
 
 def pap_kv_lease_profile_enabled() -> bool:
@@ -156,14 +151,3 @@ def log_kv_locality_profile(
         first["first_blocks"],
         first["first_deltas"],
     )
-
-
-def trace_add_elapsed_ms(
-    trace_stats: dict[str, float] | None,
-    key: str,
-    start: float,
-) -> None:
-    if trace_stats is not None:
-        trace_stats[key] = (
-            trace_stats.get(key, 0.0) + (time.perf_counter() - start) * 1000.0
-        )

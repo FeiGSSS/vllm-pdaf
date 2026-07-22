@@ -53,9 +53,6 @@ class LeaseReleaseClient:
     def enabled(self) -> bool:
         return bool(self.endpoint)
 
-    def enabled_for(self, endpoint: str | None = None) -> bool:
-        return bool(endpoint or self.endpoint)
-
     def release(
         self,
         *,
