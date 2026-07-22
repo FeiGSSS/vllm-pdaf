@@ -6,9 +6,11 @@ current four-GPU development testbed uses ten turns, randomized lognormal
 lengths around 8K initial input, 512 new user tokens per later turn, and 32
 output tokens, deterministic 3-second think and 1-second tool delays, pure
 conversation concurrency, three request-level SLO tiers, 32 conversations per
-point, and a lean topology-specific boundary scan. The current result is
-documented in
-[`PAP-20260721-AIPERF-AUDITED-CAPACITY`](experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md).
+point, and a lean topology-specific boundary scan. The current eager baseline
+is documented in
+[`PAP-20260721-AIPERF-AUDITED-CAPACITY`](experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md),
+and its matched piecewise CUDA Graph comparison is documented in
+[`PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH`](experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
 The initial integration result is documented in
 [`pap-pd-aiperf-four-gpu-results-20260716.md`](experiments/legacy/reports/pap-pd-aiperf-four-gpu-results-20260716.md).
 The historical cohort-sized capacity scan is documented in
