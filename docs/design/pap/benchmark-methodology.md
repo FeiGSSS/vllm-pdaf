@@ -70,29 +70,30 @@ headroom for the colocated Attention runtime.
 The full parameter rationale and reproducible commands live in the
 [AIPerf testbed documentation](../../../benchmarks/pap/aiperf/README.md).
 
-The published performance tables below used PAP Prefill `0.76`. They remain
-historical evidence and must not be presented as results from the new `0.90`
-baseline; the matched comparison still needs to be rerun.
+The matched eager comparison now uses this `0.90` baseline. The older
+piecewise CUDA Graph result used PAP Prefill `0.76` and is retained only as
+historical development evidence.
 
 Best SLO-compliant goodput from the current single-repetition development
 scans is:
 
 | Mode | SLO | PAP | Best PD | PAP versus PD |
 | --- | --- | ---: | ---: | ---: |
-| Eager | Strict | 1.944 req/s | 1.761 req/s | +10.4% |
-| Eager | Standard | 2.461 req/s | 1.818 req/s | +35.3% |
-| Eager | Relaxed | 2.656 req/s | 2.690 req/s | -1.3% |
-| Piecewise Graph | Strict | 2.460 req/s | 1.833 req/s | +34.2% |
-| Piecewise Graph | Standard | 2.556 req/s | 1.904 req/s | +34.2% |
-| Piecewise Graph | Relaxed | 2.777 req/s | 2.591 req/s | +7.2% |
+| Eager 0.90 | Strict | 2.455 req/s | 1.770 req/s | +38.7% |
+| Eager 0.90 | Standard | 3.277 req/s | 1.816 req/s | +80.4% |
+| Eager 0.90 | Relaxed | 5.000 req/s | 2.481 req/s | +101.5% |
+| Historical Graph 0.76 | Strict | 2.460 req/s | 1.833 req/s | +34.2% |
+| Historical Graph 0.76 | Standard | 2.556 req/s | 1.904 req/s | +34.2% |
+| Historical Graph 0.76 | Relaxed | 2.777 req/s | 2.591 req/s | +7.2% |
 
 All included points completed every request and passed routing, output, and
-runtime audits. The exact percentages are development evidence, not a formal
-release claim: each point has one repetition and Graph produced mixed
-per-configuration latency changes. See the
-[eager report](../../../benchmarks/pap/experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md)
+runtime audits. The eager comparison uses the better of two valid PD 3P1D C8
+runs because that topology showed extreme transfer variance; the report
+preserves both observations. These are development results, not a formal
+three-repetition claim. See the
+[current eager report](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md)
 and the
-[piecewise Graph report](../../../benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
+[historical Graph report](../../../benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
 
 ## Evidence and decisions
 

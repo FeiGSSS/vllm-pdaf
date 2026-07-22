@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "kind": "pap-run-manifest",
+  "run_id": "20260722_7401e8e12_aiperf_pa090_eager_pd",
+  "experiment_id": "PAP-20260722-AIPERF-PA090-EAGER",
+  "profile_id": "aiperf_qwen3_8b_4gpu_o32",
+  "architecture": "pd",
+  "mode": "controlled",
+  "evidence": "controlled",
+  "provenance": {
+    "branch": "feature/pap",
+    "commit": "7401e8e1260a81b4f7b73d9a6857052e65149791",
+    "tracked_worktree_dirty": false,
+    "tracked_worktree_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tracked_index_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "started_at": "missing"
+  },
+  "workload": {
+    "model": {"path": "missing", "dtype": "float16", "tensor_parallel_size": 1},
+    "corpus": {"path": "missing", "sha256": "4a53bd26108f9193c693ab6a9482ee5ce5102b545b70a5ca3a8cb11ca1171859"},
+    "parameters": {
+      "client": "aiperf-0.11.0",
+      "sessions": 32,
+      "turns": 10,
+      "requests_per_point": 320,
+      "topologies": ["1p3d", "2p2d", "3p1d"],
+      "execution_mode": "eager",
+      "gpu_memory_utilization": 0.90,
+      "targeted_3p1d_c8_repeat": true
+    }
+  },
+  "topology": {
+    "name": "1p3d,2p2d,3p1d",
+    "pa_count": "missing",
+    "projection_count": "missing",
+    "pd_prefill_count": "missing",
+    "pd_decode_count": "missing",
+    "routing_policy": "conversation_affinity"
+  },
+  "placement": {
+    "prefill_devices": "missing",
+    "attention_devices": "missing",
+    "projection_devices": "missing",
+    "decode_devices": "missing"
+  },
+  "transport": {"offload_exec": "not-applicable", "offload_kv": "nixl", "same_host": true},
+  "mps": {
+    "mode": "disabled",
+    "profile_id": "missing",
+    "prefill_visible_sms": "missing",
+    "attention_visible_sms": "missing"
+  },
+  "runtime": {
+    "profile": "eager",
+    "settings": {
+      "max_num_seqs": 64,
+      "prefill_token_budget": 16384,
+      "decode_token_budget": 64,
+      "gpu_memory_utilization": 0.90
+    }
+  },
+  "environment": {
+    "hardware_signature": "4x NVIDIA L20",
+    "software": {"aiperf": "0.11.0", "vllm_commit": "7401e8e1260a81b4f7b73d9a6857052e65149791"},
+    "fingerprint_basis": ["report", "dataset_sha256", "commit"]
+  },
+  "fingerprints": {
+    "profile": "missing",
+    "implementation": "missing",
+    "request_shape": "56dfe24c63fbb582f113db6e7f2ec2422bb313dcf23393ea192a062db158ea85",
+    "hardware_runtime": "missing"
+  },
+  "repetitions": {
+    "count": 2,
+    "order": [1, 2],
+    "aggregation_method": "best observed complete point per SLO; targeted 3P1D repeat retained with the anomalous primary point",
+    "items": [
+      {
+        "index": 1,
+        "repetition_id": "eager-pd-pa090-primary-matrix",
+        "result_artifact": {"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md"}
+      },
+      {
+        "index": 2,
+        "repetition_id": "eager-pd-pa090-3p1d-c8-repeat",
+        "result_artifact": {"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md"}
+      }
+    ]
+  },
+  "audits": {
+    "client": {
+      "status": "passed",
+      "detail": "All 1,920 PD requests completed",
+      "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md"}]
+    },
+    "correctness": {
+      "status": "passed",
+      "detail": "Output validation passed for primary and repeat runs",
+      "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md"}]
+    },
+    "routing": {
+      "status": "passed",
+      "detail": "Prefill and Decode conversation affinity passed with zero migrations",
+      "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md"}]
+    },
+    "session_drain": {
+      "status": "passed",
+      "detail": "All PD sessions drained",
+      "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md"}]
+    }
+  },
+  "metrics": {
+    "completed_requests": 1920,
+    "failed_requests": 0,
+    "values": [
+      {"name": "strict_goodput_rps", "scope": "best-slo", "statistic": "maximum-compliant", "unit": "requests/s", "value": 1.7701143270717767},
+      {"name": "standard_goodput_rps", "scope": "best-slo", "statistic": "maximum-compliant", "unit": "requests/s", "value": 1.8159425297144116},
+      {"name": "relaxed_goodput_rps", "scope": "best-slo", "statistic": "maximum-compliant", "unit": "requests/s", "value": 2.4812023767790126}
+    ]
+  },
+  "artifacts": [
+    {
+      "name": "report",
+      "kind": "aggregate",
+      "path": {"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md"},
+      "sha256": "345567fdca4997769591a89c44f6c266b5450cb3f31bc02a5eef6c3bb12b57fe"
+    }
+  ],
+  "validity": {
+    "status": "passed",
+    "reasons": ["PD 3P1D transfer variance is retained and disclosed in the report."]
+  },
+  "failure_reasons": []
+}

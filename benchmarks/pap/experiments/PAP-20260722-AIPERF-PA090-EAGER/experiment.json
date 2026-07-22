@@ -1,0 +1,93 @@
+{
+  "schema_version": 1,
+  "kind": "pap-experiment-record",
+  "status": "current",
+  "experiment_id": "PAP-20260722-AIPERF-PA090-EAGER",
+  "title": "PAP versus PD eager capacity with 0.90 PA memory",
+  "recorded_at": "2026-07-22",
+  "hypothesis": "With equal 0.90 Prefill memory budgets, PAP 3PA1P sustains more SLO-compliant work than any four-GPU one-way PD split.",
+  "evidence": "controlled",
+  "decision": "accepted",
+  "validity": {
+    "status": "valid",
+    "reasons": [
+      "PD 3P1D has high transfer variance; the comparison uses its better targeted repeat."
+    ]
+  },
+  "baseline": {
+    "status": "present",
+    "description": "Best observed complete PD point per SLO",
+    "run_ids": [
+      "20260722_7401e8e12_aiperf_pa090_eager_pd"
+    ]
+  },
+  "treatment": {
+    "status": "present",
+    "description": "Best compliant PAP 3PA1P point per SLO",
+    "run_ids": [
+      "20260722_7401e8e12_aiperf_pa090_eager_pap"
+    ]
+  },
+  "primary_variable": {
+    "name": "architecture",
+    "baseline": "pd",
+    "treatment": "pap"
+  },
+  "run_ids": [
+    "20260722_7401e8e12_aiperf_pa090_eager_pd",
+    "20260722_7401e8e12_aiperf_pa090_eager_pap"
+  ],
+  "aggregation_method": "best observed goodput among complete points with at least 95% SLO-good requests; the better valid 3P1D repeat is used for PD",
+  "metrics": [
+    {
+      "name": "strict_goodput_rps",
+      "scope": "best-slo",
+      "statistic": "maximum-compliant",
+      "unit": "requests/s",
+      "baseline_value": 1.7701143270717767,
+      "treatment_value": 2.4550689918401214,
+      "direction": "higher-is-better"
+    },
+    {
+      "name": "standard_goodput_rps",
+      "scope": "best-slo",
+      "statistic": "maximum-compliant",
+      "unit": "requests/s",
+      "baseline_value": 1.8159425297144116,
+      "treatment_value": 3.276835035652213,
+      "direction": "higher-is-better"
+    },
+    {
+      "name": "relaxed_goodput_rps",
+      "scope": "best-slo",
+      "statistic": "maximum-compliant",
+      "unit": "requests/s",
+      "baseline_value": 2.4812023767790126,
+      "treatment_value": 4.9996326617550855,
+      "direction": "higher-is-better"
+    }
+  ],
+  "conclusion": "PAP leads the best observed PD goodput by 38.7%, 80.4%, and 101.5% under strict, standard, and relaxed SLOs; PD 3P1D remains transfer-unstable.",
+  "supersedes": [
+    "PAP-20260721-AIPERF-AUDITED-CAPACITY",
+    "PAP-20260722-AIPERF-CONVERGENCE"
+  ],
+  "superseded_by": null,
+  "raw_artifacts": [
+    {
+      "name": "report",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md"
+      },
+      "sha256": "345567fdca4997769591a89c44f6c266b5450cb3f31bc02a5eef6c3bb12b57fe"
+    }
+  ],
+  "tags": [
+    "aiperf",
+    "capacity",
+    "eager",
+    "gpu-memory-0.90",
+    "pap-vs-pd"
+  ]
+}

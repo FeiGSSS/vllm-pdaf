@@ -53,12 +53,17 @@ def test_current_registry_validates() -> None:
     assert snapshot.profiles["aiperf_qwen3_8b_4gpu_o32"]["status"] == "current"
     assert snapshot.profiles["p17_1pa1p"]["status"] == "archived"
     assert snapshot.profiles["p17_1pa1p"]["release_gate"] is False
-    current_aiperf = {
+    superseded_aiperf = {
         "PAP-20260721-AIPERF-AUDITED-CAPACITY",
         "PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH",
         "PAP-20260722-AIPERF-CONVERGENCE",
     }
-    assert current_aiperf <= set(snapshot.experiments)
+    current_aiperf = {"PAP-20260722-AIPERF-PA090-EAGER"}
+    assert superseded_aiperf | current_aiperf <= set(snapshot.experiments)
+    assert all(
+        snapshot.experiments[experiment_id]["status"] == "archived"
+        for experiment_id in superseded_aiperf
+    )
     assert snapshot.experiments["PAP-20260714-P17-PRE-REFACTOR"]["status"] == (
         "archived"
     )

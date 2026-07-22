@@ -82,33 +82,36 @@ because Attention is colocated outside the Prefill executor's budget. These
 settings are justified from scheduler/model-runner source in the
 [AIPerf methodology](../../../benchmarks/pap/aiperf/README.md).
 
-Existing performance reports used PAP Prefill `0.76`. They are retained as
-historical evidence; the `0.90` baseline is not a milestone until PAP startup,
-PA-GPU headroom, and a matched PAP/PD AIPerf comparison are recorded.
+The matched `0.90` eager baseline is now recorded. Every tested PAP point
+started without OOM; each PA obtained 167,264 KV tokens and peak observed KV
+usage reached 89.0% at C32. The preceding `0.76` comparisons remain historical
+evidence.
 
 ## Current performance milestone
 
-The source-audited eager scan found PAP best-goodput advantages of +10.4% and
-+35.3% under the strict and standard SLOs, with a -1.3% relaxed-SLO gap. With
-both PAP and PD using piecewise CUDA Graph, the measured PAP advantages were
-+34.2% strict, +34.2% standard, and +7.2% relaxed.
+The current eager scan found PAP best-goodput advantages of +38.7%, +80.4%,
+and +101.5% under the strict, standard, and relaxed SLOs. Its concurrency
+envelope is C12/C20/C32, versus the best observed PD C8/C10/C16. All runs were
+complete and correct. A targeted PD 3P1D C8 repeat recovered from 0.432 to
+1.833 req/s, exposing large NIXL transfer variance; the comparison uses the
+better PD repeat rather than claiming advantage from the anomalous run.
 
-These CUDA Graph results are one clean development repetition. They establish
-correctness and a useful baseline, but mixed per-point latency changes mean
-the exact percentages are not a release claim. See the
-[eager capacity report](../../../benchmarks/pap/experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md)
-and the
-[piecewise CUDA Graph report](../../../benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
+This is controlled development evidence, not a three-repetition release
+claim. The former piecewise CUDA Graph comparison used PAP Prefill `0.76` and
+is archived until Graph is rerun on the `0.90` baseline. See the
+[current eager report](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md).
 
 ## Remaining work
 
 1. Run three AIPerf repetitions only when promoting a four-GPU result to a
    release-level performance claim.
-2. Profile the mixed Graph deltas, especially PAP C20 and PD 2P2D C16, before
-   expanding capture shapes or attempting broader graph coverage.
-3. Keep same-host xPAyP and cross-host NIXL source-compatible, but do not claim
+2. Diagnose PD 3P1D NIXL transfer variance before treating that topology as a
+   stable performance baseline.
+3. Rerun piecewise CUDA Graph on the `0.90` memory baseline before making a
+   current Graph-performance claim.
+4. Keep same-host xPAyP and cross-host NIXL source-compatible, but do not claim
    performance or fresh E2E support until those lanes are explicitly rerun.
-4. Continue owner-driven splits in unified-KV and transport internals only
+5. Continue owner-driven splits in unified-KV and transport internals only
    when they simplify a concrete feature; do not restore retired experiment
    selectors or per-layer scheduling paths.
 

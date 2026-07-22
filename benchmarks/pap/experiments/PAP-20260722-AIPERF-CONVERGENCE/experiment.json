@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "kind": "pap-experiment-record",
-  "status": "current",
+  "status": "archived",
   "experiment_id": "PAP-20260722-AIPERF-CONVERGENCE",
   "title": "AIPerf-only PAP convergence regression",
   "recorded_at": "2026-07-22",
   "hypothesis": "The converged AIPerf-only benchmark and runtime configuration completes the canonical four-GPU PAP C12 point without correctness or SLO regression.",
   "evidence": "controlled",
-  "decision": "accepted",
+  "decision": "superseded",
   "validity": {"status": "valid", "reasons": []},
   "baseline": {"status": "not-applicable", "description": "Post-commit runtime regression without an architecture comparison", "run_ids": []},
   "treatment": {"status": "present", "description": "PAP 3PA1P C12 after AIPerf-only convergence", "run_ids": ["20260722_aafcfb1ea_aiperf_pap_c12_convergence"]},
@@ -22,7 +22,7 @@
   ],
   "conclusion": "The clean convergence run completed 320 of 320 requests and passed correctness plus all three SLO tiers. ITL, throughput, and strict goodput remained within 2.2% of the preceding cutover point; the higher single-run TTFT tail remained within the strict SLO.",
   "supersedes": ["PAP-20260722-AIPERF-CANONICAL-CUTOVER"],
-  "superseded_by": null,
+  "superseded_by": "PAP-20260722-AIPERF-PA090-EAGER",
   "raw_artifacts": [{"name": "report", "path": {"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-CONVERGENCE/report.md"}, "sha256": "c6200fffa92cf14eebe0b1bc433dbb69b728678ff05ca658ee7d82075e537333"}],
   "tags": ["aiperf", "canonical", "regression", "convergence"]
 }

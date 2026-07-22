@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "kind": "pap-experiment-record",
-  "status": "current",
+  "status": "archived",
   "experiment_id": "PAP-20260721-AIPERF-AUDITED-CAPACITY",
   "title": "PAP versus PD audited eager capacity",
   "recorded_at": "2026-07-21",
   "hypothesis": "PAP 3PA1P sustains more SLO-compliant work than any four-GPU PD split under the fixed AIPerf multi-turn workload.",
   "evidence": "controlled",
-  "decision": "accepted",
+  "decision": "superseded",
   "validity": {"status": "valid", "reasons": []},
   "baseline": {"status": "present", "description": "Best compliant PD point per SLO", "run_ids": ["20260721_79b31742f_aiperf_audited_eager_pd"]},
   "treatment": {"status": "present", "description": "Best compliant PAP 3PA1P point per SLO", "run_ids": ["20260721_79b31742f_aiperf_audited_eager_pap"]},
@@ -21,7 +21,7 @@
   ],
   "conclusion": "PAP leads PD goodput by 10.4% under strict and 35.3% under standard SLOs, while relaxed goodput is 1.3% lower in this one-repetition eager scan.",
   "supersedes": [],
-  "superseded_by": null,
+  "superseded_by": "PAP-20260722-AIPERF-PA090-EAGER",
   "raw_artifacts": [{"name": "report", "path": {"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md"}, "sha256": "002fcb6f0b7a8857160c9700b55969f604c8e8c6bd682258f5f8b2476a562a76"}],
   "tags": ["aiperf", "capacity", "eager", "pap-vs-pd"]
 }

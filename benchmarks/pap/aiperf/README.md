@@ -186,9 +186,9 @@ use `gpu_memory_utilization=0.90`; PAP Projection remains at `0.76` because it
 does not own prompt KV. Scheduler limits, batching, model length, dtype, data,
 and AIPerf settings remain unchanged across concurrency points.
 
-This role-specific memory default postdates the published `0.76` PAP scans.
-Those reports remain valid historical measurements, but a new PAP/PD baseline
-must rerun both sides before making a performance claim.
+The matched `0.90` eager scan is recorded in
+[`PAP-20260722-AIPERF-PA090-EAGER`](../experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md).
+The earlier `0.76` PAP scans remain valid historical measurements.
 
 ### Capacity-parameter audit
 
@@ -319,9 +319,12 @@ The historical fixed-96-session scan is recorded in
 It is historical fixed-length evidence rather than the current baseline. The
 2026-07-21 fixed-length runs and their replacement decision are recorded in the
 [archive notice](../experiments/legacy/reports/pap-pd-aiperf-fixed-length-preliminary-20260721.md).
-The current source-audited randomized O32 baseline is recorded in
+The current source-audited randomized O32 eager baseline is recorded in
+[`PAP-20260722-AIPERF-PA090-EAGER`](../experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md).
+The superseded `0.76` eager baseline remains in
 [`PAP-20260721-AIPERF-AUDITED-CAPACITY`](../experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md).
-Its matched piecewise CUDA Graph comparison is recorded in
+The historical piecewise CUDA Graph comparison also used the `0.76` PAP
+Prefill budget and remains in
 [`PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH`](../experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
-Its superseded predecessor remains in
+The earlier superseded predecessor remains in
 [`PAP-20260721-AIPERF-RANDOM-O32`](../experiments/PAP-20260721-AIPERF-RANDOM-O32/report.md).
