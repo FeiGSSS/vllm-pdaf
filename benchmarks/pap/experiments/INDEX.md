@@ -6,12 +6,13 @@ live under this directory. See [the storage contract](README.md) and the
 
 Current normalized AIPerf experiment bundles:
 
-- [Latest eager PAP/PD result](PAP-20260722-AIPERF-PA090-EAGER/report.md)
+- [Current eager and Graph PAP/PD milestone](PAP-20260722-AIPERF-PROJECTION-AUTO/report.md)
 
 Superseded or historical report bundles:
 
 - [Superseded AIPerf-only convergence regression](PAP-20260722-AIPERF-CONVERGENCE/report.md)
-- [Historical piecewise CUDA Graph comparison](PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md)
+- [Superseded eager PAP/PD comparison](PAP-20260722-AIPERF-PA090-EAGER/report.md)
+- [Superseded piecewise CUDA Graph comparison](PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md)
 - [Superseded audited-capacity eager baseline](PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md)
 - [Superseded canonical AIPerf cutover regression](PAP-20260722-AIPERF-CANONICAL-CUTOVER/report.md)
 - [Superseded randomized-length AIPerf O32 scan](PAP-20260721-AIPERF-RANDOM-O32/report.md)
@@ -40,10 +41,11 @@ Archived methodology notices:
 | PAP-20260715-VLLM-INTEGRATION-BOUNDARY | archived | formal-clean | superseded | valid | 20260715_9efa92dc6_vllm_integration_boundary_formal | PAP-20260716-TRITON-72-20-BASELINE | All three repetitions completed 20 of 20 requests and passed client, cache, Attention-statistics, correctness, decode-token join, routing, commit, lease, static-MPS, and session-drain gates on clean commit 9efa92dc6. Relative to PAP-20260715-ARCHITECTURE-MILESTONE, changes were -0.12% R1 TTFT, -0.02% R1 TPOT, -2.83% steady TTFT, and -0.15% steady TPOT, so the 5% release gate passed. xPAyP and cross-host NIXL remain preserved-unverified. |
 | PAP-20260716-TRITON-72-20-BASELINE | archived | formal-clean | accepted | valid | 20260716_3a6fe93d1_p17_mps_72_20_formal | — | All three repetitions completed 60 of 60 requests and 48 of 48 cache transitions with every strict gate passing on clean commit 3a6fe93d1. Relative to PAP-20260715-VLLM-INTEGRATION-BOUNDARY, changes were -10.74% R1 TTFT, -10.75% R1 TPOT, -1.84% steady TTFT, and -18.02% steady TPOT. No release metric regressed, so this record becomes the P17 performance baseline. xPAyP and cross-host NIXL remain preserved-unverified. |
 | PAP-20260721-AIPERF-AUDITED-CAPACITY | archived | controlled | superseded | valid | 20260721_79b31742f_aiperf_audited_eager_pd, 20260721_79b31742f_aiperf_audited_eager_pap | PAP-20260722-AIPERF-PA090-EAGER | PAP leads PD goodput by 10.4% under strict and 35.3% under standard SLOs, while relaxed goodput is 1.3% lower in this one-repetition eager scan. |
-| PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH | archived | controlled | accepted | valid | 20260721_d6d590bb5_aiperf_piecewise_pd, 20260721_d6d590bb5_aiperf_piecewise_pap | — | With piecewise CUDA Graph enabled on both sides, PAP leads the best PD goodput by 34.2% strict, 34.2% standard, and 7.2% relaxed in this one-repetition scan. |
+| PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH | archived | controlled | superseded | valid | 20260721_d6d590bb5_aiperf_piecewise_pd, 20260721_d6d590bb5_aiperf_piecewise_pap | PAP-20260722-AIPERF-PROJECTION-AUTO | With piecewise CUDA Graph enabled on both sides, PAP leads the best PD goodput by 34.2% strict, 34.2% standard, and 7.2% relaxed in this one-repetition scan. |
 | PAP-20260722-AIPERF-CANONICAL-CUTOVER | archived | controlled | superseded | valid | 20260722_894b81ae9_aiperf_pap_c12_regression | PAP-20260722-AIPERF-CONVERGENCE | The clean cutover run completed 320 of 320 requests and passed strict, standard, and relaxed SLO tiers; it validates the AIPerf path but is not a new PAP-versus-PD claim. |
 | PAP-20260722-AIPERF-CONVERGENCE | archived | controlled | superseded | valid | 20260722_aafcfb1ea_aiperf_pap_c12_convergence | PAP-20260722-AIPERF-PA090-EAGER | The clean convergence run completed 320 of 320 requests and passed correctness plus all three SLO tiers. ITL, throughput, and strict goodput remained within 2.2% of the preceding cutover point; the higher single-run TTFT tail remained within the strict SLO. |
-| PAP-20260722-AIPERF-PA090-EAGER | current | controlled | accepted | valid | 20260722_7401e8e12_aiperf_pa090_eager_pd, 20260722_7401e8e12_aiperf_pa090_eager_pap | — | PAP leads the best observed PD goodput by 38.7%, 80.4%, and 101.5% under strict, standard, and relaxed SLOs; PD 3P1D remains transfer-unstable. |
+| PAP-20260722-AIPERF-PA090-EAGER | archived | controlled | superseded | valid | 20260722_7401e8e12_aiperf_pa090_eager_pd, 20260722_7401e8e12_aiperf_pa090_eager_pap | PAP-20260722-AIPERF-PROJECTION-AUTO | PAP leads the best observed PD goodput by 38.7%, 80.4%, and 101.5% under strict, standard, and relaxed SLOs; PD 3P1D remains transfer-unstable. |
+| PAP-20260722-AIPERF-PROJECTION-AUTO | current | controlled | accepted | valid | 20260722_4aaf9dd77_projection_auto_eager_pap, 20260722_4484bc983_projection_auto_eager_pd, 20260722_4484bc983_projection_auto_piecewise_pap, 20260722_4484bc983_projection_auto_piecewise_pd | — | Automatic Projection sizing resolves to 0.4070 without an eager regression beyond 2%; PAP leads best valid PD goodput by 46.0%, 85.5%, and 95.2% in eager mode and by 13.3%, 75.0%, and 118.8% in piecewise mode. |
 
 ### Reviewed historical experiments
 

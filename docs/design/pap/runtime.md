@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260722-AIPERF-PROJECTION-AUTO
   - PAP-20260722-AIPERF-PA090-EAGER
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
@@ -12,7 +13,7 @@ related_experiments:
   - PAP-20260713-ASYNC-DECODE-TOKEN-D2H
   - PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: 6d8718aa83aa326960fc65a5ca3270f08fa4a528
+last_validated_commit: 4484bc983e622fc03dffdec6c2831d9f6ec6396f
 ---
 
 # PAP runtime

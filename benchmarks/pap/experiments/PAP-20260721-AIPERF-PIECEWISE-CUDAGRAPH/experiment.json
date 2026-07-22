@@ -7,7 +7,7 @@
   "recorded_at": "2026-07-21",
   "hypothesis": "PAP retains its capacity advantage when both PAP and PD use piecewise CUDA Graphs.",
   "evidence": "controlled",
-  "decision": "accepted",
+  "decision": "superseded",
   "validity": {"status": "valid", "reasons": []},
   "baseline": {"status": "present", "description": "Best compliant PD Graph point per SLO", "run_ids": ["20260721_d6d590bb5_aiperf_piecewise_pd"]},
   "treatment": {"status": "present", "description": "Best compliant PAP Graph point per SLO", "run_ids": ["20260721_d6d590bb5_aiperf_piecewise_pap"]},
@@ -21,7 +21,7 @@
   ],
   "conclusion": "With piecewise CUDA Graph enabled on both sides, PAP leads the best PD goodput by 34.2% strict, 34.2% standard, and 7.2% relaxed in this one-repetition scan.",
   "supersedes": [],
-  "superseded_by": null,
+  "superseded_by": "PAP-20260722-AIPERF-PROJECTION-AUTO",
   "raw_artifacts": [{"name": "report", "path": {"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md"}, "sha256": "e76c76a1827f0fed0e798d01b0b891c4d437a17c82ed2cbe28a83998252ae0a7"}],
   "tags": ["aiperf", "capacity", "cuda-graph", "pap-vs-pd"]
 }

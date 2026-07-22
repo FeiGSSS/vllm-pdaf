@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "kind": "pap-experiment-record",
+  "status": "current",
+  "experiment_id": "PAP-20260722-AIPERF-PROJECTION-AUTO",
+  "title": "PAP versus PD with automatic Projection memory",
+  "recorded_at": "2026-07-22",
+  "hypothesis": "Automatic weight-based Projection sizing preserves PAP performance and PAP sustains more SLO-compliant work than four-GPU one-way PD in eager and piecewise CUDA Graph modes.",
+  "evidence": "controlled",
+  "decision": "accepted",
+  "validity": {
+    "status": "valid",
+    "reasons": [
+      "All included points completed 320/320 requests and passed correctness and routing audits.",
+      "One persistent single-lane PD Graph transport anomaly is disclosed and excluded; its targeted repeat and independent PD topologies remain included."
+    ]
+  },
+  "baseline": {
+    "status": "present",
+    "description": "Best valid complete PD point per SLO and execution mode",
+    "run_ids": [
+      "20260722_4484bc983_projection_auto_eager_pd",
+      "20260722_4484bc983_projection_auto_piecewise_pd"
+    ]
+  },
+  "treatment": {
+    "status": "present",
+    "description": "Best compliant PAP 3PA1P point per SLO and execution mode",
+    "run_ids": [
+      "20260722_4aaf9dd77_projection_auto_eager_pap",
+      "20260722_4484bc983_projection_auto_piecewise_pap"
+    ]
+  },
+  "primary_variable": {
+    "name": "architecture",
+    "baseline": "pd",
+    "treatment": "pap"
+  },
+  "run_ids": [
+    "20260722_4aaf9dd77_projection_auto_eager_pap",
+    "20260722_4484bc983_projection_auto_eager_pd",
+    "20260722_4484bc983_projection_auto_piecewise_pap",
+    "20260722_4484bc983_projection_auto_piecewise_pd"
+  ],
+  "aggregation_method": "best goodput among complete, correct points with at least 95% SLO-good requests, evaluated independently for eager and piecewise modes",
+  "metrics": [
+    {
+      "name": "eager_strict_goodput_rps",
+      "scope": "eager-best-slo",
+      "statistic": "maximum-compliant",
+      "unit": "requests/s",
+      "baseline_value": 1.6593974406236367,
+      "treatment_value": 2.423452806103782,
+      "direction": "higher-is-better"
+    },
+    {
+      "name": "eager_standard_goodput_rps",
+      "scope": "eager-best-slo",
+      "statistic": "maximum-compliant",
+      "unit": "requests/s",
+      "baseline_value": 1.7949941346692426,
+      "treatment_value": 3.3297756979491946,
+      "direction": "higher-is-better"
+    },
+    {
+      "name": "eager_relaxed_goodput_rps",
+      "scope": "eager-best-slo",
+      "statistic": "maximum-compliant",
+      "unit": "requests/s",
+      "baseline_value": 2.524772800677525,
+      "treatment_value": 4.929195800075964,
+      "direction": "higher-is-better"
+    },
+    {
+      "name": "piecewise_strict_goodput_rps",
+      "scope": "piecewise-best-slo",
+      "statistic": "maximum-compliant",
+      "unit": "requests/s",
+      "baseline_value": 1.79198253860694,
+      "treatment_value": 2.03092941659934,
+      "direction": "higher-is-better"
+    },
+    {
+      "name": "piecewise_standard_goodput_rps",
+      "scope": "piecewise-best-slo",
+      "statistic": "maximum-compliant",
+      "unit": "requests/s",
+      "baseline_value": 1.8497884269490992,
+      "treatment_value": 3.236206734711007,
+      "direction": "higher-is-better"
+    },
+    {
+      "name": "piecewise_relaxed_goodput_rps",
+      "scope": "piecewise-best-slo",
+      "statistic": "maximum-compliant",
+      "unit": "requests/s",
+      "baseline_value": 2.2590627823106413,
+      "treatment_value": 4.941901692396137,
+      "direction": "higher-is-better"
+    }
+  ],
+  "conclusion": "Automatic Projection sizing resolves to 0.4070 without an eager regression beyond 2%; PAP leads best valid PD goodput by 46.0%, 85.5%, and 95.2% in eager mode and by 13.3%, 75.0%, and 118.8% in piecewise mode.",
+  "supersedes": [
+    "PAP-20260722-AIPERF-PA090-EAGER",
+    "PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH"
+  ],
+  "superseded_by": null,
+  "raw_artifacts": [
+    {
+      "name": "report",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md"
+      },
+      "sha256": "821495dc1b40c394305504549808f270cb16c1e483bf10f47193991e3d30a9b7"
+    }
+  ],
+  "tags": [
+    "aiperf",
+    "capacity",
+    "cuda-graph",
+    "gpu-memory-0.90",
+    "pap-vs-pd",
+    "projection-auto-memory"
+  ]
+}

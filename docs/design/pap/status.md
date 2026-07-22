@@ -4,11 +4,12 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260722-AIPERF-PROJECTION-AUTO
   - PAP-20260722-AIPERF-PA090-EAGER
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
-last_validated_commit: 6d8718aa83aa326960fc65a5ca3270f08fa4a528
+last_validated_commit: 4484bc983e622fc03dffdec6c2831d9f6ec6396f
 ---
 
 # Current PAP development status
@@ -16,7 +17,7 @@ last_validated_commit: 6d8718aa83aa326960fc65a5ca3270f08fa4a528
 Snapshot date: 2026-07-22.
 
 PAP has completed its runtime refactor and the first capacity-oriented
-performance milestone. The source milestone at `6d8718aa8` has one accepted
+performance milestone. The source milestone at `4484bc983` has one accepted
 runtime architecture, a source-audited long-context testbed, and an optional
 piecewise CUDA Graph execution mode. Historical experimental algorithms are
 not selectable branches in the current runtime.
@@ -30,7 +31,7 @@ not selectable branches in the current runtime.
 | Cross-host xPAyP over NIXL | Preserved | Contract coverage only; no fresh E2E claim |
 | Prefill-owned unified KV | Main path | AIPerf runtime and lifecycle audits |
 | Triton split-4 paged decode | Main Attention kernel | AIPerf eager/Graph baselines |
-| Piecewise CUDA Graph | Optional development mode | Six valid PAP/PD four-GPU points |
+| Piecewise CUDA Graph | Optional development mode | Nine valid PAP/PD four-GPU points |
 | Full-model CUDA Graph | Unsupported | Host transport and KV publication cannot be replayed safely |
 
 Eager execution remains the default. Piecewise mode captures graph-safe model
@@ -92,37 +93,40 @@ Attention is colocated outside the Prefill executor's budget. The complete
 parameter rationale is in the
 [AIPerf methodology](../../../benchmarks/pap/aiperf/README.md).
 
-The matched `0.90` eager baseline is now recorded. Every tested PAP point
-started without OOM; each PA obtained 167,264 KV tokens and peak observed KV
-usage reached 89.0% at C32. Explicit legacy Projection budgets are not current
-configuration inputs; historical details remain isolated in archived records
-and Git history.
+The automatic-memory eager and Graph baselines are now recorded. Every tested
+PAP point started without OOM or Graph-capture failure. Explicit legacy
+Projection budgets are not current configuration inputs; historical details
+remain isolated in archived records and Git history.
 
 ## Current performance milestone
 
-The latest recorded eager scan found PAP best-goodput advantages of +38.7%,
-+80.4%, and +101.5% under the strict, standard, and relaxed SLOs. Its
-concurrency envelope is C12/C20/C32, versus the best observed PD C8/C10/C16.
-All runs were complete and correct. A targeted PD 3P1D C8 repeat recovered
-from 0.432 to 1.833 req/s, exposing large NIXL transfer variance; the
-comparison uses the better PD repeat rather than claiming advantage from the
-anomalous run.
+The current eager scan finds PAP best-goodput advantages of +46.0%, +85.5%,
+and +95.2% under the strict, standard, and relaxed SLOs. Its concurrency
+envelope is C12/C20/C32, versus best PD C8/C10/C16. Relative to the preceding
+eager milestone, PAP goodput changes by -1.3%, +1.6%, and -1.4%; automatic
+Projection sizing therefore has no measured eager regression beyond 2%.
 
-This is controlled development evidence, not a three-repetition release
-claim. It predates automatic Projection sizing, so a new four-GPU run is
-required before attributing any performance change to the memory policy. The
-former piecewise CUDA Graph comparison is archived until Graph is rerun on the
-current memory policy. See the
-[latest eager report](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md).
+With piecewise CUDA Graph enabled on both architectures, PAP leads by +13.3%,
++75.0%, and +118.8%. Its Graph envelope is C8/C20/C32 versus PD C8/C8/C16.
+Graph is not a uniform speedup: PAP C12 narrowly loses Strict compliance while
+higher-concurrency throughput is roughly flat or slightly improved. Eager
+therefore remains the default and Graph remains an optional supported mode.
+
+All included runs are complete and correct. PD continues to show NIXL
+transfer variance: one 2P2D C10 Graph attempt had a persistent single-lane
+slowdown and is retained only as a diagnostic; its targeted repeat and
+independent PD topologies are used for comparison. This is controlled
+single-repetition development evidence, not a release claim. See the
+[current milestone](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
 
 ## Remaining work
 
 1. Run three AIPerf repetitions only when promoting a four-GPU result to a
    release-level performance claim.
-2. Diagnose PD 3P1D NIXL transfer variance before treating that topology as a
-   stable performance baseline.
-3. Rerun eager and piecewise CUDA Graph with automatic Projection sizing before
-   making a current four-GPU memory-policy or Graph-performance claim.
+2. Diagnose PD NIXL transfer variance, including the observed 2P2D single-lane
+   stalls, before treating exact PD tail latency as stable.
+3. Keep piecewise CUDA Graph optional until repeated evidence shows a
+   consistent latency or goodput benefit worth changing the eager default.
 4. Keep same-host xPAyP and cross-host NIXL source-compatible, but do not claim
    performance or fresh E2E support until those lanes are explicitly rerun.
 5. Continue owner-driven splits in unified-KV and transport internals only

@@ -187,10 +187,10 @@ of checkpoint weight bytes per TP rank on the smallest selected Projection
 GPU. Scheduler limits, batching, model length, dtype, data, and AIPerf settings
 remain unchanged across concurrency points.
 
-The latest four-GPU eager scan is recorded in
-[`PAP-20260722-AIPERF-PA090-EAGER`](../experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md).
-It predates automatic Projection sizing and remains controlled historical
-performance evidence until the current policy is rerun on four GPUs.
+The current eager and piecewise four-GPU scans are recorded in
+[`PAP-20260722-AIPERF-PROJECTION-AUTO`](../experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
+They validate automatic Projection sizing at `0.4070` for Qwen3-8B TP1 on an
+L20 and remain single-repetition controlled development evidence.
 
 ### Capacity-parameter audit
 
@@ -323,11 +323,14 @@ The historical fixed-96-session scan is recorded in
 It is historical fixed-length evidence rather than the current baseline. The
 2026-07-21 fixed-length runs and their replacement decision are recorded in the
 [archive notice](../experiments/legacy/reports/pap-pd-aiperf-fixed-length-preliminary-20260721.md).
-The current source-audited randomized O32 eager baseline is recorded in
+The current source-audited randomized O32 eager and Graph milestone is
+recorded in
+[`PAP-20260722-AIPERF-PROJECTION-AUTO`](../experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
+The preceding eager comparison remains in
 [`PAP-20260722-AIPERF-PA090-EAGER`](../experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md).
 The superseded eager baseline remains in
 [`PAP-20260721-AIPERF-AUDITED-CAPACITY`](../experiments/PAP-20260721-AIPERF-AUDITED-CAPACITY/report.md).
-The historical piecewise CUDA Graph comparison remains in
+The preceding piecewise CUDA Graph comparison remains in
 [`PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH`](../experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
 The earlier superseded predecessor remains in
 [`PAP-20260721-AIPERF-RANDOM-O32`](../experiments/PAP-20260721-AIPERF-RANDOM-O32/report.md).

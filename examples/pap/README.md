@@ -112,7 +112,5 @@ resume overrides documented in the
 single topology or concurrency point. The old fixed-length O256/O128 and
 12-conversation workloads remain historical evidence, not current defaults.
 
-Current results are recorded in the
-[latest eager report](../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md)
-and the
-[archived piecewise CUDA Graph report](../../benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
+Current eager and piecewise results are recorded in the
+[automatic Projection-memory milestone](../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).

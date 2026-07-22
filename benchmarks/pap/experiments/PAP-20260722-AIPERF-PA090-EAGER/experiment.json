@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "kind": "pap-experiment-record",
-  "status": "current",
+  "status": "archived",
   "experiment_id": "PAP-20260722-AIPERF-PA090-EAGER",
   "title": "PAP versus PD eager capacity with 0.90 PA memory",
   "recorded_at": "2026-07-22",
   "hypothesis": "With equal 0.90 Prefill memory budgets, PAP 3PA1P sustains more SLO-compliant work than any four-GPU one-way PD split.",
   "evidence": "controlled",
-  "decision": "accepted",
+  "decision": "superseded",
   "validity": {
     "status": "valid",
     "reasons": [
@@ -72,7 +72,7 @@
     "PAP-20260721-AIPERF-AUDITED-CAPACITY",
     "PAP-20260722-AIPERF-CONVERGENCE"
   ],
-  "superseded_by": null,
+  "superseded_by": "PAP-20260722-AIPERF-PROJECTION-AUTO",
   "raw_artifacts": [
     {
       "name": "report",

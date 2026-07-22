@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "kind": "pap-run-manifest",
+  "run_id": "20260722_4484bc983_projection_auto_piecewise_pap",
+  "experiment_id": "PAP-20260722-AIPERF-PROJECTION-AUTO",
+  "profile_id": "aiperf_qwen3_8b_4gpu_o32",
+  "architecture": "pap",
+  "mode": "controlled",
+  "evidence": "controlled",
+  "provenance": {
+    "branch": "feature/pap",
+    "commit": "4484bc983e622fc03dffdec6c2831d9f6ec6396f",
+    "tracked_worktree_dirty": false,
+    "tracked_worktree_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tracked_index_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "started_at": "missing"
+  },
+  "workload": {
+    "model": {"path": "missing", "dtype": "float16", "tensor_parallel_size": 1},
+    "corpus": {"path": "missing", "sha256": "4a53bd26108f9193c693ab6a9482ee5ce5102b545b70a5ca3a8cb11ca1171859"},
+    "parameters": {
+      "client": "aiperf-0.11.0",
+      "sessions": 32,
+      "turns": 10,
+      "requests_per_point": 320,
+      "concurrency_points": [8, 12, 20, 28, 32],
+      "execution_mode": "piecewise",
+      "prefill_gpu_memory_utilization": 0.90,
+      "projection_gpu_memory_utilization": 0.4070,
+      "projection_memory_policy": "model_weights_x1.20"
+    }
+  },
+  "topology": {
+    "name": "3pa1p",
+    "pa_count": 3,
+    "projection_count": 1,
+    "pd_prefill_count": "missing",
+    "pd_decode_count": "missing",
+    "routing_policy": "conversation_affinity"
+  },
+  "placement": {
+    "prefill_devices": [0, 1, 2],
+    "attention_devices": [0, 1, 2],
+    "projection_devices": [3],
+    "decode_devices": "missing"
+  },
+  "transport": {
+    "offload_exec": "local_fast",
+    "offload_kv": "cuda_ipc",
+    "same_host": true
+  },
+  "mps": {
+    "mode": "static",
+    "profile_id": "static_72_20",
+    "prefill_visible_sms": 72,
+    "attention_visible_sms": 20
+  },
+  "runtime": {
+    "profile": "piecewise",
+    "settings": {
+      "max_num_seqs": 64,
+      "prefill_token_budget": 16384,
+      "projection_token_budget": 64,
+      "prefill_gpu_memory_utilization": 0.90,
+      "projection_gpu_memory_utilization": 0.4070,
+      "projection_local_kv": false
+    }
+  },
+  "environment": {
+    "hardware_signature": "4x NVIDIA L20",
+    "software": {
+      "aiperf": "0.11.0",
+      "vllm_commit": "4484bc983e622fc03dffdec6c2831d9f6ec6396f"
+    },
+    "fingerprint_basis": ["report", "dataset_sha256", "commit"]
+  },
+  "fingerprints": {
+    "profile": "missing",
+    "implementation": "missing",
+    "request_shape": "56dfe24c63fbb582f113db6e7f2ec2422bb313dcf23393ea192a062db158ea85",
+    "hardware_runtime": "missing"
+  },
+  "repetitions": {
+    "count": 1,
+    "order": [1],
+    "aggregation_method": "best compliant PAP point per SLO across the Graph scan and strict C8 supplement",
+    "items": [
+      {
+        "index": 1,
+        "repetition_id": "projection-auto-piecewise-pap-aggregate",
+        "result_artifact": {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md"
+        }
+      }
+    ]
+  },
+  "audits": {
+    "client": {
+      "status": "passed",
+      "detail": "All 1,600 PAP Graph requests completed",
+      "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md"}]
+    },
+    "correctness": {
+      "status": "passed",
+      "detail": "Output validation passed at all five points",
+      "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md"}]
+    },
+    "routing": {
+      "status": "passed",
+      "detail": "Conversation affinity passed with zero migrations",
+      "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md"}]
+    },
+    "session_drain": {
+      "status": "passed",
+      "detail": "All PAP Graph sessions drained",
+      "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md"}]
+    },
+    "mps": {
+      "status": "passed",
+      "detail": "Static MPS and role-specific Graph capture audits passed",
+      "evidence": [{"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md"}]
+    }
+  },
+  "metrics": {
+    "completed_requests": 1600,
+    "failed_requests": 0,
+    "values": [
+      {"name": "strict_goodput_rps", "scope": "piecewise-best-slo", "statistic": "maximum-compliant", "unit": "requests/s", "value": 2.03092941659934},
+      {"name": "standard_goodput_rps", "scope": "piecewise-best-slo", "statistic": "maximum-compliant", "unit": "requests/s", "value": 3.236206734711007},
+      {"name": "relaxed_goodput_rps", "scope": "piecewise-best-slo", "statistic": "maximum-compliant", "unit": "requests/s", "value": 4.941901692396137}
+    ]
+  },
+  "artifacts": [
+    {
+      "name": "report",
+      "kind": "aggregate",
+      "path": {"root_id": "pap-worktree", "relative_path": "benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md"},
+      "sha256": "821495dc1b40c394305504549808f270cb16c1e483bf10f47193991e3d30a9b7"
+    }
+  ],
+  "validity": {"status": "passed", "reasons": []},
+  "failure_reasons": []
+}

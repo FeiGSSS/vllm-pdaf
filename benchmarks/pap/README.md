@@ -13,10 +13,9 @@ lengths around 8K initial input and 512 new user tokens per later turn, plus an
 output-length distribution with mean 32 tokens. It uses deterministic 3-second
 think and 1-second tool delays, pure conversation concurrency, three
 request-level SLO tiers, 32 conversations per point, and a lean
-topology-specific boundary scan. The latest eager PAP/PD result is documented
-in [`PAP-20260722-AIPERF-PA090-EAGER`](experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md),
-and the archived piecewise CUDA Graph comparison is documented in
-[`PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH`](experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
+topology-specific boundary scan. The current eager and piecewise CUDA Graph
+results are documented together in
+[`PAP-20260722-AIPERF-PROJECTION-AUTO`](experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
 The initial integration result is documented in
 [`pap-pd-aiperf-four-gpu-results-20260716.md`](experiments/legacy/reports/pap-pd-aiperf-four-gpu-results-20260716.md).
 The historical cohort-sized capacity scan is documented in
@@ -65,10 +64,10 @@ The canonical runtime policy uses `0.90` for PAP Prefill and every PD executor.
 Projection is independent: `vllm/pap/model/memory.py` derives its budget from
 120% of checkpoint weight bytes per TP rank, and the PAP-vLLM integration
 plans no physical Projection KV tensors. The latest randomized
-32-conversation [eager scan](experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md)
-predates that automatic Projection policy, so it remains controlled
-performance evidence rather than a current memory-policy measurement. A
-release-level claim requires three repetitions of the same AIPerf testbed.
+32-conversation [milestone](experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md)
+validates that policy in eager and piecewise modes. It remains
+single-repetition controlled evidence; a release-level claim requires three
+repetitions of the same AIPerf testbed.
 P17 records and earlier four-GPU reports remain historical evidence only.
 
 Run the complete lean matrix, or select one topology and one concurrency point

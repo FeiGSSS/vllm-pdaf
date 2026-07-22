@@ -4,12 +4,13 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260722-AIPERF-PROJECTION-AUTO
   - PAP-20260722-AIPERF-PA090-EAGER
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260701-PD-METHODOLOGY
-last_validated_commit: 6d8718aa83aa326960fc65a5ca3270f08fa4a528
+last_validated_commit: 4484bc983e622fc03dffdec6c2831d9f6ec6396f
 ---
 
 # PAP benchmark methodology
@@ -74,32 +75,29 @@ PA-GPU headroom for the colocated Attention runtime.
 The full parameter rationale and reproducible commands live in the
 [AIPerf testbed documentation](../../../benchmarks/pap/aiperf/README.md).
 
-The latest four-GPU eager comparison uses the `0.90` PA/PD baseline but
-predates automatic Projection sizing. It remains controlled performance
-evidence; the current memory policy has a separate 128-request 1PA1P E2E and
-requires a fresh four-GPU run before it becomes a performance baseline. The
-older piecewise CUDA Graph result is historical development evidence.
+The latest four-GPU comparison validates the `0.90` PA/PD baseline together
+with automatic Projection sizing at `0.4070`. It covers eager and piecewise
+CUDA Graph execution with the same byte-identical dataset. PD 2P2D uses stable
+conversation affinity over the complete Cartesian P/D pair set.
 
 Best SLO-compliant goodput from the current single-repetition development
 scans is:
 
 | Mode | SLO | PAP | Best PD | PAP versus PD |
 | --- | --- | ---: | ---: | ---: |
-| Recorded eager | Strict | 2.455 req/s | 1.770 req/s | +38.7% |
-| Recorded eager | Standard | 3.277 req/s | 1.816 req/s | +80.4% |
-| Recorded eager | Relaxed | 5.000 req/s | 2.481 req/s | +101.5% |
-| Archived Graph | Strict | 2.460 req/s | 1.833 req/s | +34.2% |
-| Archived Graph | Standard | 2.556 req/s | 1.904 req/s | +34.2% |
-| Archived Graph | Relaxed | 2.777 req/s | 2.591 req/s | +7.2% |
+| Eager | Strict | 2.423 req/s | 1.659 req/s | +46.0% |
+| Eager | Standard | 3.330 req/s | 1.795 req/s | +85.5% |
+| Eager | Relaxed | 4.929 req/s | 2.525 req/s | +95.2% |
+| Piecewise Graph | Strict | 2.031 req/s | 1.792 req/s | +13.3% |
+| Piecewise Graph | Standard | 3.236 req/s | 1.850 req/s | +75.0% |
+| Piecewise Graph | Relaxed | 4.942 req/s | 2.259 req/s | +118.8% |
 
 All included points completed every request and passed routing, output, and
-runtime audits. The eager comparison uses the better of two valid PD 3P1D C8
-runs because that topology showed extreme transfer variance; the report
-preserves both observations. These are development results, not a formal
-three-repetition claim. See the
-[latest eager report](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PA090-EAGER/report.md)
-and the
-[historical Graph report](../../../benchmarks/pap/experiments/PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md).
+runtime audits. One persistent single-lane PD Graph transport anomaly is
+retained as a diagnostic and excluded; its targeted repeat and independent PD
+topologies remain in the comparison. These are development results, not a
+formal three-repetition claim. See the
+[current milestone report](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
 
 ## Evidence and decisions
 
