@@ -2,6 +2,7 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 import hashlib
 import importlib
+import json
 from collections.abc import Callable
 from typing import Any
 
@@ -9,7 +10,7 @@ import pytest
 import torch
 
 import vllm.v1.core.kv_cache_utils as kv_cache_utils
-from vllm.config import ModelConfig, SchedulerConfig, VllmConfig
+from vllm.config import DeviceConfig, ModelConfig, SchedulerConfig, VllmConfig
 from vllm.config.kv_events import KVEventsConfig
 from vllm.lora.request import LoRARequest
 from vllm.multimodal.inputs import (
@@ -2075,6 +2076,63 @@ def test_get_kv_cache_configs_attention_free():
             num_blocks=1,
             kv_cache_tensors=[],
             kv_cache_groups=[],
+        )
+    ]
+
+
+def test_get_kv_cache_configs_metadata_only_preserves_groups_without_tensors(
+    tmp_path,
+):
+    kv_cache_specs = {
+        "layer_1": new_kv_cache_spec(),
+        "layer_2": new_kv_cache_spec(),
+    }
+    model_path = tmp_path / "qwen3"
+    model_path.mkdir()
+    (model_path / "config.json").write_text(
+        json.dumps(
+            {
+                "architectures": ["Qwen3ForCausalLM"],
+                "head_dim": 16,
+                "hidden_size": 32,
+                "intermediate_size": 64,
+                "max_position_embeddings": 20_000,
+                "model_type": "qwen3",
+                "num_attention_heads": 2,
+                "num_hidden_layers": 2,
+                "num_key_value_heads": 2,
+                "rms_norm_eps": 1e-6,
+                "torch_dtype": "float32",
+                "vocab_size": 128,
+            }
+        ),
+        encoding="utf-8",
+    )
+    vllm_config = VllmConfig(
+        model_config=ModelConfig(
+            model=str(model_path),
+            max_model_len=20_000,
+        ),
+        device_config=DeviceConfig(device="cpu"),
+    )
+
+    kv_cache_configs = get_kv_cache_configs(
+        vllm_config,
+        [kv_cache_specs],
+        [0],
+        metadata_only=True,
+    )
+
+    assert kv_cache_configs == [
+        KVCacheConfig(
+            num_blocks=1,
+            kv_cache_tensors=[],
+            kv_cache_groups=[
+                KVCacheGroupSpec(
+                    ["layer_1", "layer_2"],
+                    new_kv_cache_spec(),
+                )
+            ],
         )
     ]
 

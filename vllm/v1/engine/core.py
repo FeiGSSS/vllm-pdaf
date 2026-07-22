@@ -121,6 +121,7 @@ class EngineCore:
             )
 
         self.log_stats = log_stats
+        self.pap_runtime = PAPRuntimeSettings.from_environ()
 
         # Setup Model.
         self.model_executor = executor_class(vllm_config)
@@ -159,7 +160,6 @@ class EngineCore:
             block_size=scheduler_block_size,
             hash_block_size=hash_block_size,
         )
-        self.pap_runtime = PAPRuntimeSettings.from_environ()
         self.use_spec_decode = vllm_config.speculative_config is not None
         self.check_for_draft_tokens = (
             self.use_spec_decode or vllm_config.model_config.is_diffusion
@@ -297,7 +297,10 @@ class EngineCore:
         max_model_len_before = vllm_config.model_config.max_model_len
 
         kv_cache_configs = get_kv_cache_configs(
-            vllm_config, kv_cache_specs, available_gpu_memory
+            vllm_config,
+            kv_cache_specs,
+            available_gpu_memory,
+            metadata_only=self.pap_runtime.projection_kv_unaware,
         )
 
         # If auto-fit reduced max_model_len, sync the new value to workers.

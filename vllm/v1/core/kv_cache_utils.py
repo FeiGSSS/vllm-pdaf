@@ -2006,6 +2006,8 @@ def get_kv_cache_configs(
     vllm_config: VllmConfig,
     kv_cache_specs: list[dict[str, KVCacheSpec]],
     available_memory: list[int],
+    *,
+    metadata_only: bool = False,
 ) -> list[KVCacheConfig]:
     """
     Generates the KV cache configurations for a model.
@@ -2032,6 +2034,9 @@ def get_kv_cache_configs(
         kv_cache_specs: List of dict[layer_name, KVCacheSpec] for each worker.
         available_memory: Memory available for KV cache in bytes for each
             worker.
+        metadata_only: Preserve KV layer/group metadata without planning any
+            physical cache tensors. The caller must guarantee that requests do
+            not allocate local KV slots.
 
     Returns:
         The generated KVCacheConfigs for each worker.
@@ -2066,6 +2071,19 @@ def get_kv_cache_configs(
         _project_kv_cache_groups_to_worker(global_kv_cache_groups, worker_spec)
         for worker_spec in kv_cache_specs
     ]
+
+    if metadata_only:
+        # Keep one null block because BlockPool requires it. Metadata-only
+        # runners bind their attention layers to zero-size placeholders and
+        # must never allocate local request slots from this pool.
+        return [
+            KVCacheConfig(
+                num_blocks=1,
+                kv_cache_tensors=[],
+                kv_cache_groups=groups,
+            )
+            for groups in projected_groups_per_worker
+        ]
 
     # If `num_gpu_blocks_override` is set, the cache size that will actually
     # be allocated is decoupled from the profiled `available_memory`:
