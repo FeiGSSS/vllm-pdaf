@@ -15,7 +15,8 @@ Design highlights:
   bind handshake) as a small pickled + base64-encoded metadata blob.
 * A single receive buffer carries QKV or attention output serially. CUDA stream
   memory operations publish ready/release generations without a CPU device
-  synchronization. A small ``/dev/shm`` doorbell carries descriptors.
+  synchronization. A small ``/dev/shm`` doorbell carries QKV descriptors;
+  Attention output is descriptorless.
 * CUDA stream memory operations are required. Unsupported systems fail closed
   instead of selecting an unvalidated synchronization fallback.
 * Receiver spin-wait falls back to ``os.sched_yield`` after a configurable

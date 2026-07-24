@@ -222,6 +222,7 @@ class _PAPLocalFastIOMixin:
             )
 
         wire = self._wire_metadata(direction, descriptor, tensor)
+        publish_descriptor = direction == DIR_QKV
 
         with peer.send_lock:
             seq = self._next_seq(peer, direction)
@@ -231,12 +232,12 @@ class _PAPLocalFastIOMixin:
                 if direction == DIR_QKV
                 else peer.last_output_seq
             )
-            self._wait_control_buffer(
-                peer=peer,
-                direction=direction,
-                previous_seq=previous_seq,
-            )
-
+            if publish_descriptor:
+                self._wait_control_buffer(
+                    peer=peer,
+                    direction=direction,
+                    previous_seq=previous_seq,
+                )
             # Copy raw bytes from the source tensor into the peer's uint8 recv
             # buffer.  We re-view both sides as 1-D uint8 of the correct length
             # so dtype/shape mismatches don't matter; the receiver reinterprets
@@ -288,14 +289,15 @@ class _PAPLocalFastIOMixin:
                 stream,
             )
             t_doorbell_start = time.perf_counter()
-            self._write_doorbell_sync(
-                peer=peer,
-                direction=direction,
-                seq=seq,
-                nbytes=nbytes,
-                offset=offset,
-                wire=wire,
-            )
+            if publish_descriptor:
+                self._write_doorbell_sync(
+                    peer=peer,
+                    direction=direction,
+                    seq=seq,
+                    nbytes=nbytes,
+                    offset=offset,
+                    wire=wire,
+                )
             t_done = time.perf_counter()
             enqueue_ms = (t_doorbell_start - t_sync_start) * 1000.0
             doorbell_ms = (t_done - t_doorbell_start) * 1000.0
@@ -595,8 +597,6 @@ class _PAPLocalFastIOMixin:
                 f"{self.buffer_bytes}B"
             )
 
-        record_offset = _doorbell_record_offset(DIR_OUTPUT)
-        _doorbell_ack(self._doorbell_mm, record_offset, seq)
         stream = torch.cuda.current_stream(self.device)
         wait_trace = None
         if self._deferred_cuda_trace:

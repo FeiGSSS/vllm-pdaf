@@ -82,10 +82,17 @@ def _ensure_peer_access(local_device: torch.device, peer_device: torch.device) -
         can_access = False
     if not can_access:
         return False
-    try:
-        torch.cuda.device(local_device.index)
-        torch._C._cuda_enable_peer_access(peer_device.index)
-    except RuntimeError as exc:
-        if "peer access is already enabled" not in str(exc).lower():
-            raise
+    from cuda.bindings import runtime
+
+    with torch.cuda.device(local_device):
+        result = runtime.cudaDeviceEnablePeerAccess(peer_device.index, 0)
+    error = result[0]
+    if error not in {
+        runtime.cudaError_t.cudaSuccess,
+        runtime.cudaError_t.cudaErrorPeerAccessAlreadyEnabled,
+    }:
+        raise RuntimeError(
+            "cudaDeviceEnablePeerAccess failed for "
+            f"{local_device.index}->{peer_device.index}: {error}"
+        )
     return True

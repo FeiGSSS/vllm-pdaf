@@ -276,7 +276,7 @@ def test_local_fast_prepares_descriptorless_output_gpu_wait(
         assert transport._peer.expected_output_seq == 2
         assert transport._descriptorless_output_receives == 1
         record_offset = _doorbell_record_offset(DIR_OUTPUT)
-        assert _doorbell_read_header(mm, record_offset)[4] == 1
+        assert _doorbell_read_header(mm, record_offset)[4] == 0
         assert len(waits) == 1
         signal, signal_index, seq, current_stream = waits[0]
         assert signal is transport._signal_buffer
