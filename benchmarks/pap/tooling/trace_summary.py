@@ -923,6 +923,9 @@ def summarize_pap_trace_logs(
         "route_kv_tokens_max_over_mean": [],
         "slowest_pa_rows": [],
         "slowest_pa_kv_tokens": [],
+        "slowest_pa_has_max_rows": [],
+        "slowest_pa_has_max_kv_tokens": [],
+        "completion_skew_ms_per_1k_kv_range": [],
     }
     for (
         batch_keys,
@@ -999,10 +1002,14 @@ def summarize_pap_trace_logs(
                 projection_attention_correlation["slowest_pa_rows"].append(
                     float(route_rows[slowest_index])
                 )
+                projection_attention_correlation[
+                    "slowest_pa_has_max_rows"
+                ].append(float(route_rows[slowest_index] == max(route_rows)))
             if len(route_kv_tokens) == len(attention_times):
+                kv_range = max(route_kv_tokens) - min(route_kv_tokens)
                 projection_attention_correlation[
                     "route_kv_tokens_range"
-                ].append(float(max(route_kv_tokens) - min(route_kv_tokens)))
+                ].append(float(kv_range))
                 projection_attention_correlation[
                     "route_kv_tokens_max_over_mean"
                 ].append(
@@ -1011,6 +1018,25 @@ def summarize_pap_trace_logs(
                 projection_attention_correlation[
                     "slowest_pa_kv_tokens"
                 ].append(float(route_kv_tokens[slowest_index]))
+                projection_attention_correlation[
+                    "slowest_pa_has_max_kv_tokens"
+                ].append(
+                    float(
+                        route_kv_tokens[slowest_index]
+                        == max(route_kv_tokens)
+                    )
+                )
+                if kv_range > 0:
+                    projection_attention_correlation[
+                        "completion_skew_ms_per_1k_kv_range"
+                    ].append(
+                        (
+                            max(completion_times)
+                            - min(completion_times)
+                        )
+                        / 1_000_000.0
+                        / (kv_range / 1_000.0)
+                    )
         projection_attention_correlation["matched_batches"].append(
             float(len(attention_times))
         )

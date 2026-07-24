@@ -366,3 +366,6 @@ def test_trace_summary_reports_multi_pa_completion_skew(tmp_path: Path) -> None:
     assert correlation["route_kv_tokens_range"].median == 400
     assert correlation["slowest_pa_rows"].median == 4
     assert correlation["slowest_pa_kv_tokens"].median == 600
+    assert correlation["slowest_pa_has_max_rows"].mean == 1
+    assert correlation["slowest_pa_has_max_kv_tokens"].mean == 1
+    assert correlation["completion_skew_ms_per_1k_kv_range"].median == 15
