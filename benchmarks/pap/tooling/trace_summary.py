@@ -122,7 +122,9 @@ _ATTENTION_COMPUTE_DETAIL_RE = re.compile(
     r"(?: compute_unaccounted_ms=([0-9.]+))?"
 )
 _PROJECTION_CORRELATION_RE = re.compile(
-    r"batch_keys=(\S+) send_done_ns=(\d+) yield_start_ns=(\d+) "
+    r"batch_keys=(\S+) "
+    r"(?:route_rows=(\S+) route_kv_tokens=(\S+) )?"
+    r"send_done_ns=(\d+) yield_start_ns=(\d+) "
     r"yield_end_ns=(\d+) recv_done_ns=(\d+)"
 )
 _ATTENTION_CORRELATION_OLD_RE = re.compile(
@@ -345,7 +347,9 @@ def summarize_pap_trace_logs(
     mailbox_send_by_kind: dict[str, dict[str, list[float]]] = {}
     mailbox_read_by_kind: dict[str, dict[str, list[float]]] = {}
     mailbox_wait_by_kind: dict[str, dict[str, list[float]]] = {}
-    projection_correlation_entries: list[tuple[list[str], int, int, int]] = []
+    projection_correlation_entries: list[
+        tuple[list[str], list[int], list[int], int, int, int]
+    ] = []
     attention_timestamps_by_key: dict[str, dict[str, int]] = {}
 
     for log_path in sorted(path.glob("*.log")):
@@ -554,6 +558,8 @@ def summarize_pap_trace_logs(
                     if correlation := _PROJECTION_CORRELATION_RE.search(line):
                         (
                             batch_keys,
+                            route_rows,
+                            route_kv_tokens,
                             send_done_ns,
                             _yield_start_ns,
                             yield_end_ns,
@@ -562,6 +568,19 @@ def summarize_pap_trace_logs(
                         projection_correlation_entries.append(
                             (
                                 batch_keys.split("|"),
+                                (
+                                    [int(value) for value in route_rows.split("|")]
+                                    if route_rows
+                                    else []
+                                ),
+                                (
+                                    [
+                                        int(value)
+                                        for value in route_kv_tokens.split("|")
+                                    ]
+                                    if route_kv_tokens
+                                    else []
+                                ),
                                 int(send_done_ns),
                                 int(yield_end_ns),
                                 int(recv_done_ns),
@@ -720,6 +739,7 @@ def summarize_pap_trace_logs(
                             ),
                             "send_start_ns": int(send_start_ns),
                             "send_done_ns": int(send_done_ns),
+                            "rows": calls,
                             "pre_compute_done_ns_raw": pcd_raw,
                         }
                     elif correlation_old := _ATTENTION_CORRELATION_OLD_RE.search(line):
@@ -741,6 +761,7 @@ def summarize_pap_trace_logs(
                             "post_compute_done_ns": compute_done,
                             "send_start_ns": compute_done,
                             "send_done_ns": send_done,
+                            "rows": calls,
                             "pre_compute_done_ns_raw": 0,
                         }
                 continue
@@ -892,9 +913,21 @@ def summarize_pap_trace_logs(
         "projection_resume_after_attention_ready_ms": [],
         "attention_ready_after_projection_resume_ms": [],
         "projection_resume_to_recv_done_ms": [],
+        "pa_recv_start_skew_ms": [],
+        "pa_compute_completion_skew_ms": [],
+        "pa_completion_skew_ms": [],
+        "pa_mean_idle_until_slowest_ms": [],
+        "route_rows_range": [],
+        "route_rows_max_over_mean": [],
+        "route_kv_tokens_range": [],
+        "route_kv_tokens_max_over_mean": [],
+        "slowest_pa_rows": [],
+        "slowest_pa_kv_tokens": [],
     }
     for (
         batch_keys,
+        route_rows,
+        route_kv_tokens,
         send_done_ns,
         yield_end_ns,
         recv_done_ns,
@@ -920,6 +953,64 @@ def summarize_pap_trace_logs(
         )
         send_start_ns = min(item["send_start_ns"] for item in attention_times)
         max_attention_done_ns = max(item["send_done_ns"] for item in attention_times)
+        if len(attention_times) > 1:
+            completion_times = [
+                item["send_done_ns"] for item in attention_times
+            ]
+            slowest_index = max(
+                range(len(completion_times)),
+                key=completion_times.__getitem__,
+            )
+            projection_attention_correlation["pa_recv_start_skew_ms"].append(
+                (
+                    max(item["recv_start_ns"] for item in attention_times)
+                    - min(item["recv_start_ns"] for item in attention_times)
+                )
+                / 1_000_000.0
+            )
+            projection_attention_correlation[
+                "pa_compute_completion_skew_ms"
+            ].append(
+                (
+                    max(item["compute_done_ns"] for item in attention_times)
+                    - min(item["compute_done_ns"] for item in attention_times)
+                )
+                / 1_000_000.0
+            )
+            projection_attention_correlation["pa_completion_skew_ms"].append(
+                (max(completion_times) - min(completion_times)) / 1_000_000.0
+            )
+            projection_attention_correlation[
+                "pa_mean_idle_until_slowest_ms"
+            ].append(
+                statistics.mean(
+                    max_attention_done_ns - value
+                    for value in completion_times
+                )
+                / 1_000_000.0
+            )
+            if len(route_rows) == len(attention_times):
+                projection_attention_correlation["route_rows_range"].append(
+                    float(max(route_rows) - min(route_rows))
+                )
+                projection_attention_correlation[
+                    "route_rows_max_over_mean"
+                ].append(max(route_rows) / statistics.mean(route_rows))
+                projection_attention_correlation["slowest_pa_rows"].append(
+                    float(route_rows[slowest_index])
+                )
+            if len(route_kv_tokens) == len(attention_times):
+                projection_attention_correlation[
+                    "route_kv_tokens_range"
+                ].append(float(max(route_kv_tokens) - min(route_kv_tokens)))
+                projection_attention_correlation[
+                    "route_kv_tokens_max_over_mean"
+                ].append(
+                    max(route_kv_tokens) / statistics.mean(route_kv_tokens)
+                )
+                projection_attention_correlation[
+                    "slowest_pa_kv_tokens"
+                ].append(float(route_kv_tokens[slowest_index]))
         projection_attention_correlation["matched_batches"].append(
             float(len(attention_times))
         )

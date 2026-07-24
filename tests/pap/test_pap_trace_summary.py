@@ -302,3 +302,67 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
         ].median
         == 0.600
     )
+
+
+def test_trace_summary_reports_multi_pa_completion_skew(tmp_path: Path) -> None:
+    log_dir = tmp_path / "service_logs"
+    log_dir.mkdir()
+    (log_dir / "projection_0.log").write_text(
+        "PAP OFFLOAD_EXEC projection trace layer=model.layers.1.self_attn.attn "
+        "batches=3 calls=9 send_ms=0.030 trigger_ms=0.020 "
+        "yield_ms=0.000 recv_ms=0.100 total_ms=1.000 batch_keys=a|b|c "
+        "route_rows=2|3|4 route_kv_tokens=200|360|600 "
+        "send_done_ns=1000000000 yield_start_ns=1000010000 "
+        "yield_end_ns=1000020000 recv_done_ns=1013000000\n",
+        encoding="utf-8",
+    )
+
+    def attention_line(
+        key: str,
+        calls: int,
+        recv_start_ns: int,
+        compute_done_ns: int,
+        send_done_ns: int,
+    ) -> str:
+        recv_done_ns = recv_start_ns + 1_000_000
+        pre_compute_done_ns = compute_done_ns - 1_000_000
+        return (
+            "PAP OFFLOAD_EXEC attention mailbox batch trace "
+            f"layer=model.layers.1.self_attn.attn calls={calls} "
+            "recv_qkv_ms=0.100 compute_ms=0.200 send_output_ms=0.050 "
+            "total_ms=1.000 append_kv_ms=0.050 pack_ms=0.030 "
+            "sdpa_ms=0.100 reshape_ms=0.020 "
+            f"batch_key={key} recv_done_ns={recv_done_ns} "
+            f"compute_done_ns={compute_done_ns} send_done_ns={send_done_ns} "
+            f"recv_start_ns={recv_start_ns} "
+            f"pre_compute_start_ns={recv_done_ns} "
+            f"pre_compute_done_ns={pre_compute_done_ns} "
+            f"paged_flash_done_ns={compute_done_ns - 500_000} "
+            f"reshape_done_ns={compute_done_ns} "
+            f"send_start_ns={compute_done_ns}\n"
+        )
+
+    (log_dir / "attention_0.log").write_text(
+        attention_line("a", 2, 1_001_000_000, 1_005_000_000, 1_006_000_000),
+        encoding="utf-8",
+    )
+    (log_dir / "attention_1.log").write_text(
+        attention_line("b", 3, 1_002_000_000, 1_007_000_000, 1_008_000_000),
+        encoding="utf-8",
+    )
+    (log_dir / "attention_2.log").write_text(
+        attention_line("c", 4, 1_004_000_000, 1_010_000_000, 1_012_000_000),
+        encoding="utf-8",
+    )
+
+    correlation = summarize_pap_trace_logs(log_dir)[
+        "projection_attention_correlation"
+    ]
+    assert correlation["pa_recv_start_skew_ms"].median == 3.0
+    assert correlation["pa_compute_completion_skew_ms"].median == 5.0
+    assert correlation["pa_completion_skew_ms"].median == 6.0
+    assert abs(correlation["pa_mean_idle_until_slowest_ms"].median - 10 / 3) < 1e-9
+    assert correlation["route_rows_range"].median == 2
+    assert correlation["route_kv_tokens_range"].median == 400
+    assert correlation["slowest_pa_rows"].median == 4
+    assert correlation["slowest_pa_kv_tokens"].median == 600

@@ -307,9 +307,15 @@ def compute_offload_exec_batch_output(
             step_context.prepare_event is not None
             and not step_context.prepare_event_waited
         ):
-            torch.cuda.current_stream(query_batch.device).wait_event(
-                step_context.prepare_event
+            compute_stream = torch.cuda.current_stream(query_batch.device)
+            prepare_wait_trace = begin_deferred_cuda_span(
+                "attention_step_prepare_wait_gpu_ms",
+                compute_stream,
             )
+            try:
+                compute_stream.wait_event(step_context.prepare_event)
+            finally:
+                end_deferred_cuda_span(prepare_wait_trace)
             step_context.prepare_event_waited = True
         unified_states = step_context.layer_states.get(layer_name)
         if unified_states is None:

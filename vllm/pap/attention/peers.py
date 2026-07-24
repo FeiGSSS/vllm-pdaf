@@ -17,6 +17,10 @@ from vllm.pap.attention.execution import (
 )
 from vllm.pap.attention.runtime import PAPAttentionRuntime
 from vllm.pap.config import PAPAttentionDispatchMode, PAPRuntimeConfig
+from vllm.pap.deferred_cuda_trace import (
+    begin_deferred_cuda_span,
+    end_deferred_cuda_span,
+)
 from vllm.pap.transport.factory import build_offload_exec_transport
 
 
@@ -195,11 +199,18 @@ class PAPAttentionPeerManager:
                         _stream: torch.cuda.Stream = stream,
                     ) -> None:
                         with torch.cuda.stream(_stream):
-                            prepare_offload_exec_step(
-                                registry=self.runtime.registry,
-                                descriptor=descriptor,
-                                dtype=dtype,
+                            prepare_trace = begin_deferred_cuda_span(
+                                "attention_step_prepare_gpu_ms",
+                                _stream,
                             )
+                            try:
+                                prepare_offload_exec_step(
+                                    registry=self.runtime.registry,
+                                    descriptor=descriptor,
+                                    dtype=dtype,
+                                )
+                            finally:
+                                end_deferred_cuda_span(prepare_trace)
 
                     set_step_prepare_handler(prepare_step)
                 self.transports[peer_key] = transport

@@ -19,6 +19,10 @@ from vllm.pap.config import (
     PAPOffloadExecTransport as PAPOffloadExecTransportKind,
 )
 from vllm.pap.config import parse_offload_exec_transport
+from vllm.pap.deferred_cuda_trace import (
+    begin_deferred_cuda_span,
+    end_deferred_cuda_span,
+)
 from vllm.pap.mode import is_pap_request_id, pap_request_ids_are_routable
 from vllm.pap.model.context import (
     PAPModelForwardBatch,
@@ -589,6 +593,11 @@ class PAPProjectionAttentionAdapter:
         trace_direct_output_rows = 0
         trace_scattered_output_rows = 0
         trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
+        current_stream = torch.cuda.current_stream(query.device)
+        remote_stage_trace = begin_deferred_cuda_span(
+            "projection_remote_stage_gpu_ms",
+            current_stream,
+        )
         offload_exec_batches: list[
             tuple[
                 str | None,
@@ -712,6 +721,7 @@ class PAPProjectionAttentionAdapter:
         trace_trigger_start = time.perf_counter() if trace_offload_exec else 0.0
         prepared_output_messages: list[Any | None] = []
         prepared_output_streams: list[torch.cuda.Stream | None] = []
+        prepared_output_traces: list[Any | None] = []
         output_width = self.num_heads * self.head_dim
         parallel_output_receives = len(offload_exec_batches) > 1
         output_inputs_ready: torch.cuda.Event | None = None
@@ -749,14 +759,21 @@ class PAPProjectionAttentionAdapter:
                 with torch.cuda.stream(receive_stream):
                     assert output_inputs_ready is not None
                     receive_stream.wait_event(output_inputs_ready)
+                    output_path_trace = begin_deferred_cuda_span(
+                        f"pa_output_path_{len(prepared_output_messages)}_gpu_ms",
+                        receive_stream,
+                    )
                     output_message = transport.prepare_output_batch_message(
                         batch_descriptor,
                         shape=(len(req_indices), output_width),
                         dtype=query.dtype,
                         remote_address=offload_exec_zmq_endpoint,
                     )
+            if receive_stream is None:
+                output_path_trace = None
             prepared_output_messages.append(output_message)
             prepared_output_streams.append(receive_stream)
+            prepared_output_traces.append(output_path_trace)
         trace_trigger_ms = (
             (time.perf_counter() - trace_trigger_start) * 1000.0
             if trace_offload_exec
@@ -780,6 +797,18 @@ class PAPProjectionAttentionAdapter:
                 pap_offload_exec_trace_id(item[2].output_tensor_id)
                 for item in offload_exec_batches
             )
+            trace_route_rows = "|".join(
+                str(item[2].item_count) for item in offload_exec_batches
+            )
+            trace_route_kv_tokens = "|".join(
+                str(
+                    sum(
+                        int(step)
+                        for step in item[2].metadata_template.get("s", ())
+                    )
+                )
+                for item in offload_exec_batches
+            )
             calls = sum(item[2].item_count for item in offload_exec_batches)
             if projection_timeline is not None:
                 projection_timeline.update(
@@ -794,6 +823,8 @@ class PAPProjectionAttentionAdapter:
                         "recv_ms": trace_recv_ms,
                         "remote_total_ms": trace_total_ms,
                         "batch_keys": trace_batch_keys,
+                        "route_rows": trace_route_rows,
+                        "route_kv_tokens": trace_route_kv_tokens,
                         "pre_attn_start_ns": pre_attn_start_ns,
                         "pre_attn_done_ns": pre_attn_done_ns,
                         "send_done_ns": trace_send_done_ns,
@@ -812,6 +843,7 @@ class PAPProjectionAttentionAdapter:
                 "PAP OFFLOAD_EXEC projection trace layer=%s batches=%d "
                 "calls=%d send_ms=%.3f trigger_ms=%.3f "
                 "yield_ms=%.3f recv_ms=%.3f total_ms=%.3f batch_keys=%s "
+                "route_rows=%s route_kv_tokens=%s "
                 "send_done_ns=%d yield_start_ns=%d yield_end_ns=%d "
                 "recv_done_ns=%d route_groups=%d "
                 "contiguous_route_groups=%d direct_qkv_groups=%d "
@@ -826,6 +858,8 @@ class PAPProjectionAttentionAdapter:
                 trace_recv_ms,
                 trace_total_ms,
                 trace_batch_keys,
+                trace_route_rows,
+                trace_route_kv_tokens,
                 trace_send_done_ns,
                 trace_yield_start_ns,
                 trace_yield_end_ns,
@@ -849,6 +883,7 @@ class PAPProjectionAttentionAdapter:
         ) in enumerate(offload_exec_batches):
             output_message = prepared_output_messages[batch_index]
             output_receive_stream = prepared_output_streams[batch_index]
+            output_path_trace = prepared_output_traces[batch_index]
             if output_message is not None:
                 output_batch = output_message.tensor
             else:
@@ -890,6 +925,7 @@ class PAPProjectionAttentionAdapter:
                             time.perf_counter() - trace_total_start
                         ) * 1000.0
                         record_projection_trace()
+                    end_deferred_cuda_span(remote_stage_trace)
                     return direct_output, release_messages
                 if trace_offload_exec:
                     trace_scattered_output_rows += len(req_indices)
@@ -909,23 +945,44 @@ class PAPProjectionAttentionAdapter:
                             route_index_tensor.record_stream(
                                 output_receive_stream
                             )
-                        _pap_scatter_attention_output_group(
-                            scatter_output,
-                            output_batch,
-                            req_indices=req_indices,
-                            index_tensor=route_index_tensor,
+                        scatter_trace = begin_deferred_cuda_span(
+                            "output_scatter_gpu_ms",
+                            output_receive_stream,
                         )
+                        try:
+                            _pap_scatter_attention_output_group(
+                                scatter_output,
+                                output_batch,
+                                req_indices=req_indices,
+                                index_tensor=route_index_tensor,
+                            )
+                        finally:
+                            end_deferred_cuda_span(scatter_trace)
                         output_message.release()
                         output_message = None
+                        end_deferred_cuda_span(output_path_trace)
                         scatter_done = torch.cuda.Event()
                         scatter_done.record(output_receive_stream)
                         output_scatter_events.append(scatter_done)
             finally:
                 if output_message is not None:
+                    end_deferred_cuda_span(output_path_trace)
+                if output_message is not None:
                     output_message.release()
-        current_stream = torch.cuda.current_stream(query.device)
-        for scatter_done in output_scatter_events:
-            current_stream.wait_event(scatter_done)
+        join_trace = (
+            begin_deferred_cuda_span(
+                "projection_join_wait_gpu_ms",
+                current_stream,
+            )
+            if output_scatter_events
+            else None
+        )
+        try:
+            for scatter_done in output_scatter_events:
+                current_stream.wait_event(scatter_done)
+        finally:
+            end_deferred_cuda_span(join_trace)
+            end_deferred_cuda_span(remote_stage_trace)
         if trace_offload_exec and offload_exec_batches:
             trace_recv_done_ns = time.perf_counter_ns()
             trace_recv_ms = (time.perf_counter() - trace_recv_start) * 1000.0
