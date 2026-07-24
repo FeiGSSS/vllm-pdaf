@@ -44,7 +44,6 @@ gpu_count = 8
 architectures = [
   "pap_7pa1p",
   "pap_6pa2p",
-  "pd_2p6d",
   "pd_4p4d",
   "pd_6p2d",
   "dp_8",

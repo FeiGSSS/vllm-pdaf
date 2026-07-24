@@ -117,7 +117,6 @@ export no_proxy="${no_proxy:+${no_proxy},}127.0.0.1,localhost"
 
 setsid env \
   CUDA_VISIBLE_DEVICES="${GPU_CSV}" \
-  VLLM_PORT="${DP_LOAD_VLLM_PORT:-53600}" \
   PAP_MODEL_HOOKS=0 \
   PAP_CUDAGRAPH_COMPATIBLE=0 \
   "${VLLM_BIN}" serve "${MODEL_PATH}" \

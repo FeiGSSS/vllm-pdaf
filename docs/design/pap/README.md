@@ -71,7 +71,7 @@ next-step preparation; PAP does not interleave microbatches across model
 layers.
 
 The current eight-GPU development lane compares PAP 7PA1P/6PA2P, one-way PD
-2P6D/4P4D/6P2D, and native vLLM DP8 under a 128-conversation, five-turn
+4P4D/6P2D, and native vLLM DP8 under a 128-conversation, five-turn
 randomized long-context workload.
 Eager remains the default execution mode. Optional piecewise CUDA Graph has a
 completed development comparison, while host transport, remote Attention, and

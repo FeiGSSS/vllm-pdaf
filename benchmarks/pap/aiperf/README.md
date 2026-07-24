@@ -183,8 +183,8 @@ when wire-level debugging is required.
 
 ## Run the lean randomized matrix
 
-The default matrix compares PAP 7PA1P and 6PA2P, one-way PD 2P6D, 4P4D, and
-6P2D, and native vLLM DP8. PAP uses the accepted static 72/20-SM path. Its
+The default matrix compares PAP 7PA1P and 6PA2P, one-way PD 4P4D and 6P2D,
+and native vLLM DP8. PAP uses the accepted static 72/20-SM path. Its
 Prefill executor and every PD/DP executor use
 `gpu_memory_utilization=0.90`. Projection is sized automatically to 120% of
 checkpoint weight bytes per TP rank on the smallest selected Projection GPU.
@@ -273,7 +273,7 @@ the next conversation takes its slot. The default lean scan is:
 | Topology | Concurrency points |
 | --- | --- |
 | PAP 7PA1P / 6PA2P | 32, 64, 96, 128 |
-| PD 2P6D / 4P4D / 6P2D | 32, 64, 96, 128 |
+| PD 4P4D / 6P2D | 32, 64, 96, 128 |
 | vLLM DP8 | 32, 64, 96, 128 |
 
 Every point restarts all services. Once a valid point fails the relaxed SLO,

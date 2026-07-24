@@ -71,7 +71,7 @@ or historical experiment implementations.
 The active runner is the **eight-GPU AIPerf testbed**: 128 conversations, five
 turns, randomized 8K initial input, a broad append distribution sampled near
 1.4K tokens, randomized 16-64-token output, think/tool delays, and conversation
-concurrency. It compares PAP 7PA1P/6PA2P, one-way PD 2P6D/4P4D/6P2D, and
+concurrency. It compares PAP 7PA1P/6PA2P, one-way PD 4P4D/6P2D, and
 native vLLM DP8. Until its E2E matrix completes, the latest performance
 evidence remains the four-GPU milestone.
 

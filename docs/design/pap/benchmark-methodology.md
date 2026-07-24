@@ -22,7 +22,7 @@ last_validated_commit: 31e0b3882b5fadf63d2d68b52855dfc7307c11fd
 
 `benchmarks/pap/aiperf/run_capacity_matrix.sh` is the single executable
 runtime testbed. It fixes Qwen3-8B FP16 on eight L20 GPUs, PAP 7PA1P/6PA2P,
-one-way PD 2P6D/4P4D/6P2D, native vLLM DP8, 128 conversations, five randomized
+one-way PD 4P4D/6P2D, native vLLM DP8, 128 conversations, five randomized
 long-context turns, think/tool delays, conversation concurrency, three
 request-level SLOs, and role-specific scheduler limits.
 

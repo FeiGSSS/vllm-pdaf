@@ -199,7 +199,7 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     assert "PAP_CAPACITY_EXECUTION_MODE" in text
     assert 'PAP_EXECUTION_MODE="${EXECUTION_MODE}"' in text
     assert 'PD_LOAD_EXECUTION_MODE="${EXECUTION_MODE}"' in text
-    assert "pap_7pa1p,pap_6pa2p,pd_2p6d,pd_4p4d,pd_6p2d,dp_8" in text
+    assert "pap_7pa1p,pap_6pa2p,pd_4p4d,pd_6p2d,dp_8" in text
     assert "PAP_CAPACITY_POINTS:-32,64,96,128" in text
     assert '--sessions "${TOTAL_SESSIONS}"' in text
     assert 'PAP_AIPERF_SESSIONS="${TOTAL_SESSIONS}"' in text
@@ -216,6 +216,7 @@ def test_capacity_lane_has_native_vllm_dp_baseline() -> None:
         capacity_text
     )
     assert '--data-parallel-size "${DP_SIZE}"' in dp_text
+    assert "VLLM_PORT=" not in dp_text
     assert 'AIPERF_TIMING_MODE=concurrency' in dp_text
 
 
