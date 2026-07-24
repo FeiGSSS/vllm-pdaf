@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260724-PROJECTION-SCHEDULER-OVERLAP
   - PAP-20260724-SINGLE-PROJECTION-BATCH
   - PAP-20260724-BATCH-SCALING-MICRO
   - PAP-20260722-AIPERF-PROJECTION-AUTO
@@ -11,7 +12,7 @@ related_experiments:
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
-last_validated_commit: cb6fe35009905c32b52a8ad10b7e00d778c03679
+last_validated_commit: 29cc69029554ec6ff3b0a438dab8a03cee6b2815
 ---
 
 # Current PAP development status
@@ -130,6 +131,11 @@ only overlaps scheduler/metadata/output CPU work with a complete model
 forward; it does not interleave PAP microbatches across model layers. The
 component probe independently attributes 93.2% of the B4-to-B8 per-layer
 growth to paged Attention.
+
+The corrected async C12 regression at `29cc69029` completed 320/320 requests
+with all audits passing. It reports 35.20 ms mean ITL and 2.529 requests/s:
+within 1.25% and 0.22% of the earlier async C12 baseline, respectively, while
+mean ITL is 7.96% lower than the rejected no-async mean.
 
 ## Remaining work
 

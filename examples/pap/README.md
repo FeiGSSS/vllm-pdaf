@@ -117,5 +117,7 @@ single topology or concurrency point. The old fixed-length O256/O128 and
 
 Current eager and piecewise results are recorded in the
 [automatic Projection-memory milestone](../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
+The corrected async scheduling boundary is validated in the
+[scheduler-overlap milestone](../../benchmarks/pap/experiments/PAP-20260724-PROJECTION-SCHEDULER-OVERLAP/report.md).
 The rejected no-async treatment is retained as an archived
 [scheduler-overlap diagnostic](../../benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md).

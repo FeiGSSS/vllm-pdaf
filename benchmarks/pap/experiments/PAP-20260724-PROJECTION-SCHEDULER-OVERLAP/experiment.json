@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "kind": "pap-experiment-record",
+  "status": "current",
+  "experiment_id": "PAP-20260724-PROJECTION-SCHEDULER-OVERLAP",
+  "title": "PAP Projection scheduler overlap",
+  "recorded_at": "2026-07-24",
+  "hypothesis": "PAP can preserve vLLM asynchronous scheduler overlap without introducing layer-interleaved Projection microbatches or an E2E regression.",
+  "evidence": "controlled",
+  "decision": "accepted",
+  "validity": {
+    "status": "valid",
+    "reasons": [
+      "This is one clean targeted development repetition; the earlier async and no-async references were not rerun as an interleaved multi-repetition A/B."
+    ]
+  },
+  "baseline": {
+    "status": "missing",
+    "description": "External accepted C12 result from PAP-20260722-AIPERF-PROJECTION-AUTO with vLLM asynchronous scheduling enabled",
+    "run_ids": []
+  },
+  "treatment": {
+    "status": "present",
+    "description": "PAP 3PA1P C12 with async scheduling enabled, PAP microbatching absent, and per-forward metadata reuse",
+    "run_ids": [
+      "20260724_29cc69029_projection_async_c12"
+    ]
+  },
+  "primary_variable": {
+    "name": "corrected-projection-scheduling-boundary",
+    "baseline": "earlier async runtime",
+    "treatment": "async plus forward-metadata reuse"
+  },
+  "run_ids": [
+    "20260724_29cc69029_projection_async_c12"
+  ],
+  "aggregation_method": "Single complete clean treatment repetition compared with the accepted prior async C12 point and the archived two-run no-async mean",
+  "metrics": [
+    {
+      "name": "ttft_avg_ms",
+      "scope": "requests",
+      "statistic": "mean",
+      "unit": "ms",
+      "baseline_value": 809.907405125,
+      "treatment_value": 794.0830184656251,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "ttft_p95_ms",
+      "scope": "requests",
+      "statistic": "p95",
+      "unit": "ms",
+      "baseline_value": 3205.9063555000002,
+      "treatment_value": 3121.904730050002,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "itl_avg_ms",
+      "scope": "requests",
+      "statistic": "mean",
+      "unit": "ms",
+      "baseline_value": 34.7617176619157,
+      "treatment_value": 35.196240278929025,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "itl_p95_ms",
+      "scope": "requests",
+      "statistic": "p95",
+      "unit": "ms",
+      "baseline_value": 40.715904049603175,
+      "treatment_value": 41.89241008012821,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "request_throughput_rps",
+      "scope": "run",
+      "statistic": "mean",
+      "unit": "requests/s",
+      "baseline_value": 2.534329731873236,
+      "treatment_value": 2.5287822562997437,
+      "direction": "higher-is-better"
+    }
+  ],
+  "conclusion": "The corrected async C12 run completed 320/320 requests with every audit passing. Relative to the earlier async baseline, mean ITL is 1.25% higher and throughput is 0.22% lower; relative to the rejected no-async mean, mean ITL improves by 7.96%. Keep vLLM async scheduling enabled while forbidding only PAP layer-interleaved microbatching.",
+  "supersedes": [],
+  "superseded_by": null,
+  "raw_artifacts": [
+    {
+      "name": "report",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-PROJECTION-SCHEDULER-OVERLAP/report.md"
+      },
+      "sha256": "dc089d47cc8b7e67a486eaeae923abf2d842064527e981792c6f599dae0158c6"
+    },
+    {
+      "name": "aiperf-profile-r1",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-PROJECTION-SCHEDULER-OVERLAP/runs/20260724_29cc69029_projection_async_c12/raw/r1/aiperf/profile.json"
+      },
+      "sha256": "66e10ee9a9f828a7caaa4c3d19b16387b0f63ccfbea6804f8c0ddcbae06e0c98"
+    }
+  ],
+  "tags": [
+    "aiperf",
+    "projection",
+    "async-scheduling",
+    "metadata-reuse",
+    "regression"
+  ]
+}

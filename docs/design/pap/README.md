@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260724-PROJECTION-SCHEDULER-OVERLAP
   - PAP-20260724-SINGLE-PROJECTION-BATCH
   - PAP-20260724-BATCH-SCALING-MICRO
   - PAP-20260722-AIPERF-PROJECTION-AUTO
@@ -100,6 +101,8 @@ and normalized experiments rather than a repository skill plan.
   `benchmarks/pap/aiperf/run_capacity_matrix.sh`
 - Current eager and Graph capacity report:
   [automatic Projection-memory milestone](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md)
+- Current Projection scheduling regression:
+  [scheduler-overlap milestone](../../../benchmarks/pap/experiments/PAP-20260724-PROJECTION-SCHEDULER-OVERLAP/report.md)
 - Archived Projection no-async negative control:
   [scheduler-overlap diagnostic](../../../benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md)
 - Offline diagnostics: `benchmarks/pap/tooling/`, invoked through `tools/pap_*`
