@@ -13,9 +13,9 @@ Design highlights:
   exports a CUDA IPC handle (via ``torch.multiprocessing.reductions``).
   Handles are exchanged through the existing PAP control plane (the HTTP
   bind handshake) as a small pickled + base64-encoded metadata blob.
-* A two-slot ring carries QKV and attention output in each direction. CUDA
-  stream memory operations publish ready/release generations without a CPU
-  device synchronization. A small ``/dev/shm`` doorbell carries descriptors.
+* A single receive buffer carries QKV or attention output serially. CUDA stream
+  memory operations publish ready/release generations without a CPU device
+  synchronization. A small ``/dev/shm`` doorbell carries descriptors.
 * CUDA stream memory operations are required. Unsupported systems fail closed
   instead of selecting an unvalidated synchronization fallback.
 * Receiver spin-wait falls back to ``os.sched_yield`` after a configurable
@@ -57,8 +57,8 @@ from vllm.pap.transport.local.endpoint import (
 )
 from vllm.pap.transport.local.io import _PAPLocalFastIOMixin
 from vllm.pap.transport.local.protocol import (
+    DOORBELL_BYTES,
     DIR_QKV,
-    _doorbell_bytes,
     _doorbell_read_header,
     _doorbell_record_offset,
     _doorbell_write,
@@ -76,6 +76,9 @@ DEFAULT_BUFFER_BYTES = 16 * 1024 * 1024
 # back off so long waits do not burn a CPU core and interfere with the shared
 # PA-side control plane / MPS scheduling.
 SPIN_TIGHT_ITERS = int(os.environ.get("PAP_LOCAL_FAST_SPIN_ITERS", "2048"))
+SPIN_YIELD_ITERS = int(os.environ.get("PAP_LOCAL_FAST_YIELD_ITERS", "64"))
+SPIN_SLEEP_US = int(os.environ.get("PAP_LOCAL_FAST_SLEEP_US", "20"))
+SPIN_SLEEP_AFTER_US = int(os.environ.get("PAP_LOCAL_FAST_SLEEP_AFTER_US", "50"))
 
 
 # ---------------------------------------------------------------------------
@@ -109,9 +112,7 @@ class _PeerState:
     peer_tensor: torch.Tensor  # view into peer's recv buffer (local device)
     peer_signal_tensor: torch.Tensor
     peer_doorbell_path: str
-    slot_count: int
-    slot_bytes: int
-    doorbell_bytes: int
+    buffer_bytes: int
     peer_doorbell_mm: mmap.mmap | None = None
     peer_doorbell_fd: int | None = None
     # Local-side counters for the *outgoing* directions on this side.
@@ -122,14 +123,10 @@ class _PeerState:
     # Expected incoming seq for each direction.  This is what we wait for.
     expected_qkv_seq: int = 1
     expected_output_seq: int = 1
-    last_qkv_seq_by_slot: list[int] = field(init=False)
-    last_output_seq_by_slot: list[int] = field(init=False)
-    source_refs: dict[tuple[int, int], torch.Tensor] = field(default_factory=dict)
+    last_qkv_seq: int = 0
+    last_output_seq: int = 0
+    source_refs: dict[int, torch.Tensor] = field(default_factory=dict)
     send_lock: threading.Lock = field(default_factory=threading.Lock)
-
-    def __post_init__(self) -> None:
-        self.last_qkv_seq_by_slot = [0] * self.slot_count
-        self.last_output_seq_by_slot = [0] * self.slot_count
 
 
 class PAPLocalFastTransport(_PAPLocalFastIOMixin):
@@ -165,13 +162,6 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         )
         if self.buffer_bytes <= 0:
             raise RuntimeError("PAP local fast buffer_bytes must be positive")
-        self._slot_count = int(os.environ.get("PAP_LOCAL_FAST_SLOT_COUNT", "2"))
-        if self._slot_count <= 0:
-            raise RuntimeError("PAP_LOCAL_FAST_SLOT_COUNT must be positive")
-        self._slot_bytes = self.buffer_bytes // self._slot_count
-        if self._slot_bytes <= 0:
-            raise RuntimeError("PAP local fast slots exceed the receive buffer")
-        self._doorbell_bytes = _doorbell_bytes(self._slot_count)
 
         # Allocate the local recv buffer (1D byte tensor on local GPU).
         with torch.cuda.device(self.device):
@@ -183,7 +173,7 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
                     "PAP local transport requires CUDA stream memory operations"
                 )
             self._signal_buffer = torch.zeros(
-                4 * self._slot_count,
+                4,
                 dtype=torch.int32,
                 device=self.device,
             )
@@ -196,11 +186,11 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         self._doorbell_path = _doorbell_path(self.actor_id)
         self._doorbell_fd, self._doorbell_mm = _open_or_create_doorbell(
             self._doorbell_path,
-            self._doorbell_bytes,
+            DOORBELL_BYTES,
         )
         # Zero the doorbell on (re)open.  This is safe because we only ever
         # have one transport per actor_id per machine.
-        self._doorbell_mm[:] = b"\x00" * self._doorbell_bytes
+        self._doorbell_mm[:] = b"\x00" * DOORBELL_BYTES
 
         self._peer: _PeerState | None = None
         self._started = False
@@ -234,13 +224,11 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         ipc_blob = _pack_cuda_ipc_handle(self._recv_buffer)
         signal_blob = _pack_cuda_ipc_handle(self._signal_buffer)
         payload = {
-            "v": 2,
+            "v": 3,
             "actor_id": self.actor_id,
             "hostname": _local_hostname(),
             "device_index": int(self.device.index or 0),
             "buffer_bytes": int(self.buffer_bytes),
-            "slot_count": self._slot_count,
-            "doorbell_bytes": self._doorbell_bytes,
             "stream_ordered": True,
             "doorbell_path": self._doorbell_path,
             "ipc_handle": ipc_blob,
@@ -254,6 +242,10 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         if self._peer is not None:
             return
         payload = json.loads(peer_agent_metadata.decode("utf-8"))
+        if int(payload.get("v", 0)) != 3:
+            raise RuntimeError(
+                "PAP local transport peers must use the serial-buffer protocol"
+            )
         peer_hostname = str(payload.get("hostname", ""))
         if peer_hostname and peer_hostname != _local_hostname():
             raise RuntimeError(
@@ -262,18 +254,8 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
                 "Set PAP_OFFLOAD_EXEC_TRANSPORT=nixl_mailbox for cross-host."
             )
         peer_buffer_bytes = int(payload.get("buffer_bytes", 0))
-        peer_slot_count = int(payload.get("slot_count", 1))
-        if peer_slot_count != self._slot_count:
-            raise RuntimeError(
-                "PAP local fast peers must use the same slot count: "
-                f"local={self._slot_count} peer={peer_slot_count}"
-            )
-        peer_slot_bytes = peer_buffer_bytes // peer_slot_count
-        if peer_slot_bytes <= 0:
-            raise RuntimeError("PAP local fast peer has invalid slot capacity")
-        peer_doorbell_bytes = int(
-            payload.get("doorbell_bytes", _doorbell_bytes(peer_slot_count))
-        )
+        if peer_buffer_bytes <= 0:
+            raise RuntimeError("PAP local fast peer has invalid buffer capacity")
         peer_doorbell_path = str(payload["doorbell_path"])
         ipc_blob = str(payload["ipc_handle"])
 
@@ -303,7 +285,7 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         peer_fd = os.open(peer_doorbell_path, os.O_RDWR)
         peer_mm = mmap.mmap(
             peer_fd,
-            peer_doorbell_bytes,
+            DOORBELL_BYTES,
             flags=mmap.MAP_SHARED,
             prot=mmap.PROT_READ | mmap.PROT_WRITE,
         )
@@ -312,9 +294,7 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
             peer_tensor=peer_tensor,
             peer_signal_tensor=peer_signal_tensor,
             peer_doorbell_path=peer_doorbell_path,
-            slot_count=peer_slot_count,
-            slot_bytes=peer_slot_bytes,
-            doorbell_bytes=peer_doorbell_bytes,
+            buffer_bytes=peer_buffer_bytes,
             peer_doorbell_mm=peer_mm,
             peer_doorbell_fd=peer_fd,
         )
@@ -349,12 +329,7 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         offset: int,
         wire: _WireMetadata,
     ) -> None:
-        slot_id = (int(seq) - 1) % peer.slot_count
-        record_offset = _doorbell_record_offset(
-            direction,
-            slot_id,
-            peer.slot_count,
-        )
+        record_offset = _doorbell_record_offset(direction)
         _doorbell_write(
             peer.peer_doorbell_mm,
             record_offset,
@@ -369,21 +344,16 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
             flags=wire.flags,
         )
 
-    def _wait_control_slot(
+    def _wait_control_buffer(
         self,
         *,
         peer: _PeerState,
         direction: int,
-        slot_id: int,
         previous_seq: int,
     ) -> None:
         if previous_seq == 0:
             return
-        record_offset = _doorbell_record_offset(
-            direction,
-            slot_id,
-            peer.slot_count,
-        )
+        record_offset = _doorbell_record_offset(direction)
         start = time.monotonic()
         iters = 0
         while True:
@@ -392,13 +362,20 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
                 return
             if time.monotonic() - start >= 30.0:
                 raise TimeoutError(
-                    "timed out waiting for PAP local fast control slot "
-                    f"direction={direction} slot={slot_id} seq={previous_seq}"
+                    "timed out waiting for PAP local fast receive buffer "
+                    f"direction={direction} seq={previous_seq}"
                 )
             iters += 1
             if iters < SPIN_TIGHT_ITERS:
                 continue
-            _sched_yield()
+            if iters < SPIN_TIGHT_ITERS + SPIN_YIELD_ITERS:
+                _sched_yield()
+                continue
+            waited_us = (time.monotonic() - start) * 1_000_000.0
+            if waited_us >= SPIN_SLEEP_AFTER_US:
+                time.sleep(max(SPIN_SLEEP_US, 0) / 1_000_000.0)
+            else:
+                _sched_yield()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -473,7 +450,7 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
     def __repr__(self) -> str:
         return (
             f"PAPLocalFastTransport(actor_id={self.actor_id!r}, "
-            f"device={self.device!s}, slots={self._slot_count})"
+            f"device={self.device!s}, buffer_bytes={self.buffer_bytes})"
         )
 
 # ---------------------------------------------------------------------------

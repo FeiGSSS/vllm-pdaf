@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 class DecodeCommitRequest(BaseModel):
     request_id: str
+    session_request_id: str | None = None
     commit_seq: int = Field(gt=0)
     new_seq_len: int
     new_token_ids: list[int]
@@ -44,13 +45,17 @@ async def _call_engine_control_method(
 
 def build_prefill_control_router() -> APIRouter:
     router = APIRouter()
-    commit_lock = asyncio.Lock()
+    session_locks: dict[str, asyncio.Lock] = {}
     acked_commit_state: dict[str, tuple[int, int]] = {}
+    targets_by_session: dict[str, set[str]] = {}
 
     @router.post("/v1/pap/prefill/decode-commit")
     async def commit(req: DecodeCommitRequest, raw_request: Request) -> dict[str, Any]:
         request_id = str(req.request_id)
-        async with commit_lock:
+        session_request_id = str(req.session_request_id or request_id)
+        session_lock = session_locks.setdefault(session_request_id, asyncio.Lock())
+        async with session_lock:
+            targets_by_session.setdefault(session_request_id, set()).add(request_id)
             acked_seq, acked_seq_len = acked_commit_state.get(request_id, (0, 0))
             if req.commit_seq <= acked_seq:
                 return {
@@ -88,7 +93,8 @@ def build_prefill_control_router() -> APIRouter:
         raw_request: Request,
     ) -> dict[str, Any]:
         request_id = str(req.request_id)
-        async with commit_lock:
+        session_lock = session_locks.setdefault(request_id, asyncio.Lock())
+        async with session_lock:
             engine_client = raw_request.app.state.engine_client
             result = await _call_engine_control_method(
                 engine_client,
@@ -100,7 +106,10 @@ def build_prefill_control_router() -> APIRouter:
             if result.get("released", False) or result.get("reason") == (
                 "unknown_or_released_lease"
             ):
-                acked_commit_state.pop(request_id, None)
+                targets = targets_by_session.pop(request_id, {request_id})
+                for target in targets:
+                    acked_commit_state.pop(target, None)
+        session_locks.pop(request_id, None)
         return result
 
     return router

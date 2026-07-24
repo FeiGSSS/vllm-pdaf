@@ -163,6 +163,7 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
     def _dispatch_deferred_decode_commit(commit: DeferredDecodeCommit) -> None:
         _get_commit_client().commit(
             request_id=commit.commit_request_id or commit.request_id,
+            session_request_id=commit.request_id,
             new_seq_len=commit.new_seq_len,
             new_token_ids=commit.token_ids,
             endpoint=commit.endpoint,

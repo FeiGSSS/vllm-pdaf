@@ -48,23 +48,17 @@ SIGNAL_READY_OUTPUT = 1
 SIGNAL_RELEASE_QKV = 2
 SIGNAL_RELEASE_OUTPUT = 3
 
-
-def _doorbell_bytes(slot_count: int) -> int:
-    return 2 * int(slot_count) * DOORBELL_RECORD_BYTES
+DOORBELL_BYTES = 2 * DOORBELL_RECORD_BYTES
 
 
-def _doorbell_record_offset(direction: int, slot_id: int, slot_count: int) -> int:
+def _doorbell_record_offset(direction: int) -> int:
     if direction not in (DIR_QKV, DIR_OUTPUT):
         raise ValueError(f"invalid PAP local fast direction: {direction}")
-    if slot_id < 0 or slot_id >= slot_count:
-        raise ValueError(f"invalid PAP local fast slot: {slot_id}")
-    return (direction * slot_count + slot_id) * DOORBELL_RECORD_BYTES
+    return direction * DOORBELL_RECORD_BYTES
 
 
 def _signal_index(
     direction: int,
-    slot_id: int,
-    slot_count: int,
     *,
     release: bool,
 ) -> int:
@@ -74,9 +68,7 @@ def _signal_index(
         kind = SIGNAL_RELEASE_OUTPUT if release else SIGNAL_READY_OUTPUT
     else:
         raise ValueError(f"invalid PAP local fast direction: {direction}")
-    if slot_id < 0 or slot_id >= slot_count:
-        raise ValueError(f"invalid PAP local fast slot: {slot_id}")
-    return kind * slot_count + slot_id
+    return kind
 
 
 @dataclass(frozen=True)

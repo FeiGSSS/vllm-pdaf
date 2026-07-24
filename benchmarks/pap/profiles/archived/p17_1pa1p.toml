@@ -84,7 +84,6 @@ metadata_lookup = "fast_key"
 attention_execution = "topology_derived_direct"
 direct_mailbox_output = true
 local_fast_stream_ordered = true
-local_fast_slot_count = 2
 decode_slot_plan_cache_limit = 256
 
 [runner]

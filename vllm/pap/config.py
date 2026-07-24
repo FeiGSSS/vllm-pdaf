@@ -223,7 +223,6 @@ class PAPRuntimeFeatures:
     """Operational PAP controls that do not select core runtime paths."""
 
     direct_mailbox_output: bool
-    local_fast_slot_count: int
     decode_slot_plan_cache_limit: int
     prefill_ipc_profile: bool
     prefill_torch_profile: bool
@@ -475,12 +474,6 @@ class PAPRuntimeConfig:
                 "PAP_DIRECT_MAILBOX_OUTPUT",
                 False,
             ),
-            local_fast_slot_count=_env_int(
-                env,
-                "PAP_LOCAL_FAST_SLOT_COUNT",
-                2,
-                minimum=1,
-            ),
             decode_slot_plan_cache_limit=_env_int(
                 env,
                 "PAP_DECODE_SLOT_PLAN_CACHE_LIMIT",
@@ -556,7 +549,7 @@ class PAPRuntimeConfig:
             timeout_s=_env_float(
                 env,
                 "PAP_DECODE_COMMIT_TIMEOUT",
-                0.2,
+                5.0,
                 minimum=0.0,
             ),
             queue_size=_env_int(
@@ -586,7 +579,7 @@ class PAPRuntimeConfig:
             flush_timeout_s=_env_float(
                 env,
                 "PAP_DECODE_COMMIT_FLUSH_TIMEOUT",
-                5.0,
+                15.0,
                 minimum=0.0,
             ),
         )

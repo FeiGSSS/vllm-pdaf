@@ -983,8 +983,24 @@ def test_unified_offload_exec_commit_waits_for_async_decode_token(
     commits = []
 
     class FakeCommitClient:
-        def commit(self, *, request_id, new_seq_len, new_token_ids, endpoint):
-            commits.append((request_id, new_seq_len, tuple(new_token_ids), endpoint))
+        def commit(
+            self,
+            *,
+            request_id,
+            session_request_id,
+            new_seq_len,
+            new_token_ids,
+            endpoint,
+        ):
+            commits.append(
+                (
+                    request_id,
+                    session_request_id,
+                    new_seq_len,
+                    tuple(new_token_ids),
+                    endpoint,
+                )
+            )
 
     monkeypatch.setattr(
         kv_registry_module,
@@ -1060,6 +1076,7 @@ def test_unified_offload_exec_commit_waits_for_async_decode_token(
     assert commits == [
         (
             "cmpl-req-a-0",
+            "req-a",
             2,
             (42,),
             "http://localhost:8100/v1/pap/prefill/decode-commit",
@@ -1080,7 +1097,15 @@ def test_attention_step_context_reuses_plan_and_publishes_once(
     commits = []
 
     class FakeCommitClient:
-        def commit(self, *, request_id, new_seq_len, new_token_ids, endpoint):
+        def commit(
+            self,
+            *,
+            request_id,
+            session_request_id,
+            new_seq_len,
+            new_token_ids,
+            endpoint,
+        ):
             commits.append((request_id, new_seq_len, tuple(new_token_ids), endpoint))
 
     registry = PAPAttentionRegistry(storage_device="cpu")
@@ -1415,7 +1440,15 @@ def test_unified_offload_exec_overlap_step_does_not_commit(
     class FakeCommitClient:
         enabled = True
 
-        def commit(self, *, request_id, new_seq_len, new_token_ids, endpoint):
+        def commit(
+            self,
+            *,
+            request_id,
+            session_request_id,
+            new_seq_len,
+            new_token_ids,
+            endpoint,
+        ):
             commits.append((request_id, new_seq_len, tuple(new_token_ids), endpoint))
 
     monkeypatch.setattr(

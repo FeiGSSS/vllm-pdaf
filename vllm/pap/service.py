@@ -282,7 +282,7 @@ def maybe_start_offload_exec_transport(
         return
     if transport is PAPOffloadExecTransport.LOCAL_FAST:
         logger.info(
-            "PAP Attention OFFLOAD_EXEC local_fast CUDA IPC ring "
+            "PAP Attention OFFLOAD_EXEC local_fast serial CUDA IPC buffer "
             "initialized local_rank=%d",
             local_rank,
         )

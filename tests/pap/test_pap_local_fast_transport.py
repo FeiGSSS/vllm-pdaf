@@ -16,6 +16,7 @@ from vllm.pap.transport.local import io as local_fast_io
 from vllm.pap.transport.local.endpoint import _open_or_create_doorbell
 from vllm.pap.transport.local.io import _LocalFastMessage
 from vllm.pap.transport.local.protocol import (
+    DOORBELL_BYTES,
     DTYPE_CODE_BFLOAT16,
     DIR_OUTPUT,
     DIR_QKV,
@@ -24,7 +25,6 @@ from vllm.pap.transport.local.protocol import (
     RECORD_FLAG_PLAN_FULL,
     RECORD_FLAG_PLAN_REF,
     _doorbell_ack,
-    _doorbell_bytes,
     _doorbell_read_header,
     _doorbell_read_metadata,
     _doorbell_read_record,
@@ -37,13 +37,12 @@ from vllm.pap.transport.local.transport import (
 )
 
 
-def test_local_fast_doorbell_slots_are_independent(tmp_path) -> None:
-    slot_count = 2
+def test_local_fast_doorbell_directions_are_independent(tmp_path) -> None:
     path = tmp_path / "doorbell"
-    fd, mm = _open_or_create_doorbell(str(path), _doorbell_bytes(slot_count))
+    fd, mm = _open_or_create_doorbell(str(path), DOORBELL_BYTES)
     try:
-        qkv_offset = _doorbell_record_offset(DIR_QKV, 0, slot_count)
-        output_offset = _doorbell_record_offset(DIR_OUTPUT, 1, slot_count)
+        qkv_offset = _doorbell_record_offset(DIR_QKV)
+        output_offset = _doorbell_record_offset(DIR_OUTPUT)
         _doorbell_write(
             mm,
             qkv_offset,
@@ -81,13 +80,12 @@ def test_local_fast_doorbell_slots_are_independent(tmp_path) -> None:
 
 def test_local_fast_signal_layout_is_unique() -> None:
     indices = {
-        _signal_index(direction, slot, 2, release=release)
+        _signal_index(direction, release=release)
         for direction in (DIR_QKV, DIR_OUTPUT)
-        for slot in range(2)
         for release in (False, True)
     }
 
-    assert indices == set(range(8))
+    assert indices == set(range(4))
 
 
 def test_local_fast_message_releases_once() -> None:
@@ -175,9 +173,9 @@ def test_local_fast_step_plan_is_built_once_and_output_is_descriptorless() -> No
 
 def test_local_fast_fixed_doorbell_record_needs_no_json(tmp_path) -> None:
     path = tmp_path / "doorbell-fixed"
-    fd, mm = _open_or_create_doorbell(str(path), _doorbell_bytes(1))
+    fd, mm = _open_or_create_doorbell(str(path), DOORBELL_BYTES)
     try:
-        offset = _doorbell_record_offset(DIR_QKV, 0, 1)
+        offset = _doorbell_record_offset(DIR_QKV)
         _doorbell_write(
             mm,
             offset,
@@ -227,9 +225,8 @@ def test_local_fast_prepares_descriptorless_output_gpu_wait(
     tmp_path,
     monkeypatch,
 ) -> None:
-    slot_count = 2
     path = tmp_path / "doorbell-output"
-    fd, mm = _open_or_create_doorbell(str(path), _doorbell_bytes(slot_count))
+    fd, mm = _open_or_create_doorbell(str(path), DOORBELL_BYTES)
     waits = []
     stream = object()
     monkeypatch.setattr(
@@ -248,10 +245,9 @@ def test_local_fast_prepares_descriptorless_output_gpu_wait(
     transport = object.__new__(PAPLocalFastTransport)
     transport.close = lambda: None
     transport.device = torch.device("cuda:0")
-    transport._slot_count = slot_count
-    transport._slot_bytes = 64
+    transport.buffer_bytes = 128
     transport._recv_buffer = torch.zeros(128, dtype=torch.uint8)
-    transport._signal_buffer = torch.zeros(4 * slot_count, dtype=torch.int32)
+    transport._signal_buffer = torch.zeros(4, dtype=torch.int32)
     transport._doorbell_mm = mm
     transport._deferred_cuda_trace = False
     transport._descriptorless_output_receives = 0
@@ -279,15 +275,13 @@ def test_local_fast_prepares_descriptorless_output_gpu_wait(
         assert message.tensor.dtype == torch.bfloat16
         assert transport._peer.expected_output_seq == 2
         assert transport._descriptorless_output_receives == 1
-        record_offset = _doorbell_record_offset(DIR_OUTPUT, 0, slot_count)
+        record_offset = _doorbell_record_offset(DIR_OUTPUT)
         assert _doorbell_read_header(mm, record_offset)[4] == 1
         assert len(waits) == 1
         signal, signal_index, seq, current_stream = waits[0]
         assert signal is transport._signal_buffer
         assert signal_index == _signal_index(
             DIR_OUTPUT,
-            0,
-            slot_count,
             release=False,
         )
         assert seq == 1

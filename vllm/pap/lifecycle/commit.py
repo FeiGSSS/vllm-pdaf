@@ -47,7 +47,7 @@ class DecodeCommitClient:
         self.timeout_s = (
             float(timeout_s)
             if timeout_s is not None
-            else float(os.environ.get("PAP_DECODE_COMMIT_TIMEOUT", "0.2"))
+            else float(os.environ.get("PAP_DECODE_COMMIT_TIMEOUT", "5.0"))
         )
         self.queue_size = (
             int(queue_size)
@@ -86,6 +86,8 @@ class DecodeCommitClient:
         self._acked_commit_seq_by_request: dict[str, int] = {}
         self._failed_commit_seq_by_request: dict[str, int] = {}
         self._failure_by_request: dict[str, str] = {}
+        self._targets_by_session: dict[str, set[str]] = {}
+        self._session_by_target: dict[str, str] = {}
         if self.enabled:
             self._ensure_worker()
 
@@ -112,6 +114,7 @@ class DecodeCommitClient:
         self,
         *,
         request_id: str,
+        session_request_id: str | None = None,
         new_seq_len: int,
         new_token_ids: Iterable[int],
         layer_complete: bool = True,
@@ -131,6 +134,21 @@ class DecodeCommitClient:
             return
         with self._pending_done:
             request_id = str(request_id)
+            session_request_id = str(session_request_id or request_id)
+            existing_session = self._session_by_target.get(request_id)
+            if (
+                existing_session is not None
+                and existing_session != session_request_id
+            ):
+                raise RuntimeError(
+                    "PAP decode commit target changed logical session "
+                    f"request_id={request_id} old_session={existing_session} "
+                    f"new_session={session_request_id}"
+                )
+            self._session_by_target[request_id] = session_request_id
+            self._targets_by_session.setdefault(session_request_id, set()).add(
+                request_id
+            )
             new_seq_len = int(new_seq_len)
             latest_seen = self._latest_seen_seq_len_by_request.get(request_id, -1)
             if new_seq_len <= latest_seen:
@@ -138,6 +156,7 @@ class DecodeCommitClient:
             commit_seq = self._latest_commit_seq_by_request.get(request_id, 0) + 1
             payload = {
                 "request_id": request_id,
+                "session_request_id": session_request_id,
                 "commit_seq": commit_seq,
                 "new_seq_len": new_seq_len,
                 "new_token_ids": [int(t) for t in new_token_ids],
@@ -180,13 +199,29 @@ class DecodeCommitClient:
     def flush_request(self, request_id: str, timeout_s: float | None = None) -> bool:
         """Wait for Prefill to ACK all commits issued for *request_id*."""
         if timeout_s is None:
-            timeout_s = float(os.environ.get("PAP_DECODE_COMMIT_FLUSH_TIMEOUT", "5.0"))
+            timeout_s = float(
+                os.environ.get("PAP_DECODE_COMMIT_FLUSH_TIMEOUT", "15.0")
+            )
         deadline = time.monotonic() + max(0.0, float(timeout_s))
         request_id = str(request_id)
         with self._pending_done:
-            target = self._latest_commit_seq_by_request.get(request_id, 0)
-            while self._acked_commit_seq_by_request.get(request_id, 0) < target:
-                if self._pending_by_request.get(request_id, 0) <= 0:
+            targets = self._targets_by_session.get(request_id)
+            if targets is None and request_id in self._latest_commit_seq_by_request:
+                targets = {request_id}
+            target_sequences = {
+                target: self._latest_commit_seq_by_request.get(target, 0)
+                for target in targets or ()
+            }
+            while any(
+                self._acked_commit_seq_by_request.get(target, 0) < target_seq
+                for target, target_seq in target_sequences.items()
+            ):
+                failed = any(
+                    self._acked_commit_seq_by_request.get(target, 0) < target_seq
+                    and self._pending_by_request.get(target, 0) <= 0
+                    for target, target_seq in target_sequences.items()
+                )
+                if failed:
                     return False
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
@@ -198,12 +233,20 @@ class DecodeCommitClient:
         """Drop duplicate-suppression state for a completed request."""
         with self._pending_done:
             request_id = str(request_id)
-            self._queued_item_by_request.pop(request_id, None)
-            self._latest_seen_seq_len_by_request.pop(request_id, None)
-            self._latest_commit_seq_by_request.pop(request_id, None)
-            self._acked_commit_seq_by_request.pop(request_id, None)
-            self._failed_commit_seq_by_request.pop(request_id, None)
-            self._failure_by_request.pop(request_id, None)
+            session_request_id = self._session_by_target.get(
+                request_id, request_id
+            )
+            targets = self._targets_by_session.pop(
+                session_request_id, {request_id}
+            )
+            for target in targets:
+                self._session_by_target.pop(target, None)
+                self._queued_item_by_request.pop(target, None)
+                self._latest_seen_seq_len_by_request.pop(target, None)
+                self._latest_commit_seq_by_request.pop(target, None)
+                self._acked_commit_seq_by_request.pop(target, None)
+                self._failed_commit_seq_by_request.pop(target, None)
+                self._failure_by_request.pop(target, None)
 
     def _run_worker(self) -> None:
         assert self._queue is not None

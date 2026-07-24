@@ -192,6 +192,82 @@ def test_commit_endpoint_deduplicates_acknowledged_sequence():
     assert calls == [("req-1", 17, (1, 2, 3))]
 
 
+def test_commit_endpoint_does_not_serialize_unrelated_sessions():
+    import anyio
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from vllm.pap.prefill_control_router import build_prefill_control_router
+
+    async def run_requests():
+        first_started = anyio.Event()
+        second_started = anyio.Event()
+        release_first = anyio.Event()
+        responses = {}
+
+        class StubEngineClient:
+            async def pap_apply_decode_commit_async(
+                self, request_id, new_seq_len, new_token_ids
+            ):
+                if request_id == "wrapped-a":
+                    first_started.set()
+                    await release_first.wait()
+                else:
+                    second_started.set()
+                return {"request_id": request_id, "applied": True}
+
+        app = FastAPI()
+        app.state.engine_client = StubEngineClient()
+        app.include_router(build_prefill_control_router())
+        transport = ASGITransport(app=app)
+
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+        ) as client:
+
+            async def post(name, payload):
+                responses[name] = await client.post(
+                    "/v1/pap/prefill/decode-commit",
+                    json=payload,
+                )
+
+            async with anyio.create_task_group() as task_group:
+                task_group.start_soon(
+                    post,
+                    "first",
+                    {
+                        "request_id": "wrapped-a",
+                        "session_request_id": "session-a",
+                        "commit_seq": 1,
+                        "new_seq_len": 10,
+                        "new_token_ids": [1],
+                    },
+                )
+                await first_started.wait()
+                task_group.start_soon(
+                    post,
+                    "second",
+                    {
+                        "request_id": "wrapped-b",
+                        "session_request_id": "session-b",
+                        "commit_seq": 1,
+                        "new_seq_len": 11,
+                        "new_token_ids": [2],
+                    },
+                )
+                with anyio.fail_after(0.5):
+                    await second_started.wait()
+                release_first.set()
+
+        return responses
+
+    responses = anyio.run(run_requests)
+
+    assert responses["first"].status_code == 200
+    assert responses["second"].status_code == 200
+
+
 def test_prefill_control_router_releases_lease():
     import anyio
     from fastapi import FastAPI
@@ -904,6 +980,49 @@ def test_commit_client_flush_request_waits_for_pending(monkeypatch):
     release_post.set()
     thread.join(timeout=1.0)
     assert flush_result == [True]
+
+
+def test_commit_client_flushes_wrapped_targets_by_session(monkeypatch):
+    import time
+    from threading import Event, Thread
+
+    post_started = Event()
+    release_post = Event()
+    posted = []
+    flush_result = []
+
+    def fake_post(url, json=None, timeout=None):
+        posted.append(json)
+        post_started.set()
+        release_post.wait(timeout=1.0)
+        return _CommitAckResponse(json["commit_seq"])
+
+    monkeypatch.setattr("vllm.pap.lifecycle.commit.httpx.post", fake_post)
+    client = DecodeCommitClient(
+        endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit"
+    )
+    client.commit(
+        request_id="chatcmpl-session-a-turn-1",
+        session_request_id="session-a",
+        new_seq_len=10,
+        new_token_ids=(1,),
+    )
+    assert post_started.wait(timeout=1.0)
+
+    thread = Thread(
+        target=lambda: flush_result.append(
+            client.flush_request("session-a", timeout_s=1.0)
+        )
+    )
+    thread.start()
+    time.sleep(0.05)
+    assert flush_result == []
+
+    release_post.set()
+    thread.join(timeout=1.0)
+    assert flush_result == [True]
+    assert posted[0]["request_id"] == "chatcmpl-session-a-turn-1"
+    assert posted[0]["session_request_id"] == "session-a"
 
 
 def test_commit_client_retries_until_ack(monkeypatch):

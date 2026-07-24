@@ -25,7 +25,6 @@ CURRENT_RUNTIME_ENV = {
     "PAP_OFFLOAD_EXEC_TRANSPORT": "local_fast",
     "PAP_OFFLOAD_KV_TRANSPORT": "cuda_ipc",
     "PAP_DIRECT_MAILBOX_OUTPUT": "1",
-    "PAP_LOCAL_FAST_SLOT_COUNT": "2",
     "PAP_DECODE_SLOT_PLAN_CACHE_LIMIT": "256",
     "PAP_ATTENTION_DISPATCH_QUEUE_SIZE": "0",
     "PAP_PREFILL_IPC_PROFILE": "0",
@@ -48,7 +47,8 @@ def test_runtime_config_preserves_python_defaults() -> None:
     assert config.mps.profile_id == "static_72_20"
     assert config.features.direct_mailbox_output is False
     assert config.attention.dispatch_mode is PAPAttentionDispatchMode.DIRECT
-    assert config.decode_commit.timeout_s == 0.2
+    assert config.decode_commit.timeout_s == 5.0
+    assert config.decode_commit.flush_timeout_s == 15.0
     assert config.decode_token.queue_size == 1024
     assert config.lease_release.max_attempts == 5
 
@@ -89,7 +89,6 @@ def test_runtime_config_accepts_conversation_affinity() -> None:
     [
         ({"PAP_TOPOLOGY": "0pa1p"}, "PAP_TOPOLOGY"),
         ({"PAP_TOPOLOGY": "2pa1p", "PAP_PA_COUNT": "1"}, "disagrees"),
-        ({"PAP_LOCAL_FAST_SLOT_COUNT": "0"}, "must be at least 1"),
         ({"PAP_OFFLOAD_EXEC_TRANSPORT": "nccl"}, "nixl_mailbox"),
         (
             {

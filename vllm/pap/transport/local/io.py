@@ -72,8 +72,8 @@ class _LocalFastMessage:
     The mailbox transport returns message objects with ``tensor``,
     ``release()``, and ``kind`` attributes; some call sites use
     ``recv_*_batch_message`` and then call ``.release()`` on the result.
-    For the stream-ordered transport, ``release()`` publishes the slot's GPU
-    release generation after the consumer work already queued on the stream.
+    For the stream-ordered transport, ``release()`` publishes the receive
+    buffer's GPU release generation after consumer work is queued on the stream.
     """
 
     msg_id: str
@@ -203,16 +203,17 @@ class _PAPLocalFastIOMixin:
         descriptor: PAPOffloadExecBatchDescriptor,
         tensor: torch.Tensor,
     ) -> int:
-        """Memcpy ``tensor`` into peer's recv buffer and ring the doorbell.
+        """Memcpy ``tensor`` into the peer buffer and publish its descriptor.
 
-        Returns the slot offset used in the peer's buffer.
+        Returns the fixed offset in the peer's buffer.
         """
 
         peer = self._require_peer()
         nbytes = int(tensor.numel() * tensor.element_size())
-        if nbytes > peer.slot_bytes:
+        if nbytes > peer.buffer_bytes:
             raise RuntimeError(
-                f"PAP local fast payload {nbytes}B exceeds peer slot {peer.slot_bytes}B"
+                f"PAP local fast payload {nbytes}B exceeds peer buffer "
+                f"{peer.buffer_bytes}B"
             )
         if nbytes > peer.peer_tensor.numel() * peer.peer_tensor.element_size():
             raise RuntimeError(
@@ -224,18 +225,15 @@ class _PAPLocalFastIOMixin:
 
         with peer.send_lock:
             seq = self._next_seq(peer, direction)
-            slot_id = (seq - 1) % peer.slot_count
-            offset = slot_id * peer.slot_bytes
-            last_by_slot = (
-                peer.last_qkv_seq_by_slot
+            offset = 0
+            previous_seq = (
+                peer.last_qkv_seq
                 if direction == DIR_QKV
-                else peer.last_output_seq_by_slot
+                else peer.last_output_seq
             )
-            previous_seq = last_by_slot[slot_id]
-            self._wait_control_slot(
+            self._wait_control_buffer(
                 peer=peer,
                 direction=direction,
-                slot_id=slot_id,
                 previous_seq=previous_seq,
             )
 
@@ -254,8 +252,6 @@ class _PAPLocalFastIOMixin:
                     self._signal_buffer,
                     _signal_index(
                         direction,
-                        slot_id,
-                        self._slot_count,
                         release=True,
                     ),
                     previous_seq,
@@ -286,8 +282,6 @@ class _PAPLocalFastIOMixin:
                 peer.peer_signal_tensor,
                 _signal_index(
                     direction,
-                    slot_id,
-                    peer.slot_count,
                     release=False,
                 ),
                 seq,
@@ -305,8 +299,11 @@ class _PAPLocalFastIOMixin:
             t_done = time.perf_counter()
             enqueue_ms = (t_doorbell_start - t_sync_start) * 1000.0
             doorbell_ms = (t_done - t_doorbell_start) * 1000.0
-            peer.source_refs[(direction, slot_id)] = src_bytes
-            last_by_slot[slot_id] = seq
+            peer.source_refs[direction] = src_bytes
+            if direction == DIR_QKV:
+                peer.last_qkv_seq = seq
+            else:
+                peer.last_output_seq = seq
 
         if self._trace:
             kind = "qkv" if direction == DIR_QKV else "output"
@@ -314,14 +311,13 @@ class _PAPLocalFastIOMixin:
                 "PAP local fast transport send trace kind=%s layer=%s "
                 "batch=%s memcpy_ms=%.3f enqueue_ms=%.3f "
                 "doorbell_ms=%.3f "
-                "slot=%d nbytes=%d seq=%d wire_flags=%d has_json=%d",
+                "nbytes=%d seq=%d wire_flags=%d has_json=%d",
                 kind,
                 descriptor.layer_name,
                 getattr(descriptor, "batch_id", ""),
                 (t_sync_start - t_memcpy_start) * 1000.0,
                 enqueue_ms,
                 doorbell_ms,
-                slot_id,
                 nbytes,
                 seq,
                 wire.flags,
@@ -333,7 +329,7 @@ class _PAPLocalFastIOMixin:
         self,
         *,
         direction: int,
-    ) -> tuple[int, int, int, int, dict[str, Any]]:
+    ) -> tuple[int, int, int, dict[str, Any]]:
         """Spin until peer has rung the doorbell for ``direction``."""
 
         peer = self._require_peer()
@@ -342,12 +338,7 @@ class _PAPLocalFastIOMixin:
         expected = (
             peer.expected_qkv_seq if direction == DIR_QKV else peer.expected_output_seq
         )
-        slot_id = (expected - 1) % self._slot_count
-        record_offset = _doorbell_record_offset(
-            direction,
-            slot_id,
-            self._slot_count,
-        )
+        record_offset = _doorbell_record_offset(direction)
         iters = 0
         t_start = time.perf_counter()
         while True:
@@ -357,8 +348,8 @@ class _PAPLocalFastIOMixin:
                 break
             if seq > expected:
                 raise RuntimeError(
-                    "PAP local fast control ring skipped a message: "
-                    f"expected={expected} observed={seq} slot={slot_id}"
+                    "PAP local fast control record skipped a message: "
+                    f"expected={expected} observed={seq}"
                 )
             iters += 1
             if iters < SPIN_TIGHT_ITERS:
@@ -379,6 +370,10 @@ class _PAPLocalFastIOMixin:
             )
         nbytes = record.nbytes
         offset = record.offset
+        if offset != 0:
+            raise RuntimeError(
+                f"PAP local fast serial buffer has invalid offset: {offset}"
+            )
         metadata = _doorbell_read_metadata(
             mm,
             record_offset,
@@ -420,8 +415,6 @@ class _PAPLocalFastIOMixin:
                     self._signal_buffer,
                     _signal_index(
                         direction,
-                        slot_id,
-                        self._slot_count,
                         release=False,
                     ),
                     seq,
@@ -434,8 +427,6 @@ class _PAPLocalFastIOMixin:
                 self._signal_buffer,
                 _signal_index(
                     direction,
-                    slot_id,
-                    self._slot_count,
                     release=False,
                 ),
                 seq,
@@ -450,27 +441,24 @@ class _PAPLocalFastIOMixin:
             kind = "qkv" if direction == DIR_QKV else "output"
             logger.info(
                 "PAP local fast transport recv trace kind=%s "
-                "spin_ms=%.3f slot=%d "
+                "spin_ms=%.3f "
                 "nbytes=%d offset=%d seq=%d wire_flags=%d has_json=%d",
                 kind,
                 (time.perf_counter() - t_start) * 1000.0,
-                slot_id,
                 nbytes,
                 offset,
                 seq,
                 int(metadata.get("_fixed_flags", 0)),
                 int(record.metadata_len > 0),
             )
-        return seq, slot_id, nbytes, offset, metadata
+        return seq, nbytes, offset, metadata
 
-    def _release_recv_slot(self, direction: int, slot_id: int, seq: int) -> None:
+    def _release_recv_buffer(self, direction: int, seq: int) -> None:
         peer = self._require_peer()
         stream_write_value32(
             peer.peer_signal_tensor,
             _signal_index(
                 direction,
-                slot_id,
-                peer.slot_count,
                 release=True,
             ),
             seq,
@@ -538,8 +526,8 @@ class _PAPLocalFastIOMixin:
         *,
         remote_address: str,
     ) -> None:
-        # In the local-fast path there is no separate "direct payload slot"
-        # ceremony; the batched path is already direct.
+        # The local-fast batched path is already direct and needs no separate
+        # payload reservation.
         self.send_qkv_batch(descriptor, qkv, remote_address=remote_address)
 
     def send_output_batch(
@@ -557,7 +545,7 @@ class _PAPLocalFastIOMixin:
         *,
         remote_address: str,
     ) -> Any:
-        seq, slot_id, nbytes, offset, metadata = self._recv_from_peer(
+        seq, nbytes, offset, metadata = self._recv_from_peer(
             direction=DIR_OUTPUT
         )
         self._validate_output_record(descriptor, metadata)
@@ -571,9 +559,8 @@ class _PAPLocalFastIOMixin:
             kind="attention_result_batch",
             tensor=tensor,
             metadata=_offload_exec_batch_descriptor_to_metadata(descriptor),
-            release_callback=lambda: self._release_recv_slot(
+            release_callback=lambda: self._release_recv_buffer(
                 DIR_OUTPUT,
-                slot_id,
                 seq,
             ),
         )
@@ -586,7 +573,7 @@ class _PAPLocalFastIOMixin:
         dtype: torch.dtype,
         remote_address: str,
     ) -> Any:
-        """Reserve the next output slot and enqueue its GPU-ready wait.
+        """Prepare the output buffer and enqueue its GPU-ready wait.
 
         The sealed step plan supplies output shape and dtype, so Projection
         does not need to wait for or read the per-layer output doorbell.  The
@@ -600,19 +587,15 @@ class _PAPLocalFastIOMixin:
 
         peer = self._require_peer()
         seq = int(peer.expected_output_seq)
-        slot_id = (seq - 1) % self._slot_count
-        offset = slot_id * self._slot_bytes
+        offset = 0
         nbytes = int(prod(shape) * torch.empty((), dtype=dtype).element_size())
-        if nbytes > self._slot_bytes:
+        if nbytes > self.buffer_bytes:
             raise RuntimeError(
-                f"PAP descriptorless output {nbytes}B exceeds slot {self._slot_bytes}B"
+                f"PAP descriptorless output {nbytes}B exceeds buffer "
+                f"{self.buffer_bytes}B"
             )
 
-        record_offset = _doorbell_record_offset(
-            DIR_OUTPUT,
-            slot_id,
-            self._slot_count,
-        )
+        record_offset = _doorbell_record_offset(DIR_OUTPUT)
         _doorbell_ack(self._doorbell_mm, record_offset, seq)
         stream = torch.cuda.current_stream(self.device)
         wait_trace = None
@@ -626,8 +609,6 @@ class _PAPLocalFastIOMixin:
                 self._signal_buffer,
                 _signal_index(
                     DIR_OUTPUT,
-                    slot_id,
-                    self._slot_count,
                     release=False,
                 ),
                 seq,
@@ -648,9 +629,8 @@ class _PAPLocalFastIOMixin:
             kind="attention_result_batch",
             tensor=tensor,
             metadata=_offload_exec_batch_descriptor_to_metadata(descriptor),
-            release_callback=lambda: self._release_recv_slot(
+            release_callback=lambda: self._release_recv_buffer(
                 DIR_OUTPUT,
-                slot_id,
                 seq,
             ),
         )
@@ -658,7 +638,7 @@ class _PAPLocalFastIOMixin:
     def recv_next_qkv_batch_message(
         self,
     ) -> tuple[PAPOffloadExecBatchDescriptor, Any]:
-        seq, slot_id, nbytes, offset, metadata = self._recv_from_peer(direction=DIR_QKV)
+        seq, nbytes, offset, metadata = self._recv_from_peer(direction=DIR_QKV)
         fixed_flags = int(metadata.get("_fixed_flags", 0))
         if fixed_flags & RECORD_FLAG_PLAN_REF:
             plan_id = f"{int(metadata['_plan_id']):016x}"
@@ -703,9 +683,8 @@ class _PAPLocalFastIOMixin:
             kind="attention_task_batch",
             tensor=tensor,
             metadata=descriptor_metadata,
-            release_callback=lambda: self._release_recv_slot(
+            release_callback=lambda: self._release_recv_buffer(
                 DIR_QKV,
-                slot_id,
                 seq,
             ),
         )
