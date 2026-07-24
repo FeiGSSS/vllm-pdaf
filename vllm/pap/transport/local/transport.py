@@ -60,7 +60,7 @@ from vllm.pap.transport.local.io import _PAPLocalFastIOMixin
 from vllm.pap.transport.local.protocol import (
     DOORBELL_BYTES,
     DIR_QKV,
-    _doorbell_read_header,
+    _doorbell_read_ack,
     _doorbell_record_offset,
     _doorbell_write,
     _WireMetadata,
@@ -358,7 +358,7 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         start = time.monotonic()
         iters = 0
         while True:
-            ack = _doorbell_read_header(peer.peer_doorbell_mm, record_offset)[4]
+            ack = _doorbell_read_ack(peer.peer_doorbell_mm, record_offset)
             if ack >= previous_seq:
                 return
             if time.monotonic() - start >= 30.0:

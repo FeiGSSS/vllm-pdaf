@@ -41,6 +41,7 @@ from vllm.pap.transport.local.protocol import (
     _doorbell_ack,
     _doorbell_read_metadata,
     _doorbell_read_record,
+    _doorbell_read_seq,
     _doorbell_record_offset,
     _dtype_from_name,
     _dtype_name,
@@ -221,8 +222,28 @@ class _PAPLocalFastIOMixin:
                 f"{peer.peer_tensor.numel() * peer.peer_tensor.element_size()}B"
             )
 
-        wire = self._wire_metadata(direction, descriptor, tensor)
         publish_descriptor = direction == DIR_QKV
+        if publish_descriptor:
+            wire = self._wire_metadata(direction, descriptor, tensor)
+        else:
+            if direction != DIR_OUTPUT:
+                raise ValueError(
+                    f"invalid PAP local transport direction: {direction}"
+                )
+            if tensor.ndim != 2 or tensor.dtype not in _DTYPE_TO_CODE:
+                raise RuntimeError(
+                    "PAP descriptorless output requires a rank-2 "
+                    "FP16/BF16/FP32 tensor"
+                )
+            plan_key = descriptor.batch_id_suffix or descriptor.batch_id
+            if (
+                self._sent_step_plans.get(plan_key) is None
+                and self._recv_plan_ids_by_key.get(plan_key) is None
+            ):
+                raise RuntimeError("PAP local output is missing its step plan")
+            self._output_descriptor_elisions += 1
+            self._binary_outputs += 1
+            wire = None
 
         with peer.send_lock:
             seq = self._next_seq(peer, direction)
@@ -258,7 +279,7 @@ class _PAPLocalFastIOMixin:
                     previous_seq,
                     stream,
                 )
-            t_memcpy_start = time.perf_counter()
+            t_memcpy_start = time.perf_counter() if self._trace else 0.0
             copy_span_name = None
             if self._deferred_cuda_trace:
                 copy_span_name = (
@@ -277,7 +298,7 @@ class _PAPLocalFastIOMixin:
                     end_deferred_cuda_span(copy_trace)
             else:
                 dst_bytes.copy_(src_bytes, non_blocking=True)
-            t_sync_start = time.perf_counter()
+            t_sync_start = time.perf_counter() if self._trace else 0.0
 
             stream_write_value32(
                 peer.peer_signal_tensor,
@@ -288,8 +309,9 @@ class _PAPLocalFastIOMixin:
                 seq,
                 stream,
             )
-            t_doorbell_start = time.perf_counter()
+            t_doorbell_start = time.perf_counter() if self._trace else 0.0
             if publish_descriptor:
+                assert wire is not None
                 self._write_doorbell_sync(
                     peer=peer,
                     direction=direction,
@@ -298,7 +320,7 @@ class _PAPLocalFastIOMixin:
                     offset=offset,
                     wire=wire,
                 )
-            t_done = time.perf_counter()
+            t_done = time.perf_counter() if self._trace else 0.0
             enqueue_ms = (t_doorbell_start - t_sync_start) * 1000.0
             doorbell_ms = (t_done - t_doorbell_start) * 1000.0
             peer.source_refs[direction] = src_bytes
@@ -309,6 +331,14 @@ class _PAPLocalFastIOMixin:
 
         if self._trace:
             kind = "qkv" if direction == DIR_QKV else "output"
+            wire_flags = (
+                wire.flags
+                if wire is not None
+                else (
+                    RECORD_FLAG_FIXED_TENSOR
+                    | RECORD_FLAG_OUTPUT_DESCRIPTORLESS
+                )
+            )
             logger.info(
                 "PAP local fast transport send trace kind=%s layer=%s "
                 "batch=%s memcpy_ms=%.3f enqueue_ms=%.3f "
@@ -322,8 +352,8 @@ class _PAPLocalFastIOMixin:
                 doorbell_ms,
                 nbytes,
                 seq,
-                wire.flags,
-                int(bool(wire.metadata)),
+                wire_flags,
+                int(bool(wire is not None and wire.metadata)),
             )
         return offset
 
@@ -344,8 +374,7 @@ class _PAPLocalFastIOMixin:
         iters = 0
         t_start = time.perf_counter()
         while True:
-            record = _doorbell_read_record(mm, record_offset)
-            seq = record.seq
+            seq = _doorbell_read_seq(mm, record_offset)
             if seq == expected:
                 break
             if seq > expected:
@@ -364,8 +393,9 @@ class _PAPLocalFastIOMixin:
                 time.sleep(max(SPIN_SLEEP_US, 0) / 1_000_000.0)
             else:
                 _sched_yield()
-        t_doorbell_seen = time.perf_counter()
+        record = _doorbell_read_record(mm, record_offset)
         if self._deferred_cuda_trace and direction == DIR_OUTPUT:
+            t_doorbell_seen = time.perf_counter()
             record_deferred_host_duration(
                 "output_doorbell_wait_wall_ms",
                 (t_doorbell_seen - t_start) * 1000.0,
@@ -376,10 +406,14 @@ class _PAPLocalFastIOMixin:
             raise RuntimeError(
                 f"PAP local fast serial buffer has invalid offset: {offset}"
             )
-        metadata = _doorbell_read_metadata(
-            mm,
-            record_offset,
-            record.metadata_len,
+        metadata = (
+            _doorbell_read_metadata(
+                mm,
+                record_offset,
+                record.metadata_len,
+            )
+            if record.metadata_len
+            else {}
         )
         if record.flags & RECORD_FLAG_FIXED_TENSOR:
             try:
@@ -476,7 +510,7 @@ class _PAPLocalFastIOMixin:
     ) -> torch.Tensor:
         shape = tuple(int(dim) for dim in metadata["shape"])
         dtype = _dtype_from_name(str(metadata["dtype"]))
-        expected_nbytes = int(prod(shape) * torch.empty((), dtype=dtype).element_size())
+        expected_nbytes = int(prod(shape) * (torch.finfo(dtype).bits // 8))
         if expected_nbytes != int(nbytes):
             raise RuntimeError(
                 f"PAP local fast payload size mismatch: metadata shape={shape} "
@@ -590,7 +624,7 @@ class _PAPLocalFastIOMixin:
         peer = self._require_peer()
         seq = int(peer.expected_output_seq)
         offset = 0
-        nbytes = int(prod(shape) * torch.empty((), dtype=dtype).element_size())
+        nbytes = int(prod(shape) * (torch.finfo(dtype).bits // 8))
         if nbytes > self.buffer_bytes:
             raise RuntimeError(
                 f"PAP descriptorless output {nbytes}B exceeds buffer "

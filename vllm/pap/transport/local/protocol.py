@@ -15,6 +15,7 @@ from typing import Any
 import torch
 
 DOORBELL_RECORD_STRUCT = struct.Struct("<QQQQQQQQiiII")
+DOORBELL_U64_STRUCT = struct.Struct("<Q")
 DOORBELL_HEADER_BYTES = DOORBELL_RECORD_STRUCT.size
 DOORBELL_RECORD_BYTES = int(
     os.environ.get("PAP_LOCAL_FAST_DOORBELL_RECORD_BYTES", str(64 * 1024))
@@ -98,8 +99,7 @@ def _layer_name_from_template(template: tuple[str, str], layer_index: int) -> st
 
 
 def _doorbell_read_record(mm: mmap.mmap, record_offset: int) -> _DoorbellRecord:
-    raw = bytes(mm[record_offset : record_offset + DOORBELL_HEADER_BYTES])
-    unpacked = DOORBELL_RECORD_STRUCT.unpack(raw)
+    unpacked = DOORBELL_RECORD_STRUCT.unpack_from(mm, int(record_offset))
     return _DoorbellRecord(
         seq=int(unpacked[0]),
         nbytes=int(unpacked[1]),
@@ -113,6 +113,14 @@ def _doorbell_read_record(mm: mmap.mmap, record_offset: int) -> _DoorbellRecord:
         dtype_code=int(unpacked[9]),
         flags=int(unpacked[10]),
     )
+
+
+def _doorbell_read_seq(mm: mmap.mmap, record_offset: int) -> int:
+    return int(DOORBELL_U64_STRUCT.unpack_from(mm, int(record_offset))[0])
+
+
+def _doorbell_read_ack(mm: mmap.mmap, record_offset: int) -> int:
+    return int(DOORBELL_U64_STRUCT.unpack_from(mm, int(record_offset) + 32)[0])
 
 
 def _doorbell_write(
@@ -169,19 +177,19 @@ def _doorbell_read_header(
     mm: mmap.mmap,
     record_offset: int,
 ) -> tuple[int, int, int, int, int]:
-    record = _doorbell_read_record(mm, record_offset)
+    unpacked = DOORBELL_RECORD_STRUCT.unpack_from(mm, int(record_offset))
     return (
-        record.seq,
-        record.nbytes,
-        record.offset,
-        record.metadata_len,
-        record.ack,
+        int(unpacked[0]),
+        int(unpacked[1]),
+        int(unpacked[2]),
+        int(unpacked[3]),
+        int(unpacked[4]),
     )
 
 
 def _doorbell_ack(mm: mmap.mmap, record_offset: int, seq: int) -> None:
     ack_offset = int(record_offset) + 32
-    mm[ack_offset : ack_offset + 8] = struct.pack("<Q", seq)
+    DOORBELL_U64_STRUCT.pack_into(mm, ack_offset, int(seq))
 
 
 def _doorbell_read_metadata(
