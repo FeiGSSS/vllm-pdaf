@@ -58,10 +58,14 @@ wave finish; waiting sources hand off only between complete request waves. This
 keeps the step cohort stable across every model layer without restoring the
 retired per-layer fallback. Admission is independent per PA.
 
-Projection itself keeps one global in-flight batch. Its vLLM asynchronous
-scheduler is disabled because that scheduler creates a two-entry model-step
-queue. Requests for different PAs remain shards of the same batch rather than
-independently pipelined batches.
+PAP keeps each vLLM scheduler batch intact. It does not split a batch into
+microbatches that can occupy different model layers concurrently. vLLM
+asynchronous scheduling remains enabled because its two-entry model-step queue
+overlaps scheduler, metadata, and output CPU work with the current full model
+forward. With `UniProcExecutor`, `execute_model` still completes all 36 layers
+before the next queued scheduler batch enters the model. Requests for
+different PAs remain same-step route shards, not independently pipelined
+microbatches.
 
 For every active step:
 

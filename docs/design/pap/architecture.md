@@ -52,14 +52,16 @@ independent.
 - The Gateway admits each PA to one Projection source for a complete request
   wave. Requests from that source may batch; another source takes ownership
   only after the active wave drains.
-- Each Projection engine owns exactly one in-flight global batch. vLLM async
-  scheduling is disabled for this role, so a second batch cannot be scheduled
-  behind the first. New requests accumulate for the next scheduler step.
+- PAP never splits one vLLM scheduler batch into independently inflight
+  microbatches. vLLM async scheduling remains enabled: it may prepare the next
+  scheduler step while the current full model forward runs, but
+  `UniProcExecutor` does not submit that next batch into the model until the
+  current 36-layer forward returns.
 - A global batch may contain requests routed to several PA groups. Projection
   computes QKV once for the whole batch, splits it only for same-step fan-out,
   lets the independent Attention services run concurrently, gathers every
   shard, and then continues the layer. These route groups are not microbatches
-  and are never interleaved with another Projection batch.
+  and cannot interleave layer execution with another Projection batch.
 - Different PA groups remain independent, so x:y routing does not serialize
   unrelated Attention services.
 - Conversation-affinity state lives in the Gateway and contains only the

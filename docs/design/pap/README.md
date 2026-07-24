@@ -62,8 +62,10 @@ asynchronous Prefill KV import, sealed manifest handoff, and Prefill-owned
 unified KV. The four-GPU AIPerf matrix is its only active runtime testbed.
 PAP-to-vLLM glue is isolated behind owner-specific adapters in
 `vllm/pap/integration/`; vLLM owners do not implement alternate PAP paths.
-Projection owns one global in-flight batch and may split it only for
-same-step PA fan-out.
+PAP keeps each vLLM scheduler batch intact and may split it only into
+same-step PA route shards. vLLM async scheduling remains enabled for CPU-side
+next-step preparation; PAP does not interleave microbatches across model
+layers.
 
 The current four-GPU development lane fixes PAP at 3PA1P and compares it with
 one-way PD under a 32-conversation, ten-turn randomized long-context workload.
@@ -98,8 +100,8 @@ and normalized experiments rather than a repository skill plan.
   `benchmarks/pap/aiperf/run_capacity_matrix.sh`
 - Current eager and Graph capacity report:
   [automatic Projection-memory milestone](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md)
-- Current single-Projection-batch regression:
-  [single global batch milestone](../../../benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md)
+- Archived Projection no-async negative control:
+  [scheduler-overlap diagnostic](../../../benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md)
 - Offline diagnostics: `benchmarks/pap/tooling/`, invoked through `tools/pap_*`
 - Test policy: [tests/pap/README.md](../../../tests/pap/README.md)
 - Runnable examples: [examples/pap/README.md](../../../examples/pap/README.md)

@@ -16,7 +16,7 @@ request-level SLO tiers, 32 conversations per point, and a lean
 topology-specific boundary scan. The current eager and piecewise CUDA Graph
 results are documented together in
 [`PAP-20260722-AIPERF-PROJECTION-AUTO`](experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
-The current one-global-batch Projection regression is recorded in
+The rejected Projection no-async treatment is retained as a negative control in
 [`PAP-20260724-SINGLE-PROJECTION-BATCH`](experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md).
 The initial integration result is documented in
 [`pap-pd-aiperf-four-gpu-results-20260716.md`](experiments/legacy/reports/pap-pd-aiperf-four-gpu-results-20260716.md).

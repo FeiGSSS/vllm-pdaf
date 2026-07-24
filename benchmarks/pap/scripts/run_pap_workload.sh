@@ -59,7 +59,7 @@ for removed_flag in \
         experiment_id="PAP-20260711-ATTENTION-COMBINE"
         ;;
       PAP_RUNNER_MICROBATCH_COUNT)
-        replacement="one in-flight global Projection batch"
+        replacement="one unsplit vLLM Projection scheduler batch"
         experiment_id="PAP-20260724-SINGLE-PROJECTION-BATCH"
         ;;
       PAP_MPS_MODE | PAP_BENCH_MPS_PROFILE)
@@ -786,14 +786,15 @@ audit_projection_scheduling() {
   local idx log_path
   for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     log_path="${RUN_LOG_DIR}/projection_${idx}.log"
-    if ! rg -q "Asynchronous scheduling is disabled" "${log_path}"; then
-      die "Projection ${idx} did not confirm single-batch scheduling"
+    if ! rg -q "Asynchronous scheduling is enabled" "${log_path}"; then
+      die "Projection ${idx} did not confirm asynchronous scheduling"
     fi
   done
   {
     printf 'STATUS=passed\n'
-    printf 'ASYNC_SCHEDULING=0\n'
-    printf 'MAX_INFLIGHT_BATCHES=1\n'
+    printf 'ASYNC_SCHEDULING=1\n'
+    printf 'SCHEDULER_QUEUE_DEPTH=2\n'
+    printf 'PAP_RUNNER_MICROBATCH_PIPELINE=0\n'
   } > "${RUN_ROOT}/projection_scheduling_audit.env"
 }
 
@@ -1268,7 +1269,7 @@ write_effective_config() {
       "${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS}"
     printf 'PAP_PROJECTION_MAX_NUM_SEQS=%q\n' \
       "${PAP_PROJECTION_MAX_NUM_SEQS}"
-    printf 'PAP_PROJECTION_ASYNC_SCHEDULING=%q\n' "0"
+    printf 'PAP_PROJECTION_ASYNC_SCHEDULING=%q\n' "1"
     printf 'EXECUTION_MODE=%q\n' "${PAP_EXECUTION_MODE}"
     printf 'PAP_CUDAGRAPH_COMPATIBLE=%q\n' \
       "${PAP_CUDAGRAPH_COMPATIBLE}"
@@ -1416,8 +1417,9 @@ metadata = {
     "direct_mailbox_output": os.environ["PAP_DIRECT_MAILBOX_OUTPUT"] == "1",
     "unified_md_fast_key": True,
     "local_fast_stream_ordered": True,
-    "projection_async_scheduling": False,
-    "projection_max_inflight_batches": 1,
+    "projection_async_scheduling": True,
+    "projection_scheduler_queue_depth": 2,
+    "projection_runner_microbatch_pipeline": False,
     "prefill_kv_async": True,
     "prefill_ipc_profile": os.environ["PAP_PREFILL_IPC_PROFILE"] == "1",
     "kv_handoff_mode": "sealed_manifest",
@@ -1937,7 +1939,6 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
       --max-num-seqs "${PAP_PROJECTION_MAX_NUM_SEQS}" \
       --max-num-batched-tokens \
         "${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS}" \
-      --no-async-scheduling \
       --tensor-parallel-size "${PAP_TP_SIZE}" \
       --gpu-memory-utilization "${PROJECTION_GPU_MEMORY_UTILIZATION}" \
       > "${RUN_LOG_DIR}/projection_${idx}.log" 2>&1 &

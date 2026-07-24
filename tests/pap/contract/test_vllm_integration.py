@@ -130,7 +130,7 @@ def test_runtime_settings_are_parsed_once_per_owner() -> None:
     assert worker.skip_local_attention_kernel_warmup
 
 
-def test_projection_rejects_multiple_inflight_batches(monkeypatch) -> None:
+def test_projection_allows_vllm_async_scheduling(monkeypatch) -> None:
     monkeypatch.setenv("PAP_PROJECTION_KV_UNAWARE", "1")
     config = SimpleNamespace(
         scheduler_config=SimpleNamespace(async_scheduling=True),
@@ -138,13 +138,6 @@ def test_projection_rejects_multiple_inflight_batches(monkeypatch) -> None:
         cache_config=SimpleNamespace(block_size=16),
     )
 
-    with pytest.raises(RuntimeError, match="--no-async-scheduling"):
-        PAPModelRunnerAdapter.from_vllm_config(
-            config,
-            supports_async_sampled_tokens=True,
-        )
-
-    config.scheduler_config.async_scheduling = False
     adapter = PAPModelRunnerAdapter.from_vllm_config(
         config,
         supports_async_sampled_tokens=True,

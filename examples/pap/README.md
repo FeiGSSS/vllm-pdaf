@@ -22,9 +22,10 @@ Roles:
   Prefill-owned blocks. The current path runs vLLM's Triton paged-decode kernel
   with one split-4 workspace shared by all layers in a decode step.
 - **Projection** runs the model decode path and sends current-token Q/K/V to
-  Attention. It does not receive Prefill prompt KV bytes. Each Projection
-  engine has one in-flight global batch; requests for different PA groups are
-  shards of that batch, not independently pipelined microbatches.
+  Attention. It does not receive Prefill prompt KV bytes. PAP keeps each vLLM
+  scheduler batch intact; requests for different PA groups are same-step
+  shards, not independently pipelined microbatches. vLLM async scheduling may
+  still prepare the next step on the CPU.
 
 Each Attention session sends decode commits and lease releases back to the
 Prefill in its own PA group. Attention creates a separate lazy mailbox
@@ -116,5 +117,5 @@ single topology or concurrency point. The old fixed-length O256/O128 and
 
 Current eager and piecewise results are recorded in the
 [automatic Projection-memory milestone](../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
-The one-global-batch runtime regression is recorded in the
-[single Projection batch milestone](../../benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md).
+The rejected no-async treatment is retained as an archived
+[scheduler-overlap diagnostic](../../benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md).

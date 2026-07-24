@@ -1,32 +1,32 @@
-# PAP single-Projection-batch milestone
+# PAP Projection no-async diagnostic
 
 ## Scope
 
-This experiment validates the PAP runtime after making the Projection
-scheduler obey one global in-flight batch:
+This experiment measured an overly strict interpretation of the PAP
+single-batch requirement:
 
 - runtime commit: `cb6fe35009905c32b52a8ad10b7e00d778c03679`;
 - Projection runs with vLLM asynchronous scheduling disabled;
-- one Projection step may fan QKV shards out to several PA peers, but those
-  shards all belong to the same global batch;
-- PA-specific Projection microbatches and inter-step Projection pipelining are
-  not allowed.
+- one Projection step may fan QKV shards out to several PA peers;
+- PAP-specific microbatching remained removed.
 
-This is a targeted C12 regression experiment, not a new PAP-versus-PD
-capacity scan. The latest full capacity comparison remains
+It is retained as a negative A/B diagnostic, not as a current runtime
+milestone or a new PAP-versus-PD capacity scan. The latest full capacity
+comparison remains
 `PAP-20260722-AIPERF-PROJECTION-AUTO`.
 
-## Why asynchronous scheduling is disabled
+## Interpretation correction
 
 In this vLLM tree, asynchronous scheduling changes
 `VllmConfig.max_concurrent_batches` from one to two. `EngineCore` then creates
-a two-entry batch queue and schedules the next model step before collecting
-the previous step's result. It is therefore a real two-step Projection
-pipeline, not merely an asynchronous CPU implementation of one batch.
+a two-entry scheduler queue. However, PAP uses `UniProcExecutor`, whose
+`execute_model` call runs the complete model forward before returning its
+asynchronous output handle. GPU work from adjacent steps remains stream
+ordered. The queue can overlap CPU scheduler, metadata, output, and sampling
+work; it cannot place two PAP microbatches at different model layers.
 
-The single-batch contract intentionally gives up that inter-step overlap.
-Optimization is restricted to work inside one step: same-batch PA fan-out,
-independent Attention execution, buffer reuse, and metadata reduction.
+Disabling vLLM asynchronous scheduling was therefore not required by the
+single-batch constraint.
 
 ## Workload and validity
 
@@ -50,7 +50,7 @@ Both treatment repetitions:
 - reported zero request errors or cancellations;
 - passed strict output, conversation-affinity, session-drain, and static-MPS
   audits;
-- confirmed `ASYNC_SCHEDULING=0` and `MAX_INFLIGHT_BATCHES=1`;
+- confirmed `ASYNC_SCHEDULING=0`;
 - used a clean tracked worktree at runtime commit `cb6fe3500`.
 
 ## Results
@@ -84,20 +84,17 @@ Both treatment runs remain within the Strict thresholds of TTFT p95 <= 5 s
 and ITL p95 <= 50 ms. R1 had an isolated ITL tail
 (`p99=82.27 ms`); R2 did not reproduce it (`p99=50.24 ms`).
 
-The separate same-shape GPU microbenchmark was flat at B1-B32 for Projection
-and Attention. The observed E2E change is therefore consistent with the
-expected scheduling tradeoff: removing the second in-flight model step
-eliminates CPU/GPU inter-step overlap, increasing steady decode latency by
-about 3.5 ms while keeping total throughput within 2% and improving the
-observed TTFT distribution.
+The observed E2E change is consistent with removing safe CPU/GPU scheduling
+overlap: steady decode latency increases by about 3.5 ms while total
+throughput remains within 2%. This result does not justify disabling async
+scheduling.
 
 ## Decision
 
-Accept the single global Projection batch as the runtime contract. It is a
-semantic simplification with a measured latency tradeoff, not an unconditional
-performance optimization.
+Reject the no-async treatment. Keep vLLM asynchronous scheduling enabled and
+retain this record only as a negative control.
 
-Future work must preserve one Projection batch and should target intra-step
-overlap or lower launch/control overhead. It must not reintroduce PA-specific
-Projection batches, inter-step batch queues, or cross-device batch
-pipelines.
+The actual invariant is narrower: PAP must not split one vLLM scheduler batch
+into independently inflight microbatches or interleave their layer execution.
+Same-step PA route shards and vLLM's CPU-side next-step preparation remain
+allowed.

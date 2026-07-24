@@ -31,10 +31,10 @@ bash benchmarks/pap/aiperf/run_capacity_matrix.sh
 Development runs select one topology and one concurrency point with the
 documented environment overrides. The standard PAP runtime regression is
 3PA1P C12 with one repetition; it still completes all 32 conversations and
-320 requests. The single-Projection-batch milestone used two repetitions to
-confirm the scheduling tradeoff. A release performance claim uses the same
-testbed with three repetitions; it does not introduce a second client or load
-shape.
+320 requests. The archived no-async diagnostic used two repetitions and
+showed why vLLM's safe scheduler overlap should remain enabled. A release
+performance claim uses the same testbed with three repetitions; it does not
+introduce a second client or load shape.
 
 ## Validity before performance
 

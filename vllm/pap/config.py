@@ -345,7 +345,7 @@ PAP_REMOVED_FLAGS = (
     ),
     PAPRemovedFlag(
         name="PAP_RUNNER_MICROBATCH_COUNT",
-        replacement="one in-flight global Projection batch",
+        replacement="one unsplit vLLM Projection scheduler batch",
         experiment_id="PAP-20260724-SINGLE-PROJECTION-BATCH",
     ),
     PAPRemovedFlag(

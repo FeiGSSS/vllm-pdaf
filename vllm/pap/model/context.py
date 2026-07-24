@@ -11,6 +11,8 @@ from typing import Any
 from vllm.distributed import get_tensor_model_parallel_rank
 from vllm.forward_context import get_forward_context, is_forward_context_available
 
+_PAP_FORWARD_BATCH_BASE_KEY = "_pap_model_forward_batch_base"
+
 
 def _attention_metadata_for_layer(metadata: Any, layer_name: str) -> Any | None:
     if isinstance(metadata, dict):
@@ -18,6 +20,14 @@ def _attention_metadata_for_layer(metadata: Any, layer_name: str) -> Any | None:
     if isinstance(metadata, list) and metadata:
         return metadata[0].get(layer_name)
     return None
+
+
+@dataclass(frozen=True, slots=True)
+class _PAPModelForwardBatchBase:
+    request_ids: tuple[str, ...]
+    num_scheduled_tokens: tuple[int, ...]
+    num_reqs: int
+    num_actual_tokens: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,31 +52,47 @@ class PAPModelForwardBatch:
         if not is_forward_context_available():
             return None
         forward_context = get_forward_context()
-        additional_kwargs = forward_context.additional_kwargs or {}
-        request_ids = tuple(
-            str(request_id)
-            for request_id in additional_kwargs.get("pap_request_ids") or ()
-        )
-        num_scheduled_tokens = tuple(
-            int(num_tokens)
-            for num_tokens in additional_kwargs.get("pap_num_scheduled_tokens") or ()
-        )
-        num_reqs = int(
-            additional_kwargs.get("pap_num_reqs") or len(num_scheduled_tokens)
-        )
-        num_actual_tokens = int(
-            additional_kwargs.get("pap_num_actual_tokens") or num_reqs
-        )
+        additional_kwargs = forward_context.additional_kwargs
+        if additional_kwargs is None:
+            additional_kwargs = {}
+        base = additional_kwargs.get(_PAP_FORWARD_BATCH_BASE_KEY)
+        if base is None:
+            base = _PAPModelForwardBatchBase(
+                request_ids=tuple(
+                    str(request_id)
+                    for request_id in additional_kwargs.get("pap_request_ids") or ()
+                ),
+                num_scheduled_tokens=tuple(
+                    int(num_tokens)
+                    for num_tokens in (
+                        additional_kwargs.get("pap_num_scheduled_tokens") or ()
+                    )
+                ),
+                num_reqs=int(
+                    additional_kwargs.get("pap_num_reqs")
+                    or len(
+                        additional_kwargs.get("pap_num_scheduled_tokens") or ()
+                    )
+                ),
+                num_actual_tokens=int(
+                    additional_kwargs.get("pap_num_actual_tokens")
+                    or additional_kwargs.get("pap_num_reqs")
+                    or len(
+                        additional_kwargs.get("pap_num_scheduled_tokens") or ()
+                    )
+                ),
+            )
+            additional_kwargs[_PAP_FORWARD_BATCH_BASE_KEY] = base
         return cls(
             additional_kwargs=additional_kwargs,
             attention_metadata=_attention_metadata_for_layer(
                 forward_context.attn_metadata,
                 layer_name,
             ),
-            request_ids=request_ids,
-            num_scheduled_tokens=num_scheduled_tokens,
-            num_reqs=num_reqs,
-            num_actual_tokens=num_actual_tokens,
+            request_ids=base.request_ids,
+            num_scheduled_tokens=base.num_scheduled_tokens,
+            num_reqs=base.num_reqs,
+            num_actual_tokens=base.num_actual_tokens,
         )
 
 

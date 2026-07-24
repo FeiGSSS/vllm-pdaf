@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "kind": "pap-experiment-record",
-  "status": "current",
+  "status": "archived",
   "experiment_id": "PAP-20260724-SINGLE-PROJECTION-BATCH",
-  "title": "PAP single global Projection batch",
+  "title": "PAP Projection no-async diagnostic",
   "recorded_at": "2026-07-24",
-  "hypothesis": "PAP can enforce one global in-flight Projection batch, retain same-step multi-PA fan-out, and preserve correctness with bounded performance cost.",
+  "hypothesis": "Disabling vLLM asynchronous scheduling is required to prevent PAP microbatch layer interleaving.",
   "evidence": "controlled",
-  "decision": "accepted",
+  "decision": "rejected",
   "validity": {
     "status": "valid",
     "reasons": [
@@ -21,7 +21,7 @@
   },
   "treatment": {
     "status": "present",
-    "description": "PAP 3PA1P C12 with Projection asynchronous scheduling disabled and one in-flight global batch",
+    "description": "PAP 3PA1P C12 with Projection asynchronous scheduling disabled",
     "run_ids": [
       "20260724_cb6fe3500_single_projection_batch_c12"
     ]
@@ -82,7 +82,7 @@
       "direction": "higher-is-better"
     }
   ],
-  "conclusion": "One global Projection batch is correct and operational: both C12 repetitions completed 320/320 requests and passed all audits. Relative to the previous two-batch scheduler, mean throughput changes by -1.98% and TTFT p95 by -12.30%, while ITL p95 increases by 10.16% because inter-step scheduler overlap is intentionally removed.",
+  "conclusion": "Both no-async C12 repetitions completed correctly, but the premise was wrong: vLLM async scheduling does not split or layer-interleave PAP microbatches under UniProcExecutor. Disabling it removes safe scheduler and output overlap, increasing mean ITL by 10.00%; the treatment is rejected and retained only as a negative control.",
   "supersedes": [],
   "superseded_by": null,
   "raw_artifacts": [
@@ -92,7 +92,7 @@
         "root_id": "pap-worktree",
         "relative_path": "benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md"
       },
-      "sha256": "4c5722f6c6ca23e3126775d90e9d56a236d3da3826ef6a752c2593c0f07520a1"
+      "sha256": "c52afbc75f86f711d6aa761f21ca8f7ec1ddce3d42fc2d23ada97b79058f59a1"
     },
     {
       "name": "aiperf-profile-r1",
@@ -114,7 +114,7 @@
   "tags": [
     "aiperf",
     "projection",
-    "single-batch",
-    "regression"
+    "async-scheduling",
+    "negative-control"
   ]
 }

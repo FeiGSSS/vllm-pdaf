@@ -349,6 +349,11 @@ class PAPProjectionAttentionAdapter:
     _direct_mailbox_output: bool = field(init=False, repr=False)
     _trace_offload_exec: bool = field(init=False, repr=False)
     _debug_decision: bool = field(init=False, repr=False)
+    _prepared_batch: PAPModelForwardBatch | None = field(
+        default=None,
+        init=False,
+        repr=False,
+    )
     last_projection_timeline: dict[str, Any] | None = field(
         default=None,
         init=False,
@@ -366,6 +371,7 @@ class PAPProjectionAttentionAdapter:
     def begin_step(self) -> None:
         """Reset per-forward Projection diagnostics."""
         self.last_projection_timeline = None
+        self._prepared_batch = None
 
     def direct_qkv_send_enabled(self) -> bool:
         """Whether the current runtime accepts the packed QKV buffer."""
@@ -377,6 +383,7 @@ class PAPProjectionAttentionAdapter:
 
     def should_execute(self) -> bool:
         """Return whether the current forward is a valid PAP decode batch."""
+        self._prepared_batch = None
 
         def reject(reason: str) -> bool:
             if self._debug_decision:
@@ -436,6 +443,7 @@ class PAPProjectionAttentionAdapter:
                 "attention KV not ready "
                 f"request_ids={active_request_ids} installed={tuple(installed)[:4]}"
             )
+        self._prepared_batch = batch
         return True
 
     def execute(
@@ -452,7 +460,7 @@ class PAPProjectionAttentionAdapter:
         reuse_query_output_buffer: bool = False,
     ) -> tuple[torch.Tensor, list[Any]]:
         """Offload one decode Attention layer and return its output."""
-        batch = PAPModelForwardBatch.current(self.layer_name)
+        batch = self._prepared_batch or PAPModelForwardBatch.current(self.layer_name)
         if batch is None:
             raise RuntimeError("PAP attention requires forward context")
         attn_metadata = batch.attention_metadata

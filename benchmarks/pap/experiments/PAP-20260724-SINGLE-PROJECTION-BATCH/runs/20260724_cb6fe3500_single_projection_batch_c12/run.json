@@ -175,7 +175,7 @@
     },
     "runtime": {
       "status": "passed",
-      "detail": "Both Projection launches confirmed async scheduling off and one in-flight batch.",
+      "detail": "Both Projection launches confirmed asynchronous scheduling was disabled for this negative-control treatment.",
       "evidence": [
         {
           "root_id": "pap-worktree",
@@ -233,7 +233,7 @@
         "root_id": "pap-worktree",
         "relative_path": "benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md"
       },
-      "sha256": "4c5722f6c6ca23e3126775d90e9d56a236d3da3826ef6a752c2593c0f07520a1"
+      "sha256": "c52afbc75f86f711d6aa761f21ca8f7ec1ddce3d42fc2d23ada97b79058f59a1"
     },
     {
       "name": "aiperf-profile-r1",

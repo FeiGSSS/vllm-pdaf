@@ -50,8 +50,8 @@ The current request path is:
 2. Prefill processes the prompt, owns all paged KV blocks, and publishes one
    sealed generation-bound manifest to its colocated Attention service.
 3. Projection runs the KV-unaware decode path and sends current-step Q/K/V.
-   It owns one global in-flight batch and may fan shards from that batch out
-   to several PA groups.
+   PAP keeps the vLLM scheduler batch intact and may fan same-step route
+   shards from that batch out to several PA groups.
 4. Attention appends K/V into the Prefill-owned blocks, executes one
    step-level Triton paged-decode plan across the model layers, and returns the
    Attention output.
@@ -123,13 +123,13 @@ independent PD topologies are used for comparison. This is controlled
 single-repetition development evidence, not a release claim. See the
 [current milestone](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
 
-The subsequent C12 runtime guard validates the stricter one-global-batch
-Projection contract. Two runs completed 640/640 requests with every audit
-passing. Relative to the earlier vLLM two-step scheduling queue, mean
-throughput changes by -1.98% and TTFT p95 by -12.30%, while ITL p95 increases
-by 10.16%. This is an accepted semantic simplification with a measured
-inter-step-overlap cost, not an unconditional speedup. The component probe
-attributes 93.2% of the B4-to-B8 per-layer growth to paged Attention.
+The subsequent C12 no-async diagnostic completed 640/640 requests, but tested
+an overly strict interpretation of the single-batch requirement. Disabling
+vLLM async scheduling increased ITL p95 by 10.16% and is rejected: that queue
+only overlaps scheduler/metadata/output CPU work with a complete model
+forward; it does not interleave PAP microbatches across model layers. The
+component probe independently attributes 93.2% of the B4-to-B8 per-layer
+growth to paged Attention.
 
 ## Remaining work
 
@@ -141,10 +141,10 @@ attributes 93.2% of the B4-to-B8 per-layer growth to paged Attention.
    consistent latency or goodput benefit worth changing the eager default.
 4. Keep same-host xPAyP and cross-host NIXL source-compatible, but do not claim
    performance or fresh E2E support until those lanes are explicitly rerun.
-5. Optimize only inside the one global Projection step: same-batch PA
-   fan-out, independent Attention execution, buffer reuse, and lower
-   launch/control overhead. Do not restore inter-step or PA-specific batch
-   pipelines.
+5. Preserve vLLM's safe next-step CPU overlap while optimizing same-batch PA
+   fan-out, independent Attention execution, buffer reuse, metadata reuse, and
+   lower launch/control overhead. Do not restore PAP microbatch pipelines or
+   layer-level interleaving between batches.
 6. Continue owner-driven splits in unified-KV and transport internals only
    when they simplify a concrete feature; do not restore retired experiment
    selectors or per-layer scheduling paths.

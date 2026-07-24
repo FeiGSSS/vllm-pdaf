@@ -642,7 +642,6 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
         --port "$projection_port" \
         --host 127.0.0.1 \
         --enforce-eager \
-        --no-async-scheduling \
         --generation-config vllm \
         --enable-request-id-headers \
         --max-model-len "$MAX_MODEL_LEN" \
