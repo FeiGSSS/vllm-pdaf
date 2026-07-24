@@ -37,6 +37,7 @@ from vllm.pap.transport.local.protocol import (
     RECORD_FLAG_OUTPUT_DESCRIPTORLESS,
     RECORD_FLAG_PLAN_FULL,
     RECORD_FLAG_PLAN_REF,
+    RECORD_FLAG_STEP_PREPARE,
     _doorbell_ack,
     _doorbell_read_metadata,
     _doorbell_read_record,
@@ -253,6 +254,11 @@ class _PAPLocalFastIOMixin:
                 if direction == DIR_QKV
                 else peer.last_output_seq
             )
+            previous_payload_seq = (
+                peer.last_qkv_payload_seq
+                if direction == DIR_QKV
+                else previous_seq
+            )
             if publish_descriptor:
                 self._wait_control_buffer(
                     peer=peer,
@@ -273,14 +279,14 @@ class _PAPLocalFastIOMixin:
                 stream = current_stream
             else:
                 stream.wait_stream(current_stream)
-            if previous_seq:
+            if previous_payload_seq:
                 stream_wait_value32(
                     self._signal_buffer,
                     _signal_index(
                         direction,
                         release=True,
                     ),
-                    previous_seq,
+                    previous_payload_seq,
                     stream,
                 )
             t_memcpy_start = time.perf_counter() if self._trace else 0.0
@@ -338,6 +344,7 @@ class _PAPLocalFastIOMixin:
             peer.source_refs[direction] = src_bytes
             if direction == DIR_QKV:
                 peer.last_qkv_seq = seq
+                peer.last_qkv_payload_seq = seq
             else:
                 peer.last_output_seq = seq
 
@@ -427,6 +434,7 @@ class _PAPLocalFastIOMixin:
             if record.metadata_len
             else {}
         )
+        is_step_prepare = bool(record.flags & RECORD_FLAG_STEP_PREPARE)
         if record.flags & RECORD_FLAG_FIXED_TENSOR:
             try:
                 dtype = _CODE_TO_DTYPE[record.dtype_code]
@@ -453,7 +461,9 @@ class _PAPLocalFastIOMixin:
                 if direction == DIR_QKV
                 else "output_ready_wait_gpu_ms"
             )
-        if ready_span_name is not None:
+        if is_step_prepare:
+            pass
+        elif ready_span_name is not None:
             ready_trace = begin_deferred_cuda_span(
                 ready_span_name,
                 stream,
@@ -500,6 +510,70 @@ class _PAPLocalFastIOMixin:
                 int(record.metadata_len > 0),
             )
         return seq, nbytes, offset, metadata
+
+    def send_step_prepare(
+        self,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        *,
+        dtype: torch.dtype,
+        remote_address: str,
+    ) -> None:
+        """Publish one payload-free step plan before layer-0 QKV is ready."""
+        del remote_address
+        dtype_code = _DTYPE_TO_CODE.get(dtype)
+        layer_info = _layer_index_and_template(descriptor.layer_name)
+        if dtype_code is None or layer_info is None:
+            raise RuntimeError("PAP step prepare requires a supported layer dtype")
+        descriptor_metadata = self._descriptor_metadata(DIR_QKV, descriptor)
+        try:
+            plan_id = int(str(descriptor_metadata["p"]), 16)
+        except (KeyError, ValueError) as exc:
+            raise RuntimeError("PAP step prepare is missing its plan id") from exc
+        plan_flag = (
+            RECORD_FLAG_PLAN_FULL
+            if int(descriptor_metadata.get("v", 0)) == 4
+            else RECORD_FLAG_PLAN_REF
+        )
+        peer = self._require_peer()
+        with peer.send_lock:
+            seq = self._next_seq(peer, DIR_QKV)
+            self._wait_control_buffer(
+                peer=peer,
+                direction=DIR_QKV,
+                previous_seq=peer.last_qkv_seq,
+            )
+            self._write_doorbell_sync(
+                peer=peer,
+                direction=DIR_QKV,
+                seq=seq,
+                nbytes=0,
+                offset=0,
+                wire=_WireMetadata(
+                    metadata={"descriptor": descriptor_metadata},
+                    plan_id=plan_id,
+                    shape=(descriptor.item_count, 0),
+                    layer_index=layer_info[0],
+                    dtype_code=dtype_code,
+                    flags=(
+                        RECORD_FLAG_FIXED_TENSOR
+                        | RECORD_FLAG_STEP_PREPARE
+                        | plan_flag
+                    ),
+                ),
+            )
+            peer.last_qkv_seq = seq
+
+    def set_step_prepare_handler(self, handler: Any) -> None:
+        """Install the Attention-owned step preparation callback."""
+        self._step_prepare_handler = handler
+
+    def output_receive_stream(self) -> torch.cuda.Stream:
+        """Return the peer-local stream used for output wait and scatter."""
+        return self._output_receive_stream
+
+    def step_prepare_stream(self) -> torch.cuda.Stream:
+        """Return the Attention-local stream used for step preparation."""
+        return self._step_prepare_stream
 
     def _release_recv_buffer(self, direction: int, seq: int) -> None:
         peer = self._require_peer()
@@ -700,7 +774,41 @@ class _PAPLocalFastIOMixin:
     def recv_next_qkv_batch_message(
         self,
     ) -> tuple[PAPOffloadExecBatchDescriptor, Any]:
-        seq, nbytes, offset, metadata = self._recv_from_peer(direction=DIR_QKV)
+        while True:
+            seq, nbytes, offset, metadata = self._recv_from_peer(
+                direction=DIR_QKV
+            )
+            descriptor, descriptor_metadata = self._decode_qkv_descriptor(
+                metadata
+            )
+            if not (
+                int(metadata.get("_fixed_flags", 0))
+                & RECORD_FLAG_STEP_PREPARE
+            ):
+                break
+            handler = self._step_prepare_handler
+            if handler is not None:
+                handler(
+                    descriptor,
+                    _dtype_from_name(str(metadata["dtype"])),
+                )
+        tensor = self._materialize_recv(nbytes=nbytes, offset=offset, metadata=metadata)
+        message = _LocalFastMessage(
+            msg_id=descriptor.qkv_tensor_id,
+            kind="attention_task_batch",
+            tensor=tensor,
+            metadata=descriptor_metadata,
+            release_callback=lambda: self._release_recv_buffer(
+                DIR_QKV,
+                seq,
+            ),
+        )
+        return descriptor, message
+
+    def _decode_qkv_descriptor(
+        self,
+        metadata: dict[str, Any],
+    ) -> tuple[PAPOffloadExecBatchDescriptor, dict[str, Any]]:
         fixed_flags = int(metadata.get("_fixed_flags", 0))
         if fixed_flags & RECORD_FLAG_PLAN_REF:
             plan_id = f"{int(metadata['_plan_id']):016x}"
@@ -739,18 +847,7 @@ class _PAPLocalFastIOMixin:
         if received_plan_id > 0:
             plan_key = descriptor.batch_id_suffix or descriptor.batch_id
             self._recv_plan_ids_by_key[plan_key] = f"{received_plan_id:016x}"
-        tensor = self._materialize_recv(nbytes=nbytes, offset=offset, metadata=metadata)
-        message = _LocalFastMessage(
-            msg_id=descriptor.qkv_tensor_id,
-            kind="attention_task_batch",
-            tensor=tensor,
-            metadata=descriptor_metadata,
-            release_callback=lambda: self._release_recv_buffer(
-                DIR_QKV,
-                seq,
-            ),
-        )
-        return descriptor, message
+        return descriptor, descriptor_metadata
 
     # ------------------------------------------------------------------
     # Cleanup (best-effort; daemon process exit will reclaim resources)

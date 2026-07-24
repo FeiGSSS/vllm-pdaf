@@ -175,6 +175,8 @@ class PAPAttentionStepContext:
     slot_tensor: torch.Tensor | None = None
     metadata: Any | None = None
     paged_decode_workspace: PAPPagedDecodeWorkspace | None = None
+    prepare_event: Any | None = None
+    prepare_event_waited: bool = False
     completed_layers: set[str] = field(default_factory=set)
     kv_ready_published: bool = False
     lock: RLock = field(default_factory=RLock, repr=False)

@@ -24,6 +24,7 @@ from vllm.pap.transport.local.protocol import (
     RECORD_FLAG_OUTPUT_DESCRIPTORLESS,
     RECORD_FLAG_PLAN_FULL,
     RECORD_FLAG_PLAN_REF,
+    RECORD_FLAG_STEP_PREPARE,
     _doorbell_ack,
     _doorbell_read_header,
     _doorbell_read_metadata,
@@ -204,6 +205,53 @@ def test_local_fast_step_plan_is_built_once_and_output_is_descriptorless() -> No
     assert transport._binary_qkv_refs == 1
     assert transport._binary_outputs == 1
     assert transport._json_records == 1
+
+
+def test_local_fast_consumes_step_prepare_before_qkv() -> None:
+    transport = object.__new__(PAPLocalFastTransport)
+    transport.close = lambda: None
+    prepared = []
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="model.layers.0.self_attn.attn",
+        items=(),
+        batch_id_suffix="req-a@7",
+        metadata_template={
+            "r": ("req-a",),
+            "s": (7,),
+            "a": (0.125,),
+        },
+    )
+    records = iter(
+        (
+            (
+                1,
+                0,
+                0,
+                {
+                    "dtype": "bfloat16",
+                    "_fixed_flags": RECORD_FLAG_STEP_PREPARE,
+                },
+            ),
+            (2, 8, 0, {"dtype": "bfloat16", "_fixed_flags": 0}),
+        )
+    )
+    transport._recv_from_peer = lambda **_kwargs: next(records)
+    transport._decode_qkv_descriptor = lambda _metadata: (
+        descriptor,
+        {"descriptor": True},
+    )
+    tensor = torch.zeros((1, 4), dtype=torch.bfloat16)
+    transport._materialize_recv = lambda **_kwargs: tensor
+    transport._step_prepare_handler = (
+        lambda received, dtype: prepared.append((received, dtype))
+    )
+
+    received, message = transport.recv_next_qkv_batch_message()
+
+    assert prepared == [(descriptor, torch.bfloat16)]
+    assert received is descriptor
+    assert message.tensor is tensor
+    assert message.metadata == {"descriptor": True}
 
 
 def test_local_fast_fixed_doorbell_record_needs_no_json(tmp_path) -> None:

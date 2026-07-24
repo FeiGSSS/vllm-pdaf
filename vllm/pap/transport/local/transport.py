@@ -126,6 +126,7 @@ class _PeerState:
     expected_output_seq: int = 1
     last_qkv_seq: int = 0
     last_output_seq: int = 0
+    last_qkv_payload_seq: int = 0
     source_refs: dict[int, torch.Tensor] = field(default_factory=dict)
     send_lock: threading.Lock = field(default_factory=threading.Lock)
 
@@ -179,6 +180,8 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
                 device=self.device,
             )
             self._qkv_fanout_stream = torch.cuda.Stream(device=self.device)
+            self._output_receive_stream = torch.cuda.Stream(device=self.device)
+            self._step_prepare_stream = torch.cuda.Stream(device=self.device)
         # Pin the underlying storage lifetime: hold a reference to the
         # untyped storage so the IPC handle stays valid until we drop it.
         self._recv_storage = self._recv_buffer.untyped_storage()
@@ -214,6 +217,7 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         self._binary_outputs = 0
         self._json_records = 0
         self._stats_reported = False
+        self._step_prepare_handler: Any | None = None
 
     # ------------------------------------------------------------------
     # Metadata exchange
@@ -438,6 +442,9 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
             self._signal_storage = None
             self._signal_buffer = None
             self._qkv_fanout_stream = None
+            self._output_receive_stream = None
+            self._step_prepare_stream = None
+            self._step_prepare_handler = None
 
     def __enter__(self) -> PAPLocalFastTransport:
         return self

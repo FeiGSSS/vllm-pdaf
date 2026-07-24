@@ -21,6 +21,7 @@ from vllm.pap.deferred_cuda_trace import (
 from vllm.pap.kv.decode_state import _DEFERRED_CUDA_TRACE_ENABLED
 from vllm.pap.kv.metadata import (
     PAPPagedFlashMetadata,
+    _coerce_block_id,
     build_unified_paged_flash_step_metadata,
 )
 from vllm.pap.kv.models import PAPUnifiedPagedKVState
@@ -157,6 +158,82 @@ def _offload_exec_batch_rows(
     return request_ids, steps, scales
 
 
+def prepare_offload_exec_step(
+    *,
+    registry: PAPAttentionRegistry,
+    descriptor: Any,
+    dtype: torch.dtype,
+) -> None:
+    """Prepare QKV-independent Attention state before layer-0 QKV arrives."""
+    request_ids, steps, scales = _offload_exec_batch_rows(descriptor)
+    (
+        default_q_size,
+        default_kv_size,
+        num_heads,
+        num_kv_heads,
+        head_dim,
+    ) = registry.offload_exec_shape_defaults
+    context = registry.get_or_create_attention_step_context(
+        request_ids=request_ids,
+        decode_seq_lens=steps,
+        scales=scales,
+        layer_name=str(descriptor.layer_name),
+        default_q_size=default_q_size,
+        default_kv_size=default_kv_size,
+        num_heads=num_heads,
+        num_kv_heads=num_kv_heads,
+        head_dim=head_dim,
+    )
+    with context.lock:
+        if context.prepare_event is not None:
+            return
+        states = context.layer_states[str(descriptor.layer_name)]
+        if context.slot_tensor is None and context.active_indices:
+            slots: list[int] = []
+            for index in context.active_indices:
+                state = states[index]
+                position = context.prior_seq_lens[index]
+                block_size = int(state.block_size)
+                logical_block = int(position) // block_size
+                if logical_block >= len(state.block_ids):
+                    raise RuntimeError(
+                        "PAP step prepare slot exceeds sealed block table"
+                    )
+                physical_block = _coerce_block_id(
+                    state.block_ids[logical_block]
+                )
+                slots.append(
+                    physical_block * block_size + int(position) % block_size
+                )
+            context.slot_tensor = torch.tensor(
+                slots,
+                dtype=torch.int64,
+                device=registry.storage_device,
+            )
+            registry.record_attention_step_slot_plan_build()
+        if context.metadata is None:
+            context.metadata = build_unified_paged_flash_step_metadata(
+                states=states,
+                seq_lens=context.result_seq_lens,
+                device=registry.storage_device,
+            )
+            registry.record_attention_step_metadata_build()
+        if context.paged_decode_workspace is None:
+            query_template = torch.empty(
+                (len(request_ids), context.num_heads, context.head_dim),
+                dtype=dtype,
+                device=registry.storage_device,
+            )
+            context.paged_decode_workspace = build_paged_decode_workspace(
+                query_template
+            )
+        if registry.storage_device.type == "cuda":
+            context.prepare_event = torch.cuda.Event()
+            context.prepare_event.record(
+                torch.cuda.current_stream(registry.storage_device)
+            )
+
+
 def compute_offload_exec_batch_output(
     *,
     registry: PAPAttentionRegistry,
@@ -226,6 +303,14 @@ def compute_offload_exec_batch_output(
 
     layer_name = str(descriptor.layer_name)
     with step_context.lock:
+        if (
+            step_context.prepare_event is not None
+            and not step_context.prepare_event_waited
+        ):
+            torch.cuda.current_stream(query_batch.device).wait_event(
+                step_context.prepare_event
+            )
+            step_context.prepare_event_waited = True
         unified_states = step_context.layer_states.get(layer_name)
         if unified_states is None:
             raise RuntimeError(

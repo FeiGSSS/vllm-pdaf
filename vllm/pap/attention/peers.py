@@ -8,6 +8,9 @@ import hashlib
 from threading import Lock, Thread
 from typing import Any
 
+import torch
+
+from vllm.pap.attention.compute import prepare_offload_exec_step
 from vllm.pap.attention.execution import (
     run_offload_exec_mailbox_loop,
     run_offload_exec_mailbox_receiver_loop,
@@ -170,6 +173,35 @@ class PAPAttentionPeerManager:
                     )
                 transport.bind_peer(peer_metadata)
                 transport._pap_mailbox_bound = True
+                set_step_prepare_handler = getattr(
+                    transport,
+                    "set_step_prepare_handler",
+                    None,
+                )
+                step_prepare_stream = getattr(
+                    transport,
+                    "step_prepare_stream",
+                    None,
+                )
+                if callable(set_step_prepare_handler) and callable(
+                    step_prepare_stream
+                ):
+                    stream = step_prepare_stream()
+
+                    def prepare_step(
+                        descriptor: Any,
+                        dtype: torch.dtype,
+                        *,
+                        _stream: torch.cuda.Stream = stream,
+                    ) -> None:
+                        with torch.cuda.stream(_stream):
+                            prepare_offload_exec_step(
+                                registry=self.runtime.registry,
+                                descriptor=descriptor,
+                                dtype=dtype,
+                            )
+
+                    set_step_prepare_handler(prepare_step)
                 self.transports[peer_key] = transport
             self.source_ids[peer_key] = stable_source_id
             self._sync_dispatcher_membership_locked()

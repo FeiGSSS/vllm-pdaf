@@ -491,6 +491,8 @@ class Qwen3Attention(nn.Module):
             pap_attention_enabled = self._pap_projection_adapter.should_execute()
         else:
             pap_attention_enabled = self._pap_cudagraph_role == "projection"
+        if pap_attention_enabled and self._pap_cudagraph_role is None:
+            self._pap_projection_adapter.prepare_step(hidden_states.dtype)
         deferred_qkv_role = ""
         if deferred_cuda_trace_enabled():
             deferred_metadata = _qwen3_profile_attn_metadata(layer_name)

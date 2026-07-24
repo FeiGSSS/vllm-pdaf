@@ -48,6 +48,38 @@ def _filter_mapping(
     }
 
 
+def _prepare_offload_exec_route_groups(
+    store: PAPProjectionRequestStore,
+    route_groups: Sequence[Mapping[str, Any]],
+) -> tuple[dict[str, Any], ...]:
+    """Attach session-owned wire metadata during runner input preparation."""
+    prepared_groups: list[dict[str, Any]] = []
+    for route_group in route_groups:
+        request_ids = tuple(
+            str(request_id) for request_id in route_group["request_ids"]
+        )
+        steps = tuple(int(step) for step in route_group["steps"])
+        session_request_ids = tuple(
+            str(store.prefill_kv_handle_by_request.get(request_id) or request_id)
+            for request_id in request_ids
+        )
+        prepared_groups.append(
+            {
+                **route_group,
+                "session_request_ids": session_request_ids,
+                "batch_id_suffix": ",".join(
+                    f"{request_id}@{step}"
+                    for request_id, step in zip(session_request_ids, steps)
+                ),
+                "metadata_template": {
+                    "r": session_request_ids,
+                    "s": steps,
+                },
+            }
+        )
+    return tuple(prepared_groups)
+
+
 def build_projection_forward_context(
     store: PAPProjectionRequestStore,
     *,
@@ -80,6 +112,7 @@ def build_projection_forward_context(
         ),
         steps_by_request=steps_by_request,
     )
+    route_groups = _prepare_offload_exec_route_groups(store, route_groups)
     return {
         "pap_request_ids": normalized_ids,
         "pap_num_scheduled_tokens": tuple(

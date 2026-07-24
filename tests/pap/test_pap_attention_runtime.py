@@ -22,6 +22,7 @@ from vllm.pap.attention import peers as attention_peers_module
 from vllm.pap.attention.compute import (
     _offload_exec_batch_rows,
     compute_offload_exec_batch_output,
+    prepare_offload_exec_step,
 )
 from vllm.pap.attention.execution import (
     _execute_offload_exec_work_item,
@@ -1175,6 +1176,21 @@ def test_attention_step_context_reuses_plan_and_publishes_once(
         == "pending"
     )
     qkv = torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]])
+    prepare_offload_exec_step(
+        registry=registry,
+        descriptor=PAPOffloadExecBatchDescriptor(
+            layer_name="layer0",
+            items=(
+                PAPOffloadExecDescriptor(
+                    request_id="req-step",
+                    layer_name="layer0",
+                    step=2,
+                    scale=1.0,
+                ),
+            ),
+        ),
+        dtype=qkv.dtype,
+    )
     for layer_name in ("layer0", "layer1"):
         descriptor = PAPOffloadExecBatchDescriptor(
             layer_name=layer_name,
@@ -1209,7 +1225,7 @@ def test_attention_step_context_reuses_plan_and_publishes_once(
         )
     ]
     assert registry.attention_step_context_stats() == {
-        "step_context_hits": 1,
+        "step_context_hits": 2,
         "step_context_misses": 1,
         "step_context_entries": 1,
         "step_slot_plan_builds": 1,

@@ -298,7 +298,14 @@ def test_projection_batch_adapter_builds_filtered_forward_context() -> None:
     assert context["pap_prefill_kv_handle_by_request"] == {"req-a": "session-a"}
     assert context["pap_decode_capacity_tokens_by_request"] == {"req-a": 24}
     assert context["pap_attention_kv_installed_by_request"] == {"req-a"}
-    assert context["pap_offload_exec_route_groups"][0]["steps"] == (17,)
+    route_group = context["pap_offload_exec_route_groups"][0]
+    assert route_group["steps"] == (17,)
+    assert route_group["session_request_ids"] == ("session-a",)
+    assert route_group["batch_id_suffix"] == "session-a@17"
+    assert route_group["metadata_template"] == {
+        "r": ("session-a",),
+        "s": (17,),
+    }
     assert context["pap_finished_request_ids"] == ("req-z",)
 
 

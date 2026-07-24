@@ -231,6 +231,14 @@ def _pap_offload_exec_step_groups(
         if not (len(req_indices) == len(group_request_ids) == len(group_steps)):
             raise RuntimeError("PAP OFFLOAD_EXEC route group is malformed")
 
+        prepared_session_request_ids = tuple(
+            str(request_id)
+            for request_id in route_group.get("session_request_ids", ())
+        )
+        if prepared_session_request_ids and len(
+            prepared_session_request_ids
+        ) != len(group_request_ids):
+            raise RuntimeError("PAP OFFLOAD_EXEC session route is malformed")
         session_request_ids: list[str] = []
         for group_offset, req_index in enumerate(req_indices):
             if req_index < 0 or req_index >= num_reqs:
@@ -249,17 +257,37 @@ def _pap_offload_exec_step_groups(
                 if not prefill_kv_handle:
                     raise RuntimeError("PAP missing local prefill KV handle")
                 raise RuntimeError("PAP attention KV is not installed")
-            session_request_ids.append(
-                _pap_offload_exec_session_request_id(
-                    request_id,
-                    prefill_kv_handle,
-                )
+            session_request_id = _pap_offload_exec_session_request_id(
+                request_id,
+                prefill_kv_handle,
             )
+            if (
+                prepared_session_request_ids
+                and prepared_session_request_ids[group_offset]
+                != session_request_id
+            ):
+                raise RuntimeError("PAP OFFLOAD_EXEC session route is stale")
+            session_request_ids.append(session_request_id)
 
-        batch_id_suffix = ",".join(
+        computed_batch_id_suffix = ",".join(
             f"{request_id}@{step}"
             for request_id, step in zip(session_request_ids, group_steps)
         )
+        batch_id_suffix = str(
+            route_group.get("batch_id_suffix") or computed_batch_id_suffix
+        )
+        if prepared_session_request_ids and (
+            batch_id_suffix != computed_batch_id_suffix
+        ):
+            raise RuntimeError("PAP OFFLOAD_EXEC batch route is stale")
+        prepared_metadata_template = route_group.get("metadata_template")
+        if prepared_metadata_template is not None:
+            if (
+                tuple(prepared_metadata_template.get("r", ()))
+                != tuple(session_request_ids)
+                or tuple(prepared_metadata_template.get("s", ())) != group_steps
+            ):
+                raise RuntimeError("PAP OFFLOAD_EXEC metadata route is stale")
         step_groups.append(
             _PAPOffloadExecStepGroup(
                 attention_endpoint=str(attention_endpoint),
@@ -376,6 +404,41 @@ class PAPProjectionAttentionAdapter:
     def direct_qkv_send_enabled(self) -> bool:
         """Whether the current runtime accepts the packed QKV buffer."""
         return self._direct_qkv_send
+
+    def prepare_step(self, dtype: torch.dtype) -> None:
+        """Publish layer-independent step state before layer-0 QKV compute."""
+        if ".layers.0." not in self.layer_name:
+            return
+        batch = self._prepared_batch
+        if batch is None:
+            return
+        step_groups = _pap_offload_exec_step_groups(
+            batch.additional_kwargs,
+            num_reqs=batch.num_reqs,
+            scaling=float(self.scaling),
+        )
+        for step_group in step_groups:
+            transport = _pap_offload_exec_transport_for_attention_endpoint(
+                step_group.attention_endpoint,
+                step_group.offload_exec_zmq_endpoint,
+            )
+            _pap_bind_offload_exec_mailbox_peer(
+                transport,
+                step_group.attention_endpoint,
+            )
+            send_step_prepare = getattr(transport, "send_step_prepare", None)
+            if not callable(send_step_prepare):
+                continue
+            send_step_prepare(
+                PAPOffloadExecBatchDescriptor(
+                    layer_name=self.layer_name,
+                    items=(),
+                    batch_id_suffix=step_group.batch_id_suffix,
+                    metadata_template=step_group.metadata_template,
+                ),
+                dtype=dtype,
+                remote_address=step_group.offload_exec_zmq_endpoint,
+            )
 
     def record_projection_timeline(self, timeline: dict[str, Any]) -> None:
         """Retain one layer timeline for outer model diagnostics."""
@@ -648,7 +711,14 @@ class PAPProjectionAttentionAdapter:
 
         trace_trigger_start = time.perf_counter() if trace_offload_exec else 0.0
         prepared_output_messages: list[Any | None] = []
+        prepared_output_streams: list[torch.cuda.Stream | None] = []
         output_width = self.num_heads * self.head_dim
+        parallel_output_receives = len(offload_exec_batches) > 1
+        output_inputs_ready: torch.cuda.Event | None = None
+        if parallel_output_receives:
+            get_copy_output_buffer()
+            output_inputs_ready = torch.cuda.Event()
+            output_inputs_ready.record(torch.cuda.current_stream(query.device))
         for (
             _attention_endpoint,
             offload_exec_zmq_endpoint,
@@ -657,13 +727,36 @@ class PAPProjectionAttentionAdapter:
             transport,
             _route_index_tensor,
         ) in offload_exec_batches:
-            output_message = transport.prepare_output_batch_message(
-                batch_descriptor,
-                shape=(len(req_indices), output_width),
-                dtype=query.dtype,
-                remote_address=offload_exec_zmq_endpoint,
+            output_receive_stream = getattr(
+                transport,
+                "output_receive_stream",
+                None,
             )
+            receive_stream = (
+                output_receive_stream()
+                if parallel_output_receives
+                and callable(output_receive_stream)
+                else None
+            )
+            if receive_stream is None:
+                output_message = transport.prepare_output_batch_message(
+                    batch_descriptor,
+                    shape=(len(req_indices), output_width),
+                    dtype=query.dtype,
+                    remote_address=offload_exec_zmq_endpoint,
+                )
+            else:
+                with torch.cuda.stream(receive_stream):
+                    assert output_inputs_ready is not None
+                    receive_stream.wait_event(output_inputs_ready)
+                    output_message = transport.prepare_output_batch_message(
+                        batch_descriptor,
+                        shape=(len(req_indices), output_width),
+                        dtype=query.dtype,
+                        remote_address=offload_exec_zmq_endpoint,
+                    )
             prepared_output_messages.append(output_message)
+            prepared_output_streams.append(receive_stream)
         trace_trigger_ms = (
             (time.perf_counter() - trace_trigger_start) * 1000.0
             if trace_offload_exec
@@ -745,6 +838,7 @@ class PAPProjectionAttentionAdapter:
                 trace_scattered_output_rows,
             )
 
+        output_scatter_events: list[torch.cuda.Event] = []
         for batch_index, (
             _attention_endpoint,
             offload_exec_zmq_endpoint,
@@ -754,6 +848,7 @@ class PAPProjectionAttentionAdapter:
             route_index_tensor,
         ) in enumerate(offload_exec_batches):
             output_message = prepared_output_messages[batch_index]
+            output_receive_stream = prepared_output_streams[batch_index]
             if output_message is not None:
                 output_batch = output_message.tensor
             else:
@@ -798,15 +893,39 @@ class PAPProjectionAttentionAdapter:
                     return direct_output, release_messages
                 if trace_offload_exec:
                     trace_scattered_output_rows += len(req_indices)
-                _pap_scatter_attention_output_group(
-                    get_copy_output_buffer(),
-                    output_batch,
-                    req_indices=req_indices,
-                    index_tensor=route_index_tensor,
-                )
+                if output_receive_stream is None:
+                    _pap_scatter_attention_output_group(
+                        get_copy_output_buffer(),
+                        output_batch,
+                        req_indices=req_indices,
+                        index_tensor=route_index_tensor,
+                    )
+                else:
+                    scatter_output = get_copy_output_buffer()
+                    with torch.cuda.stream(output_receive_stream):
+                        scatter_output.record_stream(output_receive_stream)
+                        output_batch.record_stream(output_receive_stream)
+                        if route_index_tensor is not None:
+                            route_index_tensor.record_stream(
+                                output_receive_stream
+                            )
+                        _pap_scatter_attention_output_group(
+                            scatter_output,
+                            output_batch,
+                            req_indices=req_indices,
+                            index_tensor=route_index_tensor,
+                        )
+                        output_message.release()
+                        output_message = None
+                        scatter_done = torch.cuda.Event()
+                        scatter_done.record(output_receive_stream)
+                        output_scatter_events.append(scatter_done)
             finally:
                 if output_message is not None:
                     output_message.release()
+        current_stream = torch.cuda.current_stream(query.device)
+        for scatter_done in output_scatter_events:
+            current_stream.wait_event(scatter_done)
         if trace_offload_exec and offload_exec_batches:
             trace_recv_done_ns = time.perf_counter_ns()
             trace_recv_ms = (time.perf_counter() - trace_recv_start) * 1000.0
