@@ -200,7 +200,7 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     assert 'PAP_EXECUTION_MODE="${EXECUTION_MODE}"' in text
     assert 'PD_LOAD_EXECUTION_MODE="${EXECUTION_MODE}"' in text
     assert "pap_7pa1p,pap_6pa2p,pd_4p4d,pd_6p2d,dp_8" in text
-    assert "PAP_CAPACITY_POINTS:-32,64,96,128" in text
+    assert "PAP_CAPACITY_POINTS:-16,24,32,48" in text
     assert '--sessions "${TOTAL_SESSIONS}"' in text
     assert 'PAP_AIPERF_SESSIONS="${TOTAL_SESSIONS}"' in text
     assert 'PD_LOAD_CONVERSATIONS="${TOTAL_SESSIONS}"' in text
@@ -208,7 +208,7 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     assert '--sessions "${concurrency}"' not in text
 
 
-def test_capacity_lane_has_native_vllm_dp_baseline() -> None:
+def test_capacity_lane_has_fused_vllm_replica_pool_baseline() -> None:
     capacity_text = CAPACITY_RUNNER.read_text(encoding="utf-8")
     dp_text = DP_RUNNER.read_text(encoding="utf-8")
 

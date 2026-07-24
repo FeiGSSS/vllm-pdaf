@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260725-8GPU-CAPACITY-PILOT
   - PAP-20260724-STEP-OVERLAP
   - PAP-20260724-PROJECTION-SCHEDULER-OVERLAP
   - PAP-20260724-SINGLE-PROJECTION-BATCH
@@ -16,7 +17,7 @@ related_experiments:
   - PAP-20260710-ARBITRARY-XY
   - PAP-20260711-ATTENTION-COMBINE
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: 31e0b3882b5fadf63d2d68b52855dfc7307c11fd
+last_validated_commit: 152f64445cd12ffda91ec1d46330c563a36ab475
 ---
 
 # PAP architecture
@@ -78,8 +79,8 @@ independent.
 
 | Capability | Implementation | Milestone validation |
 | --- | --- | --- |
-| 7PA1P, same host | `local_fast` + CUDA IPC | Eight-GPU E2E pending |
-| 6PA2P, same host | Gateway wave admission over `local_fast` | Eight-GPU E2E pending |
+| 7PA1P, same host | `local_fast` + CUDA IPC | C32 completed 640/640; Relaxed tail is above the 95% gate |
+| 6PA2P, same host | Gateway wave admission over `local_fast` | C32 completed 640/640; Standard and Relaxed pass |
 | Other xPAyP, same host | Gateway wave admission over `local_fast` | Controlled smoke |
 | xPAyP, cross host | NIXL mailbox/backend | Preserved, contract only |
 | TP or other models | Existing integration boundary | Outside the current matrix |

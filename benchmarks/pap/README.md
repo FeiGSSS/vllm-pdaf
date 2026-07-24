@@ -11,7 +11,10 @@ load generation and metrics alongside project-owned runtime audits. Its
 current eight-GPU testbed uses 128 five-turn conversations, randomized 8K
 initial input, a broad bounded append distribution sampled around 1.4K tokens,
 and output mean 32. It compares PAP 7PA1P/6PA2P, one-way PD 4P4D/6P2D,
-and native vLLM DP8 under the same concurrency and three SLO tiers. The latest
+and an eight-replica fused vLLM pool under the same concurrency and three SLO
+tiers. The initial C32 results and 7PA1P fan-in analysis are recorded in the
+[`PAP-20260725-8GPU-CAPACITY-PILOT`](experiments/PAP-20260725-8GPU-CAPACITY-PILOT/report.md).
+The latest
 completed four-GPU eager and piecewise CUDA Graph results remain documented in
 [`PAP-20260722-AIPERF-PROJECTION-AUTO`](experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
 The current step/control-overlap regression is recorded in
@@ -188,9 +191,10 @@ Evidence grades are `formal-clean`, `controlled`, `diagnostic`, `smoke`,
 `rolled-back`, `superseded`, and `inconclusive`.
 
 A release-level AIPerf point must have a full commit, a clean tracked worktree,
-at least three repetitions, all 320 expected requests, exact sampled output
-lengths, stable conversation owners, zero client/runtime errors, and passing
-Attention, decode-token, routing, commit, lease, session-drain, and MPS audits.
+at least three repetitions, every request expected by its profile, exact
+sampled output lengths, stable conversation owners, zero client/runtime errors,
+and passing Attention, decode-token, routing, commit, lease, session-drain,
+and MPS audits.
 The archived registry retains the older P17 `formal-clean` contract only to
 validate its historical records.
 

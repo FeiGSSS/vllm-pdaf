@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260725-8GPU-CAPACITY-PILOT
   - PAP-20260724-STEP-OVERLAP
   - PAP-20260724-PROJECTION-SCHEDULER-OVERLAP
   - PAP-20260724-SINGLE-PROJECTION-BATCH
@@ -13,7 +14,7 @@ related_experiments:
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
-last_validated_commit: 31e0b3882b5fadf63d2d68b52855dfc7307c11fd
+last_validated_commit: 152f64445cd12ffda91ec1d46330c563a36ab475
 ---
 
 # PAP documentation
@@ -27,8 +28,8 @@ Prefill–Attention–Projection implementation. Read these documents in order:
    and support boundaries.
 3. [Runtime](runtime.md) — the accepted request, KV, token, commit, lease, and
    drain paths.
-4. [Benchmark methodology](benchmark-methodology.md) — the four-GPU AIPerf
-   testbed, evidence grades, experiment records, and release criteria.
+4. [Benchmark methodology](benchmark-methodology.md) — the AIPerf testbeds,
+   evidence grades, experiment records, and release criteria.
 5. [Compatibility retirement](compatibility.md) — removed legacy façades and
    the current import-ownership rule.
 6. [Historical runtime refactor milestone](milestones/2026-07-runtime-refactor.md)
@@ -62,7 +63,8 @@ The accepted runtime path is Qwen3-8B FP16, same-host `local_fast`, static MPS
 72/20 on each PA GPU, asynchronous decode-token delivery,
 asynchronous Prefill KV import, sealed manifest handoff, and Prefill-owned
 unified KV. The active runner is the eight-GPU AIPerf matrix; the latest
-completed evidence remains the four-GPU milestone until that matrix finishes.
+normalized milestone remains the four-GPU result, while an initial eight-GPU
+C32 development pilot is complete.
 PAP-to-vLLM glue is isolated behind owner-specific adapters in
 `vllm/pap/integration/`; vLLM owners do not implement alternate PAP paths.
 PAP keeps each vLLM scheduler batch intact and may split it only into
@@ -71,8 +73,10 @@ next-step preparation; PAP does not interleave microbatches across model
 layers.
 
 The current eight-GPU development lane compares PAP 7PA1P/6PA2P, one-way PD
-4P4D/6P2D, and native vLLM DP8 under a 128-conversation, five-turn
-randomized long-context workload.
+4P4D/6P2D, and an eight-replica fused vLLM pool under a 128-conversation,
+five-turn randomized long-context workload. The C32 pilot finds 6PA2P to be
+the only topology passing both Standard and Relaxed; its compact boundary scan
+uses C16/24/32/48.
 Eager remains the default execution mode. Optional piecewise CUDA Graph has a
 completed development comparison, while host transport, remote Attention, and
 KV publication remain outside captured regions. The former P17 lane is
@@ -102,6 +106,8 @@ and normalized experiments rather than a repository skill plan.
   `benchmarks/pap/scripts/run_pap_workload.sh`
 - Canonical eight-GPU AIPerf matrix:
   `benchmarks/pap/aiperf/run_capacity_matrix.sh`
+- Initial eight-GPU capacity and 7PA1P trace:
+  [capacity pilot](../../../benchmarks/pap/experiments/PAP-20260725-8GPU-CAPACITY-PILOT/report.md)
 - Current eager and Graph capacity report:
   [automatic Projection-memory milestone](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md)
 - Current Projection scheduling regression:

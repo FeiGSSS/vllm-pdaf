@@ -48,7 +48,7 @@ architectures = [
   "pd_6p2d",
   "dp_8",
 ]
-concurrency = [32, 64, 96, 128]
+concurrency = [16, 24, 32, 48]
 
 [slo.strict]
 ttft_ms = 5000

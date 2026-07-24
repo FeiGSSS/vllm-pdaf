@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260725-8GPU-CAPACITY-PILOT
   - PAP-20260724-STEP-OVERLAP
   - PAP-20260724-PROJECTION-SCHEDULER-OVERLAP
   - PAP-20260724-SINGLE-PROJECTION-BATCH
@@ -13,7 +14,7 @@ related_experiments:
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260701-PD-METHODOLOGY
-last_validated_commit: 31e0b3882b5fadf63d2d68b52855dfc7307c11fd
+last_validated_commit: 152f64445cd12ffda91ec1d46330c563a36ab475
 ---
 
 # PAP benchmark methodology
@@ -22,9 +23,9 @@ last_validated_commit: 31e0b3882b5fadf63d2d68b52855dfc7307c11fd
 
 `benchmarks/pap/aiperf/run_capacity_matrix.sh` is the single executable
 runtime testbed. It fixes Qwen3-8B FP16 on eight L20 GPUs, PAP 7PA1P/6PA2P,
-one-way PD 4P4D/6P2D, native vLLM DP8, 128 conversations, five randomized
-long-context turns, think/tool delays, conversation concurrency, three
-request-level SLOs, and role-specific scheduler limits.
+one-way PD 4P4D/6P2D, an eight-replica fused vLLM pool, 128 conversations,
+five randomized long-context turns, think/tool delays, conversation
+concurrency, three request-level SLOs, and role-specific scheduler limits.
 
 ```bash
 bash benchmarks/pap/aiperf/run_capacity_matrix.sh
@@ -32,9 +33,11 @@ bash benchmarks/pap/aiperf/run_capacity_matrix.sh
 
 Development runs select one topology and one concurrency point with the
 documented environment overrides. The standard PAP runtime regression is
-7PA1P C32 with one repetition and still completes all 128 conversations and
-640 requests. A release performance claim uses the same testbed with three
-repetitions; it does not introduce a second client or load shape.
+6PA2P C32 with one repetition and still completes all 128 conversations and
+640 requests. It is preferred over 7PA1P because the latter is near the
+Relaxed ITL-tail boundary despite higher raw throughput. A release performance
+claim uses the same testbed with three repetitions; it does not introduce a
+second client or load shape.
 
 ## Validity before performance
 
@@ -49,6 +52,12 @@ cannot be labeled `formal-clean`.
 Missing requests stay in the SLO denominator, and only complete, correct runs
 contribute compliant goodput. Performance comparisons use request-level TTFT,
 ITL, throughput, goodput, and the tested concurrency envelope.
+
+The initial eight-GPU C32 comparison and the trace-based 7PA1P fan-in analysis
+are recorded in the
+[capacity pilot](../../../benchmarks/pap/experiments/PAP-20260725-8GPU-CAPACITY-PILOT/report.md).
+The default compact scan uses C16/24/32/48, stopping a topology after its first
+valid Relaxed failure.
 
 ## Archived P17 evidence
 

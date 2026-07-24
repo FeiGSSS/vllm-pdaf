@@ -172,7 +172,7 @@ PD_AIPERF_TIMING_MODE=concurrency \
 ```
 
 Supply the normal PAP GPU-list variables alongside the first command. Use the
-identical generated file for every PAP, one-way PD, and native DP point.
+identical generated file for every PAP, one-way PD, and fused-replica point.
 Restart the services for every matrix point so each point starts with cold
 caches. A comma-separated AIPerf sweep intentionally runs points in one process
 and is suitable only when warm-cache carryover is part of the experiment.
@@ -184,7 +184,8 @@ when wire-level debugging is required.
 ## Run the lean randomized matrix
 
 The default matrix compares PAP 7PA1P and 6PA2P, one-way PD 4P4D and 6P2D,
-and native vLLM DP8. PAP uses the accepted static 72/20-SM path. Its
+and an eight-replica fused vLLM pool with sticky conversation routing. PAP
+uses the accepted static 72/20-SM path. Its
 Prefill executor and every PD/DP executor use
 `gpu_memory_utilization=0.90`. Projection is sized automatically to 120% of
 checkpoint weight bytes per TP rank on the smallest selected Projection GPU.
@@ -272,13 +273,15 @@ the next conversation takes its slot. The default lean scan is:
 
 | Topology | Concurrency points |
 | --- | --- |
-| PAP 7PA1P / 6PA2P | 32, 64, 96, 128 |
-| PD 4P4D / 6P2D | 32, 64, 96, 128 |
-| vLLM DP8 | 32, 64, 96, 128 |
+| PAP 7PA1P / 6PA2P | 16, 24, 32, 48 |
+| PD 4P4D / 6P2D | 16, 24, 32, 48 |
+| Fused vLLM replica pool ×8 | 16, 24, 32, 48 |
 
 Every point restarts all services. Once a valid point fails the relaxed SLO,
 higher points for that topology are skipped. This is deliberately a lean
-boundary scan; set
+boundary scan. The lower points find Strict and Standard capacity, while C48
+brackets the C32/C64 Relaxed boundary observed in the initial eight-GPU
+pilot. Set
 `PAP_CAPACITY_REPETITIONS=3` only for a later confirmation run.
 
 ```bash
@@ -289,14 +292,18 @@ For a PAP runtime regression, run one complete canonical point instead of the
 whole comparison matrix:
 
 ```bash
-PAP_CAPACITY_ARCHITECTURES=pap_7pa1p \
-PAP_CAPACITY_PAP_7PA1P_POINTS=32 \
+PAP_CAPACITY_ARCHITECTURES=pap_6pa2p \
+PAP_CAPACITY_PAP_6PA2P_POINTS=32 \
 PAP_CAPACITY_REPETITIONS=1 \
   bash benchmarks/pap/aiperf/run_capacity_matrix.sh
 ```
 
 This still serves all 128 conversations and 640 randomized requests. It changes
 only the number of topology/concurrency points, not the workload definition.
+
+The initial C32 comparison and the trace-based explanation of the 7PA1P ITL
+tail are recorded in
+[`PAP-20260725-8GPU-CAPACITY-PILOT`](../experiments/PAP-20260725-8GPU-CAPACITY-PILOT/report.md).
 
 The output distribution defaults to mean 32, median 30, and range 16-64. The
 mean is encoded in the default matrix ID and dataset filename; all four values,

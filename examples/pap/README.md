@@ -99,8 +99,9 @@ around 1.4K tokens, randomized 16-64-token outputs, and deterministic
 think/tool delays. Conversation concurrency limits live sessions while
 preserving PA or Prefill ownership across all turns.
 
-PAP compares 7PA1P and 6PA2P. PD uses one-way P→D with 4P4D and 6P2D;
-native vLLM DP8 is the fused baseline. Run the eager baseline or its
+PAP compares 7PA1P and 6PA2P. PD uses one-way P→D with 4P4D and 6P2D.
+Eight independent fused vLLM replicas with sticky conversation routing form
+the dense-model baseline. Run the eager baseline or its
 matched piecewise CUDA Graph lane with:
 
 ```bash

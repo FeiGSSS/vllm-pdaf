@@ -9,6 +9,10 @@ Current normalized AIPerf experiment bundles:
 - [Current eager and Graph PAP/PD milestone](PAP-20260722-AIPERF-PROJECTION-AUTO/report.md)
 - [Current step/control-overlap regression](PAP-20260724-STEP-OVERLAP/report.md)
 
+Current development pilots:
+
+- [Eight-GPU capacity and 7PA1P root-cause pilot](PAP-20260725-8GPU-CAPACITY-PILOT/report.md)
+
 Superseded or historical report bundles:
 
 - [Superseded Projection scheduler-overlap baseline](PAP-20260724-PROJECTION-SCHEDULER-OVERLAP/report.md)

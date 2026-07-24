@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260725-8GPU-CAPACITY-PILOT
   - PAP-20260724-STEP-OVERLAP
   - PAP-20260724-PROJECTION-SCHEDULER-OVERLAP
   - PAP-20260724-SINGLE-PROJECTION-BATCH
@@ -13,12 +14,12 @@ related_experiments:
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
-last_validated_commit: 31e0b3882b5fadf63d2d68b52855dfc7307c11fd
+last_validated_commit: 152f64445cd12ffda91ec1d46330c563a36ab475
 ---
 
 # Current PAP development status
 
-Snapshot date: 2026-07-24.
+Snapshot date: 2026-07-25.
 
 PAP has completed its runtime refactor and the first capacity-oriented
 performance milestone. The source milestone at `cb6fe3500` has one accepted
@@ -30,8 +31,8 @@ not selectable branches in the current runtime.
 
 | Capability | Source state | Current evidence |
 | --- | --- | --- |
-| Qwen3-8B, same-host PAP | Main path | Four-GPU milestone; eight-GPU validation pending |
-| Same-host xPAyP | Implemented | Multi-Projection tests; eight-GPU E2E pending |
+| Qwen3-8B, same-host PAP | Main path | Eight-GPU 7PA1P and 6PA2P completed 640/640 requests |
+| Same-host xPAyP | Implemented | Multi-Projection 6PA2P C32 E2E complete |
 | Cross-host xPAyP over NIXL | Preserved | Contract coverage only; no fresh E2E claim |
 | Prefill-owned unified KV | Main path | AIPerf runtime and lifecycle audits |
 | Triton split-4 paged decode | Main Attention kernel | AIPerf eager/Graph baselines |
@@ -72,8 +73,10 @@ The active runner is the **eight-GPU AIPerf testbed**: 128 conversations, five
 turns, randomized 8K initial input, a broad append distribution sampled near
 1.4K tokens, randomized 16-64-token output, think/tool delays, and conversation
 concurrency. It compares PAP 7PA1P/6PA2P, one-way PD 4P4D/6P2D, and
-native vLLM DP8. Until its E2E matrix completes, the latest performance
-evidence remains the four-GPU milestone.
+an eight-replica fused vLLM pool. The initial C32 pilot is complete; the
+compact C16/24/32/48 capacity scan remains. The latest normalized performance
+milestone remains the four-GPU result until the eight-GPU boundary points have
+three repetitions.
 
 The former P17 1PA1P client, runner, and release gate are retired. Its profile
 and results remain archived solely for historical manifest validation.
@@ -148,16 +151,32 @@ throughput by 0.50%. The initial-burst TTFT p95 movement is retained as
 single-run tail variance rather than an improvement claim. See the
 [current control-overlap result](../../../benchmarks/pap/experiments/PAP-20260724-STEP-OVERLAP/report.md).
 
+The initial eight-GPU C32 pilot completed all 640 requests for PAP 6PA2P,
+PAP 7PA1P, PD 4P4D, PD 6P2D, and the fused eight-replica pool. PAP 6PA2P is
+the only tested configuration that passes both Standard and Relaxed at C32.
+It delivers 4.224 and 4.381 compliant requests/s, respectively. PD 4P4D
+passes Relaxed at 3.649 requests/s; the other C32 points require a lower
+concurrency to establish SLO capacity.
+
+7PA1P is not a liveness failure: it completes 640/640 requests, improves raw
+throughput by 14.1% and mean TTFT by 45.5% relative to 6PA2P, but only
+599/640 requests meet Relaxed. A matched trace attributes the tail to its
+single seven-PA fan-in barrier: Projection join-wait p99 is 3.654 ms per layer,
+versus 0.625 and 0.663 ms for the two independent 6PA2P Projection domains.
+QKV preparation and P2P-copy costs remain essentially unchanged. See the
+[eight-GPU pilot](../../../benchmarks/pap/experiments/PAP-20260725-8GPU-CAPACITY-PILOT/report.md).
+
 ## Remaining work
 
-1. Run three AIPerf repetitions only when promoting a four-GPU result to a
-   release-level performance claim.
+1. Complete the compact eight-GPU C16/24/32/48 scan, then run three
+   repetitions only for the selected per-SLO boundary points.
 2. Diagnose PD NIXL transfer variance, including the observed 2P2D single-lane
    stalls, before treating exact PD tail latency as stable.
 3. Keep piecewise CUDA Graph optional until repeated evidence shows a
    consistent latency or goodput benefit worth changing the eager default.
-4. Keep same-host xPAyP and cross-host NIXL source-compatible, but do not claim
-   performance or fresh E2E support until those lanes are explicitly rerun.
+4. Keep cross-host NIXL source-compatible without a fresh performance claim.
+   Same-host 7PA1P and 6PA2P now have fresh C32 E2E evidence; other xPAyP
+   shapes remain preserved-unverified.
 5. Profile the independent multi-PA output streams before attributing a
    specific E2E gain to them, and continue only metadata/control overlap that
    preserves the complete scheduler-batch and layer order.
