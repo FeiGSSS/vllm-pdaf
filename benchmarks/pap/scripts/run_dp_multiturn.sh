@@ -17,6 +17,7 @@ RESULTS_ROOT="${RESULTS_ROOT:-${EXPERIMENTS_ROOT}/_staging}"
 RUN_ROOT="${DP_LOAD_RUN_ROOT:-${RESULTS_ROOT}/runs/${RUN_ID}}"
 LOG_ROOT="${RUN_ROOT}/service_logs"
 PORT="${DP_LOAD_PORT:-24400}"
+SUPERVISOR_PORT="${DP_LOAD_SUPERVISOR_PORT:-24500}"
 
 ROUNDS="${DP_LOAD_ROUNDS:-5}"
 CONVERSATIONS="${DP_LOAD_CONVERSATIONS:-128}"
@@ -29,6 +30,11 @@ MAX_NUM_SEQS="${DP_LOAD_MAX_NUM_SEQS:-256}"
 GPU_MEMORY_UTILIZATION="${DP_LOAD_GPU_MEMORY_UTILIZATION:-0.90}"
 EXECUTION_MODE="${DP_LOAD_EXECUTION_MODE:-eager}"
 REQUEST_TIMEOUT_SECONDS="${DP_LOAD_REQUEST_TIMEOUT_SECONDS:-600}"
+TARGET_URLS=""
+for (( rank=0; rank<DP_SIZE; rank++ )); do
+  [[ -z "${TARGET_URLS}" ]] || TARGET_URLS+=","
+  TARGET_URLS+="http://127.0.0.1:$((PORT + rank))"
+done
 
 die() {
   echo "ERROR: $*" >&2
@@ -95,8 +101,10 @@ fi
 {
   printf 'MODE=dp\nTOPOLOGY=%q\nGPU_COUNT=%q\n' \
     "${DP_SIZE}dp" "${DP_SIZE}"
-  printf 'MODEL_PATH=%q\nGPUS=%q\nPORT=%q\n' \
-    "${MODEL_PATH}" "${GPU_CSV}" "${PORT}"
+  printf 'MODEL_PATH=%q\nGPUS=%q\nPORT_BASE=%q\nSUPERVISOR_PORT=%q\n' \
+    "${MODEL_PATH}" "${GPU_CSV}" "${PORT}" "${SUPERVISOR_PORT}"
+  printf 'ROUTING_POLICY=%q\nTARGET_URLS=%q\n' \
+    "aiperf_sticky_user_sessions" "${TARGET_URLS}"
   printf 'ROUNDS=%q\nTOTAL_CONVERSATIONS=%q\nACTIVE_CONVERSATIONS=%q\n' \
     "${ROUNDS}" "${CONVERSATIONS}" "${CONCURRENCY}"
   printf 'MAX_MODEL_LEN=%q\nMAX_NUM_BATCHED_TOKENS=%q\nMAX_NUM_SEQS=%q\n' \
@@ -124,6 +132,9 @@ setsid env \
     "${EXECUTION_ARGS[@]}" \
     --generation-config vllm --dtype float16 \
     --data-parallel-size "${DP_SIZE}" --tensor-parallel-size 1 \
+    --data-parallel-size-local "${DP_SIZE}" \
+    --data-parallel-multi-port-external-lb \
+    --data-parallel-supervisor-port "${SUPERVISOR_PORT}" \
     --max-model-len "${MAX_MODEL_LEN}" \
     --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
     --max-num-seqs "${MAX_NUM_SEQS}" \
@@ -133,7 +144,8 @@ setsid env \
 PIDS+=("$!")
 
 deadline=$((SECONDS + 900))
-until curl -fsS "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; do
+until curl -fsS "http://127.0.0.1:${SUPERVISOR_PORT}/health" \
+  >/dev/null 2>&1; do
   kill -0 "${PIDS[0]}" >/dev/null 2>&1 || die "DP service exited during startup"
   (( SECONDS < deadline )) || die "timed out waiting for DP service"
   sleep 2
@@ -145,7 +157,8 @@ env \
   AIPERF_BIN="${AIPERF_BIN}" \
   MODEL_PATH="${MODEL_PATH}" \
   AIPERF_INPUT_FILE="${INPUT_FILE}" \
-  AIPERF_TARGET_URL="http://127.0.0.1:${PORT}" \
+  AIPERF_TARGET_URLS="${TARGET_URLS}" \
+  AIPERF_CONNECTION_REUSE_STRATEGY=sticky-user-sessions \
   AIPERF_OUTPUT_DIR="${OUTPUT_DIR}" \
   AIPERF_SESSIONS="${CONVERSATIONS}" \
   AIPERF_CONCURRENCY="${CONCURRENCY}" \

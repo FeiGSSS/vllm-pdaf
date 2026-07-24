@@ -30,7 +30,7 @@ def select_projection_request_ids(
             request_id in store.attention_endpoint_by_request
             or request_id in store.offload_exec_zmq_endpoint_by_request
         ):
-            logger.info(
+            logger.debug(
                 "PAP enabled via per-request mailbox endpoint req_id=%s",
                 request_id,
             )

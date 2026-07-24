@@ -216,6 +216,9 @@ def test_capacity_lane_has_native_vllm_dp_baseline() -> None:
         capacity_text
     )
     assert '--data-parallel-size "${DP_SIZE}"' in dp_text
+    assert "--data-parallel-multi-port-external-lb" in dp_text
+    assert 'AIPERF_TARGET_URLS="${TARGET_URLS}"' in dp_text
+    assert "AIPERF_CONNECTION_REUSE_STRATEGY=sticky-user-sessions" in dp_text
     assert "VLLM_PORT=" not in dp_text
     assert 'AIPERF_TIMING_MODE=concurrency' in dp_text
 

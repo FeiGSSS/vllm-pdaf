@@ -7,6 +7,10 @@ AIPERF_BIN="${AIPERF_BIN:-${AIPERF_ROOT}/.venv/bin/aiperf}"
 MODEL_PATH="${MODEL_PATH:-/data/ssd1/llm-models/Qwen3-8B}"
 AIPERF_INPUT_FILE="${AIPERF_INPUT_FILE:?set AIPERF_INPUT_FILE}"
 AIPERF_TARGET_URL="${AIPERF_TARGET_URL:-http://127.0.0.1:9460}"
+AIPERF_TARGET_URLS="${AIPERF_TARGET_URLS:-}"
+AIPERF_CONNECTION_REUSE_STRATEGY="${
+  AIPERF_CONNECTION_REUSE_STRATEGY:-pooled
+}"
 AIPERF_OUTPUT_DIR="${AIPERF_OUTPUT_DIR:-${ROOT_DIR}/aiperf-artifacts}"
 AIPERF_SESSIONS="${AIPERF_SESSIONS:-12}"
 AIPERF_CONCURRENCY="${AIPERF_CONCURRENCY:-12}"
@@ -59,7 +63,6 @@ args=(
   --model "${MODEL_PATH}"
   --tokenizer "${MODEL_PATH}"
   --endpoint-type chat
-  --url "${AIPERF_TARGET_URL}"
   --input-file "${AIPERF_INPUT_FILE}"
   --custom-dataset-type multi-turn
   --streaming
@@ -74,7 +77,17 @@ args=(
   --profile-export-prefix profile
   --export-level "${AIPERF_EXPORT_LEVEL}"
   --slice-duration "${AIPERF_SLICE_DURATION}"
+  --connection-reuse-strategy "${AIPERF_CONNECTION_REUSE_STRATEGY}"
 )
+
+if [[ -n "${AIPERF_TARGET_URLS}" ]]; then
+  IFS=, read -r -a target_urls <<< "${AIPERF_TARGET_URLS}"
+  for target_url in "${target_urls[@]}"; do
+    args+=(--url "${target_url}")
+  done
+else
+  args+=(--url "${AIPERF_TARGET_URL}")
+fi
 
 if [[ "${AIPERF_TIMING_MODE}" == "request_rate" ]]; then
   args+=(
