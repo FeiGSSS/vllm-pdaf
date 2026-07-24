@@ -215,11 +215,13 @@ def test_capacity_lane_has_native_vllm_dp_baseline() -> None:
     assert 'DP_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_dp_multiturn.sh"' in (
         capacity_text
     )
-    assert '--data-parallel-size "${DP_SIZE}"' in dp_text
-    assert "--data-parallel-multi-port-external-lb" in dp_text
+    assert 'for (( rank=0; rank<DP_SIZE; rank++ ))' in dp_text
+    assert 'CUDA_VISIBLE_DEVICES="${GPUS[rank]}"' in dp_text
+    assert '--port "$((PORT + rank))"' in dp_text
+    assert "--data-parallel-size" not in dp_text
     assert 'AIPERF_TARGET_URLS="${TARGET_URLS}"' in dp_text
     assert "AIPERF_CONNECTION_REUSE_STRATEGY=sticky-user-sessions" in dp_text
-    assert "VLLM_PORT=" not in dp_text
+    assert 'VLLM_PORT="$((VLLM_PORT_BASE + rank * 20))"' in dp_text
     assert 'AIPERF_TIMING_MODE=concurrency' in dp_text
 
 

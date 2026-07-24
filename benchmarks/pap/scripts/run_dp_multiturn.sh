@@ -17,7 +17,7 @@ RESULTS_ROOT="${RESULTS_ROOT:-${EXPERIMENTS_ROOT}/_staging}"
 RUN_ROOT="${DP_LOAD_RUN_ROOT:-${RESULTS_ROOT}/runs/${RUN_ID}}"
 LOG_ROOT="${RUN_ROOT}/service_logs"
 PORT="${DP_LOAD_PORT:-24400}"
-SUPERVISOR_PORT="${DP_LOAD_SUPERVISOR_PORT:-24500}"
+VLLM_PORT_BASE="${DP_LOAD_VLLM_PORT_BASE:-53600}"
 
 ROUNDS="${DP_LOAD_ROUNDS:-5}"
 CONVERSATIONS="${DP_LOAD_CONVERSATIONS:-128}"
@@ -101,8 +101,8 @@ fi
 {
   printf 'MODE=dp\nTOPOLOGY=%q\nGPU_COUNT=%q\n' \
     "${DP_SIZE}dp" "${DP_SIZE}"
-  printf 'MODEL_PATH=%q\nGPUS=%q\nPORT_BASE=%q\nSUPERVISOR_PORT=%q\n' \
-    "${MODEL_PATH}" "${GPU_CSV}" "${PORT}" "${SUPERVISOR_PORT}"
+  printf 'MODEL_PATH=%q\nGPUS=%q\nPORT_BASE=%q\nVLLM_PORT_BASE=%q\n' \
+    "${MODEL_PATH}" "${GPU_CSV}" "${PORT}" "${VLLM_PORT_BASE}"
   printf 'ROUTING_POLICY=%q\nTARGET_URLS=%q\n' \
     "aiperf_sticky_user_sessions" "${TARGET_URLS}"
   printf 'ROUNDS=%q\nTOTAL_CONVERSATIONS=%q\nACTIVE_CONVERSATIONS=%q\n' \
@@ -123,32 +123,35 @@ export VLLM_USE_V2_MODEL_RUNNER=1
 export NO_PROXY="${NO_PROXY:+${NO_PROXY},}127.0.0.1,localhost"
 export no_proxy="${no_proxy:+${no_proxy},}127.0.0.1,localhost"
 
-setsid env \
-  CUDA_VISIBLE_DEVICES="${GPU_CSV}" \
-  PAP_MODEL_HOOKS=0 \
-  PAP_CUDAGRAPH_COMPATIBLE=0 \
-  "${VLLM_BIN}" serve "${MODEL_PATH}" \
-    --host 127.0.0.1 --port "${PORT}" \
-    "${EXECUTION_ARGS[@]}" \
-    --generation-config vllm --dtype float16 \
-    --data-parallel-size "${DP_SIZE}" --tensor-parallel-size 1 \
-    --data-parallel-size-local "${DP_SIZE}" \
-    --data-parallel-multi-port-external-lb \
-    --data-parallel-supervisor-port "${SUPERVISOR_PORT}" \
-    --max-model-len "${MAX_MODEL_LEN}" \
-    --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
-    --max-num-seqs "${MAX_NUM_SEQS}" \
-    --enable-chunked-prefill --enable-prefix-caching --block-size 16 \
-    --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}" \
-    > "${LOG_ROOT}/dp.log" 2>&1 &
-PIDS+=("$!")
+for (( rank=0; rank<DP_SIZE; rank++ )); do
+  setsid env \
+    CUDA_VISIBLE_DEVICES="${GPUS[rank]}" \
+    VLLM_PORT="$((VLLM_PORT_BASE + rank * 20))" \
+    PAP_MODEL_HOOKS=0 \
+    PAP_CUDAGRAPH_COMPATIBLE=0 \
+    "${VLLM_BIN}" serve "${MODEL_PATH}" \
+      --host 127.0.0.1 --port "$((PORT + rank))" \
+      "${EXECUTION_ARGS[@]}" \
+      --generation-config vllm --dtype float16 \
+      --tensor-parallel-size 1 \
+      --max-model-len "${MAX_MODEL_LEN}" \
+      --max-num-batched-tokens "${MAX_NUM_BATCHED_TOKENS}" \
+      --max-num-seqs "${MAX_NUM_SEQS}" \
+      --enable-chunked-prefill --enable-prefix-caching --block-size 16 \
+      --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}" \
+      > "${LOG_ROOT}/dp_${rank}.log" 2>&1 &
+  PIDS+=("$!")
+done
 
 deadline=$((SECONDS + 900))
-until curl -fsS "http://127.0.0.1:${SUPERVISOR_PORT}/health" \
-  >/dev/null 2>&1; do
-  kill -0 "${PIDS[0]}" >/dev/null 2>&1 || die "DP service exited during startup"
-  (( SECONDS < deadline )) || die "timed out waiting for DP service"
-  sleep 2
+for (( rank=0; rank<DP_SIZE; rank++ )); do
+  until curl -fsS "http://127.0.0.1:$((PORT + rank))/health" \
+    >/dev/null 2>&1; do
+    kill -0 "${PIDS[rank]}" >/dev/null 2>&1 \
+      || die "DP instance ${rank} exited during startup"
+    (( SECONDS < deadline )) || die "timed out waiting for DP instances"
+    sleep 2
+  done
 done
 
 env \
