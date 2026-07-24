@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260724-SINGLE-PROJECTION-BATCH
   - PAP-20260722-AIPERF-PROJECTION-AUTO
   - PAP-20260722-AIPERF-PA090-EAGER
   - PAP-20260722-AIPERF-CONVERGENCE
@@ -13,7 +14,7 @@ related_experiments:
   - PAP-20260713-ASYNC-DECODE-TOKEN-D2H
   - PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: 4484bc983e622fc03dffdec6c2831d9f6ec6396f
+last_validated_commit: cb6fe35009905c32b52a8ad10b7e00d778c03679
 ---
 
 # PAP runtime
@@ -57,9 +58,15 @@ wave finish; waiting sources hand off only between complete request waves. This
 keeps the step cohort stable across every model layer without restoring the
 retired per-layer fallback. Admission is independent per PA.
 
+Projection itself keeps one global in-flight batch. Its vLLM asynchronous
+scheduler is disabled because that scheduler creates a two-entry model-step
+queue. Requests for different PAs remain shards of the same batch rather than
+independently pipelined batches.
+
 For every active step:
 
-1. Projection builds the topology-derived route plan and sends Q/K/V.
+1. Projection builds one topology-derived route plan and fans Q/K/V shards
+   out to the selected PAs.
 2. Attention waits for matching KV readiness, appends decode K/V, and executes
    direct or combine/scatter paged attention.
 3. Attention publishes the result to Projection.

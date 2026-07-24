@@ -7,6 +7,7 @@ live under this directory. See [the storage contract](README.md) and the
 Current normalized AIPerf experiment bundles:
 
 - [Current eager and Graph PAP/PD milestone](PAP-20260722-AIPERF-PROJECTION-AUTO/report.md)
+- [Single global Projection batch regression](PAP-20260724-SINGLE-PROJECTION-BATCH/report.md)
 
 Superseded or historical report bundles:
 
@@ -46,6 +47,8 @@ Archived methodology notices:
 | PAP-20260722-AIPERF-CONVERGENCE | archived | controlled | superseded | valid | 20260722_aafcfb1ea_aiperf_pap_c12_convergence | PAP-20260722-AIPERF-PA090-EAGER | The clean convergence run completed 320 of 320 requests and passed correctness plus all three SLO tiers. ITL, throughput, and strict goodput remained within 2.2% of the preceding cutover point; the higher single-run TTFT tail remained within the strict SLO. |
 | PAP-20260722-AIPERF-PA090-EAGER | archived | controlled | superseded | valid | 20260722_7401e8e12_aiperf_pa090_eager_pd, 20260722_7401e8e12_aiperf_pa090_eager_pap | PAP-20260722-AIPERF-PROJECTION-AUTO | PAP leads the best observed PD goodput by 38.7%, 80.4%, and 101.5% under strict, standard, and relaxed SLOs; PD 3P1D remains transfer-unstable. |
 | PAP-20260722-AIPERF-PROJECTION-AUTO | current | controlled | accepted | valid | 20260722_4aaf9dd77_projection_auto_eager_pap, 20260722_4484bc983_projection_auto_eager_pd, 20260722_4484bc983_projection_auto_piecewise_pap, 20260722_4484bc983_projection_auto_piecewise_pd | — | Automatic Projection sizing resolves to 0.4070 without an eager regression beyond 2%; PAP leads best valid PD goodput by 46.0%, 85.5%, and 95.2% in eager mode and by 13.3%, 75.0%, and 118.8% in piecewise mode. |
+| PAP-20260724-BATCH-SCALING-MICRO | current | diagnostic | accepted | valid | 20260724_1ce452dc7_batch_scaling_micro | — | From batch 4 to 8, the reconstructed 36-layer time rises by 27.7%; paged Attention explains 93.2% of that increase, local P2P 5.8%, and the Projection proxy 1.0%. Same-shape full-GPU results remain flat after the single-Projection-batch refactor. |
+| PAP-20260724-SINGLE-PROJECTION-BATCH | current | controlled | accepted | valid | 20260724_cb6fe3500_single_projection_batch_c12 | — | One global Projection batch is correct and operational: both C12 repetitions completed 320/320 requests and passed all audits. Relative to the previous two-batch scheduler, mean throughput changes by -1.98% and TTFT p95 by -12.30%, while ITL p95 increases by 10.16% because inter-step scheduler overlap is intentionally removed. |
 
 ### Reviewed historical experiments
 

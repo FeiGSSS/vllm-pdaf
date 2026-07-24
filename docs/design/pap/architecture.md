@@ -14,7 +14,7 @@ related_experiments:
   - PAP-20260710-ARBITRARY-XY
   - PAP-20260711-ATTENTION-COMBINE
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: 4484bc983e622fc03dffdec6c2831d9f6ec6396f
+last_validated_commit: cb6fe35009905c32b52a8ad10b7e00d778c03679
 ---
 
 # PAP architecture

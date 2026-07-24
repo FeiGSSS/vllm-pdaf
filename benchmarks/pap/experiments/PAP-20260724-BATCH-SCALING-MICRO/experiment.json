@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "kind": "pap-experiment-record",
+  "status": "current",
+  "experiment_id": "PAP-20260724-BATCH-SCALING-MICRO",
+  "title": "PAP batch-scaling component probe",
+  "recorded_at": "2026-07-24",
+  "hypothesis": "The batch-dependent increase in PAP decode ITL is dominated by paged Attention rather than Projection or local-fast payload transfer.",
+  "evidence": "diagnostic",
+  "decision": "accepted",
+  "validity": {
+    "status": "valid",
+    "reasons": [
+      "The probe isolates component scaling but does not reconstruct scheduler or control-plane overlap.",
+      "Projection uses Qwen3-shaped eager PyTorch operations and is interpreted only as a scaling proxy."
+    ]
+  },
+  "baseline": {
+    "status": "not-applicable",
+    "description": "Component attribution diagnostic without an architecture baseline",
+    "run_ids": []
+  },
+  "treatment": {
+    "status": "present",
+    "description": "Projection, local P2P, and production paged-Attention scaling from batch 1 through 32",
+    "run_ids": [
+      "20260724_1ce452dc7_batch_scaling_micro"
+    ]
+  },
+  "primary_variable": {
+    "name": "decode-batch-size",
+    "baseline": 4,
+    "treatment": 8
+  },
+  "run_ids": [
+    "20260724_1ce452dc7_batch_scaling_micro"
+  ],
+  "aggregation_method": "Median component latency; B4-to-B8 change attribution using the sum of per-layer medians",
+  "metrics": [
+    {
+      "name": "projection_b4_ms",
+      "scope": "per-layer",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 0.580676261583964,
+      "direction": "descriptive"
+    },
+    {
+      "name": "projection_b8_ms",
+      "scope": "per-layer",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 0.5830645322799684,
+      "direction": "descriptive"
+    },
+    {
+      "name": "local_p2p_b4_ms",
+      "scope": "per-layer",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 0.023112533489863078,
+      "direction": "descriptive"
+    },
+    {
+      "name": "local_p2p_b8_ms",
+      "scope": "per-layer",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 0.03645439942677816,
+      "direction": "descriptive"
+    },
+    {
+      "name": "attention_20sm_b4_ms",
+      "scope": "per-layer",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 0.2303658644358317,
+      "direction": "descriptive"
+    },
+    {
+      "name": "attention_20sm_b8_ms",
+      "scope": "per-layer",
+      "statistic": "median",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 0.4452938715616862,
+      "direction": "descriptive"
+    }
+  ],
+  "conclusion": "From batch 4 to 8, the reconstructed 36-layer time rises by 27.7%; paged Attention explains 93.2% of that increase, local P2P 5.8%, and the Projection proxy 1.0%. Same-shape full-GPU results remain flat after the single-Projection-batch refactor.",
+  "supersedes": [],
+  "superseded_by": null,
+  "raw_artifacts": [
+    {
+      "name": "report",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-BATCH-SCALING-MICRO/report.md"
+      },
+      "sha256": "d4341093c8c4f75dfdccb1396c857689a47d26e56dccb8263070b4105842d98c"
+    },
+    {
+      "name": "probe",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/tooling/batch_scaling_probe.py"
+      },
+      "sha256": "0610435037541843496c22e8a5be2d8cc5b9a350e546b1becec0789f400e33ee"
+    },
+    {
+      "name": "full-gpu",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-BATCH-SCALING-MICRO/raw/full_gpu.json"
+      },
+      "sha256": "bec8279ec7b583fa0ec79d4c5a7415ef07dcc1be04d69aff28b1a74c946c65a3"
+    },
+    {
+      "name": "attention-20sm",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-BATCH-SCALING-MICRO/raw/attention_20sm.json"
+      },
+      "sha256": "cf1348a6799086690d6597bdfba54b765db89b50e1ce5ba7a5dbd4fdd25c9fea"
+    },
+    {
+      "name": "post-single-batch-full-gpu",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-BATCH-SCALING-MICRO/raw/post_single_batch_full_gpu.json"
+      },
+      "sha256": "451cfa91040c371b1d4d026add8c093e2c3449820147a94ca4612dcd3e54f6cb"
+    }
+  ],
+  "tags": [
+    "diagnostic",
+    "batch-scaling",
+    "attention",
+    "local-fast"
+  ]
+}

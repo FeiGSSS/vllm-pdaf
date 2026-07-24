@@ -4,12 +4,14 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260724-SINGLE-PROJECTION-BATCH
+  - PAP-20260724-BATCH-SCALING-MICRO
   - PAP-20260722-AIPERF-PROJECTION-AUTO
   - PAP-20260722-AIPERF-PA090-EAGER
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
-last_validated_commit: 4484bc983e622fc03dffdec6c2831d9f6ec6396f
+last_validated_commit: cb6fe35009905c32b52a8ad10b7e00d778c03679
 ---
 
 # PAP documentation
@@ -60,6 +62,8 @@ asynchronous Prefill KV import, sealed manifest handoff, and Prefill-owned
 unified KV. The four-GPU AIPerf matrix is its only active runtime testbed.
 PAP-to-vLLM glue is isolated behind owner-specific adapters in
 `vllm/pap/integration/`; vLLM owners do not implement alternate PAP paths.
+Projection owns one global in-flight batch and may split it only for
+same-step PA fan-out.
 
 The current four-GPU development lane fixes PAP at 3PA1P and compares it with
 one-way PD under a 32-conversation, ten-turn randomized long-context workload.
@@ -94,6 +98,8 @@ and normalized experiments rather than a repository skill plan.
   `benchmarks/pap/aiperf/run_capacity_matrix.sh`
 - Current eager and Graph capacity report:
   [automatic Projection-memory milestone](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md)
+- Current single-Projection-batch regression:
+  [single global batch milestone](../../../benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md)
 - Offline diagnostics: `benchmarks/pap/tooling/`, invoked through `tools/pap_*`
 - Test policy: [tests/pap/README.md](../../../tests/pap/README.md)
 - Runnable examples: [examples/pap/README.md](../../../examples/pap/README.md)

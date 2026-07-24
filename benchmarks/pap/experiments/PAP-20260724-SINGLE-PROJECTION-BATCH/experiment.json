@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "kind": "pap-experiment-record",
+  "status": "current",
+  "experiment_id": "PAP-20260724-SINGLE-PROJECTION-BATCH",
+  "title": "PAP single global Projection batch",
+  "recorded_at": "2026-07-24",
+  "hypothesis": "PAP can enforce one global in-flight Projection batch, retain same-step multi-PA fan-out, and preserve correctness with bounded performance cost.",
+  "evidence": "controlled",
+  "decision": "accepted",
+  "validity": {
+    "status": "valid",
+    "reasons": [
+      "The treatment has two clean complete repetitions; the comparison baseline is one previously accepted C12 repetition rather than a new interleaved A/B run."
+    ]
+  },
+  "baseline": {
+    "status": "missing",
+    "description": "External accepted C12 result from PAP-20260722-AIPERF-PROJECTION-AUTO with vLLM asynchronous scheduling enabled",
+    "run_ids": []
+  },
+  "treatment": {
+    "status": "present",
+    "description": "PAP 3PA1P C12 with Projection asynchronous scheduling disabled and one in-flight global batch",
+    "run_ids": [
+      "20260724_cb6fe3500_single_projection_batch_c12"
+    ]
+  },
+  "primary_variable": {
+    "name": "projection-async-scheduling",
+    "baseline": true,
+    "treatment": false
+  },
+  "run_ids": [
+    "20260724_cb6fe3500_single_projection_batch_c12"
+  ],
+  "aggregation_method": "Arithmetic mean of two complete treatment repetitions compared with the accepted prior C12 baseline",
+  "metrics": [
+    {
+      "name": "ttft_avg_ms",
+      "scope": "requests",
+      "statistic": "mean-of-runs",
+      "unit": "ms",
+      "baseline_value": 809.907405125,
+      "treatment_value": 766.7487502046874,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "ttft_p95_ms",
+      "scope": "requests",
+      "statistic": "mean-of-run-p95s",
+      "unit": "ms",
+      "baseline_value": 3205.9063555000002,
+      "treatment_value": 2811.629302175,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "itl_avg_ms",
+      "scope": "requests",
+      "statistic": "mean-of-runs",
+      "unit": "ms",
+      "baseline_value": 34.7617176619157,
+      "treatment_value": 38.237998545468784,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "itl_p95_ms",
+      "scope": "requests",
+      "statistic": "mean-of-run-p95s",
+      "unit": "ms",
+      "baseline_value": 40.715904049603175,
+      "treatment_value": 44.85113902869635,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "request_throughput_rps",
+      "scope": "run",
+      "statistic": "mean-of-runs",
+      "unit": "requests/s",
+      "baseline_value": 2.534329731873236,
+      "treatment_value": 2.4841517906094097,
+      "direction": "higher-is-better"
+    }
+  ],
+  "conclusion": "One global Projection batch is correct and operational: both C12 repetitions completed 320/320 requests and passed all audits. Relative to the previous two-batch scheduler, mean throughput changes by -1.98% and TTFT p95 by -12.30%, while ITL p95 increases by 10.16% because inter-step scheduler overlap is intentionally removed.",
+  "supersedes": [],
+  "superseded_by": null,
+  "raw_artifacts": [
+    {
+      "name": "report",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md"
+      },
+      "sha256": "4c5722f6c6ca23e3126775d90e9d56a236d3da3826ef6a752c2593c0f07520a1"
+    },
+    {
+      "name": "aiperf-profile-r1",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/runs/20260724_cb6fe3500_single_projection_batch_c12/raw/r1/aiperf/profile.json"
+      },
+      "sha256": "64d7b0bd6bf14f8284cc0a1bdacf556c0b6e773d93f182425464899c336400be"
+    },
+    {
+      "name": "aiperf-profile-r2",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/runs/20260724_cb6fe3500_single_projection_batch_c12/raw/r2/aiperf/profile.json"
+      },
+      "sha256": "f0d9dd47483f2689008403a1cd150a6b255c719b3e6fabc141a7df2f92645e16"
+    }
+  ],
+  "tags": [
+    "aiperf",
+    "projection",
+    "single-batch",
+    "regression"
+  ]
+}

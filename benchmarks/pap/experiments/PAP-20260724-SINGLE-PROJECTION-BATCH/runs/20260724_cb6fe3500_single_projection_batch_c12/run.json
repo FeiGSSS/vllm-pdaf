@@ -1,0 +1,262 @@
+{
+  "schema_version": 1,
+  "kind": "pap-run-manifest",
+  "run_id": "20260724_cb6fe3500_single_projection_batch_c12",
+  "experiment_id": "PAP-20260724-SINGLE-PROJECTION-BATCH",
+  "profile_id": "aiperf_qwen3_8b_4gpu_o32",
+  "architecture": "pap",
+  "mode": "controlled",
+  "evidence": "controlled",
+  "provenance": {
+    "branch": "feature/pap",
+    "commit": "cb6fe35009905c32b52a8ad10b7e00d778c03679",
+    "tracked_worktree_dirty": false,
+    "tracked_worktree_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tracked_index_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "started_at": "2026-07-24T20:16:37+08:00"
+  },
+  "workload": {
+    "model": {
+      "path": "missing",
+      "dtype": "float16",
+      "tensor_parallel_size": 1
+    },
+    "corpus": {
+      "path": "missing",
+      "sha256": "4a53bd26108f9193c693ab6a9482ee5ce5102b545b70a5ca3a8cb11ca1171859"
+    },
+    "parameters": {
+      "client": "aiperf-0.11.0",
+      "sessions": 32,
+      "turns": 10,
+      "requests_per_repetition": 320,
+      "concurrency": 12,
+      "initial_input_mean_tokens": 8192,
+      "append_input_mean_tokens": 512,
+      "output_mean_tokens": 32,
+      "execution_mode": "eager",
+      "prefill_gpu_memory_utilization": 0.9,
+      "projection_gpu_memory_utilization": 0.407,
+      "projection_memory_policy": "model_weights_x1.20"
+    }
+  },
+  "topology": {
+    "name": "3pa1p",
+    "pa_count": 3,
+    "projection_count": 1,
+    "pd_prefill_count": 0,
+    "pd_decode_count": 0,
+    "routing_policy": "conversation_affinity"
+  },
+  "placement": {
+    "prefill_devices": [0, 1, 2],
+    "attention_devices": [0, 1, 2],
+    "projection_devices": [3],
+    "decode_devices": []
+  },
+  "transport": {
+    "offload_exec": "local_fast",
+    "offload_kv": "cuda_ipc",
+    "same_host": true
+  },
+  "mps": {
+    "mode": "static",
+    "profile_id": "static_72_20",
+    "prefill_visible_sms": 72,
+    "attention_visible_sms": 20
+  },
+  "runtime": {
+    "profile": "eager_single_projection_batch",
+    "settings": {
+      "projection_async_scheduling": false,
+      "projection_max_inflight_batches": 1,
+      "same_batch_pa_fanout": true,
+      "max_num_seqs": 64,
+      "prefill_token_budget": 16384,
+      "projection_token_budget": 64,
+      "projection_local_kv": false
+    }
+  },
+  "environment": {
+    "hardware_signature": "4x NVIDIA L20",
+    "software": {
+      "aiperf": "0.11.0",
+      "vllm_commit": "cb6fe35009905c32b52a8ad10b7e00d778c03679"
+    },
+    "fingerprint_basis": [
+      "runtime commit",
+      "normalized AIPerf inputs",
+      "effective configuration"
+    ]
+  },
+  "fingerprints": {
+    "profile": "missing",
+    "implementation": "missing",
+    "request_shape": "9bc50f0fb27d90da0f4826a4f5fb339a7416e618a7fbab9fd1c22571fe58dfbc",
+    "hardware_runtime": "missing"
+  },
+  "repetitions": {
+    "count": 2,
+    "order": [1, 2],
+    "aggregation_method": "arithmetic mean of the two complete clean repetitions",
+    "items": [
+      {
+        "index": 1,
+        "repetition_id": "single-projection-batch-c12-r1",
+        "result_artifact": {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/runs/20260724_cb6fe3500_single_projection_batch_c12/raw/r1/aiperf/profile.json"
+        }
+      },
+      {
+        "index": 2,
+        "repetition_id": "single-projection-batch-c12-r2",
+        "result_artifact": {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/runs/20260724_cb6fe3500_single_projection_batch_c12/raw/r2/aiperf/profile.json"
+        }
+      }
+    ]
+  },
+  "audits": {
+    "client": {
+      "status": "passed",
+      "detail": "Both repetitions completed 320 of 320 requests with zero errors.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/runs/20260724_cb6fe3500_single_projection_batch_c12/raw/r1/aiperf/profile.json"
+        },
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/runs/20260724_cb6fe3500_single_projection_batch_c12/raw/r2/aiperf/profile.json"
+        }
+      ]
+    },
+    "correctness": {
+      "status": "passed",
+      "detail": "Strict service-log correctness audits passed in both repetitions.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md"
+        }
+      ]
+    },
+    "routing": {
+      "status": "passed",
+      "detail": "Conversation-affinity routing passed in both repetitions.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md"
+        }
+      ]
+    },
+    "session_drain": {
+      "status": "passed",
+      "detail": "All three Attention instances drained to zero active sessions.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md"
+        }
+      ]
+    },
+    "mps": {
+      "status": "passed",
+      "detail": "Static 72/20 MPS audits passed on all three PA GPUs.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md"
+        }
+      ]
+    },
+    "runtime": {
+      "status": "passed",
+      "detail": "Both Projection launches confirmed async scheduling off and one in-flight batch.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md"
+        }
+      ]
+    }
+  },
+  "metrics": {
+    "completed_requests": 640,
+    "failed_requests": 0,
+    "values": [
+      {
+        "name": "ttft_avg_ms",
+        "scope": "requests",
+        "statistic": "mean-of-runs",
+        "unit": "ms",
+        "value": 766.7487502046874
+      },
+      {
+        "name": "ttft_p95_ms",
+        "scope": "requests",
+        "statistic": "mean-of-run-p95s",
+        "unit": "ms",
+        "value": 2811.629302175
+      },
+      {
+        "name": "itl_avg_ms",
+        "scope": "requests",
+        "statistic": "mean-of-runs",
+        "unit": "ms",
+        "value": 38.237998545468784
+      },
+      {
+        "name": "itl_p95_ms",
+        "scope": "requests",
+        "statistic": "mean-of-run-p95s",
+        "unit": "ms",
+        "value": 44.85113902869635
+      },
+      {
+        "name": "request_throughput_rps",
+        "scope": "run",
+        "statistic": "mean-of-runs",
+        "unit": "requests/s",
+        "value": 2.4841517906094097
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "name": "report",
+      "kind": "aggregate",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md"
+      },
+      "sha256": "4c5722f6c6ca23e3126775d90e9d56a236d3da3826ef6a752c2593c0f07520a1"
+    },
+    {
+      "name": "aiperf-profile-r1",
+      "kind": "profile",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/runs/20260724_cb6fe3500_single_projection_batch_c12/raw/r1/aiperf/profile.json"
+      },
+      "sha256": "64d7b0bd6bf14f8284cc0a1bdacf556c0b6e773d93f182425464899c336400be"
+    },
+    {
+      "name": "aiperf-profile-r2",
+      "kind": "profile",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/runs/20260724_cb6fe3500_single_projection_batch_c12/raw/r2/aiperf/profile.json"
+      },
+      "sha256": "f0d9dd47483f2689008403a1cd150a6b255c719b3e6fabc141a7df2f92645e16"
+    }
+  ],
+  "validity": {
+    "status": "passed",
+    "reasons": []
+  },
+  "failure_reasons": []
+}

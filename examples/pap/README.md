@@ -116,3 +116,5 @@ single topology or concurrency point. The old fixed-length O256/O128 and
 
 Current eager and piecewise results are recorded in the
 [automatic Projection-memory milestone](../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
+The one-global-batch runtime regression is recorded in the
+[single Projection batch milestone](../../benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md).

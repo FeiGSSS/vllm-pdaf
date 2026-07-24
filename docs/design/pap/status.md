@@ -4,20 +4,22 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260724-SINGLE-PROJECTION-BATCH
+  - PAP-20260724-BATCH-SCALING-MICRO
   - PAP-20260722-AIPERF-PROJECTION-AUTO
   - PAP-20260722-AIPERF-PA090-EAGER
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
-last_validated_commit: 4484bc983e622fc03dffdec6c2831d9f6ec6396f
+last_validated_commit: cb6fe35009905c32b52a8ad10b7e00d778c03679
 ---
 
 # Current PAP development status
 
-Snapshot date: 2026-07-22.
+Snapshot date: 2026-07-24.
 
 PAP has completed its runtime refactor and the first capacity-oriented
-performance milestone. The source milestone at `4484bc983` has one accepted
+performance milestone. The source milestone at `cb6fe3500` has one accepted
 runtime architecture, a source-audited long-context testbed, and an optional
 piecewise CUDA Graph execution mode. Historical experimental algorithms are
 not selectable branches in the current runtime.
@@ -48,6 +50,8 @@ The current request path is:
 2. Prefill processes the prompt, owns all paged KV blocks, and publishes one
    sealed generation-bound manifest to its colocated Attention service.
 3. Projection runs the KV-unaware decode path and sends current-step Q/K/V.
+   It owns one global in-flight batch and may fan shards from that batch out
+   to several PA groups.
 4. Attention appends K/V into the Prefill-owned blocks, executes one
    step-level Triton paged-decode plan across the model layers, and returns the
    Attention output.
@@ -119,6 +123,14 @@ independent PD topologies are used for comparison. This is controlled
 single-repetition development evidence, not a release claim. See the
 [current milestone](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
 
+The subsequent C12 runtime guard validates the stricter one-global-batch
+Projection contract. Two runs completed 640/640 requests with every audit
+passing. Relative to the earlier vLLM two-step scheduling queue, mean
+throughput changes by -1.98% and TTFT p95 by -12.30%, while ITL p95 increases
+by 10.16%. This is an accepted semantic simplification with a measured
+inter-step-overlap cost, not an unconditional speedup. The component probe
+attributes 93.2% of the B4-to-B8 per-layer growth to paged Attention.
+
 ## Remaining work
 
 1. Run three AIPerf repetitions only when promoting a four-GPU result to a
@@ -129,7 +141,11 @@ single-repetition development evidence, not a release claim. See the
    consistent latency or goodput benefit worth changing the eager default.
 4. Keep same-host xPAyP and cross-host NIXL source-compatible, but do not claim
    performance or fresh E2E support until those lanes are explicitly rerun.
-5. Continue owner-driven splits in unified-KV and transport internals only
+5. Optimize only inside the one global Projection step: same-batch PA
+   fan-out, independent Attention execution, buffer reuse, and lower
+   launch/control overhead. Do not restore inter-step or PA-specific batch
+   pipelines.
+6. Continue owner-driven splits in unified-KV and transport internals only
    when they simplify a concrete feature; do not restore retired experiment
    selectors or per-layer scheduling paths.
 

@@ -1,0 +1,220 @@
+{
+  "schema_version": 1,
+  "kind": "pap-run-manifest",
+  "run_id": "20260724_1ce452dc7_batch_scaling_micro",
+  "experiment_id": "PAP-20260724-BATCH-SCALING-MICRO",
+  "profile_id": "qwen3_8b_batch_scaling_micro",
+  "architecture": "pap",
+  "mode": "diagnostic",
+  "evidence": "diagnostic",
+  "provenance": {
+    "branch": "feature/pap",
+    "commit": "1ce452dc7336efd1444f59695a8fa3e905040da8",
+    "tracked_worktree_dirty": false,
+    "tracked_worktree_patch_sha256": "missing",
+    "tracked_index_patch_sha256": "missing",
+    "started_at": "missing"
+  },
+  "workload": {
+    "model": {
+      "path": "missing",
+      "dtype": "float16",
+      "tensor_parallel_size": 1
+    },
+    "corpus": {
+      "path": "missing",
+      "sha256": "missing"
+    },
+    "parameters": {
+      "batch_sizes": [1, 2, 4, 8, 16, 32],
+      "sequence_length": 8192,
+      "warmup_calls": 10,
+      "samples": 5,
+      "calls_per_sample": 30,
+      "components": ["projection", "local_fast", "attention"]
+    }
+  },
+  "topology": {
+    "name": "component-microbenchmark",
+    "pa_count": 1,
+    "projection_count": 1,
+    "pd_prefill_count": 0,
+    "pd_decode_count": 0,
+    "routing_policy": "not-applicable"
+  },
+  "placement": {
+    "prefill_devices": [],
+    "attention_devices": [0],
+    "projection_devices": [1],
+    "decode_devices": []
+  },
+  "transport": {
+    "offload_exec": "local_fast-payload-copy",
+    "offload_kv": "not-applicable",
+    "same_host": true
+  },
+  "mps": {
+    "mode": "static",
+    "profile_id": "attention-20sm-plus-full-gpu-control",
+    "prefill_visible_sms": 72,
+    "attention_visible_sms": 20
+  },
+  "runtime": {
+    "profile": "batch_scaling_micro",
+    "settings": {
+      "projection_scope": "qwen3-shaped-eager-pytorch-proxy",
+      "local_fast_scope": "bidirectional-p2p-payload-only",
+      "attention_scope": "production-kv-append-and-paged-decode",
+      "post_refactor_control_commit": "cb6fe35009905c32b52a8ad10b7e00d778c03679"
+    }
+  },
+  "environment": {
+    "hardware_signature": "2x NVIDIA L20",
+    "software": {
+      "vllm_commit": "1ce452dc7336efd1444f59695a8fa3e905040da8",
+      "post_refactor_commit": "cb6fe35009905c32b52a8ad10b7e00d778c03679"
+    },
+    "fingerprint_basis": [
+      "model shape",
+      "batch sizes",
+      "sequence length",
+      "GPU partition"
+    ]
+  },
+  "fingerprints": {
+    "profile": "missing",
+    "implementation": "missing",
+    "request_shape": "missing",
+    "hardware_runtime": "missing"
+  },
+  "repetitions": {
+    "count": 1,
+    "order": [1],
+    "aggregation_method": "median of five samples with 30 calls per sample",
+    "items": [
+      {
+        "index": 1,
+        "repetition_id": "batch-scaling-component-probe",
+        "result_artifact": {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260724-BATCH-SCALING-MICRO/report.md"
+        }
+      }
+    ]
+  },
+  "audits": {
+    "runtime": {
+      "status": "passed",
+      "detail": "All requested batch sizes completed on full GPU and the production 20-SM Attention partition.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260724-BATCH-SCALING-MICRO/report.md"
+        }
+      ]
+    }
+  },
+  "metrics": {
+    "completed_requests": "missing",
+    "failed_requests": "missing",
+    "values": [
+      {
+        "name": "projection_b4_ms",
+        "scope": "per-layer",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 0.580676261583964
+      },
+      {
+        "name": "projection_b8_ms",
+        "scope": "per-layer",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 0.5830645322799684
+      },
+      {
+        "name": "local_p2p_b4_ms",
+        "scope": "per-layer",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 0.023112533489863078
+      },
+      {
+        "name": "local_p2p_b8_ms",
+        "scope": "per-layer",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 0.03645439942677816
+      },
+      {
+        "name": "attention_20sm_b4_ms",
+        "scope": "per-layer",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 0.2303658644358317
+      },
+      {
+        "name": "attention_20sm_b8_ms",
+        "scope": "per-layer",
+        "statistic": "median",
+        "unit": "ms",
+        "value": 0.4452938715616862
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "name": "report",
+      "kind": "aggregate",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-BATCH-SCALING-MICRO/report.md"
+      },
+      "sha256": "d4341093c8c4f75dfdccb1396c857689a47d26e56dccb8263070b4105842d98c"
+    },
+    {
+      "name": "probe",
+      "kind": "other",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/tooling/batch_scaling_probe.py"
+      },
+      "sha256": "0610435037541843496c22e8a5be2d8cc5b9a350e546b1becec0789f400e33ee"
+    },
+    {
+      "name": "full-gpu",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-BATCH-SCALING-MICRO/raw/full_gpu.json"
+      },
+      "sha256": "bec8279ec7b583fa0ec79d4c5a7415ef07dcc1be04d69aff28b1a74c946c65a3"
+    },
+    {
+      "name": "attention-20sm",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-BATCH-SCALING-MICRO/raw/attention_20sm.json"
+      },
+      "sha256": "cf1348a6799086690d6597bdfba54b765db89b50e1ce5ba7a5dbd4fdd25c9fea"
+    },
+    {
+      "name": "post-single-batch-full-gpu",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-BATCH-SCALING-MICRO/raw/post_single_batch_full_gpu.json"
+      },
+      "sha256": "451cfa91040c371b1d4d026add8c093e2c3449820147a94ca4612dcd3e54f6cb"
+    }
+  ],
+  "validity": {
+    "status": "passed",
+    "reasons": [
+      "Projection is a Qwen3-shaped PyTorch scaling proxy rather than an exact replay of every production fused kernel.",
+      "Local-fast measures payload copies and excludes batch-independent control-plane latency."
+    ]
+  },
+  "failure_reasons": []
+}

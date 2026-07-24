@@ -4,13 +4,14 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260724-SINGLE-PROJECTION-BATCH
   - PAP-20260722-AIPERF-PROJECTION-AUTO
   - PAP-20260722-AIPERF-PA090-EAGER
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260701-PD-METHODOLOGY
-last_validated_commit: 4484bc983e622fc03dffdec6c2831d9f6ec6396f
+last_validated_commit: cb6fe35009905c32b52a8ad10b7e00d778c03679
 ---
 
 # PAP benchmark methodology
@@ -29,9 +30,11 @@ bash benchmarks/pap/aiperf/run_capacity_matrix.sh
 
 Development runs select one topology and one concurrency point with the
 documented environment overrides. The standard PAP runtime regression is
-3PA1P C12 with one repetition; it still completes all 32 conversations and 320
-requests. A milestone performance claim uses the same testbed with three
-repetitions; it does not introduce a second client or load shape.
+3PA1P C12 with one repetition; it still completes all 32 conversations and
+320 requests. The single-Projection-batch milestone used two repetitions to
+confirm the scheduling tradeoff. A release performance claim uses the same
+testbed with three repetitions; it does not introduce a second client or load
+shape.
 
 ## Validity before performance
 
