@@ -17,6 +17,8 @@ _SCOPES = {
         "layer_spans": (
             "qkv_norm_rope_gpu_ms",
             "projection_qk_repack_gpu_ms",
+        ),
+        "peer_spans": (
             "qkv_p2p_copy_gpu_ms",
             "output_doorbell_wait_wall_ms",
             "output_ready_wait_gpu_ms",
@@ -28,6 +30,7 @@ _SCOPES = {
             "qkv_norm_rope_gpu_ms",
             "pd_paged_fa_gpu_ms",
         ),
+        "peer_spans": (),
     },
 }
 
@@ -113,15 +116,24 @@ def validate_trace(
         )
     decode_forwards = layer_calls // layers
 
+    peer_counts = {
+        str(name): _span_count(spans, str(name))
+        for name in contract["peer_spans"]
+    }
+    unique_peer_counts = set(peer_counts.values())
+    if len(unique_peer_counts) > 1:
+        raise ValueError(f"deferred trace peer-span count mismatch: {peer_counts}")
+    peer_batches = unique_peer_counts.pop() if unique_peer_counts else None
+
     if reference_peer_batches is not None:
         reference = _nonnegative_int(
             reference_peer_batches,
             name="reference_peer_batches",
         )
-        if layer_calls != reference:
+        if peer_batches != reference:
             raise ValueError(
                 "Attention peer-batch mismatch: "
-                f"{layer_calls} != {reference}"
+                f"{peer_batches} != {reference}"
             )
     return {
         "decode_forwards": decode_forwards,

@@ -19,17 +19,25 @@ def _span(count: int) -> dict[str, float | int]:
 def _projection_trace(
     *,
     layer_count: int,
+    peer_count: int | None = None,
 ) -> dict[str, object]:
-    spans = {
+    spans: dict[str, object] = {
         name: _span(layer_count)
         for name in (
             "qkv_norm_rope_gpu_ms",
             "projection_qk_repack_gpu_ms",
-            "qkv_p2p_copy_gpu_ms",
-            "output_doorbell_wait_wall_ms",
-            "output_ready_wait_gpu_ms",
         )
     }
+    spans.update(
+        {
+            name: _span(peer_count if peer_count is not None else layer_count)
+            for name in (
+                "qkv_p2p_copy_gpu_ms",
+                "output_doorbell_wait_wall_ms",
+                "output_ready_wait_gpu_ms",
+            )
+        }
+    )
     return {
         "enabled": True,
         "scope": "projection_process_critical_chain",
@@ -81,6 +89,19 @@ def test_projection_trace_rejects_attention_count_mismatch() -> None:
             num_layers=36,
             reference_peer_batches=71,
         )
+
+
+def test_projection_trace_accepts_multi_pa_peer_batches() -> None:
+    payload = _projection_trace(layer_count=72, peer_count=216)
+
+    counts = validate_trace(
+        payload,
+        scope="projection_process_critical_chain",
+        num_layers=36,
+        reference_peer_batches=216,
+    )
+
+    assert counts == {"decode_forwards": 2, "layer_calls": 72}
 
 
 def test_pd_trace_rejects_qkv_fa_count_mismatch() -> None:
