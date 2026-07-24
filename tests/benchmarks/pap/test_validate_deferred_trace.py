@@ -33,7 +33,6 @@ def _projection_trace(
             name: _span(peer_count if peer_count is not None else layer_count)
             for name in (
                 "qkv_p2p_copy_gpu_ms",
-                "output_doorbell_wait_wall_ms",
                 "output_ready_wait_gpu_ms",
             )
         }

@@ -20,7 +20,6 @@ _SCOPES = {
         ),
         "peer_spans": (
             "qkv_p2p_copy_gpu_ms",
-            "output_doorbell_wait_wall_ms",
             "output_ready_wait_gpu_ms",
         ),
     },
