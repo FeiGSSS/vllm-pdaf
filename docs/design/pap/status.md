@@ -163,6 +163,14 @@ single-run tail variance rather than an improvement claim. See the
 6. Continue owner-driven splits in unified-KV and transport internals only
    when they simplify a concrete feature; do not restore retired experiment
    selectors or per-layer scheduling paths.
+7. Consider chunked asynchronous growth of sealed Prefill-owned KV
+   reservations. The current path reserves and leases the request's complete
+   decode capacity before handoff, using `max_completion_tokens` or
+   `max_tokens` with an environment fallback, and fails closed beyond the
+   published writable range. A future design may request another block chunk
+   at a low-water mark and install a generation-versioned block-table and
+   lease extension. It must remain off the per-token hot path. This is a
+   deferred capacity-efficiency TODO, not current milestone scope.
 
 Dated milestone documents and legacy experiment reports remain read-only
 development evidence. Skill-generated execution plans were removed after

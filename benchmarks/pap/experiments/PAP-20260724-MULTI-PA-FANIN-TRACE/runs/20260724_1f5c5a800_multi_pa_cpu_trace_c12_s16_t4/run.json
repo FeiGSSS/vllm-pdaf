@@ -171,7 +171,7 @@
         "root_id": "pap-worktree",
         "relative_path": "benchmarks/pap/experiments/PAP-20260724-MULTI-PA-FANIN-TRACE/report.md"
       },
-      "sha256": "20673a3dacb2b6026af9285f6c6660cba059c14323e752c9b8a3c05c4cbfc377"
+      "sha256": "568381ab0b3ef7948c654e2b674a55a607e0095eefa5c5577eb4d6cff5989077"
     },
     {
       "name": "aiperf-profile",

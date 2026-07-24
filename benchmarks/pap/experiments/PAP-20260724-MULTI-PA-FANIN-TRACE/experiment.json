@@ -22,10 +22,12 @@
   },
   "treatment": {
     "status": "present",
-    "description": "Deferred GPU fan-in timing and CPU batch-key correlation for 3PA1P",
+    "description": "Deferred GPU fan-in timing and CPU batch-key correlation for 3PA1P, extended with a full C32 trace-off reference and deferred trace",
     "run_ids": [
       "20260724_08e8e9591_multi_pa_deferred_c12_s16_t4",
-      "20260724_1f5c5a800_multi_pa_cpu_trace_c12_s16_t4"
+      "20260724_1f5c5a800_multi_pa_cpu_trace_c12_s16_t4",
+      "20260724_8ed2fec01_pap_c32_trace_off",
+      "20260724_8ed2fec01_pap_c32_deferred_trace"
     ]
   },
   "primary_variable": {
@@ -35,7 +37,9 @@
   },
   "run_ids": [
     "20260724_08e8e9591_multi_pa_deferred_c12_s16_t4",
-    "20260724_1f5c5a800_multi_pa_cpu_trace_c12_s16_t4"
+    "20260724_1f5c5a800_multi_pa_cpu_trace_c12_s16_t4",
+    "20260724_8ed2fec01_pap_c32_trace_off",
+    "20260724_8ed2fec01_pap_c32_deferred_trace"
   ],
   "aggregation_method": "Per-layer p50/p90/p99 deferred CUDA spans plus matched batch-key PA completion timestamps",
   "metrics": [
@@ -92,9 +96,36 @@
       "baseline_value": "not-applicable",
       "treatment_value": 0.0023253333,
       "direction": "descriptive"
+    },
+    {
+      "name": "c32_trace_off_mean_itl_ms",
+      "scope": "aiperf-request",
+      "statistic": "mean",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 52.43621143637191,
+      "direction": "descriptive"
+    },
+    {
+      "name": "c32_attention_qkv_ready_wait_p50_ms",
+      "scope": "attention-layer",
+      "statistic": "mean-of-pa-p50",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 0.7138240138689677,
+      "direction": "descriptive"
+    },
+    {
+      "name": "c32_paged_attention_p50_ms",
+      "scope": "attention-layer",
+      "statistic": "mean-of-pa-p50",
+      "unit": "ms",
+      "baseline_value": "not-applicable",
+      "treatment_value": 0.28569599489370984,
+      "direction": "descriptive"
     }
   ],
-  "conclusion": "Projection waits about 0.255 ms/layer at a multi-PA join, but median PA completion skew is only 0.048 ms. Round-robin balances row counts better than KV work; the heaviest-KV PA is slowest in 73.1% of matched layers. The next scheduling experiment should use KV/load-aware initial conversation placement.",
+  "conclusion": "At C32, the trace-off workload completes 320/320 requests at 52.44-ms mean ITL. The largest PA idle interval is a 0.714-ms/layer wait for Projection to produce next-layer QKV, but it grows only 0.055 ms from the shorter C12 trace while paged Attention grows 0.164 ms. High-concurrency ITL growth is therefore dominated by real Attention work rather than local-fast copies, metadata preparation, or a newly enlarged control-plane idle gap.",
   "supersedes": [],
   "superseded_by": null,
   "raw_artifacts": [
@@ -104,7 +135,7 @@
         "root_id": "pap-worktree",
         "relative_path": "benchmarks/pap/experiments/PAP-20260724-MULTI-PA-FANIN-TRACE/report.md"
       },
-      "sha256": "20673a3dacb2b6026af9285f6c6660cba059c14323e752c9b8a3c05c4cbfc377"
+      "sha256": "568381ab0b3ef7948c654e2b674a55a607e0095eefa5c5577eb4d6cff5989077"
     },
     {
       "name": "projection-deferred-trace",
