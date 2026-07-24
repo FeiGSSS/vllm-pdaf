@@ -78,7 +78,8 @@ independent.
 
 | Capability | Implementation | Milestone validation |
 | --- | --- | --- |
-| 3PA1P, same host | `local_fast` + CUDA IPC | Current AIPerf matrix |
+| 7PA1P, same host | `local_fast` + CUDA IPC | Eight-GPU E2E pending |
+| 6PA2P, same host | Gateway wave admission over `local_fast` | Eight-GPU E2E pending |
 | Other xPAyP, same host | Gateway wave admission over `local_fast` | Controlled smoke |
 | xPAyP, cross host | NIXL mailbox/backend | Preserved, contract only |
 | TP or other models | Existing integration boundary | Outside the current matrix |

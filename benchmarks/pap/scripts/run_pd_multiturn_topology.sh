@@ -113,10 +113,7 @@ if [[ ! "${TOPOLOGY}" =~ ^([1-9][0-9]*)p([1-9][0-9]*)d$ ]]; then
 fi
 PREFILL_COUNT="${BASH_REMATCH[1]}"
 DECODE_COUNT="${BASH_REMATCH[2]}"
-if (( PREFILL_COUNT + DECODE_COUNT != 4 )); then
-  echo "this comparison runner requires exactly four GPUs" >&2
-  exit 2
-fi
+GPU_COUNT=$((PREFILL_COUNT + DECODE_COUNT))
 case "${TRANSFER_MODE}" in
   oneway)
     EXTRA_CONFIG='"bidirectional_kv_xfer":false,"enable_cross_layers_blocks":"True"'
@@ -291,6 +288,7 @@ HOSTS_DECODE=()
 {
   printf 'MODE=pd\nTOPOLOGY=%q\nPD_TRANSFER_MODE=%q\n' \
     "${TOPOLOGY}" "${TRANSFER_MODE}"
+  printf 'GPU_COUNT=%q\n' "${GPU_COUNT}"
   printf 'MODEL_PATH=%q\nROUNDS=%q\nTOTAL_CONVERSATIONS=%q\n' \
     "${MODEL_PATH}" "${ROUNDS}" "${CONVERSATIONS}"
   printf 'ACTIVE_CONVERSATIONS=%q\n' "${ACTIVE_CONVERSATIONS}"

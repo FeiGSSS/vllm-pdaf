@@ -21,10 +21,10 @@ last_validated_commit: 31e0b3882b5fadf63d2d68b52855dfc7307c11fd
 ## Canonical AIPerf testbed
 
 `benchmarks/pap/aiperf/run_capacity_matrix.sh` is the single executable
-runtime testbed. It fixes Qwen3-8B FP16 on four L20 GPUs, PAP 3PA1P, one-way PD
-1P3D/2P2D/3P1D, 32 conversations, ten randomized long-context turns, think/tool
-delays, conversation concurrency, three request-level SLOs, and role-specific
-scheduler limits.
+runtime testbed. It fixes Qwen3-8B FP16 on eight L20 GPUs, PAP 7PA1P/6PA2P,
+one-way PD 2P6D/4P4D/6P2D, native vLLM DP8, 128 conversations, five randomized
+long-context turns, think/tool delays, conversation concurrency, three
+request-level SLOs, and role-specific scheduler limits.
 
 ```bash
 bash benchmarks/pap/aiperf/run_capacity_matrix.sh
@@ -32,11 +32,9 @@ bash benchmarks/pap/aiperf/run_capacity_matrix.sh
 
 Development runs select one topology and one concurrency point with the
 documented environment overrides. The standard PAP runtime regression is
-3PA1P C12 with one repetition; it still completes all 32 conversations and
-320 requests. The archived no-async diagnostic used two repetitions and
-showed why vLLM's safe scheduler overlap should remain enabled. A release
-performance claim uses the same testbed with three repetitions; it does not
-introduce a second client or load shape.
+7PA1P C32 with one repetition and still completes all 128 conversations and
+640 requests. A release performance claim uses the same testbed with three
+repetitions; it does not introduce a second client or load shape.
 
 ## Validity before performance
 

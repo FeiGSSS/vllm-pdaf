@@ -25,9 +25,9 @@ Run tests directly related to each source change. Run the complete PAP CPU
 gate before a source milestone, and use a runtime lane only when the change
 crosses a runtime boundary:
 
-- The four-GPU AIPerf lane is the only runtime regression and performance
-  testbed. Select one relevant point during development and use the full lean
-  matrix for a milestone claim.
+- The eight-GPU AIPerf lane is the runtime regression and performance testbed.
+  Select one relevant point during development and use the full lean matrix
+  for a milestone claim. Four-GPU results remain historical evidence.
 - Piecewise Graph changes require the focused graph/launcher tests and a
   matched eager/Graph runtime point before a performance claim.
 

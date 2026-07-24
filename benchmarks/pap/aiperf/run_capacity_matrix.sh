@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Four-GPU PAP/PD randomized-length comparison. Every point restarts services.
+# PAP/PD/DP randomized-length comparison. Every point restarts services.
 
 ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
@@ -12,6 +12,7 @@ AIPERF_BIN="${AIPERF_BIN:-${AIPERF_ROOT}/.venv/bin/aiperf}"
 AIPERF_PYTHON="${AIPERF_PYTHON:-${AIPERF_ROOT}/.venv/bin/python}"
 PAP_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_pap_workload.sh"
 PD_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_pd_multiturn_topology.sh"
+DP_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_dp_multiturn.sh"
 DATASET_GENERATOR="${ROOT_DIR}/benchmarks/pap/aiperf/generate_multiturn_dataset.py"
 RUN_SUMMARIZER="${ROOT_DIR}/benchmarks/pap/aiperf/summarize_capacity_run.py"
 MATRIX_SUMMARIZER="${ROOT_DIR}/benchmarks/pap/aiperf/summarize_capacity_matrix.py"
@@ -25,12 +26,10 @@ OUTPUT_TOKENS_MAX="${PAP_CAPACITY_OUTPUT_TOKENS_MAX:-$((OUTPUT_TOKENS * 2))}"
 RANDOM_SEED="${PAP_CAPACITY_RANDOM_SEED:-42}"
 MATRIX_ID="${PAP_CAPACITY_MATRIX_ID:-$(date +%Y%m%d_%H%M%S)_aiperf_capacity_random_o${OUTPUT_TOKENS}}"
 MATRIX_ROOT="${PAP_CAPACITY_MATRIX_ROOT:-${RESULTS_ROOT}/capacity/${MATRIX_ID}}"
-ARCHITECTURES_CSV="${PAP_CAPACITY_ARCHITECTURES:-pap_3pa1p,pd_1p3d,pd_2p2d,pd_3p1d}"
-TOTAL_SESSIONS="${PAP_CAPACITY_SESSIONS:-32}"
-PAP_POINTS_CSV="${PAP_CAPACITY_PAP_3PA1P_POINTS:-12,20,28,32}"
-PD_1P3D_POINTS_CSV="${PAP_CAPACITY_PD_1P3D_POINTS:-8}"
-PD_2P2D_POINTS_CSV="${PAP_CAPACITY_PD_2P2D_POINTS:-10,16,20,24}"
-PD_3P1D_POINTS_CSV="${PAP_CAPACITY_PD_3P1D_POINTS:-8,14,20}"
+ARCHITECTURES_CSV="${PAP_CAPACITY_ARCHITECTURES:-pap_7pa1p,pap_6pa2p,pd_2p6d,pd_4p4d,pd_6p2d,dp_8}"
+TOTAL_SESSIONS="${PAP_CAPACITY_SESSIONS:-128}"
+GPU_COUNT="${PAP_CAPACITY_GPU_COUNT:-8}"
+DEFAULT_POINTS_CSV="${PAP_CAPACITY_POINTS:-32,64,96,128}"
 REPETITIONS="${PAP_CAPACITY_REPETITIONS:-1}"
 STOP_AFTER_RELAXED_FAIL="${PAP_CAPACITY_STOP_AFTER_RELAXED_FAIL:-1}"
 RESUME="${PAP_CAPACITY_RESUME:-1}"
@@ -38,23 +37,26 @@ WAIT_FOR_GPUS="${PAP_CAPACITY_WAIT_FOR_GPUS:-1}"
 GPU_IDLE_STABILITY_SECONDS="${PAP_CAPACITY_GPU_IDLE_STABILITY_SECONDS:-15}"
 EXECUTION_MODE="${PAP_CAPACITY_EXECUTION_MODE:-eager}"
 
-TURNS=10
-DATASET_SESSION_PREFIX="pap-pd-s${TOTAL_SESSIONS}-t${TURNS}-seed${RANDOM_SEED}"
-DOCUMENT_TOKENS=8192
-DOCUMENT_TOKENS_MEDIAN=8000
-DOCUMENT_TOKENS_MIN=4096
-DOCUMENT_TOKENS_MAX=11264
-APPEND_TOKENS=512
-APPEND_TOKENS_MEDIAN=500
-APPEND_TOKENS_MIN=256
-APPEND_TOKENS_MAX=768
-THINK_TIME_MS=3000
-TOOL_TIME_MS=1000
-TOOL_EVERY=3
-MAX_MODEL_LEN=20000
-PREFILL_MAX_NUM_BATCHED_TOKENS=16384
-DECODE_MAX_NUM_BATCHED_TOKENS=64
-MAX_NUM_SEQS=64
+TURNS="${PAP_CAPACITY_TURNS:-5}"
+DATASET_SESSION_PREFIX="pap-pd-dp-s${TOTAL_SESSIONS}-t${TURNS}-seed${RANDOM_SEED}"
+DOCUMENT_TOKENS="${PAP_CAPACITY_DOCUMENT_TOKENS_MEAN:-8192}"
+DOCUMENT_TOKENS_MEDIAN="${PAP_CAPACITY_DOCUMENT_TOKENS_MEDIAN:-8000}"
+DOCUMENT_TOKENS_MIN="${PAP_CAPACITY_DOCUMENT_TOKENS_MIN:-4096}"
+DOCUMENT_TOKENS_MAX="${PAP_CAPACITY_DOCUMENT_TOKENS_MAX:-11264}"
+# The upper bound truncates the log-normal tail. With seed 42 and 128x5
+# requests, these parameters sample an append mean near 1.4K (about 44:1).
+APPEND_TOKENS="${PAP_CAPACITY_APPEND_TOKENS_MEAN:-2200}"
+APPEND_TOKENS_MEDIAN="${PAP_CAPACITY_APPEND_TOKENS_MEDIAN:-800}"
+APPEND_TOKENS_MIN="${PAP_CAPACITY_APPEND_TOKENS_MIN:-4}"
+APPEND_TOKENS_MAX="${PAP_CAPACITY_APPEND_TOKENS_MAX:-4250}"
+SAMPLED_MEAN_TOLERANCE="${PAP_CAPACITY_SAMPLED_MEAN_TOLERANCE:-0.40}"
+THINK_TIME_MS="${PAP_CAPACITY_THINK_TIME_MS:-3000}"
+TOOL_TIME_MS="${PAP_CAPACITY_TOOL_TIME_MS:-1000}"
+TOOL_EVERY="${PAP_CAPACITY_TOOL_EVERY:-3}"
+MAX_MODEL_LEN="${PAP_CAPACITY_MAX_MODEL_LEN:-32768}"
+PREFILL_MAX_NUM_BATCHED_TOKENS="${PAP_CAPACITY_PREFILL_MAX_NUM_BATCHED_TOKENS:-32768}"
+DECODE_MAX_NUM_BATCHED_TOKENS="${PAP_CAPACITY_DECODE_MAX_NUM_BATCHED_TOKENS:-256}"
+MAX_NUM_SEQS="${PAP_CAPACITY_MAX_NUM_SEQS:-256}"
 PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.90
 PD_GPU_MEMORY_UTILIZATION=0.90
 PAP_PREFILL_CHUNKS=18
@@ -73,8 +75,15 @@ die() {
   exit 2
 }
 
+points_for_architecture() {
+  local architecture="$1"
+  local suffix="${architecture^^}"
+  local variable="PAP_CAPACITY_${suffix}_POINTS"
+  printf '%s' "${!variable:-${DEFAULT_POINTS_CSV}}"
+}
+
 for required in "${PYTHON_BIN}" "${AIPERF_BIN}" "${AIPERF_PYTHON}" "${MODEL_PATH}" \
-  "${CORPUS_PATH}" "${PAP_RUNNER}" "${PD_RUNNER}" \
+  "${CORPUS_PATH}" "${PAP_RUNNER}" "${PD_RUNNER}" "${DP_RUNNER}" \
   "${DATASET_GENERATOR}" "${RUN_SUMMARIZER}" "${MATRIX_SUMMARIZER}"; do
   [[ -e "${required}" ]] || die "required path is missing: ${required}"
 done
@@ -82,6 +91,8 @@ done
   || die "PAP_CAPACITY_REPETITIONS must be positive"
 [[ "${TOTAL_SESSIONS}" =~ ^[1-9][0-9]*$ ]] \
   || die "PAP_CAPACITY_SESSIONS must be positive"
+[[ "${GPU_COUNT}" =~ ^[1-9][0-9]*$ ]] \
+  || die "PAP_CAPACITY_GPU_COUNT must be positive"
 [[ "${OUTPUT_TOKENS}" =~ ^[1-9][0-9]*$ ]] \
   || die "PAP_CAPACITY_OUTPUT_TOKENS must be positive"
 for value in "${OUTPUT_TOKENS_MEDIAN}" "${OUTPUT_TOKENS_MIN}" \
@@ -100,8 +111,7 @@ case "${EXECUTION_MODE}" in
   *) die "PAP_CAPACITY_EXECUTION_MODE must be eager or piecewise" ;;
 esac
 
-ALL_POINTS_CSV="${PAP_POINTS_CSV},${PD_1P3D_POINTS_CSV},${PD_2P2D_POINTS_CSV},${PD_3P1D_POINTS_CSV}"
-IFS=, read -r -a ALL_POINTS <<< "${ALL_POINTS_CSV}"
+IFS=, read -r -a ALL_POINTS <<< "${DEFAULT_POINTS_CSV}"
 for concurrency in "${ALL_POINTS[@]}"; do
   [[ "${concurrency}" =~ ^[1-9][0-9]*$ ]] \
     || die "invalid concurrency point: ${concurrency}"
@@ -110,14 +120,30 @@ for concurrency in "${ALL_POINTS[@]}"; do
 done
 
 for architecture in "${ARCHITECTURES[@]}"; do
-  case "${architecture}" in
-    pap_3pa1p | pd_1p3d | pd_2p2d | pd_3p1d) ;;
-    *) die "unsupported architecture: ${architecture}" ;;
-  esac
+  if [[ "${architecture}" =~ ^pap_([1-9][0-9]*)pa([1-9][0-9]*)p$ ]]; then
+    (( BASH_REMATCH[1] + BASH_REMATCH[2] == GPU_COUNT )) \
+      || die "${architecture} does not use ${GPU_COUNT} GPUs"
+  elif [[ "${architecture}" =~ ^pd_([1-9][0-9]*)p([1-9][0-9]*)d$ ]]; then
+    (( BASH_REMATCH[1] + BASH_REMATCH[2] == GPU_COUNT )) \
+      || die "${architecture} does not use ${GPU_COUNT} GPUs"
+  elif [[ "${architecture}" =~ ^dp_([1-9][0-9]*)$ ]]; then
+    (( BASH_REMATCH[1] == GPU_COUNT )) \
+      || die "${architecture} does not use ${GPU_COUNT} GPUs"
+  else
+    die "unsupported architecture: ${architecture}"
+  fi
+  IFS=, read -r -a architecture_points \
+    <<< "$(points_for_architecture "${architecture}")"
+  for concurrency in "${architecture_points[@]}"; do
+    [[ "${concurrency}" =~ ^[1-9][0-9]*$ ]] \
+      || die "invalid ${architecture} concurrency point: ${concurrency}"
+    (( concurrency <= TOTAL_SESSIONS )) \
+      || die "${architecture} concurrency ${concurrency} exceeds sessions"
+  done
 done
 
 mkdir -p "${MATRIX_ROOT}/dataset" "${MATRIX_ROOT}/runs"
-DATASET_FILE="${MATRIX_ROOT}/dataset/multiturn_s${TOTAL_SESSIONS}_8k_plus512_random_o${OUTPUT_TOKENS}_t10_seed${RANDOM_SEED}.jsonl"
+DATASET_FILE="${MATRIX_ROOT}/dataset/multiturn_s${TOTAL_SESSIONS}_8k_longtail_random_o${OUTPUT_TOKENS}_t${TURNS}_seed${RANDOM_SEED}.jsonl"
 
 if [[ ! -f "${DATASET_FILE}" ]]; then
   "${PYTHON_BIN}" "${DATASET_GENERATOR}" \
@@ -139,6 +165,7 @@ if [[ ! -f "${DATASET_FILE}" ]]; then
     --output-tokens-min "${OUTPUT_TOKENS_MIN}" \
     --output-tokens-max "${OUTPUT_TOKENS_MAX}" \
     --random-seed "${RANDOM_SEED}" \
+    --sampled-mean-tolerance "${SAMPLED_MEAN_TOLERANCE}" \
     --max-model-len "${MAX_MODEL_LEN}" \
     --think-time-ms "${THINK_TIME_MS}" \
     --tool-time-ms "${TOOL_TIME_MS}" \
@@ -233,10 +260,12 @@ PY
   printf 'AIPERF_TIMING_MODE=concurrency\nAIPERF_REQUEST_RATE=\n'
   printf 'ARCHITECTURES=%q\nTOTAL_SESSIONS=%q\n' \
     "${ARCHITECTURES_CSV}" "${TOTAL_SESSIONS}"
-  printf 'POINTS_PAP_3PA1P=%q\nPOINTS_PD_1P3D=%q\n' \
-    "${PAP_POINTS_CSV}" "${PD_1P3D_POINTS_CSV}"
-  printf 'POINTS_PD_2P2D=%q\nPOINTS_PD_3P1D=%q\n' \
-    "${PD_2P2D_POINTS_CSV}" "${PD_3P1D_POINTS_CSV}"
+  printf 'GPU_COUNT=%q\nDEFAULT_POINTS=%q\n' \
+    "${GPU_COUNT}" "${DEFAULT_POINTS_CSV}"
+  for architecture in "${ARCHITECTURES[@]}"; do
+    printf 'POINTS_%s=%q\n' "${architecture^^}" \
+      "$(points_for_architecture "${architecture}")"
+  done
   printf 'REPETITIONS=%q\nSTOP_AFTER_RELAXED_FAIL=%q\n' \
     "${REPETITIONS}" "${STOP_AFTER_RELAXED_FAIL}"
   printf 'GPU_IDLE_STABILITY_SECONDS=%q\n' \
@@ -253,6 +282,12 @@ PY
     "${APPEND_TOKENS}" "${APPEND_TOKENS_MEDIAN}"
   printf 'APPEND_TOKENS_MIN=%q\nAPPEND_TOKENS_MAX=%q\n' \
     "${APPEND_TOKENS_MIN}" "${APPEND_TOKENS_MAX}"
+  printf 'SAMPLED_MEAN_TOLERANCE=%q\n' "${SAMPLED_MEAN_TOLERANCE}"
+  printf 'APPEND_SAMPLED_MEAN=%q\nAPPEND_SAMPLED_MEDIAN=%q\n' \
+    "$(jq -r '.length_distributions.append_content_tokens.sampled.mean' \
+      "${DATASET_MANIFEST}")" \
+    "$(jq -r '.length_distributions.append_content_tokens.sampled.median' \
+      "${DATASET_MANIFEST}")"
   printf 'OUTPUT_TOKENS_MEAN=%q\nOUTPUT_TOKENS_MEDIAN=%q\n' \
     "${OUTPUT_TOKENS}" "${OUTPUT_TOKENS_MEDIAN}"
   printf 'OUTPUT_TOKENS_MIN=%q\nOUTPUT_TOKENS_MAX=%q\n' \
@@ -283,12 +318,12 @@ PY
     'TTFT<=20000ms,ITL<=100ms,good>=0.95'
 } > "${MATRIX_ROOT}/matrix_config.env"
 
-wait_for_four_gpus() {
+wait_for_gpus() {
   [[ "${WAIT_FOR_GPUS}" == "1" ]] || return 0
   local busy gpu processes stable=0
   while true; do
     busy=0
-    for gpu in 0 1 2 3; do
+    for (( gpu=0; gpu<GPU_COUNT; gpu++ )); do
       processes="$(
         nvidia-smi -i "${gpu}" --query-compute-apps=pid \
           --format=csv,noheader,nounits 2>/dev/null || true
@@ -300,11 +335,11 @@ wait_for_four_gpus() {
     done
     if (( busy == 1 )); then
       stable=0
-      echo "Waiting 60 seconds for GPUs 0-3 to become idle..."
+      echo "Waiting 60 seconds for GPUs 0-$((GPU_COUNT - 1)) to become idle..."
       sleep 60
     elif (( stable == 0 && GPU_IDLE_STABILITY_SECONDS > 0 )); then
       stable=1
-      echo "GPUs 0-3 are idle; verifying for ${GPU_IDLE_STABILITY_SECONDS} seconds..."
+      echo "GPUs 0-$((GPU_COUNT - 1)) are idle; verifying for ${GPU_IDLE_STABILITY_SECONDS} seconds..."
       sleep "${GPU_IDLE_STABILITY_SECONDS}"
     else
       return 0
@@ -330,9 +365,20 @@ summarize_point() {
     --repetition "${repetition}"
 }
 
+gpu_csv() {
+  local start="$1"
+  local count="$2"
+  seq -s, "${start}" "$((start + count - 1))"
+}
+
 run_pap_point() {
-  local concurrency="$1"
-  local run_root="$2"
+  local topology="$1"
+  local concurrency="$2"
+  local run_root="$3"
+  [[ "${topology}" =~ ^([1-9][0-9]*)pa([1-9][0-9]*)p$ ]] \
+    || die "invalid PAP topology: ${topology}"
+  local pa_count="${BASH_REMATCH[1]}"
+  local projection_count="${BASH_REMATCH[2]}"
   env \
     PAP_ROOT="${ROOT_DIR}" \
     PYTHON_BIN="${PYTHON_BIN}" \
@@ -345,9 +391,9 @@ run_pap_point() {
     RESULTS_ROOT="${RESULTS_ROOT}" \
     PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE=1 \
     PAP_BENCH_STRICT_CORRECTNESS_AUDIT=1 \
-    PAP_TOPOLOGY=3pa1p \
-    PAP_PREFILL_GPUS=0,1,2 \
-    PAP_PROJECTION_GPUS=3 \
+    PAP_TOPOLOGY="${topology}" \
+    PAP_PREFILL_GPUS="$(gpu_csv 0 "${pa_count}")" \
+    PAP_PROJECTION_GPUS="$(gpu_csv "${pa_count}" "${projection_count}")" \
     PAP_ROUTING_POLICY=conversation_affinity \
     PAP_OFFLOAD_EXEC_TRANSPORT=local_fast \
     PAP_OFFLOAD_KV_TRANSPORT=cuda_ipc \
@@ -379,7 +425,7 @@ run_pap_point() {
     PAP_PREFILL_MAX_NUM_SEQS="${MAX_NUM_SEQS}" \
     PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS="${DECODE_MAX_NUM_BATCHED_TOKENS}" \
     PAP_PROJECTION_MAX_NUM_SEQS="${MAX_NUM_SEQS}" \
-    PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS=64 \
+    PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${OUTPUT_TOKENS_MAX}" \
     PAP_EXECUTION_MODE="${EXECUTION_MODE}" \
     BENCH_TIMEOUT="${PAP_RUN_TIMEOUT_SECONDS}" \
     SERVER_START_TIMEOUT=900 \
@@ -427,6 +473,39 @@ run_pd_point() {
     "${PD_RUNNER}" oneway
 }
 
+run_dp_point() {
+  local topology="$1"
+  local concurrency="$2"
+  local run_root="$3"
+  [[ "${topology}" =~ ^([1-9][0-9]*)dp$ ]] \
+    || die "invalid DP topology: ${topology}"
+  local dp_size="${BASH_REMATCH[1]}"
+  env \
+    PAP_ROOT="${ROOT_DIR}" \
+    PYTHON_BIN="${PYTHON_BIN}" \
+    MODEL_PATH="${MODEL_PATH}" \
+    AIPERF_ROOT="${AIPERF_ROOT}" \
+    AIPERF_BIN="${AIPERF_BIN}" \
+    RESULTS_ROOT="${RESULTS_ROOT}" \
+    DP_LOAD_RUN_ID="$(basename "${run_root}")" \
+    DP_LOAD_RUN_ROOT="${run_root}" \
+    DP_LOAD_SIZE="${dp_size}" \
+    DP_LOAD_GPUS="$(gpu_csv 0 "${dp_size}")" \
+    DP_LOAD_ROUNDS="${TURNS}" \
+    DP_LOAD_CONVERSATIONS="${TOTAL_SESSIONS}" \
+    DP_LOAD_MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
+    DP_LOAD_MAX_NUM_BATCHED_TOKENS="${PREFILL_MAX_NUM_BATCHED_TOKENS}" \
+    DP_LOAD_MAX_NUM_SEQS="${MAX_NUM_SEQS}" \
+    DP_LOAD_GPU_MEMORY_UTILIZATION="${PD_GPU_MEMORY_UTILIZATION}" \
+    DP_LOAD_EXECUTION_MODE="${EXECUTION_MODE}" \
+    DP_LOAD_REQUEST_TIMEOUT_SECONDS="${REQUEST_TIMEOUT_SECONDS}" \
+    DP_AIPERF_INPUT_FILE="${DATASET_FILE}" \
+    DP_AIPERF_OUTPUT_DIR="${run_root}/aiperf" \
+    DP_AIPERF_CONCURRENCY="${concurrency}" \
+    AIPERF_EXPORT_LEVEL=records \
+    "${DP_RUNNER}"
+}
+
 run_point() {
   local architecture_tag="$1"
   local concurrency="$2"
@@ -435,9 +514,12 @@ run_point() {
   if [[ "${architecture_tag}" == pap_* ]]; then
     architecture=pap
     topology="${architecture_tag#pap_}"
-  else
+  elif [[ "${architecture_tag}" == pd_* ]]; then
     architecture=pd
     topology="${architecture_tag#pd_}"
+  else
+    architecture=dp
+    topology="${architecture_tag#dp_}dp"
   fi
   run_name="${architecture_tag}_c${concurrency}_r${repetition}"
   run_root="${MATRIX_ROOT}/runs/${run_name}"
@@ -451,16 +533,20 @@ run_point() {
     die "run directory already has data: ${run_root}"
   fi
 
-  wait_for_four_gpus
+  wait_for_gpus
   mkdir -p "${run_root}"
   echo "=== ${architecture_tag} concurrency=${concurrency} rep=${repetition} ==="
   set +e
   if [[ "${architecture}" == "pap" ]]; then
-    run_pap_point "${concurrency}" "${run_root}" \
+    run_pap_point "${topology}" "${concurrency}" "${run_root}" \
+      > "${run_root}/launcher.log" 2>&1
+    launcher_code="$?"
+  elif [[ "${architecture}" == "pd" ]]; then
+    run_pd_point "${topology}" "${concurrency}" "${run_root}" \
       > "${run_root}/launcher.log" 2>&1
     launcher_code="$?"
   else
-    run_pd_point "${topology}" "${concurrency}" "${run_root}" \
+    run_dp_point "${topology}" "${concurrency}" "${run_root}" \
       > "${run_root}/launcher.log" 2>&1
     launcher_code="$?"
   fi
@@ -472,12 +558,7 @@ run_point() {
 }
 
 for architecture in "${ARCHITECTURES[@]}"; do
-  case "${architecture}" in
-    pap_3pa1p) points_csv="${PAP_POINTS_CSV}" ;;
-    pd_1p3d) points_csv="${PD_1P3D_POINTS_CSV}" ;;
-    pd_2p2d) points_csv="${PD_2P2D_POINTS_CSV}" ;;
-    pd_3p1d) points_csv="${PD_3P1D_POINTS_CSV}" ;;
-  esac
+  points_csv="$(points_for_architecture "${architecture}")"
   IFS=, read -r -a architecture_points <<< "${points_csv}"
   relaxed_failed=0
   for concurrency in "${architecture_points[@]}"; do

@@ -1,0 +1,67 @@
+schema_version = 1
+profile_id = "aiperf_qwen3_8b_8gpu_longtail_o32"
+profile_version = 1
+status = "current"
+release_gate = false
+mode = "controlled"
+client = "aiperf"
+repetitions = 1
+
+[model]
+name = "Qwen3-8B"
+dtype = "float16"
+tensor_parallel_size = 1
+max_model_len = 32768
+
+[workload]
+sessions = 128
+turns = 5
+requests = 640
+timing_mode = "conversation_concurrency"
+document_tokens_mean = 8192
+document_tokens_median = 8000
+append_distribution_mean_parameter = 2200
+append_tokens_median = 800
+append_tokens_min = 4
+append_tokens_max = 4250
+append_sampled_mean_target = 1500
+output_tokens_mean = 32
+output_tokens_median = 30
+length_distribution = "bounded_lognormal"
+random_seed = 42
+think_time_ms = 3000
+tool_time_ms = 1000
+tool_every = 3
+
+[scheduler]
+max_num_seqs = 256
+prefill_max_num_batched_tokens = 32768
+decode_max_num_batched_tokens = 256
+max_num_partial_prefills = 1
+
+[matrix]
+gpu_count = 8
+architectures = [
+  "pap_7pa1p",
+  "pap_6pa2p",
+  "pd_2p6d",
+  "pd_4p4d",
+  "pd_6p2d",
+  "dp_8",
+]
+concurrency = [32, 64, 96, 128]
+
+[slo.strict]
+ttft_ms = 5000
+itl_ms = 50
+minimum_good_fraction = 0.95
+
+[slo.standard]
+ttft_ms = 10000
+itl_ms = 75
+minimum_good_fraction = 0.95
+
+[slo.relaxed]
+ttft_ms = 20000
+itl_ms = 100
+minimum_good_fraction = 0.95

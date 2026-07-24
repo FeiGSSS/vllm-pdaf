@@ -508,13 +508,19 @@ def summarize_run(
             expected_requests=expected_requests,
             errors=errors,
         )
-    else:
+    elif architecture == "pd":
         routing = _check_pd_routing(
             run_root,
             sessions=sessions,
             turns=turns,
             errors=errors,
         )
+    else:
+        routing = {
+            "passed": True,
+            "policy": "vllm_internal_load_balancer",
+            "migration_count": None,
+        }
 
     correctness_passed = not errors
     request_throughput = _aggregate_metric(profile, "request_throughput")
@@ -605,7 +611,7 @@ def summarize_run(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-root", type=Path, required=True)
-    parser.add_argument("--architecture", choices=("pap", "pd"), required=True)
+    parser.add_argument("--architecture", choices=("pap", "pd", "dp"), required=True)
     parser.add_argument("--topology", required=True)
     parser.add_argument("--concurrency", type=int, required=True)
     parser.add_argument("--sessions", type=int)

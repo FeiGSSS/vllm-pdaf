@@ -155,7 +155,7 @@ def build_rows(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
         rows,
         key=lambda row: (
-            0 if row["architecture"] == "pap" else 1,
+            {"pap": 0, "pd": 1, "dp": 2}.get(row["architecture"], 3),
             row["topology"],
             row["concurrency"],
         ),
@@ -208,40 +208,56 @@ def build_envelope(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 and row[tier]
             ]
             capacities[f"{architecture}:{topology}"] = max(passing, default=None)
-        pd_capacities = {
-            key: value
-            for key, value in capacities.items()
-            if key.startswith("pd:") and value is not None
-        }
-        pd_best_key = (
-            max(pd_capacities, key=pd_capacities.get) if pd_capacities else None
-        )
-        pap_capacity = capacities.get("pap:3pa1p")
-        pd_capacity = pd_capacities.get(pd_best_key) if pd_best_key else None
+        best_by_architecture = {}
+        for architecture in ("pap", "pd", "dp"):
+            candidates = {
+                key: value
+                for key, value in capacities.items()
+                if key.startswith(f"{architecture}:") and value is not None
+            }
+            best_key = max(candidates, key=candidates.get) if candidates else None
+            best_by_architecture[architecture] = {
+                "topology": best_key.partition(":")[2] if best_key else None,
+                "concurrency": candidates.get(best_key) if best_key else None,
+            }
+        pap_capacity = best_by_architecture["pap"]["concurrency"]
+        pd_capacity = best_by_architecture["pd"]["concurrency"]
+        dp_capacity = best_by_architecture["dp"]["concurrency"]
         capacity_by_slo[tier] = {
             "configurations": capacities,
-            "pap_3pa1p": pap_capacity,
-            "best_pd": {
-                "topology": pd_best_key.partition(":")[2] if pd_best_key else None,
-                "concurrency": pd_capacity,
-            },
+            "best_pap": best_by_architecture["pap"],
+            "best_pd": best_by_architecture["pd"],
+            "best_dp": best_by_architecture["dp"],
             "pap_minus_best_pd": (
                 pap_capacity - pd_capacity
                 if pap_capacity is not None and pd_capacity is not None
+                else None
+            ),
+            "pap_minus_dp": (
+                pap_capacity - dp_capacity
+                if pap_capacity is not None and dp_capacity is not None
                 else None
             ),
         }
 
         pap_goodput = _best_compliant_goodput(rows, tier, "pap")
         pd_goodput = _best_compliant_goodput(rows, tier, "pd")
+        dp_goodput = _best_compliant_goodput(rows, tier, "dp")
         pap_value = pap_goodput["requests_per_second"]
         pd_value = pd_goodput["requests_per_second"]
+        dp_value = dp_goodput["requests_per_second"]
         compliant_goodput_by_slo[tier] = {
-            "pap": pap_goodput,
+            "best_pap": pap_goodput,
             "best_pd": pd_goodput,
+            "best_dp": dp_goodput,
             "pap_over_pd_percent": (
                 (pap_value / pd_value - 1) * 100
                 if pap_value is not None and pd_value is not None and pd_value > 0
+                else None
+            ),
+            "pap_over_dp_percent": (
+                (pap_value / dp_value - 1) * 100
+                if pap_value is not None and dp_value is not None and dp_value > 0
                 else None
             ),
         }
@@ -292,7 +308,7 @@ def write_markdown(
     path: Path,
 ) -> None:
     lines = [
-        "# PAP/PD four-GPU AIPerf capacity matrix",
+        "# PAP/PD/DP AIPerf capacity matrix",
         "",
         "| Architecture | Topology | C | Run status | Completed (worst) | "
         "Validation | TTFT p95 ms | ITL p95 ms | Req/s | Strict | "
@@ -324,16 +340,20 @@ def write_markdown(
             "",
             "## Tested capacity envelope",
             "",
-            "| SLO | PAP 3PA1P | Best PD topology | Best PD | PAP - PD |",
-            "| --- | ---: | --- | ---: | ---: |",
+            "| SLO | Best PAP | PAP C | Best PD | PD C | DP C | "
+            "PAP - PD | PAP - DP |",
+            "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: |",
         ]
     )
     for tier, value in envelope["capacity_by_slo"].items():
         lines.append(
-            f"| {tier} | {_fmt(value['pap_3pa1p'], 0)} | "
+            f"| {tier} | {_fmt(value['best_pap']['topology'], 0)} | "
+            f"{_fmt(value['best_pap']['concurrency'], 0)} | "
             f"{_fmt(value['best_pd']['topology'], 0)} | "
             f"{_fmt(value['best_pd']['concurrency'], 0)} | "
-            f"{_fmt(value['pap_minus_best_pd'], 0)} |"
+            f"{_fmt(value['best_dp']['concurrency'], 0)} | "
+            f"{_fmt(value['pap_minus_best_pd'], 0)} | "
+            f"{_fmt(value['pap_minus_dp'], 0)} |"
         )
     lines.extend(
         [
@@ -343,21 +363,28 @@ def write_markdown(
             "Only complete, correct configurations with at least 95% of "
             "requests meeting the tier are eligible.",
             "",
-            "| SLO | PAP req/s | PAP C | Best PD topology | PD req/s | "
-            "PD C | PAP over PD |",
-            "| --- | ---: | ---: | --- | ---: | ---: | ---: |",
+            "| SLO | Best PAP | PAP req/s | PAP C | Best PD | PD req/s | "
+            "PD C | DP req/s | DP C | PAP over PD | PAP over DP |",
+            "| --- | --- | ---: | ---: | --- | ---: | ---: | ---: | "
+            "---: | ---: | ---: |",
         ]
     )
     for tier, value in envelope["compliant_goodput_by_slo"].items():
-        pap = value["pap"]
+        pap = value["best_pap"]
         pd = value["best_pd"]
-        difference = value["pap_over_pd_percent"]
-        difference_label = f"{difference:+.1f}%" if difference is not None else "-"
+        dp = value["best_dp"]
+        pd_difference = value["pap_over_pd_percent"]
+        dp_difference = value["pap_over_dp_percent"]
+        pd_label = f"{pd_difference:+.1f}%" if pd_difference is not None else "-"
+        dp_label = f"{dp_difference:+.1f}%" if dp_difference is not None else "-"
         lines.append(
-            f"| {tier} | {_fmt(pap['requests_per_second'], 3)} | "
+            f"| {tier} | {_fmt(pap['topology'], 0)} | "
+            f"{_fmt(pap['requests_per_second'], 3)} | "
             f"{_fmt(pap['concurrency'], 0)} | {_fmt(pd['topology'], 0)} | "
             f"{_fmt(pd['requests_per_second'], 3)} | "
-            f"{_fmt(pd['concurrency'], 0)} | {difference_label} |"
+            f"{_fmt(pd['concurrency'], 0)} | "
+            f"{_fmt(dp['requests_per_second'], 3)} | "
+            f"{_fmt(dp['concurrency'], 0)} | {pd_label} | {dp_label} |"
         )
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 

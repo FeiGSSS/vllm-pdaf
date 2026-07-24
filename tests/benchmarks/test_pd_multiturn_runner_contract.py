@@ -12,6 +12,7 @@ TOPOLOGY_RUNNER = ROOT / "benchmarks/pap/scripts/run_pd_multiturn_topology.sh"
 PAP_RUNNER = ROOT / "benchmarks/pap/scripts/run_pap_workload.sh"
 AIPERF_RUNNER = ROOT / "benchmarks/pap/aiperf/run_profile.sh"
 CAPACITY_RUNNER = ROOT / "benchmarks/pap/aiperf/run_capacity_matrix.sh"
+DP_RUNNER = ROOT / "benchmarks/pap/scripts/run_dp_multiturn.sh"
 P17_RUNNER = ROOT / "benchmarks/pap/scripts/run_p17_1pa1p.sh"
 
 
@@ -90,11 +91,12 @@ def test_pd_proxy_selects_stable_prefill_decode_pairs() -> None:
     assert repeated == first
 
 
-def test_four_gpu_topology_runner_has_bounded_conversation_load() -> None:
+def test_pd_topology_runner_accepts_arbitrary_positive_gpu_count() -> None:
     text = TOPOLOGY_RUNNER.read_text(encoding="utf-8")
 
     assert "PD_LOAD_TOPOLOGY:-3p1d" in text
-    assert "PREFILL_COUNT + DECODE_COUNT != 4" in text
+    assert "GPU_COUNT=$((PREFILL_COUNT + DECODE_COUNT))" in text
+    assert "PREFILL_COUNT + DECODE_COUNT != 4" not in text
     assert "PD_LOAD_REQUEST_TIMEOUT_SECONDS:-180" in text
     assert 'printf \'CLIENT=%q\\n\' "aiperf"' in text
     assert "PD_LOAD_ROUNDS:-10" in text
@@ -167,16 +169,19 @@ def test_aiperf_is_the_only_performance_testbed() -> None:
 def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     text = CAPACITY_RUNNER.read_text(encoding="utf-8")
 
-    assert "TURNS=10" in text
-    assert "DOCUMENT_TOKENS=8192" in text
-    assert "APPEND_TOKENS=512" in text
+    assert "PAP_CAPACITY_TURNS:-5" in text
+    assert "PAP_CAPACITY_DOCUMENT_TOKENS_MEAN:-8192" in text
+    assert "PAP_CAPACITY_APPEND_TOKENS_MEAN:-2200" in text
+    assert "PAP_CAPACITY_APPEND_TOKENS_MEDIAN:-800" in text
+    assert "PAP_CAPACITY_APPEND_TOKENS_MIN:-4" in text
+    assert "PAP_CAPACITY_APPEND_TOKENS_MAX:-4250" in text
     assert "PAP_CAPACITY_OUTPUT_TOKENS:-32" in text
-    assert "multiturn_s${TOTAL_SESSIONS}_8k_plus512_random_o" in text
-    assert "THINK_TIME_MS=3000" in text
-    assert "TOOL_TIME_MS=1000" in text
-    assert "TOOL_EVERY=3" in text
-    assert "PAP_CAPACITY_SESSIONS:-32" in text
-    assert 'DATASET_SESSION_PREFIX="pap-pd-s${TOTAL_SESSIONS}' in text
+    assert "multiturn_s${TOTAL_SESSIONS}_8k_longtail_random_o" in text
+    assert "PAP_CAPACITY_THINK_TIME_MS:-3000" in text
+    assert "PAP_CAPACITY_TOOL_TIME_MS:-1000" in text
+    assert "PAP_CAPACITY_TOOL_EVERY:-3" in text
+    assert "PAP_CAPACITY_SESSIONS:-128" in text
+    assert 'DATASET_SESSION_PREFIX="pap-pd-dp-s${TOTAL_SESSIONS}' in text
     assert '--session-prefix "${DATASET_SESSION_PREFIX}"' in text
     assert '--session-prefix "${MATRIX_ID}-session"' not in text
     assert "PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.90" in text
@@ -185,23 +190,33 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     assert "PAP_PROJECTION_GPU_MEMORY_UTILIZATION=" not in text
     assert "PAP_GPU_MEMORY_UTILIZATION=" not in text
     assert "PD_GPU_MEMORY_UTILIZATION=0.90" in text
-    assert "PREFILL_MAX_NUM_BATCHED_TOKENS=16384" in text
-    assert "DECODE_MAX_NUM_BATCHED_TOKENS=64" in text
-    assert "MAX_NUM_SEQS=64" in text
+    assert "PAP_CAPACITY_PREFILL_MAX_NUM_BATCHED_TOKENS:-32768" in text
+    assert "PAP_CAPACITY_DECODE_MAX_NUM_BATCHED_TOKENS:-256" in text
+    assert "PAP_CAPACITY_MAX_NUM_SEQS:-256" in text
     assert "MAX_NUM_PARTIAL_PREFILLS=default_1" in text
     assert "--max-num-partial-prefills" not in text
-    assert "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS=64" in text
+    assert 'PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${OUTPUT_TOKENS_MAX}"' in text
     assert "PAP_CAPACITY_EXECUTION_MODE" in text
     assert 'PAP_EXECUTION_MODE="${EXECUTION_MODE}"' in text
     assert 'PD_LOAD_EXECUTION_MODE="${EXECUTION_MODE}"' in text
-    assert "PAP_CAPACITY_PAP_3PA1P_POINTS:-12,20,28,32" in text
-    assert "PAP_CAPACITY_PD_1P3D_POINTS:-8" in text
-    assert "PAP_CAPACITY_PD_2P2D_POINTS:-10,16,20,24" in text
-    assert "PAP_CAPACITY_PD_3P1D_POINTS:-8,14,20" in text
+    assert "pap_7pa1p,pap_6pa2p,pd_2p6d,pd_4p4d,pd_6p2d,dp_8" in text
+    assert "PAP_CAPACITY_POINTS:-32,64,96,128" in text
     assert '--sessions "${TOTAL_SESSIONS}"' in text
     assert 'PAP_AIPERF_SESSIONS="${TOTAL_SESSIONS}"' in text
     assert 'PD_LOAD_CONVERSATIONS="${TOTAL_SESSIONS}"' in text
+    assert 'DP_LOAD_CONVERSATIONS="${TOTAL_SESSIONS}"' in text
     assert '--sessions "${concurrency}"' not in text
+
+
+def test_capacity_lane_has_native_vllm_dp_baseline() -> None:
+    capacity_text = CAPACITY_RUNNER.read_text(encoding="utf-8")
+    dp_text = DP_RUNNER.read_text(encoding="utf-8")
+
+    assert 'DP_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_dp_multiturn.sh"' in (
+        capacity_text
+    )
+    assert '--data-parallel-size "${DP_SIZE}"' in dp_text
+    assert 'AIPERF_TIMING_MODE=concurrency' in dp_text
 
 
 def test_pap_launchers_compute_projection_memory_from_model_size() -> None:

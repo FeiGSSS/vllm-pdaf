@@ -1536,8 +1536,6 @@ expected_pair_routes = Counter()
 errors = []
 expected_group_indices = []
 if routing_policy == "conversation_affinity":
-    if projection_count != 1:
-        errors.append("conversation-affinity load audit requires one Projection")
     expected_group_indices = [
         conversation % pa_count
         for _ in range(load_rounds)
@@ -1584,7 +1582,10 @@ if projection_routes != expected_projection_routes:
         f"Projection route counts {dict(projection_routes)} != expected "
         f"{dict(expected_projection_routes)}"
     )
-if pair_routes != expected_pair_routes:
+if (
+    routing_policy != "conversation_affinity"
+    and pair_routes != expected_pair_routes
+):
     errors.append(
         f"PA/Projection pair counts {dict(pair_routes)} != expected "
         f"{dict(expected_pair_routes)}"
@@ -1666,8 +1667,6 @@ else
     || "${PAP_ROUTING_POLICY}" == "conversation_affinity" ]] \
     || die "single-PA AIPerf requires round_robin or conversation_affinity"
 fi
-(( PROJECTION_COUNT == 1 )) \
-  || die "AIPerf currently requires one Projection"
 (( PAP_AIPERF_TURNS >= 4 )) \
   || die "AIPerf requires at least four turns"
 (( INPUT_LEN > 0 && PAP_AIPERF_APPEND_TOKENS > 0 && OUTPUT_LEN > 1 )) \

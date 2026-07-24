@@ -61,7 +61,8 @@ result root. Benchmark automation is likewise project-owned under
 The accepted runtime path is Qwen3-8B FP16, same-host `local_fast`, static MPS
 72/20 on each PA GPU, asynchronous decode-token delivery,
 asynchronous Prefill KV import, sealed manifest handoff, and Prefill-owned
-unified KV. The four-GPU AIPerf matrix is its only active runtime testbed.
+unified KV. The active runner is the eight-GPU AIPerf matrix; the latest
+completed evidence remains the four-GPU milestone until that matrix finishes.
 PAP-to-vLLM glue is isolated behind owner-specific adapters in
 `vllm/pap/integration/`; vLLM owners do not implement alternate PAP paths.
 PAP keeps each vLLM scheduler batch intact and may split it only into
@@ -69,8 +70,9 @@ same-step PA route shards. vLLM async scheduling remains enabled for CPU-side
 next-step preparation; PAP does not interleave microbatches across model
 layers.
 
-The current four-GPU development lane fixes PAP at 3PA1P and compares it with
-one-way PD under a 32-conversation, ten-turn randomized long-context workload.
+The current eight-GPU development lane compares PAP 7PA1P/6PA2P, one-way PD
+2P6D/4P4D/6P2D, and native vLLM DP8 under a 128-conversation, five-turn
+randomized long-context workload.
 Eager remains the default execution mode. Optional piecewise CUDA Graph has a
 completed development comparison, while host transport, remote Attention, and
 KV publication remain outside captured regions. The former P17 lane is
@@ -96,9 +98,9 @@ and normalized experiments rather than a repository skill plan.
 
 ## Operational entry points
 
-- AIPerf PAP xPA1P workload runner:
+- AIPerf PAP xPAyP workload runner:
   `benchmarks/pap/scripts/run_pap_workload.sh`
-- Canonical four-GPU AIPerf matrix:
+- Canonical eight-GPU AIPerf matrix:
   `benchmarks/pap/aiperf/run_capacity_matrix.sh`
 - Current eager and Graph capacity report:
   [automatic Projection-memory milestone](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md)

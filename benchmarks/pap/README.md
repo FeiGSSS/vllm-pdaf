@@ -8,13 +8,11 @@ these project-owned entry points directly, without a repository skill layer.
 
 The canonical [AIPerf lane](aiperf/README.md) provides standardized serving
 load generation and metrics alongside project-owned runtime audits. Its
-four-GPU testbed uses ten turns, randomized lognormal
-lengths around 8K initial input and 512 new user tokens per later turn, plus an
-output-length distribution with mean 32 tokens. It uses deterministic 3-second
-think and 1-second tool delays, pure conversation concurrency, three
-request-level SLO tiers, 32 conversations per point, and a lean
-topology-specific boundary scan. The current eager and piecewise CUDA Graph
-results are documented together in
+current eight-GPU testbed uses 128 five-turn conversations, randomized 8K
+initial input, a broad bounded append distribution sampled around 1.4K tokens,
+and output mean 32. It compares PAP 7PA1P/6PA2P, one-way PD 2P6D/4P4D/6P2D,
+and native vLLM DP8 under the same concurrency and three SLO tiers. The latest
+completed four-GPU eager and piecewise CUDA Graph results remain documented in
 [`PAP-20260722-AIPERF-PROJECTION-AUTO`](experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
 The current step/control-overlap regression is recorded in
 [`PAP-20260724-STEP-OVERLAP`](experiments/PAP-20260724-STEP-OVERLAP/report.md).

@@ -30,8 +30,8 @@ not selectable branches in the current runtime.
 
 | Capability | Source state | Current evidence |
 | --- | --- | --- |
-| Qwen3-8B, same-host PAP | Main path | Four-GPU AIPerf matrix |
-| Same-host xPAyP | Implemented | Controlled correctness smoke; not a performance gate |
+| Qwen3-8B, same-host PAP | Main path | Four-GPU milestone; eight-GPU validation pending |
+| Same-host xPAyP | Implemented | Multi-Projection tests; eight-GPU E2E pending |
 | Cross-host xPAyP over NIXL | Preserved | Contract coverage only; no fresh E2E claim |
 | Prefill-owned unified KV | Main path | AIPerf runtime and lifecycle audits |
 | Triton split-4 paged decode | Main Attention kernel | AIPerf eager/Graph baselines |
@@ -68,11 +68,12 @@ or historical experiment implementations.
 
 ## Validation lanes
 
-The only active runtime lane is the **four-GPU AIPerf testbed**: 32
-conversations, ten turns, randomized 8K initial input, roughly 512 appended
-input tokens, randomized 16-64-token output, think/tool delays, and
-conversation concurrency. PAP is 3PA1P; PD compares one-way 1P3D, 2P2D, and
-3P1D.
+The active runner is the **eight-GPU AIPerf testbed**: 128 conversations, five
+turns, randomized 8K initial input, a broad append distribution sampled near
+1.4K tokens, randomized 16-64-token output, think/tool delays, and conversation
+concurrency. It compares PAP 7PA1P/6PA2P, one-way PD 2P6D/4P4D/6P2D, and
+native vLLM DP8. Until its E2E matrix completes, the latest performance
+evidence remains the four-GPU milestone.
 
 The former P17 1PA1P client, runner, and release gate are retired. Its profile
 and results remain archived solely for historical manifest validation.
@@ -81,11 +82,11 @@ The capacity lane deliberately avoids artificial scheduler limits:
 
 | Role | `max_num_seqs` | `max_num_batched_tokens` |
 | --- | ---: | ---: |
-| PAP PA / PD Prefill | 64 | 16384 |
-| PAP Projection / PD Decode | 64 | 64 |
+| PAP PA / PD Prefill / DP | 256 | 32768 |
+| PAP Projection / PD Decode | 256 | 256 |
 
 `max_num_partial_prefills` stays at its vLLM default of 1 and
-`max_model_len=20000`. PAP Prefill and every PD executor use
+`max_model_len=32768`. PAP Prefill and every PD/DP executor use
 `gpu_memory_utilization=0.90`. Projection is sized independently at launch:
 the checkpoint weight bytes per TP rank are multiplied by 1.20 and divided by
 the smallest selected Projection GPU's total memory, rounding utilization up

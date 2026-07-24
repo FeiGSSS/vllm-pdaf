@@ -3,7 +3,7 @@
 This directory contains thin launchers and request examples for the
 Prefill-Attention-Projection service. Gateway implementation lives in
 `vllm/pap/gateway/`; Attention implementation lives in `vllm/pap/attention/`.
-The current runtime testbed is the four-GPU AIPerf matrix, validated through
+The current runtime testbed is the eight-GPU AIPerf matrix, validated through
 the owner-specific `vllm/pap/integration/` boundary. Same-host `xPAyP` has a
 controlled correctness smoke; cross-host `xPAyP` remains available but is not
 an active E2E lane. The validated multi-turn path reuses
@@ -78,14 +78,13 @@ Send one request through the proxy:
 
 Runtime logs are written under `examples/pap/logs/`, which is ignored by git.
 
-The canonical benchmark runner is intentionally limited to xPA1P and always
-drives it through AIPerf. Arbitrary xPAyP remains a service/debug capability,
-not a current benchmark lane:
+The canonical benchmark runner accepts arbitrary positive xPAyP topologies
+and always drives them through AIPerf:
 
 ```bash
-PAP_TOPOLOGY=3pa1p \
-PAP_PREFILL_GPUS=0,1,2 \
-PAP_PROJECTION_GPUS=3 \
+PAP_TOPOLOGY=6pa2p \
+PAP_PREFILL_GPUS=0,1,2,3,4,5 \
+PAP_PROJECTION_GPUS=6,7 \
 bash benchmarks/pap/scripts/run_pap_workload.sh
 ```
 
@@ -93,16 +92,16 @@ Each run records `topology_manifest.json`, `routing_audit.json`, strict log
 audit results, and an all-Attention session-drain result. One-off service smoke
 requests belong to `launch_pap_nixl.sh`, not the benchmark runner.
 
-The current four-GPU capacity comparison is driven by AIPerf. Every matrix
-point serves the same 32 conversations and 320 requests: ten turns per
-conversation, a randomized 8K initial input, roughly 512 appended input tokens
-on later turns, randomized 16-64-token outputs, and deterministic think/tool
-delays. Conversation concurrency limits live sessions while preserving PA or
-Prefill ownership across all turns.
+The current eight-GPU capacity comparison is driven by AIPerf. Every matrix
+point serves the same 128 conversations and 640 requests: five turns per
+conversation, randomized 8K initial input, a broad append distribution sampled
+around 1.4K tokens, randomized 16-64-token outputs, and deterministic
+think/tool delays. Conversation concurrency limits live sessions while
+preserving PA or Prefill ownership across all turns.
 
-PAP is fixed at 3PA1P. PD uses the standard one-way P→D flow and compares
-1P3D, 2P2D, and 3P1D. Run the eager baseline or its matched piecewise CUDA
-Graph lane with:
+PAP compares 7PA1P and 6PA2P. PD uses one-way P→D with 2P6D, 4P4D, and
+6P2D; native vLLM DP8 is the fused baseline. Run the eager baseline or its
+matched piecewise CUDA Graph lane with:
 
 ```bash
 bash benchmarks/pap/aiperf/run_capacity_matrix.sh

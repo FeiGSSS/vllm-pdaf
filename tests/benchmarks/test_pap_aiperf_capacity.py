@@ -322,13 +322,16 @@ def test_matrix_envelope_uses_best_pd_topology() -> None:
             summary("pd", "1p3d", 16, True),
             summary("pd", "2p2d", 20, True),
             summary("pd", "3p1d", 24, False),
+            summary("dp", "4dp", 18, True),
         ]
     )
     envelope = build_envelope(rows)["capacity_by_slo"]["standard"]
 
-    assert envelope["pap_3pa1p"] == 24
+    assert envelope["best_pap"] == {"topology": "3pa1p", "concurrency": 24}
     assert envelope["best_pd"] == {"topology": "2p2d", "concurrency": 20}
+    assert envelope["best_dp"] == {"topology": "4dp", "concurrency": 18}
     assert envelope["pap_minus_best_pd"] == 4
+    assert envelope["pap_minus_dp"] == 6
 
 
 def test_matrix_reports_best_compliant_goodput() -> None:
@@ -366,11 +369,12 @@ def test_matrix_reports_best_compliant_goodput() -> None:
             summary("pap", "3pa1p", 20, 2.7, passed=False),
             summary("pd", "2p2d", 10, 1.8),
             summary("pd", "3p1d", 8, 1.7),
+            summary("dp", "4dp", 12, 2.0),
         ]
     )
     goodput = build_envelope(rows)["compliant_goodput_by_slo"]["standard"]
 
-    assert goodput["pap"] == {
+    assert goodput["best_pap"] == {
         "topology": "3pa1p",
         "concurrency": 12,
         "requests_per_second": 2.4,
@@ -380,7 +384,13 @@ def test_matrix_reports_best_compliant_goodput() -> None:
         "concurrency": 10,
         "requests_per_second": 1.8,
     }
+    assert goodput["best_dp"] == {
+        "topology": "4dp",
+        "concurrency": 12,
+        "requests_per_second": 2.0,
+    }
     assert goodput["pap_over_pd_percent"] == pytest.approx(33.333333)
+    assert goodput["pap_over_dp_percent"] == pytest.approx(20.0)
 
 
 def test_matrix_marks_incomplete_run_as_ineligible(tmp_path: Path) -> None:
