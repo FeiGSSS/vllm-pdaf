@@ -1,0 +1,211 @@
+{
+  "schema_version": 1,
+  "kind": "pap-run-manifest",
+  "run_id": "20260724_1f5c5a800_multi_pa_cpu_trace_c12_s16_t4",
+  "experiment_id": "PAP-20260724-MULTI-PA-FANIN-TRACE",
+  "profile_id": "aiperf_qwen3_8b_4gpu_o32",
+  "architecture": "pap",
+  "mode": "diagnostic",
+  "evidence": "diagnostic",
+  "provenance": {
+    "branch": "feature/pap",
+    "commit": "1f5c5a800eb3838ad43afedf3160d10ee065b61e",
+    "tracked_worktree_dirty": false,
+    "tracked_worktree_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tracked_index_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "started_at": "2026-07-24T22:25:01+08:00"
+  },
+  "workload": {
+    "model": {
+      "path": "missing",
+      "dtype": "float16",
+      "tensor_parallel_size": 1
+    },
+    "corpus": {
+      "path": "missing",
+      "sha256": "missing"
+    },
+    "parameters": {
+      "client": "aiperf-0.11.0",
+      "sessions": 16,
+      "turns": 4,
+      "requests": 64,
+      "concurrency": 12,
+      "initial_input_mean_tokens": 8192,
+      "append_input_mean_tokens": 512,
+      "output_mean_tokens": 32,
+      "think_time_ms": 3000,
+      "tool_time_ms": 1000
+    }
+  },
+  "topology": {
+    "name": "3pa1p",
+    "pa_count": 3,
+    "projection_count": 1,
+    "pd_prefill_count": 0,
+    "pd_decode_count": 0,
+    "routing_policy": "conversation_affinity"
+  },
+  "placement": {
+    "prefill_devices": [0, 1, 2],
+    "attention_devices": [0, 1, 2],
+    "projection_devices": [3],
+    "decode_devices": []
+  },
+  "transport": {
+    "offload_exec": "local_fast",
+    "offload_kv": "cuda_ipc",
+    "same_host": true
+  },
+  "mps": {
+    "mode": "static",
+    "profile_id": "static_72_20",
+    "prefill_visible_sms": 72,
+    "attention_visible_sms": 20
+  },
+  "runtime": {
+    "profile": "cpu_multi_pa_batch_key_trace",
+    "settings": {
+      "offload_exec_trace": true,
+      "deferred_cuda_trace": false,
+      "projection_async_scheduling": true,
+      "projection_runner_microbatch_pipeline": false,
+      "direct_mailbox_output": true,
+      "trace_summary_commit": "5827a257f"
+    }
+  },
+  "environment": {
+    "hardware_signature": "4x NVIDIA L20",
+    "software": {
+      "aiperf": "0.11.0",
+      "vllm_commit": "1f5c5a800eb3838ad43afedf3160d10ee065b61e"
+    },
+    "fingerprint_basis": [
+      "runtime commit",
+      "reused AIPerf input",
+      "trace configuration"
+    ]
+  },
+  "fingerprints": {
+    "profile": "missing",
+    "implementation": "missing",
+    "request_shape": "missing",
+    "hardware_runtime": "missing"
+  },
+  "repetitions": {
+    "count": 1,
+    "order": [1],
+    "aggregation_method": "single synchronized correlation trace",
+    "items": [
+      {
+        "index": 1,
+        "repetition_id": "cpu-batch-key-correlation",
+        "result_artifact": {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260724-MULTI-PA-FANIN-TRACE/report.md"
+        }
+      }
+    ]
+  },
+  "audits": {
+    "client": {
+      "status": "passed",
+      "detail": "AIPerf completed 64 of 64 requests with zero errors.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260724-MULTI-PA-FANIN-TRACE/report.md"
+        }
+      ]
+    },
+    "correctness": {
+      "status": "passed",
+      "detail": "Correctness, routing, session-drain, decode-token-join, scheduler, and static-MPS audits passed.",
+      "evidence": [
+        {
+          "root_id": "pap-worktree",
+          "relative_path": "benchmarks/pap/experiments/PAP-20260724-MULTI-PA-FANIN-TRACE/report.md"
+        }
+      ]
+    }
+  },
+  "metrics": {
+    "completed_requests": 64,
+    "failed_requests": 0,
+    "values": [
+      {
+        "name": "pa_completion_skew_p50_ms",
+        "scope": "multi-pa-layer",
+        "statistic": "p50",
+        "unit": "ms",
+        "value": 0.048142
+      },
+      {
+        "name": "pa_completion_skew_p90_ms",
+        "scope": "multi-pa-layer",
+        "statistic": "p90",
+        "unit": "ms",
+        "value": 0.221713
+      },
+      {
+        "name": "route_kv_range_p50_tokens",
+        "scope": "multi-pa-layer",
+        "statistic": "p50",
+        "unit": "tokens",
+        "value": 5652
+      },
+      {
+        "name": "slowest_pa_has_max_kv_fraction",
+        "scope": "multi-pa-layer",
+        "statistic": "mean",
+        "unit": "ratio",
+        "value": 0.7312758750470455
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "name": "report",
+      "kind": "aggregate",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-MULTI-PA-FANIN-TRACE/report.md"
+      },
+      "sha256": "20673a3dacb2b6026af9285f6c6660cba059c14323e752c9b8a3c05c4cbfc377"
+    },
+    {
+      "name": "aiperf-profile",
+      "kind": "profile",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-MULTI-PA-FANIN-TRACE/runs/20260724_1f5c5a800_multi_pa_cpu_trace_c12_s16_t4/raw/aiperf/profile.json"
+      },
+      "sha256": "a0f470ce8415cae033383aae6d084d5a422aedd1c4514869df94c99586438805"
+    },
+    {
+      "name": "attention-fast-path-stats",
+      "kind": "metrics",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-MULTI-PA-FANIN-TRACE/runs/20260724_1f5c5a800_multi_pa_cpu_trace_c12_s16_t4/raw/attention_fast_path_stats.json"
+      },
+      "sha256": "4b1ee070379fe5a119cd7595cf19746d601cfd8af82b24a08fd4b66459e10ca4"
+    },
+    {
+      "name": "service-logs",
+      "kind": "trace",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-MULTI-PA-FANIN-TRACE/runs/20260724_1f5c5a800_multi_pa_cpu_trace_c12_s16_t4/raw/service_logs"
+      },
+      "sha256": "missing"
+    }
+  ],
+  "validity": {
+    "status": "passed",
+    "reasons": [
+      "Verbose synchronized timing perturbs absolute latency and is used only for within-layer PA skew and load attribution."
+    ]
+  },
+  "failure_reasons": []
+}
