@@ -20,7 +20,9 @@ Roles:
 - **Attention** is an internal service colocated with Prefill. It opens
   Prefill paged KV through CUDA IPC and appends decode K/V directly to those
   Prefill-owned blocks. The current path runs vLLM's Triton paged-decode kernel
-  with one split-4 workspace shared by all layers in a decode step.
+  with one split-4 workspace shared by all layers in a decode step. A
+  payload-free step descriptor lets it prepare QKV-independent state before
+  layer-0 QKV arrives.
 - **Projection** runs the model decode path and sends current-token Q/K/V to
   Attention. It does not receive Prefill prompt KV bytes. PAP keeps each vLLM
   scheduler batch intact; requests for different PA groups are same-step
@@ -117,7 +119,7 @@ single topology or concurrency point. The old fixed-length O256/O128 and
 
 Current eager and piecewise results are recorded in the
 [automatic Projection-memory milestone](../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
-The corrected async scheduling boundary is validated in the
-[scheduler-overlap milestone](../../benchmarks/pap/experiments/PAP-20260724-PROJECTION-SCHEDULER-OVERLAP/report.md).
+The corrected async scheduling and step-control boundary is validated in the
+[step/control-overlap milestone](../../benchmarks/pap/experiments/PAP-20260724-STEP-OVERLAP/report.md).
 The rejected no-async treatment is retained as an archived
 [scheduler-overlap diagnostic](../../benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md).

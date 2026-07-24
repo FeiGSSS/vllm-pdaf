@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260724-STEP-OVERLAP
   - PAP-20260724-PROJECTION-SCHEDULER-OVERLAP
   - PAP-20260724-SINGLE-PROJECTION-BATCH
   - PAP-20260724-BATCH-SCALING-MICRO
@@ -12,7 +13,7 @@ related_experiments:
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
-last_validated_commit: 29cc69029554ec6ff3b0a438dab8a03cee6b2815
+last_validated_commit: 31e0b3882b5fadf63d2d68b52855dfc7307c11fd
 ---
 
 # Current PAP development status
@@ -52,7 +53,9 @@ The current request path is:
    sealed generation-bound manifest to its colocated Attention service.
 3. Projection runs the KV-unaware decode path and sends current-step Q/K/V.
    PAP keeps the vLLM scheduler batch intact and may fan same-step route
-   shards from that batch out to several PA groups.
+   shards from that batch out to several PA groups. Before layer-0 QKV,
+   Projection publishes one step descriptor so Attention can prepare its
+   context, slot plan, metadata, and workspace asynchronously.
 4. Attention appends K/V into the Prefill-owned blocks, executes one
    step-level Triton paged-decode plan across the model layers, and returns the
    Attention output.
@@ -137,6 +140,13 @@ with all audits passing. It reports 35.20 ms mean ITL and 2.529 requests/s:
 within 1.25% and 0.22% of the earlier async C12 baseline, respectively, while
 mean ITL is 7.96% lower than the rejected no-async mean.
 
+The step/control-overlap regression at `31e0b3882` also completed 320/320
+requests. Every prepared context was reused by all 36 layers. Relative to
+`29cc69029`, mean ITL improves by 0.37%, ITL p95 by 5.19%, and request
+throughput by 0.50%. The initial-burst TTFT p95 movement is retained as
+single-run tail variance rather than an improvement claim. See the
+[current control-overlap result](../../../benchmarks/pap/experiments/PAP-20260724-STEP-OVERLAP/report.md).
+
 ## Remaining work
 
 1. Run three AIPerf repetitions only when promoting a four-GPU result to a
@@ -147,10 +157,9 @@ mean ITL is 7.96% lower than the rejected no-async mean.
    consistent latency or goodput benefit worth changing the eager default.
 4. Keep same-host xPAyP and cross-host NIXL source-compatible, but do not claim
    performance or fresh E2E support until those lanes are explicitly rerun.
-5. Preserve vLLM's safe next-step CPU overlap while optimizing same-batch PA
-   fan-out, independent Attention execution, buffer reuse, metadata reuse, and
-   lower launch/control overhead. Do not restore PAP microbatch pipelines or
-   layer-level interleaving between batches.
+5. Profile the independent multi-PA output streams before attributing a
+   specific E2E gain to them, and continue only metadata/control overlap that
+   preserves the complete scheduler-batch and layer order.
 6. Continue owner-driven splits in unified-KV and transport internals only
    when they simplify a concrete feature; do not restore retired experiment
    selectors or per-layer scheduling paths.

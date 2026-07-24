@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260724-STEP-OVERLAP
   - PAP-20260724-PROJECTION-SCHEDULER-OVERLAP
   - PAP-20260724-SINGLE-PROJECTION-BATCH
   - PAP-20260722-AIPERF-PROJECTION-AUTO
@@ -15,7 +16,7 @@ related_experiments:
   - PAP-20260713-ASYNC-DECODE-TOKEN-D2H
   - PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: 29cc69029554ec6ff3b0a438dab8a03cee6b2815
+last_validated_commit: 31e0b3882b5fadf63d2d68b52855dfc7307c11fd
 ---
 
 # PAP runtime
@@ -70,16 +71,22 @@ microbatches.
 
 For every active step:
 
-1. Projection builds one topology-derived route plan and fans Q/K/V shards
-   out to the selected PAs.
-2. Attention waits for matching KV readiness, appends decode K/V, and executes
+1. The Projection runner builds the session-aware route plan while preparing
+   vLLM inputs.
+2. Before layer-0 QKV, Projection publishes one payload-free step descriptor.
+   Attention prepares its step context, append slots, paged metadata, and
+   workspace on a separate CUDA stream.
+3. Projection fans Q/K/V shards out to the selected PAs.
+4. Attention waits for matching KV readiness, appends decode K/V, and executes
    direct or combine/scatter paged attention.
-3. Attention publishes the result to Projection.
-4. Sampled-token delivery is always asynchronous. Token and KV completion join
+5. Attention publishes the result to Projection. For multi-PA route groups,
+   peer-local streams wait and scatter into disjoint output rows before the
+   Projection stream continues.
+6. Sampled-token delivery is always asynchronous. Token and KV completion join
    by request/session generation before the step commits.
-5. Decode commit and ACK advance the Prefill scheduler/cache transaction.
-6. Lease release happens after the committed tail is safe to release.
-7. Shutdown/drain requires no pending token, commit, lease, or Attention
+7. Decode commit and ACK advance the Prefill scheduler/cache transaction.
+8. Lease release happens after the committed tail is safe to release.
+9. Shutdown/drain requires no pending token, commit, lease, or Attention
    session state.
 
 For streaming responses, the Gateway withholds the terminal SSE `[DONE]`
@@ -129,7 +136,8 @@ This is the correctness boundary for current Graph support.
 The execution transport is built through `transport/factory.py`:
 
 - `local_fast` uses `transport/local/`: same-host CUDA IPC endpoints and a
-  mandatory stream-ordered slot/doorbell protocol with decode-step plans.
+  mandatory stream-ordered slot/doorbell protocol with decode-step plans,
+  payload-free step preparation, and peer-local output receive streams.
 - NIXL uses `transport/nixl/`: mailbox messages, endpoint metadata,
   notification and transfer progress.
 

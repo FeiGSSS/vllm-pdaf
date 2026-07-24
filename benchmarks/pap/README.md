@@ -16,7 +16,9 @@ request-level SLO tiers, 32 conversations per point, and a lean
 topology-specific boundary scan. The current eager and piecewise CUDA Graph
 results are documented together in
 [`PAP-20260722-AIPERF-PROJECTION-AUTO`](experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
-The current corrected Projection scheduling regression is recorded in
+The current step/control-overlap regression is recorded in
+[`PAP-20260724-STEP-OVERLAP`](experiments/PAP-20260724-STEP-OVERLAP/report.md).
+Its scheduler-overlap predecessor is retained in
 [`PAP-20260724-PROJECTION-SCHEDULER-OVERLAP`](experiments/PAP-20260724-PROJECTION-SCHEDULER-OVERLAP/report.md).
 The rejected Projection no-async treatment is retained as a negative control in
 [`PAP-20260724-SINGLE-PROJECTION-BATCH`](experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md).

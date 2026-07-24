@@ -7,10 +7,12 @@ live under this directory. See [the storage contract](README.md) and the
 Current normalized AIPerf experiment bundles:
 
 - [Current eager and Graph PAP/PD milestone](PAP-20260722-AIPERF-PROJECTION-AUTO/report.md)
-- [Single global Projection batch regression](PAP-20260724-SINGLE-PROJECTION-BATCH/report.md)
+- [Current step/control-overlap regression](PAP-20260724-STEP-OVERLAP/report.md)
 
 Superseded or historical report bundles:
 
+- [Superseded Projection scheduler-overlap baseline](PAP-20260724-PROJECTION-SCHEDULER-OVERLAP/report.md)
+- [Rejected no-async Projection treatment](PAP-20260724-SINGLE-PROJECTION-BATCH/report.md)
 - [Superseded AIPerf-only convergence regression](PAP-20260722-AIPERF-CONVERGENCE/report.md)
 - [Superseded eager PAP/PD comparison](PAP-20260722-AIPERF-PA090-EAGER/report.md)
 - [Superseded piecewise CUDA Graph comparison](PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH/report.md)
@@ -48,8 +50,9 @@ Archived methodology notices:
 | PAP-20260722-AIPERF-PA090-EAGER | archived | controlled | superseded | valid | 20260722_7401e8e12_aiperf_pa090_eager_pd, 20260722_7401e8e12_aiperf_pa090_eager_pap | PAP-20260722-AIPERF-PROJECTION-AUTO | PAP leads the best observed PD goodput by 38.7%, 80.4%, and 101.5% under strict, standard, and relaxed SLOs; PD 3P1D remains transfer-unstable. |
 | PAP-20260722-AIPERF-PROJECTION-AUTO | current | controlled | accepted | valid | 20260722_4aaf9dd77_projection_auto_eager_pap, 20260722_4484bc983_projection_auto_eager_pd, 20260722_4484bc983_projection_auto_piecewise_pap, 20260722_4484bc983_projection_auto_piecewise_pd | — | Automatic Projection sizing resolves to 0.4070 without an eager regression beyond 2%; PAP leads best valid PD goodput by 46.0%, 85.5%, and 95.2% in eager mode and by 13.3%, 75.0%, and 118.8% in piecewise mode. |
 | PAP-20260724-BATCH-SCALING-MICRO | current | diagnostic | accepted | valid | 20260724_1ce452dc7_batch_scaling_micro | — | From batch 4 to 8, the reconstructed 36-layer time rises by 27.7%; paged Attention explains 93.2% of that increase, local P2P 5.8%, and the Projection proxy 1.0%. Same-shape full-GPU results remain flat after the single-Projection-batch refactor. |
-| PAP-20260724-PROJECTION-SCHEDULER-OVERLAP | current | controlled | accepted | valid | 20260724_29cc69029_projection_async_c12 | — | The corrected async C12 run completed 320/320 requests with every audit passing. Relative to the earlier async baseline, mean ITL is 1.25% higher and throughput is 0.22% lower; relative to the rejected no-async mean, mean ITL improves by 7.96%. Keep vLLM async scheduling enabled while forbidding only PAP layer-interleaved microbatching. |
+| PAP-20260724-PROJECTION-SCHEDULER-OVERLAP | archived | controlled | superseded | valid | 20260724_29cc69029_projection_async_c12 | PAP-20260724-STEP-OVERLAP | The corrected async C12 run completed 320/320 requests with every audit passing. Relative to the earlier async baseline, mean ITL is 1.25% higher and throughput is 0.22% lower; relative to the rejected no-async mean, mean ITL improves by 7.96%. Keep vLLM async scheduling enabled while forbidding only PAP layer-interleaved microbatching. |
 | PAP-20260724-SINGLE-PROJECTION-BATCH | archived | controlled | rejected | valid | 20260724_cb6fe3500_single_projection_batch_c12 | — | Both no-async C12 repetitions completed correctly, but the premise was wrong: vLLM async scheduling does not split or layer-interleave PAP microbatches under UniProcExecutor. Disabling it removes safe scheduler and output overlap, increasing mean ITL by 10.00%; the treatment is rejected and retained only as a negative control. |
+| PAP-20260724-STEP-OVERLAP | current | controlled | accepted | valid | 20260724_31e0b3882_step_overlap_c12 | — | The clean C12 run completed 320/320 requests and reused every prepared context across all 36 layers. Mean ITL improves 0.37%, ITL p95 improves 5.19%, and throughput improves 0.50%; accept the implementation while treating the isolated initial-burst TTFT p95 movement as inconclusive. |
 
 ### Reviewed historical experiments
 

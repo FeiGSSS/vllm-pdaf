@@ -1,13 +1,13 @@
 {
   "schema_version": 1,
   "kind": "pap-experiment-record",
-  "status": "current",
+  "status": "archived",
   "experiment_id": "PAP-20260724-PROJECTION-SCHEDULER-OVERLAP",
   "title": "PAP Projection scheduler overlap",
   "recorded_at": "2026-07-24",
   "hypothesis": "PAP can preserve vLLM asynchronous scheduler overlap without introducing layer-interleaved Projection microbatches or an E2E regression.",
   "evidence": "controlled",
-  "decision": "accepted",
+  "decision": "superseded",
   "validity": {
     "status": "valid",
     "reasons": [
@@ -84,7 +84,7 @@
   ],
   "conclusion": "The corrected async C12 run completed 320/320 requests with every audit passing. Relative to the earlier async baseline, mean ITL is 1.25% higher and throughput is 0.22% lower; relative to the rejected no-async mean, mean ITL improves by 7.96%. Keep vLLM async scheduling enabled while forbidding only PAP layer-interleaved microbatching.",
   "supersedes": [],
-  "superseded_by": null,
+  "superseded_by": "PAP-20260724-STEP-OVERLAP",
   "raw_artifacts": [
     {
       "name": "report",

@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260724-STEP-OVERLAP
   - PAP-20260724-PROJECTION-SCHEDULER-OVERLAP
   - PAP-20260724-SINGLE-PROJECTION-BATCH
   - PAP-20260722-AIPERF-PROJECTION-AUTO
@@ -15,7 +16,7 @@ related_experiments:
   - PAP-20260710-ARBITRARY-XY
   - PAP-20260711-ATTENTION-COMBINE
   - PAP-20260714-SEAL-HANDOFF-KV
-last_validated_commit: 29cc69029554ec6ff3b0a438dab8a03cee6b2815
+last_validated_commit: 31e0b3882b5fadf63d2d68b52855dfc7307c11fd
 ---
 
 # PAP architecture
@@ -30,12 +31,16 @@ whole request.
 2. Prefill processes prompt chunks and owns prompt plus decode KV blocks.
 3. Prefill publishes a static KV catalog and one generation-bound request
    manifest to its colocated Attention service.
-4. Projection runs the KV-unaware decode model path. For each step it sends
-   Q/K/V to Attention and receives the attention output.
-5. Attention opens the Prefill-owned KV through CUDA IPC or NIXL, appends the
+4. Projection runs the KV-unaware decode model path. Its runner prepares the
+   route plan, then publishes a payload-free step descriptor before layer-0
+   QKV so Attention can prepare QKV-independent state concurrently.
+5. For each layer, Projection sends Q/K/V to Attention and receives the
+   attention output. Multi-PA output waits and disjoint scatters use
+   peer-local CUDA streams.
+6. Attention opens the Prefill-owned KV through CUDA IPC or NIXL, appends the
    current decode K/V, runs vLLM's Triton paged-decode kernel, and returns the
    output.
-6. Sampled tokens, decode commits, ACKs, leases, and session drain close the
+7. Sampled tokens, decode commits, ACKs, leases, and session drain close the
    request without transferring KV ownership to Projection.
 
 Projection never owns prompt history. Attention is an execution service over

@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260724-STEP-OVERLAP
   - PAP-20260724-PROJECTION-SCHEDULER-OVERLAP
   - PAP-20260724-SINGLE-PROJECTION-BATCH
   - PAP-20260724-BATCH-SCALING-MICRO
@@ -12,7 +13,7 @@ related_experiments:
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
-last_validated_commit: cb6fe35009905c32b52a8ad10b7e00d778c03679
+last_validated_commit: 31e0b3882b5fadf63d2d68b52855dfc7307c11fd
 ---
 
 # PAP documentation
@@ -102,6 +103,8 @@ and normalized experiments rather than a repository skill plan.
 - Current eager and Graph capacity report:
   [automatic Projection-memory milestone](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md)
 - Current Projection scheduling regression:
+  [step/control-overlap milestone](../../../benchmarks/pap/experiments/PAP-20260724-STEP-OVERLAP/report.md)
+- Superseded scheduler-overlap baseline:
   [scheduler-overlap milestone](../../../benchmarks/pap/experiments/PAP-20260724-PROJECTION-SCHEDULER-OVERLAP/report.md)
 - Archived Projection no-async negative control:
   [scheduler-overlap diagnostic](../../../benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md)

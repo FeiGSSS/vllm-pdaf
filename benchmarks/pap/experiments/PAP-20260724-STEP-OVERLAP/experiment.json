@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "kind": "pap-experiment-record",
+  "status": "current",
+  "experiment_id": "PAP-20260724-STEP-OVERLAP",
+  "title": "PAP step-scoped control overlap",
+  "recorded_at": "2026-07-24",
+  "hypothesis": "PAP can overlap step-level control and metadata preparation with Projection QKV computation without changing batch order or regressing decode performance.",
+  "evidence": "controlled",
+  "decision": "accepted",
+  "validity": {
+    "status": "valid",
+    "reasons": [
+      "This is one clean targeted development repetition; release-level evidence still requires three interleaved repetitions.",
+      "The initial-burst TTFT p95 moved adversely while mean, p90, and p99 do not show a consistent tail regression."
+    ]
+  },
+  "baseline": {
+    "status": "missing",
+    "description": "Accepted C12 scheduler-overlap run from PAP-20260724-PROJECTION-SCHEDULER-OVERLAP",
+    "run_ids": []
+  },
+  "treatment": {
+    "status": "present",
+    "description": "PAP 3PA1P C12 with route-plan preparation, Attention step preparation, and independent multi-PA output streams",
+    "run_ids": [
+      "20260724_31e0b3882_step_overlap_c12"
+    ]
+  },
+  "primary_variable": {
+    "name": "step-control-overlap",
+    "baseline": "stream-ordered per-layer control",
+    "treatment": "step preparation plus peer-local output streams"
+  },
+  "run_ids": [
+    "20260724_31e0b3882_step_overlap_c12"
+  ],
+  "aggregation_method": "Single complete clean treatment repetition compared with the accepted prior C12 development baseline",
+  "metrics": [
+    {
+      "name": "ttft_avg_ms",
+      "scope": "requests",
+      "statistic": "mean",
+      "unit": "ms",
+      "baseline_value": 794.0830184656251,
+      "treatment_value": 790.5449717875,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "ttft_p95_ms",
+      "scope": "requests",
+      "statistic": "p95",
+      "unit": "ms",
+      "baseline_value": 3121.904730050002,
+      "treatment_value": 3954.7036808500015,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "itl_avg_ms",
+      "scope": "requests",
+      "statistic": "mean",
+      "unit": "ms",
+      "baseline_value": 35.196240278929025,
+      "treatment_value": 35.06516378303488,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "itl_p95_ms",
+      "scope": "requests",
+      "statistic": "p95",
+      "unit": "ms",
+      "baseline_value": 41.89241008012821,
+      "treatment_value": 39.720410486548914,
+      "direction": "lower-is-better"
+    },
+    {
+      "name": "request_throughput_rps",
+      "scope": "run",
+      "statistic": "mean",
+      "unit": "requests/s",
+      "baseline_value": 2.5287822562997437,
+      "treatment_value": 2.5415013789612857,
+      "direction": "higher-is-better"
+    }
+  ],
+  "conclusion": "The clean C12 run completed 320/320 requests and reused every prepared context across all 36 layers. Mean ITL improves 0.37%, ITL p95 improves 5.19%, and throughput improves 0.50%; accept the implementation while treating the isolated initial-burst TTFT p95 movement as inconclusive.",
+  "supersedes": [
+    "PAP-20260724-PROJECTION-SCHEDULER-OVERLAP"
+  ],
+  "superseded_by": null,
+  "raw_artifacts": [
+    {
+      "name": "report",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-STEP-OVERLAP/report.md"
+      },
+      "sha256": "945b31e184dbd8bc81fc49b6d77b648ca942d775e52b337ba46c4af70c14d2cc"
+    },
+    {
+      "name": "aiperf-profile-r1",
+      "path": {
+        "root_id": "pap-worktree",
+        "relative_path": "benchmarks/pap/experiments/PAP-20260724-STEP-OVERLAP/runs/20260724_31e0b3882_step_overlap_c12/raw/r1/aiperf/profile.json"
+      },
+      "sha256": "316269a1165bb6b5e2561f5eda57b1e9dc4e1aec0fcf43f4f620982ae42d9e3a"
+    }
+  ],
+  "tags": [
+    "aiperf",
+    "attention-step",
+    "control-overlap",
+    "local-fast",
+    "multi-pa",
+    "regression"
+  ]
+}
