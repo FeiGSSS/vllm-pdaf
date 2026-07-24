@@ -343,6 +343,16 @@ PAP_REMOVED_FLAGS = (
         replacement="the mandatory decode-step transport plan",
         experiment_id="PAP-20260722-AIPERF-PROJECTION-AUTO",
     ),
+    PAPRemovedFlag(
+        name="PAP_RUNNER_MICROBATCH_COUNT",
+        replacement="one in-flight global Projection batch",
+        experiment_id="PAP-20260724-SINGLE-PROJECTION-BATCH",
+    ),
+    PAPRemovedFlag(
+        name="PAP_ATTENTION_MAILBOX_PREFETCH",
+        replacement="the serial Attention receive loop",
+        experiment_id="PAP-20260701-ATTENTION-MAILBOX-PREFETCH",
+    ),
 )
 
 

@@ -22,7 +22,9 @@ Roles:
   Prefill-owned blocks. The current path runs vLLM's Triton paged-decode kernel
   with one split-4 workspace shared by all layers in a decode step.
 - **Projection** runs the model decode path and sends current-token Q/K/V to
-  Attention. It does not receive Prefill prompt KV bytes.
+  Attention. It does not receive Prefill prompt KV bytes. Each Projection
+  engine has one in-flight global batch; requests for different PA groups are
+  shards of that batch, not independently pipelined microbatches.
 
 Each Attention session sends decode commits and lease releases back to the
 Prefill in its own PA group. Attention creates a separate lazy mailbox

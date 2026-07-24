@@ -104,6 +104,41 @@ def test_local_fast_message_releases_once() -> None:
     assert releases == [True]
 
 
+def test_local_fast_fanout_uses_peer_stream() -> None:
+    calls = []
+    fanout_stream = object()
+    transport = object.__new__(PAPLocalFastTransport)
+    transport.close = lambda: None
+    transport._qkv_fanout_stream = fanout_stream
+    transport._send_to_peer = lambda **kwargs: calls.append(kwargs)
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="model.layers.0.self_attn.attn",
+        items=(),
+        batch_id_suffix="req-a@7",
+        metadata_template={
+            "r": ("req-a",),
+            "s": (7,),
+            "a": (0.125,),
+        },
+    )
+    qkv = torch.zeros((1, 4), dtype=torch.bfloat16)
+
+    transport.send_qkv_batch_fanout(
+        descriptor,
+        qkv,
+        remote_address="unused",
+    )
+
+    assert calls == [
+        {
+            "direction": DIR_QKV,
+            "descriptor": descriptor,
+            "tensor": qkv,
+            "stream": fanout_stream,
+        }
+    ]
+
+
 def test_local_fast_step_plan_is_built_once_and_output_is_descriptorless() -> None:
     transport = object.__new__(PAPLocalFastTransport)
     transport.close = lambda: None
@@ -275,6 +310,8 @@ def test_local_fast_prepares_descriptorless_output_gpu_wait(
         assert message.tensor.dtype == torch.bfloat16
         assert transport._peer.expected_output_seq == 2
         assert transport._descriptorless_output_receives == 1
+        assert message.msg_id == descriptor.layer_name
+        assert message.metadata == {}
         record_offset = _doorbell_record_offset(DIR_OUTPUT)
         assert _doorbell_read_header(mm, record_offset)[4] == 0
         assert len(waits) == 1

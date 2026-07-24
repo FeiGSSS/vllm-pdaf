@@ -46,7 +46,6 @@ class PAPRuntimeSettings:
     cudagraph_compatible: bool
     critical_trace: bool
     debug_decision: bool
-    runner_microbatch_count: int
     unified_kv_decode_capacity_tokens: int
     cuda_context_role: str
 
@@ -72,10 +71,6 @@ class PAPRuntimeSettings:
                 and pap_env_enabled("PAP_PROJECTION_CRITICAL_TRACE", values)
             ),
             debug_decision=pap_env_enabled("PAP_DEBUG_DECISION", values),
-            runner_microbatch_count=_integer(
-                values,
-                "PAP_RUNNER_MICROBATCH_COUNT",
-            ),
             unified_kv_decode_capacity_tokens=max(
                 0,
                 _integer(values, "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS"),

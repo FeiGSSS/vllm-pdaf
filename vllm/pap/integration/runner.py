@@ -54,6 +54,14 @@ class PAPModelRunnerAdapter:
         """Create one adapter from the model-runner composition root."""
         reject_removed_pap_flags(os.environ)
         settings = PAPRuntimeSettings.from_environ()
+        if (
+            settings.projection_kv_unaware
+            and vllm_config.scheduler_config.async_scheduling
+        ):
+            raise RuntimeError(
+                "PAP Projection requires one in-flight global batch; "
+                "launch with --no-async-scheduling"
+            )
         kv_transfer_config = vllm_config.kv_transfer_config
         extra = (
             kv_transfer_config.kv_connector_extra_config

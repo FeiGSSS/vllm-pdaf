@@ -345,10 +345,23 @@ class PAPProjectionAttentionAdapter:
     num_kv_heads: int
     head_dim: int
     scaling: float
+    _direct_qkv_send: bool = field(init=False, repr=False)
+    _direct_mailbox_output: bool = field(init=False, repr=False)
+    _trace_offload_exec: bool = field(init=False, repr=False)
+    _debug_decision: bool = field(init=False, repr=False)
     last_projection_timeline: dict[str, Any] | None = field(
         default=None,
         init=False,
     )
+
+    def __post_init__(self) -> None:
+        """Resolve process-lifetime runtime switches once per model layer."""
+        self._direct_qkv_send = _pap_direct_qkv_send_enabled()
+        self._direct_mailbox_output = _pap_env_enabled(
+            "PAP_DIRECT_MAILBOX_OUTPUT"
+        )
+        self._trace_offload_exec = _pap_env_enabled("PAP_OFFLOAD_EXEC_TRACE")
+        self._debug_decision = _pap_env_enabled("PAP_DEBUG_DECISION")
 
     def begin_step(self) -> None:
         """Reset per-forward Projection diagnostics."""
@@ -356,7 +369,7 @@ class PAPProjectionAttentionAdapter:
 
     def direct_qkv_send_enabled(self) -> bool:
         """Whether the current runtime accepts the packed QKV buffer."""
-        return _pap_direct_qkv_send_enabled()
+        return self._direct_qkv_send
 
     def record_projection_timeline(self, timeline: dict[str, Any]) -> None:
         """Retain one layer timeline for outer model diagnostics."""
@@ -366,7 +379,7 @@ class PAPProjectionAttentionAdapter:
         """Return whether the current forward is a valid PAP decode batch."""
 
         def reject(reason: str) -> bool:
-            if _pap_env_enabled("PAP_DEBUG_DECISION"):
+            if self._debug_decision:
                 logger.info(
                     "PAP attention disabled for %s: %s",
                     self.layer_name,
@@ -436,6 +449,7 @@ class PAPProjectionAttentionAdapter:
         pre_attn_done_ns: int = 0,
         projection_timeline: dict[str, Any] | None = None,
         direct_qkv_send_buffer: torch.Tensor | None = None,
+        reuse_query_output_buffer: bool = False,
     ) -> tuple[torch.Tensor, list[Any]]:
         """Offload one decode Attention layer and return its output."""
         batch = PAPModelForwardBatch.current(self.layer_name)
@@ -473,24 +487,23 @@ class PAPProjectionAttentionAdapter:
         all_requests_offloaded = (
             sum(len(group.req_indices) for group in step_groups) == num_reqs
         )
-        direct_mailbox_output_enabled = _pap_env_enabled(
-            "PAP_DIRECT_MAILBOX_OUTPUT"
-        )
+        direct_mailbox_output_enabled = self._direct_mailbox_output
         output: torch.Tensor | None = None
         release_messages: list[Any] = []
 
         def get_copy_output_buffer() -> torch.Tensor:
             nonlocal output
             if output is None:
-                output = (
-                    torch.empty_like(query)
-                    if all_requests_offloaded
-                    else torch.zeros_like(query)
-                )
+                if all_requests_offloaded and reuse_query_output_buffer:
+                    output = query
+                elif all_requests_offloaded:
+                    output = torch.empty_like(query)
+                else:
+                    output = torch.zeros_like(query)
             return output
 
-        direct_qkv_send_enabled = _pap_direct_qkv_send_enabled()
-        trace_offload_exec = _pap_env_enabled("PAP_OFFLOAD_EXEC_TRACE")
+        direct_qkv_send_enabled = self._direct_qkv_send
+        trace_offload_exec = self._trace_offload_exec
         trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
         trace_send_done_ns = 0
         trace_yield_start_ns = 0
@@ -543,6 +556,10 @@ class PAPProjectionAttentionAdapter:
             )
             _pap_bind_offload_exec_mailbox_peer(transport, attention_endpoint)
             send_qkv_batch_direct = getattr(transport, "send_qkv_batch_direct", None)
+            send_qkv_batch_fanout = getattr(transport, "send_qkv_batch_fanout", None)
+            use_fanout_stream = len(step_groups) > 1 and callable(
+                send_qkv_batch_fanout
+            )
             qkv_width = (
                 self.num_heads * self.head_dim
                 + 2 * self.num_kv_heads * self.head_dim
@@ -563,11 +580,18 @@ class PAPProjectionAttentionAdapter:
                         trace_packed_qkv_groups += 1
                 if int(direct_qkv_batch.shape[-1]) != qkv_width:
                     raise RuntimeError("PAP direct QKV batch width mismatch")
-                send_qkv_batch_direct(
-                    batch_descriptor,
-                    direct_qkv_batch,
-                    remote_address=offload_exec_zmq_endpoint,
-                )
+                if use_fanout_stream:
+                    send_qkv_batch_fanout(
+                        batch_descriptor,
+                        direct_qkv_batch,
+                        remote_address=offload_exec_zmq_endpoint,
+                    )
+                else:
+                    send_qkv_batch_direct(
+                        batch_descriptor,
+                        direct_qkv_batch,
+                        remote_address=offload_exec_zmq_endpoint,
+                    )
             else:
                 if trace_offload_exec:
                     trace_packed_qkv_groups += 1
@@ -584,11 +608,18 @@ class PAPProjectionAttentionAdapter:
                     for req_index in req_indices
                 ]
                 qkv_batch = _pap_pack_qkv_group_items(group_items)
-                transport.send_qkv_batch(
-                    batch_descriptor,
-                    qkv_batch,
-                    remote_address=offload_exec_zmq_endpoint,
-                )
+                if use_fanout_stream:
+                    send_qkv_batch_fanout(
+                        batch_descriptor,
+                        qkv_batch,
+                        remote_address=offload_exec_zmq_endpoint,
+                    )
+                else:
+                    transport.send_qkv_batch(
+                        batch_descriptor,
+                        qkv_batch,
+                        remote_address=offload_exec_zmq_endpoint,
+                    )
             offload_exec_batches.append(
                 (
                     attention_endpoint,

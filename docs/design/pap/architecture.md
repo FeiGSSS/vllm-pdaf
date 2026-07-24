@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260724-SINGLE-PROJECTION-BATCH
   - PAP-20260722-AIPERF-PROJECTION-AUTO
   - PAP-20260722-AIPERF-PA090-EAGER
   - PAP-20260722-AIPERF-CONVERGENCE
@@ -51,6 +52,14 @@ independent.
 - The Gateway admits each PA to one Projection source for a complete request
   wave. Requests from that source may batch; another source takes ownership
   only after the active wave drains.
+- Each Projection engine owns exactly one in-flight global batch. vLLM async
+  scheduling is disabled for this role, so a second batch cannot be scheduled
+  behind the first. New requests accumulate for the next scheduler step.
+- A global batch may contain requests routed to several PA groups. Projection
+  computes QKV once for the whole batch, splits it only for same-step fan-out,
+  lets the independent Attention services run concurrently, gathers every
+  shard, and then continues the layer. These route groups are not microbatches
+  and are never interleaved with another Projection batch.
 - Different PA groups remain independent, so x:y routing does not serialize
   unrelated Attention services.
 - Conversation-affinity state lives in the Gateway and contains only the

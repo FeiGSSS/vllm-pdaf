@@ -179,6 +179,14 @@ def test_removed_flag_registry_has_unique_names() -> None:
             "PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT",
             "PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
         ),
+        (
+            "PAP_RUNNER_MICROBATCH_COUNT",
+            "PAP-20260724-SINGLE-PROJECTION-BATCH",
+        ),
+        (
+            "PAP_ATTENTION_MAILBOX_PREFETCH",
+            "PAP-20260701-ATTENTION-MAILBOX-PREFETCH",
+        ),
     ],
 )
 def test_removed_runtime_flags_fail_closed(

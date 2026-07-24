@@ -17,6 +17,7 @@ PAP_TRITON_DECODE_NUM_SPLITS = 4
 class PAPPagedDecodeWorkspace:
     """Step-owned scratch reused by every Attention layer."""
 
+    output: torch.Tensor
     partial: torch.Tensor
     lse: torch.Tensor
     k_scale: torch.Tensor
@@ -58,6 +59,7 @@ def build_paged_decode_workspace(
         raise ValueError("PAP paged decode query must be rank 3")
     batch_size, num_heads, head_dim = map(int, query.shape)
     return PAPPagedDecodeWorkspace(
+        output=torch.empty_like(query),
         partial=torch.empty(
             (
                 batch_size,
@@ -109,12 +111,11 @@ def run_paged_decode_attention(
     if int(query.shape[1]) % int(key_cache.shape[-2]) != 0:
         raise RuntimeError("PAP paged decode GQA head counts are incompatible")
 
-    output = torch.empty_like(query)
     decode_attention_fwd(
         query,
         key_cache,
         value_cache,
-        output,
+        workspace.output,
         workspace.lse,
         metadata.block_table,
         metadata.seq_lens,
@@ -125,7 +126,7 @@ def run_paged_decode_attention(
         k_scale=workspace.k_scale,
         v_scale=workspace.v_scale,
     )
-    return output
+    return workspace.output
 
 
 __all__ = [

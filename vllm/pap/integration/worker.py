@@ -47,10 +47,6 @@ class PAPWorkerAdapter:
     def critical_trace(self) -> bool:
         return self.settings.critical_trace
 
-    @property
-    def runner_microbatch_count(self) -> int:
-        return self.settings.runner_microbatch_count
-
     def write_cuda_context_audit(self) -> None:
         """Record the worker CUDA context after distributed initialization."""
         write_runtime_cuda_context_audit(role=self.settings.cuda_context_role)

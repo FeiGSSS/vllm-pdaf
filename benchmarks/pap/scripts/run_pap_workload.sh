@@ -13,6 +13,8 @@ for removed_flag in \
   PAP_ATTENTION_DISPATCH_MODE \
   PAP_ATTENTION_COMBINE_WAIT_US \
   PAP_ATTENTION_ACTIVE_PEER_TRACKING \
+  PAP_ATTENTION_MAILBOX_PREFETCH \
+  PAP_RUNNER_MICROBATCH_COUNT \
   PAP_MPS_MODE \
   PAP_BENCH_MPS_PROFILE \
   PAP_ASYNC_DECODE_TOKEN_SYNC_ONLY_BARRIER \
@@ -48,9 +50,17 @@ for removed_flag in \
         replacement="the current PAP data path"
         experiment_id="PAP-20260703-UNIFIED-KV"
         ;;
+      PAP_ATTENTION_MAILBOX_PREFETCH)
+        replacement="the serial Attention receive loop"
+        experiment_id="PAP-20260701-ATTENTION-MAILBOX-PREFETCH"
+        ;;
       PAP_ATTENTION_*)
         replacement="topology-derived Attention execution"
         experiment_id="PAP-20260711-ATTENTION-COMBINE"
+        ;;
+      PAP_RUNNER_MICROBATCH_COUNT)
+        replacement="one in-flight global Projection batch"
+        experiment_id="PAP-20260724-SINGLE-PROJECTION-BATCH"
         ;;
       PAP_MPS_MODE | PAP_BENCH_MPS_PROFILE)
         replacement="the AIPerf static 72/20 MPS partition"
@@ -772,6 +782,21 @@ wait_cluster_stable() {
   done
 }
 
+audit_projection_scheduling() {
+  local idx log_path
+  for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
+    log_path="${RUN_LOG_DIR}/projection_${idx}.log"
+    if ! rg -q "Asynchronous scheduling is disabled" "${log_path}"; then
+      die "Projection ${idx} did not confirm single-batch scheduling"
+    fi
+  done
+  {
+    printf 'STATUS=passed\n'
+    printf 'ASYNC_SCHEDULING=0\n'
+    printf 'MAX_INFLIGHT_BATCHES=1\n'
+  } > "${RUN_ROOT}/projection_scheduling_audit.env"
+}
+
 wait_attention_sessions_drained() {
   local start response idx active_sessions last_responses
   start="$(date +%s)"
@@ -1243,6 +1268,7 @@ write_effective_config() {
       "${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS}"
     printf 'PAP_PROJECTION_MAX_NUM_SEQS=%q\n' \
       "${PAP_PROJECTION_MAX_NUM_SEQS}"
+    printf 'PAP_PROJECTION_ASYNC_SCHEDULING=%q\n' "0"
     printf 'EXECUTION_MODE=%q\n' "${PAP_EXECUTION_MODE}"
     printf 'PAP_CUDAGRAPH_COMPATIBLE=%q\n' \
       "${PAP_CUDAGRAPH_COMPATIBLE}"
@@ -1390,6 +1416,8 @@ metadata = {
     "direct_mailbox_output": os.environ["PAP_DIRECT_MAILBOX_OUTPUT"] == "1",
     "unified_md_fast_key": True,
     "local_fast_stream_ordered": True,
+    "projection_async_scheduling": False,
+    "projection_max_inflight_batches": 1,
     "prefill_kv_async": True,
     "prefill_ipc_profile": os.environ["PAP_PREFILL_IPC_PROFILE"] == "1",
     "kv_handoff_mode": "sealed_manifest",
@@ -1909,6 +1937,7 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
       --max-num-seqs "${PAP_PROJECTION_MAX_NUM_SEQS}" \
       --max-num-batched-tokens \
         "${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS}" \
+      --no-async-scheduling \
       --tensor-parallel-size "${PAP_TP_SIZE}" \
       --gpu-memory-utilization "${PROJECTION_GPU_MEMORY_UTILIZATION}" \
       > "${RUN_LOG_DIR}/projection_${idx}.log" 2>&1 &
@@ -1944,6 +1973,7 @@ PIDS+=("$!")
 
 wait_for_http "http://127.0.0.1:${PAP_PROXY_PORT}/health" "PAP Gateway"
 wait_cluster_stable
+audit_projection_scheduling
 
 write_effective_config
 write_topology_manifest

@@ -107,6 +107,13 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
             )
             if storage_device is None:
                 storage_device = runtime_config.attention.storage_device
+        self._offload_exec_shape_defaults = (
+            int(os.environ.get("PAP_OFFLOAD_EXEC_Q_SIZE", "0")),
+            int(os.environ.get("PAP_OFFLOAD_EXEC_KV_SIZE", "0")),
+            int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_HEADS", "0")),
+            int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "0")),
+            int(os.environ.get("PAP_OFFLOAD_EXEC_HEAD_DIM", "0")),
+        )
         self._storage_device = self._resolve_storage_device(storage_device)
         self._sessions: dict[str, PAPAttentionSession] = {}
         self._prefill_kv_catalog_id: str | None = None
@@ -214,6 +221,11 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
     @property
     def storage_device(self) -> torch.device:
         return self._storage_device
+
+    @property
+    def offload_exec_shape_defaults(self) -> tuple[int, int, int, int, int]:
+        """Return process-lifetime OFFLOAD_EXEC shape defaults."""
+        return self._offload_exec_shape_defaults
 
     def _decode_slot_plan_cache_limit(self) -> int:
         return self._decode_slot_plan_cache_limit_value
@@ -906,8 +918,9 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                     f"PAP Attention step received unexpected layer {layer_name}"
                 )
             context.completed_layers.add(layer_name)
-            if context.kv_ready_published or not context.expected_layers.issubset(
-                context.completed_layers
+            if (
+                context.kv_ready_published
+                or len(context.completed_layers) != len(context.expected_layers)
             ):
                 return 0
 

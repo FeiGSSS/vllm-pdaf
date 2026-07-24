@@ -18,6 +18,8 @@ for removed_flag in \
     PAP_ATTENTION_DISPATCH_MODE \
     PAP_ATTENTION_COMBINE_WAIT_US \
     PAP_ATTENTION_ACTIVE_PEER_TRACKING \
+    PAP_ATTENTION_MAILBOX_PREFETCH \
+    PAP_RUNNER_MICROBATCH_COUNT \
     PAP_MPS_MODE; do
     if [[ -v "${removed_flag}" ]]; then
         echo "${removed_flag} was removed by the current PAP runtime contract" >&2
@@ -640,6 +642,7 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
         --port "$projection_port" \
         --host 127.0.0.1 \
         --enforce-eager \
+        --no-async-scheduling \
         --generation-config vllm \
         --enable-request-id-headers \
         --max-model-len "$MAX_MODEL_LEN" \

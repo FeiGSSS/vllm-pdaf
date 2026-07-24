@@ -25,7 +25,6 @@ from vllm.pap.deferred_cuda_trace import (
 from vllm.pap.protocol import PAPOffloadExecBatchDescriptor
 from vllm.pap.protocol.offload_exec import (
     _offload_exec_batch_descriptor_from_metadata,
-    _offload_exec_batch_descriptor_to_metadata,
     _offload_exec_batch_plan_id,
     _offload_exec_batch_plan_payload,
 )
@@ -203,6 +202,7 @@ class _PAPLocalFastIOMixin:
         direction: int,
         descriptor: PAPOffloadExecBatchDescriptor,
         tensor: torch.Tensor,
+        stream: torch.cuda.Stream | None = None,
     ) -> int:
         """Memcpy ``tensor`` into the peer buffer and publish its descriptor.
 
@@ -268,7 +268,11 @@ class _PAPLocalFastIOMixin:
             src_bytes = src_bytes.narrow(0, 0, nbytes)
             dst_bytes = peer.peer_tensor.narrow(0, offset, nbytes)
 
-            stream = torch.cuda.current_stream(self.device)
+            current_stream = torch.cuda.current_stream(self.device)
+            if stream is None:
+                stream = current_stream
+            else:
+                stream.wait_stream(current_stream)
             if previous_seq:
                 stream_wait_value32(
                     self._signal_buffer,
@@ -293,11 +297,19 @@ class _PAPLocalFastIOMixin:
                     stream,
                 )
                 try:
-                    dst_bytes.copy_(src_bytes, non_blocking=True)
+                    if stream is current_stream:
+                        dst_bytes.copy_(src_bytes, non_blocking=True)
+                    else:
+                        with torch.cuda.stream(stream):
+                            dst_bytes.copy_(src_bytes, non_blocking=True)
                 finally:
                     end_deferred_cuda_span(copy_trace)
             else:
-                dst_bytes.copy_(src_bytes, non_blocking=True)
+                if stream is current_stream:
+                    dst_bytes.copy_(src_bytes, non_blocking=True)
+                else:
+                    with torch.cuda.stream(stream):
+                        dst_bytes.copy_(src_bytes, non_blocking=True)
             t_sync_start = time.perf_counter() if self._trace else 0.0
 
             stream_write_value32(
@@ -566,6 +578,22 @@ class _PAPLocalFastIOMixin:
         # payload reservation.
         self.send_qkv_batch(descriptor, qkv, remote_address=remote_address)
 
+    def send_qkv_batch_fanout(
+        self,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        qkv: torch.Tensor,
+        *,
+        remote_address: str,
+    ) -> None:
+        """Send one global-batch shard on this peer's fan-out stream."""
+        del remote_address
+        self._send_to_peer(
+            direction=DIR_QKV,
+            descriptor=descriptor,
+            tensor=qkv,
+            stream=self._qkv_fanout_stream,
+        )
+
     def send_output_batch(
         self,
         descriptor: PAPOffloadExecBatchDescriptor,
@@ -591,10 +619,10 @@ class _PAPLocalFastIOMixin:
             metadata=metadata,
         )
         return _LocalFastMessage(
-            msg_id=descriptor.output_tensor_id,
+            msg_id=descriptor.layer_name,
             kind="attention_result_batch",
             tensor=tensor,
-            metadata=_offload_exec_batch_descriptor_to_metadata(descriptor),
+            metadata={},
             release_callback=lambda: self._release_recv_buffer(
                 DIR_OUTPUT,
                 seq,
@@ -659,10 +687,10 @@ class _PAPLocalFastIOMixin:
             metadata={"shape": list(shape), "dtype": _dtype_name(dtype)},
         )
         return _LocalFastMessage(
-            msg_id=descriptor.output_tensor_id,
+            msg_id=descriptor.layer_name,
             kind="attention_result_batch",
             tensor=tensor,
-            metadata=_offload_exec_batch_descriptor_to_metadata(descriptor),
+            metadata={},
             release_callback=lambda: self._release_recv_buffer(
                 DIR_OUTPUT,
                 seq,

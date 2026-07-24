@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import os
 import time
 from typing import Any
 
@@ -176,16 +175,20 @@ def compute_offload_exec_batch_output(
         trace_stats["pre_compute_start_ns"] = float(time.perf_counter_ns())
 
     shape_lookup_start = time.perf_counter() if trace_stats is not None else 0.0
-    num_heads_default = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_HEADS", "0"))
-    num_kv_heads_default = int(os.environ.get("PAP_OFFLOAD_EXEC_NUM_KV_HEADS", "0"))
-    head_dim_default = int(os.environ.get("PAP_OFFLOAD_EXEC_HEAD_DIM", "0"))
+    (
+        default_q_size,
+        default_kv_size,
+        num_heads_default,
+        num_kv_heads_default,
+        head_dim_default,
+    ) = registry.offload_exec_shape_defaults
     step_context = registry.get_or_create_attention_step_context(
         request_ids=request_ids,
         decode_seq_lens=steps,
         scales=scales,
         layer_name=str(descriptor.layer_name),
-        default_q_size=int(os.environ.get("PAP_OFFLOAD_EXEC_Q_SIZE", "0")),
-        default_kv_size=int(os.environ.get("PAP_OFFLOAD_EXEC_KV_SIZE", "0")),
+        default_q_size=default_q_size,
+        default_kv_size=default_kv_size,
         num_heads=num_heads_default,
         num_kv_heads=num_kv_heads_default,
         head_dim=head_dim_default,

@@ -178,6 +178,7 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
                 dtype=torch.int32,
                 device=self.device,
             )
+            self._qkv_fanout_stream = torch.cuda.Stream(device=self.device)
         # Pin the underlying storage lifetime: hold a reference to the
         # untyped storage so the IPC handle stays valid until we drop it.
         self._recv_storage = self._recv_buffer.untyped_storage()
@@ -436,6 +437,7 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
             self._recv_buffer = None
             self._signal_storage = None
             self._signal_buffer = None
+            self._qkv_fanout_stream = None
 
     def __enter__(self) -> PAPLocalFastTransport:
         return self

@@ -372,7 +372,7 @@ class Worker(WorkerBase):
         num_ubatches = (
             self.vllm_config.parallel_config.num_ubatches
             if self.vllm_config.parallel_config.use_ubatching
-            else max(1, self.pap_worker.runner_microbatch_count)
+            else 1
         )
         init_workspace_manager(self.device, num_ubatches)
 

@@ -21,3 +21,13 @@ def test_conversation_affinity_audit_counts_sessions_for_aiperf() -> None:
 
     assert 'load_rounds = int(os.environ["PAP_AIPERF_TURNS"])' in runner
     assert 'load_conversations = int(os.environ["PAP_AIPERF_SESSIONS"])' in runner
+
+
+def test_projection_has_exactly_one_inflight_global_batch() -> None:
+    runner = PAP_RUNNER.read_text(encoding="utf-8")
+
+    assert runner.count("--no-async-scheduling") == 1
+    assert "PAP_PROJECTION_ASYNC_SCHEDULING" in runner
+    assert "PAP_RUNNER_MICROBATCH_COUNT \\" in runner
+    assert "audit_projection_scheduling" in runner
+    assert '"projection_max_inflight_batches": 1' in runner

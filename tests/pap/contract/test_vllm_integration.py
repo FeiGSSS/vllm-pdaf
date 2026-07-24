@@ -115,7 +115,6 @@ def test_runtime_settings_are_parsed_once_per_owner() -> None:
             "PAP_CUDAGRAPH_COMPATIBLE": "1",
             "PAP_PROJECTION_CRITICAL_TRACE": "on",
             "PAP_DEBUG_DECISION": "yes",
-            "PAP_RUNNER_MICROBATCH_COUNT": "4",
             "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS": "64",
             "PAP_RUNTIME_CUDA_CONTEXT_ROLE": "projection",
         }
@@ -129,7 +128,29 @@ def test_runtime_settings_are_parsed_once_per_owner() -> None:
     assert worker.cudagraph_compatible
     assert not worker.skip_model_warmup
     assert worker.skip_local_attention_kernel_warmup
-    assert worker.runner_microbatch_count == 4
+
+
+def test_projection_rejects_multiple_inflight_batches(monkeypatch) -> None:
+    monkeypatch.setenv("PAP_PROJECTION_KV_UNAWARE", "1")
+    config = SimpleNamespace(
+        scheduler_config=SimpleNamespace(async_scheduling=True),
+        kv_transfer_config=None,
+        cache_config=SimpleNamespace(block_size=16),
+    )
+
+    with pytest.raises(RuntimeError, match="--no-async-scheduling"):
+        PAPModelRunnerAdapter.from_vllm_config(
+            config,
+            supports_async_sampled_tokens=True,
+        )
+
+    config.scheduler_config.async_scheduling = False
+    adapter = PAPModelRunnerAdapter.from_vllm_config(
+        config,
+        supports_async_sampled_tokens=True,
+    )
+    assert adapter.projection_kv_unaware
+    assert adapter.supports_async_sampled_tokens
 
 
 def test_eager_projection_skips_model_and_kernel_warmup() -> None:

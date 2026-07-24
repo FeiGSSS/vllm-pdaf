@@ -7,8 +7,6 @@ from __future__ import annotations
 import logging
 import os
 import time
-from queue import Queue
-from threading import Thread
 from typing import Any
 
 import torch
@@ -59,44 +57,6 @@ def _qkv_message_recv_trace(
         "wait_other_ms": max(0.0, wait_ms - read_ms),
         "unaccounted_ms": max(0.0, recv_qkv_ms - wait_ms),
     }
-
-
-class _QKVBatchMessagePrefetcher:
-    def __init__(self, transport: Any) -> None:
-        self._transport = transport
-        self._requests: Queue[object] = Queue()
-        self._results: Queue[tuple[bool, Any]] = Queue(maxsize=1)
-        self._stop = object()
-        self._thread = Thread(
-            target=self._run,
-            name="pap-attention-mailbox-prefetch",
-            daemon=True,
-        )
-        self._thread.start()
-
-    def prefetch(self) -> None:
-        self._requests.put(None)
-
-    def result(self) -> tuple[Any, Any | None, torch.Tensor]:
-        ok, payload = self._results.get()
-        if ok:
-            return payload
-        raise payload
-
-    def close(self) -> None:
-        self._requests.put(self._stop)
-
-    def _run(self) -> None:
-        while True:
-            request = self._requests.get()
-            if request is self._stop:
-                return
-            try:
-                payload = _recv_next_qkv_batch_message(self._transport)
-            except BaseException as exc:
-                self._results.put((False, exc))
-            else:
-                self._results.put((True, payload))
 
 
 def _record_offload_exec_ready_event(qkv_batch: torch.Tensor) -> Any | None:
@@ -551,11 +511,7 @@ def run_offload_exec_mailbox_loop(
         "yes",
         "on",
     )
-    prefetch_enabled = _pap_env_flag("PAP_ATTENTION_MAILBOX_PREFETCH", False)
     peer_id = peer_id or str(getattr(transport, "actor_id", type(transport).__name__))
-    prefetcher = _QKVBatchMessagePrefetcher(transport) if prefetch_enabled else None
-    if prefetcher is not None:
-        prefetcher.prefetch()
     while True:
         trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
         trace_recv_start_ns = 0
@@ -567,11 +523,7 @@ def run_offload_exec_mailbox_loop(
         if trace_offload_exec:
             trace_recv_start_ns = time.perf_counter_ns()
         qkv_message = None
-        if prefetcher is not None:
-            descriptor, qkv_message, qkv_batch = prefetcher.result()
-            prefetcher.prefetch()
-        else:
-            descriptor, qkv_message, qkv_batch = _recv_next_qkv_batch_message(transport)
+        descriptor, qkv_message, qkv_batch = _recv_next_qkv_batch_message(transport)
         arrival_ns = time.perf_counter_ns()
         trace_recv_ms = (
             (time.perf_counter() - trace_recv_start) * 1000.0

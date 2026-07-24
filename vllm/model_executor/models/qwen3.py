@@ -469,6 +469,7 @@ class Qwen3Attention(nn.Module):
         )
         self._pap_cudagraph_role = pap_cudagraph_role()
         self._pap_model_hooks_enabled = pap_model_hooks_enabled()
+        self._pap_trace_offload_exec = pap_env_enabled("PAP_OFFLOAD_EXEC_TRACE")
         bind_pap_cudagraph_adapters(
             self.attn,
             projection_adapter=self._pap_projection_adapter,
@@ -504,7 +505,7 @@ class Qwen3Attention(nn.Module):
                 "qkv_norm_rope_gpu_ms",
                 torch.cuda.current_stream(hidden_states.device),
             )
-        trace_offload_exec = pap_env_enabled("PAP_OFFLOAD_EXEC_TRACE")
+        trace_offload_exec = self._pap_trace_offload_exec
         trace_pre_attn_start = time.perf_counter() if trace_offload_exec else 0.0
         trace_pre_attn_start_ns = time.perf_counter_ns() if trace_offload_exec else 0
         try:
@@ -586,6 +587,8 @@ class Qwen3Attention(nn.Module):
             projection_timeline: dict[str, Any] | None = (
                 {} if trace_offload_exec else None
             )
+            # Remote output readiness proves that every QKV shard has been
+            # consumed, so the dead query storage can assemble routed output.
             attn_output, pap_release_messages = self._pap_projection_adapter.execute(
                 q,
                 k,
@@ -595,6 +598,7 @@ class Qwen3Attention(nn.Module):
                 pre_attn_done_ns=trace_pre_attn_done_ns,
                 projection_timeline=projection_timeline,
                 direct_qkv_send_buffer=direct_qkv_send_buffer,
+                reuse_query_output_buffer=True,
             )
             trace_o_proj_start = time.perf_counter() if trace_offload_exec else 0.0
             try:
@@ -736,6 +740,12 @@ class Qwen3DecoderLayer(nn.Module):
         self.post_attention_layernorm = RMSNorm(
             config.hidden_size, eps=config.rms_norm_eps
         )
+        self._pap_trace_projection_layer = pap_env_enabled(
+            "PAP_OFFLOAD_EXEC_TRACE"
+        ) and (
+            pap_env_enabled("PAP_PROJECTION_KV_UNAWARE")
+            or pap_projection_critical_trace_enabled()
+        )
 
     def forward(
         self,
@@ -744,10 +754,7 @@ class Qwen3DecoderLayer(nn.Module):
         residual: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         layer_name = self.self_attn.attn.layer_name
-        trace_projection_layer = pap_env_enabled("PAP_OFFLOAD_EXEC_TRACE") and (
-            pap_env_enabled("PAP_PROJECTION_KV_UNAWARE")
-            or pap_projection_critical_trace_enabled()
-        )
+        trace_projection_layer = self._pap_trace_projection_layer
         trace_layer_start_ns = time.perf_counter_ns() if trace_projection_layer else 0
 
         # Self Attention
