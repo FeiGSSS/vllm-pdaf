@@ -8,6 +8,7 @@ import sys
 import time
 from contextlib import suppress
 from threading import Event, Thread
+from types import SimpleNamespace
 from typing import Any
 
 import anyio
@@ -2699,9 +2700,6 @@ def test_run_offload_exec_mailbox_loop_releases_qkv_message(monkeypatch) -> None
                 raise KeyboardInterrupt
             return self.descriptor, self.message
 
-        def recv_next_qkv_batch(self):
-            raise AssertionError("mailbox loop should preserve message lifetime")
-
         def send_output_batch(self, descriptor, output, *, remote_address):
             events.append("send")
 
@@ -3348,9 +3346,6 @@ def test_run_offload_exec_mailbox_loop_prefetches_next_qkv_message(
                 raise KeyboardInterrupt
             return self.descriptor, FakeMessage(self.recv_calls)
 
-        def recv_next_qkv_batch(self):
-            raise AssertionError("prefetch should use mailbox message receive")
-
         def send_output_batch(self, descriptor, output, *, remote_address):
             events.append("send")
 
@@ -3402,11 +3397,18 @@ def test_run_offload_exec_mailbox_loop_emits_trace(monkeypatch, caplog) -> None:
             self.sent = []
             self.recv_calls = 0
 
-        def recv_next_qkv_batch(self):
+        def recv_next_qkv_batch_message(self):
             self.recv_calls += 1
             if self.recv_calls > 1:
                 raise KeyboardInterrupt
-            return self.descriptor, torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]])
+            message = SimpleNamespace(
+                tensor=torch.tensor(
+                    [[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]]
+                ),
+                release=lambda: None,
+                recv_trace={},
+            )
+            return self.descriptor, message
 
         def send_output_batch(self, descriptor, output, *, remote_address):
             self.sent.append((descriptor, output, remote_address))

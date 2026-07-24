@@ -25,7 +25,6 @@ CURRENT_RUNTIME_ENV = {
     "PAP_OFFLOAD_EXEC_TRANSPORT": "local_fast",
     "PAP_OFFLOAD_KV_TRANSPORT": "cuda_ipc",
     "PAP_DIRECT_MAILBOX_OUTPUT": "1",
-    "PAP_LOCAL_FAST_STREAM_ORDERED": "1",
     "PAP_LOCAL_FAST_SLOT_COUNT": "2",
     "PAP_DECODE_SLOT_PLAN_CACHE_LIMIT": "256",
     "PAP_ATTENTION_DISPATCH_QUEUE_SIZE": "0",
@@ -62,7 +61,7 @@ def test_runtime_config_supports_arbitrary_xpayp_and_tp() -> None:
             "PAP_PREFILL_GPUS": "0,1,2,3,4,5",
             "PAP_ATTENTION_GPUS": "0,1,2,3,4,5",
             "PAP_PROJECTION_GPUS": "6,7,8,9",
-            "PAP_OFFLOAD_EXEC_TRANSPORT": "nixl",
+            "PAP_OFFLOAD_EXEC_TRANSPORT": "nixl_mailbox",
             "PAP_OFFLOAD_KV_TRANSPORT": "nixl",
             "PAP_ROUTING_POLICY": "crossbar_round_robin",
         }

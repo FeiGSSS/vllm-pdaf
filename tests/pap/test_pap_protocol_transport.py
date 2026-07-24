@@ -14,8 +14,10 @@ from vllm.pap.protocol.offload_exec import (
     _offload_exec_batch_descriptor_from_metadata,
     _offload_exec_batch_descriptor_to_metadata,
 )
-from vllm.pap.transport.mailbox import PAPMailboxMessage
-from vllm.pap.transport.nixl_offload import PAPNixlMailboxOffloadExecTransport
+from vllm.pap.transport.nixl.message import PAPMailboxMessage
+from vllm.pap.transport.nixl.offload import (
+    PAPNixlMailboxOffloadExecTransport,
+)
 
 
 def test_nixl_mailbox_sends_direct_qkv_batch_without_copy_payload() -> None:
@@ -96,38 +98,6 @@ def test_nixl_mailbox_direct_qkv_batch_supports_inference_mode_slot() -> None:
         )
 
     torch.testing.assert_close(endpoint.sent[0].tensor, qkv)
-
-
-def test_nixl_mailbox_transport_naked_next_qkv_clones_and_releases() -> None:
-    class FakeEndpoint:
-        def __init__(self, message) -> None:
-            self.message = message
-
-        def recv(self, msg_id=None):
-            assert msg_id is None
-            return self.message
-
-    descriptor = PAPOffloadExecBatchDescriptor(
-        layer_name="layer0",
-        items=(PAPOffloadExecDescriptor("req-a", "layer0", 7, 0.125),),
-    )
-    released = []
-    tensor = torch.tensor([[1.0, 2.0, 3.0]], dtype=torch.float32)
-    message = PAPMailboxMessage(
-        msg_id=descriptor.qkv_tensor_id,
-        kind="attention_task_batch",
-        metadata=_offload_exec_batch_descriptor_to_metadata(descriptor),
-        tensor=tensor,
-        release_callback=lambda: released.append(True),
-    )
-    transport = PAPNixlMailboxOffloadExecTransport(FakeEndpoint(message))
-
-    restored_descriptor, restored_tensor = transport.recv_next_qkv_batch()
-
-    assert restored_descriptor == descriptor
-    torch.testing.assert_close(restored_tensor, tensor)
-    assert restored_tensor.data_ptr() != tensor.data_ptr()
-    assert released == [True]
 
 
 def test_nixl_mailbox_qkv_batch_uses_plan_ref_after_first_layer_by_default() -> None:

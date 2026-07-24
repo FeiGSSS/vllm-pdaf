@@ -9,10 +9,10 @@ from vllm.pap.config import parse_offload_exec_transport
 from vllm.pap.protocol import (
     PAPOffloadExecTransport as PAPOffloadExecTransportBackend,
 )
-from vllm.pap.transport.local_fast import (
+from vllm.pap.transport.local import (
     build_local_fast_offload_exec_transport,
 )
-from vllm.pap.transport.nixl_offload import (
+from vllm.pap.transport.nixl import (
     build_nixl_mailbox_offload_exec_transport,
 )
 

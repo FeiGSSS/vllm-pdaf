@@ -99,8 +99,7 @@ STATUS_FILE="${PAP_STATUS_FILE:-}"
 SKIP_SMOKE_REQUEST="${PAP_SKIP_SMOKE_REQUEST:-0}"
 PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT:-nixl_mailbox}"
 case "$PAP_OFFLOAD_EXEC_TRANSPORT" in
-    nixl|nixl_mailbox) ;;
-    local_fast|local-fast|cuda_ipc_fast) ;;
+    nixl_mailbox|local_fast) ;;
     *)
         echo "PAP_OFFLOAD_EXEC_TRANSPORT=$PAP_OFFLOAD_EXEC_TRANSPORT is not supported; use nixl_mailbox or local_fast" >&2
         exit 1

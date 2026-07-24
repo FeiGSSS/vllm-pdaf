@@ -618,19 +618,12 @@ class PAPProjectionAttentionAdapter:
             transport,
             _route_index_tensor,
         ) in offload_exec_batches:
-            prepare_output_batch_message = getattr(
-                transport,
-                "prepare_output_batch_message",
-                None,
+            output_message = transport.prepare_output_batch_message(
+                batch_descriptor,
+                shape=(len(req_indices), output_width),
+                dtype=query.dtype,
+                remote_address=offload_exec_zmq_endpoint,
             )
-            output_message = None
-            if callable(prepare_output_batch_message):
-                output_message = prepare_output_batch_message(
-                    batch_descriptor,
-                    shape=(len(req_indices), output_width),
-                    dtype=query.dtype,
-                    remote_address=offload_exec_zmq_endpoint,
-                )
             prepared_output_messages.append(output_message)
         trace_trigger_ms = (
             (time.perf_counter() - trace_trigger_start) * 1000.0
@@ -725,20 +718,11 @@ class PAPProjectionAttentionAdapter:
             if output_message is not None:
                 output_batch = output_message.tensor
             else:
-                recv_output_batch_message = getattr(
-                    transport, "recv_output_batch_message", None
+                output_message = transport.recv_output_batch_message(
+                    batch_descriptor,
+                    remote_address=offload_exec_zmq_endpoint,
                 )
-                if callable(recv_output_batch_message):
-                    output_message = recv_output_batch_message(
-                        batch_descriptor,
-                        remote_address=offload_exec_zmq_endpoint,
-                    )
-                    output_batch = output_message.tensor
-                else:
-                    output_batch = transport.recv_output_batch(
-                        batch_descriptor,
-                        remote_address=offload_exec_zmq_endpoint,
-                    )
+                output_batch = output_message.tensor
             try:
                 if int(output_batch.shape[0]) != batch_descriptor.item_count:
                     raise RuntimeError(

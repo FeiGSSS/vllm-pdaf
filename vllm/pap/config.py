@@ -223,7 +223,6 @@ class PAPRuntimeFeatures:
     """Operational PAP controls that do not select core runtime paths."""
 
     direct_mailbox_output: bool
-    local_fast_stream_ordered: bool
     local_fast_slot_count: int
     decode_slot_plan_cache_limit: int
     prefill_ipc_profile: bool
@@ -324,6 +323,26 @@ PAP_REMOVED_FLAGS = (
         name="PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT",
         replacement="the normal decode-commit timeout and retry policy",
         experiment_id="PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
+    ),
+    PAPRemovedFlag(
+        name="PAP_LOCAL_FAST_STREAM_ORDERED",
+        replacement="the mandatory stream-ordered local transport",
+        experiment_id="PAP-20260722-AIPERF-PROJECTION-AUTO",
+    ),
+    PAPRemovedFlag(
+        name="PAP_LOCAL_FAST_ASYNC_DOORBELL",
+        replacement="the mandatory stream-ordered local transport",
+        experiment_id="PAP-20260722-AIPERF-PROJECTION-AUTO",
+    ),
+    PAPRemovedFlag(
+        name="PAP_LOCAL_FAST_BATCH_PLAN",
+        replacement="the mandatory decode-step transport plan",
+        experiment_id="PAP-20260722-AIPERF-PROJECTION-AUTO",
+    ),
+    PAPRemovedFlag(
+        name="PAP_NIXL_MAILBOX_BATCH_PLAN",
+        replacement="the mandatory decode-step transport plan",
+        experiment_id="PAP-20260722-AIPERF-PROJECTION-AUTO",
     ),
 )
 
@@ -455,11 +474,6 @@ class PAPRuntimeConfig:
                 env,
                 "PAP_DIRECT_MAILBOX_OUTPUT",
                 False,
-            ),
-            local_fast_stream_ordered=_env_bool(
-                env,
-                "PAP_LOCAL_FAST_STREAM_ORDERED",
-                True,
             ),
             local_fast_slot_count=_env_int(
                 env,
@@ -823,15 +837,9 @@ def parse_offload_exec_transport(
     if isinstance(value, PAPOffloadExecTransport):
         return value
     normalized = _normalize_flag_value(value)
-    aliases = {
-        "nixl": PAPOffloadExecTransport.NIXL_MAILBOX,
-        "nixl_mailbox": PAPOffloadExecTransport.NIXL_MAILBOX,
-        "local_fast": PAPOffloadExecTransport.LOCAL_FAST,
-        "cuda_ipc_fast": PAPOffloadExecTransport.LOCAL_FAST,
-    }
     try:
-        return aliases[normalized]
-    except KeyError as exc:
+        return PAPOffloadExecTransport(normalized)
+    except ValueError as exc:
         raise PAPConfigError(
             "PAP_OFFLOAD_EXEC_TRANSPORT must be nixl_mailbox or local_fast, "
             f"got {value!r}"

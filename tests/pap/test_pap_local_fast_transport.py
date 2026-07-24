@@ -12,13 +12,10 @@ from vllm.pap.cuda_stream_memops import (
     stream_write_value32,
 )
 from vllm.pap.protocol import PAPOffloadExecBatchDescriptor
-from vllm.pap.transport import local_fast_io
-from vllm.pap.transport.local_fast import (
-    PAPLocalFastTransport,
-)
-from vllm.pap.transport.local_fast_endpoint import _open_or_create_doorbell
-from vllm.pap.transport.local_fast_io import _LocalFastMessage
-from vllm.pap.transport.local_fast_protocol import (
+from vllm.pap.transport.local import io as local_fast_io
+from vllm.pap.transport.local.endpoint import _open_or_create_doorbell
+from vllm.pap.transport.local.io import _LocalFastMessage
+from vllm.pap.transport.local.protocol import (
     DTYPE_CODE_BFLOAT16,
     DIR_OUTPUT,
     DIR_QKV,
@@ -33,8 +30,10 @@ from vllm.pap.transport.local_fast_protocol import (
     _doorbell_read_record,
     _doorbell_record_offset,
     _doorbell_write,
-    _payload_metadata,
     _signal_index,
+)
+from vllm.pap.transport.local.transport import (
+    PAPLocalFastTransport,
 )
 
 
@@ -110,7 +109,6 @@ def test_local_fast_message_releases_once() -> None:
 def test_local_fast_step_plan_is_built_once_and_output_is_descriptorless() -> None:
     transport = object.__new__(PAPLocalFastTransport)
     transport.close = lambda: None
-    transport._batch_plan_enabled = True
     transport._step_plan_cache_limit = 8
     transport._sent_step_plans = OrderedDict()
     transport._recv_plan_ids_by_key = {}
@@ -173,14 +171,6 @@ def test_local_fast_step_plan_is_built_once_and_output_is_descriptorless() -> No
     assert transport._binary_qkv_refs == 1
     assert transport._binary_outputs == 1
     assert transport._json_records == 1
-
-
-def test_local_fast_payload_omits_empty_descriptor_metadata() -> None:
-    tensor = torch.zeros((2, 4), dtype=torch.bfloat16)
-
-    metadata = _payload_metadata({}, tensor)
-
-    assert metadata == {"shape": [2, 4], "dtype": "bfloat16"}
 
 
 def test_local_fast_fixed_doorbell_record_needs_no_json(tmp_path) -> None:
@@ -258,8 +248,6 @@ def test_local_fast_prepares_descriptorless_output_gpu_wait(
     transport = object.__new__(PAPLocalFastTransport)
     transport.close = lambda: None
     transport.device = torch.device("cuda:0")
-    transport._stream_ordered = True
-    transport._batch_plan_enabled = True
     transport._slot_count = slot_count
     transport._slot_bytes = 64
     transport._recv_buffer = torch.zeros(128, dtype=torch.uint8)

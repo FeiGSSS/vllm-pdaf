@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""PAP same-machine stream-ordered CUDA IPC fast-path transport.
+"""Same-machine stream-ordered CUDA IPC transport.
 
 This transport is a research prototype intended to demonstrate that the
 Projection<->Attention per-layer QKV/O transit can be driven well below the
@@ -16,21 +16,15 @@ Design highlights:
 * A two-slot ring carries QKV and attention output in each direction. CUDA
   stream memory operations publish ready/release generations without a CPU
   device synchronization. A small ``/dev/shm`` doorbell carries descriptors.
-* Systems without CUDA stream memory operations fall back to the original
-  synchronous doorbell path.
+* CUDA stream memory operations are required. Unsupported systems fail closed
+  instead of selecting an unvalidated synchronization fallback.
 * Receiver spin-wait falls back to ``os.sched_yield`` after a configurable
   number of tight iterations to avoid pinning a core forever.
 * Default OFF.  Activate with ``PAP_OFFLOAD_EXEC_TRANSPORT=local_fast``.
 
-This implementation is intentionally lightweight on error-handling for unusual
-states (slot overrun, peer death).  It is meant for controlled benchmark runs
-on a single host.
-
-The transport implements the same public surface as
-:class:`PAPNixlMailboxOffloadExecTransport`.  Some methods that are not used
-on the fast path (notably ``recv_next_qkv_batch``/``recv_next_qkv_batch_message``
-used by the optional mailbox prefetch thread) are stubbed in terms of
-``recv_qkv_batch`` so the attention executor's mailbox loop still functions.
+This implementation is intentionally lightweight on error-handling for
+unusual states such as peer death. It is meant for controlled same-host runs
+and implements the ownership-bearing OFFLOAD_EXEC transport contract directly.
 """
 
 from __future__ import annotations
@@ -38,7 +32,6 @@ from __future__ import annotations
 import json
 import mmap
 import os
-import queue
 import threading
 import time
 from collections import OrderedDict
@@ -54,7 +47,7 @@ from vllm.pap.deferred_cuda_trace import (
     deferred_cuda_trace_enabled,
 )
 from vllm.pap.protocol import PAPTensorTransport
-from vllm.pap.transport.local_fast_endpoint import (
+from vllm.pap.transport.local.endpoint import (
     _doorbell_path,
     _ensure_peer_access,
     _local_hostname,
@@ -62,11 +55,8 @@ from vllm.pap.transport.local_fast_endpoint import (
     _pack_cuda_ipc_handle,
     _unpack_cuda_ipc_handle,
 )
-from vllm.pap.transport.local_fast_io import (
-    _PAPLocalFastIOMixin,
-    _PendingDoorbell,
-)
-from vllm.pap.transport.local_fast_protocol import (
+from vllm.pap.transport.local.io import _PAPLocalFastIOMixin
+from vllm.pap.transport.local.protocol import (
     DIR_QKV,
     _doorbell_bytes,
     _doorbell_read_header,
@@ -117,7 +107,7 @@ class _PeerState:
     """Per-peer state cached on the local transport after bind_peer."""
 
     peer_tensor: torch.Tensor  # view into peer's recv buffer (local device)
-    peer_signal_tensor: torch.Tensor | None
+    peer_signal_tensor: torch.Tensor
     peer_doorbell_path: str
     slot_count: int
     slot_bytes: int
@@ -132,16 +122,12 @@ class _PeerState:
     # Expected incoming seq for each direction.  This is what we wait for.
     expected_qkv_seq: int = 1
     expected_output_seq: int = 1
-    pending_qkv_seq: int = 0
-    pending_output_seq: int = 0
     last_qkv_seq_by_slot: list[int] = field(init=False)
     last_output_seq_by_slot: list[int] = field(init=False)
     source_refs: dict[tuple[int, int], torch.Tensor] = field(default_factory=dict)
     send_lock: threading.Lock = field(default_factory=threading.Lock)
-    wait_cond: threading.Condition = field(init=False)
 
     def __post_init__(self) -> None:
-        self.wait_cond = threading.Condition(self.send_lock)
         self.last_qkv_seq_by_slot = [0] * self.slot_count
         self.last_output_seq_by_slot = [0] * self.slot_count
 
@@ -192,18 +178,15 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
             self._recv_buffer = torch.empty(
                 self.buffer_bytes, dtype=torch.uint8, device=self.device
             )
-            self._stream_ordered_requested = _env_bool(
-                "PAP_LOCAL_FAST_STREAM_ORDERED", True
-            )
-            self._stream_ordered_available = (
-                self._stream_ordered_requested and probe_stream_mem_ops(self.device)
-            )
+            if not probe_stream_mem_ops(self.device):
+                raise RuntimeError(
+                    "PAP local transport requires CUDA stream memory operations"
+                )
             self._signal_buffer = torch.zeros(
                 4 * self._slot_count,
                 dtype=torch.int32,
                 device=self.device,
             )
-        self._stream_ordered = False
         # Pin the underlying storage lifetime: hold a reference to the
         # untyped storage so the IPC handle stays valid until we drop it.
         self._recv_storage = self._recv_buffer.untyped_storage()
@@ -224,8 +207,6 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         self._bound = False
         self._trace = _env_bool("PAP_OFFLOAD_EXEC_TRACE", False)
         self._deferred_cuda_trace = deferred_cuda_trace_enabled()
-        self._async_doorbell = _env_bool("PAP_LOCAL_FAST_ASYNC_DOORBELL", False)
-        self._batch_plan_enabled = _env_bool("PAP_LOCAL_FAST_BATCH_PLAN", True)
         self._step_plan_cache_limit = int(
             os.environ.get("PAP_LOCAL_FAST_STEP_PLAN_CACHE_LIMIT", "256")
         )
@@ -241,10 +222,6 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         self._binary_outputs = 0
         self._json_records = 0
         self._stats_reported = False
-        self._notify_queue: queue.Queue[_PendingDoorbell | None] | None = None
-        self._notify_thread: threading.Thread | None = None
-        self._notify_error: Exception | None = None
-        self._notify_error_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Metadata exchange
@@ -264,7 +241,7 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
             "buffer_bytes": int(self.buffer_bytes),
             "slot_count": self._slot_count,
             "doorbell_bytes": self._doorbell_bytes,
-            "stream_ordered": self._stream_ordered_available,
+            "stream_ordered": True,
             "doorbell_path": self._doorbell_path,
             "ipc_handle": ipc_blob,
             "signal_ipc_handle": signal_blob,
@@ -305,15 +282,13 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         # ours, the kernel will route via peer access (or staged copy).
         peer_tensor = _unpack_cuda_ipc_handle(ipc_blob)
         peer_device = peer_tensor.device
-        peer_stream_ordered = bool(payload.get("stream_ordered", False))
-        self._stream_ordered = bool(
-            self._stream_ordered_available and peer_stream_ordered
-        )
-        peer_signal_tensor = None
-        if self._stream_ordered:
-            peer_signal_tensor = _unpack_cuda_ipc_handle(
-                str(payload["signal_ipc_handle"])
+        if not bool(payload.get("stream_ordered", False)):
+            raise RuntimeError(
+                "PAP local transport requires a stream-ordered peer"
             )
+        peer_signal_tensor = _unpack_cuda_ipc_handle(
+            str(payload["signal_ipc_handle"])
+        )
 
         # Enable peer access (local -> peer).  If unsupported, refuse to
         # start: per the spec we do not silently fall back.
@@ -349,30 +324,11 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         self.start()
 
     def start(self) -> None:
-        """Start optional notifier thread; receiver spin stays inline."""
+        """Mark the bound local transport ready."""
 
         if self._started:
             return
         self._started = True
-        if self._async_doorbell and not self._stream_ordered:
-            self._notify_queue = queue.Queue()
-            self._notify_thread = threading.Thread(
-                target=self._notify_loop,
-                name=f"pap-local-fast-notify-{self.actor_id}",
-                daemon=True,
-            )
-            self._notify_thread.start()
-
-    def _set_notify_error(self, exc: Exception) -> None:
-        with self._notify_error_lock:
-            if self._notify_error is None:
-                self._notify_error = exc
-
-    def _raise_if_notify_failed(self) -> None:
-        with self._notify_error_lock:
-            exc = self._notify_error
-        if exc is not None:
-            raise RuntimeError("PAP local fast async doorbell notifier failed") from exc
 
     def _next_seq(self, peer: _PeerState, direction: int) -> int:
         if direction == DIR_QKV:
@@ -382,20 +338,6 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         seq = peer.next_output_seq
         peer.next_output_seq += 1
         return seq
-
-    def _set_pending_seq(self, peer: _PeerState, direction: int, seq: int) -> None:
-        if direction == DIR_QKV:
-            peer.pending_qkv_seq = seq
-        else:
-            peer.pending_output_seq = seq
-
-    def _clear_pending_seq(self, peer: _PeerState, direction: int, seq: int) -> None:
-        if direction == DIR_QKV:
-            if peer.pending_qkv_seq == seq:
-                peer.pending_qkv_seq = 0
-        elif peer.pending_output_seq == seq:
-            peer.pending_output_seq = 0
-        peer.wait_cond.notify_all()
 
     def _write_doorbell_sync(
         self,
@@ -458,57 +400,6 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
                 continue
             _sched_yield()
 
-    def _notify_loop(self) -> None:
-        assert self._notify_queue is not None
-        while True:
-            job = self._notify_queue.get()
-            if job is None:
-                self._notify_queue.task_done()
-                return
-            try:
-                wait_start = time.perf_counter()
-                job.event.synchronize()
-                doorbell_start = time.perf_counter()
-                peer = self._require_peer()
-                self._write_doorbell_sync(
-                    peer=peer,
-                    direction=job.direction,
-                    seq=job.seq,
-                    nbytes=job.nbytes,
-                    offset=job.offset,
-                    wire=job.wire,
-                )
-                with peer.wait_cond:
-                    self._clear_pending_seq(peer, job.direction, job.seq)
-                if self._trace:
-                    kind = "qkv" if job.direction == DIR_QKV else "output"
-                    logger.info(
-                        "PAP local fast transport async doorbell trace kind=%s "
-                        "layer=%s batch=%s enqueue_ms=%.3f event_wait_ms=%.3f "
-                        "doorbell_ms=%.3f seq=%d nbytes=%d",
-                        kind,
-                        job.descriptor_layer_name,
-                        job.descriptor_batch_id,
-                        (wait_start - job.enqueue_time) * 1000.0,
-                        (doorbell_start - wait_start) * 1000.0,
-                        (time.perf_counter() - doorbell_start) * 1000.0,
-                        job.seq,
-                        job.nbytes,
-                    )
-            except Exception as exc:
-                self._set_notify_error(exc)
-                peer = self._peer
-                if peer is not None:
-                    with peer.wait_cond:
-                        peer.wait_cond.notify_all()
-                logger.exception(
-                    "PAP local fast async doorbell notifier failed actor=%s",
-                    self.actor_id,
-                )
-                return
-            finally:
-                self._notify_queue.task_done()
-
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -519,26 +410,9 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         return self._peer
 
     def flush(self) -> None:
-        peer = self._peer
-        if peer is None:
+        if self._peer is None:
             return
-        if self._stream_ordered:
-            torch.cuda.synchronize(self.device)
-            return
-        if not self._async_doorbell:
-            return
-        with peer.wait_cond:
-            while (
-                peer.pending_qkv_seq != 0 or peer.pending_output_seq != 0
-            ) and self._notify_error is None:
-                peer.wait_cond.wait(timeout=0.01)
-        self._raise_if_notify_failed()
-
-    def barrier(self) -> None:
-        self.flush()
-
-    def wait_idle(self) -> None:
-        self.flush()
+        torch.cuda.synchronize(self.device)
 
     def _report_stats(self) -> None:
         if self._stats_reported:
@@ -563,13 +437,6 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         try:
             self.flush()
             self._report_stats()
-            if (
-                self._notify_queue is not None
-                and self._notify_thread is not None
-                and self._notify_thread.is_alive()
-            ):
-                self._notify_queue.put(None)
-                self._notify_thread.join(timeout=1.0)
             if self._peer is not None:
                 if self._peer.peer_doorbell_mm is not None:
                     self._peer.peer_doorbell_mm.close()
@@ -582,14 +449,11 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         except Exception:
             pass
         finally:
-            self._notify_queue = None
-            self._notify_thread = None
             self._peer = None
             self._started = False
             self._bound = False
             self._doorbell_fd = None
             self._doorbell_mm = None
-            self._notify_error = None
             self._recv_storage = None
             self._recv_buffer = None
             self._signal_storage = None
@@ -609,16 +473,8 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
     def __repr__(self) -> str:
         return (
             f"PAPLocalFastTransport(actor_id={self.actor_id!r}, "
-            f"device={self.device!s}, stream_ordered={self._stream_ordered}, "
-            f"slots={self._slot_count})"
+            f"device={self.device!s}, slots={self._slot_count})"
         )
-
-    def __getstate__(self) -> dict[str, Any]:
-        raise TypeError("PAPLocalFastTransport is not picklable")
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        raise TypeError("PAPLocalFastTransport is not picklable")
-
 
 # ---------------------------------------------------------------------------
 # Factory

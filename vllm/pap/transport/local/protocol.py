@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Doorbell wire layout for the PAP local-fast transport."""
+"""Doorbell wire layout for the PAP local transport."""
 
 from __future__ import annotations
 
@@ -216,19 +216,6 @@ def _dtype_from_name(name: str) -> torch.dtype:
     if not isinstance(dtype, torch.dtype):
         raise RuntimeError(f"unsupported PAP local fast tensor dtype: {name}")
     return dtype
-
-
-def _payload_metadata(
-    descriptor_metadata: dict[str, Any],
-    tensor: torch.Tensor,
-) -> dict[str, Any]:
-    metadata: dict[str, Any] = {
-        "shape": list(tensor.shape),
-        "dtype": _dtype_name(tensor.dtype),
-    }
-    if descriptor_metadata:
-        metadata["descriptor"] = descriptor_metadata
-    return metadata
 
 
 @dataclass

@@ -36,8 +36,8 @@ modules. Historical documents retain their original paths for traceability.
 | `deferred_decode_token.py` | `lifecycle/decode_token.py` |
 | `kv_lease.py` | `lifecycle/lease.py` |
 | `lease_release_client.py` | `lifecycle/lease_release.py` |
-| `local_fast_transport.py` | `transport/local_fast.py` |
-| `nixl_mailbox.py` | `transport/mailbox.py`, `transport/nixl.py` |
+| `local_fast_transport.py` | `transport/local/` |
+| `nixl_mailbox.py` | `transport/nixl/` |
 | `peer_activity.py` | `topology/peer_activity.py` |
 | `remote_attention.py` | `protocol/wire.py` |
 | `shadow_attention.py` | `attention/client.py`, `kv/handoff.py` |

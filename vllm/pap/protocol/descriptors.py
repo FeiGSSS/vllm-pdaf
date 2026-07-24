@@ -350,10 +350,24 @@ class PAPPrefillKVSessionManifest:
         )
 
 
+class PAPOffloadExecMessage(Protocol):
+    """Transport-owned tensor view with explicit slot release."""
+
+    tensor: torch.Tensor
+
+    def release(self) -> None: ...
+
+
 class PAPOffloadExecTransport(Protocol):
     """Projection<->Attention QKV/O data-plane transport."""
 
     transport: PAPTensorTransport
+    requires_tcp_trigger: bool
+
+    @property
+    def local_agent_metadata(self) -> bytes: ...
+
+    def bind_peer(self, peer_agent_metadata: bytes) -> None: ...
 
     def send_qkv_batch(
         self,
@@ -371,12 +385,9 @@ class PAPOffloadExecTransport(Protocol):
         remote_address: str,
     ) -> None: ...
 
-    def recv_qkv_batch(
+    def recv_next_qkv_batch_message(
         self,
-        descriptor: PAPOffloadExecBatchDescriptor,
-        *,
-        remote_address: str,
-    ) -> torch.Tensor: ...
+    ) -> tuple[PAPOffloadExecBatchDescriptor, PAPOffloadExecMessage]: ...
 
     def send_output_batch(
         self,
@@ -386,9 +397,18 @@ class PAPOffloadExecTransport(Protocol):
         remote_address: str,
     ) -> None: ...
 
-    def recv_output_batch(
+    def prepare_output_batch_message(
+        self,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        *,
+        shape: tuple[int, int],
+        dtype: torch.dtype,
+        remote_address: str,
+    ) -> PAPOffloadExecMessage | None: ...
+
+    def recv_output_batch_message(
         self,
         descriptor: PAPOffloadExecBatchDescriptor,
         *,
         remote_address: str,
-    ) -> torch.Tensor: ...
+    ) -> PAPOffloadExecMessage: ...

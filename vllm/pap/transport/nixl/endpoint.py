@@ -3,7 +3,7 @@
 """NIXL-backed PAP bidirectional mailbox endpoint.
 
 Backend-neutral mailbox messages live in
-``vllm.pap.transport.mailbox``. This module owns NIXL agent metadata,
+``vllm.pap.transport.nixl.message``. This module owns NIXL agent metadata,
 registered tensor slots, notifications, and transfer progress.
 """
 
@@ -25,7 +25,7 @@ from typing import Any
 import msgspec
 import torch
 
-from vllm.pap.transport.mailbox import (
+from vllm.pap.transport.nixl.message import (
     PAPMailboxMessage,
     _merge_message_recv_trace,
 )

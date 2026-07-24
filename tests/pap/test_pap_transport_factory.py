@@ -11,7 +11,7 @@ from vllm.pap.transport import factory as factory_module
 
 @pytest.mark.parametrize(
     "transport",
-    ["nixl", PAPOffloadExecTransport.NIXL_MAILBOX],
+    ["nixl_mailbox", PAPOffloadExecTransport.NIXL_MAILBOX],
 )
 def test_transport_factory_selects_nixl_mailbox(monkeypatch, transport) -> None:
     calls = []
@@ -46,7 +46,7 @@ def test_transport_factory_selects_nixl_mailbox(monkeypatch, transport) -> None:
 
 @pytest.mark.parametrize(
     "transport",
-    ["local-fast", "cuda_ipc_fast", PAPOffloadExecTransport.LOCAL_FAST],
+    ["local_fast", PAPOffloadExecTransport.LOCAL_FAST],
 )
 def test_transport_factory_selects_local_fast(monkeypatch, transport) -> None:
     calls = []

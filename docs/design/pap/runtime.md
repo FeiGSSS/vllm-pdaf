@@ -116,14 +116,15 @@ This is the correctness boundary for current Graph support.
 
 The execution transport is built through `transport/factory.py`:
 
-- `local_fast` uses same-host CUDA IPC endpoints and a stream-ordered slot/
-  doorbell protocol.
-- NIXL uses the backend-neutral mailbox actor/message layer plus NIXL endpoint
-  metadata, notification, and transfer progress.
+- `local_fast` uses `transport/local/`: same-host CUDA IPC endpoints and a
+  mandatory stream-ordered slot/doorbell protocol with decode-step plans.
+- NIXL uses `transport/nixl/`: mailbox messages, endpoint metadata,
+  notification and transfer progress.
 
-Protocol and lifecycle callers depend on the transport interface rather than
-backend-specific endpoint types. Cross-host NIXL is preserved but is not an E2E
-gate in this milestone.
+The transport interface exposes ownership-bearing receive messages and an
+optional pre-submitted output receive. Callers no longer probe backend methods
+or fall back to clone-based receive APIs. Cross-host NIXL is preserved but is
+not an E2E gate in this milestone.
 
 ## Observability
 

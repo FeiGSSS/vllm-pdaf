@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Same-host resource exchange for the PAP local-fast transport."""
+"""Same-host resource exchange for the PAP local transport."""
 
 from __future__ import annotations
 

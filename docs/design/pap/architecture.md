@@ -121,9 +121,10 @@ executor.
   Projection membership, transports, and receiver threads; `dispatcher.py`
   and `compute.py` own queueing and Attention compute; `kernels.py` owns the
   selected decode kernel and its step-level workspace.
-- `transport/`: backend-neutral contract plus NIXL; `local_fast.py` owns peer
-  binding and lifecycle, while `local_fast_io.py` owns wire encoding and the
-  send/receive hot path.
+- `transport/`: `factory.py` is the composition boundary. `local/` owns the
+  same-host CUDA IPC endpoint, stream-ordered protocol, and send/receive hot
+  path. `nixl/` owns the cross-host mailbox message, endpoint, and OFFLOAD_EXEC
+  adapter. The shared ownership-bearing interface lives in `protocol/`.
 - `service.py`: thin Attention HTTP/TCP composition and process entry point.
 
 Legacy top-level compatibility façades have been removed; the retirement record

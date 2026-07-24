@@ -32,15 +32,11 @@ from vllm.pap.protocol import (
 logger = logging.getLogger("pap_attention")
 
 
-def _recv_next_qkv_batch_message_or_tensor(
+def _recv_next_qkv_batch_message(
     transport: Any,
-) -> tuple[Any, Any | None, torch.Tensor]:
-    recv_message_fn = getattr(transport, "recv_next_qkv_batch_message", None)
-    if callable(recv_message_fn):
-        descriptor, qkv_message = recv_message_fn()
-        return descriptor, qkv_message, qkv_message.tensor
-    descriptor, qkv_batch = transport.recv_next_qkv_batch()
-    return descriptor, None, qkv_batch
+) -> tuple[Any, Any, torch.Tensor]:
+    descriptor, qkv_message = transport.recv_next_qkv_batch_message()
+    return descriptor, qkv_message, qkv_message.tensor
 
 
 def _qkv_message_recv_trace(
@@ -96,7 +92,7 @@ class _QKVBatchMessagePrefetcher:
             if request is self._stop:
                 return
             try:
-                payload = _recv_next_qkv_batch_message_or_tensor(self._transport)
+                payload = _recv_next_qkv_batch_message(self._transport)
             except BaseException as exc:
                 self._results.put((False, exc))
             else:
@@ -200,7 +196,7 @@ def run_offload_exec_mailbox_receiver_loop(
         trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
         trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
         trace_recv_start_ns = time.perf_counter_ns() if trace_offload_exec else 0
-        descriptor, qkv_message, qkv_batch = _recv_next_qkv_batch_message_or_tensor(
+        descriptor, qkv_message, qkv_batch = _recv_next_qkv_batch_message(
             transport
         )
         arrival_ns = time.perf_counter_ns()
@@ -555,9 +551,7 @@ def run_offload_exec_mailbox_loop(
         "yes",
         "on",
     )
-    prefetch_enabled = _pap_env_flag(
-        "PAP_ATTENTION_MAILBOX_PREFETCH", False
-    ) and callable(getattr(transport, "recv_next_qkv_batch_message", None))
+    prefetch_enabled = _pap_env_flag("PAP_ATTENTION_MAILBOX_PREFETCH", False)
     peer_id = peer_id or str(getattr(transport, "actor_id", type(transport).__name__))
     prefetcher = _QKVBatchMessagePrefetcher(transport) if prefetch_enabled else None
     if prefetcher is not None:
@@ -577,9 +571,7 @@ def run_offload_exec_mailbox_loop(
             descriptor, qkv_message, qkv_batch = prefetcher.result()
             prefetcher.prefetch()
         else:
-            descriptor, qkv_message, qkv_batch = _recv_next_qkv_batch_message_or_tensor(
-                transport
-            )
+            descriptor, qkv_message, qkv_batch = _recv_next_qkv_batch_message(transport)
         arrival_ns = time.perf_counter_ns()
         trace_recv_ms = (
             (time.perf_counter() - trace_recv_start) * 1000.0

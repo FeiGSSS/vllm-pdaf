@@ -8,14 +8,14 @@ from threading import Condition, RLock
 import pytest
 import torch
 
-import vllm.pap.transport.nixl as nixl_mailbox
-from vllm.pap.transport.mailbox import PAPMailboxMessage
-from vllm.pap.transport.nixl import (
+import vllm.pap.transport.nixl.endpoint as nixl_mailbox
+from vllm.pap.transport.nixl.endpoint import (
     PAPNixlMailboxEndpoint,
     _decode_nixl_mailbox_agent_metadata,
     _nixl_mailbox_agent_config,
     _nixl_mailbox_env_float,
 )
+from vllm.pap.transport.nixl.message import PAPMailboxMessage
 
 
 def test_nixl_mailbox_local_metadata_includes_slot_layout() -> None:

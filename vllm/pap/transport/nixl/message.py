@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Backend-neutral PAP mailbox messages."""
+"""NIXL mailbox messages."""
 
 from __future__ import annotations
 

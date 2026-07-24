@@ -18,27 +18,7 @@ from vllm.pap.protocol.offload_exec import (
     _offload_exec_batch_descriptor_to_metadata,
     _offload_exec_batch_descriptor_to_plan_metadata,
 )
-from vllm.pap.transport.mailbox import PAPMailboxMessage
-
-_TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
-
-
-def _data_plane_env_bool(name: str, default: bool) -> bool:
-    value = os.environ.get(name)
-    if value in (None, ""):
-        return bool(default)
-    return value.lower() in _TRUE_ENV_VALUES
-
-
-def _clone_and_release_mailbox_message(message: Any) -> torch.Tensor:
-    tensor = message.tensor
-    if getattr(message, "release_callback", None) is not None:
-        tensor = tensor.clone()
-        if tensor.is_cuda:
-            torch.cuda.current_stream(tensor.device).synchronize()
-    message.release()
-    return tensor
-
+from vllm.pap.transport.nixl.message import PAPMailboxMessage
 
 def _record_tensor_ready_event(tensor: torch.Tensor) -> Any | None:
     if not tensor.is_cuda:
@@ -57,10 +37,6 @@ class PAPNixlMailboxOffloadExecTransport:
 
     def __init__(self, endpoint: object) -> None:
         self.endpoint = endpoint
-        self._batch_plan_enabled = _data_plane_env_bool(
-            "PAP_NIXL_MAILBOX_BATCH_PLAN",
-            True,
-        )
         self._sent_batch_plans: set[str] = set()
         self._recv_batch_plans: dict[str, dict[str, Any]] = {}
 
@@ -119,52 +95,14 @@ class PAPNixlMailboxOffloadExecTransport:
             )
         )
 
-    def recv_qkv_batch(
-        self,
-        descriptor: PAPOffloadExecBatchDescriptor,
-        *,
-        remote_address: str,
-    ) -> torch.Tensor:
-        return _clone_and_release_mailbox_message(
-            self.recv_qkv_batch_message(
-                descriptor,
-                remote_address=remote_address,
-            )
-        )
-
-    def recv_qkv_batch_message(
-        self,
-        descriptor: PAPOffloadExecBatchDescriptor,
-        *,
-        remote_address: str,
-    ) -> Any:
-        return self.endpoint.recv(descriptor.qkv_tensor_id)
-
-    def recv_next_qkv_batch(
-        self,
-    ) -> tuple[PAPOffloadExecBatchDescriptor, torch.Tensor]:
-        descriptor, message = self.recv_next_qkv_batch_message()
-        return descriptor, _clone_and_release_mailbox_message(message)
-
     def recv_next_qkv_batch_message(
-        self,
-    ) -> tuple[PAPOffloadExecBatchDescriptor, Any]:
-        descriptor, message = self.recv_next_attention_batch_message()
-        if message.kind == "attention_task_batch":
-            return descriptor, message
-        message.release()
-        raise RuntimeError(f"unexpected PAP mailbox message kind: {message.kind}")
-
-    def recv_next_attention_batch_message(
         self,
     ) -> tuple[PAPOffloadExecBatchDescriptor, Any]:
         message = self.endpoint.recv()
         if message.kind == "attention_task_batch":
             descriptor = _offload_exec_batch_descriptor_from_metadata(
                 message.metadata,
-                plan_cache=(
-                    self._recv_batch_plans if self._batch_plan_enabled else None
-                ),
+                plan_cache=self._recv_batch_plans,
             )
             return descriptor, message
         message.release()
@@ -184,18 +122,16 @@ class PAPNixlMailboxOffloadExecTransport:
             tensor=output,
         )
 
-    def recv_output_batch(
+    def prepare_output_batch_message(
         self,
         descriptor: PAPOffloadExecBatchDescriptor,
         *,
+        shape: tuple[int, int],
+        dtype: torch.dtype,
         remote_address: str,
-    ) -> torch.Tensor:
-        return _clone_and_release_mailbox_message(
-            self.recv_output_batch_message(
-                descriptor,
-                remote_address=remote_address,
-            )
-        )
+    ) -> None:
+        del descriptor, shape, dtype, remote_address
+        return None
 
     def recv_output_batch_message(
         self,
@@ -226,8 +162,6 @@ class PAPNixlMailboxOffloadExecTransport:
         self,
         descriptor: PAPOffloadExecBatchDescriptor,
     ) -> dict[str, Any]:
-        if not self._batch_plan_enabled:
-            return _offload_exec_batch_descriptor_to_metadata(descriptor)
         return _offload_exec_batch_descriptor_to_plan_metadata(
             descriptor,
             sent_plans=self._sent_batch_plans,
@@ -240,7 +174,7 @@ def build_nixl_mailbox_offload_exec_transport(
     local_rank: int,
     buffer_bytes: int | None = None,
 ) -> PAPNixlMailboxOffloadExecTransport:
-    from vllm.pap.transport.nixl import PAPNixlMailboxEndpoint
+    from vllm.pap.transport.nixl.endpoint import PAPNixlMailboxEndpoint
 
     endpoint = PAPNixlMailboxEndpoint(
         actor_id=actor_id,
