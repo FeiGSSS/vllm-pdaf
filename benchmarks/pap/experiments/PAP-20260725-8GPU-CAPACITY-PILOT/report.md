@@ -4,6 +4,11 @@
 > a targeted PAP trace. It validates the eight-GPU execution paths and narrows
 > the next scan, but it is not a three-repetition release claim.
 
+The compact scan requested by this pilot is complete. Use the
+[full capacity report](../PAP-20260725-8GPU-CAPACITY-SCAN/report.md) for
+PAP/PD/DP comparisons; retain this document for the matched 7PA1P/6PA2P
+root-cause trace.
+
 Date: 2026-07-25
 
 ## Scope

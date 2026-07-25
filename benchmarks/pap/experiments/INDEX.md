@@ -11,6 +11,7 @@ Current normalized AIPerf experiment bundles:
 
 Current development pilots:
 
+- [Eight-GPU PAP/PD/fused-DP capacity scan](PAP-20260725-8GPU-CAPACITY-SCAN/report.md)
 - [Eight-GPU capacity and 7PA1P root-cause pilot](PAP-20260725-8GPU-CAPACITY-PILOT/report.md)
 
 Superseded or historical report bundles:

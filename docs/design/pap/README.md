@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260725-8GPU-CAPACITY-SCAN
   - PAP-20260725-8GPU-CAPACITY-PILOT
   - PAP-20260724-STEP-OVERLAP
   - PAP-20260724-PROJECTION-SCHEDULER-OVERLAP
@@ -64,7 +65,7 @@ The accepted runtime path is Qwen3-8B FP16, same-host `local_fast`, static MPS
 asynchronous Prefill KV import, sealed manifest handoff, and Prefill-owned
 unified KV. The active runner is the eight-GPU AIPerf matrix; the latest
 normalized milestone remains the four-GPU result, while an initial eight-GPU
-C32 development pilot is complete.
+C32 development pilot and the compact capacity scan are complete.
 PAP-to-vLLM glue is isolated behind owner-specific adapters in
 `vllm/pap/integration/`; vLLM owners do not implement alternate PAP paths.
 PAP keeps each vLLM scheduler batch intact and may split it only into
@@ -75,8 +76,9 @@ layers.
 The current eight-GPU development lane compares PAP 7PA1P/6PA2P, one-way PD
 4P4D/6P2D, and an eight-replica fused vLLM pool under a 128-conversation,
 five-turn randomized long-context workload. The C32 pilot finds 6PA2P to be
-the only topology passing both Standard and Relaxed; its compact boundary scan
-uses C16/24/32/48.
+the only topology passing both Standard and Relaxed. The completed
+C16/24/32/48 scan finds PAP leading PD and fused DP under Strict and Standard
+goodput; fused DP leads under Relaxed.
 Eager remains the default execution mode. Optional piecewise CUDA Graph has a
 completed development comparison, while host transport, remote Attention, and
 KV publication remain outside captured regions. The former P17 lane is
@@ -108,6 +110,8 @@ and normalized experiments rather than a repository skill plan.
   `benchmarks/pap/aiperf/run_capacity_matrix.sh`
 - Initial eight-GPU capacity and 7PA1P trace:
   [capacity pilot](../../../benchmarks/pap/experiments/PAP-20260725-8GPU-CAPACITY-PILOT/report.md)
+- Completed PAP/PD/fused-DP capacity comparison:
+  [capacity scan](../../../benchmarks/pap/experiments/PAP-20260725-8GPU-CAPACITY-SCAN/report.md)
 - Current eager and Graph capacity report:
   [automatic Projection-memory milestone](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md)
 - Current Projection scheduling regression:

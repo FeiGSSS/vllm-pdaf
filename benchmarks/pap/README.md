@@ -12,7 +12,9 @@ current eight-GPU testbed uses 128 five-turn conversations, randomized 8K
 initial input, a broad bounded append distribution sampled around 1.4K tokens,
 and output mean 32. It compares PAP 7PA1P/6PA2P, one-way PD 4P4D/6P2D,
 and an eight-replica fused vLLM pool under the same concurrency and three SLO
-tiers. The initial C32 results and 7PA1P fan-in analysis are recorded in the
+tiers. The completed compact scan is recorded in
+[`PAP-20260725-8GPU-CAPACITY-SCAN`](experiments/PAP-20260725-8GPU-CAPACITY-SCAN/report.md).
+The initial C32 results and 7PA1P fan-in analysis are recorded in the
 [`PAP-20260725-8GPU-CAPACITY-PILOT`](experiments/PAP-20260725-8GPU-CAPACITY-PILOT/report.md).
 The latest
 completed four-GPU eager and piecewise CUDA Graph results remain documented in

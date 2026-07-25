@@ -301,8 +301,10 @@ PAP_CAPACITY_REPETITIONS=1 \
 This still serves all 128 conversations and 640 randomized requests. It changes
 only the number of topology/concurrency points, not the workload definition.
 
-The initial C32 comparison and the trace-based explanation of the 7PA1P ITL
-tail are recorded in
+The completed compact scan and strict-boundary refinement are recorded in
+[`PAP-20260725-8GPU-CAPACITY-SCAN`](../experiments/PAP-20260725-8GPU-CAPACITY-SCAN/report.md).
+The initial C32 comparison and trace-based explanation of the 7PA1P ITL tail
+remain in
 [`PAP-20260725-8GPU-CAPACITY-PILOT`](../experiments/PAP-20260725-8GPU-CAPACITY-PILOT/report.md).
 
 The output distribution defaults to mean 32, median 30, and range 16-64. The

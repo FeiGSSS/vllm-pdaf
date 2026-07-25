@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260725-8GPU-CAPACITY-SCAN
   - PAP-20260725-8GPU-CAPACITY-PILOT
   - PAP-20260724-STEP-OVERLAP
   - PAP-20260724-PROJECTION-SCHEDULER-OVERLAP
@@ -58,6 +59,11 @@ are recorded in the
 [capacity pilot](../../../benchmarks/pap/experiments/PAP-20260725-8GPU-CAPACITY-PILOT/report.md).
 The default compact scan uses C16/24/32/48, stopping a topology after its first
 valid Relaxed failure.
+
+The completed compact scan adds C8/C12/C20 only to resolve the Strict
+boundary. Its PAP/PD/fused-DP goodput, raw-throughput, TTFT, and ITL comparison
+is recorded in the
+[eight-GPU capacity report](../../../benchmarks/pap/experiments/PAP-20260725-8GPU-CAPACITY-SCAN/report.md).
 
 ## Archived P17 evidence
 

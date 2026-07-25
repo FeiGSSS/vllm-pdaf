@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260725-8GPU-CAPACITY-SCAN
   - PAP-20260725-8GPU-CAPACITY-PILOT
   - PAP-20260724-STEP-OVERLAP
   - PAP-20260724-PROJECTION-SCHEDULER-OVERLAP
@@ -74,9 +75,9 @@ turns, randomized 8K initial input, a broad append distribution sampled near
 1.4K tokens, randomized 16-64-token output, think/tool delays, and conversation
 concurrency. It compares PAP 7PA1P/6PA2P, one-way PD 4P4D/6P2D, and
 an eight-replica fused vLLM pool. The initial C32 pilot is complete; the
-compact C16/24/32/48 capacity scan remains. The latest normalized performance
-milestone remains the four-GPU result until the eight-GPU boundary points have
-three repetitions.
+compact C16/24/32/48 scan and Strict-boundary refinement are also complete.
+The latest normalized performance milestone remains the four-GPU result until
+the selected eight-GPU boundary points have three repetitions.
 
 The former P17 1PA1P client, runner, and release gate are retired. Its profile
 and results remain archived solely for historical manifest validation.
@@ -166,10 +167,25 @@ versus 0.625 and 0.663 ms for the two independent 6PA2P Projection domains.
 QKV preparation and P2P-copy costs remain essentially unchanged. See the
 [eight-GPU pilot](../../../benchmarks/pap/experiments/PAP-20260725-8GPU-CAPACITY-PILOT/report.md).
 
+The completed compact scan finds the following best compliant request
+goodputs:
+
+| SLO | PAP | PD | Fused DP | PAP vs PD | PAP vs DP |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Strict | 3.347, 7PA1P C16 | 2.442, 6P2D C12 | 2.294, C8 | +37.0% | +45.9% |
+| Standard | 4.339, 6PA2P C32 | 3.596, 6P2D C24 | 4.006, C16 | +20.7% | +8.3% |
+| Relaxed | 4.894, 7PA1P C32 | 3.785, 6P2D C24 | 5.181, C24 | +29.3% | -5.5% |
+
+The 7PA1P C32 Relaxed result is repeat-unstable. Four observations straddle
+the 95% gate, so 6PA2P C32 remains the latency-stable PAP baseline. Its
+Relaxed goodput is 4.443 requests/s: 17.4% above PD and 14.2% below fused DP.
+See the
+[full eight-GPU scan](../../../benchmarks/pap/experiments/PAP-20260725-8GPU-CAPACITY-SCAN/report.md).
+
 ## Remaining work
 
-1. Complete the compact eight-GPU C16/24/32/48 scan, then run three
-   repetitions only for the selected per-SLO boundary points.
+1. Run three repetitions only for the selected eight-GPU boundary points:
+   PAP 7PA1P C16, PAP 6PA2P C32, PD 6P2D C12/C24, and fused DP C8/C16/C24.
 2. Diagnose PD NIXL transfer variance, including the observed 2P2D single-lane
    stalls, before treating exact PD tail latency as stable.
 3. Keep piecewise CUDA Graph optional until repeated evidence shows a
