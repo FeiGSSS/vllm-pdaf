@@ -62,6 +62,41 @@ def test_route_index_tensor_is_cached_for_all_layers() -> None:
     torch.testing.assert_close(first, torch.tensor([3, 1]))
 
 
+def test_qkv_collective_submits_all_peers() -> None:
+    from vllm.pap.model.projection import (
+        _pap_send_qkv_fanout_collective,
+    )
+
+    events = []
+    owner = object()
+    second = object()
+    descriptor = object()
+    qkv = torch.zeros((1, 4))
+
+    def send_first(*args, **kwargs):
+        assert args == (descriptor, qkv)
+        assert kwargs == {
+            "remote_address": "peer-1",
+        }
+        events.append("send-1")
+
+    def send_second(*args, **kwargs):
+        assert args == (descriptor, qkv)
+        assert kwargs == {
+            "remote_address": "peer-2",
+        }
+        events.append("send-2")
+
+    _pap_send_qkv_fanout_collective(
+        [
+            (owner, send_first, descriptor, qkv, "peer-1"),
+            (second, send_second, descriptor, qkv, "peer-2"),
+        ]
+    )
+
+    assert events == ["send-1", "send-2"]
+
+
 def test_batched_route_copy_can_be_disabled_for_ab(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

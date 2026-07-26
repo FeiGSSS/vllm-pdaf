@@ -90,6 +90,11 @@ _PROJECTION_FIRST_OUTPUT_RE = re.compile(
     r"sched_ms=([0-9.]+) exec_and_sample_ms=([0-9.]+) "
     r"scheduler_update_ms=([0-9.]+) step_to_first_output_ms=([0-9.]+)"
 )
+_PROJECTION_FANIN_RE = re.compile(
+    r"projection fan-in trace .*?peers=(\d+) "
+    r"first_ready_ms=([0-9.]+) last_ready_ms=([0-9.]+) "
+    r"spread_ms=([0-9.]+) spread_over_fastest_pct=([0-9.]+)"
+)
 _ATTENTION_TRACE_RE = re.compile(
     r"attention mailbox batch trace .* calls=(\d+) recv_qkv_ms=([0-9.]+) "
     r"compute_ms=([0-9.]+) send_output_ms=([0-9.]+) total_ms=([0-9.]+)"
@@ -220,6 +225,7 @@ def summarize_pap_trace_logs(
     log_dir: str | Path,
     *,
     max_total_ms: float | None = 10.0,
+    include_samples: bool = False,
 ) -> dict[str, object]:
     """Summarize PAP trace timings from a benchmark service_logs directory."""
 
@@ -309,6 +315,13 @@ def summarize_pap_trace_logs(
         "scheduler_update_ms": [],
         "step_to_first_output_ms": [],
     }
+    projection_fanin: dict[str, list[float]] = {
+        "peers": [],
+        "first_ready_ms": [],
+        "last_ready_ms": [],
+        "spread_ms": [],
+        "spread_over_fastest_pct": [],
+    }
     attention: dict[str, list[float]] = {
         "calls": [],
         "recv_qkv_ms": [],
@@ -383,6 +396,17 @@ def summarize_pap_trace_logs(
                     ):
                         projection_timeline[field].append(float(value))
                 continue
+            if match := _PROJECTION_FANIN_RE.search(line):
+                peers, first_ready, last_ready, spread, spread_pct = match.groups()
+                for field, value in (
+                    ("peers", peers),
+                    ("first_ready_ms", first_ready),
+                    ("last_ready_ms", last_ready),
+                    ("spread_ms", spread),
+                    ("spread_over_fastest_pct", spread_pct),
+                ):
+                    projection_fanin[field].append(float(value))
+                continue
             if match := _PROJECTION_LAYER_TIMELINE_RE.search(line):
                 (
                     input_norm_ms,
@@ -450,7 +474,9 @@ def summarize_pap_trace_logs(
                 forward = float(forward_ms)
                 if max_total_ms is None or forward <= max_total_ms * 100:
                     projection_runner_forward["num_tokens"].append(float(num_tokens))
-                    projection_runner_forward["forward_and_postprocess_ms"].append(forward)
+                    projection_runner_forward["forward_and_postprocess_ms"].append(
+                        forward
+                    )
                 continue
             if match := _PROJECTION_RUNNER_FORWARD_DETAIL_RE.search(line):
                 (
@@ -487,7 +513,7 @@ def summarize_pap_trace_logs(
                     projection_worker_exec["exec_ms"].append(exec_val)
                 continue
             if match := _PROJECTION_WORKER_SAMPLE_RE.search(line):
-                sample_ms, = match.groups()
+                (sample_ms,) = match.groups()
                 sample_val = float(sample_ms)
                 if max_total_ms is None or sample_val <= max_total_ms * 100:
                     projection_worker_sample["sample_ms"].append(sample_val)
@@ -574,10 +600,7 @@ def summarize_pap_trace_logs(
                                     else []
                                 ),
                                 (
-                                    [
-                                        int(value)
-                                        for value in route_kv_tokens.split("|")
-                                    ]
+                                    [int(value) for value in route_kv_tokens.split("|")]
                                     if route_kv_tokens
                                     else []
                                 ),
@@ -623,16 +646,12 @@ def summarize_pap_trace_logs(
                         recv_unaccounted_ms = 0.0
                     attention["recv_wait_ms"].append(float(recv_wait_ms))
                     attention["recv_read_ms"].append(float(recv_read_ms))
-                    attention["recv_materialize_ms"].append(
-                        float(recv_materialize_ms)
-                    )
+                    attention["recv_materialize_ms"].append(float(recv_materialize_ms))
                     attention["recv_transfer_ms"].append(float(recv_transfer_ms))
                     attention["recv_wait_other_ms"].append(
                         float(recv_wait_other_ms or 0.0)
                     )
-                    attention["recv_unaccounted_ms"].append(
-                        float(recv_unaccounted_ms)
-                    )
+                    attention["recv_unaccounted_ms"].append(float(recv_unaccounted_ms))
                     if detail := _ATTENTION_COMPUTE_DETAIL_RE.search(line):
                         (
                             append_kv_ms,
@@ -916,6 +935,7 @@ def summarize_pap_trace_logs(
         "pa_recv_start_skew_ms": [],
         "pa_compute_completion_skew_ms": [],
         "pa_completion_skew_ms": [],
+        "pa_completion_skew_over_fastest_pct": [],
         "pa_mean_idle_until_slowest_ms": [],
         "route_rows_range": [],
         "route_rows_max_over_mean": [],
@@ -957,9 +977,9 @@ def summarize_pap_trace_logs(
         send_start_ns = min(item["send_start_ns"] for item in attention_times)
         max_attention_done_ns = max(item["send_done_ns"] for item in attention_times)
         if len(attention_times) > 1:
-            completion_times = [
-                item["send_done_ns"] for item in attention_times
-            ]
+            completion_times = [item["send_done_ns"] for item in attention_times]
+            fastest_completion_ns = min(completion_times)
+            completion_skew_ns = max(completion_times) - fastest_completion_ns
             slowest_index = max(
                 range(len(completion_times)),
                 key=completion_times.__getitem__,
@@ -971,9 +991,7 @@ def summarize_pap_trace_logs(
                 )
                 / 1_000_000.0
             )
-            projection_attention_correlation[
-                "pa_compute_completion_skew_ms"
-            ].append(
+            projection_attention_correlation["pa_compute_completion_skew_ms"].append(
                 (
                     max(item["compute_done_ns"] for item in attention_times)
                     - min(item["compute_done_ns"] for item in attention_times)
@@ -981,14 +999,16 @@ def summarize_pap_trace_logs(
                 / 1_000_000.0
             )
             projection_attention_correlation["pa_completion_skew_ms"].append(
-                (max(completion_times) - min(completion_times)) / 1_000_000.0
+                completion_skew_ns / 1_000_000.0
             )
-            projection_attention_correlation[
-                "pa_mean_idle_until_slowest_ms"
-            ].append(
+            fastest_latency_ns = fastest_completion_ns - send_done_ns
+            if fastest_latency_ns > 0:
+                projection_attention_correlation[
+                    "pa_completion_skew_over_fastest_pct"
+                ].append(completion_skew_ns / fastest_latency_ns * 100.0)
+            projection_attention_correlation["pa_mean_idle_until_slowest_ms"].append(
                 statistics.mean(
-                    max_attention_done_ns - value
-                    for value in completion_times
+                    max_attention_done_ns - value for value in completion_times
                 )
                 / 1_000_000.0
             )
@@ -996,44 +1016,34 @@ def summarize_pap_trace_logs(
                 projection_attention_correlation["route_rows_range"].append(
                     float(max(route_rows) - min(route_rows))
                 )
-                projection_attention_correlation[
-                    "route_rows_max_over_mean"
-                ].append(max(route_rows) / statistics.mean(route_rows))
+                projection_attention_correlation["route_rows_max_over_mean"].append(
+                    max(route_rows) / statistics.mean(route_rows)
+                )
                 projection_attention_correlation["slowest_pa_rows"].append(
                     float(route_rows[slowest_index])
                 )
-                projection_attention_correlation[
-                    "slowest_pa_has_max_rows"
-                ].append(float(route_rows[slowest_index] == max(route_rows)))
+                projection_attention_correlation["slowest_pa_has_max_rows"].append(
+                    float(route_rows[slowest_index] == max(route_rows))
+                )
             if len(route_kv_tokens) == len(attention_times):
                 kv_range = max(route_kv_tokens) - min(route_kv_tokens)
-                projection_attention_correlation[
-                    "route_kv_tokens_range"
-                ].append(float(kv_range))
-                projection_attention_correlation[
-                    "route_kv_tokens_max_over_mean"
-                ].append(
-                    max(route_kv_tokens) / statistics.mean(route_kv_tokens)
+                projection_attention_correlation["route_kv_tokens_range"].append(
+                    float(kv_range)
                 )
                 projection_attention_correlation[
-                    "slowest_pa_kv_tokens"
-                ].append(float(route_kv_tokens[slowest_index]))
-                projection_attention_correlation[
-                    "slowest_pa_has_max_kv_tokens"
-                ].append(
-                    float(
-                        route_kv_tokens[slowest_index]
-                        == max(route_kv_tokens)
-                    )
+                    "route_kv_tokens_max_over_mean"
+                ].append(max(route_kv_tokens) / statistics.mean(route_kv_tokens))
+                projection_attention_correlation["slowest_pa_kv_tokens"].append(
+                    float(route_kv_tokens[slowest_index])
+                )
+                projection_attention_correlation["slowest_pa_has_max_kv_tokens"].append(
+                    float(route_kv_tokens[slowest_index] == max(route_kv_tokens))
                 )
                 if kv_range > 0:
                     projection_attention_correlation[
                         "completion_skew_ms_per_1k_kv_range"
                     ].append(
-                        (
-                            max(completion_times)
-                            - min(completion_times)
-                        )
+                        (max(completion_times) - min(completion_times))
                         / 1_000_000.0
                         / (kv_range / 1_000.0)
                     )
@@ -1081,7 +1091,7 @@ def summarize_pap_trace_logs(
             (recv_done_ns - yield_end_ns) / 1_000_000.0
         )
 
-    return {
+    summary: dict[str, object] = {
         "projection_trace": {
             field: _stat(values) for field, values in projection.items()
         },
@@ -1119,6 +1129,9 @@ def summarize_pap_trace_logs(
         "projection_first_output": {
             field: _stat(values) for field, values in projection_first_output.items()
         },
+        "projection_fanin": {
+            field: _stat(values) for field, values in projection_fanin.items()
+        },
         "attention_trace": {
             field: _stat(values) for field, values in attention.items()
         },
@@ -1147,6 +1160,15 @@ def summarize_pap_trace_logs(
             for group, fields in mailbox_wait_by_kind.items()
         },
     }
+    if include_samples:
+        summary["projection_fanin_samples"] = {
+            field: list(values) for field, values in projection_fanin.items()
+        }
+        summary["projection_attention_correlation_samples"] = {
+            field: list(values)
+            for field, values in projection_attention_correlation.items()
+        }
+    return summary
 
 
 def summary_to_jsonable(summary: dict[str, object]) -> dict[str, object]:
@@ -1168,10 +1190,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="include trace rows above the default 10ms warmup/outlier cutoff",
     )
+    parser.add_argument(
+        "--include-samples",
+        action="store_true",
+        help="include per-layer correlation samples used for histogram plots",
+    )
     args = parser.parse_args(argv)
     summary = summarize_pap_trace_logs(
         args.log_dir,
         max_total_ms=None if args.include_outliers else 10.0,
+        include_samples=args.include_samples,
     )
     print(json.dumps(summary_to_jsonable(summary), indent=2, sort_keys=True))
     return 0

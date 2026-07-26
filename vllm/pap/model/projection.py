@@ -285,13 +285,12 @@ def _pap_offload_exec_step_groups(
         ):
             raise RuntimeError("PAP OFFLOAD_EXEC batch route is stale")
         prepared_metadata_template = route_group.get("metadata_template")
-        if prepared_metadata_template is not None:
-            if (
-                tuple(prepared_metadata_template.get("r", ()))
-                != tuple(session_request_ids)
-                or tuple(prepared_metadata_template.get("s", ())) != group_steps
-            ):
-                raise RuntimeError("PAP OFFLOAD_EXEC metadata route is stale")
+        if prepared_metadata_template is not None and (
+            tuple(prepared_metadata_template.get("r", ()))
+            != tuple(session_request_ids)
+            or tuple(prepared_metadata_template.get("s", ())) != group_steps
+        ):
+            raise RuntimeError("PAP OFFLOAD_EXEC metadata route is stale")
         step_groups.append(
             _PAPOffloadExecStepGroup(
                 attention_endpoint=str(attention_endpoint),
@@ -366,6 +365,26 @@ def _pap_bind_offload_exec_mailbox_peer(
     transport.bind_peer(peer_metadata)
     transport._pap_mailbox_bound = True
     transport._pap_mailbox_bound_attention_endpoint = attention_endpoint
+
+
+def _pap_send_qkv_fanout_collective(
+    sends: list[
+        tuple[
+            Any,
+            Any,
+            PAPOffloadExecBatchDescriptor,
+            torch.Tensor,
+            str,
+        ]
+    ],
+) -> None:
+    """Submit the complete fan-out to independent peer CUDA streams."""
+    for _transport, send, descriptor, qkv, remote_address in sends:
+        send(
+            descriptor,
+            qkv,
+            remote_address=remote_address,
+        )
 
 
 @dataclass(slots=True)
@@ -594,6 +613,10 @@ class PAPProjectionAttentionAdapter:
         trace_scattered_output_rows = 0
         trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
         current_stream = torch.cuda.current_stream(query.device)
+        trace_output_origin: torch.cuda.Event | None = None
+        if trace_offload_exec:
+            trace_output_origin = torch.cuda.Event(enable_timing=True)
+            trace_output_origin.record(current_stream)
         remote_stage_trace = begin_deferred_cuda_span(
             "projection_remote_stage_gpu_ms",
             current_stream,
@@ -606,6 +629,15 @@ class PAPProjectionAttentionAdapter:
                 tuple[int, ...],
                 Any,
                 torch.Tensor | None,
+            ]
+        ] = []
+        pending_fanout_sends: list[
+            tuple[
+                Any,
+                Any,
+                PAPOffloadExecBatchDescriptor,
+                torch.Tensor,
+                str,
             ]
         ] = []
         for step_group in step_groups:
@@ -661,10 +693,14 @@ class PAPProjectionAttentionAdapter:
                 if int(direct_qkv_batch.shape[-1]) != qkv_width:
                     raise RuntimeError("PAP direct QKV batch width mismatch")
                 if use_fanout_stream:
-                    send_qkv_batch_fanout(
-                        batch_descriptor,
-                        direct_qkv_batch,
-                        remote_address=offload_exec_zmq_endpoint,
+                    pending_fanout_sends.append(
+                        (
+                            transport,
+                            send_qkv_batch_fanout,
+                            batch_descriptor,
+                            direct_qkv_batch,
+                            offload_exec_zmq_endpoint,
+                        )
                     )
                 else:
                     send_qkv_batch_direct(
@@ -689,10 +725,14 @@ class PAPProjectionAttentionAdapter:
                 ]
                 qkv_batch = _pap_pack_qkv_group_items(group_items)
                 if use_fanout_stream:
-                    send_qkv_batch_fanout(
-                        batch_descriptor,
-                        qkv_batch,
-                        remote_address=offload_exec_zmq_endpoint,
+                    pending_fanout_sends.append(
+                        (
+                            transport,
+                            send_qkv_batch_fanout,
+                            batch_descriptor,
+                            qkv_batch,
+                            offload_exec_zmq_endpoint,
+                        )
                     )
                 else:
                     transport.send_qkv_batch(
@@ -710,6 +750,7 @@ class PAPProjectionAttentionAdapter:
                     route_index_tensor,
                 )
             )
+        _pap_send_qkv_fanout_collective(pending_fanout_sends)
         trace_send_ms = (
             (time.perf_counter() - trace_send_start) * 1000.0
             if trace_offload_exec
@@ -722,12 +763,15 @@ class PAPProjectionAttentionAdapter:
         prepared_output_messages: list[Any | None] = []
         prepared_output_streams: list[torch.cuda.Stream | None] = []
         prepared_output_traces: list[Any | None] = []
+        trace_output_ready_events: list[torch.cuda.Event] = []
         output_width = self.num_heads * self.head_dim
         parallel_output_receives = len(offload_exec_batches) > 1
         output_inputs_ready: torch.cuda.Event | None = None
         if parallel_output_receives:
             get_copy_output_buffer()
-            output_inputs_ready = torch.cuda.Event()
+            output_inputs_ready = torch.cuda.Event(
+                enable_timing=trace_offload_exec,
+            )
             output_inputs_ready.record(torch.cuda.current_stream(query.device))
         for (
             _attention_endpoint,
@@ -769,6 +813,10 @@ class PAPProjectionAttentionAdapter:
                         dtype=query.dtype,
                         remote_address=offload_exec_zmq_endpoint,
                     )
+                    if trace_offload_exec:
+                        ready_event = torch.cuda.Event(enable_timing=True)
+                        ready_event.record(receive_stream)
+                        trace_output_ready_events.append(ready_event)
             if receive_stream is None:
                 output_path_trace = None
             prepared_output_messages.append(output_message)
@@ -871,6 +919,35 @@ class PAPProjectionAttentionAdapter:
                 trace_direct_output_rows,
                 trace_scattered_output_rows,
             )
+            if (
+                trace_output_origin is not None
+                and len(trace_output_ready_events) > 1
+            ):
+                for ready_event in trace_output_ready_events:
+                    ready_event.synchronize()
+                ready_times_ms = [
+                    trace_output_origin.elapsed_time(ready_event)
+                    for ready_event in trace_output_ready_events
+                ]
+                first_ready_ms = min(ready_times_ms)
+                last_ready_ms = max(ready_times_ms)
+                spread_ms = last_ready_ms - first_ready_ms
+                spread_pct = (
+                    spread_ms / first_ready_ms * 100.0
+                    if first_ready_ms > 0
+                    else 0.0
+                )
+                logger.info(
+                    "PAP OFFLOAD_EXEC projection fan-in trace layer=%s "
+                    "peers=%d first_ready_ms=%.3f last_ready_ms=%.3f "
+                    "spread_ms=%.3f spread_over_fastest_pct=%.3f",
+                    offload_exec_batches[0][2].layer_name,
+                    len(ready_times_ms),
+                    first_ready_ms,
+                    last_ready_ms,
+                    spread_ms,
+                    spread_pct,
+                )
 
         output_scatter_events: list[torch.cuda.Event] = []
         for batch_index, (

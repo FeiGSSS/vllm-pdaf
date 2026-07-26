@@ -14,6 +14,10 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
         "yield_ms=0.200 recv_ms=0.700 total_ms=0.950 batch_keys=abc "
         "send_done_ns=1000000000 yield_start_ns=1000010000 "
         "yield_end_ns=1005000000 recv_done_ns=1005800000\n"
+        "PAP OFFLOAD_EXEC projection fan-in trace "
+        "layer=model.layers.1.self_attn.attn peers=3 "
+        "first_ready_ms=4.000 last_ready_ms=10.000 "
+        "spread_ms=6.000 spread_over_fastest_pct=150.000\n"
         "PAP OFFLOAD_EXEC projection timeline "
         "layer=model.layers.1.self_attn.attn batches=1 calls=1 "
         "pre_attn_compute_ms=0.400 send_ms=0.030 trigger_ms=0.000 "
@@ -123,6 +127,12 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
     assert summary["projection_trace"]["yield_ms"].median == 0.200
     assert abs(summary["projection_trace"]["gap_ms"].median - 0.020) < 1e-9
     assert summary["projection_trace"]["batches"].median == 1
+    assert summary["projection_fanin"]["peers"].median == 3
+    assert summary["projection_fanin"]["spread_ms"].median == 6.0
+    assert (
+        summary["projection_fanin"]["spread_over_fastest_pct"].median
+        == 150.0
+    )
     assert "ubatch_id" not in summary["projection_timeline"]
     assert "ubatch_id" not in summary["projection_layer_timeline"]
     assert summary["projection_timeline"]["pre_attn_compute_ms"].median == 0.400
@@ -140,12 +150,10 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
     assert summary["projection_runner_forward_detail"]["metadata_ms"].median == 0.300
     assert summary["projection_runner_forward_detail"]["preprocess_ms"].median == 0.400
     assert (
-        summary["projection_runner_forward_detail"]["model_forward_ms"].median
-        == 90.000
+        summary["projection_runner_forward_detail"]["model_forward_ms"].median == 90.000
     )
     assert (
-        summary["projection_runner_forward_detail"]["hidden_slice_ms"].median
-        == 0.050
+        summary["projection_runner_forward_detail"]["hidden_slice_ms"].median == 0.050
     )
     assert summary["projection_runner_forward_detail"]["logits_ms"].median == 1.200
     assert (
@@ -195,8 +203,7 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
         == 2.000
     )
     assert (
-        summary["projection_attention_correlation"]["attention_recv_ms"].median
-        == 1.900
+        summary["projection_attention_correlation"]["attention_recv_ms"].median == 1.900
     )
     assert (
         summary["projection_attention_correlation"]["attention_pre_compute_ms"].median
@@ -211,8 +218,7 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
         == 0.050
     )
     assert (
-        summary["projection_attention_correlation"]["attention_send_ms"].median
-        == 0.050
+        summary["projection_attention_correlation"]["attention_send_ms"].median == 0.050
     )
     assert (
         summary["projection_attention_correlation"][
@@ -355,12 +361,12 @@ def test_trace_summary_reports_multi_pa_completion_skew(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    correlation = summarize_pap_trace_logs(log_dir)[
-        "projection_attention_correlation"
-    ]
+    summary = summarize_pap_trace_logs(log_dir, include_samples=True)
+    correlation = summary["projection_attention_correlation"]
     assert correlation["pa_recv_start_skew_ms"].median == 3.0
     assert correlation["pa_compute_completion_skew_ms"].median == 5.0
     assert correlation["pa_completion_skew_ms"].median == 6.0
+    assert correlation["pa_completion_skew_over_fastest_pct"].median == 100.0
     assert abs(correlation["pa_mean_idle_until_slowest_ms"].median - 10 / 3) < 1e-9
     assert correlation["route_rows_range"].median == 2
     assert correlation["route_kv_tokens_range"].median == 400
@@ -369,3 +375,6 @@ def test_trace_summary_reports_multi_pa_completion_skew(tmp_path: Path) -> None:
     assert correlation["slowest_pa_has_max_rows"].mean == 1
     assert correlation["slowest_pa_has_max_kv_tokens"].mean == 1
     assert correlation["completion_skew_ms_per_1k_kv_range"].median == 15
+    samples = summary["projection_attention_correlation_samples"]
+    assert samples["pa_completion_skew_ms"] == [6.0]
+    assert samples["pa_completion_skew_over_fastest_pct"] == [100.0]
