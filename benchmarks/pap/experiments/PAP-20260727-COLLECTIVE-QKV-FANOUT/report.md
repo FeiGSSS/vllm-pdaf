@@ -1,4 +1,4 @@
-# PAP collective QKV fan-out
+# PAP deferred QKV fan-out submission
 
 > Controlled 7PA1P development validation. Raw AIPerf and trace artifacts
 > remain machine-local under `experiments/_staging/`.
@@ -7,19 +7,22 @@ Date: 2026-07-27
 
 ## Decision
 
-Accept the collective fan-out organization, but do not use a common GPU start
-gate.
+Reject and roll back deferred collective submission.
 
-Projection now finishes constructing the complete set of per-PA QKV shards
-before it submits that set. Each local-fast transport continues to enqueue its
-copy on an independent peer CUDA stream. There is no cross-peer stream
-dependency, so the GPU transfers may overlap while the existing per-peer
-buffer, doorbell, and backpressure semantics remain unchanged.
+The original path was already concurrent: as soon as one PA shard was ready,
+Projection asynchronously enqueued it on that peer's independent CUDA stream
+and continued constructing the next shard. Collecting every shard before
+iterating over the same asynchronous sends did not create new GPU concurrency,
+reduce copies, or reduce doorbells. It only delayed the earliest peer.
 
 The first implementation added a common GPU release gate after all host-side
 submissions. That treatment was rejected and removed before commit: it made
 the returns more tightly grouped but delayed the barrier completion and
 reduced end-to-end throughput.
+
+The later ungated deferred-submission treatment showed no stable benefit and
+was also rolled back. Fan-in tracing introduced during the experiment remains
+because it is independent diagnostic instrumentation.
 
 ## Workload
 
@@ -41,13 +44,13 @@ drained all seven Attention sessions.
 | --- | ---: | ---: | ---: | ---: |
 | Previous sparse-routing baseline | 2 | 1,665.19 ms | 49.80 ms | 5.225 req/s |
 | Rejected common GPU gate | 2 | 1,684.98 ms | 50.67 ms | 5.065 req/s |
-| Final independent-stream collective | 1 | 1,651.09 ms | 48.47 ms | 5.220 req/s |
+| Deferred submission, independent streams | 1 | 1,651.09 ms | 48.47 ms | 5.220 req/s |
 
 The common gate regressed mean ITL by 1.7% and throughput by 3.1% relative to
-the prior two-run baseline. The final implementation restored throughput
-within 0.1% of the baseline and produced a 2.7% lower mean ITL in its
-validation run. Treat the latter as no-regression evidence, not a stable
-performance gain, because the final treatment has one repetition.
+the prior two-run baseline. Deferred submission without the gate restored
+throughput within 0.1% of the baseline, but its single-run ITL difference is
+not stable evidence. It was removed because it added no concurrency absent
+from the original immediate asynchronous submission path.
 
 The gate trace explains the negative result:
 
@@ -62,6 +65,28 @@ The gate synchronized start times, but barrier latency depends on the last
 return rather than the width of the return distribution. Delaying the fast PA
 therefore cannot solve load-driven Attention skew.
 
+## Rollback validation
+
+After post-Prefill Decode placement was implemented, immediate asynchronous
+submission was restored and tested twice on the same S128/C32 workload. Both
+runs completed 640/640 requests with zero errors, zero migration misses, passed
+all runtime audits, and drained every Attention session.
+
+| Metric | Deferred submission | Immediate run 1 | Immediate run 2 |
+| --- | ---: | ---: | ---: |
+| Request throughput | 5.312 req/s | 5.028 req/s | 5.089 req/s |
+| Mean TTFT | 1,566.33 ms | 1,731.50 ms | 1,679.77 ms |
+| Mean ITL | 49.03 ms | 54.14 ms | 50.09 ms |
+| Successful migrations | 5 | 4 | 5 |
+
+The first rollback repetition was substantially slower; the second was close
+to the older immediate-submit baseline. These non-interleaved runs do not
+prove equivalence, nor do they prove that deferred submission is stably
+faster. The rollback is an architectural decision: deferred submission did
+not introduce new GPU concurrency and had no established repeatable benefit.
+The observed variance is retained rather than presenting the rollback as a
+performance improvement.
+
 ## Validation
 
 ```text
@@ -70,7 +95,7 @@ therefore cannot solve load-driven Attention skew.
   tests/pap/test_pap_qwen3_async_send.py \
   tests/pap/test_pap_trace_summary.py -q
 
-19 passed, 2 skipped
+Rollback source: 18 passed, 2 skipped
 ```
 
 `py_compile` and `git diff --check` passed for the changed source and tests.
@@ -88,7 +113,12 @@ benchmarks/pap/experiments/_staging/scheduling/
       7pa1p_collective_fanout_formal_s128_c32/
       7pa1p_collective_fanout_formal_s128_c32_rep2/
       7pa1p_collective_streams_final_s128_c32/
+  20260727_fanout_rollback/runs/
+    immediate_async_s128_c32/
+    immediate_async_s128_c32_rep2/
 ```
 
 The first three run directories preserve the rejected gate treatment as
-negative evidence. Only the final run corresponds to the committed source.
+negative evidence. The final directory preserves the later rolled-back
+deferred-submission treatment. Current source uses immediate per-peer
+asynchronous submission.

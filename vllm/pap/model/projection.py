@@ -367,26 +367,6 @@ def _pap_bind_offload_exec_mailbox_peer(
     transport._pap_mailbox_bound_attention_endpoint = attention_endpoint
 
 
-def _pap_send_qkv_fanout_collective(
-    sends: list[
-        tuple[
-            Any,
-            Any,
-            PAPOffloadExecBatchDescriptor,
-            torch.Tensor,
-            str,
-        ]
-    ],
-) -> None:
-    """Submit the complete fan-out to independent peer CUDA streams."""
-    for _transport, send, descriptor, qkv, remote_address in sends:
-        send(
-            descriptor,
-            qkv,
-            remote_address=remote_address,
-        )
-
-
 @dataclass(slots=True)
 class PAPProjectionAttentionAdapter:
     """Execute the Projection side of PAP Attention for one model layer."""
@@ -631,15 +611,6 @@ class PAPProjectionAttentionAdapter:
                 torch.Tensor | None,
             ]
         ] = []
-        pending_fanout_sends: list[
-            tuple[
-                Any,
-                Any,
-                PAPOffloadExecBatchDescriptor,
-                torch.Tensor,
-                str,
-            ]
-        ] = []
         for step_group in step_groups:
             attention_endpoint = step_group.attention_endpoint
             offload_exec_zmq_endpoint = step_group.offload_exec_zmq_endpoint
@@ -693,14 +664,10 @@ class PAPProjectionAttentionAdapter:
                 if int(direct_qkv_batch.shape[-1]) != qkv_width:
                     raise RuntimeError("PAP direct QKV batch width mismatch")
                 if use_fanout_stream:
-                    pending_fanout_sends.append(
-                        (
-                            transport,
-                            send_qkv_batch_fanout,
-                            batch_descriptor,
-                            direct_qkv_batch,
-                            offload_exec_zmq_endpoint,
-                        )
+                    send_qkv_batch_fanout(
+                        batch_descriptor,
+                        direct_qkv_batch,
+                        remote_address=offload_exec_zmq_endpoint,
                     )
                 else:
                     send_qkv_batch_direct(
@@ -725,14 +692,10 @@ class PAPProjectionAttentionAdapter:
                 ]
                 qkv_batch = _pap_pack_qkv_group_items(group_items)
                 if use_fanout_stream:
-                    pending_fanout_sends.append(
-                        (
-                            transport,
-                            send_qkv_batch_fanout,
-                            batch_descriptor,
-                            qkv_batch,
-                            offload_exec_zmq_endpoint,
-                        )
+                    send_qkv_batch_fanout(
+                        batch_descriptor,
+                        qkv_batch,
+                        remote_address=offload_exec_zmq_endpoint,
                     )
                 else:
                     transport.send_qkv_batch(
@@ -750,7 +713,6 @@ class PAPProjectionAttentionAdapter:
                     route_index_tensor,
                 )
             )
-        _pap_send_qkv_fanout_collective(pending_fanout_sends)
         trace_send_ms = (
             (time.perf_counter() - trace_send_start) * 1000.0
             if trace_offload_exec

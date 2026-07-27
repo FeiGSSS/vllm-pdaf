@@ -12,7 +12,7 @@ Current normalized AIPerf experiment bundles:
 Current development pilots:
 
 - [History-local Prefill and post-Prefill Decode late binding](PAP-20260727-POST-PREFILL-LATE-BINDING/report.md)
-- [Collective QKV fan-out and rejected common-gate treatment](PAP-20260727-COLLECTIVE-QKV-FANOUT/report.md)
+- [Rolled-back deferred QKV submission and rejected common gate](PAP-20260727-COLLECTIVE-QKV-FANOUT/report.md)
 - [Attention-load placement, direct KV migration, and fan-in tracing](PAP-20260726-ATTENTION-LOAD-MIGRATION/report.md)
 - [Eight-GPU PAP/PD/fused-DP capacity scan](PAP-20260725-8GPU-CAPACITY-SCAN/report.md)
 - [Eight-GPU capacity and 7PA1P root-cause pilot](PAP-20260725-8GPU-CAPACITY-PILOT/report.md)

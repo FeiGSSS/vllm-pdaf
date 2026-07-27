@@ -53,8 +53,9 @@ change the next Decode barrier.
 ## End-to-end result
 
 The comparison uses the same AIPerf dataset and topology. The prior row is the
-accepted independent-stream result from
-`PAP-20260727-COLLECTIVE-QKV-FANOUT`.
+rolled-back deferred-submission result from
+`PAP-20260727-COLLECTIVE-QKV-FANOUT`; it remains useful only as a nearby
+measurement, not as the current code baseline.
 
 | Metric | Prior placement boundary | Post-Prefill late binding | Change |
 | --- | ---: | ---: | ---: |
