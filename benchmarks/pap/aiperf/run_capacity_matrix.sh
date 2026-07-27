@@ -36,6 +36,8 @@ RESUME="${PAP_CAPACITY_RESUME:-1}"
 WAIT_FOR_GPUS="${PAP_CAPACITY_WAIT_FOR_GPUS:-1}"
 GPU_IDLE_STABILITY_SECONDS="${PAP_CAPACITY_GPU_IDLE_STABILITY_SECONDS:-15}"
 EXECUTION_MODE="${PAP_CAPACITY_EXECUTION_MODE:-eager}"
+PAP_ROUTING_POLICY="${PAP_CAPACITY_PAP_ROUTING_POLICY:-conversation_affinity}"
+PAP_MIGRATION_MIN_PEAK_GAIN_RATIO="${PAP_CAPACITY_PAP_MIGRATION_MIN_PEAK_GAIN_RATIO:-0.30}"
 
 TURNS="${PAP_CAPACITY_TURNS:-5}"
 DATASET_SESSION_PREFIX="pap-pd-dp-s${TOTAL_SESSIONS}-t${TURNS}-seed${RANDOM_SEED}"
@@ -109,6 +111,10 @@ done
 case "${EXECUTION_MODE}" in
   eager | piecewise) ;;
   *) die "PAP_CAPACITY_EXECUTION_MODE must be eager or piecewise" ;;
+esac
+case "${PAP_ROUTING_POLICY}" in
+  conversation_affinity | attention_load) ;;
+  *) die "unsupported PAP capacity routing policy: ${PAP_ROUTING_POLICY}" ;;
 esac
 
 IFS=, read -r -a ALL_POINTS <<< "${DEFAULT_POINTS_CSV}"
@@ -306,6 +312,9 @@ PY
   printf 'EXECUTION_MODE=%q\n' "${EXECUTION_MODE}"
   printf 'PAP_PREFILL_GPU_MEMORY_UTILIZATION=%q\n' \
     "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}"
+  printf 'PAP_ROUTING_POLICY=%q\n' "${PAP_ROUTING_POLICY}"
+  printf 'PAP_MIGRATION_MIN_PEAK_GAIN_RATIO=%q\n' \
+    "${PAP_MIGRATION_MIN_PEAK_GAIN_RATIO}"
   printf 'PAP_PROJECTION_MEMORY_POLICY=%q\n' 'model_weights_x1.20'
   printf 'PD_GPU_MEMORY_UTILIZATION=%q\n' \
     "${PD_GPU_MEMORY_UTILIZATION}"
@@ -394,7 +403,9 @@ run_pap_point() {
     PAP_TOPOLOGY="${topology}" \
     PAP_PREFILL_GPUS="$(gpu_csv 0 "${pa_count}")" \
     PAP_PROJECTION_GPUS="$(gpu_csv "${pa_count}" "${projection_count}")" \
-    PAP_ROUTING_POLICY=conversation_affinity \
+    PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY}" \
+    PAP_ATTENTION_LOAD_MIGRATION_MIN_PEAK_GAIN_RATIO=\
+"${PAP_MIGRATION_MIN_PEAK_GAIN_RATIO}" \
     PAP_OFFLOAD_EXEC_TRANSPORT=local_fast \
     PAP_OFFLOAD_KV_TRANSPORT=cuda_ipc \
     PAP_DIRECT_MAILBOX_OUTPUT=1 \
