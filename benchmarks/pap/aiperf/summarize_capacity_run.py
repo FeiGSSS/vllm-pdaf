@@ -264,6 +264,47 @@ def _check_pap_routing(
     if stats.get("total_requests") != expected_requests:
         errors.append("PAP runtime route count does not match")
 
+    if stats.get("routing_policy") == "attention_load":
+        load_routing = stats.get("attention_load_routing", {})
+        request_counts_raw = load_routing.get("pa_decode_requests", {})
+        owner_counts_raw = load_routing.get("pa_history_owners", {})
+        token_loads_raw = load_routing.get("pa_attention_tokens", {})
+        request_counts = [int(value) for value in request_counts_raw.values()]
+        owner_counts = [int(value) for value in owner_counts_raw.values()]
+        token_loads = [int(value) for value in token_loads_raw.values()]
+        load_passed = True
+        if load_routing.get("active_requests") != 0:
+            errors.append("PAP Attention-load router did not drain")
+            load_passed = False
+        if load_routing.get("conversations") != sessions:
+            errors.append("PAP Attention-load conversation count does not match")
+            load_passed = False
+        if sum(request_counts) != expected_requests:
+            errors.append("PAP Attention-load request count does not match")
+            load_passed = False
+        if sum(owner_counts) != sessions:
+            errors.append("PAP Attention-load history owners do not match")
+            load_passed = False
+        if any(token_loads):
+            errors.append("PAP Attention-load tokens did not drain")
+            load_passed = False
+        migration_count = load_routing.get("migration_count")
+        if not isinstance(migration_count, int) or migration_count < 0:
+            errors.append("PAP Attention-load migration count is invalid")
+            load_passed = False
+        passed = (
+            audit.get("status") == "passed"
+            and audit.get("route_count") == expected_requests
+            and stats.get("total_requests") == expected_requests
+            and load_passed
+        )
+        return {
+            "passed": passed,
+            "conversations": load_routing.get("conversations"),
+            "migration_count": migration_count,
+            "owner_assignments": owner_counts,
+        }
+
     conversation = stats.get("conversation_routing", {})
     assignments_raw = conversation.get("pa_assignments", {})
     requests_raw = conversation.get("pa_requests", {})

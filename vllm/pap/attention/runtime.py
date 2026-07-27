@@ -140,8 +140,11 @@ class PAPAttentionRuntime:
     ) -> list[PAPPrefillLayerReadiness]:
         return self.registry.get_prefill_readiness(request_id)
 
-    def release_session(self, request_id: str) -> bool:
-        return self.registry.release_session(request_id)
+    def release_session(self, request_id: str, *, retain_lease: bool = False) -> bool:
+        return self.registry.release_session(
+            request_id,
+            retain_lease=retain_lease,
+        )
 
     def stop(self) -> None:
         """Drain and stop the optional central dispatcher."""

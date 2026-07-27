@@ -149,6 +149,12 @@ export PAP_LEASE_RELEASE_TIMEOUT PAP_LEASE_RELEASE_MAX_ATTEMPTS
 export PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS PAP_LEASE_RELEASE_RETRY_MAX_SECONDS
 export PAP_KV_LEASE_TTL_SECONDS
 PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-round_robin}"
+PAP_ATTENTION_LOAD_MIGRATION_MIN_BALANCE_GAIN_RATIO="${PAP_ATTENTION_LOAD_MIGRATION_MIN_BALANCE_GAIN_RATIO:-0.3}"
+PAP_ATTENTION_LOAD_MIGRATION_MIN_INTERVAL="${PAP_ATTENTION_LOAD_MIGRATION_MIN_INTERVAL:-64}"
+PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT="${PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT:-1}"
+if [[ "${PAP_ROUTING_POLICY}" == "attention_load" ]]; then
+    PAP_ENABLE_PROMPT_TOKENS_DETAILS=1
+fi
 unset PAP_ATTENTION_COPY_PREFIX_KV
 PREFILL_NIXL_PORT_BASE="${PAP_PREFILL_NIXL_PORT_BASE:-5559}"
 PROJECTION_NIXL_PORT_BASE="${PAP_PROJECTION_NIXL_PORT_BASE:-6000}"
@@ -156,6 +162,8 @@ VLLM_PORT_BASE="${PAP_VLLM_PORT_BASE:-50000}"
 MAX_MODEL_LEN="${PAP_MAX_MODEL_LEN:-1024}"
 MAX_NUM_SEQS="${PAP_MAX_NUM_SEQS:-2}"
 MAX_NUM_BATCHED_TOKENS="${PAP_MAX_NUM_BATCHED_TOKENS:-8192}"
+PAP_BLOCK_SIZE="${PAP_BLOCK_SIZE:-16}"
+export PAP_BLOCK_SIZE
 PREFILL_GPU_MEMORY_UTILIZATION="${PAP_PREFILL_GPU_MEMORY_UTILIZATION:-0.90}"
 PREFILL_MPS_PERCENT="${PAP_PREFILL_MPS_PERCENT:-70}"
 ATTENTION_MPS_PERCENT="${PAP_ATTENTION_MPS_PERCENT:-30}"
@@ -580,12 +588,13 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
             --enable-request-id-headers \
             --max-model-len "$MAX_MODEL_LEN" \
             --max-num-seqs "$MAX_NUM_SEQS" \
+            --block-size "$PAP_BLOCK_SIZE" \
             "${vllm_scheduler_args[@]}" \
             "${vllm_prefill_observability_args[@]}" \
             --tensor-parallel-size "$PAP_TP_SIZE" \
             --gpu-memory-utilization "$PREFILL_GPU_MEMORY_UTILIZATION" \
             "${vllm_tp_args[@]}" \
-            --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer"}' \
+            --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer","kv_connector_extra_config":{"bidirectional_kv_xfer":true,"kv_recompute_threshold":0,"enable_cross_layers_blocks":"True"}}' \
             >"$LOG_DIR/prefill_${idx}.log" 2>&1 &
     else
         CUDA_VISIBLE_DEVICES="$gpu_csv" \
@@ -606,12 +615,13 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
             --enable-request-id-headers \
             --max-model-len "$MAX_MODEL_LEN" \
             --max-num-seqs "$MAX_NUM_SEQS" \
+            --block-size "$PAP_BLOCK_SIZE" \
             "${vllm_scheduler_args[@]}" \
             "${vllm_prefill_observability_args[@]}" \
             --tensor-parallel-size "$PAP_TP_SIZE" \
             --gpu-memory-utilization "$PREFILL_GPU_MEMORY_UTILIZATION" \
             "${vllm_tp_args[@]}" \
-            --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer"}' \
+            --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer","kv_connector_extra_config":{"bidirectional_kv_xfer":true,"kv_recompute_threshold":0,"enable_cross_layers_blocks":"True"}}' \
             >"$LOG_DIR/prefill_${idx}.log" 2>&1 &
     fi
     PIDS+=("$!")
@@ -671,6 +681,12 @@ echo "Starting PAP Gateway on port $PROXY_PORT"
     --pap-groups "$pap_groups_spec" \
     --projections "$projections_spec" \
     --routing-policy "$PAP_ROUTING_POLICY" \
+    --attention-load-migration-min-balance-gain-ratio \
+    "$PAP_ATTENTION_LOAD_MIGRATION_MIN_BALANCE_GAIN_RATIO" \
+    --attention-load-migration-min-interval \
+    "$PAP_ATTENTION_LOAD_MIGRATION_MIN_INTERVAL" \
+    --attention-load-migration-max-inflight \
+    "$PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT" \
     >"$LOG_DIR/proxy.log" 2>&1 &
 PIDS+=("$!")
 

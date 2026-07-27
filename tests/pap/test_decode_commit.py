@@ -101,6 +101,44 @@ def test_commit_endpoint_falls_back_to_sync_engine_client():
     assert calls == [("req-1", 18, (4,))]
 
 
+def test_kv_export_endpoint_uses_engine_control_plane():
+    import anyio
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from vllm.pap.prefill_control_router import build_prefill_control_router
+
+    class StubEngineClient:
+        async def pap_export_kv_lease_async(self, request_id):
+            return {
+                "request_id": request_id,
+                "exported": True,
+                "lease_id": "lease-1",
+                "seq_len": 64,
+                "kv_transfer_params": {"remote_block_ids": [[1, 2, 3, 4]]},
+            }
+
+    async def run_request():
+        app = FastAPI()
+        app.state.engine_client = StubEngineClient()
+        app.include_router(build_prefill_control_router())
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+        ) as client:
+            return await client.post(
+                "/v1/pap/prefill/kv-export",
+                json={"request_id": "req-1"},
+            )
+
+    response = anyio.run(run_request)
+
+    assert response.status_code == 200
+    assert response.json()["seq_len"] == 64
+    assert response.json()["lease_id"] == "lease-1"
+
+
 def test_commit_endpoint_rejects_unacknowledged_unknown_request():
     import anyio
     from fastapi import FastAPI
@@ -309,6 +347,54 @@ def test_prefill_control_router_releases_lease():
     assert resp.status_code == 200
     assert resp.json()["block_count"] == 2
     assert calls == [("req-1", "lease-1")]
+
+
+def test_prefill_control_router_marks_completed_turn_lease_retained():
+    import anyio
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from vllm.pap.prefill_control_router import build_prefill_control_router
+
+    class StubEngineClient:
+        def __init__(self):
+            self.calls = []
+
+        async def pap_release_kv_lease_async(
+            self, request_id, lease_id, retain=False
+        ):
+            self.calls.append((request_id, lease_id, retain))
+            return {
+                "request_id": request_id,
+                "lease_id": lease_id,
+                "retained": retain,
+            }
+
+    async def run_request():
+        engine_client = StubEngineClient()
+        app = FastAPI()
+        app.state.engine_client = engine_client
+        app.include_router(build_prefill_control_router())
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+        ) as client:
+            resp = await client.post(
+                "/v1/pap/prefill/lease-release",
+                json={
+                    "request_id": "req-1",
+                    "lease_id": "lease-1",
+                    "retain": True,
+                },
+            )
+        return resp, engine_client.calls
+
+    resp, calls = anyio.run(run_request)
+
+    assert resp.status_code == 200
+    assert resp.json()["retained"]
+    assert calls == [("req-1", "lease-1", True)]
 
 
 def test_prefill_control_router_release_falls_back_to_sync_engine_client():
@@ -1156,6 +1242,30 @@ def test_lease_release_client_accepts_idempotent_release(monkeypatch):
     assert client.release(request_id="r", lease_id="lease-1")
 
 
+def test_lease_release_client_can_mark_retained_lease(monkeypatch):
+    posted = {}
+
+    def fake_post(url, json=None, timeout=None):
+        posted["json"] = json
+        return _LeaseReleaseResponse({"retained": True})
+
+    monkeypatch.setattr(
+        "vllm.pap.lifecycle.lease_release.httpx.post",
+        fake_post,
+    )
+    client = LeaseReleaseClient(
+        endpoint="http://127.0.0.1:9999/v1/pap/prefill/lease-release",
+        max_attempts=1,
+    )
+
+    assert client.release(request_id="r", lease_id="lease-1", retain=True)
+    assert posted["json"] == {
+        "request_id": "r",
+        "lease_id": "lease-1",
+        "retain": True,
+    }
+
+
 def test_lease_release_client_reports_terminal_failure(monkeypatch):
     attempts = []
 
@@ -1198,6 +1308,51 @@ def test_kv_lease_refresh_extends_expiry(monkeypatch):
 
     assert registry.refresh_lease("r")
     assert registry._by_lease[lease_id].expires_at == 115.0
+
+
+def test_kv_lease_exports_retained_nixl_metadata_and_tracks_decode() -> None:
+    from vllm.pap.lifecycle.lease import PAPKVLeaseRegistry
+
+    registry = PAPKVLeaseRegistry(_ttl_seconds=10.0)
+    lease_id = registry.pin_blocks(request_id="r", block_ids=(1, 2, 3))
+
+    assert registry.record_export(
+        request_id="r",
+        seq_len=32,
+        kv_transfer_params={
+            "remote_engine_id": "prefill",
+            "remote_block_ids": [[1, 2, 3]],
+        },
+    )
+    assert registry.update_export_seq_len("r", 40)
+
+    exported = registry.export("r")
+    assert exported is not None
+    assert exported.lease_id == lease_id
+    assert exported.seq_len == 40
+    assert exported.kv_transfer_params["remote_block_ids"] == [[1, 2, 3]]
+
+    registry.release_lease(lease_id)
+    assert registry.export("r") is None
+
+
+def test_kv_lease_pressure_evicts_only_retained_leases_in_lru_order() -> None:
+    from vllm.pap.lifecycle.lease import PAPKVLeaseRegistry
+
+    registry = PAPKVLeaseRegistry(_ttl_seconds=10.0)
+    active_lease = registry.pin_blocks(request_id="active", block_ids=(1,))
+    oldest = registry.pin_blocks(request_id="oldest", block_ids=(2, 3))
+    newest = registry.pin_blocks(request_id="newest", block_ids=(4,))
+
+    assert registry.mark_retained("gateway-alias-for-oldest", oldest)
+    assert registry.mark_retained("newest", newest)
+
+    evicted = registry.evict_oldest_retained()
+
+    assert evicted == ("oldest", oldest, (2, 3))
+    assert registry.active_lease_id("oldest") is None
+    assert registry.active_lease_id("newest") == newest
+    assert registry.active_lease_id("active") == active_lease
 
 
 def test_kv_lease_sweeps_replaced_expired_lease(monkeypatch):

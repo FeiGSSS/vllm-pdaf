@@ -2,6 +2,8 @@
 set -euo pipefail
 
 ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
+source "${ROOT_DIR}/benchmarks/pap/scripts/configure_same_node_nixl.sh"
+pap_configure_same_node_nixl "${ROOT_DIR}"
 if [[ -v PD_LOAD_CLIENT_MODE ]]; then
   echo "PD_LOAD_CLIENT_MODE was removed; the PD runner is AIPerf-only" >&2
   exit 2
@@ -172,9 +174,6 @@ done
 export VLLM_USE_FLASHINFER_SAMPLER=0
 export VLLM_USE_V1=1
 export VLLM_USE_V2_MODEL_RUNNER=1
-export UCX_TLS="${UCX_TLS:-cuda_ipc,cuda_copy,tcp}"
-export UCX_NET_DEVICES="${UCX_NET_DEVICES:-all}"
-export UCX_RCACHE_MAX_UNRELEASED="${UCX_RCACHE_MAX_UNRELEASED:-1024}"
 export NO_PROXY="${NO_PROXY:+${NO_PROXY},}127.0.0.1,localhost"
 export no_proxy="${no_proxy:+${no_proxy},}127.0.0.1,localhost"
 
@@ -323,6 +322,10 @@ HOSTS_DECODE=()
   printf 'PD_AIPERF_CONCURRENCY=%q\nPD_AIPERF_TIMING_MODE=%q\n' \
     "${PD_AIPERF_CONCURRENCY}" "${PD_AIPERF_TIMING_MODE}"
   printf 'PD_AIPERF_REQUEST_RATE=%q\n' "${PD_AIPERF_REQUEST_RATE}"
+  printf 'PAP_NIXL_RUNTIME_MODE=%q\nPAP_NIXL_UCX_VERSION=%q\n' \
+    "${PAP_NIXL_RUNTIME_MODE}" "${PAP_NIXL_UCX_VERSION}"
+  printf 'NIXL_PLUGIN_DIR=%q\nUCX_PROTO_EMULATION_ENABLE=%q\n' \
+    "${NIXL_PLUGIN_DIR}" "${UCX_PROTO_EMULATION_ENABLE}"
   printf 'GIT_COMMIT=%q\nGIT_TRACKED_WORKTREE_DIRTY=%q\n' \
     "${GIT_COMMIT}" "${GIT_TRACKED_WORKTREE_DIRTY}"
 } > "${RUN_ROOT}/effective_config.env"

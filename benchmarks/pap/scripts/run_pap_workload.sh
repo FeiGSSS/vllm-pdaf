@@ -85,6 +85,8 @@ for removed_flag in \
 done
 
 ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
+source "${ROOT_DIR}/benchmarks/pap/scripts/configure_same_node_nixl.sh"
+pap_configure_same_node_nixl "${ROOT_DIR}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 VLLM_BIN="${VLLM_BIN:-${ROOT_DIR}/.venv/bin/vllm}"
 DEFERRED_TRACE_VALIDATOR="${ROOT_DIR}/benchmarks/pap/tooling/validate_deferred_trace.py"
@@ -251,6 +253,9 @@ PAP_LOCAL_FAST_SLEEP_US="${PAP_LOCAL_FAST_SLEEP_US:-20}"
 PAP_LOCAL_FAST_SLEEP_AFTER_US="${PAP_LOCAL_FAST_SLEEP_AFTER_US:-50}"
 PAP_REMOTE_ATTENTION_PARALLELISM="${PAP_REMOTE_ATTENTION_PARALLELISM:-16}"
 PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-conversation_affinity}"
+PAP_ATTENTION_LOAD_MIGRATION_MIN_BALANCE_GAIN_RATIO="${PAP_ATTENTION_LOAD_MIGRATION_MIN_BALANCE_GAIN_RATIO:-0.3}"
+PAP_ATTENTION_LOAD_MIGRATION_MIN_INTERVAL="${PAP_ATTENTION_LOAD_MIGRATION_MIN_INTERVAL:-64}"
+PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT="${PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT:-1}"
 PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-64}"
 PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS:-1}"
 PAP_PREFIX_CACHE_AUDIT="${PAP_PREFIX_CACHE_AUDIT:-0}"
@@ -368,6 +373,7 @@ export PAP_NIXL_MAILBOX_INLINE_PUBLISH
 export PAP_UNIFIED_MD_CACHE_LIMIT
 export PAP_DECODE_SLOT_PLAN_CACHE_LIMIT
 export PAP_ATTENTION_DISPATCH_QUEUE_SIZE
+export PAP_BLOCK_SIZE
 export PAP_DECODE_COMMIT_FAIL_CLOSED
 export PAP_DECODE_COMMIT_TIMEOUT
 export PAP_DECODE_COMMIT_QUEUE_SIZE
@@ -397,8 +403,6 @@ export VLLM_USE_V1=1
 export VLLM_USE_V2_MODEL_RUNNER=1
 export VLLM_ENABLE_V1_MULTIPROCESSING="${VLLM_ENABLE_V1_MULTIPROCESSING:-1}"
 export VLLM_WORKER_MULTIPROC_METHOD="${VLLM_WORKER_MULTIPROC_METHOD:-spawn}"
-export UCX_TLS="${UCX_TLS:-cuda_ipc,cuda_copy,tcp}"
-export UCX_NET_DEVICES="${UCX_NET_DEVICES:-all}"
 export PYTHONHASHSEED="${PYTHONHASHSEED:-123}"
 
 append_no_proxy() {
@@ -1172,6 +1176,10 @@ write_effective_config() {
     printf 'PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE=%q\n' "${PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE}"
     printf 'PAP_BENCH_STRICT_CORRECTNESS_AUDIT=%q\n' "${PAP_BENCH_STRICT_CORRECTNESS_AUDIT}"
     printf 'VLLM_USE_FLASHINFER_SAMPLER=%q\n' "${VLLM_USE_FLASHINFER_SAMPLER}"
+    printf 'PAP_NIXL_RUNTIME_MODE=%q\nPAP_NIXL_UCX_VERSION=%q\n' \
+      "${PAP_NIXL_RUNTIME_MODE}" "${PAP_NIXL_UCX_VERSION}"
+    printf 'NIXL_PLUGIN_DIR=%q\nUCX_PROTO_EMULATION_ENABLE=%q\n' \
+      "${NIXL_PLUGIN_DIR}" "${UCX_PROTO_EMULATION_ENABLE}"
     printf 'NO_PROXY=%q\n' "${NO_PROXY}"
     printf 'no_proxy=%q\n' "${no_proxy}"
     printf 'PAP_PROXY_PORT=%q\n' "${PAP_PROXY_PORT}"
@@ -1219,6 +1227,12 @@ write_effective_config() {
     printf 'PAP_PROJECTION_GPUS=%q\n' "${PAP_PROJECTION_GPUS}"
     printf 'PAP_VLLM_DTYPE=%q\n' "${PAP_VLLM_DTYPE}"
     printf 'PAP_ROUTING_POLICY=%q\n' "${PAP_ROUTING_POLICY}"
+    printf 'PAP_ATTENTION_LOAD_MIGRATION_MIN_BALANCE_GAIN_RATIO=%q\n' \
+      "${PAP_ATTENTION_LOAD_MIGRATION_MIN_BALANCE_GAIN_RATIO}"
+    printf 'PAP_ATTENTION_LOAD_MIGRATION_MIN_INTERVAL=%q\n' \
+      "${PAP_ATTENTION_LOAD_MIGRATION_MIN_INTERVAL}"
+    printf 'PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT=%q\n' \
+      "${PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT}"
     printf 'PREFILL_PORT_BASE=%q\n' "${PREFILL_PORT_BASE}"
     printf 'PROJECTION_PORT_BASE=%q\n' "${PROJECTION_PORT_BASE}"
     printf 'ATTENTION_PORT_BASE=%q\n' "${ATTENTION_PORT_BASE}"
@@ -1496,6 +1510,7 @@ audit_xy_routes() {
     PREFILL_PORT_BASE="${PREFILL_PORT_BASE}" \
     PROJECTION_PORT_BASE="${PROJECTION_PORT_BASE}" \
     PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY}" \
+    PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT="${PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT}" \
     PAP_AIPERF_TURNS="${PAP_AIPERF_TURNS}" \
     PAP_AIPERF_SESSIONS="${PAP_AIPERF_SESSIONS}" \
     "${PYTHON_BIN}" - <<'PY'
@@ -1513,6 +1528,10 @@ projection_count = int(os.environ["PROJECTION_COUNT"])
 prefill_base = int(os.environ["PREFILL_PORT_BASE"])
 projection_base = int(os.environ["PROJECTION_PORT_BASE"])
 routing_policy = os.environ["PAP_ROUTING_POLICY"]
+migration_lifecycle_enabled = (
+    routing_policy == "attention_load"
+    and int(os.environ["PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT"]) > 0
+)
 load_rounds = int(os.environ["PAP_AIPERF_TURNS"])
 load_conversations = int(os.environ["PAP_AIPERF_SESSIONS"])
 route_pattern = re.compile(
@@ -1535,12 +1554,17 @@ expected_projection_routes = Counter()
 expected_pair_routes = Counter()
 errors = []
 expected_group_indices = []
+dynamic_pa_routing = routing_policy == "attention_load"
 if routing_policy == "conversation_affinity":
     expected_group_indices = [
         conversation % pa_count
         for _ in range(load_rounds)
         for conversation in range(load_conversations)
     ]
+elif dynamic_pa_routing:
+    # PA selection depends on live committed Attention tokens. A static audit
+    # can validate its range and count, but not reconstruct it from request IDs.
+    expected_group_indices = [0 for _ in range(expected_requests)]
 else:
     expected_group_indices = [
         request_number % pa_count for request_number in range(expected_requests)
@@ -1561,7 +1585,11 @@ for request_number, group_index in enumerate(expected_group_indices):
         )
     elif routing_policy == "projection_sticky":
         group_index = projection_index % pa_count
-    elif routing_policy not in ("round_robin", "conversation_affinity"):
+    elif routing_policy not in (
+        "round_robin",
+        "conversation_affinity",
+        "attention_load",
+    ):
         errors.append(f"unsupported routing policy {routing_policy!r}")
         group_index = 0
         projection_index = 0
@@ -1572,7 +1600,12 @@ if len(routes) != expected_requests:
     errors.append(
         f"routed request count {len(routes)} != expected {expected_requests}"
     )
-if pa_routes != expected_pa_routes:
+if dynamic_pa_routing:
+    if any(
+        port < prefill_base or port >= prefill_base + pa_count for port in pa_routes
+    ):
+        errors.append(f"PA routes contain an unknown endpoint: {dict(pa_routes)}")
+elif pa_routes != expected_pa_routes:
     errors.append(
         f"PA route counts {dict(pa_routes)} != expected "
         f"{dict(expected_pa_routes)}"
@@ -1583,7 +1616,7 @@ if projection_routes != expected_projection_routes:
         f"{dict(expected_projection_routes)}"
     )
 if (
-    routing_policy != "conversation_affinity"
+    routing_policy not in ("conversation_affinity", "attention_load")
     and pair_routes != expected_pair_routes
 ):
     errors.append(
@@ -1592,6 +1625,7 @@ if (
     )
 
 control_counts = {}
+total_releases = 0
 release_marker = '"POST /v1/pap/prefill/lease-release HTTP/1.1" 200 OK'
 commit_marker = '"POST /v1/pap/prefill/decode-commit HTTP/1.1" 200 OK'
 for index in range(pa_count):
@@ -1600,12 +1634,15 @@ for index in range(pa_count):
     releases = prefill_text.count(release_marker)
     commits = prefill_text.count(commit_marker)
     routed = pa_routes[port]
+    total_releases += releases
     control_counts[port] = {
         "routed_requests": routed,
         "decode_commit_200": commits,
         "lease_release_200": releases,
     }
-    if releases != routed:
+    if (not dynamic_pa_routing or not migration_lifecycle_enabled) and (
+        releases != routed
+    ):
         errors.append(
             f"PA port {port} release count {releases} != routed {routed}"
         )
@@ -1613,6 +1650,56 @@ for index in range(pa_count):
         errors.append(
             f"PA port {port} commit count {commits} < routed {routed}"
         )
+if dynamic_pa_routing and migration_lifecycle_enabled:
+    # Every request marks its current-turn lease retained. A later turn also
+    # releases its previous lease when that history is still cached. Under
+    # pressure-LRU, that previous lease may already have been evicted. A
+    # post-Prefill migration creates one additional source-or-target session
+    # that is released after the attempt resolves.
+    migration_attempts = proxy_text.count(
+        "PAP completed Prefill migration planned"
+    )
+    minimum_releases = expected_requests
+    maximum_historical_releases = (
+        (load_rounds - 1) * load_conversations
+    )
+    maximum_releases = (
+        expected_requests
+        + maximum_historical_releases
+        + migration_attempts
+    )
+    historical_release_misses = maximum_releases - total_releases
+    pressure_evictions = sum(
+        (log_dir / f"prefill_{index}.log")
+        .read_text(errors="replace")
+        .count("PAP KV pressure eviction")
+        for index in range(pa_count)
+    )
+    migration_misses = proxy_text.count(
+        "PAP retained KV unavailable; recomputing"
+    )
+    if not minimum_releases <= total_releases <= maximum_releases:
+        errors.append(
+            f"global release count {total_releases} is outside "
+            f"[{minimum_releases}, {maximum_releases}]"
+        )
+    elif historical_release_misses > pressure_evictions:
+        errors.append(
+            f"{historical_release_misses} historical release misses exceed "
+            f"{pressure_evictions} pressure evictions"
+        )
+    if migration_misses > historical_release_misses:
+        errors.append(
+            f"{migration_misses} migration misses exceed "
+            f"{historical_release_misses} unavailable historical leases"
+        )
+else:
+    migration_attempts = None
+    minimum_releases = None
+    maximum_releases = None
+    historical_release_misses = None
+    pressure_evictions = None
+    migration_misses = None
 
 audit = {
     "status": "failed" if errors else "passed",
@@ -1622,6 +1709,14 @@ audit = {
     "pair_routes": dict(sorted(pair_routes.items())),
     "expected_pair_routes": dict(sorted(expected_pair_routes.items())),
     "prefill_control_counts": control_counts,
+    "total_lease_release_200": total_releases,
+    "minimum_lease_release_200": minimum_releases,
+    "maximum_lease_release_200": maximum_releases,
+    "migration_attempt_count": migration_attempts,
+    "historical_release_miss_count": historical_release_misses,
+    "pressure_eviction_count": pressure_evictions,
+    "migration_miss_count": migration_misses,
+    "migration_lifecycle_enabled": migration_lifecycle_enabled,
     "errors": errors,
 }
 with open(run_root / "routing_audit.json", "w", encoding="utf-8") as output:
@@ -1660,12 +1755,14 @@ cd "${ROOT_DIR}"
   && "${PAP_STATIC_ATTENTION_CHUNKS}" == "5" ]] \
   || die "the AIPerf PAP path requires 18/5 static-MPS chunks"
 if (( PA_COUNT > 1 )); then
-  [[ "${PAP_ROUTING_POLICY}" == "conversation_affinity" ]] \
-    || die "multi-PA AIPerf requires conversation_affinity routing"
+  [[ "${PAP_ROUTING_POLICY}" == "conversation_affinity" \
+    || "${PAP_ROUTING_POLICY}" == "attention_load" ]] \
+    || die "multi-PA AIPerf requires conversation_affinity or attention_load"
 else
   [[ "${PAP_ROUTING_POLICY}" == "round_robin" \
-    || "${PAP_ROUTING_POLICY}" == "conversation_affinity" ]] \
-    || die "single-PA AIPerf requires round_robin or conversation_affinity"
+    || "${PAP_ROUTING_POLICY}" == "conversation_affinity" \
+    || "${PAP_ROUTING_POLICY}" == "attention_load" ]] \
+    || die "single-PA AIPerf requires a supported PAP routing policy"
 fi
 (( PAP_AIPERF_TURNS >= 4 )) \
   || die "AIPerf requires at least four turns"
@@ -1890,7 +1987,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       --tensor-parallel-size "${PAP_TP_SIZE}" \
       --gpu-memory-utilization "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}" \
       "${prefill_profiler_args[@]}" \
-      --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer"}' \
+      --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer","kv_connector_extra_config":{"bidirectional_kv_xfer":true,"kv_recompute_threshold":0,"enable_cross_layers_blocks":"True"}}' \
       > "${RUN_LOG_DIR}/prefill_${idx}.log" 2>&1 &
   PIDS+=("$!")
 done
@@ -1968,6 +2065,12 @@ env \
   --pap-groups "${PAP_GROUPS_SPEC}" \
   --projections "${PROJECTIONS_SPEC}" \
   --routing-policy "${PAP_ROUTING_POLICY}" \
+  --attention-load-migration-min-balance-gain-ratio \
+  "${PAP_ATTENTION_LOAD_MIGRATION_MIN_BALANCE_GAIN_RATIO}" \
+  --attention-load-migration-min-interval \
+  "${PAP_ATTENTION_LOAD_MIGRATION_MIN_INTERVAL}" \
+  --attention-load-migration-max-inflight \
+  "${PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT}" \
   > "${RUN_LOG_DIR}/proxy.log" 2>&1 &
 PIDS+=("$!")
 

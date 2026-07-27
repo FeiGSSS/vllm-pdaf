@@ -20,6 +20,11 @@ class DecodeCommitRequest(BaseModel):
 class LeaseReleaseRequest(BaseModel):
     request_id: str
     lease_id: str
+    retain: bool = False
+
+
+class KVExportRequest(BaseModel):
+    request_id: str
 
 
 async def _maybe_await(value: Any) -> Any:
@@ -96,20 +101,41 @@ def build_prefill_control_router() -> APIRouter:
         session_lock = session_locks.setdefault(request_id, asyncio.Lock())
         async with session_lock:
             engine_client = raw_request.app.state.engine_client
+            control_args = (
+                (request_id, req.lease_id, True)
+                if req.retain
+                else (request_id, req.lease_id)
+            )
             result = await _call_engine_control_method(
                 engine_client,
                 "pap_release_kv_lease_async",
                 "pap_release_kv_lease",
-                request_id,
-                req.lease_id,
+                *control_args,
             )
-            if result.get("released", False) or result.get("reason") == (
-                "unknown_or_released_lease"
-            ):
+            completed = result.get("released", False) or result.get(
+                "retained", False
+            )
+            if completed or result.get("reason") in {
+                "unknown_or_released_lease",
+                "unknown_expired_or_released_lease",
+            }:
                 targets = targets_by_session.pop(request_id, {request_id})
                 for target in targets:
                     acked_commit_state.pop(target, None)
         session_locks.pop(request_id, None)
         return result
+
+    @router.post("/v1/pap/prefill/kv-export")
+    async def export_kv(
+        req: KVExportRequest,
+        raw_request: Request,
+    ) -> dict[str, Any]:
+        engine_client = raw_request.app.state.engine_client
+        return await _call_engine_control_method(
+            engine_client,
+            "pap_export_kv_lease_async",
+            "pap_export_kv_lease",
+            str(req.request_id),
+        )
 
     return router

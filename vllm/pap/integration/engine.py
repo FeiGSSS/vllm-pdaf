@@ -55,6 +55,7 @@ class PAPEngineAdapter:
             new_token_ids=tuple(int(token) for token in new_token_ids),
         )
         pap_lease.pap_refresh_lease(normalized_id)
+        pap_lease.pap_update_kv_export_seq_len(normalized_id, int(new_seq_len))
         return {
             "request_id": normalized_id,
             "applied": True,
@@ -66,8 +67,24 @@ class PAPEngineAdapter:
     def release_kv_lease(
         request_id: str,
         lease_id: str,
+        *,
+        retain: bool = False,
     ) -> dict[str, Any]:
         """Release one Prefill KV lease and report the result."""
+        if retain:
+            retained = pap_lease.pap_mark_kv_lease_retained(
+                str(request_id),
+                str(lease_id),
+            )
+            result: dict[str, Any] = {
+                "request_id": str(request_id),
+                "lease_id": str(lease_id),
+                "retained": retained,
+            }
+            if not retained:
+                result["reason"] = "unknown_expired_or_released_lease"
+            return result
+
         released = pap_lease.pap_release_lease(str(lease_id))
         did_release = bool(released)
         result: dict[str, Any] = {
@@ -79,3 +96,24 @@ class PAPEngineAdapter:
         if not did_release:
             result["reason"] = "unknown_or_released_lease"
         return result
+
+    @staticmethod
+    def export_kv_lease(request_id: str) -> dict[str, Any]:
+        """Return reusable NIXL metadata for one retained Prefill lease."""
+        normalized_id = str(request_id)
+        entry = pap_lease.pap_export_kv(normalized_id)
+        if entry is None:
+            return {
+                "request_id": normalized_id,
+                "exported": False,
+                "reason": "unknown_expired_or_released_lease",
+            }
+        kv_transfer_params = dict(entry.kv_transfer_params)
+        kv_transfer_params["remote_num_tokens"] = entry.seq_len
+        return {
+            "request_id": normalized_id,
+            "exported": True,
+            "lease_id": entry.lease_id,
+            "seq_len": entry.seq_len,
+            "kv_transfer_params": kv_transfer_params,
+        }

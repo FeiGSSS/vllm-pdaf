@@ -233,8 +233,17 @@ def create_app(
         }
 
     @app.delete("/v1/pap/attention/sessions/{request_id}")
-    def release_session(request_id: str) -> dict[str, Any]:
-        return {"released": runtime.release_session(request_id)}
+    def release_session(
+        request_id: str,
+        retain_lease: bool = False,
+    ) -> dict[str, Any]:
+        return {
+            "released": runtime.release_session(
+                request_id,
+                retain_lease=retain_lease,
+            ),
+            "lease_retained": retain_lease,
+        }
 
     return app
 

@@ -309,7 +309,12 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
         self._request_id_resolution_cache.pop(request_id, None)
         return lease_id, None
 
-    def release_session(self, request_id: str) -> bool:
+    def release_session(
+        self,
+        request_id: str,
+        *,
+        retain_lease: bool = False,
+    ) -> bool:
         request_id = self.resolve_session_request_id(request_id) or str(request_id)
         deferred_flushed = self._decode_token_committer.flush_request(
             request_id,
@@ -342,10 +347,25 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                     _LEASE_RELEASE_PATH,
                 )
             )
-            _get_lease_release_client().release(
-                request_id=request_id,
-                lease_id=lease_id,
-                endpoint=release_endpoint,
+            release_client = _get_lease_release_client()
+            if retain_lease:
+                release_client.release(
+                    request_id=request_id,
+                    lease_id=lease_id,
+                    endpoint=release_endpoint,
+                    retain=True,
+                )
+            else:
+                release_client.release(
+                    request_id=request_id,
+                    lease_id=lease_id,
+                    endpoint=release_endpoint,
+                )
+        if lease_id is not None and retain_lease:
+            logger.info(
+                "PAP Attention retained Prefill lease request_id=%s lease_id=%s",
+                request_id,
+                lease_id,
             )
         commit_client.forget_request(request_id)
         self._decode_token_committer.forget_request(request_id)

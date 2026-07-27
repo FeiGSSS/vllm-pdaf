@@ -20,7 +20,6 @@ instead of embedding feature-specific logic directly.
 import functools
 import gc
 import time
-from collections.abc import Callable, Iterable
 from copy import deepcopy
 from typing import Any, NamedTuple
 
@@ -61,6 +60,8 @@ from vllm.v1.worker.gpu.attn_utils import (
     init_attn_backend,
     init_kv_cache,
     init_kv_cache_metadata_only,
+    init_uniform_kv_cache,
+    use_uniform_kv_cache,
 )
 from vllm.v1.worker.gpu.block_table import BlockTables
 from vllm.v1.worker.gpu.buffer_utils import (
@@ -499,6 +500,8 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             )
 
         self.kv_caches: list[torch.Tensor] = []
+        cross_layers_kv_cache = None
+        cross_layers_attn_backend = None
         if self.pap_runner.projection_kv_unaware:
             logger.info(
                 "PAP Projection KV-unaware process binds metadata-only KV "
@@ -509,6 +512,21 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 self.compilation_config.static_forward_context,
                 self.kv_cache_config,
                 self.device,
+            )
+        elif use_uniform_kv_cache(self.attn_groups):
+            (
+                kv_caches_dict,
+                cross_layers_kv_cache,
+                cross_layers_attn_backend,
+            ) = init_uniform_kv_cache(
+                self.kv_caches,
+                self.compilation_config.static_forward_context,
+                self.kv_cache_config,
+                self.attn_groups,
+                self.device,
+                self.cache_config.cache_dtype,
+                self.kernel_block_sizes,
+                self.vllm_config,
             )
         else:
             kv_caches_dict = init_kv_cache(
@@ -521,7 +539,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 self.kernel_block_sizes,
                 self.vllm_config,
             )
-        self.kv_connector = get_kv_connector(self.vllm_config, kv_caches_dict)
+        self.kv_connector = get_kv_connector(
+            self.vllm_config,
+            kv_caches_dict,
+            cross_layers_kv_cache,
+            cross_layers_attn_backend,
+        )
 
     def _init_kv_zero_meta(self) -> None:
         """Build KV-block zeroing metadata; invoked from gpu_worker."""
@@ -1342,9 +1365,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             trace_preprocess_done_ns = time.perf_counter_ns()
 
         # Run model.
-        trace_forward_start_ns = (
-            time.perf_counter_ns() if trace_pap_projection else 0
-        )
+        trace_forward_start_ns = time.perf_counter_ns() if trace_pap_projection else 0
         if batch_desc.cg_mode == CUDAGraphMode.FULL:
             # Use explicit cudagraph replay for FULL mode.
             # NOTE(woosuk): Here, we don't need to pass the input tensors,
@@ -1445,20 +1466,14 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 "model_forward_done_ns=%d hidden_slice_done_ns=%d "
                 "logits_done_ns=%d postprocess_done_ns=%d",
                 input_batch.num_tokens_after_padding,
-                (trace_input_prep_done_ns - trace_input_prep_start_ns)
-                / 1_000_000.0,
-                (trace_metadata_done_ns - trace_input_prep_done_ns)
-                / 1_000_000.0,
-                (trace_preprocess_done_ns - trace_metadata_done_ns)
-                / 1_000_000.0,
-                (trace_model_forward_done_ns - trace_forward_start_ns)
-                / 1_000_000.0,
+                (trace_input_prep_done_ns - trace_input_prep_start_ns) / 1_000_000.0,
+                (trace_metadata_done_ns - trace_input_prep_done_ns) / 1_000_000.0,
+                (trace_preprocess_done_ns - trace_metadata_done_ns) / 1_000_000.0,
+                (trace_model_forward_done_ns - trace_forward_start_ns) / 1_000_000.0,
                 0.0,
                 0.0,
-                (trace_postprocess_done_ns - trace_model_forward_done_ns)
-                / 1_000_000.0,
-                (trace_postprocess_done_ns - trace_input_prep_start_ns)
-                / 1_000_000.0,
+                (trace_postprocess_done_ns - trace_model_forward_done_ns) / 1_000_000.0,
+                (trace_postprocess_done_ns - trace_input_prep_start_ns) / 1_000_000.0,
                 trace_input_prep_start_ns,
                 trace_input_prep_done_ns,
                 trace_metadata_done_ns,
@@ -1473,8 +1488,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 "num_tokens=%d forward_and_postprocess_ms=%.3f "
                 "forward_start_ns=%d postprocess_done_ns=%d",
                 input_batch.num_tokens_after_padding,
-                (trace_postprocess_done_ns - trace_forward_start_ns)
-                / 1_000_000.0,
+                (trace_postprocess_done_ns - trace_forward_start_ns) / 1_000_000.0,
                 trace_forward_start_ns,
                 trace_postprocess_done_ns,
             )

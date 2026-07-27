@@ -6,6 +6,19 @@ owns benchmark methodology, tracked conclusions, manifests, and colocated raw
 artifacts; it does not define the runtime architecture. PAP experiments use
 these project-owned entry points directly, without a repository skill layer.
 
+Same-node PAP/PD NIXL runs are fail-closed on the validated data path:
+NIXL 1.3.0, UCX 1.22.0 built with multi-threading, CUDA IPC, and protocol
+emulation disabled. Install or verify the repository-local runtime with:
+
+```bash
+bash benchmarks/pap/scripts/setup_same_node_nixl.sh install
+bash benchmarks/pap/scripts/setup_same_node_nixl.sh verify
+```
+
+The launchers also accept `PAP_UCX_PREFIX` and `PAP_NIXL_PLUGIN_DIR` for an
+equivalent external build. They reject UCX 1.21, a plugin linked to another
+UCX, or enabled software emulation instead of silently measuring TCP.
+
 The canonical [AIPerf lane](aiperf/README.md) provides standardized serving
 load generation and metrics alongside project-owned runtime audits. Its
 current eight-GPU testbed uses 128 five-turn conversations, randomized 8K
@@ -16,6 +29,13 @@ tiers. The completed compact scan is recorded in
 [`PAP-20260725-8GPU-CAPACITY-SCAN`](experiments/PAP-20260725-8GPU-CAPACITY-SCAN/report.md).
 The initial C32 results and 7PA1P fan-in analysis are recorded in the
 [`PAP-20260725-8GPU-CAPACITY-PILOT`](experiments/PAP-20260725-8GPU-CAPACITY-PILOT/report.md).
+The attention-load placement and migration pilot, including the corrected
+UCX 1.22/V2 cross-layer transfer status and the selected sparse-migration
+policy, is recorded in
+[`PAP-20260726-ATTENTION-LOAD-MIGRATION`](experiments/PAP-20260726-ATTENTION-LOAD-MIGRATION/report.md).
+Its current history-local Prefill and post-Prefill Decode placement boundary
+is validated in
+[`PAP-20260727-POST-PREFILL-LATE-BINDING`](experiments/PAP-20260727-POST-PREFILL-LATE-BINDING/report.md).
 The latest
 completed four-GPU eager and piecewise CUDA Graph results remain documented in
 [`PAP-20260722-AIPERF-PROJECTION-AUTO`](experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).

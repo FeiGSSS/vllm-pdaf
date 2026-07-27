@@ -15,7 +15,7 @@ _PREFILL_KV_TRANSPORT_KEYS = {
 }
 
 
-def _requested_decode_capacity(req_data: dict[str, Any]) -> int | None:
+def requested_decode_capacity(req_data: dict[str, Any]) -> int | None:
     value = req_data.get("max_completion_tokens")
     if value is None:
         value = req_data.get("max_tokens")
@@ -30,12 +30,16 @@ def _requested_decode_capacity(req_data: dict[str, Any]) -> int | None:
     return capacity
 
 
-def build_prefill_payload(req_data: dict[str, Any]) -> dict[str, Any]:
-    decode_capacity = _requested_decode_capacity(req_data)
+def build_prefill_payload(
+    req_data: dict[str, Any],
+    *,
+    remote_kv_params: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    decode_capacity = requested_decode_capacity(req_data)
     payload = req_data.copy()
     payload["stream"] = False
     payload["max_tokens"] = 1
-    payload["kv_transfer_params"] = {
+    kv_params: dict[str, Any] = {
         "do_remote_decode": True,
         "do_remote_prefill": False,
         "remote_engine_id": None,
@@ -43,6 +47,13 @@ def build_prefill_payload(req_data: dict[str, Any]) -> dict[str, Any]:
         "remote_host": None,
         "remote_port": None,
     }
+    if remote_kv_params:
+        kv_params.update(remote_kv_params)
+        # A migrated request still acts as a Prefill producer after pulling
+        # the previous owner's blocks through bidirectional NIXL.
+        kv_params["do_remote_decode"] = True
+        kv_params["do_remote_prefill"] = False
+    payload["kv_transfer_params"] = kv_params
     if decode_capacity is not None:
         payload["kv_transfer_params"]["pap_decode_capacity_tokens"] = decode_capacity
     payload.pop("max_completion_tokens", None)

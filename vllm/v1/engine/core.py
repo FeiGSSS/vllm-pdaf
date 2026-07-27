@@ -394,8 +394,16 @@ class EngineCore:
         self,
         request_id: str,
         lease_id: str,
+        retain: bool = False,
     ) -> dict[str, Any]:
-        return PAPEngineAdapter.release_kv_lease(request_id, lease_id)
+        return PAPEngineAdapter.release_kv_lease(
+            request_id,
+            lease_id,
+            retain=retain,
+        )
+
+    def pap_export_kv_lease(self, request_id: str) -> dict[str, Any]:
+        return PAPEngineAdapter.export_kv_lease(request_id)
 
     def add_request(self, request: Request, request_wave: int = 0):
         """Add request to the scheduler.

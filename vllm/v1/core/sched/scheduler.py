@@ -556,6 +556,9 @@ class Scheduler(SchedulerInterface):
                         # The request can be scheduled.
                         break
 
+                    if self.pap_scheduler.evict_oldest_retained_kv_lease():
+                        continue
+
                     # The request cannot be scheduled.
                     # Preempt the lowest-priority request.
                     if self.policy == SchedulingPolicy.PRIORITY:
@@ -934,34 +937,39 @@ class Scheduler(SchedulerInterface):
                     # avoid deadlock and predictable preemptions.
                     reserved_blocks = self._inflight_prefill_reserved_blocks()
 
-                new_blocks = self.kv_cache_manager.allocate_slots(
-                    request,
-                    num_new_tokens,
-                    num_new_computed_tokens=num_new_local_computed_tokens,
-                    new_computed_blocks=new_computed_blocks,
-                    num_lookahead_tokens=effective_lookahead_tokens,
-                    num_external_computed_tokens=num_external_computed_tokens,
-                    delay_cache_blocks=load_kv_async,
-                    num_encoder_tokens=num_encoder_tokens,
-                    full_sequence_must_fit=self.scheduler_reserve_full_isl,
-                    allocate_external_computed_blocks=(
-                        pap_projection_state.allocate_external_computed_blocks
-                        if pap_projection_state is not None
-                        else True
-                    ),
-                    local_computed_token_offset=(
-                        pap_projection_state.local_computed_token_offset
-                        if pap_projection_state is not None
-                        else 0
-                    ),
-                    allocate_local_slots=(
-                        pap_projection_state.allocate_local_slots
-                        if pap_projection_state is not None
-                        else True
-                    ),
-                    reserved_blocks=reserved_blocks,
-                    has_scheduled_reqs=bool(self.running),
-                )
+                while True:
+                    new_blocks = self.kv_cache_manager.allocate_slots(
+                        request,
+                        num_new_tokens,
+                        num_new_computed_tokens=num_new_local_computed_tokens,
+                        new_computed_blocks=new_computed_blocks,
+                        num_lookahead_tokens=effective_lookahead_tokens,
+                        num_external_computed_tokens=num_external_computed_tokens,
+                        delay_cache_blocks=load_kv_async,
+                        num_encoder_tokens=num_encoder_tokens,
+                        full_sequence_must_fit=self.scheduler_reserve_full_isl,
+                        allocate_external_computed_blocks=(
+                            pap_projection_state.allocate_external_computed_blocks
+                            if pap_projection_state is not None
+                            else True
+                        ),
+                        local_computed_token_offset=(
+                            pap_projection_state.local_computed_token_offset
+                            if pap_projection_state is not None
+                            else 0
+                        ),
+                        allocate_local_slots=(
+                            pap_projection_state.allocate_local_slots
+                            if pap_projection_state is not None
+                            else True
+                        ),
+                        reserved_blocks=reserved_blocks,
+                        has_scheduled_reqs=bool(self.running),
+                    )
+                    if new_blocks is not None:
+                        break
+                    if not self.pap_scheduler.evict_oldest_retained_kv_lease():
+                        break
 
                 if new_blocks is None:
                     # The request cannot be scheduled.
@@ -2144,6 +2152,11 @@ class Scheduler(SchedulerInterface):
 
         self._inflight_prefills.discard(request)
         connector_delay_free_blocks, kv_xfer_params = self._connector_finished(request)
+        self.pap_scheduler.record_kv_export(
+            request_id=request.request_id,
+            seq_len=request.num_computed_tokens,
+            kv_transfer_params=kv_xfer_params,
+        )
         self.encoder_cache_manager.free(request)
         request_id = request.request_id
         self.finished_req_ids.add(request_id)

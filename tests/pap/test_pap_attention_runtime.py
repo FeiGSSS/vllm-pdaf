@@ -2476,6 +2476,65 @@ def test_attention_registry_release_session_notifies_prefill_lease(
     assert registry.get_session("req-lease") is None
 
 
+def test_attention_registry_can_detach_session_and_retain_prefill_lease(
+    monkeypatch,
+) -> None:
+    events = []
+
+    class FakeCommitClient:
+        enabled = True
+
+        def flush_request(self, request_id):
+            events.append(("flush", request_id))
+            return True
+
+        def forget_request(self, request_id):
+            events.append(("forget", request_id))
+
+    class FakeLeaseReleaseClient:
+        def release(self, **kwargs):
+            events.append(("release", kwargs))
+
+    monkeypatch.setattr(
+        kv_registry_module,
+        "_get_commit_client",
+        lambda: FakeCommitClient(),
+    )
+    monkeypatch.setattr(
+        kv_registry_module,
+        "_get_lease_release_client",
+        lambda: FakeLeaseReleaseClient(),
+    )
+
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-retain",
+            conversation_id="conv",
+            prefill_endpoint="http://localhost:8100",
+        )
+    )
+    registry._session_lease_ids["req-retain"] = "lease-1"
+
+    assert registry.release_session("req-retain", retain_lease=True)
+    assert events == [
+        ("flush", "req-retain"),
+        (
+            "release",
+            {
+                "request_id": "req-retain",
+                "lease_id": "lease-1",
+                "endpoint": (
+                    "http://localhost:8100/v1/pap/prefill/lease-release"
+                ),
+                "retain": True,
+            },
+        ),
+        ("forget", "req-retain"),
+    ]
+    assert registry.get_session("req-retain") is None
+
+
 def test_attention_registry_does_not_release_lease_before_commit_ack(
     monkeypatch,
 ) -> None:

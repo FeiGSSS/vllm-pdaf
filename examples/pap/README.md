@@ -35,10 +35,31 @@ transport for every Projection peer, so PA and Projection counts do not need to
 match. The default independent round-robin policy uses all configured nodes;
 `PAP_ROUTING_POLICY=projection_affinity` remains available for a static
 PA-to-Projection mapping. `PAP_ROUTING_POLICY=conversation_affinity` assigns a
-new conversation ID to the next PA and pins later turns to that PA. For each
-PA, the Gateway admits requests from one Projection source at a time and
-switches sources only after that request wave drains. Separate PA groups
-continue independently.
+new conversation ID to the next PA and pins later turns to that PA.
+`PAP_ROUTING_POLICY=attention_load` instead reserves each admitted prompt on
+the PA with the fewest committed Attention context tokens. A later turn always
+runs Prefill on its retained-history PA. After Prefill reports the exact full
+context length, the Gateway selects the Decode PA. If it changes, the target
+pulls the complete newly Prefilled KV through bidirectional NIXL and installs
+it into its colocated Attention process before Decode starts. The historical
+PA remains the Decode target unless moving reduces cross-PA aggregate load
+variance by at least
+`PAP_ATTENTION_LOAD_MIGRATION_MIN_BALANCE_GAIN_RATIO` (default `0.3`).
+Migrations are separated by
+`PAP_ATTENTION_LOAD_MIGRATION_MIN_INTERVAL` later-turn admissions (default
+`64`), and at most `PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT` migrations are
+unresolved at once (default `1`). Migration failure atomically falls Decode
+back to the completed Prefill's PA. Completed-turn leases are pressure-evictable
+LRU entries, while active Decode leases remain protected. This first
+load-aware policy is experimental. Its sparse default admits migration only
+when the predicted aggregate-load variance reduction is large and migration
+spacing permits it. On the 7PA1P C32 testbed this reduced 512 possible
+later-turn moves to 5-8 successful migrations while improving TTFT, ITL, and
+throughput in two repetitions. The general AIPerf topology default remains
+`conversation_affinity`; select `attention_load` explicitly. For each PA, the
+Gateway admits requests from one Projection source at a time and switches
+sources only after that request wave drains. Separate PA groups continue
+independently.
 
 Run a local PAP service:
 

@@ -97,6 +97,27 @@ class PAPSchedulerAdapter:
         pap_lease.pap_sweep_expired_leases()
 
     @staticmethod
+    def evict_oldest_retained_kv_lease() -> bool:
+        """Release one completed-turn lease under KV allocation pressure."""
+        return pap_lease.pap_evict_oldest_retained_kv_lease() is not None
+
+    @staticmethod
+    def record_kv_export(
+        *,
+        request_id: str,
+        seq_len: int,
+        kv_transfer_params: dict[str, Any] | None,
+    ) -> bool:
+        """Retain connector metadata beside its active PAP block lease."""
+        if not kv_transfer_params:
+            return False
+        return pap_lease.pap_record_kv_export(
+            request_id,
+            seq_len,
+            kv_transfer_params,
+        )
+
+    @staticmethod
     def defer_leased_blocks(
         *,
         request_id: str,

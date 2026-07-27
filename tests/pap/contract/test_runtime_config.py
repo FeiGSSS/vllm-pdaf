@@ -84,6 +84,12 @@ def test_runtime_config_accepts_conversation_affinity() -> None:
     assert config.routing_policy is PAPRoutingPolicy.CONVERSATION_AFFINITY
 
 
+def test_runtime_config_accepts_attention_load() -> None:
+    config = PAPRuntimeConfig.from_env({"PAP_ROUTING_POLICY": "attention_load"})
+
+    assert config.routing_policy is PAPRoutingPolicy.ATTENTION_LOAD
+
+
 @pytest.mark.parametrize(
     ("environment", "message"),
     [

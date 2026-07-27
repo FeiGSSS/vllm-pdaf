@@ -59,6 +59,7 @@ class LeaseReleaseClient:
         request_id: str,
         lease_id: str,
         endpoint: str | None = None,
+        retain: bool = False,
     ) -> bool:
         target_endpoint = str(endpoint or self.endpoint or "")
         if not target_endpoint:
@@ -67,16 +68,24 @@ class LeaseReleaseClient:
         last_error: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
             try:
+                payload: dict[str, str | bool] = {
+                    "request_id": request_id,
+                    "lease_id": lease_id,
+                }
+                if retain:
+                    payload["retain"] = True
                 response = httpx.post(
                     target_endpoint,
-                    json={"request_id": request_id, "lease_id": lease_id},
+                    json=payload,
                     timeout=self.timeout_s,
                 )
                 response.raise_for_status()
                 body = response.json()
-                if body.get("released", False) or body.get("reason") == (
-                    "unknown_or_released_lease"
-                ):
+                completed = body.get("retained" if retain else "released", False)
+                if completed or body.get("reason") in {
+                    "unknown_or_released_lease",
+                    "unknown_expired_or_released_lease",
+                }:
                     return True
                 raise RuntimeError(f"lease release was not acknowledged: {body}")
             except Exception as exc:

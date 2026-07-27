@@ -12,10 +12,15 @@ from vllm.config import (
     get_layers_from_vllm_config,
     set_current_vllm_config,
 )
+from vllm.distributed.kv_transfer import (
+    get_kv_transfer_group,
+    has_kv_transfer_group,
+)
 from vllm.model_executor.layers.attention import Attention
 from vllm.model_executor.layers.attention_layer_base import AttentionLayerBase
 from vllm.utils.torch_utils import get_dtype_size
 from vllm.v1.attention.backend import (
+    AttentionBackend,
     AttentionCGSupport,
     CommonAttentionMetadata,
 )
@@ -439,6 +444,93 @@ def init_kv_cache(
     )
     bind_kv_cache(kv_caches, forward_context, runner_kv_caches)
     return kv_caches
+
+
+def use_uniform_kv_cache(attn_groups: list[list[AttentionGroup]]) -> bool:
+    """Return whether a connector-backed cross-layer KV layout can be used."""
+    if not has_kv_transfer_group():
+        return False
+    if not get_kv_transfer_group().prefer_cross_layer_blocks:
+        return False
+    if len(attn_groups) != 1 or len(attn_groups[0]) != 1:
+        return False
+
+    kv_cache_spec = attn_groups[0][0].kv_cache_spec
+    return (
+        isinstance(kv_cache_spec, AttentionSpec)
+        and kv_cache_spec.indexes_kv_by_block_stride
+    )
+
+
+def init_uniform_kv_cache(
+    runner_kv_caches: list[torch.Tensor | list[torch.Tensor]],
+    forward_context: dict[str, Any],
+    kv_cache_config: KVCacheConfig,
+    attn_groups: list[list[AttentionGroup]],
+    device: torch.device,
+    cache_dtype: str,
+    kernel_block_sizes: list[int],
+    vllm_config: VllmConfig,
+) -> tuple[dict[str, torch.Tensor], torch.Tensor, type[AttentionBackend]]:
+    """Allocate the connector-optimized cross-layer KV cache layout."""
+    attn_group = attn_groups[0][0]
+    kv_cache_spec = attn_group.kv_cache_spec
+    assert isinstance(kv_cache_spec, AttentionSpec)
+
+    tensor_sizes = {
+        kv_cache_tensor.size for kv_cache_tensor in kv_cache_config.kv_cache_tensors
+    }
+    assert len(tensor_sizes) == 1
+    tensor_size = tensor_sizes.pop()
+    page_size = kv_cache_spec.page_size_bytes
+    assert tensor_size % page_size == 0
+    num_blocks = tensor_size // page_size
+    num_layers = len(kv_cache_config.kv_cache_tensors)
+
+    assert len(kernel_block_sizes) == 1
+    kernel_block_size = kernel_block_sizes[0]
+    num_blocks_per_kv_block = kv_cache_spec.block_size // kernel_block_size
+    kernel_num_blocks = num_blocks * num_blocks_per_kv_block
+
+    attn_backend = attn_group.backend
+    kv_cache_shape = attn_backend.get_kv_cache_shape(
+        kernel_num_blocks,
+        kernel_block_size,
+        kv_cache_spec.num_kv_heads,
+        kv_cache_spec.head_size,
+        cache_dtype_str=cache_dtype,
+    )
+    kv_cache_shape = (num_layers,) + kv_cache_shape
+    try:
+        stride_order = attn_backend.get_kv_cache_stride_order(
+            include_num_layers_dimension=True
+        )
+        assert len(stride_order) == len(kv_cache_shape)
+    except (AttributeError, NotImplementedError):
+        stride_order = tuple(range(len(kv_cache_shape)))
+    allocated_shape = tuple(kv_cache_shape[i] for i in stride_order)
+
+    cross_layers_kv_cache = (
+        torch.zeros(
+            tensor_size * num_layers,
+            dtype=torch.int8,
+            device=device,
+        )
+        .view(kv_cache_spec.dtype)
+        .view(allocated_shape)
+    )
+    inv_order = [stride_order.index(i) for i in range(len(stride_order))]
+    per_layer_cache = cross_layers_kv_cache.permute(*inv_order)
+
+    kv_caches: dict[str, torch.Tensor] = {}
+    for index, kv_cache_tensor in enumerate(kv_cache_config.kv_cache_tensors):
+        for layer_name in kv_cache_tensor.shared_by:
+            kv_caches[layer_name] = per_layer_cache[index]
+    for layer_name, target_layer in get_shared_kv_cache_layers(vllm_config).items():
+        kv_caches[layer_name] = kv_caches[target_layer]
+
+    bind_kv_cache(kv_caches, forward_context, runner_kv_caches)
+    return kv_caches, cross_layers_kv_cache, attn_backend
 
 
 def init_kv_cache_metadata_only(

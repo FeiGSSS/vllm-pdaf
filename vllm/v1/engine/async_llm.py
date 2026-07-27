@@ -944,11 +944,24 @@ class AsyncLLM(EngineClient):
         self,
         request_id: str,
         lease_id: str,
+        retain: bool = False,
     ) -> dict[str, Any]:
+        if not retain:
+            return await self.engine_core.pap_release_kv_lease_async(
+                request_id,
+                lease_id,
+            )
         return await self.engine_core.pap_release_kv_lease_async(
             request_id,
             lease_id,
+            True,
         )
+
+    async def pap_export_kv_lease_async(
+        self,
+        request_id: str,
+    ) -> dict[str, Any]:
+        return await self.engine_core.pap_export_kv_lease_async(request_id)
 
     async def sleep(self, level: int = 1, mode: PauseMode = "abort") -> None:
         if level >= 1:

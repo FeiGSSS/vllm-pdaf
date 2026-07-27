@@ -7,6 +7,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import math
 import os
 import time
 import uuid
@@ -36,6 +37,7 @@ from vllm.pap.gateway.payloads import (
     build_prefill_payload,
     build_projection_kv_unaware_payload,
     enrich_prefill_kv_params,
+    requested_decode_capacity,
 )
 
 logging.basicConfig(
@@ -202,6 +204,500 @@ class PAPConversationRouter:
 
 
 @dataclass
+class _PAPAttentionLoadAdmission:
+    conversation_id: str
+    prefill_group: PAPGroup
+    group: PAPGroup
+    history_group: PAPGroup | None
+    context_tokens: int
+    reserved_history_tokens: int = 0
+    decode_placed: bool = False
+    migration_pending: bool = False
+    migration_succeeded: bool = False
+
+
+class PAPAttentionLoadRouter:
+    """Place each turn on the PA with the least committed Attention load."""
+
+    def __init__(
+        self,
+        groups: list[PAPGroup],
+        *,
+        migration_min_balance_gain_ratio: float = 0.3,
+        migration_min_interval: int = 64,
+        migration_max_inflight: int = 1,
+    ) -> None:
+        if not groups:
+            raise ValueError("PAP attention-load routing requires a PA group")
+        if (
+            not math.isfinite(migration_min_balance_gain_ratio)
+            or migration_min_balance_gain_ratio < 0
+        ):
+            raise ValueError(
+                "migration_min_balance_gain_ratio must be finite and >= 0"
+            )
+        if migration_min_interval < 1:
+            raise ValueError("migration_min_interval must be >= 1")
+        if migration_max_inflight < 0:
+            raise ValueError("migration_max_inflight must be >= 0")
+        self._groups = groups
+        self._group_indices = {group: index for index, group in enumerate(groups)}
+        self._migration_min_balance_gain_ratio = (
+            migration_min_balance_gain_ratio
+        )
+        self._migration_min_interval = migration_min_interval
+        self._migration_max_inflight = migration_max_inflight
+        self._next_group = count()
+        self._prefill_loads = {group: 0 for group in groups}
+        self._decode_loads = {group: 0 for group in groups}
+        self._history_loads = {group: 0 for group in groups}
+        self._history_owners: dict[str, PAPGroup] = {}
+        self._history_context_tokens: dict[str, int] = {}
+        self._history_request_ids: dict[str, str] = {}
+        self._admissions: dict[str, _PAPAttentionLoadAdmission] = {}
+        self._prefill_request_counts: Counter[PAPGroup] = Counter()
+        self._decode_request_counts: Counter[PAPGroup] = Counter()
+        self._migration_fallback_count = 0
+        self._migration_count = 0
+        self._migration_miss_count = 0
+        self._history_admission_count = 0
+        self._last_migration_history_admission = 1 - migration_min_interval
+        self._migration_inflight_count = 0
+        self._migration_candidate_count = 0
+        self._migration_selected_count = 0
+        self._migration_suppressed_count = 0
+        self._migration_suppressed_by_balance_count = 0
+        self._migration_suppressed_by_interval_count = 0
+        self._migration_suppressed_by_inflight_count = 0
+
+    @staticmethod
+    def _imbalance(loads: list[int]) -> int:
+        """Return an integer proportional to load variance."""
+        total = sum(loads)
+        return len(loads) * sum(load * load for load in loads) - total * total
+
+    def history_context_tokens(self, conversation_id: str) -> int:
+        """Return the last completed turn's context length."""
+        return self._history_context_tokens.get(conversation_id, 0)
+
+    @property
+    def migration_enabled(self) -> bool:
+        """Return whether this router may select cross-PA migration."""
+        return self._migration_max_inflight > 0
+
+    def history(
+        self,
+        conversation_id: str,
+    ) -> tuple[PAPGroup, str, int] | None:
+        """Return the retained owner, request ID, and context length."""
+        group = self._history_owners.get(conversation_id)
+        request_id = self._history_request_ids.get(conversation_id)
+        if group is None or request_id is None:
+            return None
+        return (
+            group,
+            request_id,
+            self._history_context_tokens.get(conversation_id, 0),
+        )
+
+    def admit(
+        self,
+        *,
+        request_id: str,
+        conversation_id: str,
+        estimated_context_tokens: int,
+    ) -> PAPGroup:
+        """Choose the Prefill PA and reserve its pending Decode load."""
+        if request_id in self._admissions:
+            raise ValueError(f"duplicate PAP request admission: {request_id}")
+        context_tokens = max(1, int(estimated_context_tokens))
+        history_group = self._history_owners.get(conversation_id)
+        reserved_history_tokens = 0
+        if history_group is not None:
+            self._history_admission_count += 1
+            reserved_history_tokens = self._history_context_tokens.get(
+                conversation_id,
+                0,
+            )
+            self._history_loads[history_group] -= reserved_history_tokens
+            if self._history_loads[history_group] < 0:
+                raise RuntimeError("negative PAP reserved history load")
+        committed_loads = self._committed_loads()
+        if history_group is not None:
+            group = history_group
+        else:
+            minimum_load = min(committed_loads.values())
+            candidates = [
+                group
+                for group in self._groups
+                if committed_loads[group] == minimum_load
+            ]
+            group = candidates[next(self._next_group) % len(candidates)]
+        self._prefill_loads[group] += context_tokens
+        self._prefill_request_counts[group] += 1
+        self._admissions[request_id] = _PAPAttentionLoadAdmission(
+            conversation_id=conversation_id,
+            prefill_group=group,
+            group=group,
+            history_group=history_group,
+            context_tokens=context_tokens,
+            reserved_history_tokens=reserved_history_tokens,
+        )
+        return group
+
+    def _committed_loads(self) -> dict[PAPGroup, int]:
+        return {
+            group: (
+                self._prefill_loads[group]
+                + self._decode_loads[group]
+                + self._history_loads[group]
+            )
+            for group in self._groups
+        }
+
+    def history_group(self, request_id: str) -> PAPGroup | None:
+        """Return the previous turn's PA for an admitted request."""
+        return self._admissions[request_id].history_group
+
+    def observe_prefill(self, request_id: str, prompt_tokens: int) -> PAPGroup:
+        """Commit exact Prefill load and choose the request's Decode PA."""
+        admission = self._admissions[request_id]
+        if admission.decode_placed:
+            raise RuntimeError(f"PAP request already placed for Decode: {request_id}")
+        exact_tokens = max(1, int(prompt_tokens))
+        prefill_group = admission.prefill_group
+        self._prefill_loads[prefill_group] -= admission.context_tokens
+        if self._prefill_loads[prefill_group] < 0:
+            raise RuntimeError("negative PAP Prefill load")
+        admission.context_tokens = exact_tokens
+        group = prefill_group
+        migration_pending = False
+
+        if admission.history_group is not None:
+            committed_loads = self._committed_loads()
+            minimum_load = min(committed_loads.values())
+            candidates = [
+                candidate
+                for candidate in self._groups
+                if committed_loads[candidate] == minimum_load
+            ]
+            candidate = (
+                prefill_group
+                if prefill_group in candidates
+                else candidates[next(self._next_group) % len(candidates)]
+            )
+            stay_loads = [
+                load + exact_tokens if candidate_group == prefill_group else load
+                for candidate_group, load in committed_loads.items()
+            ]
+            move_loads = [
+                load + exact_tokens if candidate_group == candidate else load
+                for candidate_group, load in committed_loads.items()
+            ]
+            stay_imbalance = self._imbalance(stay_loads)
+            move_imbalance = self._imbalance(move_loads)
+            balance_gain = max(0, stay_imbalance - move_imbalance)
+            balance_gain_ratio = (
+                balance_gain / stay_imbalance if stay_imbalance else 0.0
+            )
+            if candidate != prefill_group and balance_gain > 0:
+                self._migration_candidate_count += 1
+            balance_ready = (
+                candidate != prefill_group
+                and balance_gain > 0
+                and balance_gain_ratio
+                >= self._migration_min_balance_gain_ratio
+            )
+            interval_ready = (
+                self._history_admission_count
+                - self._last_migration_history_admission
+                >= self._migration_min_interval
+            )
+            inflight_ready = (
+                self._migration_inflight_count
+                < self._migration_max_inflight
+            )
+            should_migrate = balance_ready and interval_ready and inflight_ready
+            if should_migrate:
+                group = candidate
+                migration_pending = True
+                self._migration_inflight_count += 1
+                self._last_migration_history_admission = (
+                    self._history_admission_count
+                )
+                self._migration_selected_count += 1
+            elif candidate != prefill_group and balance_gain > 0:
+                self._migration_suppressed_count += 1
+                if not balance_ready:
+                    self._migration_suppressed_by_balance_count += 1
+                elif not interval_ready:
+                    self._migration_suppressed_by_interval_count += 1
+                elif not inflight_ready:
+                    self._migration_suppressed_by_inflight_count += 1
+            logger.info(
+                "PAP attention-load Decode placement request_id=%s "
+                "prefill_pa=%d candidate_pa=%d action=%s stay_peak_tokens=%d "
+                "move_peak_tokens=%d stay_imbalance=%d move_imbalance=%d "
+                "balance_gain_ratio=%.6f threshold=%.6f interval_ready=%d "
+                "inflight_ready=%d stay_loads=%s move_loads=%s",
+                request_id,
+                self._group_indices[prefill_group],
+                self._group_indices[candidate],
+                "migrate" if should_migrate else "stay",
+                max(stay_loads),
+                max(move_loads),
+                stay_imbalance,
+                move_imbalance,
+                balance_gain_ratio,
+                self._migration_min_balance_gain_ratio,
+                int(interval_ready),
+                int(inflight_ready),
+                ",".join(str(load) for load in stay_loads),
+                ",".join(str(load) for load in move_loads),
+            )
+
+        admission.group = group
+        admission.decode_placed = True
+        admission.migration_pending = migration_pending
+        self._decode_loads[group] += exact_tokens
+        self._decode_request_counts[group] += 1
+        return group
+
+    def decode_group(self, request_id: str) -> PAPGroup:
+        """Return the current Decode placement for an admitted request."""
+        admission = self._admissions[request_id]
+        if not admission.decode_placed:
+            raise RuntimeError(f"PAP request is not placed for Decode: {request_id}")
+        return admission.group
+
+    def mark_migration_succeeded(self, request_id: str) -> None:
+        """Record a completed cross-PA KV migration."""
+        admission = self._admissions[request_id]
+        if (
+            admission.history_group is not None
+            and admission.history_group != admission.group
+            and not admission.migration_succeeded
+        ):
+            admission.migration_succeeded = True
+            self._migration_count += 1
+        self._resolve_migration(admission)
+
+    def mark_migration_missed(self, request_id: str) -> PAPGroup:
+        """Atomically fall a failed migration back to its Prefill PA."""
+        admission = self._admissions[request_id]
+        if admission.prefill_group != admission.group:
+            self._migration_miss_count += 1
+            self._migration_fallback_count += 1
+            self._decode_loads[admission.group] -= admission.context_tokens
+            self._decode_request_counts[admission.group] -= 1
+            if self._decode_loads[admission.group] < 0:
+                raise RuntimeError("negative PAP Decode load after fallback")
+            admission.group = admission.prefill_group
+            self._decode_loads[admission.group] += admission.context_tokens
+            self._decode_request_counts[admission.group] += 1
+        self._resolve_migration(admission)
+        return admission.group
+
+    def _resolve_migration(
+        self,
+        admission: _PAPAttentionLoadAdmission,
+    ) -> None:
+        if not admission.migration_pending:
+            return
+        admission.migration_pending = False
+        self._migration_inflight_count -= 1
+        if self._migration_inflight_count < 0:
+            raise RuntimeError("negative PAP migration in-flight count")
+
+    def finish(
+        self,
+        request_id: str,
+        *,
+        completion_tokens: int = 0,
+        prefill_kv_handle: str | None = None,
+    ) -> None:
+        """Release active load and retain the new history owner."""
+        admission = self._admissions.pop(request_id)
+        self._resolve_migration(admission)
+        if not admission.decode_placed:
+            raise RuntimeError(f"PAP request finished before Decode: {request_id}")
+        self._decode_loads[admission.group] -= admission.context_tokens
+        if self._decode_loads[admission.group] < 0:
+            raise RuntimeError("negative PAP Decode load")
+        if admission.conversation_id:
+            retained_context_tokens = admission.context_tokens + max(
+                0,
+                int(completion_tokens),
+            )
+            self._history_owners[admission.conversation_id] = admission.group
+            self._history_request_ids[admission.conversation_id] = str(
+                prefill_kv_handle or request_id
+            )
+            self._history_context_tokens[admission.conversation_id] = (
+                retained_context_tokens
+            )
+            self._history_loads[admission.group] += retained_context_tokens
+
+    def abort(self, request_id: str) -> None:
+        """Roll back a request that did not complete Decode."""
+        admission = self._admissions.pop(request_id, None)
+        if admission is None:
+            return
+        self._resolve_migration(admission)
+        if admission.decode_placed:
+            self._decode_loads[admission.group] -= admission.context_tokens
+            if self._decode_loads[admission.group] < 0:
+                raise RuntimeError("negative PAP Decode load")
+        else:
+            self._prefill_loads[admission.prefill_group] -= (
+                admission.context_tokens
+            )
+            if self._prefill_loads[admission.prefill_group] < 0:
+                raise RuntimeError("negative PAP Prefill load")
+        if admission.history_group is not None:
+            self._history_loads[
+                admission.history_group
+            ] += admission.reserved_history_tokens
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return current token load and migration counters by PA."""
+        history_counts = Counter(self._history_owners.values())
+        return {
+            "active_requests": len(self._admissions),
+            "conversations": len(self._history_owners),
+            "migration_min_balance_gain_ratio": (
+                self._migration_min_balance_gain_ratio
+            ),
+            "migration_min_interval": self._migration_min_interval,
+            "migration_max_inflight": self._migration_max_inflight,
+            "migration_inflight_count": self._migration_inflight_count,
+            "history_admission_count": self._history_admission_count,
+            "migration_candidate_count": self._migration_candidate_count,
+            "migration_selected_count": self._migration_selected_count,
+            "migration_suppressed_count": self._migration_suppressed_count,
+            "migration_suppressed_by_balance_count": (
+                self._migration_suppressed_by_balance_count
+            ),
+            "migration_suppressed_by_interval_count": (
+                self._migration_suppressed_by_interval_count
+            ),
+            "migration_suppressed_by_inflight_count": (
+                self._migration_suppressed_by_inflight_count
+            ),
+            "migration_count": self._migration_count,
+            "migration_miss_count": self._migration_miss_count,
+            "migration_fallback_count": self._migration_fallback_count,
+            "pa_prefill_tokens": {
+                str(self._group_indices[group]): self._prefill_loads[group]
+                for group in self._groups
+            },
+            "pa_attention_tokens": {
+                str(self._group_indices[group]): self._decode_loads[group]
+                for group in self._groups
+            },
+            "pa_history_tokens": {
+                str(self._group_indices[group]): self._history_loads[group]
+                for group in self._groups
+            },
+            "pa_committed_tokens": {
+                str(self._group_indices[group]): (
+                    self._prefill_loads[group]
+                    + self._decode_loads[group]
+                    + self._history_loads[group]
+                )
+                for group in self._groups
+            },
+            "pa_history_owners": {
+                str(self._group_indices[group]): history_counts[group]
+                for group in self._groups
+            },
+            "pa_prefill_requests": {
+                str(self._group_indices[group]): self._prefill_request_counts[group]
+                for group in self._groups
+            },
+            "pa_decode_requests": {
+                str(self._group_indices[group]): self._decode_request_counts[group]
+                for group in self._groups
+            },
+        }
+
+
+def _request_text_bytes(value: Any) -> int:
+    if isinstance(value, str):
+        return len(value.encode("utf-8"))
+    if isinstance(value, list):
+        return sum(_request_text_bytes(item) for item in value)
+    if isinstance(value, dict):
+        return sum(
+            _request_text_bytes(item)
+            for key, item in value.items()
+            if key in {"content", "text"}
+        )
+    return 0
+
+
+def _estimate_context_tokens(
+    req_data: dict[str, Any],
+    *,
+    history_context_tokens: int = 0,
+    explicit_context_tokens: str | int | None = None,
+) -> int:
+    """Estimate a prompt only until Prefill reports its exact token count."""
+    if explicit_context_tokens is not None:
+        try:
+            value = int(explicit_context_tokens)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("PAP context token hint must be an integer") from exc
+        if value <= 0:
+            raise ValueError("PAP context token hint must be positive")
+        return value
+    prompt = req_data.get("prompt")
+    if (
+        isinstance(prompt, list)
+        and prompt
+        and all(isinstance(token_id, int) for token_id in prompt)
+    ):
+        return len(prompt)
+    text_bytes = _request_text_bytes(
+        req_data.get("messages", prompt if prompt is not None else "")
+    )
+    estimated = max(1, math.ceil(text_bytes / 4))
+    return max(estimated, int(history_context_tokens))
+
+
+def _migration_prefix_kv_params(
+    export_response: dict[str, Any],
+    *,
+    source_group: PAPGroup,
+    block_size: int,
+) -> tuple[dict[str, Any], int]:
+    """Limit a retained source manifest to its exact historical prefix."""
+    cached_tokens = export_response.get("seq_len")
+    if not isinstance(cached_tokens, int) or cached_tokens <= 0:
+        raise RuntimeError("PAP migration source has no retained historical prefix")
+    if block_size <= 0:
+        raise ValueError("PAP migration block size must be positive")
+
+    kv_params = enrich_prefill_kv_params(
+        export_response.get("kv_transfer_params") or {},
+        prefill_host=source_group.prefill_host,
+        prefill_nixl_port=source_group.prefill_nixl_port,
+    )
+    remote_block_ids = kv_params.get("remote_block_ids")
+    if not isinstance(remote_block_ids, list) or not remote_block_ids:
+        raise RuntimeError("PAP migration source returned no remote KV blocks")
+    prefix_blocks = math.ceil(cached_tokens / block_size)
+    trimmed_block_ids: list[list[int]] = []
+    for group_blocks in remote_block_ids:
+        if not isinstance(group_blocks, list) or len(group_blocks) < prefix_blocks:
+            raise RuntimeError("PAP migration source returned incomplete KV blocks")
+        trimmed_block_ids.append(group_blocks[:prefix_blocks])
+    kv_params["remote_block_ids"] = trimmed_block_ids
+    kv_params["remote_num_tokens"] = cached_tokens
+    return kv_params, cached_tokens
+
+
+@dataclass
 class _PAPProjectionAdmissionState:
     owner: ProjectionInstance | None = None
     active_requests: int = 0
@@ -360,6 +856,9 @@ def select_instances(
     routing_policy: str = "round_robin",
     conversation_id: str = "",
     conversation_router: PAPConversationRouter | None = None,
+    attention_load_router: PAPAttentionLoadRouter | None = None,
+    request_id: str = "",
+    estimated_context_tokens: int = 1,
 ) -> tuple[PAPGroup, ProjectionInstance]:
     group_index = request_number % len(groups)
     group = groups[group_index]
@@ -385,6 +884,15 @@ def select_instances(
         group = conversation_router.select_group(
             conversation_id,
             request_number=request_number,
+        )
+        projection_index = request_number % len(projections)
+    elif routing_policy == "attention_load":
+        if attention_load_router is None:
+            raise ValueError("attention_load requires a PAPAttentionLoadRouter")
+        group = attention_load_router.admit(
+            request_id=request_id,
+            conversation_id=conversation_id,
+            estimated_context_tokens=estimated_context_tokens,
         )
         projection_index = request_number % len(projections)
     else:
@@ -441,6 +949,130 @@ async def _post_json(
     return resp.json()
 
 
+async def _export_prefill_kv(
+    prefill: PAPServiceClient,
+    request_id: str,
+) -> dict[str, Any] | None:
+    """Fetch retained KV metadata without entering the model scheduler."""
+    response = await prefill.client.post(
+        "/v1/pap/prefill/kv-export",
+        json={"request_id": request_id},
+        headers=_headers(request_id),
+    )
+    response.raise_for_status()
+    body = response.json()
+    return body if body.get("exported", False) else None
+
+
+async def _release_prefill_kv(
+    prefill: PAPServiceClient,
+    *,
+    request_id: str,
+    lease_id: str,
+) -> bool:
+    """Release a retained historical Prefill lease after replacement."""
+    response = await prefill.client.post(
+        "/v1/pap/prefill/lease-release",
+        json={"request_id": request_id, "lease_id": lease_id},
+        headers=_headers(request_id),
+    )
+    response.raise_for_status()
+    body = response.json()
+    return bool(
+        body.get("released", False)
+        or body.get("reason") == "unknown_or_released_lease"
+    )
+
+
+async def _install_completed_prefill_on_group(
+    *,
+    api_path: str,
+    req_data: dict[str, Any],
+    request_id: str,
+    conversation_id: str,
+    source_group: PAPGroup,
+    source_prefill_response: dict[str, Any],
+    target_group: PAPGroup,
+    target_prefill: PAPServiceClient,
+    target_attention_clients: list[PAPServiceClient],
+    pap_mode: str,
+) -> tuple[list[dict[str, Any]], dict[str, Any], int]:
+    """Import a completed Prefill KV snapshot into the Decode target PA."""
+    source_kv_params = enrich_prefill_kv_params(
+        source_prefill_response.get("kv_transfer_params") or {},
+        prefill_host=source_group.prefill_host,
+        prefill_nixl_port=source_group.prefill_nixl_port,
+    )
+    source_prefix_len = prefill_prefix_len_from_kv_params(source_kv_params)
+    if source_prefix_len is None:
+        raise RuntimeError("PAP completed Prefill returned no transferable KV")
+    remote_kv_params, migrated_tokens = _migration_prefix_kv_params(
+        {
+            "seq_len": source_prefix_len,
+            "kv_transfer_params": source_kv_params,
+        },
+        source_group=source_group,
+        block_size=int(os.environ.get("PAP_BLOCK_SIZE", "16")),
+    )
+
+    target_sessions = await register_attention_handles(
+        target_attention_clients,
+        request_id=request_id,
+        conversation_id=conversation_id,
+        prefill_endpoint=target_group.prefill_base_url,
+        kv_transfer_params={},
+        prefix_len=None,
+    )
+    try:
+        target_payload = attach_pap_prefill_attention_params(
+            build_prefill_payload(
+                req_data,
+                remote_kv_params=remote_kv_params,
+            ),
+            pap_attention_endpoint=target_group.attention_base_url,
+            pap_attention_tcp_endpoint=target_group.attention_tcp_endpoint,
+            pap_offload_exec_zmq_endpoint=target_group.attention_zmq_endpoint,
+            pap_prefill_kv_handle=str(
+                target_sessions[0].get("prefill_kv_handle")
+            ),
+            pap_mode=pap_mode,
+        )
+        started = time.perf_counter()
+        target_response = await _post_json(
+            target_prefill,
+            api_path,
+            target_payload,
+            request_id,
+        )
+        migration_ms = int((time.perf_counter() - started) * 1000)
+        target_kv_params = enrich_prefill_kv_params(
+            target_response.get("kv_transfer_params") or {},
+            prefill_host=target_group.prefill_host,
+            prefill_nixl_port=target_group.prefill_nixl_port,
+        )
+        target_prefix_len = prefill_prefix_len_from_kv_params(target_kv_params)
+        if target_prefix_len != migrated_tokens:
+            raise RuntimeError(
+                "PAP completed Prefill migration length mismatch "
+                f"source={migrated_tokens} target={target_prefix_len}"
+            )
+        ready = all(
+            [
+                await wait_attention_prefill_ready(attention, request_id)
+                for attention in target_attention_clients
+            ]
+        )
+        if not ready:
+            raise RuntimeError("PAP target Attention did not install migrated KV")
+        return target_sessions, target_response, migration_ms
+    except Exception:
+        await _cleanup_attention_sessions(
+            target_attention_clients,
+            request_id,
+        )
+        raise
+
+
 async def register_attention_handles(
     attention_clients: list[PAPServiceClient],
     *,
@@ -474,10 +1106,13 @@ async def register_attention_handles(
 async def _delete_attention_session(
     attention: PAPServiceClient,
     request_id: str,
+    *,
+    retain_lease: bool = False,
 ) -> None:
     resp = await attention.client.delete(
         f"/v1/pap/attention/sessions/{request_id}",
         headers=_headers(request_id),
+        params={"retain_lease": "true"} if retain_lease else None,
     )
     resp.raise_for_status()
 
@@ -485,10 +1120,16 @@ async def _delete_attention_session(
 async def _cleanup_attention_sessions(
     attention_clients: list[PAPServiceClient],
     request_id: str,
+    *,
+    retain_lease: bool = False,
 ) -> None:
     for attention in attention_clients:
         try:
-            await _delete_attention_session(attention, request_id)
+            await _delete_attention_session(
+                attention,
+                request_id,
+                retain_lease=retain_lease,
+            )
         except Exception as exc:
             logger.warning(
                 "failed to release PAP attention session request_id=%s "
@@ -557,6 +1198,10 @@ async def _stream_projection_with_cleanup(
     admission: PAPProjectionAdmission,
     group: PAPGroup,
     projection: ProjectionInstance,
+    attention_load_router: PAPAttentionLoadRouter | None = None,
+    completion_tokens: int = 0,
+    retain_completed_lease: bool = False,
+    prefill_kv_handle: str | None = None,
 ):
     terminal_marker = b"data: [DONE]"
     pending = b""
@@ -581,8 +1226,22 @@ async def _stream_projection_with_cleanup(
         if pending:
             yield pending
     finally:
+        completed = bool(terminal_chunks)
+        if attention_load_router is not None:
+            if completed:
+                attention_load_router.finish(
+                    request_id,
+                    completion_tokens=completion_tokens,
+                    prefill_kv_handle=prefill_kv_handle,
+                )
+            else:
+                attention_load_router.abort(request_id)
         try:
-            await _cleanup_attention_sessions(attention_clients, request_id)
+            await _cleanup_attention_sessions(
+                attention_clients,
+                request_id,
+                retain_lease=completed and retain_completed_lease,
+            )
         finally:
             await admission.release(group, projection)
     for chunk in terminal_chunks:
@@ -615,6 +1274,14 @@ async def lifespan(app: FastAPI):
         for projection in app.state.projections
     }
     app.state.conversation_router = PAPConversationRouter(app.state.groups)
+    app.state.attention_load_router = PAPAttentionLoadRouter(
+        app.state.groups,
+        migration_min_balance_gain_ratio=(
+            args.attention_load_migration_min_balance_gain_ratio
+        ),
+        migration_min_interval=args.attention_load_migration_min_interval,
+        migration_max_inflight=args.attention_load_migration_max_inflight,
+    )
     app.state.projection_admission = PAPProjectionAdmission(app.state.groups)
     yield
     attention_clients = [
@@ -656,6 +1323,46 @@ async def _handle_openai_request(api_path: str, request: Request):
     )
     client_stream = bool(req_data.get("stream", False))
     request_number = next(request.app.state.request_counter)
+    attention_load_router: PAPAttentionLoadRouter | None = None
+    estimated_context_tokens = 1
+    history_record: tuple[PAPGroup, str, int] | None = None
+    history_export: dict[str, Any] | None = None
+    if request.app.state.args.routing_policy == "attention_load":
+        attention_load_router = request.app.state.attention_load_router
+        history_record = (
+            attention_load_router.history(conversation_id)
+            if conversation_id
+            else None
+        )
+        history_context_tokens = history_record[2] if history_record else 0
+        if history_record is not None and attention_load_router.migration_enabled:
+            history_group, history_request_id, _ = history_record
+            try:
+                history_export = await _export_prefill_kv(
+                    request.app.state.prefill_clients[history_group],
+                    history_request_id,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "PAP retained KV export failed request_id=%s "
+                    "history_request_id=%s source_pa=%d error=%s",
+                    request_id,
+                    history_request_id,
+                    request.app.state.groups.index(history_group),
+                    exc,
+                )
+            if history_export is not None:
+                exported_seq_len = history_export.get("seq_len")
+                if isinstance(exported_seq_len, int) and exported_seq_len > 0:
+                    history_context_tokens = exported_seq_len
+        explicit_context_tokens = req_data.pop("pap_context_tokens", None)
+        if explicit_context_tokens is None:
+            explicit_context_tokens = request.headers.get("X-PAP-Context-Tokens")
+        estimated_context_tokens = _estimate_context_tokens(
+            req_data,
+            history_context_tokens=history_context_tokens,
+            explicit_context_tokens=explicit_context_tokens,
+        )
     group, projection = select_instances(
         request_number,
         request.app.state.groups,
@@ -663,18 +1370,21 @@ async def _handle_openai_request(api_path: str, request: Request):
         routing_policy=request.app.state.args.routing_policy,
         conversation_id=conversation_id,
         conversation_router=request.app.state.conversation_router,
+        attention_load_router=attention_load_router,
+        request_id=request_id,
+        estimated_context_tokens=estimated_context_tokens,
     )
+    prefill_group = group
+    prefill_group_index = request.app.state.groups.index(prefill_group)
     prefill = request.app.state.prefill_clients[group]
     attention_clients = request.app.state.attention_clients[group]
     projection_client = request.app.state.projection_clients[projection]
-    group_index = request.app.state.groups.index(group)
     projection_index = request.app.state.projections.index(projection)
-    pair_name = f"pa{group_index}:p{projection_index}"
-    request.app.state.pair_counts[pair_name] += 1
 
     attention_sessions: list[dict[str, Any]] | None = None
     handed_off_stream_cleanup = False
     projection_admitted = False
+    attention_load_finished = False
     try:
         register_start = time.perf_counter() if profile else 0.0
         attention_sessions = await register_attention_handles(
@@ -705,6 +1415,119 @@ async def _handle_openai_request(api_path: str, request: Request):
         t0 = time.time()
         prefill_resp = await _post_json(prefill, api_path, prefill_payload, request_id)
         prefill_ms = int((time.time() - t0) * 1000)
+        migration_ms = 0
+        migration_attention_ready = False
+        usage = prefill_resp.get("usage")
+        prompt_tokens = None
+        if isinstance(usage, dict):
+            value = usage.get("prompt_tokens")
+            if isinstance(value, int) and value > 0:
+                prompt_tokens = value
+        if prompt_tokens is None:
+            source_kv_params = prefill_resp.get("kv_transfer_params") or {}
+            prompt_tokens = prefill_prefix_len_from_kv_params(source_kv_params)
+        if prompt_tokens is None:
+            prompt_tokens = estimated_context_tokens
+
+        if attention_load_router is not None:
+            decode_group = attention_load_router.observe_prefill(
+                request_id,
+                prompt_tokens,
+            )
+            if decode_group != prefill_group:
+                decode_group_index = request.app.state.groups.index(decode_group)
+                target_attention_clients = (
+                    request.app.state.attention_clients[decode_group]
+                )
+                logger.info(
+                    "PAP completed Prefill migration planned request_id=%s "
+                    "source_pa=%d target_pa=%d tokens=%d",
+                    request_id,
+                    prefill_group_index,
+                    decode_group_index,
+                    prompt_tokens,
+                )
+                migration_started = time.perf_counter()
+                try:
+                    target_sessions, target_response, migration_ms = (
+                        await _install_completed_prefill_on_group(
+                            api_path=api_path,
+                            req_data=req_data,
+                            request_id=request_id,
+                            conversation_id=conversation_id,
+                            source_group=prefill_group,
+                            source_prefill_response=prefill_resp,
+                            target_group=decode_group,
+                            target_prefill=(
+                                request.app.state.prefill_clients[decode_group]
+                            ),
+                            target_attention_clients=target_attention_clients,
+                            pap_mode=request.app.state.args.pap_mode,
+                        )
+                    )
+                except Exception as exc:
+                    migration_ms = int(
+                        (time.perf_counter() - migration_started) * 1000
+                    )
+                    group = attention_load_router.mark_migration_missed(
+                        request_id
+                    )
+                    logger.warning(
+                        "PAP completed Prefill migration failed; using source "
+                        "request_id=%s source_pa=%d target_pa=%d error=%s",
+                        request_id,
+                        prefill_group_index,
+                        decode_group_index,
+                        exc,
+                    )
+                else:
+                    await _cleanup_attention_sessions(
+                        attention_clients,
+                        request_id,
+                    )
+                    group = decode_group
+                    prefill = request.app.state.prefill_clients[group]
+                    attention_clients = target_attention_clients
+                    attention_sessions = target_sessions
+                    attention_session = attention_sessions[0]
+                    prefill_resp = target_response
+                    migration_attention_ready = True
+                    attention_load_router.mark_migration_succeeded(request_id)
+                    logger.info(
+                        "PAP completed Prefill migration installed "
+                        "request_id=%s source_pa=%d target_pa=%d "
+                        "tokens=%d migration_ms=%d",
+                        request_id,
+                        prefill_group_index,
+                        decode_group_index,
+                        prompt_tokens,
+                        migration_ms,
+                    )
+        if history_record is not None and history_export is not None:
+            history_source_group, history_request_id, _ = history_record
+            history_lease_id = history_export.get("lease_id")
+            if isinstance(history_lease_id, str) and history_lease_id:
+                try:
+                    released = await _release_prefill_kv(
+                        request.app.state.prefill_clients[history_source_group],
+                        request_id=history_request_id,
+                        lease_id=history_lease_id,
+                    )
+                    if not released:
+                        logger.warning(
+                            "PAP historical KV lease release not acknowledged "
+                            "request_id=%s history_request_id=%s",
+                            request_id,
+                            history_request_id,
+                        )
+                except Exception as exc:
+                    logger.warning(
+                        "PAP historical KV lease release failed request_id=%s "
+                        "history_request_id=%s error=%s",
+                        request_id,
+                        history_request_id,
+                        exc,
+                    )
 
         projection_payload_start = time.perf_counter() if profile else 0.0
         kv_params = enrich_prefill_kv_params(
@@ -717,8 +1540,8 @@ async def _handle_openai_request(api_path: str, request: Request):
             fallback=attention_session.get("prefill_kv_handle"),
         )
         prefix_len = prefill_prefix_len_from_kv_params(kv_params)
-        attention_ready = False
-        if prefix_len is not None:
+        attention_ready = migration_attention_ready
+        if prefix_len is not None and not attention_ready:
             attention_ready = all(
                 [
                     await wait_attention_prefill_ready(attention, request_id)
@@ -734,6 +1557,9 @@ async def _handle_openai_request(api_path: str, request: Request):
         )
         projection_payload.setdefault("stream", client_stream)
         projection_kv_params = projection_payload.get("kv_transfer_params") or {}
+        group_index = request.app.state.groups.index(group)
+        pair_name = f"pa{group_index}:p{projection_index}"
+        request.app.state.pair_counts[pair_name] += 1
         projection_payload_ms = (
             (time.perf_counter() - projection_payload_start) * 1000.0
             if profile
@@ -742,7 +1568,8 @@ async def _handle_openai_request(api_path: str, request: Request):
         logger.info(
             "request_id=%s pa=%s:%d attention=%s:%s projection=%s:%d "
             "pa_index=%d projection_index=%d pair=%s "
-            "prefill_ms=%d prefill_prefix_len=%s attention_ready=%s "
+            "prefill_pa_index=%d prefill_ms=%d migration_ms=%d "
+            "prefill_prefix_len=%s attention_ready=%s "
             "projection_kv_keys=%s",
             request_id,
             group.prefill_host,
@@ -754,7 +1581,9 @@ async def _handle_openai_request(api_path: str, request: Request):
             group_index,
             projection_index,
             pair_name,
+            prefill_group_index,
             prefill_ms,
+            migration_ms,
             prefix_len,
             attention_ready,
             sorted(projection_kv_params.keys()),
@@ -762,18 +1591,21 @@ async def _handle_openai_request(api_path: str, request: Request):
         if profile:
             logger.info(
                 "PAP proxy prefill IPC profile request_id=%s register_ms=%.3f "
-                "prefill_payload_ms=%.3f prefill_ms=%d projection_payload_ms=%.3f "
-                "pre_projection_ms=%.3f",
+                "prefill_payload_ms=%.3f prefill_ms=%d migration_ms=%d "
+                "projection_payload_ms=%.3f pre_projection_ms=%.3f",
                 request_id,
                 register_ms,
                 prefill_payload_ms,
                 prefill_ms,
+                migration_ms,
                 projection_payload_ms,
                 (time.perf_counter() - request_start) * 1000.0,
             )
 
         response_headers = {
             "X-PAP-Prefill-Ms": str(prefill_ms),
+            "X-PAP-Migration-Ms": str(migration_ms),
+            "X-PAP-Prefill-Group": str(prefill_group_index),
             "X-PAP-Group": str(group_index),
             "X-PAP-Projection": str(projection.port),
             "X-PAP-Projection-Index": str(projection_index),
@@ -798,6 +1630,14 @@ async def _handle_openai_request(api_path: str, request: Request):
                     admission,
                     group,
                     projection,
+                    attention_load_router,
+                    requested_decode_capacity(req_data) or 0,
+                    bool(
+                        conversation_id
+                        and attention_load_router is not None
+                        and attention_load_router.migration_enabled
+                    ),
+                    prefill_kv_handle,
                 ),
                 media_type="text/event-stream",
                 headers=response_headers,
@@ -809,6 +1649,19 @@ async def _handle_openai_request(api_path: str, request: Request):
             projection_payload,
             request_id,
         )
+        if attention_load_router is not None:
+            response_usage = projection_resp.get("usage")
+            completion_tokens = 0
+            if isinstance(response_usage, dict):
+                value = response_usage.get("completion_tokens")
+                if isinstance(value, int):
+                    completion_tokens = value
+            attention_load_router.finish(
+                request_id,
+                completion_tokens=completion_tokens,
+                prefill_kv_handle=prefill_kv_handle,
+            )
+            attention_load_finished = True
         return JSONResponse(
             projection_resp,
             headers=response_headers,
@@ -820,6 +1673,12 @@ async def _handle_openai_request(api_path: str, request: Request):
                     await _cleanup_attention_sessions(
                         attention_clients,
                         request_id,
+                        retain_lease=bool(
+                            conversation_id
+                            and attention_load_router is not None
+                            and attention_load_finished
+                            and attention_load_router.migration_enabled
+                        ),
                     )
             finally:
                 if projection_admitted:
@@ -827,6 +1686,8 @@ async def _handle_openai_request(api_path: str, request: Request):
                         group,
                         projection,
                     )
+            if attention_load_router is not None and not attention_load_finished:
+                attention_load_router.abort(request_id)
 
 
 @app.post("/v1/completions")
@@ -849,6 +1710,7 @@ async def health() -> dict[str, Any]:
         "routing_policy": app.state.args.routing_policy,
         "pair_counts": dict(sorted(app.state.pair_counts.items())),
         "conversation_routing": app.state.conversation_router.snapshot(),
+        "attention_load_routing": app.state.attention_load_router.snapshot(),
         "projection_admission": await app.state.projection_admission.snapshot(),
     }
 
@@ -863,6 +1725,7 @@ async def topology_stats() -> dict[str, Any]:
         "total_requests": sum(pair_counts.values()),
         "pair_counts": pair_counts,
         "conversation_routing": app.state.conversation_router.snapshot(),
+        "attention_load_routing": app.state.attention_load_router.snapshot(),
         "projection_admission": await app.state.projection_admission.snapshot(),
     }
 
@@ -894,7 +1757,38 @@ def parse_args() -> argparse.Namespace:
             "projection_affinity",
             "projection_sticky",
             "conversation_affinity",
+            "attention_load",
         ),
+    )
+    parser.add_argument(
+        "--attention-load-migration-min-balance-gain-ratio",
+        type=float,
+        default=float(
+            os.environ.get(
+                "PAP_ATTENTION_LOAD_MIGRATION_MIN_BALANCE_GAIN_RATIO",
+                "0.3",
+            )
+        ),
+        help=(
+            "Minimum relative reduction in cross-PA aggregate-load variance "
+            "required for a migration"
+        ),
+    )
+    parser.add_argument(
+        "--attention-load-migration-min-interval",
+        type=int,
+        default=int(
+            os.environ.get("PAP_ATTENTION_LOAD_MIGRATION_MIN_INTERVAL", "64")
+        ),
+        help="Minimum later-turn admissions between migrations",
+    )
+    parser.add_argument(
+        "--attention-load-migration-max-inflight",
+        type=int,
+        default=int(
+            os.environ.get("PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT", "1")
+        ),
+        help="Maximum unresolved historical KV migrations; zero disables them",
     )
     return parser.parse_args()
 

@@ -169,7 +169,11 @@ class EngineCoreClient(ABC):
         self,
         request_id: str,
         lease_id: str,
+        retain: bool = False,
     ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def pap_export_kv_lease(self, request_id: str) -> dict[str, Any]:
         raise NotImplementedError
 
     def sleep(self, level: int = 1, mode: PauseMode = "abort") -> None:
@@ -261,6 +265,13 @@ class EngineCoreClient(ABC):
         self,
         request_id: str,
         lease_id: str,
+        retain: bool = False,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def pap_export_kv_lease_async(
+        self,
+        request_id: str,
     ) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -367,8 +378,18 @@ class InprocClient(EngineCoreClient):
         self,
         request_id: str,
         lease_id: str,
+        retain: bool = False,
     ) -> dict[str, Any]:
-        return self.engine_core.pap_release_kv_lease(request_id, lease_id)
+        if not retain:
+            return self.engine_core.pap_release_kv_lease(request_id, lease_id)
+        return self.engine_core.pap_release_kv_lease(
+            request_id,
+            lease_id,
+            True,
+        )
+
+    def pap_export_kv_lease(self, request_id: str) -> dict[str, Any]:
+        return self.engine_core.pap_export_kv_lease(request_id)
 
     def sleep(self, level: int = 1, mode: PauseMode = "abort") -> None:
         if mode == "wait":
@@ -974,8 +995,23 @@ class SyncMPClient(MPClient):
         self,
         request_id: str,
         lease_id: str,
+        retain: bool = False,
     ) -> dict[str, Any]:
-        return self.call_utility("pap_release_kv_lease", request_id, lease_id)
+        if not retain:
+            return self.call_utility(
+                "pap_release_kv_lease",
+                request_id,
+                lease_id,
+            )
+        return self.call_utility(
+            "pap_release_kv_lease",
+            request_id,
+            lease_id,
+            True,
+        )
+
+    def pap_export_kv_lease(self, request_id: str) -> dict[str, Any]:
+        return self.call_utility("pap_export_kv_lease", request_id)
 
     def add_lora(self, lora_request: LoRARequest) -> bool:
         return self.call_utility("add_lora", lora_request)
@@ -1242,12 +1278,26 @@ class AsyncMPClient(MPClient):
         self,
         request_id: str,
         lease_id: str,
+        retain: bool = False,
     ) -> dict[str, Any]:
+        if not retain:
+            return await self.call_utility_async(
+                "pap_release_kv_lease",
+                request_id,
+                lease_id,
+            )
         return await self.call_utility_async(
             "pap_release_kv_lease",
             request_id,
             lease_id,
+            True,
         )
+
+    async def pap_export_kv_lease_async(
+        self,
+        request_id: str,
+    ) -> dict[str, Any]:
+        return await self.call_utility_async("pap_export_kv_lease", request_id)
 
     async def sleep_async(self, level: int = 1, mode: PauseMode = "abort") -> None:
         await self.call_utility_async("sleep", level, mode)
