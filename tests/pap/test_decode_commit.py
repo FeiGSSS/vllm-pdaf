@@ -360,9 +360,7 @@ def test_prefill_control_router_marks_completed_turn_lease_retained():
         def __init__(self):
             self.calls = []
 
-        async def pap_release_kv_lease_async(
-            self, request_id, lease_id, retain=False
-        ):
+        async def pap_release_kv_lease_async(self, request_id, lease_id, retain=False):
             self.calls.append((request_id, lease_id, retain))
             return {
                 "request_id": request_id,
@@ -645,9 +643,7 @@ def test_prefix_cache_audit_state_reports_safe_block_counts():
         req_to_blocks={"req-1": blocks},
         num_cached_block={"req-1": 2},
     )
-    manager = SimpleNamespace(
-        coordinator=SimpleNamespace(single_type_managers=[group])
-    )
+    manager = SimpleNamespace(coordinator=SimpleNamespace(single_type_managers=[group]))
 
     state = build_prefix_cache_audit_state(manager, request)
 
@@ -809,6 +805,80 @@ def test_engine_core_pap_apply_decode_commit_reports_unknown_request():
         "applied": False,
         "reason": "unknown_request",
     }
+
+
+def test_engine_core_pap_export_reads_active_request_identity(monkeypatch):
+    from types import SimpleNamespace
+
+    from vllm.v1.engine.core import EngineCore
+
+    monkeypatch.setattr(
+        "vllm.pap.lifecycle.lease.pap_export_kv",
+        lambda request_id: None,
+    )
+    request = SimpleNamespace(
+        num_computed_tokens=35,
+        all_token_ids=list(range(40)),
+        block_hashes=[b"a" * 32, b"b" * 32],
+    )
+    core = object.__new__(EngineCore)
+    core.scheduler = SimpleNamespace(
+        requests={"active": request},
+        kv_cache_manager=SimpleNamespace(
+            block_pool=SimpleNamespace(hash_block_size=16)
+        ),
+    )
+
+    result = core.pap_export_kv_lease("active")
+
+    assert result == {
+        "request_id": "active",
+        "exported": True,
+        "active_request": True,
+        "seq_len": 35,
+        "kv_transfer_params": {},
+        "prefix_token_ids": list(range(35)),
+        "prefix_block_hashes": [(b"a" * 32).hex(), (b"b" * 32).hex()],
+    }
+
+
+def test_engine_core_pap_apply_decode_commit_updates_migrated_lease(monkeypatch):
+    from types import SimpleNamespace
+
+    from vllm.v1.engine.core import EngineCore
+
+    monkeypatch.setattr(
+        "vllm.pap.lifecycle.lease.pap_has_active_lease",
+        lambda request_id: request_id == "migrated",
+    )
+    monkeypatch.setattr(
+        "vllm.pap.lifecycle.lease.pap_export_kv",
+        lambda request_id: SimpleNamespace(seq_len=32),
+    )
+    refreshed = []
+    updated = []
+    monkeypatch.setattr(
+        "vllm.pap.lifecycle.lease.pap_refresh_lease",
+        refreshed.append,
+    )
+    monkeypatch.setattr(
+        "vllm.pap.lifecycle.lease.pap_update_kv_export_seq_len",
+        lambda request_id, seq_len: not updated.append((request_id, seq_len)),
+    )
+    core = object.__new__(EngineCore)
+    core.scheduler = SimpleNamespace(requests={})
+
+    result = core.pap_apply_decode_commit("migrated", 33, (42,))
+
+    assert result == {
+        "request_id": "migrated",
+        "applied": True,
+        "old_seq_len": 32,
+        "new_seq_len": 33,
+        "direct_lease_commit": True,
+    }
+    assert refreshed == ["migrated"]
+    assert updated == [("migrated", 33)]
 
 
 def test_engine_core_pap_release_kv_lease(monkeypatch):
@@ -1323,6 +1393,8 @@ def test_kv_lease_exports_retained_nixl_metadata_and_tracks_decode() -> None:
             "remote_engine_id": "prefill",
             "remote_block_ids": [[1, 2, 3]],
         },
+        prefix_token_ids=tuple(range(32)),
+        prefix_block_hashes=(b"a" * 32, b"b" * 32),
     )
     assert registry.update_export_seq_len("r", 40)
 
@@ -1331,9 +1403,34 @@ def test_kv_lease_exports_retained_nixl_metadata_and_tracks_decode() -> None:
     assert exported.lease_id == lease_id
     assert exported.seq_len == 40
     assert exported.kv_transfer_params["remote_block_ids"] == [[1, 2, 3]]
+    assert exported.prefix_token_ids == tuple(range(32))
+    assert exported.prefix_block_hashes == (b"a" * 32, b"b" * 32)
 
     registry.release_lease(lease_id)
     assert registry.export("r") is None
+
+
+def test_kv_lease_binds_export_recorded_before_manifest_pin() -> None:
+    from vllm.pap.lifecycle.lease import PAPKVLeaseRegistry
+
+    registry = PAPKVLeaseRegistry(_ttl_seconds=10.0)
+
+    assert registry.record_export(
+        request_id="r",
+        seq_len=32,
+        kv_transfer_params={"remote_block_ids": [[1, 2]]},
+        prefix_token_ids=tuple(range(32)),
+        prefix_block_hashes=(b"a" * 32, b"b" * 32),
+    )
+    assert registry.export("r") is None
+
+    lease_id = registry.pin_blocks(request_id="r", block_ids=(1, 2))
+    exported = registry.export("r")
+
+    assert exported is not None
+    assert exported.lease_id == lease_id
+    assert exported.prefix_token_ids == tuple(range(32))
+    assert exported.prefix_block_hashes == (b"a" * 32, b"b" * 32)
 
 
 def test_kv_lease_pressure_evicts_only_retained_leases_in_lru_order() -> None:

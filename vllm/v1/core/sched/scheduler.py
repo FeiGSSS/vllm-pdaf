@@ -410,7 +410,6 @@ class Scheduler(SchedulerInterface):
         num_scheduled_tokens: dict[str, int] = {}
         token_budget = self.max_num_scheduled_tokens
         if self._pause_state == PauseState.PAUSED_ALL:
-            # Do not schedule any requests when paused.
             token_budget = 0
 
         # Encoder-related.
@@ -537,16 +536,15 @@ class Scheduler(SchedulerInterface):
                     if pap_projection_state is not None
                     else True
                 )
-                pap_decode_capacity_tokens = (
-                    self.pap_scheduler.decode_capacity_tokens(request)
+                pap_decode_capacity_tokens = self.pap_scheduler.decode_capacity_tokens(
+                    request
                 )
                 while True:
                     new_blocks = self.kv_cache_manager.allocate_slots(
                         request,
                         num_new_tokens,
                         num_lookahead_tokens=(
-                            self.num_lookahead_tokens
-                            + pap_decode_capacity_tokens
+                            self.num_lookahead_tokens + pap_decode_capacity_tokens
                         ),
                         local_computed_token_offset=pap_local_computed_token_offset,
                         allocate_local_slots=allocate_pap_local_slots,
@@ -1178,6 +1176,15 @@ class Scheduler(SchedulerInterface):
         # 3. Clear the internal states of the connector
         if self.connector is not None:
             meta = self._build_kv_connector_meta(self.connector, scheduler_output)
+            scheduler_output.pap_migration_manifests = (
+                self.pap_scheduler.attach_next_migration(
+                    metadata=meta,
+                    kv_cache_manager=self.kv_cache_manager,
+                    connector=self.connector,
+                    reserved_blocks=self._inflight_prefill_reserved_blocks(),
+                )
+                or None
+            )
             scheduler_output.kv_connector_metadata = meta
 
         # Build the connector meta for ECConnector
@@ -2152,10 +2159,19 @@ class Scheduler(SchedulerInterface):
 
         self._inflight_prefills.discard(request)
         connector_delay_free_blocks, kv_xfer_params = self._connector_finished(request)
+        hash_block_size = self.kv_cache_manager.block_pool.hash_block_size
+        num_prefix_hashes = request.num_computed_tokens // hash_block_size
         self.pap_scheduler.record_kv_export(
             request_id=request.request_id,
             seq_len=request.num_computed_tokens,
             kv_transfer_params=kv_xfer_params,
+            prefix_token_ids=tuple(
+                request.all_token_ids[: request.num_computed_tokens]
+            ),
+            prefix_block_hashes=tuple(
+                bytes(block_hash)
+                for block_hash in request.block_hashes[:num_prefix_hashes]
+            ),
         )
         self.encoder_cache_manager.free(request)
         request_id = request.request_id
@@ -2231,7 +2247,8 @@ class Scheduler(SchedulerInterface):
             + len(self.skipped_waiting)
             - self.num_waiting_for_streaming_input
         )
-        return num_waiting + len(self.running)
+        migration_work = int(self.pap_scheduler.has_migration_work())
+        return num_waiting + len(self.running) + migration_work
 
     def has_finished_requests(self) -> bool:
         if self.finished_req_ids:
@@ -2547,9 +2564,22 @@ class Scheduler(SchedulerInterface):
         if self.connector is not None:
             self.connector.update_connector_output(kv_connector_output)
 
+        for req_id, error in (kv_connector_output.pap_migration_failures or {}).items():
+            self.pap_scheduler.fail_migration(
+                job_id=req_id,
+                error=error,
+                kv_cache_manager=self.kv_cache_manager,
+            )
+
         # KV Connector:: update recv and send status from last step.
         for req_id in kv_connector_output.finished_recving or ():
             logger.debug("Finished recving KV transfer for request %s", req_id)
+            if self.pap_scheduler.finish_migration(
+                job_id=req_id,
+                kv_cache_manager=self.kv_cache_manager,
+                connector=self.connector,
+            ):
+                continue
             assert req_id in self.requests
             req = self.requests[req_id]
             if req.status == RequestStatus.WAITING_FOR_REMOTE_KVS:

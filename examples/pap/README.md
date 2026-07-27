@@ -43,23 +43,16 @@ context length, the Gateway selects the Decode PA. If it changes, the target
 pulls the complete newly Prefilled KV through bidirectional NIXL and installs
 it into its colocated Attention process before Decode starts. The historical
 PA remains the Decode target unless moving reduces cross-PA aggregate load
-variance by at least
-`PAP_ATTENTION_LOAD_MIGRATION_MIN_BALANCE_GAIN_RATIO` (default `0.3`).
-Migrations are separated by
-`PAP_ATTENTION_LOAD_MIGRATION_MIN_INTERVAL` later-turn admissions (default
-`64`), and at most `PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT` migrations are
+peak by at least `PAP_ATTENTION_LOAD_MIGRATION_MIN_PEAK_GAIN_RATIO` (default
+`0.3`). At most `PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT` migrations are
 unresolved at once (default `1`). Migration failure atomically falls Decode
-back to the completed Prefill's PA. Completed-turn leases are pressure-evictable
-LRU entries, while active Decode leases remain protected. This first
-load-aware policy is experimental. Its sparse default admits migration only
-when the predicted aggregate-load variance reduction is large and migration
-spacing permits it. On the 7PA1P C32 testbed this reduced 512 possible
-later-turn moves to 5-8 successful migrations while improving TTFT, ITL, and
-throughput in two repetitions. The general AIPerf topology default remains
-`conversation_affinity`; select `attention_load` explicitly. For each PA, the
-Gateway admits requests from one Projection source at a time and switches
-sources only after that request wave drains. Separate PA groups continue
-independently.
+back to the completed Prefill's PA. Completed-turn leases are
+pressure-evictable LRU entries, while active Decode leases remain protected.
+This load-aware policy is experimental. The general AIPerf topology default
+remains `conversation_affinity`; select `attention_load` explicitly. For each
+PA, the Gateway admits requests from one Projection source at a time and
+switches sources only after that request wave drains. Separate PA groups
+continue independently.
 
 Run a local PAP service:
 

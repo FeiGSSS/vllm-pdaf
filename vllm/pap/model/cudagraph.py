@@ -12,6 +12,7 @@ import torch
 
 from vllm.forward_context import get_forward_context
 from vllm.pap.model.context import PAPModelForwardBatch
+from vllm.pap.model.prefill import publish_current_prefill_kv
 from vllm.utils.torch_utils import direct_register_custom_op
 
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
@@ -109,8 +110,7 @@ def _pap_publish_prefill_kv_impl(
     layer_name: str,
 ) -> None:
     attention = _pap_attention_layer(layer_name)
-    publisher = attention._pap_cudagraph_prefill_publisher
-    publisher.publish(attention)
+    publish_current_prefill_kv(attention)
 
 
 def _pap_publish_prefill_kv_fake(

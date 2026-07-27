@@ -41,6 +41,133 @@ history-owner Prefill
 This preserves local history reuse during Prefill and makes migration directly
 change the next Decode barrier.
 
+## Out-of-band migration correction
+
+The original late-binding implementation represented a migration as a
+synthetic target Prefill request. That request waited in the target Prefill
+queue, executed an unnecessary one-token forward, and tied NIXL completion to
+the Prefill engine step. This path is removed.
+
+The corrected path is:
+
+```text
+target scheduler allocates final KV blocks and establishes the target lease
+  -> NIXL READ starts on its independent stream
+  -> worker background progress observes DMA completion
+  -> existing CUDA-IPC manifest is published directly to Attention
+  -> Gateway observes Attention readiness
+  -> source lease is released
+  -> scheduler later completes block-ownership bookkeeping
+```
+
+There is no target tokenization, fake prompt, Prefill wait-queue entry, or
+model forward. Migration uses the existing NIXL connector, external KV-slot
+allocator, lease registry, and Attention manifest protocol. At most one
+migration remains unresolved. The background progress fast path is enabled
+for TP=1; other TP shapes retain the safe post-forward completion fallback.
+
+The Decode placement objective still uses only active Decode KV plus incoming
+migration reservations. Prefill work is not added to Attention load. A
+separate execution-readiness gate suppresses migration when the selected
+target still has unfinished Prefill work, because its EngineCore cannot accept
+the migration control message until the current forward boundary.
+
+### Controlled C32 comparison and prefix-identity correction
+
+The comparison uses the same Qwen3-8B FP16 eager 7PA1P deployment, the same
+randomized long-context dataset, and 32 sessions with five turns
+(160 requests). All three runs completed 160/160 requests with zero AIPerf
+errors and drained all seven Attention nodes.
+
+The initial async-late-binding run exposed a correctness/performance bug:
+blocks installed by migration were usable by the current Decode session but
+were anonymous to the target PA's prefix cache. A following conversation turn
+could therefore recompute the complete history. This produced the previously
+observed fifth-turn TTFT maximum of 3.477 seconds.
+
+The fix carries the full-block token IDs and block hashes with the migration,
+binds them to the imported blocks, and registers the resulting prefix in the
+target KV-cache coordinator. It also handles the scheduler-to-lease-publisher
+ordering window and uses the stable NIXL request ID instead of the Gateway
+request UUID for source export and release.
+
+| Metric | Affinity | Buggy late binding | Fixed late binding |
+| --- | ---: | ---: | ---: |
+| Completed requests | 160/160 | 160/160 | 160/160 |
+| Successful migrations | 0 | 10 | 17 |
+| Migration misses | 0 | 0 | 0 |
+| Mean TTFT | 2,429.33 ms | 2,349.48 ms | 2,440.66 ms |
+| Mean ITL | 43.93 ms | 39.09 ms | 42.78 ms |
+| Request throughput | 4.833 req/s | 4.607 req/s | 4.732 req/s |
+| Output throughput | 159.93 tok/s | 152.46 tok/s | 156.60 tok/s |
+| Benchmark duration | 33.07 s | 34.68 s | 33.75 s |
+| Turn-4 mean TTFT | 658.5 ms | 917.8 ms | 739.7 ms |
+| Turn-4 maximum TTFT | 1,866.7 ms | 3,477.2 ms | 2,423.4 ms |
+| Turn-4 mean ITL | 41.05 ms | 34.03 ms | 36.05 ms |
+
+Relative to the buggy run, the fix reduces turn-4 mean TTFT by 19.4% and its
+maximum by 30.3%. The eleven migrations followed by another conversation turn
+had next-turn Prefill times of 199-1,253 ms (604 ms mean), rather than the
+roughly 3.3-second full-history recomputations that exposed the bug. Repeated
+migrations of the same conversation also retained reusable prefix identity.
+
+Relative to affinity, overall mean TTFT is effectively equal (+0.5%), request
+throughput is 2.1% lower, and mean ITL is 2.6% lower. Turn-4 maximum TTFT
+remains higher than affinity, so migration/scheduling tail latency is not
+declared solved.
+
+The final run performed 17 migration attempts and installed all 17 in
+71-204 ms, with zero migration misses or fallbacks. Its lifecycle audit passed
+with 322 releases:
+
+```text
+160 current-turn releases
+  + 128 retained-history releases
+  + 17 migration-attempt session releases
+  + 17 successful source-lease releases
+  = 322
+```
+
+### Rejected intermediate executions
+
+The staging directory retains diagnostic runs that must not be used as
+baselines:
+
+- `oob_priority_s32_c32` forced no-forward migration steps. It removed NIXL
+  completion tails but paused target Prefill scheduling.
+- `oob_overlap_notify_s32_c32` overlapped NIXL with Prefill but published only
+  from `post_forward`, producing transfers reported as long as 2.56 seconds.
+- `oob_notify_s32_c32` validated deferred completion notification but allowed
+  18 migrations and retained Prefill interference.
+- `oob_worker_async_s32_c32` validated worker-side progress and exposed one
+  2.32-second control-admission tail on a busy target Prefill engine.
+
+The accepted controlled run is:
+
+```text
+benchmarks/pap/experiments/_staging/scheduling/
+  20260727_out_of_band_migration/runs/
+    affinity_baseline_s32_c32/
+    prefix_identity_fix_s32_c32_idfix/
+```
+
+`oob_worker_async_idle_gate_s32_c32` is retained only as the diagnostic
+execution that exposed missing prefix identity.
+
+Focused validation for the corrected path:
+
+```text
+.venv/bin/python -m pytest \
+  tests/pap/test_pap_migration.py \
+  tests/pap/test_decode_commit.py \
+  tests/pap/test_pap_gateway_app.py -q
+
+93 passed
+```
+
+The focused Ruff check, `git diff --check`, and workload-script syntax check
+also passed.
+
 ## Workload
 
 - Qwen3-8B FP16, eager execution, 7PA1P on eight NVIDIA L20 GPUs.

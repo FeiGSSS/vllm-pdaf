@@ -98,6 +98,11 @@ class NixlPullConnectorWorker(NixlBaseConnectorWorker):
         # requests sit in the D scheduler WAITING queue.
         self._send_heartbeats(metadata)
 
+    def pap_progress_ready_recvs(self) -> None:
+        """Start receives whose background NIXL handshake has completed."""
+        while not self._ready_requests.empty():
+            self._read_blocks_for_req(*self._ready_requests.get_nowait())
+
     def _read_blocks_for_req(self, req_id: str, meta: ReqMeta):
         assert meta.remote is not None and self.transfer_topo is not None
         engine_id = meta.remote.engine_id
@@ -311,6 +316,11 @@ class NixlPullConnectorWorker(NixlBaseConnectorWorker):
 
             # Begin async xfer.
             self.nixl_wrapper.transfer(handle)
+            self._start_xfer_diagnostic(
+                request_id,
+                handle,
+                dst_engine_id,
+            )
 
             # Use handle to check completion in future step().
             self._recving_transfers[request_id].append(handle)

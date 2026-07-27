@@ -46,13 +46,11 @@ def prefill_prefix_len_from_kv_params(
         prefix_len = int(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(
-            "invalid remote_num_tokens in Prefill kv_transfer_params: "
-            f"{value!r}"
+            f"invalid remote_num_tokens in Prefill kv_transfer_params: {value!r}"
         ) from exc
     if prefix_len < 0:
         raise ValueError(
-            "invalid remote_num_tokens in Prefill kv_transfer_params: "
-            f"{value!r}"
+            f"invalid remote_num_tokens in Prefill kv_transfer_params: {value!r}"
         )
     return prefix_len or None
 
@@ -88,11 +86,18 @@ async def register_attention_handle(
         "kv_transfer_params": dict(kv_transfer_params),
         "prefix_len": prefix_len,
     }
-    response = await attention.client.post(
-        "/v1/pap/attention/register",
-        json=payload,
-        headers={},
-    )
+    for attempt in range(2):
+        try:
+            response = await attention.client.post(
+                "/v1/pap/attention/register",
+                json=payload,
+                headers={},
+            )
+            break
+        except httpx.TransportError:
+            if attempt:
+                raise
+            await asyncio.sleep(0)
     response.raise_for_status()
     return response.json()
 

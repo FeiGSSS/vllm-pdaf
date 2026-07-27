@@ -428,6 +428,11 @@ class NixlBaseConnectorWorker:
         # [req_id -> list[handle]]
         self._recving_metadata: dict[ReqId, ReqMeta] = {}
         self._recving_transfers = defaultdict[ReqId, list[TransferHandle]](list)
+        self._xfer_diagnostics = (
+            os.environ.get("PAP_NIXL_XFER_DIAGNOSTICS", "0") == "1"
+            or os.environ.get("VLLM_NIXL_XFER_DIAGNOSTICS", "0") == "1"
+        )
+        self._xfer_diagnostic_state: dict[TransferHandle, dict[str, Any]] = {}
         # Track the expiration time of requests that are waiting to be sent.
         self._reqs_to_send: dict[ReqId, float] = {}
         # Set of requests that have been part of a batch, regardless of status.
@@ -2037,11 +2042,56 @@ class NixlBaseConnectorWorker:
             in_progress = []
             for handle in handles:
                 try:
+                    diagnostic = (
+                        self._xfer_diagnostic_state.get(handle)
+                        if self._xfer_diagnostics
+                        else None
+                    )
+                    if diagnostic is not None:
+                        poll_time = time.perf_counter()
+                        previous_poll = diagnostic["last_poll"]
+                        poll_gap = poll_time - previous_poll
+                        diagnostic["last_poll"] = poll_time
+                        diagnostic["polls"] += 1
+                        diagnostic["max_poll_gap"] = max(
+                            diagnostic["max_poll_gap"],
+                            poll_gap,
+                        )
+                        if diagnostic["first_poll"] is None:
+                            diagnostic["first_poll"] = poll_time
                     xfer_state = self.nixl_wrapper.check_xfer_state(handle)
                     if xfer_state == "DONE":
                         # Get telemetry from NIXL
                         res = self.nixl_wrapper.get_xfer_telemetry(handle)
                         self.xfer_stats.record_transfer(res)
+                        if diagnostic is not None:
+                            first_poll = diagnostic["first_poll"]
+                            first_poll_delay = (
+                                first_poll - diagnostic["submitted"]
+                                if first_poll is not None
+                                else 0.0
+                            )
+                            completed_wall_ns = time.time_ns()
+                            logger.info(
+                                "NIXL_XFER_DIAG request_id=%s peer=%s "
+                                "submitted_wall_ns=%d completed_wall_ns=%d "
+                                "wall_ms=%.3f xfer_ms=%.3f post_ms=%.3f "
+                                "polls=%d first_poll_delay_ms=%.3f "
+                                "max_poll_gap_ms=%.3f bytes=%d descriptors=%d",
+                                req_id,
+                                diagnostic["peer"],
+                                diagnostic["submitted_wall_ns"],
+                                completed_wall_ns,
+                                (poll_time - diagnostic["submitted"]) * 1e3,
+                                res.xferDuration / 1e3,
+                                res.postDuration / 1e3,
+                                diagnostic["polls"],
+                                first_poll_delay * 1e3,
+                                diagnostic["max_poll_gap"] * 1e3,
+                                res.totalBytes,
+                                res.descCount,
+                            )
+                            del self._xfer_diagnostic_state[handle]
                         self.nixl_wrapper.release_xfer_handle(handle)
                     elif xfer_state == "PROC":
                         in_progress.append(handle)
@@ -2070,6 +2120,26 @@ class NixlBaseConnectorWorker:
             else:
                 transfers[req_id] = in_progress
         return done_req_ids
+
+    def _start_xfer_diagnostic(
+        self,
+        request_id: str,
+        handle: TransferHandle,
+        peer: str,
+    ) -> None:
+        if not self._xfer_diagnostics:
+            return
+        submitted = time.perf_counter()
+        self._xfer_diagnostic_state[handle] = {
+            "request_id": request_id,
+            "peer": peer,
+            "submitted": submitted,
+            "submitted_wall_ns": time.time_ns(),
+            "first_poll": None,
+            "last_poll": submitted,
+            "polls": 0,
+            "max_poll_gap": 0.0,
+        }
 
     def _handle_failed_transfer(self, req_id: str, handle: int | None):
         """

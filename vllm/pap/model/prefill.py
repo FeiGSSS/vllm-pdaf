@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from typing import Any
@@ -26,6 +27,7 @@ from vllm.pap.protocol import PAPTensorTransport
 from vllm.v1.attention.backends.utils import get_kv_cache_layout
 
 logger = init_logger(__name__)
+_PAP_KV_PUBLISH_LOCK = threading.RLock()
 
 
 def _pap_unified_kv_export_decode_capacity_tokens() -> int:
@@ -72,6 +74,40 @@ def _pap_prune_imported_prefill_kv(
         for import_key in tuple(imported_prefill_kv)
         if import_key[0] in finished
     )
+
+
+def publish_completed_migrations(
+    static_forward_context: dict[str, Any],
+    migrations: Iterable[dict[str, Any]],
+) -> None:
+    """Publish completed NIXL migrations from Prefill-owned KV tensors."""
+    with _PAP_KV_PUBLISH_LOCK:
+        for migration in migrations:
+            manifest_published = False
+            for attention in static_forward_context.values():
+                publisher = getattr(
+                    attention,
+                    "_pap_cudagraph_prefill_publisher",
+                    None,
+                )
+                if publisher is None:
+                    continue
+                manifest_published |= publisher.publish_migration(
+                    attention,
+                    migration,
+                )
+            if not manifest_published:
+                raise RuntimeError(
+                    "PAP migration found no final Prefill KV publisher "
+                    f"job_id={migration.get('job_id')}"
+                )
+
+
+def publish_current_prefill_kv(attention: Any) -> None:
+    """Serialize regular and migration manifest publication."""
+    with _PAP_KV_PUBLISH_LOCK:
+        publisher = attention._pap_cudagraph_prefill_publisher
+        publisher.publish(attention)
 
 
 @dataclass(slots=True)
@@ -126,10 +162,7 @@ class PAPPrefillKVPublisher:
             additional_kwargs.get("pap_decode_capacity_tokens_by_request") or {}
         )
         import_request_ids = set(
-            additional_kwargs.get(
-                "pap_import_prefill_kv_to_attention_by_request"
-            )
-            or ()
+            additional_kwargs.get("pap_import_prefill_kv_to_attention_by_request") or ()
         )
         tcp_endpoint_by_request = (
             additional_kwargs.get("pap_attention_tcp_endpoint_by_request") or {}
@@ -178,6 +211,93 @@ class PAPPrefillKVPublisher:
             block_size=int(block_size),
             layout=get_kv_cache_layout(),
         )
+
+    def publish_migration(
+        self,
+        attention: Any,
+        migration: dict[str, Any],
+    ) -> bool:
+        """Publish migrated KV without executing a model forward."""
+        kv_cache = getattr(attention, "kv_cache", None)
+        if kv_cache is None or kv_cache.device.type != "cuda":
+            raise RuntimeError("PAP migration requires a CUDA Prefill KV cache")
+        block_size = migration.get("block_size")
+        if block_size is None:
+            block_size = getattr(
+                getattr(attention, "impl", None),
+                "block_size",
+                None,
+            )
+        if block_size is None:
+            block_size = getattr(attention, "block_size", None)
+        if block_size is None:
+            raise RuntimeError("PAP migration cannot determine KV block size")
+
+        request_id = str(migration["request_id"])
+        prefix_len = int(migration["prefix_len"])
+        decode_capacity_tokens = int(migration["decode_capacity_tokens"])
+        session_handle = str(migration["session_handle"])
+        endpoint = str(pap_endpoint_for_tp_rank(migration["attention_tcp_endpoint"]))
+        block_groups = migration["block_ids"]
+        if len(block_groups) != 1:
+            raise RuntimeError("PAP migration currently requires one KV cache group")
+        block_ids = tuple(int(block_id) for block_id in block_groups[0])
+
+        if endpoint not in self.registered_catalog_endpoints:
+            status = register_prefill_kv_catalog(
+                catalog_id=self.catalog_id,
+                layer_name=self.layer_name,
+                kv_cache=kv_cache,
+                block_size=int(block_size),
+                num_kv_heads=self.num_kv_heads,
+                layout=get_kv_cache_layout(),
+                tcp_endpoint=endpoint,
+            )
+            self.registered_catalog_endpoints.add(endpoint)
+            logger.info(
+                "PAP migration catalog %s catalog_id=%s layer=%s endpoint=%s",
+                status,
+                self.catalog_id,
+                self.layer_name,
+                endpoint,
+            )
+        if not self.is_last_layer:
+            return False
+
+        import_key = (
+            request_id,
+            "migration_manifest",
+            prefix_len,
+            decode_capacity_tokens,
+            session_handle,
+            endpoint,
+        )
+        if import_key in self.imported_prefill_kv:
+            return True
+        ready_event = torch.cuda.Event(interprocess=True)
+        ready_event.record(torch.cuda.current_stream(kv_cache.device))
+        publish_prefill_kv_session_manifest(
+            request_id=request_id,
+            session_handle=session_handle,
+            catalog_id=self.catalog_id,
+            block_ids=block_ids,
+            prefix_len=prefix_len,
+            block_size=int(block_size),
+            expected_layer_count=self.expected_layer_count,
+            ready_event_handle=ready_event.ipc_handle(),
+            tcp_endpoint=endpoint,
+            decode_capacity_tokens=decode_capacity_tokens,
+        )
+        self.imported_prefill_kv.add(import_key)
+        self.manifest_ready_events[(request_id, prefix_len)] = ready_event
+        logger.info(
+            "PAP migrated KV manifest published request_id=%s prefix_len=%d "
+            "capacity=%d",
+            request_id,
+            prefix_len,
+            prefix_len + decode_capacity_tokens,
+        )
+        return True
 
     def _publish_manifests(
         self,
@@ -256,13 +376,9 @@ class PAPPrefillKVPublisher:
             prefix_len = int(seq_lens_cpu[req_index].item())
             if prefix_len <= 1:
                 continue
-            decode_capacity_tokens = decode_capacity_tokens_by_request.get(
-                request_id
-            )
+            decode_capacity_tokens = decode_capacity_tokens_by_request.get(request_id)
             if decode_capacity_tokens is None:
-                decode_capacity_tokens = (
-                    _pap_unified_kv_export_decode_capacity_tokens()
-                )
+                decode_capacity_tokens = _pap_unified_kv_export_decode_capacity_tokens()
             decode_capacity_tokens = max(0, int(decode_capacity_tokens))
             import_key = (
                 request_id,
@@ -310,3 +426,10 @@ class PAPPrefillKVPublisher:
                 min(published_prefixes),
                 max(published_prefixes),
             )
+
+
+__all__ = [
+    "PAPPrefillKVPublisher",
+    "publish_completed_migrations",
+    "publish_current_prefill_kv",
+]

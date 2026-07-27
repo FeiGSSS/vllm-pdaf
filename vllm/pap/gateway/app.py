@@ -217,39 +217,32 @@ class _PAPAttentionLoadAdmission:
 
 
 class PAPAttentionLoadRouter:
-    """Place each turn on the PA with the least committed Attention load."""
+    """Place Decode on the PA that minimizes peak active Attention load."""
 
     def __init__(
         self,
         groups: list[PAPGroup],
         *,
-        migration_min_balance_gain_ratio: float = 0.3,
-        migration_min_interval: int = 64,
+        migration_min_peak_gain_ratio: float = 0.3,
         migration_max_inflight: int = 1,
     ) -> None:
         if not groups:
             raise ValueError("PAP attention-load routing requires a PA group")
         if (
-            not math.isfinite(migration_min_balance_gain_ratio)
-            or migration_min_balance_gain_ratio < 0
+            not math.isfinite(migration_min_peak_gain_ratio)
+            or migration_min_peak_gain_ratio < 0
         ):
-            raise ValueError(
-                "migration_min_balance_gain_ratio must be finite and >= 0"
-            )
-        if migration_min_interval < 1:
-            raise ValueError("migration_min_interval must be >= 1")
+            raise ValueError("migration_min_peak_gain_ratio must be finite and >= 0")
         if migration_max_inflight < 0:
             raise ValueError("migration_max_inflight must be >= 0")
         self._groups = groups
         self._group_indices = {group: index for index, group in enumerate(groups)}
-        self._migration_min_balance_gain_ratio = (
-            migration_min_balance_gain_ratio
-        )
-        self._migration_min_interval = migration_min_interval
+        self._migration_min_peak_gain_ratio = migration_min_peak_gain_ratio
         self._migration_max_inflight = migration_max_inflight
         self._next_group = count()
         self._prefill_loads = {group: 0 for group in groups}
         self._decode_loads = {group: 0 for group in groups}
+        self._migration_reserved_loads = {group: 0 for group in groups}
         self._history_loads = {group: 0 for group in groups}
         self._history_owners: dict[str, PAPGroup] = {}
         self._history_context_tokens: dict[str, int] = {}
@@ -261,20 +254,13 @@ class PAPAttentionLoadRouter:
         self._migration_count = 0
         self._migration_miss_count = 0
         self._history_admission_count = 0
-        self._last_migration_history_admission = 1 - migration_min_interval
         self._migration_inflight_count = 0
         self._migration_candidate_count = 0
         self._migration_selected_count = 0
         self._migration_suppressed_count = 0
-        self._migration_suppressed_by_balance_count = 0
-        self._migration_suppressed_by_interval_count = 0
+        self._migration_suppressed_by_peak_gain_count = 0
         self._migration_suppressed_by_inflight_count = 0
-
-    @staticmethod
-    def _imbalance(loads: list[int]) -> int:
-        """Return an integer proportional to load variance."""
-        total = sum(loads)
-        return len(loads) * sum(load * load for load in loads) - total * total
+        self._migration_suppressed_by_prefill_busy_count = 0
 
     def history_context_tokens(self, conversation_id: str) -> int:
         """Return the last completed turn's context length."""
@@ -350,8 +336,16 @@ class PAPAttentionLoadRouter:
             group: (
                 self._prefill_loads[group]
                 + self._decode_loads[group]
+                + self._migration_reserved_loads[group]
                 + self._history_loads[group]
             )
+            for group in self._groups
+        }
+
+    def _decode_base_loads(self) -> dict[PAPGroup, int]:
+        """Return active Decode KV plus incoming migration reservations."""
+        return {
+            group: (self._decode_loads[group] + self._migration_reserved_loads[group])
             for group in self._groups
         }
 
@@ -374,93 +368,92 @@ class PAPAttentionLoadRouter:
         migration_pending = False
 
         if admission.history_group is not None:
-            committed_loads = self._committed_loads()
-            minimum_load = min(committed_loads.values())
-            candidates = [
-                candidate
-                for candidate in self._groups
-                if committed_loads[candidate] == minimum_load
+            base_loads = self._decode_base_loads()
+            placement_peaks = {
+                target: max(
+                    load + exact_tokens if group == target else load
+                    for group, load in base_loads.items()
+                )
+                for target in self._groups
+            }
+            minimum_peak = min(placement_peaks.values())
+            peak_candidates = [
+                target
+                for target in self._groups
+                if placement_peaks[target] == minimum_peak
             ]
-            candidate = (
-                prefill_group
-                if prefill_group in candidates
-                else candidates[next(self._next_group) % len(candidates)]
-            )
-            stay_loads = [
-                load + exact_tokens if candidate_group == prefill_group else load
-                for candidate_group, load in committed_loads.items()
-            ]
-            move_loads = [
-                load + exact_tokens if candidate_group == candidate else load
-                for candidate_group, load in committed_loads.items()
-            ]
-            stay_imbalance = self._imbalance(stay_loads)
-            move_imbalance = self._imbalance(move_loads)
-            balance_gain = max(0, stay_imbalance - move_imbalance)
-            balance_gain_ratio = (
-                balance_gain / stay_imbalance if stay_imbalance else 0.0
-            )
-            if candidate != prefill_group and balance_gain > 0:
+            if prefill_group in peak_candidates:
+                candidate = prefill_group
+            else:
+                minimum_base_load = min(
+                    base_loads[target] for target in peak_candidates
+                )
+                lightest_candidates = [
+                    target
+                    for target in peak_candidates
+                    if base_loads[target] == minimum_base_load
+                ]
+                candidate = lightest_candidates[
+                    next(self._next_group) % len(lightest_candidates)
+                ]
+            stay_peak = placement_peaks[prefill_group]
+            move_peak = placement_peaks[candidate]
+            peak_gain = max(0, stay_peak - move_peak)
+            peak_gain_ratio = peak_gain / stay_peak if stay_peak else 0.0
+            if candidate != prefill_group and peak_gain > 0:
                 self._migration_candidate_count += 1
-            balance_ready = (
+            peak_gain_ready = (
                 candidate != prefill_group
-                and balance_gain > 0
-                and balance_gain_ratio
-                >= self._migration_min_balance_gain_ratio
-            )
-            interval_ready = (
-                self._history_admission_count
-                - self._last_migration_history_admission
-                >= self._migration_min_interval
+                and peak_gain > 0
+                and peak_gain_ratio >= self._migration_min_peak_gain_ratio
             )
             inflight_ready = (
-                self._migration_inflight_count
-                < self._migration_max_inflight
+                self._migration_inflight_count < self._migration_max_inflight
             )
-            should_migrate = balance_ready and interval_ready and inflight_ready
+            target_prefill_ready = self._prefill_loads[candidate] == 0
+            should_migrate = peak_gain_ready and inflight_ready and target_prefill_ready
             if should_migrate:
                 group = candidate
                 migration_pending = True
                 self._migration_inflight_count += 1
-                self._last_migration_history_admission = (
-                    self._history_admission_count
-                )
                 self._migration_selected_count += 1
-            elif candidate != prefill_group and balance_gain > 0:
+            elif candidate != prefill_group and peak_gain > 0:
                 self._migration_suppressed_count += 1
-                if not balance_ready:
-                    self._migration_suppressed_by_balance_count += 1
-                elif not interval_ready:
-                    self._migration_suppressed_by_interval_count += 1
+                if not peak_gain_ready:
+                    self._migration_suppressed_by_peak_gain_count += 1
                 elif not inflight_ready:
                     self._migration_suppressed_by_inflight_count += 1
+                elif not target_prefill_ready:
+                    self._migration_suppressed_by_prefill_busy_count += 1
             logger.info(
                 "PAP attention-load Decode placement request_id=%s "
-                "prefill_pa=%d candidate_pa=%d action=%s stay_peak_tokens=%d "
-                "move_peak_tokens=%d stay_imbalance=%d move_imbalance=%d "
-                "balance_gain_ratio=%.6f threshold=%.6f interval_ready=%d "
-                "inflight_ready=%d stay_loads=%s move_loads=%s",
+                "prefill_pa=%d candidate_pa=%d action=%s "
+                "stay_peak_tokens=%d move_peak_tokens=%d "
+                "peak_gain_ratio=%.6f threshold=%.6f inflight_ready=%d "
+                "target_prefill_ready=%d target_prefill_tokens=%d "
+                "base_loads=%s",
                 request_id,
                 self._group_indices[prefill_group],
                 self._group_indices[candidate],
                 "migrate" if should_migrate else "stay",
-                max(stay_loads),
-                max(move_loads),
-                stay_imbalance,
-                move_imbalance,
-                balance_gain_ratio,
-                self._migration_min_balance_gain_ratio,
-                int(interval_ready),
+                stay_peak,
+                move_peak,
+                peak_gain_ratio,
+                self._migration_min_peak_gain_ratio,
                 int(inflight_ready),
-                ",".join(str(load) for load in stay_loads),
-                ",".join(str(load) for load in move_loads),
+                int(target_prefill_ready),
+                self._prefill_loads[candidate],
+                ",".join(str(load) for load in base_loads.values()),
             )
 
         admission.group = group
         admission.decode_placed = True
         admission.migration_pending = migration_pending
-        self._decode_loads[group] += exact_tokens
-        self._decode_request_counts[group] += 1
+        if migration_pending:
+            self._migration_reserved_loads[group] += exact_tokens
+        else:
+            self._decode_loads[group] += exact_tokens
+            self._decode_request_counts[group] += 1
         return group
 
     def decode_group(self, request_id: str) -> PAPGroup:
@@ -478,6 +471,11 @@ class PAPAttentionLoadRouter:
             and admission.history_group != admission.group
             and not admission.migration_succeeded
         ):
+            self._migration_reserved_loads[admission.group] -= admission.context_tokens
+            if self._migration_reserved_loads[admission.group] < 0:
+                raise RuntimeError("negative PAP migration reserved load")
+            self._decode_loads[admission.group] += admission.context_tokens
+            self._decode_request_counts[admission.group] += 1
             admission.migration_succeeded = True
             self._migration_count += 1
         self._resolve_migration(admission)
@@ -488,10 +486,9 @@ class PAPAttentionLoadRouter:
         if admission.prefill_group != admission.group:
             self._migration_miss_count += 1
             self._migration_fallback_count += 1
-            self._decode_loads[admission.group] -= admission.context_tokens
-            self._decode_request_counts[admission.group] -= 1
-            if self._decode_loads[admission.group] < 0:
-                raise RuntimeError("negative PAP Decode load after fallback")
+            self._migration_reserved_loads[admission.group] -= admission.context_tokens
+            if self._migration_reserved_loads[admission.group] < 0:
+                raise RuntimeError("negative PAP migration load after fallback")
             admission.group = admission.prefill_group
             self._decode_loads[admission.group] += admission.context_tokens
             self._decode_request_counts[admission.group] += 1
@@ -518,9 +515,10 @@ class PAPAttentionLoadRouter:
     ) -> None:
         """Release active load and retain the new history owner."""
         admission = self._admissions.pop(request_id)
-        self._resolve_migration(admission)
         if not admission.decode_placed:
             raise RuntimeError(f"PAP request finished before Decode: {request_id}")
+        if admission.migration_pending:
+            raise RuntimeError(f"PAP request finished during migration: {request_id}")
         self._decode_loads[admission.group] -= admission.context_tokens
         if self._decode_loads[admission.group] < 0:
             raise RuntimeError("negative PAP Decode load")
@@ -543,21 +541,26 @@ class PAPAttentionLoadRouter:
         admission = self._admissions.pop(request_id, None)
         if admission is None:
             return
-        self._resolve_migration(admission)
         if admission.decode_placed:
-            self._decode_loads[admission.group] -= admission.context_tokens
-            if self._decode_loads[admission.group] < 0:
-                raise RuntimeError("negative PAP Decode load")
+            if admission.migration_pending:
+                self._migration_reserved_loads[admission.group] -= (
+                    admission.context_tokens
+                )
+                if self._migration_reserved_loads[admission.group] < 0:
+                    raise RuntimeError("negative PAP migration reserved load")
+            else:
+                self._decode_loads[admission.group] -= admission.context_tokens
+                if self._decode_loads[admission.group] < 0:
+                    raise RuntimeError("negative PAP Decode load")
         else:
-            self._prefill_loads[admission.prefill_group] -= (
-                admission.context_tokens
-            )
+            self._prefill_loads[admission.prefill_group] -= admission.context_tokens
             if self._prefill_loads[admission.prefill_group] < 0:
                 raise RuntimeError("negative PAP Prefill load")
         if admission.history_group is not None:
-            self._history_loads[
-                admission.history_group
-            ] += admission.reserved_history_tokens
+            self._history_loads[admission.history_group] += (
+                admission.reserved_history_tokens
+            )
+        self._resolve_migration(admission)
 
     def snapshot(self) -> dict[str, Any]:
         """Return current token load and migration counters by PA."""
@@ -565,24 +568,21 @@ class PAPAttentionLoadRouter:
         return {
             "active_requests": len(self._admissions),
             "conversations": len(self._history_owners),
-            "migration_min_balance_gain_ratio": (
-                self._migration_min_balance_gain_ratio
-            ),
-            "migration_min_interval": self._migration_min_interval,
+            "migration_min_peak_gain_ratio": self._migration_min_peak_gain_ratio,
             "migration_max_inflight": self._migration_max_inflight,
             "migration_inflight_count": self._migration_inflight_count,
             "history_admission_count": self._history_admission_count,
             "migration_candidate_count": self._migration_candidate_count,
             "migration_selected_count": self._migration_selected_count,
             "migration_suppressed_count": self._migration_suppressed_count,
-            "migration_suppressed_by_balance_count": (
-                self._migration_suppressed_by_balance_count
-            ),
-            "migration_suppressed_by_interval_count": (
-                self._migration_suppressed_by_interval_count
+            "migration_suppressed_by_peak_gain_count": (
+                self._migration_suppressed_by_peak_gain_count
             ),
             "migration_suppressed_by_inflight_count": (
                 self._migration_suppressed_by_inflight_count
+            ),
+            "migration_suppressed_by_prefill_busy_count": (
+                self._migration_suppressed_by_prefill_busy_count
             ),
             "migration_count": self._migration_count,
             "migration_miss_count": self._migration_miss_count,
@@ -595,6 +595,16 @@ class PAPAttentionLoadRouter:
                 str(self._group_indices[group]): self._decode_loads[group]
                 for group in self._groups
             },
+            "pa_migration_reserved_tokens": {
+                str(self._group_indices[group]): (self._migration_reserved_loads[group])
+                for group in self._groups
+            },
+            "pa_decode_base_tokens": {
+                str(self._group_indices[group]): (
+                    self._decode_loads[group] + self._migration_reserved_loads[group]
+                )
+                for group in self._groups
+            },
             "pa_history_tokens": {
                 str(self._group_indices[group]): self._history_loads[group]
                 for group in self._groups
@@ -603,6 +613,7 @@ class PAPAttentionLoadRouter:
                 str(self._group_indices[group]): (
                     self._prefill_loads[group]
                     + self._decode_loads[group]
+                    + self._migration_reserved_loads[group]
                     + self._history_loads[group]
                 )
                 for group in self._groups
@@ -695,6 +706,34 @@ def _migration_prefix_kv_params(
     kv_params["remote_block_ids"] = trimmed_block_ids
     kv_params["remote_num_tokens"] = cached_tokens
     return kv_params, cached_tokens
+
+
+def _migration_prefix_identity(
+    export_response: dict[str, Any],
+    *,
+    migrated_tokens: int,
+) -> tuple[list[int], list[str]]:
+    """Validate the source identity used to index migrated KV blocks."""
+    raw_token_ids = export_response.get("prefix_token_ids")
+    raw_block_hashes = export_response.get("prefix_block_hashes")
+    if not isinstance(raw_token_ids, list) or not raw_token_ids:
+        raise RuntimeError("PAP migration source returned no prefix token identity")
+    if not isinstance(raw_block_hashes, list) or not raw_block_hashes:
+        raise RuntimeError("PAP migration source returned no prefix block hashes")
+
+    token_ids = [int(token) for token in raw_token_ids[:migrated_tokens]]
+    block_hashes: list[str] = []
+    for raw_hash in raw_block_hashes:
+        if not isinstance(raw_hash, str):
+            raise RuntimeError("PAP migration source returned an invalid block hash")
+        try:
+            bytes.fromhex(raw_hash)
+        except ValueError as exc:
+            raise RuntimeError(
+                "PAP migration source returned an invalid block hash"
+            ) from exc
+        block_hashes.append(raw_hash)
+    return token_ids, block_hashes
 
 
 @dataclass
@@ -964,6 +1003,22 @@ async def _export_prefill_kv(
     return body if body.get("exported", False) else None
 
 
+async def _wait_prefill_kv_export(
+    prefill: PAPServiceClient,
+    request_id: str,
+) -> dict[str, Any] | None:
+    """Wait for scheduler finalization to publish a completed Prefill lease."""
+    timeout = float(os.environ.get("PAP_KV_EXPORT_READY_TIMEOUT", "1"))
+    deadline = time.monotonic() + max(0.0, timeout)
+    while True:
+        exported = await _export_prefill_kv(prefill, request_id)
+        if exported is not None:
+            return exported
+        if time.monotonic() >= deadline:
+            return None
+        await asyncio.sleep(0.005)
+
+
 async def _release_prefill_kv(
     prefill: PAPServiceClient,
     *,
@@ -979,23 +1034,21 @@ async def _release_prefill_kv(
     response.raise_for_status()
     body = response.json()
     return bool(
-        body.get("released", False)
-        or body.get("reason") == "unknown_or_released_lease"
+        body.get("released", False) or body.get("reason") == "unknown_or_released_lease"
     )
 
 
 async def _install_completed_prefill_on_group(
     *,
-    api_path: str,
     req_data: dict[str, Any],
     request_id: str,
     conversation_id: str,
     source_group: PAPGroup,
+    source_prefill: PAPServiceClient,
     source_prefill_response: dict[str, Any],
     target_group: PAPGroup,
     target_prefill: PAPServiceClient,
     target_attention_clients: list[PAPServiceClient],
-    pap_mode: str,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], int]:
     """Import a completed Prefill KV snapshot into the Decode target PA."""
     source_kv_params = enrich_prefill_kv_params(
@@ -1014,6 +1067,21 @@ async def _install_completed_prefill_on_group(
         source_group=source_group,
         block_size=int(os.environ.get("PAP_BLOCK_SIZE", "16")),
     )
+    source_request_id = prefill_kv_handle_from_kv_params(source_kv_params)
+    if source_request_id is None:
+        raise RuntimeError("PAP migration source returned no stable KV handle")
+    source_export = await _wait_prefill_kv_export(
+        source_prefill,
+        source_request_id,
+    )
+    if source_export is None:
+        raise RuntimeError("PAP migration source KV lease is unavailable")
+    prefix_token_ids, prefix_block_hashes = _migration_prefix_identity(
+        source_export,
+        migrated_tokens=migrated_tokens,
+    )
+    if not target_group.attention_tcp_endpoint:
+        raise RuntimeError("PAP KV migration requires Attention TCP endpoints")
 
     target_sessions = await register_attention_handles(
         target_attention_clients,
@@ -1024,27 +1092,61 @@ async def _install_completed_prefill_on_group(
         prefix_len=None,
     )
     try:
-        target_payload = attach_pap_prefill_attention_params(
-            build_prefill_payload(
-                req_data,
-                remote_kv_params=remote_kv_params,
-            ),
-            pap_attention_endpoint=target_group.attention_base_url,
-            pap_attention_tcp_endpoint=target_group.attention_tcp_endpoint,
-            pap_offload_exec_zmq_endpoint=target_group.attention_zmq_endpoint,
-            pap_prefill_kv_handle=str(
-                target_sessions[0].get("prefill_kv_handle")
-            ),
-            pap_mode=pap_mode,
-        )
+        decode_capacity_tokens = requested_decode_capacity(req_data)
+        if decode_capacity_tokens is None:
+            decode_capacity_tokens = int(
+                os.environ.get(
+                    "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS",
+                    "0",
+                )
+            )
+        migration_request = {
+            "request_id": request_id,
+            "source_kv_params": remote_kv_params,
+            "prefix_len": migrated_tokens,
+            "prefix_token_ids": prefix_token_ids,
+            "prefix_block_hashes": prefix_block_hashes,
+            "decode_capacity_tokens": decode_capacity_tokens,
+            "session_handle": str(target_sessions[0].get("prefill_kv_handle")),
+            "attention_tcp_endpoint": target_group.attention_tcp_endpoint,
+        }
         started = time.perf_counter()
-        target_response = await _post_json(
+        submitted = await _post_json(
             target_prefill,
-            api_path,
-            target_payload,
+            "/v1/pap/prefill/kv-import",
+            migration_request,
             request_id,
         )
-        migration_ms = int((time.perf_counter() - started) * 1000)
+        job_id = str(submitted["job_id"])
+        status = submitted
+        transfer_started = status.get("status") == "transferring" and bool(
+            status.get("kv_transfer_params")
+        )
+        if status.get("status") != "ready" and not transfer_started:
+            timeout = float(os.environ.get("PAP_KV_MIGRATION_TIMEOUT", "30"))
+            deadline = time.monotonic() + timeout
+            while True:
+                if status.get("status") in {"failed", "unknown"}:
+                    raise RuntimeError(
+                        "PAP target KV migration failed "
+                        f"job_id={job_id} detail={status.get('error')}"
+                    )
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"PAP target KV migration timed out job_id={job_id}"
+                    )
+                await asyncio.sleep(0.01)
+                status = await _post_json(
+                    target_prefill,
+                    "/v1/pap/prefill/kv-import/status",
+                    {"job_id": job_id},
+                    request_id,
+                )
+                if status.get("status") == "ready":
+                    break
+        target_response = {
+            "kv_transfer_params": status.get("kv_transfer_params") or {},
+        }
         target_kv_params = enrich_prefill_kv_params(
             target_response.get("kv_transfer_params") or {},
             prefill_host=target_group.prefill_host,
@@ -1064,6 +1166,42 @@ async def _install_completed_prefill_on_group(
         )
         if not ready:
             raise RuntimeError("PAP target Attention did not install migrated KV")
+        migration_ms = int((time.perf_counter() - started) * 1000)
+        logger.info(
+            "PAP KV migration Attention ready request_id=%s job_id=%s "
+            "queue_ms=%s engine_transfer_and_publish_ms=%s "
+            "engine_total_ms=%s gateway_ms=%d",
+            request_id,
+            job_id,
+            status.get("queue_ms"),
+            status.get("transfer_and_publish_ms"),
+            status.get("total_ms"),
+            migration_ms,
+        )
+        if source_export is not None:
+            source_lease_id = source_export.get("lease_id")
+            if isinstance(source_lease_id, str) and source_lease_id:
+                try:
+                    released = await _release_prefill_kv(
+                        source_prefill,
+                        request_id=source_request_id,
+                        lease_id=source_lease_id,
+                    )
+                    if not released:
+                        logger.warning(
+                            "PAP migrated source lease release not acknowledged "
+                            "request_id=%s lease_id=%s",
+                            request_id,
+                            source_lease_id,
+                        )
+                except Exception:
+                    logger.warning(
+                        "PAP migrated source lease release failed "
+                        "request_id=%s lease_id=%s",
+                        request_id,
+                        source_lease_id,
+                        exc_info=True,
+                    )
         return target_sessions, target_response, migration_ms
     except Exception:
         await _cleanup_attention_sessions(
@@ -1276,10 +1414,9 @@ async def lifespan(app: FastAPI):
     app.state.conversation_router = PAPConversationRouter(app.state.groups)
     app.state.attention_load_router = PAPAttentionLoadRouter(
         app.state.groups,
-        migration_min_balance_gain_ratio=(
-            args.attention_load_migration_min_balance_gain_ratio
+        migration_min_peak_gain_ratio=(
+            args.attention_load_migration_min_peak_gain_ratio
         ),
-        migration_min_interval=args.attention_load_migration_min_interval,
         migration_max_inflight=args.attention_load_migration_max_inflight,
     )
     app.state.projection_admission = PAPProjectionAdmission(app.state.groups)
@@ -1330,9 +1467,7 @@ async def _handle_openai_request(api_path: str, request: Request):
     if request.app.state.args.routing_policy == "attention_load":
         attention_load_router = request.app.state.attention_load_router
         history_record = (
-            attention_load_router.history(conversation_id)
-            if conversation_id
-            else None
+            attention_load_router.history(conversation_id) if conversation_id else None
         )
         history_context_tokens = history_record[2] if history_record else 0
         if history_record is not None and attention_load_router.migration_enabled:
@@ -1436,9 +1571,9 @@ async def _handle_openai_request(api_path: str, request: Request):
             )
             if decode_group != prefill_group:
                 decode_group_index = request.app.state.groups.index(decode_group)
-                target_attention_clients = (
-                    request.app.state.attention_clients[decode_group]
-                )
+                target_attention_clients = request.app.state.attention_clients[
+                    decode_group
+                ]
                 logger.info(
                     "PAP completed Prefill migration planned request_id=%s "
                     "source_pa=%d target_pa=%d tokens=%d",
@@ -1449,29 +1584,28 @@ async def _handle_openai_request(api_path: str, request: Request):
                 )
                 migration_started = time.perf_counter()
                 try:
-                    target_sessions, target_response, migration_ms = (
-                        await _install_completed_prefill_on_group(
-                            api_path=api_path,
-                            req_data=req_data,
-                            request_id=request_id,
-                            conversation_id=conversation_id,
-                            source_group=prefill_group,
-                            source_prefill_response=prefill_resp,
-                            target_group=decode_group,
-                            target_prefill=(
-                                request.app.state.prefill_clients[decode_group]
-                            ),
-                            target_attention_clients=target_attention_clients,
-                            pap_mode=request.app.state.args.pap_mode,
-                        )
+                    (
+                        target_sessions,
+                        target_response,
+                        migration_ms,
+                    ) = await _install_completed_prefill_on_group(
+                        req_data=req_data,
+                        request_id=request_id,
+                        conversation_id=conversation_id,
+                        source_group=prefill_group,
+                        source_prefill=(
+                            request.app.state.prefill_clients[prefill_group]
+                        ),
+                        source_prefill_response=prefill_resp,
+                        target_group=decode_group,
+                        target_prefill=(
+                            request.app.state.prefill_clients[decode_group]
+                        ),
+                        target_attention_clients=target_attention_clients,
                     )
                 except Exception as exc:
-                    migration_ms = int(
-                        (time.perf_counter() - migration_started) * 1000
-                    )
-                    group = attention_load_router.mark_migration_missed(
-                        request_id
-                    )
+                    migration_ms = int((time.perf_counter() - migration_started) * 1000)
+                    group = attention_load_router.mark_migration_missed(request_id)
                     logger.warning(
                         "PAP completed Prefill migration failed; using source "
                         "request_id=%s source_pa=%d target_pa=%d error=%s",
@@ -1761,33 +1895,23 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--attention-load-migration-min-balance-gain-ratio",
+        "--attention-load-migration-min-peak-gain-ratio",
         type=float,
         default=float(
             os.environ.get(
-                "PAP_ATTENTION_LOAD_MIGRATION_MIN_BALANCE_GAIN_RATIO",
+                "PAP_ATTENTION_LOAD_MIGRATION_MIN_PEAK_GAIN_RATIO",
                 "0.3",
             )
         ),
         help=(
-            "Minimum relative reduction in cross-PA aggregate-load variance "
+            "Minimum relative reduction in peak Decode Attention load "
             "required for a migration"
         ),
     )
     parser.add_argument(
-        "--attention-load-migration-min-interval",
-        type=int,
-        default=int(
-            os.environ.get("PAP_ATTENTION_LOAD_MIGRATION_MIN_INTERVAL", "64")
-        ),
-        help="Minimum later-turn admissions between migrations",
-    )
-    parser.add_argument(
         "--attention-load-migration-max-inflight",
         type=int,
-        default=int(
-            os.environ.get("PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT", "1")
-        ),
+        default=int(os.environ.get("PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT", "1")),
         help="Maximum unresolved historical KV migrations; zero disables them",
     )
     return parser.parse_args()

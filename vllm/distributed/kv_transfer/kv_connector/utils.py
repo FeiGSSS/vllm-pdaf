@@ -90,6 +90,7 @@ class KVOutputAggregator:
         aggregated_kv_connector_worker_meta = None
         combined_kv_cache_events = None
         invalid_block_ids = set[int]()
+        pap_migration_failures: dict[str, str] = {}
         for model_runner_output in outputs:
             assert model_runner_output is not None
             kv_output = model_runner_output.kv_connector_output
@@ -152,6 +153,7 @@ class KVOutputAggregator:
                 combined_kv_cache_events.increment_workers(1)
 
             invalid_block_ids |= kv_output.invalid_block_ids
+            pap_migration_failures.update(kv_output.pap_migration_failures or {})
 
         # select output of the worker specified by output_rank
         output = outputs[output_rank]
@@ -165,6 +167,7 @@ class KVOutputAggregator:
             kv_connector_worker_meta=aggregated_kv_connector_worker_meta or None,
             invalid_block_ids=invalid_block_ids,
             expected_finished_count=self._expected_finished_count,
+            pap_migration_failures=pap_migration_failures or None,
         )
 
         return output

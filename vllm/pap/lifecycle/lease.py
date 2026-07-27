@@ -61,6 +61,8 @@ class PAPKVExportEntry:
     seq_len: int
     kv_transfer_params: dict[str, Any]
     updated_at: float
+    prefix_token_ids: tuple[int, ...] = ()
+    prefix_block_hashes: tuple[bytes, ...] = ()
 
 
 @dataclass
@@ -85,6 +87,9 @@ class PAPKVLeaseRegistry:
         default_factory=dict
     )
     _exports_by_request: dict[str, PAPKVExportEntry] = field(default_factory=dict)
+    _pending_exports_by_request: dict[str, PAPKVExportEntry] = field(
+        default_factory=dict
+    )
     _retained_leases: OrderedDict[str, float] = field(default_factory=OrderedDict)
 
     def pin_blocks(
@@ -114,13 +119,24 @@ class PAPKVLeaseRegistry:
             created_at=now,
             expires_at=expires_at,
         )
+        normalized_request_id = str(request_id)
         with self._lock:
-            self._exports_by_request.pop(str(request_id), None)
-            previous_lease_id = self._active_by_request.get(str(request_id))
+            pending_export = self._pending_exports_by_request.pop(
+                normalized_request_id,
+                None,
+            )
+            self._exports_by_request.pop(normalized_request_id, None)
+            previous_lease_id = self._active_by_request.get(normalized_request_id)
             if previous_lease_id is not None:
                 self._retained_leases.pop(previous_lease_id, None)
             self._by_lease[lease_id] = entry
-            self._active_by_request[str(request_id)] = lease_id
+            self._active_by_request[normalized_request_id] = lease_id
+            if pending_export is not None:
+                self._exports_by_request[normalized_request_id] = replace(
+                    pending_export,
+                    lease_id=lease_id,
+                    updated_at=now,
+                )
         if _kv_lease_profile_enabled():
             logger.info(
                 "PAP KV lease pin request_id=%s lease_id=%s blocks=%d ttl=%s",
@@ -212,8 +228,7 @@ class PAPKVLeaseRegistry:
                 released = self.release_lease(lease_id)
                 if released:
                     logger.info(
-                        "PAP KV pressure eviction request_id=%s lease_id=%s "
-                        "blocks=%d",
+                        "PAP KV pressure eviction request_id=%s lease_id=%s blocks=%d",
                         request_id,
                         lease_id,
                         len(released),
@@ -299,24 +314,42 @@ class PAPKVLeaseRegistry:
         request_id: str,
         seq_len: int,
         kv_transfer_params: dict[str, Any],
+        prefix_token_ids: Sequence[int] = (),
+        prefix_block_hashes: Sequence[bytes] = (),
     ) -> bool:
-        """Attach reusable NIXL metadata to an active Prefill lease."""
+        """Attach NIXL metadata now or when the Prefill lease is pinned."""
         normalized_id = str(request_id)
+        now = time.time()
         with self._lock:
             lease_id = self._active_by_request.get(normalized_id)
             if lease_id is None:
-                return False
+                self._pending_exports_by_request[normalized_id] = PAPKVExportEntry(
+                    request_id=normalized_id,
+                    lease_id="",
+                    seq_len=max(0, int(seq_len)),
+                    kv_transfer_params=deepcopy(kv_transfer_params),
+                    updated_at=now,
+                    prefix_token_ids=tuple(int(token) for token in prefix_token_ids),
+                    prefix_block_hashes=tuple(
+                        bytes(block_hash) for block_hash in prefix_block_hashes
+                    ),
+                )
+                return True
             lease = self._by_lease.get(lease_id)
             if lease is None or lease.released_at is not None:
                 return False
-            if lease.expires_at is not None and time.time() > lease.expires_at:
+            if lease.expires_at is not None and now > lease.expires_at:
                 return False
             self._exports_by_request[normalized_id] = PAPKVExportEntry(
                 request_id=normalized_id,
                 lease_id=lease_id,
                 seq_len=max(0, int(seq_len)),
                 kv_transfer_params=deepcopy(kv_transfer_params),
-                updated_at=time.time(),
+                updated_at=now,
+                prefix_token_ids=tuple(int(token) for token in prefix_token_ids),
+                prefix_block_hashes=tuple(
+                    bytes(block_hash) for block_hash in prefix_block_hashes
+                ),
             )
             return True
 
@@ -417,9 +450,7 @@ def pap_mark_kv_lease_retained(request_id: str, lease_id: str) -> bool:
     return get_global_kv_lease_registry().mark_retained(request_id, lease_id)
 
 
-def pap_evict_oldest_retained_kv_lease() -> (
-    tuple[str, str, tuple[int, ...]] | None
-):
+def pap_evict_oldest_retained_kv_lease() -> tuple[str, str, tuple[int, ...]] | None:
     return get_global_kv_lease_registry().evict_oldest_retained()
 
 
@@ -443,11 +474,15 @@ def pap_record_kv_export(
     request_id: str,
     seq_len: int,
     kv_transfer_params: dict[str, Any],
+    prefix_token_ids: Sequence[int] = (),
+    prefix_block_hashes: Sequence[bytes] = (),
 ) -> bool:
     return get_global_kv_lease_registry().record_export(
         request_id=request_id,
         seq_len=seq_len,
         kv_transfer_params=kv_transfer_params,
+        prefix_token_ids=prefix_token_ids,
+        prefix_block_hashes=prefix_block_hashes,
     )
 
 

@@ -8,7 +8,7 @@ import uuid
 import weakref
 from abc import ABC, abstractmethod
 from collections import defaultdict, deque
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass
 from multiprocessing.connection import Connection
@@ -176,6 +176,15 @@ class EngineCoreClient(ABC):
     def pap_export_kv_lease(self, request_id: str) -> dict[str, Any]:
         raise NotImplementedError
 
+    def pap_submit_kv_migration(
+        self,
+        migration: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def pap_kv_migration_status(self, job_id: str) -> dict[str, Any]:
+        raise NotImplementedError
+
     def sleep(self, level: int = 1, mode: PauseMode = "abort") -> None:
         raise NotImplementedError
 
@@ -272,6 +281,18 @@ class EngineCoreClient(ABC):
     async def pap_export_kv_lease_async(
         self,
         request_id: str,
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def pap_submit_kv_migration_async(
+        self,
+        migration: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def pap_kv_migration_status_async(
+        self,
+        job_id: str,
     ) -> dict[str, Any]:
         raise NotImplementedError
 
@@ -390,6 +411,15 @@ class InprocClient(EngineCoreClient):
 
     def pap_export_kv_lease(self, request_id: str) -> dict[str, Any]:
         return self.engine_core.pap_export_kv_lease(request_id)
+
+    def pap_submit_kv_migration(
+        self,
+        migration: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        return self.engine_core.pap_submit_kv_migration(migration)
+
+    def pap_kv_migration_status(self, job_id: str) -> dict[str, Any]:
+        return self.engine_core.pap_kv_migration_status(job_id)
 
     def sleep(self, level: int = 1, mode: PauseMode = "abort") -> None:
         if mode == "wait":
@@ -1013,6 +1043,15 @@ class SyncMPClient(MPClient):
     def pap_export_kv_lease(self, request_id: str) -> dict[str, Any]:
         return self.call_utility("pap_export_kv_lease", request_id)
 
+    def pap_submit_kv_migration(
+        self,
+        migration: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        return self.call_utility("pap_submit_kv_migration", dict(migration))
+
+    def pap_kv_migration_status(self, job_id: str) -> dict[str, Any]:
+        return self.call_utility("pap_kv_migration_status", str(job_id))
+
     def add_lora(self, lora_request: LoRARequest) -> bool:
         return self.call_utility("add_lora", lora_request)
 
@@ -1298,6 +1337,24 @@ class AsyncMPClient(MPClient):
         request_id: str,
     ) -> dict[str, Any]:
         return await self.call_utility_async("pap_export_kv_lease", request_id)
+
+    async def pap_submit_kv_migration_async(
+        self,
+        migration: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        return await self.call_utility_async(
+            "pap_submit_kv_migration",
+            dict(migration),
+        )
+
+    async def pap_kv_migration_status_async(
+        self,
+        job_id: str,
+    ) -> dict[str, Any]:
+        return await self.call_utility_async(
+            "pap_kv_migration_status",
+            str(job_id),
+        )
 
     async def sleep_async(self, level: int = 1, mode: PauseMode = "abort") -> None:
         await self.call_utility_async("sleep", level, mode)

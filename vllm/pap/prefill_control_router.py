@@ -27,6 +27,21 @@ class KVExportRequest(BaseModel):
     request_id: str
 
 
+class KVMigrationRequest(BaseModel):
+    request_id: str
+    source_kv_params: dict[str, Any]
+    prefix_len: int = Field(gt=0)
+    prefix_token_ids: list[int]
+    prefix_block_hashes: list[str]
+    decode_capacity_tokens: int = Field(ge=0)
+    session_handle: str
+    attention_tcp_endpoint: str
+
+
+class KVMigrationStatusRequest(BaseModel):
+    job_id: str
+
+
 async def _maybe_await(value: Any) -> Any:
     if inspect.isawaitable(value):
         return await value
@@ -112,9 +127,7 @@ def build_prefill_control_router() -> APIRouter:
                 "pap_release_kv_lease",
                 *control_args,
             )
-            completed = result.get("released", False) or result.get(
-                "retained", False
-            )
+            completed = result.get("released", False) or result.get("retained", False)
             if completed or result.get("reason") in {
                 "unknown_or_released_lease",
                 "unknown_expired_or_released_lease",
@@ -136,6 +149,32 @@ def build_prefill_control_router() -> APIRouter:
             "pap_export_kv_lease_async",
             "pap_export_kv_lease",
             str(req.request_id),
+        )
+
+    @router.post("/v1/pap/prefill/kv-import")
+    async def import_kv(
+        req: KVMigrationRequest,
+        raw_request: Request,
+    ) -> dict[str, Any]:
+        engine_client = raw_request.app.state.engine_client
+        return await _call_engine_control_method(
+            engine_client,
+            "pap_submit_kv_migration_async",
+            "pap_submit_kv_migration",
+            req.model_dump(),
+        )
+
+    @router.post("/v1/pap/prefill/kv-import/status")
+    async def import_kv_status(
+        req: KVMigrationStatusRequest,
+        raw_request: Request,
+    ) -> dict[str, Any]:
+        engine_client = raw_request.app.state.engine_client
+        return await _call_engine_control_method(
+            engine_client,
+            "pap_kv_migration_status_async",
+            "pap_kv_migration_status",
+            str(req.job_id),
         )
 
     return router

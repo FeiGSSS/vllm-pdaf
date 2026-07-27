@@ -11,7 +11,7 @@ from vllm.logger import init_logger
 from vllm.pap.integration.kv_cache import PAPKVCacheAdapter
 from vllm.v1.core.kv_cache_coordinator import get_kv_cache_coordinator
 from vllm.v1.core.kv_cache_metrics import KVCacheMetricsCollector
-from vllm.v1.core.kv_cache_utils import KVCacheBlock
+from vllm.v1.core.kv_cache_utils import BlockHash, KVCacheBlock
 from vllm.v1.kv_cache_interface import (
     KVCacheConfig,
     get_kv_cache_spec_kind,
@@ -21,6 +21,26 @@ from vllm.v1.metrics.stats import PrefixCacheStats
 from vllm.v1.request import Request, RequestStatus
 
 logger = init_logger(__name__)
+
+
+class _PAPExternalPrefixRequest:
+    """Request-shaped prefix identity for migrated KV cache blocks."""
+
+    def __init__(
+        self,
+        request_id: str,
+        token_ids: tuple[int, ...],
+        block_hashes: tuple[bytes, ...],
+    ) -> None:
+        self.request_id = request_id
+        self.all_token_ids = token_ids
+        self.block_hashes = [BlockHash(block_hash) for block_hash in block_hashes]
+        self.num_prompt_tokens = len(token_ids)
+        self.mm_features = []
+        self.lora_request = None
+        self.cache_salt = None
+        self.prompt_embeds = None
+        self._prompt_embeds_per_block_hashes: dict[tuple[int, int], bytes] = {}
 
 
 @dataclass
@@ -495,6 +515,82 @@ class KVCacheManager:
         self.coordinator.cache_blocks(request, num_tokens_to_cache)
 
         return self.create_kv_cache_blocks(new_blocks)
+
+    def allocate_external_transfer_slots(
+        self,
+        *,
+        request_id: str,
+        prefix_tokens: int,
+        total_capacity_tokens: int,
+        reserved_blocks: int = 0,
+    ) -> KVCacheBlocks | None:
+        """Allocate receiver and Decode slots without creating a request."""
+        if prefix_tokens <= 0:
+            raise ValueError("prefix_tokens must be positive")
+        if total_capacity_tokens < prefix_tokens:
+            raise ValueError("total_capacity_tokens cannot be smaller than prefix")
+
+        total_capacity_tokens = min(total_capacity_tokens, self.max_model_len)
+        prefix_tokens = min(prefix_tokens, total_capacity_tokens)
+        empty_blocks = self.empty_kv_cache_blocks.blocks
+        num_blocks = self.coordinator.get_num_blocks_to_allocate(
+            request_id=request_id,
+            num_tokens=total_capacity_tokens,
+            new_computed_blocks=empty_blocks,
+            num_encoder_tokens=0,
+            total_computed_tokens=prefix_tokens,
+            num_tokens_main_model=total_capacity_tokens,
+        )
+        if num_blocks + reserved_blocks > self.block_pool.get_num_free_blocks():
+            return None
+
+        self.coordinator.allocate_new_computed_blocks(
+            request_id=request_id,
+            new_computed_blocks=empty_blocks,
+            num_local_computed_tokens=0,
+            num_external_computed_tokens=prefix_tokens,
+        )
+        self.coordinator.allocate_new_blocks(
+            request_id,
+            total_capacity_tokens,
+            total_capacity_tokens,
+        )
+        return self.get_blocks(request_id)
+
+    def free_external_transfer_slots(self, request_id: str) -> None:
+        """Free slots allocated by :meth:`allocate_external_transfer_slots`."""
+        self.coordinator.free(request_id)
+
+    def pop_external_transfer_slots(self, request_id: str) -> list[KVCacheBlock]:
+        """Detach migration slots without returning them to the block pool."""
+        return self.coordinator.pop_blocks_for_free(request_id)
+
+    def cache_external_transfer_prefix(
+        self,
+        *,
+        request_id: str,
+        prefix_token_ids: tuple[int, ...],
+        prefix_block_hashes: tuple[bytes, ...],
+    ) -> int:
+        """Make migrated full blocks reachable through prefix caching."""
+        if not self.enable_caching:
+            return 0
+        if not prefix_block_hashes:
+            raise ValueError("PAP migration source returned no prefix block hashes")
+
+        hash_block_size = self.block_pool.hash_block_size
+        cacheable_tokens = len(prefix_block_hashes) * hash_block_size
+        if len(prefix_token_ids) < cacheable_tokens:
+            raise ValueError(
+                "PAP migration prefix identity has fewer tokens than its block hashes"
+            )
+        identity = _PAPExternalPrefixRequest(
+            request_id,
+            prefix_token_ids,
+            prefix_block_hashes,
+        )
+        self.coordinator.cache_blocks(identity, cacheable_tokens)
+        return cacheable_tokens
 
     def free(self, request: Request) -> None:
         """Free the blocks allocated for the request.

@@ -18,6 +18,7 @@ import torch
 
 from vllm.config import VllmConfig
 from vllm.distributed.kv_transfer.kv_connector.utils import (
+    BlockIds,
     EngineId,
     get_current_attn_backend,
 )
@@ -183,6 +184,48 @@ class NixlBaseConnector(KVConnectorBase_V1, SupportsHMA):
         assert self.connector_scheduler is not None
         return self.connector_scheduler.build_connector_meta(scheduler_output)
 
+    def pap_add_migration_recv(
+        self,
+        metadata: KVConnectorMetadata,
+        *,
+        request_id: str,
+        local_block_ids: BlockIds,
+        kv_transfer_params: dict[str, Any],
+    ) -> None:
+        """Attach one out-of-band PAP receive to this scheduler step."""
+        if not isinstance(metadata, NixlConnectorMetadata):
+            raise TypeError("PAP migration requires NIXL connector metadata")
+        scheduler = self.connector_scheduler
+        assert scheduler is not None
+        scheduler.track_external_recv(request_id, kv_transfer_params)
+        metadata.add_new_req_to_recv(
+            request_id=request_id,
+            local_block_ids=local_block_ids,
+            kv_transfer_params=kv_transfer_params,
+        )
+
+    def pap_build_local_export_params(
+        self,
+        *,
+        request_id: str,
+        block_ids: BlockIds,
+        num_tokens: int,
+    ) -> dict[str, Any]:
+        """Build reusable NIXL metadata for migrated local KV."""
+        scheduler = self.connector_scheduler
+        assert scheduler is not None
+        return {
+            "do_remote_prefill": True,
+            "do_remote_decode": False,
+            "remote_block_ids": block_ids,
+            "remote_engine_id": scheduler.engine_id,
+            "remote_request_id": request_id,
+            "remote_host": scheduler.side_channel_host,
+            "remote_port": scheduler.side_channel_port,
+            "tp_size": self._vllm_config.parallel_config.tensor_parallel_size,
+            "remote_num_tokens": int(num_tokens),
+        }
+
     def on_new_request(self, request: "Request") -> None:
         assert self.connector_scheduler is not None
         self.connector_scheduler.on_new_request(request)
@@ -240,6 +283,12 @@ class NixlBaseConnector(KVConnectorBase_V1, SupportsHMA):
         """Get the finished recving and sending requests."""
         assert self.connector_worker is not None
         return self.connector_worker.get_finished()
+
+    def pap_progress_ready_recvs(self) -> None:
+        """Progress PAP receives after an asynchronous NIXL handshake."""
+        worker = self.connector_worker
+        if isinstance(worker, NixlPullConnectorWorker):
+            worker.pap_progress_ready_recvs()
 
     def get_block_ids_with_load_errors(self) -> set[int]:
         """Get block IDs that failed to load via NIXL."""

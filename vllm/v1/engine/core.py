@@ -7,7 +7,7 @@ import signal
 import threading
 import time
 from collections import defaultdict, deque
-from collections.abc import Callable, Generator, Sequence
+from collections.abc import Callable, Generator, Mapping, Sequence
 from concurrent.futures import Future
 from contextlib import ExitStack, contextmanager
 from enum import IntEnum
@@ -403,7 +403,16 @@ class EngineCore:
         )
 
     def pap_export_kv_lease(self, request_id: str) -> dict[str, Any]:
-        return PAPEngineAdapter.export_kv_lease(request_id)
+        return PAPEngineAdapter.export_kv_lease(self.scheduler, request_id)
+
+    def pap_submit_kv_migration(
+        self,
+        migration: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        return PAPEngineAdapter.submit_kv_migration(self.scheduler, migration)
+
+    def pap_kv_migration_status(self, job_id: str) -> dict[str, Any]:
+        return PAPEngineAdapter.kv_migration_status(self.scheduler, job_id)
 
     def add_request(self, request: Request, request_wave: int = 0):
         """Add request to the scheduler.

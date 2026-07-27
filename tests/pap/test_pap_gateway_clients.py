@@ -1,6 +1,7 @@
 """PAP gateway client and handoff tests."""
 
 import asyncio
+
 import httpx
 
 from vllm.pap.gateway.clients import (
@@ -13,6 +14,8 @@ from vllm.pap.gateway.clients import (
 from vllm.pap.gateway.payloads import (
     attach_pap_prefill_attention_params,
     build_prefill_payload,
+)
+from vllm.pap.gateway.payloads import (
     build_projection_kv_unaware_payload as build_projection_payload,
 )
 
@@ -98,10 +101,7 @@ def test_prefill_kv_handle_prefers_remote_request_id() -> None:
 
 
 def test_prefill_kv_handle_falls_back_to_attention_session() -> None:
-    assert (
-        prefill_kv_handle_from_kv_params({}, fallback="external")
-        == "external"
-    )
+    assert prefill_kv_handle_from_kv_params({}, fallback="external") == "external"
 
 
 def test_wait_attention_prefill_ready_polls_until_layers_ready() -> None:
@@ -149,8 +149,7 @@ def test_wait_attention_prefill_ready_polls_until_layers_ready() -> None:
     ]
 
 
-def test_build_projection_payload_does_not_claim_attention_kv_installed_by_default(
-) -> None:
+def test_projection_payload_does_not_claim_attention_kv_by_default() -> None:
     kv_params = {"remote_engine_id": "prefill-0"}
     payload = build_projection_payload(
         {"model": "qwen", "prompt": "hello"},
@@ -245,3 +244,36 @@ def test_register_attention_handle_posts_internal_registration() -> None:
             {},
         )
     ]
+
+
+def test_register_attention_handle_retries_transport_error() -> None:
+    class FlakyAsyncClient(FakeAsyncClient):
+        async def post(self, endpoint, json, headers):
+            self.posts.append((endpoint, json, headers))
+            if len(self.posts) == 1:
+                request = httpx.Request("POST", "http://localhost:8300")
+                raise httpx.ReadError("stale keep-alive", request=request)
+            return FakeResponse({"ok": True})
+
+    fake_http = FlakyAsyncClient()
+    client = PAPServiceClient(
+        client=fake_http,
+        host="localhost",
+        port=8300,
+        base_url="http://localhost:8300",
+        role="attention",
+    )
+
+    result = asyncio.run(
+        register_attention_handle(
+            client,
+            request_id="req-retry",
+            conversation_id="conv-retry",
+            prefill_endpoint="http://localhost:8100",
+            kv_transfer_params={},
+            prefix_len=None,
+        )
+    )
+
+    assert result == {"ok": True}
+    assert len(fake_http.posts) == 2

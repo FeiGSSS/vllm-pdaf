@@ -963,6 +963,18 @@ class AsyncLLM(EngineClient):
     ) -> dict[str, Any]:
         return await self.engine_core.pap_export_kv_lease_async(request_id)
 
+    async def pap_submit_kv_migration_async(
+        self,
+        migration: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        return await self.engine_core.pap_submit_kv_migration_async(migration)
+
+    async def pap_kv_migration_status_async(
+        self,
+        job_id: str,
+    ) -> dict[str, Any]:
+        return await self.engine_core.pap_kv_migration_status_async(job_id)
+
     async def sleep(self, level: int = 1, mode: PauseMode = "abort") -> None:
         if level >= 1:
             await self.renderer.clear_mm_cache_async()

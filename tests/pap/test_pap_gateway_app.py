@@ -409,7 +409,10 @@ def test_attention_load_router_migrates_only_when_history_owner_is_not_minimum()
         PAPGroup("127.0.0.1", 8100 + idx, 5559 + idx, "127.0.0.1", 8300 + idx)
         for idx in range(3)
     ]
-    router = PAPAttentionLoadRouter(groups)
+    router = PAPAttentionLoadRouter(
+        groups,
+        migration_min_peak_gain_ratio=0.1,
+    )
     assert (
         router.admit(
             request_id="history",
@@ -464,14 +467,14 @@ def test_attention_load_router_keeps_history_owner_on_equal_load() -> None:
     assert router.history_group("turn-1") == owner
 
 
-def test_attention_load_router_suppresses_tiny_balance_gain() -> None:
+def test_attention_load_router_suppresses_tiny_peak_gain() -> None:
     groups = [
         PAPGroup("127.0.0.1", 8100 + idx, 5559 + idx, "127.0.0.1", 8300 + idx)
         for idx in range(2)
     ]
     router = PAPAttentionLoadRouter(
         groups,
-        migration_min_balance_gain_ratio=0.1,
+        migration_min_peak_gain_ratio=0.1,
     )
     owner = router.admit(
         request_id="turn-0",
@@ -498,14 +501,14 @@ def test_attention_load_router_suppresses_tiny_balance_gain() -> None:
     assert router.snapshot()["migration_suppressed_count"] == 1
 
 
-def test_attention_load_router_migrates_above_balance_threshold() -> None:
+def test_attention_load_router_migrates_above_peak_threshold() -> None:
     groups = [
         PAPGroup("127.0.0.1", 8100 + idx, 5559 + idx, "127.0.0.1", 8300 + idx)
         for idx in range(2)
     ]
     router = PAPAttentionLoadRouter(
         groups,
-        migration_min_balance_gain_ratio=0.1,
+        migration_min_peak_gain_ratio=0.1,
     )
     owner = router.admit(
         request_id="turn-0",
@@ -532,10 +535,87 @@ def test_attention_load_router_migrates_above_balance_threshold() -> None:
     assert router.snapshot()["migration_suppressed_count"] == 0
 
 
-def test_attention_load_router_values_balance_when_peak_is_unchanged() -> None:
-    assert PAPAttentionLoadRouter._imbalance([1000, 100, 100]) < (
-        PAPAttentionLoadRouter._imbalance([1000, 200, 0])
+def test_attention_load_router_stays_when_no_target_reduces_peak() -> None:
+    groups = [
+        PAPGroup("127.0.0.1", 8100 + idx, 5559 + idx, "127.0.0.1", 8300 + idx)
+        for idx in range(3)
+    ]
+    router = PAPAttentionLoadRouter(groups)
+    owner = router.admit(
+        request_id="turn-0",
+        conversation_id="conv",
+        estimated_context_tokens=150,
     )
+    router.observe_prefill("turn-0", 150)
+    router.finish("turn-0")
+    router._decode_loads[groups[1]] = 100
+    router._decode_loads[groups[2]] = 100
+
+    assert owner == groups[0]
+    assert (
+        router.admit(
+            request_id="turn-1",
+            conversation_id="conv",
+            estimated_context_tokens=150,
+        )
+        == owner
+    )
+    assert router.observe_prefill("turn-1", 150) == owner
+
+
+def test_attention_load_router_uses_prefill_only_as_migration_readiness() -> None:
+    groups = [
+        PAPGroup("127.0.0.1", 8100 + idx, 5559 + idx, "127.0.0.1", 8300 + idx)
+        for idx in range(2)
+    ]
+    router = PAPAttentionLoadRouter(groups)
+    owner = router.admit(
+        request_id="turn-0",
+        conversation_id="conv",
+        estimated_context_tokens=500,
+    )
+    router.observe_prefill("turn-0", 500)
+    router.finish("turn-0")
+    other = groups[1] if owner == groups[0] else groups[0]
+    router._decode_loads[owner] = 1_000
+    router._prefill_loads[other] = 100_000
+    router._history_loads[other] = 100_000
+
+    router.admit(
+        request_id="turn-1",
+        conversation_id="conv",
+        estimated_context_tokens=500,
+    )
+    assert router.observe_prefill("turn-1", 500) == owner
+    snapshot = router.snapshot()
+    assert snapshot["migration_candidate_count"] == 1
+    assert snapshot["migration_suppressed_by_prefill_busy_count"] == 1
+
+
+def test_attention_load_router_counts_incoming_reservations_in_base_load() -> None:
+    groups = [
+        PAPGroup("127.0.0.1", 8100 + idx, 5559 + idx, "127.0.0.1", 8300 + idx)
+        for idx in range(3)
+    ]
+    router = PAPAttentionLoadRouter(groups)
+    owner = router.admit(
+        request_id="turn-0",
+        conversation_id="conv",
+        estimated_context_tokens=500,
+    )
+    router.observe_prefill("turn-0", 500)
+    router.finish("turn-0")
+    router._decode_loads[owner] = 1_000
+    reserved_group = groups[1]
+    empty_group = groups[2]
+    router._migration_reserved_loads[reserved_group] = 900
+
+    router.admit(
+        request_id="turn-1",
+        conversation_id="conv",
+        estimated_context_tokens=500,
+    )
+    assert router.observe_prefill("turn-1", 500) == empty_group
 
 
 def test_attention_load_router_balances_committed_conversation_load() -> None:
@@ -577,8 +657,7 @@ def test_attention_load_router_limits_unresolved_migrations() -> None:
     ]
     router = PAPAttentionLoadRouter(
         groups,
-        migration_min_balance_gain_ratio=0,
-        migration_min_interval=1,
+        migration_min_peak_gain_ratio=0,
         migration_max_inflight=1,
     )
     owner_a = router.admit(
@@ -606,6 +685,7 @@ def test_attention_load_router_limits_unresolved_migrations() -> None:
     decode_a = router.observe_prefill("turn-a", 1000)
     assert selected_a == owner_a
     assert decode_a != owner_a
+    assert sum(router.snapshot()["pa_migration_reserved_tokens"].values()) == 1000
 
     router._decode_loads[owner_b] += 3_000
     selected_b = router.admit(
@@ -628,8 +708,7 @@ def test_attention_load_router_falls_failed_migration_back_to_prefill_pa() -> No
     ]
     router = PAPAttentionLoadRouter(
         groups,
-        migration_min_balance_gain_ratio=0,
-        migration_min_interval=1,
+        migration_min_peak_gain_ratio=0,
     )
     owner = router.admit(
         request_id="turn-0",
@@ -726,33 +805,79 @@ def test_migration_uses_only_the_retained_source_prefix() -> None:
     assert kv_params["remote_port"] == 5559
 
 
+def test_wait_prefill_kv_export_tolerates_scheduler_finalize_race(
+    monkeypatch,
+) -> None:
+    attempts = 0
+
+    async def fake_export(prefill, request_id):
+        nonlocal attempts
+        del prefill, request_id
+        attempts += 1
+        if attempts < 3:
+            return None
+        return {"lease_id": "lease"}
+
+    monkeypatch.setattr(gateway_app, "_export_prefill_kv", fake_export)
+
+    exported = asyncio.run(gateway_app._wait_prefill_kv_export(object(), "request-0"))
+
+    assert exported == {"lease_id": "lease"}
+    assert attempts == 3
+
+
 def test_completed_prefill_migration_installs_target_before_decode(
     monkeypatch,
 ) -> None:
     source = PAPGroup("127.0.0.1", 8100, 5559, "127.0.0.1", 8300)
-    target = PAPGroup("127.0.0.1", 8101, 5560, "127.0.0.1", 8301)
+    target = PAPGroup(
+        "127.0.0.1",
+        8101,
+        5560,
+        "127.0.0.1",
+        8301,
+        attention_tcp_port=9301,
+    )
     target_attention = [object()]
     posted: list[dict] = []
     cleaned: list[str] = []
+    released: list[tuple[str, str]] = []
 
     async def fake_register(*args, **kwargs):
         del args, kwargs
         return [{"prefill_kv_handle": "target-handle"}]
 
     async def fake_post(client, endpoint, payload, request_id):
-        del client, endpoint, request_id
-        posted.append(payload)
-        return {
-            "kv_transfer_params": {
-                "remote_engine_id": "target-engine",
-                "remote_request_id": "target-handle",
-                "remote_block_ids": [[20, 21]],
-                "remote_num_tokens": 32,
+        del client, request_id
+        posted.append({"endpoint": endpoint, "payload": payload})
+        if endpoint.endswith("/kv-import"):
+            return {
+                "job_id": "migration-job",
+                "status": "transferring",
+                "kv_transfer_params": {
+                    "remote_engine_id": "target-engine",
+                    "remote_request_id": "request-0",
+                    "remote_block_ids": [[20, 21]],
+                    "remote_num_tokens": 32,
+                },
             }
-        }
+        raise AssertionError(f"unexpected migration poll: {endpoint}")
 
     async def fake_ready(attention, request_id):
         del attention, request_id
+        return True
+
+    async def fake_export(prefill, request_id):
+        del prefill, request_id
+        return {
+            "lease_id": "source-lease",
+            "prefix_token_ids": list(range(32)),
+            "prefix_block_hashes": ["aa" * 32, "bb" * 32],
+        }
+
+    async def fake_release(prefill, *, request_id, lease_id):
+        del prefill
+        released.append((request_id, lease_id))
         return True
 
     async def fake_cleanup(attention_clients, request_id):
@@ -762,6 +887,8 @@ def test_completed_prefill_migration_installs_target_before_decode(
     monkeypatch.setattr(gateway_app, "register_attention_handles", fake_register)
     monkeypatch.setattr(gateway_app, "_post_json", fake_post)
     monkeypatch.setattr(gateway_app, "wait_attention_prefill_ready", fake_ready)
+    monkeypatch.setattr(gateway_app, "_export_prefill_kv", fake_export)
+    monkeypatch.setattr(gateway_app, "_release_prefill_kv", fake_release)
     monkeypatch.setattr(
         gateway_app,
         "_cleanup_attention_sessions",
@@ -770,11 +897,11 @@ def test_completed_prefill_migration_installs_target_before_decode(
 
     sessions, response, migration_ms = asyncio.run(
         gateway_app._install_completed_prefill_on_group(
-            api_path="/v1/completions",
             req_data={"model": "qwen", "prompt": "hello", "max_tokens": 32},
             request_id="request-0",
             conversation_id="conv-0",
             source_group=source,
+            source_prefill=object(),
             source_prefill_response={
                 "kv_transfer_params": {
                     "remote_engine_id": "source-engine",
@@ -786,7 +913,6 @@ def test_completed_prefill_migration_installs_target_before_decode(
             target_group=target,
             target_prefill=object(),
             target_attention_clients=target_attention,
-            pap_mode="unified",
         )
     )
 
@@ -794,41 +920,70 @@ def test_completed_prefill_migration_installs_target_before_decode(
     assert response["kv_transfer_params"]["remote_engine_id"] == "target-engine"
     assert migration_ms >= 0
     assert cleaned == []
-    migration_params = posted[0]["kv_transfer_params"]
+    assert released == [("source-handle", "source-lease")]
+    assert posted[0]["endpoint"] == "/v1/pap/prefill/kv-import"
+    migration_request = posted[0]["payload"]
+    migration_params = migration_request["source_kv_params"]
     assert migration_params["remote_engine_id"] == "source-engine"
     assert migration_params["remote_request_id"] == "source-handle"
     assert migration_params["remote_block_ids"] == [[10, 11]]
     assert migration_params["remote_num_tokens"] == 32
-    assert migration_params["pap_prefill_kv_handle"] == "target-handle"
-    assert migration_params["pap_import_prefill_kv_to_attention"] is True
+    assert migration_request["prefix_token_ids"] == list(range(32))
+    assert migration_request["prefix_block_hashes"] == [
+        "aa" * 32,
+        "bb" * 32,
+    ]
+    assert migration_request["session_handle"] == "target-handle"
+    assert migration_request["attention_tcp_endpoint"] == "tcp://127.0.0.1:9301"
+    assert migration_request["decode_capacity_tokens"] == 32
 
 
 def test_completed_prefill_migration_cleans_partial_target_on_failure(
     monkeypatch,
 ) -> None:
     source = PAPGroup("127.0.0.1", 8100, 5559, "127.0.0.1", 8300)
-    target = PAPGroup("127.0.0.1", 8101, 5560, "127.0.0.1", 8301)
+    target = PAPGroup(
+        "127.0.0.1",
+        8101,
+        5560,
+        "127.0.0.1",
+        8301,
+        attention_tcp_port=9301,
+    )
     cleaned: list[str] = []
 
     async def fake_register(*args, **kwargs):
         del args, kwargs
         return [{"prefill_kv_handle": "target-handle"}]
 
-    async def fake_post(*args, **kwargs):
-        del args, kwargs
+    async def fake_post(client, endpoint, payload, request_id):
+        del client, payload, request_id
+        if endpoint.endswith("/kv-import"):
+            return {"job_id": "migration-job", "status": "pending"}
         return {
+            "job_id": "migration-job",
+            "status": "ready",
             "kv_transfer_params": {
                 "remote_block_ids": [[20]],
                 "remote_num_tokens": 16,
-            }
+            },
         }
 
     async def fake_cleanup(attention_clients, request_id):
         del attention_clients
         cleaned.append(request_id)
 
+    async def fake_export(prefill, request_id):
+        del prefill, request_id
+        return {
+            "lease_id": "source-lease",
+            "prefix_token_ids": list(range(32)),
+            "prefix_block_hashes": ["aa" * 32, "bb" * 32],
+        }
+
     monkeypatch.setattr(gateway_app, "register_attention_handles", fake_register)
     monkeypatch.setattr(gateway_app, "_post_json", fake_post)
+    monkeypatch.setattr(gateway_app, "_export_prefill_kv", fake_export)
     monkeypatch.setattr(
         gateway_app,
         "_cleanup_attention_sessions",
@@ -838,11 +993,11 @@ def test_completed_prefill_migration_cleans_partial_target_on_failure(
     with pytest.raises(RuntimeError, match="length mismatch"):
         asyncio.run(
             gateway_app._install_completed_prefill_on_group(
-                api_path="/v1/completions",
                 req_data={"model": "qwen", "prompt": "hello", "max_tokens": 32},
                 request_id="request-0",
                 conversation_id="conv-0",
                 source_group=source,
+                source_prefill=object(),
                 source_prefill_response={
                     "kv_transfer_params": {
                         "remote_engine_id": "source-engine",
@@ -854,7 +1009,6 @@ def test_completed_prefill_migration_cleans_partial_target_on_failure(
                 target_group=target,
                 target_prefill=object(),
                 target_attention_clients=[object()],
-                pap_mode="unified",
             )
         )
 

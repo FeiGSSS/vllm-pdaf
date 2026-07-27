@@ -41,6 +41,10 @@ pap_configure_same_node_nixl() {
     echo "Same-node NIXL benchmarks require UCX_PROTO_EMULATION_ENABLE=n" >&2
     return 1
   fi
+  if [[ "${UCX_CUDA_IPC_ENABLE_GET_ZCOPY:-y}" != "y" ]]; then
+    echo "Same-node NIXL benchmarks require CUDA IPC GET zero-copy" >&2
+    return 1
+  fi
 
   export PAP_NIXL_RUNTIME_MODE="same_node_ucx122_strict"
   export PAP_NIXL_UCX_VERSION="${version}"
@@ -50,6 +54,7 @@ pap_configure_same_node_nixl() {
   export UCX_MODULE_DIR="${ucx_prefix}/lib/ucx"
   export LD_LIBRARY_PATH="${ucx_prefix}/lib:${LD_LIBRARY_PATH:-}"
   export UCX_PROTO_EMULATION_ENABLE=n
+  export UCX_CUDA_IPC_ENABLE_GET_ZCOPY=y
   export UCX_TLS="${UCX_TLS:-cuda_ipc,cuda_copy,tcp}"
   export UCX_NET_DEVICES="${UCX_NET_DEVICES:-all}"
   export UCX_RCACHE_MAX_UNRELEASED="${UCX_RCACHE_MAX_UNRELEASED:-1024}"

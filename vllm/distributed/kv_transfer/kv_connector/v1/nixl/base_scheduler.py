@@ -175,6 +175,14 @@ class NixlBaseConnectorScheduler:
     def on_new_request(self, request: "Request") -> None:
         """Track a request that may need heartbeats."""
         params = request.kv_transfer_params
+        self.track_external_recv(request.request_id, params)
+
+    def track_external_recv(
+        self,
+        request_id: str,
+        params: dict[str, Any] | None,
+    ) -> None:
+        """Track a direct external receive for remote lease heartbeats."""
         # NOTE (NickLucche) This excludes request meant for P, ie heartbeats are
         # effectively disabled for Bidirectional KV transfer.
         if params is None or not params.get("do_remote_prefill"):
@@ -201,7 +209,7 @@ class NixlBaseConnectorScheduler:
                 tp_size=tp_size,
             )
         self._heartbeat_by_engine[remote_engine_id].req_ids.add(remote_request_id)
-        self._heartbeat_req_engine[request.request_id] = (
+        self._heartbeat_req_engine[request_id] = (
             remote_engine_id,
             remote_request_id,
         )

@@ -248,6 +248,9 @@ class SchedulerOutput:
     # KV Cache Connector metadata.
     kv_connector_metadata: KVConnectorMetadata | None = None
 
+    # Out-of-band PAP migrations started by this scheduler step.
+    pap_migration_manifests: list[dict[str, Any]] | None = None
+
     # EC Cache Connector metadata
     ec_connector_metadata: ECConnectorMetadata | None = None
 

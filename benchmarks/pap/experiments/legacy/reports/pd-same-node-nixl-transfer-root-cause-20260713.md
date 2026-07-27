@@ -2,6 +2,12 @@
 
 日期：2026-07-13
 
+后续校正（2026-07-27）：当前 7PA 同机拓扑上的 UCX 1.22 仍需显式设置
+`UCX_CUDA_IPC_ENABLE_GET_ZCOPY=y`。否则 strict READ 虽不会回退到 TCP，但实测只有
+约 `6.6--7.2 GB/s`；显式设置后恢复到约 `19.6--22.0 GB/s`。当前默认配置和证据见
+[NIXL READ/WRITE 与 GET-zcopy 诊断](../../PAP-20260727-NIXL-READ-WRITE/report.md)。
+以下正文保留 2026-07-13 当时的实验结论。
+
 状态：根因已定位并二次校正。旧结论用 Push 绕开 GET；新证据证明 UCX 1.22 已修复
 官方 `NixlConnector` 的同机 GET 路径，因此默认基线已升级为同一 connector 下的单向、
 双向 PD。新三路结果见

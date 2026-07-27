@@ -253,8 +253,7 @@ PAP_LOCAL_FAST_SLEEP_US="${PAP_LOCAL_FAST_SLEEP_US:-20}"
 PAP_LOCAL_FAST_SLEEP_AFTER_US="${PAP_LOCAL_FAST_SLEEP_AFTER_US:-50}"
 PAP_REMOTE_ATTENTION_PARALLELISM="${PAP_REMOTE_ATTENTION_PARALLELISM:-16}"
 PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-conversation_affinity}"
-PAP_ATTENTION_LOAD_MIGRATION_MIN_BALANCE_GAIN_RATIO="${PAP_ATTENTION_LOAD_MIGRATION_MIN_BALANCE_GAIN_RATIO:-0.3}"
-PAP_ATTENTION_LOAD_MIGRATION_MIN_INTERVAL="${PAP_ATTENTION_LOAD_MIGRATION_MIN_INTERVAL:-64}"
+PAP_ATTENTION_LOAD_MIGRATION_MIN_PEAK_GAIN_RATIO="${PAP_ATTENTION_LOAD_MIGRATION_MIN_PEAK_GAIN_RATIO:-0.3}"
 PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT="${PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT:-1}"
 PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-64}"
 PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS:-1}"
@@ -1180,6 +1179,8 @@ write_effective_config() {
       "${PAP_NIXL_RUNTIME_MODE}" "${PAP_NIXL_UCX_VERSION}"
     printf 'NIXL_PLUGIN_DIR=%q\nUCX_PROTO_EMULATION_ENABLE=%q\n' \
       "${NIXL_PLUGIN_DIR}" "${UCX_PROTO_EMULATION_ENABLE}"
+    printf 'UCX_CUDA_IPC_ENABLE_GET_ZCOPY=%q\n' \
+      "${UCX_CUDA_IPC_ENABLE_GET_ZCOPY}"
     printf 'NO_PROXY=%q\n' "${NO_PROXY}"
     printf 'no_proxy=%q\n' "${no_proxy}"
     printf 'PAP_PROXY_PORT=%q\n' "${PAP_PROXY_PORT}"
@@ -1227,10 +1228,8 @@ write_effective_config() {
     printf 'PAP_PROJECTION_GPUS=%q\n' "${PAP_PROJECTION_GPUS}"
     printf 'PAP_VLLM_DTYPE=%q\n' "${PAP_VLLM_DTYPE}"
     printf 'PAP_ROUTING_POLICY=%q\n' "${PAP_ROUTING_POLICY}"
-    printf 'PAP_ATTENTION_LOAD_MIGRATION_MIN_BALANCE_GAIN_RATIO=%q\n' \
-      "${PAP_ATTENTION_LOAD_MIGRATION_MIN_BALANCE_GAIN_RATIO}"
-    printf 'PAP_ATTENTION_LOAD_MIGRATION_MIN_INTERVAL=%q\n' \
-      "${PAP_ATTENTION_LOAD_MIGRATION_MIN_INTERVAL}"
+    printf 'PAP_ATTENTION_LOAD_MIGRATION_MIN_PEAK_GAIN_RATIO=%q\n' \
+      "${PAP_ATTENTION_LOAD_MIGRATION_MIN_PEAK_GAIN_RATIO}"
     printf 'PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT=%q\n' \
       "${PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT}"
     printf 'PREFILL_PORT_BASE=%q\n' "${PREFILL_PORT_BASE}"
@@ -1654,10 +1653,14 @@ if dynamic_pa_routing and migration_lifecycle_enabled:
     # Every request marks its current-turn lease retained. A later turn also
     # releases its previous lease when that history is still cached. Under
     # pressure-LRU, that previous lease may already have been evicted. A
-    # post-Prefill migration creates one additional source-or-target session
-    # that is released after the attempt resolves.
+    # post-Prefill migration always creates one additional target session that
+    # is released after the attempt resolves. A successful migration also
+    # releases the superseded source Prefill lease.
     migration_attempts = proxy_text.count(
         "PAP completed Prefill migration planned"
+    )
+    migration_successes = proxy_text.count(
+        "PAP completed Prefill migration installed"
     )
     minimum_releases = expected_requests
     maximum_historical_releases = (
@@ -1667,6 +1670,7 @@ if dynamic_pa_routing and migration_lifecycle_enabled:
         expected_requests
         + maximum_historical_releases
         + migration_attempts
+        + migration_successes
     )
     historical_release_misses = maximum_releases - total_releases
     pressure_evictions = sum(
@@ -1695,6 +1699,7 @@ if dynamic_pa_routing and migration_lifecycle_enabled:
         )
 else:
     migration_attempts = None
+    migration_successes = None
     minimum_releases = None
     maximum_releases = None
     historical_release_misses = None
@@ -1713,6 +1718,7 @@ audit = {
     "minimum_lease_release_200": minimum_releases,
     "maximum_lease_release_200": maximum_releases,
     "migration_attempt_count": migration_attempts,
+    "migration_success_count": migration_successes,
     "historical_release_miss_count": historical_release_misses,
     "pressure_eviction_count": pressure_evictions,
     "migration_miss_count": migration_misses,
@@ -2065,10 +2071,8 @@ env \
   --pap-groups "${PAP_GROUPS_SPEC}" \
   --projections "${PROJECTIONS_SPEC}" \
   --routing-policy "${PAP_ROUTING_POLICY}" \
-  --attention-load-migration-min-balance-gain-ratio \
-  "${PAP_ATTENTION_LOAD_MIGRATION_MIN_BALANCE_GAIN_RATIO}" \
-  --attention-load-migration-min-interval \
-  "${PAP_ATTENTION_LOAD_MIGRATION_MIN_INTERVAL}" \
+  --attention-load-migration-min-peak-gain-ratio \
+  "${PAP_ATTENTION_LOAD_MIGRATION_MIN_PEAK_GAIN_RATIO}" \
   --attention-load-migration-max-inflight \
   "${PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT}" \
   > "${RUN_LOG_DIR}/proxy.log" 2>&1 &

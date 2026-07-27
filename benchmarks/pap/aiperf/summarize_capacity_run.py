@@ -268,7 +268,10 @@ def _check_pap_routing(
         load_routing = stats.get("attention_load_routing", {})
         request_counts_raw = load_routing.get("pa_decode_requests", {})
         owner_counts_raw = load_routing.get("pa_history_owners", {})
-        token_loads_raw = load_routing.get("pa_attention_tokens", {})
+        token_loads_raw = load_routing.get(
+            "pa_decode_base_tokens",
+            load_routing.get("pa_attention_tokens", {}),
+        )
         request_counts = [int(value) for value in request_counts_raw.values()]
         owner_counts = [int(value) for value in owner_counts_raw.values()]
         token_loads = [int(value) for value in token_loads_raw.values()]
