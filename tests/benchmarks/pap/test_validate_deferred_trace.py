@@ -20,6 +20,7 @@ def _projection_trace(
     *,
     layer_count: int,
     peer_count: int | None = None,
+    batched_fanout: bool = False,
 ) -> dict[str, object]:
     spans: dict[str, object] = {
         name: _span(layer_count)
@@ -28,15 +29,14 @@ def _projection_trace(
             "projection_qk_repack_gpu_ms",
         )
     }
-    spans.update(
-        {
-            name: _span(peer_count if peer_count is not None else layer_count)
-            for name in (
-                "qkv_p2p_copy_gpu_ms",
-                "output_ready_wait_gpu_ms",
-            )
-        }
+    resolved_peer_count = (
+        peer_count if peer_count is not None else layer_count
     )
+    spans["output_ready_wait_gpu_ms"] = _span(resolved_peer_count)
+    if batched_fanout:
+        spans["qkv_batched_fanout_gpu_ms"] = _span(layer_count)
+    else:
+        spans["qkv_p2p_copy_gpu_ms"] = _span(resolved_peer_count)
     return {
         "enabled": True,
         "scope": "projection_process_critical_chain",
@@ -101,6 +101,42 @@ def test_projection_trace_accepts_multi_pa_peer_batches() -> None:
     )
 
     assert counts == {"decode_forwards": 2, "layer_calls": 72}
+
+
+def test_projection_trace_accepts_batched_fanout() -> None:
+    payload = _projection_trace(
+        layer_count=72,
+        peer_count=216,
+        batched_fanout=True,
+    )
+
+    counts = validate_trace(
+        payload,
+        scope="projection_process_critical_chain",
+        num_layers=36,
+        reference_peer_batches=216,
+    )
+
+    assert counts == {"decode_forwards": 2, "layer_calls": 72}
+
+
+def test_projection_trace_rejects_batched_fanout_count_mismatch() -> None:
+    payload = _projection_trace(
+        layer_count=72,
+        peer_count=216,
+        batched_fanout=True,
+    )
+    spans = payload["spans"]
+    assert isinstance(spans, dict)
+    spans["qkv_batched_fanout_gpu_ms"] = _span(71)
+
+    with pytest.raises(ValueError, match="batched fan-out count mismatch"):
+        validate_trace(
+            payload,
+            scope="projection_process_critical_chain",
+            num_layers=36,
+            reference_peer_batches=216,
+        )
 
 
 def test_pd_trace_rejects_qkv_fa_count_mismatch() -> None:

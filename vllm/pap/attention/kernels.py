@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
+from threading import Lock
 
 import torch
 
@@ -48,6 +50,95 @@ class PAPPagedDecodeWorkspace:
             raise RuntimeError(
                 "PAP paged decode workspace does not match the query shape"
             )
+
+
+class PAPPagedDecodeWorkspaceCache:
+    """Bounded per-peer cache for shape-stable decode scratch."""
+
+    def __init__(self, *, max_entries: int = 16) -> None:
+        if max_entries <= 0:
+            raise ValueError("PAP paged decode workspace cache must be positive")
+        self.max_entries = int(max_entries)
+        self._entries: OrderedDict[
+            tuple[int, int, int, torch.dtype, torch.device],
+            PAPPagedDecodeWorkspace,
+        ] = OrderedDict()
+        self._lock = Lock()
+
+    def get(self, query: torch.Tensor) -> PAPPagedDecodeWorkspace:
+        """Return reusable scratch for one query shape."""
+        if query.ndim != 3:
+            raise ValueError("PAP paged decode query must be rank 3")
+        key = (
+            int(query.shape[0]),
+            int(query.shape[1]),
+            int(query.shape[2]),
+            query.dtype,
+            query.device,
+        )
+        with self._lock:
+            workspace = self._entries.get(key)
+            if workspace is None:
+                workspace = build_paged_decode_workspace(query)
+                self._entries[key] = workspace
+                while len(self._entries) > self.max_entries:
+                    self._entries.popitem(last=False)
+            else:
+                self._entries.move_to_end(key)
+            return workspace
+
+
+class PAPAttentionStepTensorCache:
+    """Bounded per-peer cache for mutable decode-step metadata tensors."""
+
+    def __init__(self, *, max_entries: int = 64) -> None:
+        if max_entries <= 0:
+            raise ValueError("PAP Attention step tensor cache must be positive")
+        self.max_entries = int(max_entries)
+        self._entries: OrderedDict[
+            tuple[str, int, torch.dtype, torch.device],
+            tuple[torch.Tensor, torch.Tensor],
+        ] = OrderedDict()
+        self._lock = Lock()
+
+    def copy(
+        self,
+        *,
+        kind: str,
+        values: tuple[int, ...],
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> torch.Tensor:
+        """Copy host values into one shape-stable reusable device tensor."""
+        normalized_device = torch.device(device)
+        key = (str(kind), len(values), dtype, normalized_device)
+        with self._lock:
+            buffers = self._entries.get(key)
+            if buffers is None:
+                host = torch.empty(
+                    len(values),
+                    dtype=dtype,
+                    device="cpu",
+                    pin_memory=normalized_device.type == "cuda",
+                )
+                target = torch.empty(
+                    len(values),
+                    dtype=dtype,
+                    device=normalized_device,
+                )
+                buffers = (host, target)
+                self._entries[key] = buffers
+                while len(self._entries) > self.max_entries:
+                    self._entries.popitem(last=False)
+            else:
+                self._entries.move_to_end(key)
+            host, target = buffers
+            host.copy_(torch.tensor(values, dtype=dtype))
+            target.copy_(
+                host,
+                non_blocking=normalized_device.type == "cuda",
+            )
+            return target
 
 
 def build_paged_decode_workspace(
@@ -129,8 +220,59 @@ def run_paged_decode_attention(
     return workspace.output
 
 
+def warm_paged_decode_attention(
+    *,
+    kv_cache: torch.Tensor,
+    num_heads: int,
+    head_dim: int,
+    block_size: int,
+) -> None:
+    """Compile the PAP paged-decode kernel before the first decode step."""
+    if (
+        kv_cache.device.type != "cuda"
+        or kv_cache.ndim != 5
+        or int(num_heads) <= 0
+        or int(head_dim) <= 0
+    ):
+        return
+    key_cache, value_cache = kv_cache.unbind(1)
+    device = kv_cache.device
+    query = torch.empty(
+        (1, int(num_heads), int(head_dim)),
+        dtype=kv_cache.dtype,
+        device=device,
+    )
+    workspace = build_paged_decode_workspace(query)
+    block_table_backing = torch.zeros(
+        (1, int(kv_cache.shape[0])),
+        dtype=torch.int32,
+        device=device,
+    )
+    metadata = PAPPagedFlashMetadata(
+        block_table=block_table_backing[:, :1],
+        seq_lens=torch.ones(1, dtype=torch.int32, device=device),
+        cu_seqlens_q=torch.arange(2, dtype=torch.int32, device=device),
+        max_seq_len=1,
+    )
+    stream = torch.cuda.Stream(device=device)
+    with torch.cuda.stream(stream):
+        run_paged_decode_attention(
+            query=query,
+            key_cache=key_cache,
+            value_cache=value_cache,
+            metadata=metadata,
+            workspace=workspace,
+            scale=float(int(head_dim) ** -0.5),
+            block_size=int(block_size),
+        )
+    stream.synchronize()
+
+
 __all__ = [
+    "PAPAttentionStepTensorCache",
     "PAPPagedDecodeWorkspace",
+    "PAPPagedDecodeWorkspaceCache",
     "build_paged_decode_workspace",
     "run_paged_decode_attention",
+    "warm_paged_decode_attention",
 ]

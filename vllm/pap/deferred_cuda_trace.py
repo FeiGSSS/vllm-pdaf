@@ -366,16 +366,30 @@ def _duration_stats(values: list[float]) -> dict[str, float | int]:
             "mean_ms": 0.0,
             "p50_ms": 0.0,
             "p90_ms": 0.0,
+            "p95_ms": 0.0,
             "p99_ms": 0.0,
+            "p999_ms": 0.0,
+            "p9999_ms": 0.0,
             "max_ms": 0.0,
+            "ge_1ms": 0,
+            "ge_10ms": 0,
+            "ge_100ms": 0,
+            "ge_1000ms": 0,
         }
     return {
         "count": len(sorted_values),
         "mean_ms": statistics.mean(sorted_values),
         "p50_ms": statistics.median(sorted_values),
         "p90_ms": _percentile(sorted_values, 0.90),
+        "p95_ms": _percentile(sorted_values, 0.95),
         "p99_ms": _percentile(sorted_values, 0.99),
+        "p999_ms": _percentile(sorted_values, 0.999),
+        "p9999_ms": _percentile(sorted_values, 0.9999),
         "max_ms": sorted_values[-1],
+        "ge_1ms": sum(value >= 1.0 for value in sorted_values),
+        "ge_10ms": sum(value >= 10.0 for value in sorted_values),
+        "ge_100ms": sum(value >= 100.0 for value in sorted_values),
+        "ge_1000ms": sum(value >= 1000.0 for value in sorted_values),
     }
 
 

@@ -27,6 +27,93 @@ class PAPPagedFlashMetadata:
     max_seq_len: int
 
 
+class PAPPagedBlockTableBuffer:
+    """Per-peer mutable backing storage for paged decode block tables."""
+
+    def __init__(self, *, row_capacity: int = 256) -> None:
+        if row_capacity <= 0:
+            raise ValueError("PAP block table row capacity must be positive")
+        self.row_capacity = int(row_capacity)
+        self._host: torch.Tensor | None = None
+        self._target: torch.Tensor | None = None
+        self._identity: tuple[Any, ...] | None = None
+        self._shape: tuple[int, int] | None = None
+        self._lock = Lock()
+
+    def lookup(
+        self,
+        identity: tuple[Any, ...],
+    ) -> torch.Tensor | None:
+        """Return the current view when its topology identity is unchanged."""
+        with self._lock:
+            if (
+                self._identity != identity
+                or self._shape is None
+                or self._target is None
+            ):
+                return None
+            rows, columns = self._shape
+            return self._target[:rows, :columns]
+
+    def update(
+        self,
+        *,
+        identity: tuple[Any, ...],
+        rows: tuple[tuple[int, ...], ...],
+        device: torch.device,
+        column_capacity: int,
+    ) -> torch.Tensor:
+        """Asynchronously update the active view without device allocation."""
+        row_count = len(rows)
+        column_count = len(rows[0]) if rows else 0
+        if (
+            row_count <= 0
+            or column_count <= 0
+            or any(len(row) != column_count for row in rows)
+        ):
+            raise ValueError("PAP block table buffer requires a non-empty matrix")
+        if row_count > self.row_capacity:
+            raise ValueError("PAP block table row capacity exceeded")
+        if column_count > int(column_capacity):
+            raise ValueError("PAP block table column capacity exceeded")
+
+        normalized_device = torch.device(device)
+        with self._lock:
+            capacity_shape = (self.row_capacity, int(column_capacity))
+            if (
+                self._target is None
+                or tuple(self._target.shape) != capacity_shape
+                or self._target.device.type != normalized_device.type
+                or (
+                    normalized_device.index is not None
+                    and self._target.device.index != normalized_device.index
+                )
+            ):
+                self._host = torch.empty(
+                    capacity_shape,
+                    dtype=torch.int32,
+                    device="cpu",
+                    pin_memory=normalized_device.type == "cuda",
+                )
+                self._target = torch.empty(
+                    capacity_shape,
+                    dtype=torch.int32,
+                    device=normalized_device,
+                )
+            assert self._host is not None
+            source = torch.tensor(rows, dtype=torch.int32)
+            host_view = self._host[:row_count, :column_count]
+            target_view = self._target[:row_count, :column_count]
+            host_view.copy_(source)
+            target_view.copy_(
+                host_view,
+                non_blocking=normalized_device.type == "cuda",
+            )
+            self._identity = identity
+            self._shape = (row_count, column_count)
+            return target_view
+
+
 _UNIFIED_STATIC_BLOCK_TABLE_CACHE: OrderedDict[tuple[Any, ...], torch.Tensor] = (
     OrderedDict()
 )
@@ -169,6 +256,8 @@ def build_unified_paged_flash_step_metadata(
     states: Sequence[PAPUnifiedPagedKVState],
     seq_lens: Sequence[int],
     device: torch.device,
+    seq_lens_tensor: torch.Tensor | None = None,
+    block_table_buffer: PAPPagedBlockTableBuffer | None = None,
 ) -> PAPPagedFlashMetadata:
     """Build dynamic decode metadata over a reusable static block table."""
 
@@ -186,7 +275,9 @@ def build_unified_paged_flash_step_metadata(
         device=device,
     )
     block_table = None
-    if cache_key is not None:
+    if cache_key is not None and block_table_buffer is not None:
+        block_table = block_table_buffer.lookup(cache_key)
+    elif cache_key is not None:
         block_table = _lookup_unified_static_block_table(
             cache_key,
             fast_key=True,
@@ -217,21 +308,43 @@ def build_unified_paged_flash_step_metadata(
                 block_row + (block_row[-1],) * (max_blocks - len(block_row))
                 for block_row in block_rows
             ]
-            block_table = torch.tensor(
-                padded_rows,
-                dtype=torch.int32,
-                device=device,
-            )
-            block_table = _store_unified_static_block_table(
-                cache_key,
-                block_table,
-            )
+            if block_table_buffer is not None:
+                block_table = block_table_buffer.update(
+                    identity=cache_key,
+                    rows=tuple(padded_rows),
+                    device=device,
+                    column_capacity=int(states[0].kv_cache.shape[0]),
+                )
+            else:
+                block_table = torch.tensor(
+                    padded_rows,
+                    dtype=torch.int32,
+                    device=device,
+                )
+                block_table = _store_unified_static_block_table(
+                    cache_key,
+                    block_table,
+                )
 
-    seq_lens_tensor = torch.tensor(
-        normalized_seq_lens,
-        dtype=torch.int32,
-        device=device,
-    )
+    if seq_lens_tensor is None:
+        seq_lens_tensor = torch.tensor(
+            normalized_seq_lens,
+            dtype=torch.int32,
+            device=device,
+        )
+    else:
+        expected_device = torch.device(device)
+        actual_device = seq_lens_tensor.device
+        device_mismatch = actual_device.type != expected_device.type or (
+            expected_device.index is not None
+            and actual_device.index != expected_device.index
+        )
+        if (
+            tuple(seq_lens_tensor.shape) != (batch_size,)
+            or seq_lens_tensor.dtype != torch.int32
+            or device_mismatch
+        ):
+            raise ValueError("PAP Attention step seq_lens tensor is incompatible")
     return PAPPagedFlashMetadata(
         block_table=block_table,
         seq_lens=seq_lens_tensor,
@@ -244,6 +357,7 @@ def build_unified_paged_flash_step_metadata(
 
 
 __all__ = [
+    "PAPPagedBlockTableBuffer",
     "PAPPagedFlashMetadata",
     "build_unified_paged_flash_step_metadata",
     "reset_unified_paged_flash_metadata_cache",

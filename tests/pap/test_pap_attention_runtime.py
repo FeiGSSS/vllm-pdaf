@@ -247,6 +247,36 @@ def test_step_metadata_falls_back_for_unknown_ragged_topology() -> None:
     assert stats["block_ids_scanned"] == 6
 
 
+def test_step_metadata_updates_reusable_block_table_buffer() -> None:
+    import torch
+
+    buffer = kv_metadata_module.PAPPagedBlockTableBuffer(row_capacity=4)
+    first_states = [
+        _step_metadata_state(torch, block_ids=(3, 5), topology_id=101),
+        _step_metadata_state(torch, block_ids=(7,), topology_id=102),
+    ]
+    second_states = [
+        _step_metadata_state(torch, block_ids=(11,), topology_id=103),
+        _step_metadata_state(torch, block_ids=(13, 17), topology_id=104),
+    ]
+
+    first = build_unified_paged_flash_step_metadata(
+        states=first_states,
+        seq_lens=(8, 12),
+        device=torch.device("cpu"),
+        block_table_buffer=buffer,
+    )
+    second = build_unified_paged_flash_step_metadata(
+        states=second_states,
+        seq_lens=(9, 13),
+        device=torch.device("cpu"),
+        block_table_buffer=buffer,
+    )
+
+    assert second.block_table.data_ptr() == first.block_table.data_ptr()
+    assert second.block_table.tolist() == [[11, 11], [13, 17]]
+
+
 def test_sealed_prefill_manifest_installs_all_layers_atomically() -> None:
     import torch
 
@@ -2402,6 +2432,9 @@ def test_attention_fast_path_stats_endpoint() -> None:
         "offload_exec_peer_batches_by_source": {},
         "offload_exec_peer_rows_by_source": {},
         "offload_exec_compute_calls_by_layer": {},
+        "paged_decode_warmup_started": False,
+        "paged_decode_warmup_done": False,
+        "paged_decode_warmup_failed": False,
         "decode_token_received": 0,
         "decode_kv_ready": 0,
         "decode_token_matched": 0,
@@ -2861,6 +2894,9 @@ def test_run_offload_exec_mailbox_loop_releases_qkv_message(monkeypatch) -> None
         "offload_exec_peer_batches_by_source": {"projection-a": 1},
         "offload_exec_peer_rows_by_source": {"projection-a": 1},
         "offload_exec_compute_calls_by_layer": {"layer0": 1},
+        "paged_decode_warmup_started": False,
+        "paged_decode_warmup_done": False,
+        "paged_decode_warmup_failed": False,
     }
 
 

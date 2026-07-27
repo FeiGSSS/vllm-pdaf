@@ -36,6 +36,9 @@ policy, is recorded in
 Its current history-local Prefill and post-Prefill Decode placement boundary
 is validated in
 [`PAP-20260727-POST-PREFILL-LATE-BINDING`](experiments/PAP-20260727-POST-PREFILL-LATE-BINDING/report.md).
+The current Attention allocator and kernel cold-start tail fixes are recorded
+in
+[`PAP-20260727-ATTENTION-TAIL-LATENCY`](experiments/PAP-20260727-ATTENTION-TAIL-LATENCY/report.md).
 The latest
 completed four-GPU eager and piecewise CUDA Graph results remain documented in
 [`PAP-20260722-AIPERF-PROJECTION-AUTO`](experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).

@@ -8,7 +8,7 @@ import logging
 import os
 import time
 from collections import Counter, OrderedDict
-from threading import Condition, Lock
+from threading import Condition, Lock, Thread
 from typing import Any
 
 import torch
@@ -162,6 +162,9 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
         self._offload_exec_peer_batches_by_source: Counter[str] = Counter()
         self._offload_exec_peer_rows_by_source: Counter[str] = Counter()
         self._offload_exec_compute_calls_by_layer: Counter[str] = Counter()
+        self._paged_decode_warmup_started = False
+        self._paged_decode_warmup_done = False
+        self._paged_decode_warmup_failed = False
         self._decode_token_committer = DeferredDecodeTokenCommitter(
             self._dispatch_deferred_decode_commit
         )
@@ -422,6 +425,11 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                 "offload_exec_compute_calls_by_layer": dict(
                     sorted(self._offload_exec_compute_calls_by_layer.items())
                 ),
+                "paged_decode_warmup_started": (
+                    self._paged_decode_warmup_started
+                ),
+                "paged_decode_warmup_done": self._paged_decode_warmup_done,
+                "paged_decode_warmup_failed": self._paged_decode_warmup_failed,
             }
 
     def register_prefill_kv_catalog(
@@ -471,7 +479,53 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
             descriptor.layer_name,
             tuple(kv_cache.shape),
         )
+        self._start_paged_decode_warmup(
+            kv_cache=entry.kv_cache,
+            block_size=entry.block_size,
+        )
         return True
+
+    def _start_paged_decode_warmup(
+        self,
+        *,
+        kv_cache: torch.Tensor,
+        block_size: int,
+    ) -> None:
+        if kv_cache.device.type != "cuda":
+            return
+        with self._lock:
+            if self._paged_decode_warmup_started:
+                return
+            self._paged_decode_warmup_started = True
+        num_heads = int(self._offload_exec_shape_defaults[2])
+        head_dim = int(self._offload_exec_shape_defaults[4])
+
+        def _warm() -> None:
+            try:
+                from vllm.pap.attention.kernels import (
+                    warm_paged_decode_attention,
+                )
+
+                warm_paged_decode_attention(
+                    kv_cache=kv_cache,
+                    num_heads=num_heads,
+                    head_dim=head_dim,
+                    block_size=block_size,
+                )
+            except Exception:
+                with self._lock:
+                    self._paged_decode_warmup_failed = True
+                logger.exception("PAP paged decode kernel warmup failed")
+                return
+            with self._lock:
+                self._paged_decode_warmup_done = True
+            logger.info("PAP paged decode kernel warmup complete")
+
+        Thread(
+            target=_warm,
+            name="pap-paged-decode-warmup",
+            daemon=True,
+        ).start()
 
     def install_prefill_kv_session_manifest(
         self,

@@ -15,12 +15,17 @@ from vllm.pap.attention.execution import (
     run_offload_exec_mailbox_loop,
     run_offload_exec_mailbox_receiver_loop,
 )
+from vllm.pap.attention.kernels import (
+    PAPAttentionStepTensorCache,
+    PAPPagedDecodeWorkspaceCache,
+)
 from vllm.pap.attention.runtime import PAPAttentionRuntime
 from vllm.pap.config import PAPAttentionDispatchMode, PAPRuntimeConfig
 from vllm.pap.deferred_cuda_trace import (
     begin_deferred_cuda_span,
     end_deferred_cuda_span,
 )
+from vllm.pap.kv.metadata import PAPPagedBlockTableBuffer
 from vllm.pap.transport.factory import build_offload_exec_transport
 
 
@@ -191,12 +196,24 @@ class PAPAttentionPeerManager:
                     step_prepare_stream
                 ):
                     stream = step_prepare_stream()
+                    workspace_cache = PAPPagedDecodeWorkspaceCache()
+                    step_tensor_cache = PAPAttentionStepTensorCache()
+                    block_table_buffer = PAPPagedBlockTableBuffer()
 
                     def prepare_step(
                         descriptor: Any,
                         dtype: torch.dtype,
                         *,
                         _stream: torch.cuda.Stream = stream,
+                        _workspace_cache: PAPPagedDecodeWorkspaceCache = (
+                            workspace_cache
+                        ),
+                        _step_tensor_cache: PAPAttentionStepTensorCache = (
+                            step_tensor_cache
+                        ),
+                        _block_table_buffer: PAPPagedBlockTableBuffer = (
+                            block_table_buffer
+                        ),
                     ) -> None:
                         with torch.cuda.stream(_stream):
                             prepare_trace = begin_deferred_cuda_span(
@@ -208,6 +225,9 @@ class PAPAttentionPeerManager:
                                     registry=self.runtime.registry,
                                     descriptor=descriptor,
                                     dtype=dtype,
+                                    workspace_cache=_workspace_cache,
+                                    step_tensor_cache=_step_tensor_cache,
+                                    block_table_buffer=_block_table_buffer,
                                 )
                             finally:
                                 end_deferred_cuda_span(prepare_trace)

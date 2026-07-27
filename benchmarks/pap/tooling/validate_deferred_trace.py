@@ -18,10 +18,7 @@ _SCOPES = {
             "qkv_norm_rope_gpu_ms",
             "projection_qk_repack_gpu_ms",
         ),
-        "peer_spans": (
-            "qkv_p2p_copy_gpu_ms",
-            "output_ready_wait_gpu_ms",
-        ),
+        "peer_spans": ("output_ready_wait_gpu_ms",),
     },
     _PD_SCOPE: {
         "role": "pd_decode",
@@ -114,6 +111,30 @@ def validate_trace(
             f"layer-call count {layer_calls} is not divisible by {layers}"
         )
     decode_forwards = layer_calls // layers
+
+    if scope == _PROJECTION_SCOPE:
+        batched_fanout = spans.get("qkv_batched_fanout_gpu_ms")
+        if isinstance(batched_fanout, Mapping):
+            batched_count = _span_count(
+                spans,
+                "qkv_batched_fanout_gpu_ms",
+            )
+            if batched_count != layer_calls:
+                raise ValueError(
+                    "deferred trace batched fan-out count mismatch: "
+                    f"{batched_count} != {layer_calls}"
+                )
+        else:
+            legacy_copy_count = _span_count(spans, "qkv_p2p_copy_gpu_ms")
+            output_wait_count = _span_count(
+                spans,
+                "output_ready_wait_gpu_ms",
+            )
+            if legacy_copy_count != output_wait_count:
+                raise ValueError(
+                    "deferred trace legacy peer-span count mismatch: "
+                    f"{legacy_copy_count} != {output_wait_count}"
+                )
 
     peer_counts = {
         str(name): _span_count(spans, str(name))

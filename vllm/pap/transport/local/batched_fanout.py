@@ -13,6 +13,10 @@ from vllm.pap.cuda_stream_memops import (
     make_stream_write_value32_batch,
     stream_write_value32_batch,
 )
+from vllm.pap.deferred_cuda_trace import (
+    begin_deferred_cuda_span,
+    end_deferred_cuda_span,
+)
 from vllm.pap.transport.local.protocol import DIR_QKV
 
 
@@ -114,17 +118,24 @@ class PAPLocalQKVBatchedFanoutPlan:
             source_base + source_offset
             for source_offset in self.source_byte_offsets
         ]
-        _submit_memcpy_batch(
-            destinations=self.destination_addresses,
-            sources=sources,
-            sizes=self.byte_counts,
-            attributes=self.memcpy_attributes,
-            stream=self.stream,
-        )
-        stream_write_value32_batch(
-            self.signal_batches[layer_index],
+        copy_trace = begin_deferred_cuda_span(
+            "qkv_batched_fanout_gpu_ms",
             self.stream,
         )
+        try:
+            _submit_memcpy_batch(
+                destinations=self.destination_addresses,
+                sources=sources,
+                sizes=self.byte_counts,
+                attributes=self.memcpy_attributes,
+                stream=self.stream,
+            )
+            stream_write_value32_batch(
+                self.signal_batches[layer_index],
+                self.stream,
+            )
+        finally:
+            end_deferred_cuda_span(copy_trace)
         for transport in self.transports:
             peer = transport._require_peer()
             peer.source_refs[DIR_QKV] = qkv
