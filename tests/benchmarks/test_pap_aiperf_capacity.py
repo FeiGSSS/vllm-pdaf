@@ -393,6 +393,63 @@ def test_matrix_reports_best_compliant_goodput() -> None:
     assert goodput["pap_over_dp_percent"] == pytest.approx(20.0)
 
 
+def test_matrix_emits_repetition_statistics_and_point_goodput(
+    tmp_path: Path,
+) -> None:
+    def summary(
+        repetition: int,
+        throughput: float,
+        fraction: float,
+        goodput: float,
+    ) -> dict[str, object]:
+        passed = fraction >= 0.95
+        tiers = {
+            name: {
+                "passed": passed,
+                "good_request_fraction": fraction,
+                "goodput_requests_per_second": goodput,
+            }
+            for name in ("strict", "standard", "relaxed")
+        }
+        return {
+            "architecture": "pap",
+            "topology": "7pa1p",
+            "concurrency": 32,
+            "repetition": repetition,
+            "correctness": {"passed": True},
+            "metrics": {
+                "ttft_ms": {"average": 100.0, "p95": 500.0},
+                "itl_ms": {"average": 40.0, "p95": 60.0},
+                "request_throughput_per_second": throughput,
+                "output_token_throughput_per_second": throughput * 32,
+            },
+            "slo": tiers,
+        }
+
+    rows = build_rows(
+        [
+            summary(1, 5.0, 0.98, 4.9),
+            summary(2, 4.5, 0.94, 4.2),
+        ]
+    )
+    row = rows[0]
+
+    assert row["request_throughput_per_second"] == 4.5
+    assert row["request_throughput_mean_per_second"] == 4.75
+    assert row["strict_good_fraction"] == 0.94
+    assert row["strict_good_fraction_mean"] == 0.96
+    assert row["strict_goodput_requests_per_second"] == 4.2
+    assert row["strict_goodput_mean_requests_per_second"] == pytest.approx(4.55)
+    assert row["strict_passed_repetitions"] == 1
+
+    output = tmp_path / "capacity.md"
+    write_markdown(rows, build_envelope(rows), output)
+    text = output.read_text(encoding="utf-8")
+
+    assert "## Per-point SLO goodput" in text
+    assert "4.200; 94.0%; 1/2" in text
+
+
 def test_matrix_marks_incomplete_run_as_ineligible(tmp_path: Path) -> None:
     tiers = {
         name: {
@@ -429,4 +486,4 @@ def test_matrix_marks_incomplete_run_as_ineligible(tmp_path: Path) -> None:
 
     assert "early-stopped: SLO impossible" in text
     assert "628/960" in text
-    assert text.count("ineligible") == 4
+    assert text.count("ineligible") == 7

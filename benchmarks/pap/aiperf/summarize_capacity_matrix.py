@@ -69,6 +69,23 @@ def _slo_label(row: dict[str, Any], tier: str) -> str:
     return "pass" if row[tier] else "fail"
 
 
+def _mean(values: list[float]) -> float | None:
+    return sum(values) / len(values) if values else None
+
+
+def _slo_point_label(row: dict[str, Any], tier: str) -> str:
+    goodput = row[f"{tier}_goodput_requests_per_second"]
+    fraction = row[f"{tier}_good_fraction"]
+    passed = row[f"{tier}_passed_repetitions"]
+    repetitions = row["repetitions"]
+    if goodput is None:
+        return "ineligible"
+    return (
+        f"{goodput:.3f}; {fraction * 100:.1f}%; "
+        f"{passed}/{repetitions}"
+    )
+
+
 def load_summaries(matrix_root: Path) -> list[dict[str, Any]]:
     summaries = []
     for path in sorted((matrix_root / "runs").glob("*/capacity_summary.json")):
@@ -121,6 +138,21 @@ def build_rows(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
             for item in repetitions
             if item["metrics"]["request_throughput_per_second"] is not None
         ]
+        output_throughput = [
+            item["metrics"].get("output_token_throughput_per_second")
+            for item in repetitions
+            if item["metrics"].get("output_token_throughput_per_second") is not None
+        ]
+        ttft_average = [
+            item["metrics"]["ttft_ms"].get("average")
+            for item in repetitions
+            if item["metrics"]["ttft_ms"].get("average") is not None
+        ]
+        itl_average = [
+            item["metrics"]["itl_ms"].get("average")
+            for item in repetitions
+            if item["metrics"]["itl_ms"].get("average") is not None
+        ]
         row = {
             "architecture": architecture,
             "topology": topology,
@@ -134,15 +166,28 @@ def build_rows(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "expected_requests": max(expected_requests) if expected_requests else None,
             "correctness": all(item["correctness"]["passed"] for item in repetitions),
             "ttft_p95_ms": max(ttft_p95) if ttft_p95 else None,
+            "ttft_average_mean_ms": _mean(ttft_average),
+            "ttft_p95_mean_ms": _mean(ttft_p95),
             "itl_p95_ms": max(itl_p95) if itl_p95 else None,
+            "itl_average_mean_ms": _mean(itl_average),
+            "itl_p95_mean_ms": _mean(itl_p95),
             "request_throughput_per_second": min(throughput) if throughput else None,
+            "request_throughput_mean_per_second": _mean(throughput),
+            "request_throughput_max_per_second": (
+                max(throughput) if throughput else None
+            ),
+            "output_token_throughput_mean_per_second": _mean(output_throughput),
         }
         for tier in SLO_TIER_NAMES:
             row[tier] = all(item["slo"][tier]["passed"] for item in repetitions)
+            row[f"{tier}_passed_repetitions"] = sum(
+                bool(item["slo"][tier]["passed"]) for item in repetitions
+            )
             fractions = [
                 item["slo"][tier]["good_request_fraction"] for item in repetitions
             ]
             row[f"{tier}_good_fraction"] = min(fractions)
+            row[f"{tier}_good_fraction_mean"] = _mean(fractions)
             goodputs = [
                 item["slo"][tier].get("goodput_requests_per_second")
                 for item in repetitions
@@ -151,6 +196,7 @@ def build_rows(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
             row[f"{tier}_goodput_requests_per_second"] = (
                 min(goodputs) if goodputs else None
             )
+            row[f"{tier}_goodput_mean_requests_per_second"] = _mean(goodputs)
         rows.append(row)
     return sorted(
         rows,
@@ -279,17 +325,33 @@ def write_tsv(rows: list[dict[str, Any]], path: Path) -> None:
         "expected_requests",
         "correctness",
         "ttft_p95_ms",
+        "ttft_average_mean_ms",
+        "ttft_p95_mean_ms",
         "itl_p95_ms",
+        "itl_average_mean_ms",
+        "itl_p95_mean_ms",
         "request_throughput_per_second",
+        "request_throughput_mean_per_second",
+        "request_throughput_max_per_second",
+        "output_token_throughput_mean_per_second",
         "strict",
         "standard",
         "relaxed",
+        "strict_passed_repetitions",
+        "standard_passed_repetitions",
+        "relaxed_passed_repetitions",
         "strict_good_fraction",
         "standard_good_fraction",
         "relaxed_good_fraction",
+        "strict_good_fraction_mean",
+        "standard_good_fraction_mean",
+        "relaxed_good_fraction_mean",
         "strict_goodput_requests_per_second",
         "standard_goodput_requests_per_second",
         "relaxed_goodput_requests_per_second",
+        "strict_goodput_mean_requests_per_second",
+        "standard_goodput_mean_requests_per_second",
+        "relaxed_goodput_mean_requests_per_second",
     ]
     with path.open("w", encoding="utf-8", newline="") as output:
         writer = csv.DictWriter(
@@ -309,6 +371,10 @@ def write_markdown(
 ) -> None:
     lines = [
         "# PAP/PD/DP AIPerf capacity matrix",
+        "",
+        "Repeated-point metrics and SLO eligibility are conservative: throughput "
+        "and goodput use the minimum repetition, latency p95 uses the maximum "
+        "repetition, and every repetition must pass for the point to pass.",
         "",
         "| Architecture | Topology | C | Run status | Completed (worst) | "
         "Validation | TTFT p95 ms | ITL p95 ms | Req/s | Strict | "
@@ -334,6 +400,25 @@ def write_markdown(
                 standard=_slo_label(row, "standard"),
                 relaxed=_slo_label(row, "relaxed"),
             )
+        )
+    lines.extend(
+        [
+            "",
+            "## Per-point SLO goodput",
+            "",
+            "Each cell is `minimum goodput req/s; minimum good-request fraction; "
+            "passing repetitions/total repetitions`.",
+            "",
+            "| Architecture | Topology | C | Strict | Standard | Relaxed |",
+            "| --- | --- | ---: | ---: | ---: | ---: |",
+        ]
+    )
+    for row in rows:
+        lines.append(
+            f"| {row['architecture'].upper()} | {row['topology']} | "
+            f"{row['concurrency']} | {_slo_point_label(row, 'strict')} | "
+            f"{_slo_point_label(row, 'standard')} | "
+            f"{_slo_point_label(row, 'relaxed')} |"
         )
     lines.extend(
         [
@@ -404,6 +489,18 @@ def main() -> None:
     envelope = build_envelope(rows)
     write_tsv(rows, args.matrix_root / "capacity_results.tsv")
     write_markdown(rows, envelope, args.matrix_root / "capacity_results.md")
+    (args.matrix_root / "capacity_results.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "rows": rows,
+                "envelope": envelope,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     (args.matrix_root / "capacity_envelope.json").write_text(
         json.dumps(envelope, indent=2) + "\n",
         encoding="utf-8",

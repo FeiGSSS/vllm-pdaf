@@ -130,7 +130,11 @@ diagnostic only and never contribute eligible goodput.
 
 `summarize_capacity_run.py` emits one compact JSON result per run.
 `summarize_capacity_matrix.py` emits a TSV, a Markdown table, and the tested
-PAP-versus-best-PD/DP capacity envelope.
+PAP-versus-best-PD/DP capacity envelope. The Markdown output includes every
+point's conservative three-tier goodput, good-request fraction, and repetition
+pass count. `capacity_results.json` contains the same rows and selected
+envelope for scripts and agents; reading AIPerf `profile.jsonl` is unnecessary
+for ordinary comparisons.
 
 ## Fixed-length historical shapes
 
@@ -182,6 +186,32 @@ duplicating every long prompt and response. Set `AIPERF_EXPORT_LEVEL=raw` only
 when wire-level debugging is required.
 
 ## Run the lean randomized matrix
+
+For a complete eight-GPU goodput campaign, use the checked-in scan preset:
+
+```bash
+bash benchmarks/pap/aiperf/run_goodput_scan.sh
+```
+
+It runs PAP 7PA1P/6PA2P, PD 4P4D/6P2D, and fused DP across topology-specific
+concurrency points around their known Strict, Standard, and Relaxed
+boundaries. It performs one discovery repetition by default. Override
+`PAP_CAPACITY_REPETITIONS=3` only when confirming already selected points, and
+override an architecture's point list to avoid repeating the whole discovery
+matrix:
+
+```bash
+PAP_CAPACITY_ARCHITECTURES=pap_7pa1p,pd_4p4d \
+PAP_CAPACITY_PAP_7PA1P_POINTS=24 \
+PAP_CAPACITY_PD_4P4D_POINTS=28 \
+PAP_CAPACITY_REPETITIONS=3 \
+  bash benchmarks/pap/aiperf/run_goodput_scan.sh
+```
+
+The final answer is available directly in `capacity_results.md` and
+`capacity_results.json` below the printed matrix root. The former is intended
+for review; the latter is the stable machine-readable input for later report
+generation.
 
 The default matrix compares PAP 7PA1P and 6PA2P, one-way PD 4P4D and 6P2D,
 and an eight-replica fused vLLM pool with sticky conversation routing. PAP
@@ -315,7 +345,8 @@ dataset manifests.
 The runner waits in 60-second intervals when GPUs 0-7 are occupied, supports
 resuming a matrix ID, and writes `matrix_config.env`, per-run
 `capacity_summary.json`, `capacity_results.tsv`, `capacity_results.md`, and
-`capacity_envelope.json` below one matrix directory.
+`capacity_results.json` plus `capacity_envelope.json` below one matrix
+directory.
 After GPUs first appear idle, it waits another 15 seconds and verifies them
 again so a preceding job can finish releasing ports and processes. Invalid
 startup or correctness failures are recorded but never treated as an SLO
