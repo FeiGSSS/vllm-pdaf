@@ -915,6 +915,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # Decode first, then prefill.
         # batch_idx -> req_id
         req_ids = sorted(num_tokens_per_req, key=num_tokens_per_req.get)  # type: ignore[arg-type]
+        req_ids = list(
+            self.pap_runner.group_decode_request_ids(
+                req_ids,
+                num_tokens_per_req,
+            )
+        )
         self.pap_runner.log_prepared_batch(req_ids, num_tokens_per_req)
         numtoks_iter = map(num_tokens_per_req.get, req_ids)
         num_scheduled_tokens = np.fromiter(numtoks_iter, dtype=np.int32, count=num_reqs)

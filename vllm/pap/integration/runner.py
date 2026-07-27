@@ -113,6 +113,41 @@ class PAPModelRunnerAdapter:
             globally_enabled=self.globally_enabled,
         )
 
+    def group_decode_request_ids(
+        self,
+        request_ids: Sequence[str],
+        num_scheduled_tokens: Mapping[str, int],
+    ) -> tuple[str, ...]:
+        """Group one-token PAP requests by their Attention peer."""
+        normalized_ids = tuple(str(request_id) for request_id in request_ids)
+        if not normalized_ids or any(
+            int(num_scheduled_tokens[request_id]) != 1
+            for request_id in normalized_ids
+        ):
+            return normalized_ids
+        if self.request_ids(normalized_ids) != frozenset(normalized_ids):
+            return normalized_ids
+
+        groups: dict[tuple[str, str], list[str]] = {}
+        for request_id in normalized_ids:
+            attention_endpoint = self.store.attention_endpoint_by_request.get(
+                request_id
+            )
+            mailbox_endpoint = (
+                self.store.offload_exec_zmq_endpoint_by_request.get(request_id)
+            )
+            if not attention_endpoint or not mailbox_endpoint:
+                return normalized_ids
+            groups.setdefault(
+                (attention_endpoint, mailbox_endpoint),
+                [],
+            ).append(request_id)
+        return tuple(
+            request_id
+            for group_request_ids in groups.values()
+            for request_id in group_request_ids
+        )
+
     def build_forward_context(
         self,
         *,

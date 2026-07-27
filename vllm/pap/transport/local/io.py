@@ -37,6 +37,7 @@ from vllm.pap.transport.local.protocol import (
     RECORD_FLAG_OUTPUT_DESCRIPTORLESS,
     RECORD_FLAG_PLAN_FULL,
     RECORD_FLAG_PLAN_REF,
+    RECORD_FLAG_QKV_DESCRIPTORLESS,
     RECORD_FLAG_STEP_PREPARE,
     _doorbell_ack,
     _doorbell_read_metadata,
@@ -90,6 +91,15 @@ class _LocalFastMessage:
         self._released = True
         if self.release_callback is not None:
             self.release_callback()
+
+
+@dataclass
+class _DescriptorlessQKVPlan:
+    descriptor: PAPOffloadExecBatchDescriptor
+    dtype: torch.dtype
+    qkv_width: int
+    layer_count: int
+    next_layer_index: int = 0
 
 
 class _PAPLocalFastIOMixin:
@@ -517,6 +527,9 @@ class _PAPLocalFastIOMixin:
         *,
         dtype: torch.dtype,
         remote_address: str,
+        descriptorless_qkv: bool = False,
+        qkv_width: int = 0,
+        layer_count: int = 0,
     ) -> None:
         """Publish one payload-free step plan before layer-0 QKV is ready."""
         del remote_address
@@ -534,6 +547,10 @@ class _PAPLocalFastIOMixin:
             if int(descriptor_metadata.get("v", 0)) == 4
             else RECORD_FLAG_PLAN_REF
         )
+        if descriptorless_qkv and (qkv_width <= 0 or layer_count <= 0):
+            raise RuntimeError(
+                "PAP descriptorless QKV requires width and layer count"
+            )
         peer = self._require_peer()
         with peer.send_lock:
             seq = self._next_seq(peer, DIR_QKV)
@@ -549,19 +566,54 @@ class _PAPLocalFastIOMixin:
                 nbytes=0,
                 offset=0,
                 wire=_WireMetadata(
-                    metadata={"descriptor": descriptor_metadata},
+                    metadata={
+                        "descriptor": descriptor_metadata,
+                        **(
+                            {
+                                "qkv_width": int(qkv_width),
+                                "layer_count": int(layer_count),
+                            }
+                            if descriptorless_qkv
+                            else {}
+                        ),
+                    },
                     plan_id=plan_id,
-                    shape=(descriptor.item_count, 0),
+                    shape=(
+                        descriptor.item_count,
+                        int(qkv_width) if descriptorless_qkv else 0,
+                    ),
                     layer_index=layer_info[0],
                     dtype_code=dtype_code,
                     flags=(
                         RECORD_FLAG_FIXED_TENSOR
                         | RECORD_FLAG_STEP_PREPARE
                         | plan_flag
+                        | (
+                            RECORD_FLAG_QKV_DESCRIPTORLESS
+                            if descriptorless_qkv
+                            else 0
+                        )
                     ),
                 ),
             )
             peer.last_qkv_seq = seq
+
+    def reserve_qkv_fanout(self, *, num_layers: int) -> dict[str, int]:
+        """Reserve one step's QKV generations for a batched fan-out plan."""
+        if num_layers <= 0:
+            raise RuntimeError("PAP batched fan-out layer count must be positive")
+        peer = self._require_peer()
+        with peer.send_lock:
+            base_sequence = int(peer.next_qkv_seq)
+            peer.next_qkv_seq += int(num_layers)
+            peer.last_qkv_payload_seq = base_sequence + int(num_layers) - 1
+        return {
+            "destination_address": int(peer.peer_tensor.data_ptr()),
+            "ready_address": int(peer.peer_signal_tensor.data_ptr())
+            + _signal_index(DIR_QKV, release=False)
+            * peer.peer_signal_tensor.element_size(),
+            "base_sequence": base_sequence,
+        }
 
     def set_step_prepare_handler(self, handler: Any) -> None:
         """Install the Attention-owned step preparation callback."""
@@ -774,6 +826,8 @@ class _PAPLocalFastIOMixin:
     def recv_next_qkv_batch_message(
         self,
     ) -> tuple[PAPOffloadExecBatchDescriptor, Any]:
+        if getattr(self, "_descriptorless_qkv_plan", None) is not None:
+            return self._recv_descriptorless_qkv_batch_message()
         while True:
             seq, nbytes, offset, metadata = self._recv_from_peer(
                 direction=DIR_QKV
@@ -786,18 +840,98 @@ class _PAPLocalFastIOMixin:
                 & RECORD_FLAG_STEP_PREPARE
             ):
                 break
+            if int(metadata.get("_fixed_flags", 0)) & (
+                RECORD_FLAG_QKV_DESCRIPTORLESS
+            ):
+                qkv_width = int(metadata.get("qkv_width", 0))
+                layer_count = int(metadata.get("layer_count", 0))
+                if qkv_width <= 0 or layer_count <= 0:
+                    raise RuntimeError(
+                        "PAP descriptorless QKV step plan is malformed"
+                    )
+                self._descriptorless_qkv_plan = _DescriptorlessQKVPlan(
+                    descriptor=descriptor,
+                    dtype=_dtype_from_name(str(metadata["dtype"])),
+                    qkv_width=qkv_width,
+                    layer_count=layer_count,
+                )
             handler = self._step_prepare_handler
             if handler is not None:
                 handler(
                     descriptor,
                     _dtype_from_name(str(metadata["dtype"])),
                 )
+            if getattr(self, "_descriptorless_qkv_plan", None) is not None:
+                return self._recv_descriptorless_qkv_batch_message()
         tensor = self._materialize_recv(nbytes=nbytes, offset=offset, metadata=metadata)
         message = _LocalFastMessage(
             msg_id=descriptor.qkv_tensor_id,
             kind="attention_task_batch",
             tensor=tensor,
             metadata=descriptor_metadata,
+            release_callback=lambda: self._release_recv_buffer(
+                DIR_QKV,
+                seq,
+            ),
+        )
+        return descriptor, message
+
+    def _recv_descriptorless_qkv_batch_message(
+        self,
+    ) -> tuple[PAPOffloadExecBatchDescriptor, Any]:
+        plan = self._descriptorless_qkv_plan
+        if plan is None:
+            raise RuntimeError("PAP descriptorless QKV plan is missing")
+        peer = self._require_peer()
+        layer_index = int(plan.next_layer_index)
+        if layer_index < 0 or layer_index >= plan.layer_count:
+            raise RuntimeError("PAP descriptorless QKV layer is out of range")
+        layer_info = _layer_index_and_template(plan.descriptor.layer_name)
+        if layer_info is None:
+            raise RuntimeError("PAP descriptorless QKV layer template is invalid")
+        layer_name = _layer_name_from_template(layer_info[1], layer_index)
+        descriptor = PAPOffloadExecBatchDescriptor(
+            layer_name=layer_name,
+            items=(),
+            batch_id_suffix=plan.descriptor.batch_id_suffix,
+            metadata_template=plan.descriptor.metadata_template,
+        )
+        seq = int(peer.expected_qkv_seq)
+        nbytes = (
+            int(descriptor.item_count)
+            * int(plan.qkv_width)
+            * torch.empty((), dtype=plan.dtype).element_size()
+        )
+        if nbytes > self.buffer_bytes:
+            raise RuntimeError(
+                f"PAP descriptorless QKV {nbytes}B exceeds buffer "
+                f"{self.buffer_bytes}B"
+            )
+        stream = torch.cuda.current_stream(self.device)
+        stream_wait_value32(
+            self._signal_buffer,
+            _signal_index(DIR_QKV, release=False),
+            seq,
+            stream,
+        )
+        peer.expected_qkv_seq = seq + 1
+        plan.next_layer_index = layer_index + 1
+        if plan.next_layer_index == plan.layer_count:
+            self._descriptorless_qkv_plan = None
+        self._descriptorless_qkv_receives += 1
+        tensor = self._materialize_recv(
+            nbytes=nbytes,
+            offset=0,
+            metadata={
+                "shape": [descriptor.item_count, plan.qkv_width],
+                "dtype": _dtype_name(plan.dtype),
+            },
+        )
+        message = _LocalFastMessage(
+            msg_id=descriptor.qkv_tensor_id,
+            kind="attention_task_batch",
+            tensor=tensor,
+            metadata={},
             release_callback=lambda: self._release_recv_buffer(
                 DIR_QKV,
                 seq,

@@ -8,22 +8,28 @@ import torch
 
 from vllm.pap.cuda_stream_memops import (
     _signal_address,
+    make_stream_write_value32_batch,
     stream_wait_value32,
     stream_write_value32,
 )
 from vllm.pap.protocol import PAPOffloadExecBatchDescriptor
 from vllm.pap.transport.local import io as local_fast_io
+from vllm.pap.transport.local.batched_fanout import (
+    PAPLocalQKVBatchedFanoutPlan,
+    _make_memcpy_attributes,
+)
 from vllm.pap.transport.local.endpoint import _open_or_create_doorbell
 from vllm.pap.transport.local.io import _LocalFastMessage
 from vllm.pap.transport.local.protocol import (
-    DOORBELL_BYTES,
-    DTYPE_CODE_BFLOAT16,
     DIR_OUTPUT,
     DIR_QKV,
+    DOORBELL_BYTES,
+    DTYPE_CODE_BFLOAT16,
     RECORD_FLAG_FIXED_TENSOR,
     RECORD_FLAG_OUTPUT_DESCRIPTORLESS,
     RECORD_FLAG_PLAN_FULL,
     RECORD_FLAG_PLAN_REF,
+    RECORD_FLAG_QKV_DESCRIPTORLESS,
     RECORD_FLAG_STEP_PREPARE,
     _doorbell_ack,
     _doorbell_read_header,
@@ -254,6 +260,80 @@ def test_local_fast_consumes_step_prepare_before_qkv() -> None:
     assert message.metadata == {"descriptor": True}
 
 
+def test_local_fast_descriptorless_qkv_uses_step_plan(monkeypatch) -> None:
+    waits = []
+    stream = object()
+    monkeypatch.setattr(
+        local_fast_io.torch.cuda,
+        "current_stream",
+        lambda _device: stream,
+    )
+    monkeypatch.setattr(
+        local_fast_io,
+        "stream_wait_value32",
+        lambda signal, index, seq, current_stream: waits.append(
+            (signal, index, seq, current_stream)
+        ),
+    )
+
+    transport = object.__new__(PAPLocalFastTransport)
+    transport.close = lambda: None
+    transport.device = torch.device("cuda:0")
+    transport.buffer_bytes = 128
+    transport._recv_buffer = torch.zeros(128, dtype=torch.uint8)
+    transport._signal_buffer = torch.zeros(4, dtype=torch.int32)
+    transport._descriptorless_qkv_plan = None
+    transport._descriptorless_qkv_receives = 0
+    transport._step_prepare_handler = None
+    transport._peer = SimpleNamespace(expected_qkv_seq=2)
+    descriptor = PAPOffloadExecBatchDescriptor(
+        layer_name="model.layers.0.self_attn.attn",
+        items=(),
+        batch_id_suffix="req-a@7",
+        metadata_template={
+            "r": ("req-a",),
+            "s": (7,),
+            "a": (0.125,),
+        },
+    )
+    records = iter(
+        (
+            (
+                1,
+                0,
+                0,
+                {
+                    "dtype": "bfloat16",
+                    "qkv_width": 4,
+                    "layer_count": 2,
+                    "_fixed_flags": (
+                        RECORD_FLAG_STEP_PREPARE
+                        | RECORD_FLAG_QKV_DESCRIPTORLESS
+                    ),
+                },
+            ),
+        )
+    )
+    transport._recv_from_peer = lambda **_kwargs: next(records)
+    transport._decode_qkv_descriptor = lambda _metadata: (descriptor, {})
+
+    first_descriptor, first_message = (
+        transport.recv_next_qkv_batch_message()
+    )
+    second_descriptor, second_message = (
+        transport.recv_next_qkv_batch_message()
+    )
+
+    assert first_descriptor.layer_name == "model.layers.0.self_attn.attn"
+    assert second_descriptor.layer_name == "model.layers.1.self_attn.attn"
+    assert tuple(first_message.tensor.shape) == (1, 4)
+    assert tuple(second_message.tensor.shape) == (1, 4)
+    assert [wait[2] for wait in waits] == [2, 3]
+    assert transport._peer.expected_qkv_seq == 4
+    assert transport._descriptorless_qkv_plan is None
+    assert transport._descriptorless_qkv_receives == 2
+
+
 def test_local_fast_fixed_doorbell_record_needs_no_json(tmp_path) -> None:
     path = tmp_path / "doorbell-fixed"
     fd, mm = _open_or_create_doorbell(str(path), DOORBELL_BYTES)
@@ -414,3 +494,81 @@ def test_cuda_stream_signal_roundtrip_from_background_thread() -> None:
 
     assert errors == []
     assert signal.item() == 9
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_local_qkv_fanout_batches_peers() -> None:
+    device = torch.device("cuda:0")
+    source = torch.arange(
+        16,
+        dtype=torch.bfloat16,
+        device=device,
+    ).reshape(4, 4)
+    destinations = [
+        torch.zeros(16, dtype=torch.uint8, device=device),
+        torch.zeros(16, dtype=torch.uint8, device=device),
+    ]
+    ready = [
+        torch.zeros(1, dtype=torch.int32, device=device),
+        torch.zeros(1, dtype=torch.int32, device=device),
+    ]
+    peers = [
+        SimpleNamespace(source_refs={}),
+        SimpleNamespace(source_refs={}),
+    ]
+    transports = tuple(
+        SimpleNamespace(_require_peer=lambda peer=peer: peer)
+        for peer in peers
+    )
+
+    plan = PAPLocalQKVBatchedFanoutPlan(
+        transports=transports,
+        stream=torch.cuda.Stream(device=device),
+        destination_addresses=tuple(
+            tensor.data_ptr() for tensor in destinations
+        ),
+        source_byte_offsets=(0, 16),
+        byte_counts=(16, 16),
+        signal_batches=(
+            make_stream_write_value32_batch(
+                tuple(tensor.data_ptr() for tensor in ready),
+                (1, 1),
+            ),
+            make_stream_write_value32_batch(
+                tuple(tensor.data_ptr() for tensor in ready),
+                (2, 2),
+            ),
+        ),
+        memcpy_attributes=_make_memcpy_attributes(),
+        dtype=torch.bfloat16,
+        qkv_width=4,
+        num_layers=2,
+        num_source_rows=4,
+    )
+
+    plan.launch(source)
+    torch.cuda.synchronize(device)
+
+    assert torch.equal(
+        destinations[0].view(torch.bfloat16).reshape(2, 4),
+        source[:2],
+    )
+    assert torch.equal(
+        destinations[1].view(torch.bfloat16).reshape(2, 4),
+        source[2:],
+    )
+    assert [tensor.item() for tensor in ready] == [1, 1]
+
+    second_source = source + 16
+    plan.launch(second_source)
+    torch.cuda.synchronize(device)
+
+    assert torch.equal(
+        destinations[0].view(torch.bfloat16).reshape(2, 4),
+        second_source[:2],
+    )
+    assert torch.equal(
+        destinations[1].view(torch.bfloat16).reshape(2, 4),
+        second_source[2:],
+    )
+    assert [tensor.item() for tensor in ready] == [2, 2]

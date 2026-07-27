@@ -58,8 +58,8 @@ from vllm.pap.transport.local.endpoint import (
 )
 from vllm.pap.transport.local.io import _PAPLocalFastIOMixin
 from vllm.pap.transport.local.protocol import (
-    DOORBELL_BYTES,
     DIR_QKV,
+    DOORBELL_BYTES,
     _doorbell_read_ack,
     _doorbell_record_offset,
     _doorbell_write,
@@ -200,7 +200,10 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         self._peer: _PeerState | None = None
         self._started = False
         self._bound = False
-        self._trace = _env_bool("PAP_OFFLOAD_EXEC_TRACE", False)
+        self._trace = _env_bool(
+            "PAP_LOCAL_FAST_TRACE",
+            _env_bool("PAP_OFFLOAD_EXEC_TRACE", False),
+        )
         self._deferred_cuda_trace = deferred_cuda_trace_enabled()
         self._step_plan_cache_limit = int(
             os.environ.get("PAP_LOCAL_FAST_STEP_PLAN_CACHE_LIMIT", "256")
@@ -213,6 +216,8 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         self._step_plan_refs = 0
         self._output_descriptor_elisions = 0
         self._descriptorless_output_receives = 0
+        self._descriptorless_qkv_plan = None
+        self._descriptorless_qkv_receives = 0
         self._binary_qkv_refs = 0
         self._binary_outputs = 0
         self._json_records = 0
@@ -405,12 +410,14 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
             "PAP local fast transport stats actor=%s step_plan_builds=%d "
             "step_plan_refs=%d output_descriptor_elisions=%d "
             "descriptorless_output_receives=%d "
+            "descriptorless_qkv_receives=%d "
             "binary_qkv_refs=%d binary_outputs=%d json_records=%d",
             self.actor_id,
             self._step_plan_builds,
             self._step_plan_refs,
             self._output_descriptor_elisions,
             self._descriptorless_output_receives,
+            self._descriptorless_qkv_receives,
             self._binary_qkv_refs,
             self._binary_outputs,
             self._json_records,

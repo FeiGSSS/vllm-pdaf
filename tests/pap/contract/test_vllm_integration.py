@@ -309,6 +309,77 @@ def test_projection_batch_adapter_builds_filtered_forward_context() -> None:
     assert context["pap_finished_request_ids"] == ("req-z",)
 
 
+def test_v2_runner_groups_decode_requests_by_attention_peer() -> None:
+    adapter = _runner_adapter(supports_async_sampled_tokens=True)
+    for request_id, attention_endpoint, mailbox_endpoint in (
+        ("req-a", "http://attention-0", "tcp://mailbox-0"),
+        ("req-b", "http://attention-1", "tcp://mailbox-1"),
+        ("req-c", "http://attention-0", "tcp://mailbox-0"),
+        ("req-d", "http://attention-1", "tcp://mailbox-1"),
+    ):
+        adapter.store.update(
+            request_id,
+            {
+                "pap_attention_endpoint": attention_endpoint,
+                "pap_offload_exec_zmq_endpoint": mailbox_endpoint,
+            },
+        )
+
+    grouped = adapter.group_decode_request_ids(
+        ("req-a", "req-b", "req-c", "req-d"),
+        {
+            "req-a": 1,
+            "req-b": 1,
+            "req-c": 1,
+            "req-d": 1,
+        },
+    )
+
+    assert grouped == ("req-a", "req-c", "req-b", "req-d")
+    context = adapter.build_forward_context(
+        request_ids=grouped,
+        num_scheduled_tokens=(1, 1, 1, 1),
+        num_actual_tokens=4,
+        positions=object(),
+        seq_lens_cpu_upper_bound=(11, 13, 12, 14),
+    )
+    route_groups = context["pap_offload_exec_route_groups"]
+    assert tuple(group["req_indices"] for group in route_groups) == (
+        (0, 1),
+        (2, 3),
+    )
+    assert tuple(group["request_ids"] for group in route_groups) == (
+        ("req-a", "req-c"),
+        ("req-b", "req-d"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("request_ids", "num_scheduled_tokens"),
+    [
+        (("req-a", "req-b"), {"req-a": 1, "req-b": 2}),
+        (("req-a", "req-missing"), {"req-a": 1, "req-missing": 1}),
+    ],
+)
+def test_v2_runner_preserves_order_when_pap_grouping_is_not_safe(
+    request_ids,
+    num_scheduled_tokens,
+) -> None:
+    adapter = _runner_adapter(supports_async_sampled_tokens=True)
+    adapter.store.update(
+        "req-a",
+        {
+            "pap_attention_endpoint": "http://attention-0",
+            "pap_offload_exec_zmq_endpoint": "tcp://mailbox-0",
+        },
+    )
+
+    assert (
+        adapter.group_decode_request_ids(request_ids, num_scheduled_tokens)
+        == request_ids
+    )
+
+
 def test_v2_runner_flushes_decode_tokens_before_removing_request() -> None:
     runner, events = _v2_runner_for_removal(flush_succeeds=True)
 

@@ -460,6 +460,7 @@ class Qwen3Attention(nn.Module):
             num_kv_heads=self.num_kv_heads,
             head_dim=self.head_dim,
             scaling=self.scaling,
+            num_hidden_layers=int(num_hidden_layers or 0),
         )
         self._pap_prefill_publisher = PAPPrefillKVPublisher(
             layer_name=self.attn.layer_name,

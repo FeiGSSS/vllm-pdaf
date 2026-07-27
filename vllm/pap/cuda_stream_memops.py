@@ -100,6 +100,50 @@ def stream_write_value32(
     _check(result, "cuStreamWriteValue32")
 
 
+def make_stream_write_value32_batch(
+    addresses: tuple[int, ...],
+    values: tuple[int, ...],
+) -> tuple[object, ...]:
+    """Prepare one reusable CUDA batch of 32-bit stream-ordered writes."""
+    if not addresses or len(addresses) != len(values):
+        raise ValueError("CUDA stream write batch is malformed")
+    driver = _driver()
+    params = []
+    operation = (
+        driver.CUstreamBatchMemOpType.CU_STREAM_MEM_OP_WRITE_VALUE_32
+    )
+    for address, value in zip(addresses, values):
+        param = driver.CUstreamBatchMemOpParams()
+        param.operation = operation
+        param.writeValue.operation = operation
+        param.writeValue.address = driver.CUdeviceptr(int(address))
+        param.writeValue.value = int(value) & 0xFFFFFFFF
+        param.writeValue.flags = (
+            driver.CUstreamWriteValue_flags.CU_STREAM_WRITE_VALUE_DEFAULT
+        )
+        params.append(param)
+    return tuple(params)
+
+
+def stream_write_value32_batch(
+    params: tuple[object, ...],
+    stream: torch.cuda.Stream,
+) -> None:
+    """Submit a prepared batch of 32-bit writes with one driver call."""
+    if not params:
+        raise ValueError("CUDA stream write batch must not be empty")
+    driver = _driver()
+    with torch.cuda.device(stream.device):
+        _ensure_cuda_context(torch.device(stream.device))
+        result = driver.cuStreamBatchMemOp(
+            driver.CUstream(stream.cuda_stream),
+            len(params),
+            params,
+            0,
+        )
+    _check(result, "cuStreamBatchMemOp")
+
+
 def probe_stream_mem_ops(device: torch.device) -> bool:
     """Return whether 32-bit stream wait/write operations work on ``device``."""
 

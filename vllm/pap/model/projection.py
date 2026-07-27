@@ -38,6 +38,9 @@ logger = init_logger(__name__)
 
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 _PAP_STEP_GROUPS_KEY = "_pap_qwen3_offload_exec_step_groups"
+_PAP_LOCAL_BATCHED_FANOUT_PLAN_KEY = (
+    "_pap_qwen3_local_qkv_batched_fanout_plan"
+)
 
 
 def _pap_env_enabled(name: str) -> bool:
@@ -376,6 +379,7 @@ class PAPProjectionAttentionAdapter:
     num_kv_heads: int
     head_dim: int
     scaling: float
+    num_hidden_layers: int = 0
     _direct_qkv_send: bool = field(init=False, repr=False)
     _direct_mailbox_output: bool = field(init=False, repr=False)
     _trace_offload_exec: bool = field(init=False, repr=False)
@@ -420,6 +424,7 @@ class PAPProjectionAttentionAdapter:
             num_reqs=batch.num_reqs,
             scaling=float(self.scaling),
         )
+        prepared_groups: list[tuple[_PAPOffloadExecStepGroup, Any]] = []
         for step_group in step_groups:
             transport = _pap_offload_exec_transport_for_attention_endpoint(
                 step_group.attention_endpoint,
@@ -429,6 +434,34 @@ class PAPProjectionAttentionAdapter:
                 transport,
                 step_group.attention_endpoint,
             )
+            prepared_groups.append((step_group, transport))
+
+        qkv_width = (
+            self.num_heads * self.head_dim
+            + 2 * self.num_kv_heads * self.head_dim
+        )
+        from vllm.pap.transport.local.batched_fanout import (
+            local_qkv_batched_fanout_available,
+        )
+
+        batched_fanout = (
+            self._direct_qkv_send
+            and self.num_hidden_layers > 0
+            and local_qkv_batched_fanout_available()
+            and os.environ.get(
+                "PAP_LOCAL_BATCHED_FANOUT",
+                "1",
+            ).lower()
+            in _TRUE_ENV_VALUES
+            and all(
+                _pap_req_indices_are_contiguous(step_group.req_indices)
+                and callable(
+                    getattr(transport, "reserve_qkv_fanout", None)
+                )
+                for step_group, transport in prepared_groups
+            )
+        )
+        for step_group, transport in prepared_groups:
             send_step_prepare = getattr(transport, "send_step_prepare", None)
             if not callable(send_step_prepare):
                 continue
@@ -441,6 +474,34 @@ class PAPProjectionAttentionAdapter:
                 ),
                 dtype=dtype,
                 remote_address=step_group.offload_exec_zmq_endpoint,
+                descriptorless_qkv=batched_fanout,
+                qkv_width=qkv_width if batched_fanout else 0,
+                layer_count=(
+                    self.num_hidden_layers if batched_fanout else 0
+                ),
+            )
+        if batched_fanout:
+            from vllm.pap.transport.local.batched_fanout import (
+                build_local_qkv_batched_fanout_plan,
+            )
+
+            fanout_entries = [
+                (
+                    transport,
+                    int(step_group.req_indices[0]),
+                    len(step_group.req_indices),
+                )
+                for step_group, transport in prepared_groups
+            ]
+            batch.additional_kwargs[_PAP_LOCAL_BATCHED_FANOUT_PLAN_KEY] = (
+                build_local_qkv_batched_fanout_plan(
+                    fanout_entries,
+                    device=prepared_groups[0][1].device,
+                    dtype=dtype,
+                    qkv_width=qkv_width,
+                    num_layers=self.num_hidden_layers,
+                    num_source_rows=batch.num_reqs,
+                )
             )
 
     def record_projection_timeline(self, timeline: dict[str, Any]) -> None:
@@ -591,6 +652,9 @@ class PAPProjectionAttentionAdapter:
         trace_packed_qkv_groups = 0
         trace_direct_output_rows = 0
         trace_scattered_output_rows = 0
+        trace_fanout_prepare_us: list[float] = []
+        trace_fanout_submit_us: list[float] = []
+        trace_fanout_submit_start_ns: list[int] = []
         trace_send_start = time.perf_counter() if trace_offload_exec else 0.0
         current_stream = torch.cuda.current_stream(query.device)
         trace_output_origin: torch.cuda.Event | None = None
@@ -601,6 +665,23 @@ class PAPProjectionAttentionAdapter:
             "projection_remote_stage_gpu_ms",
             current_stream,
         )
+        local_batched_fanout_plan = batch.additional_kwargs.get(
+            _PAP_LOCAL_BATCHED_FANOUT_PLAN_KEY
+        )
+        batched_fanout_submit_us = 0.0
+        if local_batched_fanout_plan is not None:
+            if direct_qkv_send_buffer is None:
+                raise RuntimeError(
+                    "PAP local batched fan-out requires the direct QKV buffer"
+                )
+            batched_fanout_start_ns = (
+                time.perf_counter_ns() if trace_offload_exec else 0
+            )
+            local_batched_fanout_plan.launch(direct_qkv_send_buffer)
+            if trace_offload_exec:
+                batched_fanout_submit_us = (
+                    time.perf_counter_ns() - batched_fanout_start_ns
+                ) / 1_000.0
         offload_exec_batches: list[
             tuple[
                 str | None,
@@ -612,6 +693,9 @@ class PAPProjectionAttentionAdapter:
             ]
         ] = []
         for step_group in step_groups:
+            trace_group_prepare_start_ns = (
+                time.perf_counter_ns() if trace_offload_exec else 0
+            )
             attention_endpoint = step_group.attention_endpoint
             offload_exec_zmq_endpoint = step_group.offload_exec_zmq_endpoint
             req_indices = step_group.req_indices
@@ -649,13 +733,23 @@ class PAPProjectionAttentionAdapter:
             )
             direct_qkv_batch: torch.Tensor | None = None
             direct_layout = False
-            if direct_qkv_send_enabled and callable(send_qkv_batch_direct):
+            if (
+                local_batched_fanout_plan is None
+                and direct_qkv_send_enabled
+                and callable(send_qkv_batch_direct)
+            ):
                 direct_qkv_batch, direct_layout = _pap_qkv_batch_for_indices(
                     direct_qkv_send_buffer,
                     req_indices,
                     index_tensor=route_index_tensor,
                 )
-            if direct_qkv_batch is not None:
+            trace_group_submit_start_ns = (
+                time.perf_counter_ns() if trace_offload_exec else 0
+            )
+            if local_batched_fanout_plan is not None:
+                if trace_offload_exec:
+                    trace_direct_qkv_groups += 1
+            elif direct_qkv_batch is not None:
                 if trace_offload_exec:
                     if direct_layout:
                         trace_direct_qkv_groups += 1
@@ -703,6 +797,25 @@ class PAPProjectionAttentionAdapter:
                         qkv_batch,
                         remote_address=offload_exec_zmq_endpoint,
                     )
+            if trace_offload_exec and local_batched_fanout_plan is None:
+                trace_group_submit_done_ns = time.perf_counter_ns()
+                trace_fanout_prepare_us.append(
+                    (
+                        trace_group_submit_start_ns
+                        - trace_group_prepare_start_ns
+                    )
+                    / 1_000.0
+                )
+                trace_fanout_submit_us.append(
+                    (
+                        trace_group_submit_done_ns
+                        - trace_group_submit_start_ns
+                    )
+                    / 1_000.0
+                )
+                trace_fanout_submit_start_ns.append(
+                    trace_group_submit_start_ns
+                )
             offload_exec_batches.append(
                 (
                     attention_endpoint,
@@ -909,6 +1022,44 @@ class PAPProjectionAttentionAdapter:
                     last_ready_ms,
                     spread_ms,
                     spread_pct,
+                )
+            if trace_fanout_submit_us:
+                first_submit_ns = trace_fanout_submit_start_ns[0]
+                logger.info(
+                    "PAP OFFLOAD_EXEC projection fan-out trace layer=%s "
+                    "peers=%d qkv_host_to_first_submit_us=%.3f "
+                    "total_host_send_us=%.3f prepare_us=%s submit_us=%s "
+                    "submit_start_offsets_us=%s",
+                    offload_exec_batches[0][2].layer_name,
+                    len(trace_fanout_submit_us),
+                    max(
+                        0.0,
+                        (first_submit_ns - pre_attn_done_ns)
+                        / 1_000.0,
+                    ),
+                    (
+                        trace_send_done_ns
+                        - pre_attn_done_ns
+                    )
+                    / 1_000.0,
+                    "|".join(
+                        f"{value:.3f}" for value in trace_fanout_prepare_us
+                    ),
+                    "|".join(
+                        f"{value:.3f}" for value in trace_fanout_submit_us
+                    ),
+                    "|".join(
+                        f"{(value - first_submit_ns) / 1_000.0:.3f}"
+                        for value in trace_fanout_submit_start_ns
+                    ),
+                )
+            if local_batched_fanout_plan is not None:
+                logger.info(
+                    "PAP OFFLOAD_EXEC batched fan-out trace layer=%s "
+                    "peers=%d submit_us=%.3f",
+                    offload_exec_batches[0][2].layer_name,
+                    len(offload_exec_batches),
+                    batched_fanout_submit_us,
                 )
 
         output_scatter_events: list[torch.cuda.Event] = []
