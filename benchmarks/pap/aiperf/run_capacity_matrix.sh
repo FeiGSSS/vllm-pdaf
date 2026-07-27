@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# PAP/PD/DP randomized-length comparison. Every point restarts services.
+# PAP/PD/DP randomized-length comparison. AIPerf owns each concurrency sweep.
 
 ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
@@ -14,8 +14,6 @@ PAP_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_pap_workload.sh"
 PD_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_pd_multiturn_topology.sh"
 DP_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_dp_multiturn.sh"
 DATASET_GENERATOR="${ROOT_DIR}/benchmarks/pap/aiperf/generate_multiturn_dataset.py"
-RUN_SUMMARIZER="${ROOT_DIR}/benchmarks/pap/aiperf/summarize_capacity_run.py"
-MATRIX_SUMMARIZER="${ROOT_DIR}/benchmarks/pap/aiperf/summarize_capacity_matrix.py"
 
 EXPERIMENTS_ROOT="${PAP_EXPERIMENTS_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments}"
 RESULTS_ROOT="${RESULTS_ROOT:-${EXPERIMENTS_ROOT}/_staging}"
@@ -31,10 +29,13 @@ TOTAL_SESSIONS="${PAP_CAPACITY_SESSIONS:-128}"
 GPU_COUNT="${PAP_CAPACITY_GPU_COUNT:-8}"
 DEFAULT_POINTS_CSV="${PAP_CAPACITY_POINTS:-16,24,32,48}"
 REPETITIONS="${PAP_CAPACITY_REPETITIONS:-1}"
-STOP_AFTER_RELAXED_FAIL="${PAP_CAPACITY_STOP_AFTER_RELAXED_FAIL:-1}"
 RESUME="${PAP_CAPACITY_RESUME:-1}"
 WAIT_FOR_GPUS="${PAP_CAPACITY_WAIT_FOR_GPUS:-1}"
 GPU_IDLE_STABILITY_SECONDS="${PAP_CAPACITY_GPU_IDLE_STABILITY_SECONDS:-15}"
+AIPERF_SWEEP_COOLDOWN_SECONDS="${PAP_CAPACITY_SWEEP_COOLDOWN_SECONDS:-30}"
+AIPERF_PROFILE_RUN_COOLDOWN_SECONDS="${PAP_CAPACITY_PROFILE_RUN_COOLDOWN_SECONDS:-30}"
+DEFAULT_AIPERF_GOODPUT_SLO="time_to_first_token:10000 inter_token_latency:75"
+AIPERF_GOODPUT_SLO="${PAP_CAPACITY_GOODPUT_SLO:-${DEFAULT_AIPERF_GOODPUT_SLO}}"
 EXECUTION_MODE="${PAP_CAPACITY_EXECUTION_MODE:-eager}"
 PAP_ROUTING_POLICY="${PAP_CAPACITY_PAP_ROUTING_POLICY:-conversation_affinity}"
 PAP_MIGRATION_MIN_PEAK_GAIN_RATIO="${PAP_CAPACITY_PAP_MIGRATION_MIN_PEAK_GAIN_RATIO:-0.30}"
@@ -86,11 +87,13 @@ points_for_architecture() {
 
 for required in "${PYTHON_BIN}" "${AIPERF_BIN}" "${AIPERF_PYTHON}" "${MODEL_PATH}" \
   "${CORPUS_PATH}" "${PAP_RUNNER}" "${PD_RUNNER}" "${DP_RUNNER}" \
-  "${DATASET_GENERATOR}" "${RUN_SUMMARIZER}" "${MATRIX_SUMMARIZER}"; do
+  "${DATASET_GENERATOR}"; do
   [[ -e "${required}" ]] || die "required path is missing: ${required}"
 done
 [[ "${REPETITIONS}" =~ ^[1-9][0-9]*$ ]] \
   || die "PAP_CAPACITY_REPETITIONS must be positive"
+(( REPETITIONS <= 10 )) \
+  || die "PAP_CAPACITY_REPETITIONS exceeds AIPerf's limit of 10"
 [[ "${TOTAL_SESSIONS}" =~ ^[1-9][0-9]*$ ]] \
   || die "PAP_CAPACITY_SESSIONS must be positive"
 [[ "${GPU_COUNT}" =~ ^[1-9][0-9]*$ ]] \
@@ -108,6 +111,11 @@ done
   || die "output token minimum exceeds its maximum"
 [[ "${GPU_IDLE_STABILITY_SECONDS}" =~ ^[0-9]+$ ]] \
   || die "PAP_CAPACITY_GPU_IDLE_STABILITY_SECONDS must be non-negative"
+for value in "${AIPERF_SWEEP_COOLDOWN_SECONDS}" \
+  "${AIPERF_PROFILE_RUN_COOLDOWN_SECONDS}"; do
+  [[ "${value}" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+    || die "AIPerf cooldown values must be non-negative numbers"
+done
 case "${EXECUTION_MODE}" in
   eager | piecewise) ;;
   *) die "PAP_CAPACITY_EXECUTION_MODE must be eager or piecewise" ;;
@@ -140,6 +148,11 @@ for architecture in "${ARCHITECTURES[@]}"; do
   fi
   IFS=, read -r -a architecture_points \
     <<< "$(points_for_architecture "${architecture}")"
+  if [[ "${architecture}" == pap_* \
+    && "${PAP_ROUTING_POLICY}" == "attention_load" \
+    && ${#architecture_points[@]} -gt 1 ]]; then
+    die "attention_load requires a single-point run until gateway reset exists"
+  fi
   for concurrency in "${architecture_points[@]}"; do
     [[ "${concurrency}" =~ ^[1-9][0-9]*$ ]] \
       || die "invalid ${architecture} concurrency point: ${concurrency}"
@@ -272,8 +285,14 @@ PY
     printf 'POINTS_%s=%q\n' "${architecture^^}" \
       "$(points_for_architecture "${architecture}")"
   done
-  printf 'REPETITIONS=%q\nSTOP_AFTER_RELAXED_FAIL=%q\n' \
-    "${REPETITIONS}" "${STOP_AFTER_RELAXED_FAIL}"
+  printf 'REPETITIONS=%q\n' "${REPETITIONS}"
+  printf 'SWEEP_OWNER=aiperf\nSWEEP_MODE=repeated\n'
+  printf 'AIPERF_SWEEP_SAME_SEED=1\n'
+  printf 'AIPERF_SWEEP_COOLDOWN_SECONDS=%q\n' \
+    "${AIPERF_SWEEP_COOLDOWN_SECONDS}"
+  printf 'AIPERF_PROFILE_RUN_COOLDOWN_SECONDS=%q\n' \
+    "${AIPERF_PROFILE_RUN_COOLDOWN_SECONDS}"
+  printf 'AIPERF_GOODPUT_SLO=%q\n' "${AIPERF_GOODPUT_SLO}"
   printf 'GPU_IDLE_STABILITY_SECONDS=%q\n' \
     "${GPU_IDLE_STABILITY_SECONDS}"
   printf 'TURNS=%q\n' "${TURNS}"
@@ -356,33 +375,15 @@ wait_for_gpus() {
   done
 }
 
-summarize_point() {
-  local architecture="$1"
-  local topology="$2"
-  local concurrency="$3"
-  local repetition="$4"
-  local run_root="$5"
-  "${PYTHON_BIN}" "${RUN_SUMMARIZER}" \
-    --run-root "${run_root}" \
-    --architecture "${architecture}" \
-    --topology "${topology}" \
-    --concurrency "${concurrency}" \
-    --sessions "${TOTAL_SESSIONS}" \
-    --turns "${TURNS}" \
-    --output-tokens "${OUTPUT_TOKENS}" \
-    --dataset-file "${DATASET_FILE}" \
-    --repetition "${repetition}"
-}
-
 gpu_csv() {
   local start="$1"
   local count="$2"
   seq -s, "${start}" "$((start + count - 1))"
 }
 
-run_pap_point() {
+run_pap_architecture() {
   local topology="$1"
-  local concurrency="$2"
+  local concurrency_points="$2"
   local run_root="$3"
   [[ "${topology}" =~ ^([1-9][0-9]*)pa([1-9][0-9]*)p$ ]] \
     || die "invalid PAP topology: ${topology}"
@@ -424,10 +425,17 @@ run_pap_point() {
     OUTPUT_LEN="${OUTPUT_TOKENS}" \
     PAP_AIPERF_INPUT_FILE="${DATASET_FILE}" \
     PAP_AIPERF_OUTPUT_DIR="${run_root}/aiperf" \
-    PAP_AIPERF_CONCURRENCY="${concurrency}" \
+    PAP_AIPERF_CONCURRENCY="${concurrency_points}" \
     PAP_AIPERF_TIMING_MODE=concurrency \
     PAP_AIPERF_REQUEST_RATE= \
     AIPERF_RANDOM_SEED="${RANDOM_SEED}" \
+    AIPERF_NUM_PROFILE_RUNS="${REPETITIONS}" \
+    AIPERF_PROFILE_RUN_COOLDOWN_SECONDS=\
+"${AIPERF_PROFILE_RUN_COOLDOWN_SECONDS}" \
+    AIPERF_PARAMETER_SWEEP_COOLDOWN_SECONDS=\
+"${AIPERF_SWEEP_COOLDOWN_SECONDS}" \
+    AIPERF_PARAMETER_SWEEP_MODE=repeated \
+    AIPERF_GOODPUT_SLO="${AIPERF_GOODPUT_SLO}" \
     AIPERF_EXPORT_LEVEL=records \
     MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
     MAX_NUM_BATCHED_TOKENS="${PREFILL_MAX_NUM_BATCHED_TOKENS}" \
@@ -444,9 +452,9 @@ run_pap_point() {
     "${PAP_RUNNER}"
 }
 
-run_pd_point() {
+run_pd_architecture() {
   local topology="$1"
-  local concurrency="$2"
+  local concurrency_points="$2"
   local run_root="$3"
   env \
     PAP_ROOT="${ROOT_DIR}" \
@@ -476,17 +484,24 @@ run_pd_point() {
     PD_LOAD_REQUEST_TIMEOUT_SECONDS="${REQUEST_TIMEOUT_SECONDS}" \
     PD_AIPERF_INPUT_FILE="${DATASET_FILE}" \
     PD_AIPERF_OUTPUT_DIR="${run_root}/aiperf" \
-    PD_AIPERF_CONCURRENCY="${concurrency}" \
+    PD_AIPERF_CONCURRENCY="${concurrency_points}" \
     PD_AIPERF_TIMING_MODE=concurrency \
     PD_AIPERF_REQUEST_RATE= \
     AIPERF_RANDOM_SEED="${RANDOM_SEED}" \
+    AIPERF_NUM_PROFILE_RUNS="${REPETITIONS}" \
+    AIPERF_PROFILE_RUN_COOLDOWN_SECONDS=\
+"${AIPERF_PROFILE_RUN_COOLDOWN_SECONDS}" \
+    AIPERF_PARAMETER_SWEEP_COOLDOWN_SECONDS=\
+"${AIPERF_SWEEP_COOLDOWN_SECONDS}" \
+    AIPERF_PARAMETER_SWEEP_MODE=repeated \
+    AIPERF_GOODPUT_SLO="${AIPERF_GOODPUT_SLO}" \
     AIPERF_EXPORT_LEVEL=records \
     "${PD_RUNNER}" oneway
 }
 
-run_dp_point() {
+run_dp_architecture() {
   local topology="$1"
-  local concurrency="$2"
+  local concurrency_points="$2"
   local run_root="$3"
   [[ "${topology}" =~ ^([1-9][0-9]*)dp$ ]] \
     || die "invalid DP topology: ${topology}"
@@ -512,16 +527,23 @@ run_dp_point() {
     DP_LOAD_REQUEST_TIMEOUT_SECONDS="${REQUEST_TIMEOUT_SECONDS}" \
     DP_AIPERF_INPUT_FILE="${DATASET_FILE}" \
     DP_AIPERF_OUTPUT_DIR="${run_root}/aiperf" \
-    DP_AIPERF_CONCURRENCY="${concurrency}" \
+    DP_AIPERF_CONCURRENCY="${concurrency_points}" \
+    AIPERF_RANDOM_SEED="${RANDOM_SEED}" \
+    AIPERF_NUM_PROFILE_RUNS="${REPETITIONS}" \
+    AIPERF_PROFILE_RUN_COOLDOWN_SECONDS=\
+"${AIPERF_PROFILE_RUN_COOLDOWN_SECONDS}" \
+    AIPERF_PARAMETER_SWEEP_COOLDOWN_SECONDS=\
+"${AIPERF_SWEEP_COOLDOWN_SECONDS}" \
+    AIPERF_PARAMETER_SWEEP_MODE=repeated \
+    AIPERF_GOODPUT_SLO="${AIPERF_GOODPUT_SLO}" \
     AIPERF_EXPORT_LEVEL=records \
     "${DP_RUNNER}"
 }
 
-run_point() {
+run_architecture() {
   local architecture_tag="$1"
-  local concurrency="$2"
-  local repetition="$3"
-  local architecture topology run_name run_root launcher_code
+  local concurrency_points="$2"
+  local architecture topology run_root launcher_code
   if [[ "${architecture_tag}" == pap_* ]]; then
     architecture=pap
     topology="${architecture_tag#pap_}"
@@ -532,12 +554,11 @@ run_point() {
     architecture=dp
     topology="${architecture_tag#dp_}dp"
   fi
-  run_name="${architecture_tag}_c${concurrency}_r${repetition}"
-  run_root="${MATRIX_ROOT}/runs/${run_name}"
+  run_root="${MATRIX_ROOT}/runs/${architecture_tag}"
 
   if [[ "${RESUME}" == "1" \
-    && -f "${run_root}/capacity_summary.json" ]]; then
-    echo "Reusing ${run_name}"
+    && -f "${run_root}/aiperf_sweep_complete.env" ]]; then
+    echo "Reusing completed AIPerf sweep for ${architecture_tag}"
     return
   fi
   if [[ -d "${run_root}" && -n "$(find "${run_root}" -mindepth 1 -print -quit)" ]]; then
@@ -546,57 +567,42 @@ run_point() {
 
   wait_for_gpus
   mkdir -p "${run_root}"
-  echo "=== ${architecture_tag} concurrency=${concurrency} rep=${repetition} ==="
+  echo "=== ${architecture_tag} AIPerf concurrency=${concurrency_points} ==="
   set +e
   if [[ "${architecture}" == "pap" ]]; then
-    run_pap_point "${topology}" "${concurrency}" "${run_root}" \
+    run_pap_architecture "${topology}" "${concurrency_points}" "${run_root}" \
       > "${run_root}/launcher.log" 2>&1
     launcher_code="$?"
   elif [[ "${architecture}" == "pd" ]]; then
-    run_pd_point "${topology}" "${concurrency}" "${run_root}" \
+    run_pd_architecture "${topology}" "${concurrency_points}" "${run_root}" \
       > "${run_root}/launcher.log" 2>&1
     launcher_code="$?"
   else
-    run_dp_point "${topology}" "${concurrency}" "${run_root}" \
+    run_dp_architecture "${topology}" "${concurrency_points}" "${run_root}" \
       > "${run_root}/launcher.log" 2>&1
     launcher_code="$?"
   fi
   set -e
   printf '%s\n' "${launcher_code}" > "${run_root}/launcher_exit_code.txt"
-  summarize_point \
-    "${architecture}" "${topology}" "${concurrency}" \
-    "${repetition}" "${run_root}"
+  (( launcher_code == 0 )) \
+    || die "${architecture_tag} AIPerf sweep failed; see ${run_root}"
+  if [[ -z "$(find "${run_root}/aiperf" -type f \
+    -name 'profile*.json' -size +0c -print -quit)" ]]; then
+    die "${architecture_tag} AIPerf sweep produced no profile JSON"
+  fi
+  {
+    printf 'STATUS=passed\n'
+    printf 'ARCHITECTURE=%q\nTOPOLOGY=%q\n' \
+      "${architecture}" "${topology}"
+    printf 'CONCURRENCY_POINTS=%q\n' "${concurrency_points}"
+    printf 'PROFILE_RUNS=%q\n' "${REPETITIONS}"
+    printf 'DATASET_FILE=%q\n' "${DATASET_FILE}"
+  } > "${run_root}/aiperf_sweep_complete.env"
 }
 
 for architecture in "${ARCHITECTURES[@]}"; do
   points_csv="$(points_for_architecture "${architecture}")"
-  IFS=, read -r -a architecture_points <<< "${points_csv}"
-  relaxed_failed=0
-  for concurrency in "${architecture_points[@]}"; do
-    if (( relaxed_failed == 1 )) && [[ "${STOP_AFTER_RELAXED_FAIL}" == "1" ]]; then
-      echo "Skipping ${architecture} above its first relaxed-SLO failure"
-      break
-    fi
-    point_has_eligible_run=0
-    point_has_relaxed_failure=0
-    for (( repetition=1; repetition<=REPETITIONS; repetition++ )); do
-      run_point "${architecture}" "${concurrency}" "${repetition}"
-      summary="${MATRIX_ROOT}/runs/${architecture}_c${concurrency}_r${repetition}/capacity_summary.json"
-      if [[ "$(jq -r '.correctness.passed' "${summary}")" == "true" ]]; then
-        point_has_eligible_run=1
-        if [[ "$(jq -r '.slo.relaxed.passed' "${summary}")" != "true" ]]; then
-          point_has_relaxed_failure=1
-        fi
-      else
-        echo "Not using ineligible ${architecture} C=${concurrency} rep=${repetition} for SLO pruning"
-      fi
-    done
-    if (( point_has_eligible_run == 1 && point_has_relaxed_failure == 1 )); then
-      relaxed_failed=1
-    fi
-    "${PYTHON_BIN}" "${MATRIX_SUMMARIZER}" "${MATRIX_ROOT}"
-  done
+  run_architecture "${architecture}" "${points_csv}"
 done
 
-"${PYTHON_BIN}" "${MATRIX_SUMMARIZER}" "${MATRIX_ROOT}"
 echo "PAP_CAPACITY_MATRIX_ROOT=${MATRIX_ROOT}"

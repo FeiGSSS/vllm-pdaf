@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Canonical eight-GPU Qwen3-8B capacity scan. The underlying matrix runner
-# owns dataset generation, service restarts, audits, resume, and summaries.
+# Canonical eight-GPU Qwen3-8B capacity scan. The matrix runner owns dataset
+# generation and architecture lifecycle; AIPerf owns each concurrency sweep.
 
 ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
 MATRIX_RUNNER="${ROOT_DIR}/benchmarks/pap/aiperf/run_capacity_matrix.sh"
@@ -26,8 +26,7 @@ export PAP_CAPACITY_PD_6P2D_POINTS="${PAP_CAPACITY_PD_6P2D_POINTS:-12,16,20,24,2
 export PAP_CAPACITY_DP_8_POINTS="${PAP_CAPACITY_DP_8_POINTS:-8,12,16,20,24,28,32}"
 
 export PAP_CAPACITY_REPETITIONS="${PAP_CAPACITY_REPETITIONS:-1}"
-export PAP_CAPACITY_STOP_AFTER_RELAXED_FAIL="${PAP_CAPACITY_STOP_AFTER_RELAXED_FAIL:-0}"
-export PAP_CAPACITY_PAP_ROUTING_POLICY="${PAP_CAPACITY_PAP_ROUTING_POLICY:-attention_load}"
+export PAP_CAPACITY_PAP_ROUTING_POLICY="${PAP_CAPACITY_PAP_ROUTING_POLICY:-conversation_affinity}"
 export PAP_CAPACITY_PAP_MIGRATION_MIN_PEAK_GAIN_RATIO="${PAP_CAPACITY_PAP_MIGRATION_MIN_PEAK_GAIN_RATIO:-0.30}"
 
 exec "${MATRIX_RUNNER}"

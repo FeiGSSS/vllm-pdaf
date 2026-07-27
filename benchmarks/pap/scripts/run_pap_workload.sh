@@ -130,7 +130,9 @@ if ! [[ "${PAP_AIPERF_TURNS}" =~ ^[1-9][0-9]*$ \
   echo "ERROR: AIPerf turns/sessions must be positive" >&2
   exit 2
 fi
-NUM_PROMPTS=$((PAP_AIPERF_TURNS * PAP_AIPERF_SESSIONS))
+REQUESTS_PER_AIPERF_VARIATION=$((
+  PAP_AIPERF_TURNS * PAP_AIPERF_SESSIONS
+))
 BENCH_TIMEOUT="${BENCH_TIMEOUT:-900}"
 SERVER_START_TIMEOUT="${SERVER_START_TIMEOUT:-900}"
 CLUSTER_READY_WAIT_SECONDS="${CLUSTER_READY_WAIT_SECONDS:-30}"
@@ -164,14 +166,31 @@ PAP_AIPERF_OUTPUT_DIR="${PAP_AIPERF_OUTPUT_DIR:-${RUN_ROOT}/aiperf}"
 PAP_AIPERF_CONCURRENCY="${PAP_AIPERF_CONCURRENCY:-12}"
 PAP_AIPERF_TIMING_MODE="${PAP_AIPERF_TIMING_MODE:-concurrency}"
 PAP_AIPERF_REQUEST_RATE="${PAP_AIPERF_REQUEST_RATE-}"
-if [[ ! "${PAP_AIPERF_CONCURRENCY}" =~ ^[1-9][0-9]*$ ]]; then
-  echo "ERROR: PAP_AIPERF_CONCURRENCY must be positive" >&2
+if [[ ! "${PAP_AIPERF_CONCURRENCY}" \
+  =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]]; then
+  echo "ERROR: PAP_AIPERF_CONCURRENCY must be a positive integer or CSV list" >&2
   exit 2
 fi
-if (( PAP_AIPERF_CONCURRENCY > PAP_AIPERF_SESSIONS )); then
-  echo "ERROR: AIPerf concurrency exceeds total sessions" >&2
+IFS=, read -r -a PAP_AIPERF_CONCURRENCY_POINTS \
+  <<< "${PAP_AIPERF_CONCURRENCY}"
+for concurrency in "${PAP_AIPERF_CONCURRENCY_POINTS[@]}"; do
+  if (( concurrency > PAP_AIPERF_SESSIONS )); then
+    echo "ERROR: AIPerf concurrency exceeds total sessions" >&2
+    exit 2
+  fi
+done
+AIPERF_NUM_PROFILE_RUNS="${AIPERF_NUM_PROFILE_RUNS:-1}"
+if [[ ! "${AIPERF_NUM_PROFILE_RUNS}" =~ ^[1-9][0-9]*$ ]] \
+  || (( AIPERF_NUM_PROFILE_RUNS > 10 )); then
+  echo "ERROR: AIPERF_NUM_PROFILE_RUNS must be between 1 and 10" >&2
   exit 2
 fi
+AIPERF_VARIATION_COUNT="${#PAP_AIPERF_CONCURRENCY_POINTS[@]}"
+NUM_PROMPTS=$((
+  REQUESTS_PER_AIPERF_VARIATION
+  * AIPERF_VARIATION_COUNT
+  * AIPERF_NUM_PROFILE_RUNS
+))
 if [[ "${PAP_AIPERF_TIMING_MODE}" == "request_rate" \
   && -z "${PAP_AIPERF_REQUEST_RATE}" ]]; then
   echo "ERROR: request_rate timing requires PAP_AIPERF_REQUEST_RATE" >&2
@@ -1157,6 +1176,8 @@ write_effective_config() {
     printf 'PAP_AIPERF_INPUT_FILE=%q\n' "${PAP_AIPERF_INPUT_FILE}"
     printf 'PAP_AIPERF_OUTPUT_DIR=%q\n' "${PAP_AIPERF_OUTPUT_DIR}"
     printf 'PAP_AIPERF_CONCURRENCY=%q\n' "${PAP_AIPERF_CONCURRENCY}"
+    printf 'AIPERF_VARIATION_COUNT=%q\n' "${AIPERF_VARIATION_COUNT}"
+    printf 'AIPERF_NUM_PROFILE_RUNS=%q\n' "${AIPERF_NUM_PROFILE_RUNS}"
     printf 'PAP_AIPERF_TIMING_MODE=%q\n' "${PAP_AIPERF_TIMING_MODE}"
     printf 'PAP_AIPERF_REQUEST_RATE=%q\n' "${PAP_AIPERF_REQUEST_RATE}"
     printf 'INPUT_LENS_CSV=%q\n' "${INPUT_LEN}"
@@ -1384,6 +1405,7 @@ write_run_metadata() {
   PAP_AIPERF_SESSIONS="${PAP_AIPERF_SESSIONS}" \
   PAP_AIPERF_APPEND_TOKENS="${PAP_AIPERF_APPEND_TOKENS}" \
   PAP_AIPERF_CONCURRENCY="${PAP_AIPERF_CONCURRENCY}" \
+  AIPERF_NUM_PROFILE_RUNS="${AIPERF_NUM_PROFILE_RUNS}" \
   PAP_AIPERF_TIMING_MODE="${PAP_AIPERF_TIMING_MODE}" \
   PAP_AIPERF_REQUEST_RATE="${PAP_AIPERF_REQUEST_RATE}" \
   PAP_VLLM_DTYPE="${PAP_VLLM_DTYPE}" \
@@ -1448,7 +1470,13 @@ metadata = {
     "aiperf_turns": int(os.environ["PAP_AIPERF_TURNS"]),
     "aiperf_sessions": int(os.environ["PAP_AIPERF_SESSIONS"]),
     "aiperf_append_tokens": int(os.environ["PAP_AIPERF_APPEND_TOKENS"]),
-    "aiperf_concurrency": int(os.environ["PAP_AIPERF_CONCURRENCY"]),
+    "aiperf_concurrency_points": [
+        int(value)
+        for value in os.environ["PAP_AIPERF_CONCURRENCY"].split(",")
+    ],
+    "aiperf_num_profile_runs": int(
+        os.environ["AIPERF_NUM_PROFILE_RUNS"]
+    ),
     "aiperf_timing_mode": os.environ["PAP_AIPERF_TIMING_MODE"],
     "aiperf_request_rate": (
         float(os.environ["PAP_AIPERF_REQUEST_RATE"])
@@ -1533,6 +1561,7 @@ migration_lifecycle_enabled = (
 )
 load_rounds = int(os.environ["PAP_AIPERF_TURNS"])
 load_conversations = int(os.environ["PAP_AIPERF_SESSIONS"])
+load_repetitions = expected_requests // (load_rounds * load_conversations)
 route_pattern = re.compile(
     r"request_id=\S+ pa=[^:\s]+:(\d+).* projection=[^:\s]+:(\d+)"
 )
@@ -1557,6 +1586,7 @@ dynamic_pa_routing = routing_policy == "attention_load"
 if routing_policy == "conversation_affinity":
     expected_group_indices = [
         conversation % pa_count
+        for _ in range(load_repetitions)
         for _ in range(load_rounds)
         for conversation in range(load_conversations)
     ]
@@ -1664,7 +1694,7 @@ if dynamic_pa_routing and migration_lifecycle_enabled:
     )
     minimum_releases = expected_requests
     maximum_historical_releases = (
-        (load_rounds - 1) * load_conversations
+        load_repetitions * (load_rounds - 1) * load_conversations
     )
     maximum_releases = (
         expected_requests

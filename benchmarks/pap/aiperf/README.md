@@ -100,7 +100,7 @@ boundary differences are expected and recorded; they are not forced away.
 Each completed request is evaluated against TTFT and its request-level mean
 ITL. A tier passes only when at least 95% of all expected requests meet both
 limits. Missing requests remain in the denominator. A run is eligible for an
-SLO pass/fail result only when all sessions complete all ten turns, every
+SLO pass/fail result only when all sessions complete all five turns, every
 response exactly matches that request's sampled output length, AIPerf reports
 no error/cancellation, runtime audits pass, and both Prefill/PA and
 Decode/Projection routing retain one owner per conversation. Incomplete or
@@ -112,29 +112,17 @@ invalid runs are reported as `ineligible`, not as ordinary SLO failures.
 | Standard | <= 10 s | <= 75 ms | >= 95% |
 | Relaxed | <= 20 s | <= 100 ms | >= 95% |
 
-The per-run summary also records an explicit execution state:
+AIPerf's native `--goodput` output uses the Standard tier by default. The
+per-request records retain enough data to evaluate Strict and Relaxed
+thresholds without rerunning inference; those two tiers remain report-level
+views rather than separate load sweeps.
 
-| State | Meaning |
-| --- | --- |
-| `completed` | All expected requests were observed; inspect SLO columns for pass/fail. |
-| `early_stopped_slo_impossible` | The run received SIGINT/SIGTERM after the relaxed tier could no longer reach 95%. |
-| `incomplete_slo_impossible` | The run ended incomplete after the relaxed tier could no longer reach 95%. |
-| `request_timeout` | Request timeouts occurred, but the observed records had not yet made the relaxed tier mathematically impossible. |
-| `service_failed` | The launcher failed before producing a complete result. |
-| `incomplete` | The workload ended without enough evidence for a more specific state. |
-
-Request error counts, launcher exit code, and the relaxed tier's observed and
-maximum bad-request counts remain in `capacity_summary.json`. Matrix tables
-show completion as `observed/expected`; partial TTFT and ITL values are
-diagnostic only and never contribute eligible goodput.
-
-`summarize_capacity_run.py` emits one compact JSON result per run.
-`summarize_capacity_matrix.py` emits a TSV, a Markdown table, and the tested
-PAP-versus-best-PD/DP capacity envelope. The Markdown output includes every
-point's conservative three-tier goodput, good-request fraction, and repetition
-pass count. `capacity_results.json` contains the same rows and selected
-envelope for scripts and agents; reading AIPerf `profile.jsonl` is unnecessary
-for ordinary comparisons.
+AIPerf owns the per-variation records, sweep aggregates, repeated-run
+confidence data, and error counts. Project launchers add architecture-level
+runtime audits and preserve the AIPerf directory without translating it into
+a second project-specific scan format. The older
+`summarize_capacity_{run,matrix}.py` files only read historical, pre-native-
+sweep experiments.
 
 ## Fixed-length historical shapes
 
@@ -149,7 +137,9 @@ AIPERF_INPUT_FILE=/tmp/pap-aiperf-8gpu-longtail-o32-t5.jsonl \
 AIPERF_TARGET_URL=http://127.0.0.1:9460 \
 AIPERF_OUTPUT_DIR=/path/to/run/aiperf \
 AIPERF_SESSIONS=128 \
-AIPERF_CONCURRENCY=32 \
+AIPERF_CONCURRENCY=16,24,32,48 \
+AIPERF_NUM_PROFILE_RUNS=1 \
+AIPERF_PARAMETER_SWEEP_COOLDOWN_SECONDS=30 \
 AIPERF_TIMING_MODE=concurrency \
 AIPERF_REQUEST_RATE= \
   bash benchmarks/pap/aiperf/run_profile.sh
@@ -162,7 +152,7 @@ AIPERF_INPUT_FILE=/tmp/pap-aiperf-8gpu-longtail-o32-t5.jsonl \
 PAP_TOPOLOGY=6pa2p \
 PAP_AIPERF_TURNS=5 \
 PAP_AIPERF_SESSIONS=128 \
-PAP_AIPERF_CONCURRENCY=32 \
+PAP_AIPERF_CONCURRENCY=16,24,32,48 \
 PAP_AIPERF_TIMING_MODE=concurrency \
   bash benchmarks/pap/scripts/run_pap_workload.sh
 
@@ -170,16 +160,27 @@ AIPERF_INPUT_FILE=/tmp/pap-aiperf-8gpu-longtail-o32-t5.jsonl \
 PD_LOAD_TOPOLOGY=4p4d \
 PD_LOAD_ROUNDS=5 \
 PD_LOAD_CONVERSATIONS=128 \
-PD_AIPERF_CONCURRENCY=32 \
+PD_AIPERF_CONCURRENCY=16,24,32,48 \
 PD_AIPERF_TIMING_MODE=concurrency \
   bash benchmarks/pap/scripts/run_pd_multiturn_topology.sh oneway
 ```
 
 Supply the normal PAP GPU-list variables alongside the first command. Use the
-identical generated file for every PAP, one-way PD, and fused-replica point.
-Restart the services for every matrix point so each point starts with cold
-caches. A comma-separated AIPerf sweep intentionally runs points in one process
-and is suitable only when warm-cache carryover is part of the experiment.
+identical generated file for every PAP, one-way PD, and fused-replica sweep.
+The architecture starts once, then AIPerf runs every comma-separated
+concurrency variation and repeated trial. `--parameter-sweep-same-seed`,
+sequential dataset sampling, and the fixed JSONL make request contents,
+target lengths, delays, session order, and random choices identical across
+variations.
+
+This is a steady-state sweep, not a cold-cache-per-point experiment. AIPerf
+does not restart vLLM between variations, so allocator state and prefix-cache
+contents can carry over. The canonical order is therefore fixed and recorded.
+Use separate single-point launcher invocations when cold-cache isolation is
+the research question. The `attention_load` PAP migration policy also retains
+conversation history in the gateway and is not eligible for a native
+multi-point sweep until a variation-boundary reset exists; the canonical
+capacity sweep uses `conversation_affinity`.
 
 The default `records` export retains aggregate and per-request metrics without
 duplicating every long prompt and response. Set `AIPERF_EXPORT_LEVEL=raw` only
@@ -208,10 +209,11 @@ PAP_CAPACITY_REPETITIONS=3 \
   bash benchmarks/pap/aiperf/run_goodput_scan.sh
 ```
 
-The final answer is available directly in `capacity_results.md` and
-`capacity_results.json` below the printed matrix root. The former is intended
-for review; the latter is the stable machine-readable input for later report
-generation.
+Results are the native AIPerf artifacts below each architecture's `aiperf/`
+directory. Single-trial sweeps use `concurrency_<C>/`; repeated sweeps use
+`profile_runs/trial_<N>/concurrency_<C>/`. AIPerf writes its cross-variation
+aggregate under `sweep_aggregate/` (or `aggregate/sweep_aggregate/` for
+repeated runs).
 
 The default matrix compares PAP 7PA1P and 6PA2P, one-way PD 4P4D and 6P2D,
 and an eight-replica fused vLLM pool with sticky conversation routing. PAP
@@ -297,9 +299,10 @@ PAP_CAPACITY_EXECUTION_MODE=piecewise \
   bash benchmarks/pap/aiperf/run_capacity_matrix.sh
 ```
 
-Every point processes the same 128 conversations and 640 requests. Concurrency
-only limits the number of live sessions; when one five-turn session finishes,
-the next conversation takes its slot. The default lean scan is:
+Every variation replays the same 128 conversations and 640 requests from one
+JSONL file. Concurrency only limits the number of live sessions; when one
+five-turn session finishes, the next conversation takes its slot. The default
+lean scan is:
 
 | Topology | Concurrency points |
 | --- | --- |
@@ -307,12 +310,11 @@ the next conversation takes its slot. The default lean scan is:
 | PD 4P4D / 6P2D | 16, 24, 32, 48 |
 | Fused vLLM replica pool ×8 | 16, 24, 32, 48 |
 
-Every point restarts all services. Once a valid point fails the relaxed SLO,
-higher points for that topology are skipped. This is deliberately a lean
-boundary scan. The lower points find Strict and Standard capacity, while C48
-brackets the C32/C64 Relaxed boundary observed in the initial eight-GPU
-pilot. Set
-`PAP_CAPACITY_REPETITIONS=3` only for a later confirmation run.
+The project runner starts each architecture once. AIPerf owns the inner
+concurrency grid, same-seed replay, cooldowns, repeated runs, and aggregate
+artifacts. The lower points find Strict and Standard capacity, while C48
+brackets the C32/C64 Relaxed boundary observed in the initial eight-GPU pilot.
+Set `PAP_CAPACITY_REPETITIONS=3` only for a later confirmation run.
 
 ```bash
 bash benchmarks/pap/aiperf/run_capacity_matrix.sh
@@ -343,10 +345,9 @@ the seed, and the actual sampled statistics are recorded in the matrix and
 dataset manifests.
 
 The runner waits in 60-second intervals when GPUs 0-7 are occupied, supports
-resuming a matrix ID, and writes `matrix_config.env`, per-run
-`capacity_summary.json`, `capacity_results.tsv`, `capacity_results.md`, and
-`capacity_results.json` plus `capacity_envelope.json` below one matrix
-directory.
+resuming a matrix ID, and writes `matrix_config.env`, one run directory per
+architecture, native AIPerf sweep artifacts, launcher logs, and architecture
+runtime audits.
 After GPUs first appear idle, it waits another 15 seconds and verifies them
 again so a preceding job can finish releasing ports and processes. Invalid
 startup or correctness failures are recorded but never treated as an SLO

@@ -95,15 +95,23 @@ PD_AIPERF_OUTPUT_DIR="${PD_AIPERF_OUTPUT_DIR:-${RUN_ROOT}/aiperf}"
 PD_AIPERF_CONCURRENCY="${PD_AIPERF_CONCURRENCY:-${CONVERSATIONS}}"
 PD_AIPERF_TIMING_MODE="${PD_AIPERF_TIMING_MODE:-concurrency}"
 PD_AIPERF_REQUEST_RATE="${PD_AIPERF_REQUEST_RATE-}"
-if [[ ! "${PD_AIPERF_CONCURRENCY}" =~ ^[1-9][0-9]*$ ]]; then
-  echo "PD_AIPERF_CONCURRENCY must be positive" >&2
+if [[ ! "${PD_AIPERF_CONCURRENCY}" \
+  =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]]; then
+  echo "PD_AIPERF_CONCURRENCY must be a positive integer or CSV list" >&2
   exit 2
 fi
-ACTIVE_CONVERSATIONS="${PD_AIPERF_CONCURRENCY}"
-if (( ACTIVE_CONVERSATIONS > CONVERSATIONS )); then
-  echo "AIPerf concurrency exceeds total conversations" >&2
-  exit 2
-fi
+ACTIVE_CONVERSATIONS=0
+IFS=, read -r -a PD_AIPERF_CONCURRENCY_POINTS \
+  <<< "${PD_AIPERF_CONCURRENCY}"
+for concurrency in "${PD_AIPERF_CONCURRENCY_POINTS[@]}"; do
+  if (( concurrency > CONVERSATIONS )); then
+    echo "AIPerf concurrency exceeds total conversations" >&2
+    exit 2
+  fi
+  if (( concurrency > ACTIVE_CONVERSATIONS )); then
+    ACTIVE_CONVERSATIONS="${concurrency}"
+  fi
+done
 if [[ "${PD_AIPERF_TIMING_MODE}" == "request_rate" \
   && -z "${PD_AIPERF_REQUEST_RATE}" ]]; then
   PD_AIPERF_REQUEST_RATE="${REQUEST_RATE}"

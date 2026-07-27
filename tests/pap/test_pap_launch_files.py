@@ -7,6 +7,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 PAP_SHELL_ENTRYPOINTS = (
     "benchmarks/pap/aiperf/run_capacity_matrix.sh",
+    "benchmarks/pap/aiperf/run_goodput_scan.sh",
     "benchmarks/pap/aiperf/run_profile.sh",
     "benchmarks/pap/scripts/run_pap_workload.sh",
     "benchmarks/pap/scripts/run_dp_multiturn.sh",

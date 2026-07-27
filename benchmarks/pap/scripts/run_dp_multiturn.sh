@@ -42,10 +42,17 @@ die() {
 }
 
 [[ "${DP_SIZE}" =~ ^[1-9][0-9]*$ ]] || die "DP_LOAD_SIZE must be positive"
-[[ "${CONCURRENCY}" =~ ^[1-9][0-9]*$ ]] \
-  || die "DP_AIPERF_CONCURRENCY must be positive"
-(( CONCURRENCY <= CONVERSATIONS )) \
-  || die "AIPerf concurrency exceeds total conversations"
+[[ "${CONCURRENCY}" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]] \
+  || die "DP_AIPERF_CONCURRENCY must be a positive integer or CSV list"
+ACTIVE_CONVERSATIONS=0
+IFS=, read -r -a DP_AIPERF_CONCURRENCY_POINTS <<< "${CONCURRENCY}"
+for concurrency in "${DP_AIPERF_CONCURRENCY_POINTS[@]}"; do
+  (( concurrency <= CONVERSATIONS )) \
+    || die "AIPerf concurrency exceeds total conversations"
+  if (( concurrency > ACTIVE_CONVERSATIONS )); then
+    ACTIVE_CONVERSATIONS="${concurrency}"
+  fi
+done
 IFS=, read -r -a GPUS <<< "${GPU_CSV}"
 (( ${#GPUS[@]} == DP_SIZE )) || die "DP_LOAD_GPUS does not match DP_LOAD_SIZE"
 for required in "${PYTHON_BIN}" "${VLLM_BIN}" "${AIPERF_BIN}" \
@@ -106,7 +113,8 @@ fi
   printf 'ROUTING_POLICY=%q\nTARGET_URLS=%q\n' \
     "aiperf_sticky_user_sessions" "${TARGET_URLS}"
   printf 'ROUNDS=%q\nTOTAL_CONVERSATIONS=%q\nACTIVE_CONVERSATIONS=%q\n' \
-    "${ROUNDS}" "${CONVERSATIONS}" "${CONCURRENCY}"
+    "${ROUNDS}" "${CONVERSATIONS}" "${ACTIVE_CONVERSATIONS}"
+  printf 'AIPERF_CONCURRENCY_POINTS=%q\n' "${CONCURRENCY}"
   printf 'MAX_MODEL_LEN=%q\nMAX_NUM_BATCHED_TOKENS=%q\nMAX_NUM_SEQS=%q\n' \
     "${MAX_MODEL_LEN}" "${MAX_NUM_BATCHED_TOKENS}" "${MAX_NUM_SEQS}"
   printf 'GPU_MEMORY_UTILIZATION=%q\nEXECUTION_MODE=%q\n' \

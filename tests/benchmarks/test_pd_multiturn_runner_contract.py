@@ -142,6 +142,10 @@ def test_aiperf_capacity_lane_uses_concurrency_without_request_rate() -> None:
     capacity_text = CAPACITY_RUNNER.read_text(encoding="utf-8")
 
     assert 'AIPERF_TIMING_MODE="${AIPERF_TIMING_MODE:-concurrency}"' in profile_text
+    assert "--parameter-sweep-same-seed" in profile_text
+    assert "--num-profile-runs" in profile_text
+    assert "--profile-run-cooldown-seconds" in profile_text
+    assert "--parameter-sweep-cooldown-seconds" in profile_text
     assert "AIPERF_TIMING_MODE=concurrency" in capacity_text
     assert "PAP_AIPERF_REQUEST_RATE=" in capacity_text
     assert "PD_AIPERF_REQUEST_RATE=" in capacity_text
@@ -238,13 +242,15 @@ def test_pap_launchers_compute_projection_memory_from_model_size() -> None:
         assert "PAP_PROJECTION_GPU_MEMORY_UTILIZATION:-" not in text
 
 
-def test_capacity_lane_only_prunes_eligible_slo_failures() -> None:
+def test_capacity_lane_delegates_sweep_and_repetitions_to_aiperf() -> None:
     text = CAPACITY_RUNNER.read_text(encoding="utf-8")
 
-    assert "point_has_eligible_run=0" in text
-    assert "point_has_relaxed_failure=0" in text
-    assert "'.correctness.passed'" in text
-    assert "Not using ineligible" in text
+    assert 'run_architecture "${architecture}" "${points_csv}"' in text
+    assert 'AIPERF_NUM_PROFILE_RUNS="${REPETITIONS}"' in text
+    assert "AIPERF_PARAMETER_SWEEP_MODE=repeated" in text
+    assert "run_point" not in text
+    assert "for (( repetition=" not in text
+    assert "STOP_AFTER_RELAXED_FAIL" not in text
     assert "PAP_CAPACITY_GPU_IDLE_STABILITY_SECONDS:-15" in text
 
 
@@ -252,8 +258,8 @@ def test_aiperf_capacity_does_not_reject_load_above_scheduler_batch_size() -> No
     pap_text = PAP_RUNNER.read_text(encoding="utf-8")
     pd_text = TOPOLOGY_RUNNER.read_text(encoding="utf-8")
 
-    assert "PAP_AIPERF_CONCURRENCY > PAP_AIPERF_SESSIONS" in pap_text
+    assert "PAP_AIPERF_CONCURRENCY_POINTS" in pap_text
     assert "active conversations exceed Projection max_num_seqs" not in pap_text
     assert "per-PA conversations exceed Prefill max_num_seqs" not in pap_text
-    assert 'ACTIVE_CONVERSATIONS="${PD_AIPERF_CONCURRENCY}"' in pd_text
+    assert "PD_AIPERF_CONCURRENCY_POINTS" in pd_text
     assert "TOTAL_CONVERSATIONS=%q" in pd_text
