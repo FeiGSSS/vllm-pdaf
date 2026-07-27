@@ -1,9 +1,93 @@
 # PAP post-Prefill Decode late binding
 
-> Controlled 7PA1P development validation. Raw AIPerf and trace artifacts
-> remain machine-local under `experiments/_staging/`.
+> Controlled post-Prefill migration and eight-GPU C32 validation. Raw AIPerf
+> and trace artifacts remain machine-local under `experiments/_staging/`.
 
 Date: 2026-07-27
+
+## Full C32 milestone validation
+
+The milestone code was cleaned and committed before this comparison:
+
+- `a6d77514d`: decouple post-Prefill migration from the target Prefill queue;
+- `2753fbd30`: expose the capacity runner's PAP routing policy and peak-gain
+  threshold.
+
+The current PAP result uses three independent repetitions per topology. Each
+run served 128 conversations with five turns (640 requests) at concurrency 32.
+All six runs completed 640/640 requests with no AIPerf request errors and
+passed correctness, routing, static-MPS, lifecycle, and session-drain audits.
+
+The dataset is identical across PAP, PD, and the retained fused-DP point:
+
+```text
+SHA-256:
+4196b1f1b20afe38849c4c31926975dd14aa5b547241b72e146ac0c3f31ac028
+```
+
+It has 8,020.7 mean initial-input tokens, 1,408.2 mean later-turn append
+tokens, randomized 16-64-token output with mean 32.4, and a 0/3/3/1/3-second
+think/tool schedule.
+
+| Architecture | Repetitions | Req/s | TTFT avg / p95 | ITL avg / p95 | Relaxed passes |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| PAP 7PA1P | 3 | 5.275 (5.200-5.333) | 1.737 / 6.820 s | 44.68 / 80.73 ms | 3/3 |
+| PAP 6PA2P | 3 | 4.217 (3.782-4.591) | 3.251 / 10.616 s | 34.16 / 45.62 ms | 3/3 |
+| PD 4P4D | 1 | 5.067 | 2.735 / 10.929 s | 32.95 / 47.01 ms | 1/1 |
+| PD 6P2D | 1 | 5.068 | 1.917 / 6.859 s | 59.66 / 130.04 ms | 0/1 |
+| Fused DP x8 | 1, retained | 6.567 | 0.982 / 2.875 s | 47.86 / 112.09 ms | 0/1 |
+
+PAP values are arithmetic means across the three repetitions, including the
+mean of each repetition's p95. PD was refreshed on the current commit because
+the corrected V2 cross-layer NIXL layout and UCX GET-zcopy path are shared
+with PD. Reusing the July 25 PD measurements would have understated current
+PD: 4P4D rises from 3.755 to 5.067 requests/s and 6P2D from 2.580 to 5.068
+requests/s. Fused DP does not traverse PAP or NIXL, so its same-workload July
+25 point is retained.
+
+At this fixed C32 point, no topology has a repeat-stable Strict or Standard
+result. Relaxed goodput is:
+
+| Architecture | Relaxed goodput | Eligibility |
+| --- | ---: | --- |
+| PAP 7PA1P | 5.130 requests/s | eligible in 3/3 repetitions |
+| PAP 6PA2P | 4.204 requests/s | eligible in 3/3 repetitions |
+| PD 4P4D | 5.004 requests/s | eligible in 1/1 repetition |
+| PD 6P2D | 4.601 requests/s | ineligible: 90.78% good requests |
+| Fused DP x8 | 6.054 requests/s | ineligible: 92.19% good requests |
+
+The latest result therefore does not reproduce the old claim that 7PA1P is
+simply worse than 6PA2P. Compared with 6PA2P, 7PA1P has 25.1% higher raw
+throughput, 46.6% lower mean TTFT, and 22.0% higher Relaxed goodput. Its cost
+is 30.8% higher mean ITL and 76.9% higher ITL p95. Compared with the current
+PD winner, 4P4D, 7PA1P has 4.1% higher raw throughput and 2.5% higher eligible
+Relaxed goodput, but its Decode latency is higher. Fused DP remains the raw
+throughput and TTFT winner at C32, but its ITL tail makes that point
+SLO-ineligible.
+
+The three repetitions also expose a remaining placement limitation. At high
+KV pressure, the peak-gain policy can select a target that cannot temporarily
+hold the complete migrated prefix:
+
+| PAP topology | Planned migrations | Installed | Capacity fallbacks |
+| --- | ---: | ---: | ---: |
+| 7PA1P, three runs | 41 | 22 | 19 |
+| 6PA2P, three runs | 14 | 6 | 8 |
+
+Every failed target allocation atomically retained the source session, so it
+did not cause a request error or lifecycle leak. These safe fallbacks are not
+counted by the current `migration_miss_count`; the next scheduler improvement
+should make target selection capacity-aware and report capacity fallbacks as
+a distinct first-class metric. The result validates the current mechanism,
+but it does not declare the 7PA1P fan-in tail solved.
+
+Raw artifacts remain machine-local under:
+
+```text
+benchmarks/pap/experiments/_staging/capacity/
+  20260727_postprefill_peak30_c32_r3/
+  20260727_pd_nixl_refresh_c32/
+```
 
 ## Decision
 
@@ -63,8 +147,9 @@ target scheduler allocates final KV blocks and establishes the target lease
 There is no target tokenization, fake prompt, Prefill wait-queue entry, or
 model forward. Migration uses the existing NIXL connector, external KV-slot
 allocator, lease registry, and Attention manifest protocol. At most one
-migration remains unresolved. The background progress fast path is enabled
-for TP=1; other TP shapes retain the safe post-forward completion fallback.
+migration remains unresolved. Post-Prefill migration is validated only for
+TP=1; other TP shapes fail closed with `NotImplementedError` until
+rank-coordinated background completion is implemented.
 
 The Decode placement objective still uses only active Decode KV plus incoming
 migration reservations. Prefill work is not added to Attention load. A
@@ -175,7 +260,8 @@ also passed.
 - Long-tail randomized multi-turn input and randomized 16-64-token output.
 - `max_model_len=32768`, PA memory utilization 0.90.
 - Prefill and Projection `max_num_seqs=256`.
-- Sparse migration defaults: balance gain 0.30, interval 64, max in-flight 1.
+- Post-Prefill routing uses a 0.30 minimum peak-reduction gain and at most one
+  in-flight migration.
 
 ## End-to-end result
 
