@@ -2,44 +2,48 @@
 
 - **Research lifecycle:** `active`
 - **Execution gate:** `open`
-- **Active loop:** `L11`
+- **Active loop:** `L12`
 - **Loop status:** `pre-registered`
-- **Baseline commit:** `77548d1aa`
+- **Baseline commit:** `5299b5087`
 - **Last checkpoint:** `2026-07-29`
 
-L10 falsifies the proposed long-input goodput advantage. In the coarse
-bracket, only C20 is standard/relaxed eligible for each architecture; PAP
-trails PD by 23.1%/21.8%. L11 refines the intermediate concurrency values
-before treating that deficit as the tuned result.
+L11 is invalidated by an asynchronous sampled-token correctness defect at PAP
+C25. Commit `4a3e36820` fixes ownership by combining GPU-frame-local sequence
+keys with Scheduler-side output acceptance; two 640-request diagnostics then
+complete with zero mismatches. L12 now tests the mechanism that earlier
+workloads did not isolate: PAP's 2.63x larger aggregate KV-token pool.
 
 ## Current loop
 
-- **Paper-level uncertainty:** Is L10's 21.8--23.1% PAP goodput deficit robust
-  to a finer search of the actual long-input capacity boundary?
-- **Hypothesis:** After refining the C20--28 interval, best tested PD standard
-  and relaxed goodput remains at least 15% above best tested PAP.
-- **Falsification condition:** Reject if the PD margin is below 15% in either
-  tier, any run fails correctness, or no intermediate eligible PAP or PD point
-  is measured when one exists in the tested sequence.
-- **Expected paper delta:** Establish a credible tuned long-input negative
-  result, or identify a narrow concurrency point where PAP converts latency
-  headroom into goodput.
-- **Minimal next evidence:** One clean repetition at PAP C21/C23/C25 and PD
-  C22/C24/C26, combined with the L10 C20 controls.
+- **Paper-level uncertainty:** Does PA-side KV pooling turn into an SLO
+  goodput advantage when four multi-turn contexts approach the model limit?
+- **Hypothesis:** On the fixed four-round workload, the best tested PAP
+  6PA2P Standard and Relaxed goodput is at least 10% above the best tested PD
+  6P2D goodput because PD reaches its Decode KV wall first.
+- **Falsification condition:** Reject if PAP leads by less than 10% in either
+  tier, any selected run fails correctness, PD shows no capacity pressure by
+  C16, PAP fails at or below C16, or the points do not bracket an eligible and
+  a higher-pressure boundary for each architecture.
+- **Expected paper delta:** Establish PAP's first mechanism-backed positive
+  region, or show that remote execution overhead dominates even with a 2.63x
+  aggregate KV pool.
+- **Minimal next evidence:** One clean scan at PD C8/C10/C12/C16 and PAP
+  C8/C12/C16/C20/C24, followed by repetitions only at selected boundaries.
 
 ## Evidence checkpoint
 
-- **Completed evidence:** `PAP-20260729-RESEARCH-L10` correctly completes all
-  six bracket points. Best tested standard/relaxed goodput is PAP 5.704/5.844
-  versus PD 7.418/7.477 req/s.
-- **Known contradictions:** The scan jumps from C20 to C27/C28. An unmeasured
-  intermediate boundary could narrow the apparent PAP deficit.
+- **Completed evidence:** `PAP-20260729-RESEARCH-L11` records the invalidated
+  comparison and the accepted-token/frame-key correctness diagnosis.
+- **Known contradictions:** L07's PAP-negative workload has roughly 4K
+  initial input; L10 reaches only 13.8K mean final context. Neither isolates
+  the near-capacity region predicted from actual KV-token budgets.
 - **Current implementation state:** Refer to `docs/design/pap/status.md`.
 - **Current experiment state:** Refer to
   `benchmarks/pap/experiments/INDEX.md`.
-- **Dataset/config identity:** Reuse the byte-identical 128-session,
-  five-turn AIPerf dataset with SHA-256
-  `b694ba148a0789e4056a6c3f21fe1f3cbaf3d2c3a2eff2d4d663553f1a2546ed`.
+- **Dataset/config identity:** Generate 128 sessions and four turns with
+  seed 42; every round targets 10K new input (range 8.5--9.9K), O16 output,
+  and the existing short delay schedule. The validated dataset SHA-256 is
+  `4e99a9ec2626899bb4625e36c135ee8609f4de473ab38f4a7097293145760876`.
 
 ## Paper gap queue
 
@@ -49,7 +53,7 @@ before treating that deficit as the tuned result.
   domain size, not copy or dense Projection cost
 - Novelty and closest related work: initial pass rejects basic barrier-aware
   placement and A/F ratio selection as novelty
-- Correct implementation
+- Correct implementation: accepted-token/frame-key fix validated at C25
 - Fair and tuned baselines
 - Workload-region validity
 - Model and hardware generality
@@ -59,14 +63,16 @@ before treating that deficit as the tuned result.
 
 ## Next loop
 
-- **Loop ID:** `L11`
-- **Question:** What are the finer standard/relaxed boundaries between C20
-  and the first failing points?
-- **Next action:** Commit L10 and this refinement plan, then run the six
-  intermediate points on the exact dataset.
-- **Stop or pivot condition:** If no intermediate point passes, retain C20.
-  If a point passes, select the highest-goodput eligible point. Decide C11
-  before any repetitions or mechanism work.
+- **Loop ID:** `L12`
+- **Question:** Does the measured 2.63x aggregate KV-token pool produce a
+  usable-capacity advantage near 38K final contexts?
+- **Next action:** Commit this pre-registration, run the fixed scan, and
+  inspect Decode/PA KV usage plus waiting/deferred evidence before assigning
+  causality.
+- **Stop or pivot condition:** If both architectures remain below capacity,
+  extend only the nearest registered edge. If PAP wins, repeat selected
+  boundaries and add a context-length ablation; if not, retain the negative
+  result and pivot away from KV pooling as the paper's primary benefit.
 
 ## Pause and recovery
 

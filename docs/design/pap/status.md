@@ -15,12 +15,12 @@ related_experiments:
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
-last_validated_commit: 152f64445cd12ffda91ec1d46330c563a36ab475
+last_validated_commit: 4a3e36820
 ---
 
 # Current PAP development status
 
-Snapshot date: 2026-07-25.
+Snapshot date: 2026-07-29.
 
 PAP has completed its runtime refactor and the first capacity-oriented
 performance milestone. The source milestone at `cb6fe3500` has one accepted
@@ -61,8 +61,10 @@ The current request path is:
 4. Attention appends K/V into the Prefill-owned blocks, executes one
    step-level Triton paged-decode plan across the model layers, and returns the
    Attention output.
-5. Asynchronous sampled-token delivery joins KV completion before decode
-   commit, ACK, lease release, and final session drain.
+5. The ModelRunner carries a GPU-frame-local sequence key to the Scheduler.
+   Only Scheduler-accepted sampled tokens are delivered asynchronously and
+   joined with KV completion before decode commit, ACK, lease release, and
+   final session drain.
 
 PAP-to-vLLM integration is owned by `vllm/pap/integration/`; model interception
 is owned by `vllm/pap/model/`. Runtime packages do not import benchmark tooling

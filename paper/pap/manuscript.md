@@ -112,6 +112,24 @@ latency in an overloaded regime is not evidence of higher usable capacity.
 Because the initial bracket is coarse, intermediate concurrency values must
 be tested before this becomes the tuned long-context result.
 
+That refinement cannot be used as performance evidence
+(`PAP-20260729-RESEARCH-L11`). PAP C25 exposed an asynchronous output
+ownership defect: a sampled token could be published before Scheduler
+acceptance with a sequence key derived from already-advanced mutable state.
+The corrected path carries a GPU-frame-local key to the Scheduler and
+publishes only accepted tokens. Two full C25 diagnostics then complete with
+zero sequence mismatches, but the registered comparison spans the defective
+runtime and is invalidated rather than merged across commits.
+
+More importantly, the existing input ablations do not isolate PAP's intended
+KV-pooling mechanism. L07 uses roughly 4K initial input, while L10's fifth
+turn averages only 13.8K input tokens. Startup logs expose 155,424 KV tokens
+per PAP PA and 177,504 per PD Decode GPU; 6PA2P therefore pools 932,544 tokens
+across six PA owners, versus 355,008 across two Decode owners in 6P2D, a
+2.63x ratio. L12 prospectively tests whether this ratio becomes usable
+goodput with four approximately 10K-token turns, reaching 37.6K mean final
+context without exceeding the model's 40,960-token limit.
+
 ## 3. Design
 
 ### 3.1 Architecture

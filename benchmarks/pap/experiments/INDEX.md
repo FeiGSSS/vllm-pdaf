@@ -11,6 +11,7 @@ Current normalized AIPerf experiment bundles:
 
 Current development pilots:
 
+- [Research L11: invalidated boundary refinement and token-ownership fix](PAP-20260729-RESEARCH-L11/report.md)
 - [Research L10: long-input capacity bracket](PAP-20260729-RESEARCH-L10/report.md)
 - [Research L09: long-input sensitivity](PAP-20260729-RESEARCH-L09/report.md)
 - [Research L08: output-length sensitivity](PAP-20260729-RESEARCH-L08/report.md)

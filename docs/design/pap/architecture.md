@@ -121,8 +121,9 @@ executor.
 - `integration/`: the only PAP-to-vLLM glue boundary. `scheduler.py`,
   `engine.py`, `worker.py`, `kv_cache.py`, and `api.py` translate PAP state for
   their matching vLLM owners; `runner.py` owns Projection request state,
-  forward-context construction, peer activity, and asynchronous sampled-token
-  delivery. `settings.py` parses shared process settings once per owner.
+  forward-context construction, peer activity, and GPU-frame-local decode
+  sequence keys. `scheduler.py` publishes only Scheduler-accepted sampled
+  tokens. `settings.py` parses shared process settings once per owner.
 - `model/`: typed forward-batch access, Projection Attention execution,
   Prefill sealed-KV publication, piecewise CUDA Graph boundaries, and the
   Projection checkpoint-weight memory planner used by launchers.

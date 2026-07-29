@@ -82,8 +82,10 @@ For every active step:
 5. Attention publishes the result to Projection. For multi-PA route groups,
    peer-local streams wait and scatter into disjoint output rows before the
    Projection stream continues.
-6. Sampled-token delivery is always asynchronous. Token and KV completion join
-   by request/session generation before the step commits.
+6. The ModelRunner attaches the immutable sequence key from the same GPU
+   output frame. After accepting that frame's token, the Scheduler enqueues
+   asynchronous delivery. Token and KV completion join by request/session
+   generation before the step commits.
 7. Decode commit and ACK advance the Prefill scheduler/cache transaction.
 8. Lease release happens after the committed tail is safe to release.
 9. Shutdown/drain requires no pending token, commit, lease, or Attention

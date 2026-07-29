@@ -27,7 +27,8 @@ This file records claim maturity separately from experiment evidence grades.
 | C08 | Decode output length materially determines PAP's throughput position relative to PD. | Preserve current O16 input text, session order, and delays; change only output distribution to O32; fixed PAP 7PA1P C34 and PD 6P2D C48; clean eager runs. | `falsified` | PAP-20260729-RESEARCH-L08: the raw throughput ratio improves from 0.758 to 0.820. | The 6.15-point improvement misses the registered 10-point threshold; PAP remains 16.0% behind in standard goodput. | Reopen only with repeated output-length sensitivity that prospectively defines a different materiality threshold. |
 | C09 | Doubling long-context input and append lengths materially improves PAP's throughput position relative to PD. | Preserve O16 outputs, session order, and delays; double document and append distributions; fixed PAP 7PA1P C34 and PD 6P2D C48; clean eager runs. | `observed` | PAP-20260729-RESEARCH-L09: ratio improves from 0.758 to 0.870 (+11.17 points); PAP mean TTFT/ITL are 33.3%/46.0% lower. | Both fixed points fail every SLO and the treatment has one repetition. | Find and repeat each architecture's long-input SLO boundary; reject a goodput extension if PAP does not retain an advantage. |
 | C10 | PAP's long-input fixed-point latency advantage translates into at least 10% higher standard and relaxed SLO goodput than tuned PD. | Exact L09 dataset; one clean bracket repetition at PAP C20/C27/C32 and PD C20/C28/C36; Qwen3-8B eager on eight L20 GPUs. | `falsified` | PAP-20260729-RESEARCH-L10 provides a valid passing/failing bracket for both architectures. | PAP trails PD by 23.1% standard and 21.8% relaxed at the best eligible tested points. | Reopen only if finer boundary search or a new mechanism prospectively reverses the repeated result. |
-| C11 | The coarse L10 PAP goodput deficit remains material after refining the long-input concurrency boundary. | Exact L09 dataset; combine L10 C20 with PAP C21/C23/C25 and PD C22/C24/C26; clean eager runs. | `hypothesis` | L10 gives PD a 21.8--23.1% goodput lead with valid brackets. | The C20-to-C27/C28 gap could hide a better intermediate PAP point. | Reject if best PD standard or relaxed goodput leads best PAP by less than 15%, correctness fails, or the tested sequence skips an observed eligible intermediate. |
+| C11 | The coarse L10 PAP goodput deficit remains material after refining the long-input concurrency boundary. | Exact L09 dataset; combine L10 C20 with PAP C21/C23/C25 and PD C22/C24/C26; clean eager runs. | `superseded` | PAP-20260729-RESEARCH-L11 records valid partial points and the correctness diagnosis. | PAP C25 produced 161 request errors, so the registered comparison is invalid; it cannot tune the boundary. | Replaced by C12's mechanism-directed near-capacity workload. |
+| C12 | PAP's larger aggregate KV pool yields at least 10% higher Standard and Relaxed goodput than PD for four-round, near-model-limit conversations. | Same 128-session seed-42 dataset, four approximately 10K-token turns, O16 output, 6PA2P versus 6P2D, eager FP16 Qwen3-8B on eight L20 GPUs. | `hypothesis` | Startup logs expose 932,544 PAP PA KV tokens versus 355,008 PD Decode KV tokens, a 2.63x pool ratio. | Existing L07/L10 workloads do not reach this registered final-context regime. | Reject if either goodput lead is below 10%, correctness fails, predicted PD pressure is absent by C16, PAP fails at or below C16, or either capacity boundary is not bracketed. |
 
 ### C01: Fan-in amplification limits 7PA1P scaling
 
@@ -253,17 +254,38 @@ This file records claim maturity separately from experiment evidence grades.
   refining the long-input concurrency boundary.
 - **Conditions:** Exact L09 dataset and runtime; combine the valid L10 C20
   controls with one clean repetition at PAP C21/C23/C25 and PD C22/C24/C26.
-- **Status:** `hypothesis`
+- **Status:** `superseded`
 - **Paper section:** End-to-End Evaluation; Sensitivity.
-- **Supporting evidence:** L10 reports a 21.8--23.1% PD lead and brackets both
-  architectures between C20 and C27/C28.
-- **Counterevidence:** The coarse gap could hide an eligible PAP point with
-  higher goodput or a lower PD boundary.
-- **Falsification condition:** Reject if best tested PD standard or relaxed
-  goodput leads best PAP by less than 15%, any run fails correctness, or the
-  tested sequence skips an observed eligible intermediate point.
-- **Next test:** Run the six intermediate points, select winners by
-  eligibility and goodput, then repeat only the selected boundaries.
+- **Supporting evidence:** L10 reports a 21.8--23.1% PD lead; L11 obtains
+  valid partial points at PAP C21/C23 and PD C22/C24/C26.
+- **Counterevidence:** PAP C25 produces 161 request errors from an
+  asynchronous sampled-token ownership defect, invalidating the registered
+  comparison.
+- **Falsification condition:** Not applicable after invalidation.
+- **Next test:** Replaced by C12 rather than mixing commits within L11.
+
+### C12: Near-model-limit KV-pooling region
+
+- **Statement:** PAP's larger aggregate KV pool yields at least 10% higher
+  Standard and Relaxed goodput than PD for four-round, near-model-limit
+  conversations.
+- **Conditions:** Byte-identical 128-session seed-42 dataset; four turns with
+  configured 10K new input and sampled range 8.5--9.9K; O16 output; short
+  delays; 6PA2P versus 6P2D; eager FP16 Qwen3-8B on eight L20 GPUs.
+- **Status:** `hypothesis`
+- **Paper section:** Motivation; End-to-End Evaluation; Workload Sensitivity.
+- **Supporting evidence:** Runtime startup logs report 155,424 KV tokens per
+  PAP PA and 177,504 per PD Decode GPU. The aggregate pools are therefore
+  932,544 and 355,008 tokens, respectively, or 2.63x.
+- **Counterevidence:** L07 and L10 favor PD, and no existing valid scan uses
+  the registered final-context distribution (mean 37.6K, max 39,733).
+- **Falsification condition:** Reject if best tested PAP Standard or Relaxed
+  goodput is less than 10% above PD, any selected run fails correctness, PD
+  lacks capacity pressure by C16, PAP fails at or below C16, or either scan
+  lacks a passing and a higher-pressure point.
+- **Next test:** Run PD C8/C10/C12/C16 and PAP C8/C12/C16/C20/C24. Repeat
+  only selected boundaries, then vary context length while holding all other
+  workload dimensions fixed if the mechanism is supported.
 
 ## Entry requirements
 
