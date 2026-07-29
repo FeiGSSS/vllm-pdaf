@@ -104,6 +104,14 @@ however, so this remains an observation rather than an end-to-end goodput
 claim. A clean concurrency bracket is required to determine whether the
 latency headroom survives fair retuning.
 
+The first bracket rejects that extension (`PAP-20260729-RESEARCH-L10`). PAP
+and PD both pass standard and relaxed SLOs at C20 and fail at the next tested
+C27/C28 points. PAP delivers 5.704/5.844 good req/s under standard/relaxed,
+versus 7.418/7.477 for PD, deficits of 23.1% and 21.8%. Thus lower tail
+latency in an overloaded regime is not evidence of higher usable capacity.
+Because the initial bracket is coarse, intermediate concurrency values must
+be tested before this becomes the tuned long-context result.
+
 ## 3. Design
 
 ### 3.1 Architecture

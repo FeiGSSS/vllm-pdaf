@@ -26,7 +26,8 @@ This file records claim maturity separately from experiment evidence grades.
 | C07 | On clean current code and the canonical O16 workload, tuned PD materially exceeds PAP goodput, while PAP exceeds fused DP only under strict and standard SLOs. | Exact eight preselected boundaries, same dataset SHA, two repetitions, clean tracked worktree, corrected NIXL, eager Qwen3-8B on eight L20 GPUs. | `falsified` | PAP-20260729-RESEARCH-L07: PD leads PAP by 32.2%/36.9%/24.4%; PAP leads fused DP by 57.8% strict. | PAP loses to fused DP by 12.1% standard and 17.2% relaxed; 7PA1P C34 is not repeat-eligible under standard. | Reopen only after a prospectively registered mechanism or workload dimension changes the standard result in repeated clean runs. |
 | C08 | Decode output length materially determines PAP's throughput position relative to PD. | Preserve current O16 input text, session order, and delays; change only output distribution to O32; fixed PAP 7PA1P C34 and PD 6P2D C48; clean eager runs. | `falsified` | PAP-20260729-RESEARCH-L08: the raw throughput ratio improves from 0.758 to 0.820. | The 6.15-point improvement misses the registered 10-point threshold; PAP remains 16.0% behind in standard goodput. | Reopen only with repeated output-length sensitivity that prospectively defines a different materiality threshold. |
 | C09 | Doubling long-context input and append lengths materially improves PAP's throughput position relative to PD. | Preserve O16 outputs, session order, and delays; double document and append distributions; fixed PAP 7PA1P C34 and PD 6P2D C48; clean eager runs. | `observed` | PAP-20260729-RESEARCH-L09: ratio improves from 0.758 to 0.870 (+11.17 points); PAP mean TTFT/ITL are 33.3%/46.0% lower. | Both fixed points fail every SLO and the treatment has one repetition. | Find and repeat each architecture's long-input SLO boundary; reject a goodput extension if PAP does not retain an advantage. |
-| C10 | PAP's long-input fixed-point latency advantage translates into at least 10% higher standard and relaxed SLO goodput than tuned PD. | Exact L09 dataset; one clean bracket repetition at PAP C20/C27/C32 and PD C20/C28/C36; Qwen3-8B eager on eight L20 GPUs. | `hypothesis` | C09 shows PAP degrades more slowly and has substantially better latency at overloaded points. | C09 PAP raw throughput remains 13.0% below PD and neither point is SLO-eligible. | Reject if PAP misses 10% in either tier, correctness fails, or the bracket lacks both an eligible point and a higher-pressure boundary per architecture. |
+| C10 | PAP's long-input fixed-point latency advantage translates into at least 10% higher standard and relaxed SLO goodput than tuned PD. | Exact L09 dataset; one clean bracket repetition at PAP C20/C27/C32 and PD C20/C28/C36; Qwen3-8B eager on eight L20 GPUs. | `falsified` | PAP-20260729-RESEARCH-L10 provides a valid passing/failing bracket for both architectures. | PAP trails PD by 23.1% standard and 21.8% relaxed at the best eligible tested points. | Reopen only if finer boundary search or a new mechanism prospectively reverses the repeated result. |
+| C11 | The coarse L10 PAP goodput deficit remains material after refining the long-input concurrency boundary. | Exact L09 dataset; combine L10 C20 with PAP C21/C23/C25 and PD C22/C24/C26; clean eager runs. | `hypothesis` | L10 gives PD a 21.8--23.1% goodput lead with valid brackets. | The C20-to-C27/C28 gap could hide a better intermediate PAP point. | Reject if best PD standard or relaxed goodput leads best PAP by less than 15%, correctness fails, or the tested sequence skips an observed eligible intermediate. |
 
 ### C01: Fan-in amplification limits 7PA1P scaling
 
@@ -231,20 +232,38 @@ This file records claim maturity separately from experiment evidence grades.
 - **Conditions:** Exact L09 dataset and runtime; Qwen3-8B eager on eight L20
   GPUs; one clean bracket repetition at PAP 7PA1P C20/C27/C32 and PD 6P2D
   C20/C28/C36; isolated service restart per point.
-- **Status:** `hypothesis`
+- **Status:** `falsified`
 - **Paper section:** Motivation; End-to-End Evaluation; Sensitivity.
-- **Supporting evidence:** C09 shows PAP degrades more slowly with doubled
-  context and has substantially better TTFT and ITL at overloaded fixed
+- **Supporting evidence:** `PAP-20260729-RESEARCH-L10` gives both
+  architectures a valid passing C20 point and two higher-pressure failing
   points.
-- **Counterevidence:** PAP raw request throughput remains 13.0% below PD at
-  C34/C48, and neither point is SLO-eligible.
+- **Counterevidence:** PAP best tested goodput is 23.1% below PD under
+  standard and 21.8% below under relaxed. At C20, PD also has lower mean TTFT
+  and ITL.
 - **Falsification condition:** Reject if the best tested PAP standard or
   relaxed goodput is less than 10% above best tested PD, any run fails
   correctness, or the points fail to bracket at least one eligible and one
   higher-pressure boundary per architecture.
-- **Next test:** Run the six-point bracket. If valid and supportive, repeat
-  only the selected standard/relaxed boundaries; otherwise record the
-  negative result before testing arrival timing.
+- **Next test:** Reopen only if the finer L11 boundary search or a
+  prospectively registered mechanism reverses a repeated result.
+
+### C11: Refined long-input capacity boundary
+
+- **Statement:** The coarse L10 PAP goodput deficit remains material after
+  refining the long-input concurrency boundary.
+- **Conditions:** Exact L09 dataset and runtime; combine the valid L10 C20
+  controls with one clean repetition at PAP C21/C23/C25 and PD C22/C24/C26.
+- **Status:** `hypothesis`
+- **Paper section:** End-to-End Evaluation; Sensitivity.
+- **Supporting evidence:** L10 reports a 21.8--23.1% PD lead and brackets both
+  architectures between C20 and C27/C28.
+- **Counterevidence:** The coarse gap could hide an eligible PAP point with
+  higher goodput or a lower PD boundary.
+- **Falsification condition:** Reject if best tested PD standard or relaxed
+  goodput leads best PAP by less than 15%, any run fails correctness, or the
+  tested sequence skips an observed eligible intermediate point.
+- **Next test:** Run the six intermediate points, select winners by
+  eligibility and goodput, then repeat only the selected boundaries.
 
 ## Entry requirements
 

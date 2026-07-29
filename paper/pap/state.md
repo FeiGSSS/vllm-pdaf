@@ -2,43 +2,38 @@
 
 - **Research lifecycle:** `active`
 - **Execution gate:** `open`
-- **Active loop:** `L10`
+- **Active loop:** `L11`
 - **Loop status:** `pre-registered`
-- **Baseline commit:** `5c19606e9`
+- **Baseline commit:** `77548d1aa`
 - **Last checkpoint:** `2026-07-29`
 
-L09 observes that doubling input and append lengths improves the fixed-point
-PAP/PD raw throughput ratio by 11.17 percentage points, above its registered
-threshold. PAP also has much lower mean TTFT and ITL at the fixed points, but
-both points fail every SLO. L10 now brackets each architecture's long-input
-capacity instead of treating overloaded raw throughput as goodput.
+L10 falsifies the proposed long-input goodput advantage. In the coarse
+bracket, only C20 is standard/relaxed eligible for each architecture; PAP
+trails PD by 23.1%/21.8%. L11 refines the intermediate concurrency values
+before treating that deficit as the tuned result.
 
 ## Current loop
 
-- **Paper-level uncertainty:** Does PAP's fixed-point long-context latency
-  advantage translate into higher SLO goodput after both architectures are
-  retuned for concurrency?
-- **Hypothesis:** On the L09 dataset, the best tested 7PA1P standard and
-  relaxed goodput exceeds the best tested 6P2D goodput by at least 10%.
-- **Falsification condition:** Reject if PAP misses the 10% margin in either
-  standard or relaxed, any selected run fails correctness, or the tested
-  points do not include at least one eligible point and one higher-pressure
-  boundary for each architecture.
-- **Expected paper delta:** Convert the long-context observation into an SLO
-  operating-region claim, or show that PAP's latency benefit still cannot
-  overcome PD raw capacity.
-- **Minimal next evidence:** One clean repetition at PAP C20/C27/C32 and PD
-  C20/C28/C36 on the exact L09 dataset. Repeat only selected boundaries in the
-  following loop if the bracket is valid.
+- **Paper-level uncertainty:** Is L10's 21.8--23.1% PAP goodput deficit robust
+  to a finer search of the actual long-input capacity boundary?
+- **Hypothesis:** After refining the C20--28 interval, best tested PD standard
+  and relaxed goodput remains at least 15% above best tested PAP.
+- **Falsification condition:** Reject if the PD margin is below 15% in either
+  tier, any run fails correctness, or no intermediate eligible PAP or PD point
+  is measured when one exists in the tested sequence.
+- **Expected paper delta:** Establish a credible tuned long-input negative
+  result, or identify a narrow concurrency point where PAP converts latency
+  headroom into goodput.
+- **Minimal next evidence:** One clean repetition at PAP C21/C23/C25 and PD
+  C22/C24/C26, combined with the L10 C20 controls.
 
 ## Evidence checkpoint
 
-- **Completed evidence:** `PAP-20260729-RESEARCH-L09` preserves O16 outputs
-  and delays and completes both fixed points correctly. The PAP/PD raw
-  throughput ratio improves from 0.758 to 0.870; PAP mean TTFT and ITL are
-  33.3% and 46.0% lower at the overloaded points.
-- **Known contradictions:** Both fixed points fail strict, standard, and
-  relaxed SLO eligibility. No tuned long-input goodput advantage exists yet.
+- **Completed evidence:** `PAP-20260729-RESEARCH-L10` correctly completes all
+  six bracket points. Best tested standard/relaxed goodput is PAP 5.704/5.844
+  versus PD 7.418/7.477 req/s.
+- **Known contradictions:** The scan jumps from C20 to C27/C28. An unmeasured
+  intermediate boundary could narrow the apparent PAP deficit.
 - **Current implementation state:** Refer to `docs/design/pap/status.md`.
 - **Current experiment state:** Refer to
   `benchmarks/pap/experiments/INDEX.md`.
@@ -64,14 +59,14 @@ capacity instead of treating overloaded raw throughput as goodput.
 
 ## Next loop
 
-- **Loop ID:** `L10`
-- **Question:** What are the PAP and PD standard/relaxed capacity boundaries
-  on the long-input workload?
-- **Next action:** Commit L09 and this bracket, then run the six preselected
-  points with isolated service restarts.
-- **Stop or pivot condition:** If the bracket lacks a passing and failing
-  side, add at most one adjacent point per architecture. Otherwise decide C10
-  and repeat only the selected boundary points.
+- **Loop ID:** `L11`
+- **Question:** What are the finer standard/relaxed boundaries between C20
+  and the first failing points?
+- **Next action:** Commit L10 and this refinement plan, then run the six
+  intermediate points on the exact dataset.
+- **Stop or pivot condition:** If no intermediate point passes, retain C20.
+  If a point passes, select the highest-goodput eligible point. Decide C11
+  before any repetitions or mechanism work.
 
 ## Pause and recovery
 
