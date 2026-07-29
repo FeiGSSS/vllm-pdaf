@@ -283,6 +283,10 @@ class ModelRunnerOutput:
     # ``None`` when ``enable_return_routed_experts`` is off.
     routed_experts: RoutedExpertsLists | None = None
 
+    # PAP next-sequence lengths captured from the same GPU output frame.
+    # The scheduler publishes only entries whose sampled tokens it accepts.
+    pap_decode_token_seq_lens: dict[str, int] = field(default_factory=dict)
+
     @staticmethod
     def with_kv_conn_output_only(
         kv_connector_output: KVConnectorOutput | None,

@@ -1591,6 +1591,8 @@ class Scheduler(SchedulerInterface):
 
         outputs: dict[int, list[EngineCoreOutput]] = defaultdict(list)
         spec_decoding_stats: SpecDecodingStats | None = None
+        pap_scheduler = getattr(self, "pap_scheduler", None)
+        pap_decode_token_notifications: list[dict[str, object]] = []
 
         failed_kv_load_req_ids = None
         if kv_connector_output and kv_connector_output.invalid_block_ids:
@@ -1717,6 +1719,18 @@ class Scheduler(SchedulerInterface):
                     request.resumable = False
                     stopped = True
 
+            pap_notification = (
+                pap_scheduler.accepted_decode_token_notification(
+                    request,
+                    new_token_ids,
+                    model_runner_output.pap_decode_token_seq_lens.get(req_id),
+                )
+                if pap_scheduler is not None
+                else None
+            )
+            if pap_notification is not None:
+                pap_decode_token_notifications.append(pap_notification)
+
             routed_experts = None
             if (
                 self.enable_return_routed_experts
@@ -1759,6 +1773,11 @@ class Scheduler(SchedulerInterface):
 
             finish_reason = None
             if stopped:
+                if pap_decode_token_notifications:
+                    pap_scheduler.publish_accepted_decode_tokens(
+                        pap_decode_token_notifications
+                    )
+                    pap_decode_token_notifications.clear()
                 # Capture finish_reason BEFORE _handle_stopped_request, which may
                 # reset the status to WAITING for streaming requests that continue.
                 finish_reason = request.get_finished_reason()
@@ -1811,6 +1830,11 @@ class Scheduler(SchedulerInterface):
             else:
                 # Invariant: EngineCore returns no partial prefill outputs.
                 assert not prompt_logprobs_tensors
+
+        if pap_scheduler is not None:
+            pap_scheduler.publish_accepted_decode_tokens(
+                pap_decode_token_notifications
+            )
 
         # Remove the stopped requests from the running and waiting queues.
         if stopped_running_reqs:
@@ -2421,6 +2445,7 @@ class Scheduler(SchedulerInterface):
 
         if self.ec_connector is not None:
             self.ec_connector.shutdown()
+        self.pap_scheduler.shutdown()
 
         logger.debug_once("[shutdown] Scheduler: complete")
 

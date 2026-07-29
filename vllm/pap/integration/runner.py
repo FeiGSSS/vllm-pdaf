@@ -5,13 +5,12 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
 from vllm.logger import init_logger
 from vllm.pap.config import reject_removed_pap_flags
-from vllm.pap.integration.decode_token import PAPDecodeTokenBridge
 from vllm.pap.integration.projection import (
     build_projection_forward_context,
     select_projection_request_ids,
@@ -24,6 +23,7 @@ from vllm.pap.topology import (
 )
 
 logger = init_logger(__name__)
+
 
 @dataclass(slots=True)
 class PAPModelRunnerAdapter:
@@ -38,9 +38,6 @@ class PAPModelRunnerAdapter:
     critical_trace: bool = False
     store: PAPProjectionRequestStore = field(
         default_factory=PAPProjectionRequestStore
-    )
-    decode_token_bridge: PAPDecodeTokenBridge = field(
-        default_factory=PAPDecodeTokenBridge
     )
     peer_activity: PAPProjectionPeerActivity | None = None
 
@@ -100,9 +97,7 @@ class PAPModelRunnerAdapter:
         self.store.update(request_id, params)
 
     def remove_request(self, request_id: str) -> None:
-        """Drain sampled tokens before removing Projection request state."""
-        if self.supports_async_sampled_tokens:
-            self.decode_token_bridge.drain_request(self.store, request_id)
+        """Remove Projection request state."""
         self.store.remove(request_id)
 
     def request_ids(self, request_ids: Sequence[str]) -> frozenset[str]:
@@ -112,6 +107,28 @@ class PAPModelRunnerAdapter:
             request_ids,
             globally_enabled=self.globally_enabled,
         )
+
+    def decode_token_seq_lens(
+        self,
+        request_ids: Sequence[str],
+        seq_lens_cpu_upper_bound: Iterable[int],
+    ) -> dict[str, int]:
+        """Capture frame-local sequence keys for PAP sampled tokens."""
+        normalized_ids = tuple(str(request_id) for request_id in request_ids)
+        pap_request_ids = self.request_ids(normalized_ids)
+        if pap_request_ids and not self.supports_async_sampled_tokens:
+            raise RuntimeError(
+                "PAP sampled-token delivery requires the V2 model runner"
+            )
+        return {
+            request_id: int(seq_len) + 1
+            for request_id, seq_len in zip(
+                normalized_ids,
+                seq_lens_cpu_upper_bound,
+                strict=True,
+            )
+            if request_id in pap_request_ids
+        }
 
     def group_decode_request_ids(
         self,
@@ -189,25 +206,6 @@ class PAPModelRunnerAdapter:
             )
         return context
 
-    def sampled_token_callback(
-        self,
-        *,
-        request_ids: Sequence[str],
-        seq_lens_cpu_upper_bound: Iterable[int],
-    ) -> Callable[[Any], None] | None:
-        """Build the asynchronous sampled-token callback for one batch."""
-        pap_request_ids = self.request_ids(request_ids)
-        if pap_request_ids and not self.supports_async_sampled_tokens:
-            raise RuntimeError(
-                "PAP sampled-token callbacks require the V2 model runner"
-            )
-        return self.decode_token_bridge.build_callback(
-            self.store,
-            pap_request_ids=pap_request_ids,
-            request_ids=request_ids,
-            seq_lens_cpu_upper_bound=seq_lens_cpu_upper_bound,
-        )
-
     def sync_peer_activity(self, request_ids: Iterable[str]) -> None:
         """Synchronize topology-derived Projection peer membership."""
         self.peer_activity = sync_pap_projection_peer_activity(
@@ -233,5 +231,5 @@ class PAPModelRunnerAdapter:
         )
 
     def shutdown(self) -> None:
-        """Stop PAP-owned background workers."""
-        self.decode_token_bridge.shutdown()
+        """Release runner-owned PAP state."""
+        return None

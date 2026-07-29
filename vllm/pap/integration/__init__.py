@@ -3,7 +3,7 @@
 """PAP adapters for vLLM request and execution integration."""
 
 from vllm.pap.integration.api import install_pap_control_routes
-from vllm.pap.integration.decode_token import PAPDecodeTokenBridge
+from vllm.pap.integration.decode_token import PAPAcceptedDecodeTokenPublisher
 from vllm.pap.integration.engine import PAPEngineAdapter
 from vllm.pap.integration.kv_cache import PAPKVCacheAdapter
 from vllm.pap.integration.projection import (
@@ -23,7 +23,7 @@ from vllm.pap.integration.settings import PAPRuntimeSettings
 from vllm.pap.integration.worker import PAPWorkerAdapter
 
 __all__ = [
-    "PAPDecodeTokenBridge",
+    "PAPAcceptedDecodeTokenPublisher",
     "PAPEngineAdapter",
     "PAPKVCacheAdapter",
     "PAPModelRunnerAdapter",

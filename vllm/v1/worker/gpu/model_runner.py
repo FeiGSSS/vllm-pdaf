@@ -1564,13 +1564,22 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         )
 
         # Prepare the model runner output.
+        frame_request_ids = list(input_batch.req_ids[: input_batch.num_reqs])
         model_runner_output = ModelRunnerOutput(
-            req_ids=input_batch.req_ids,
+            req_ids=frame_request_ids,
             # NOTE(woosuk): req_id_to_index is unused in this model runner.
             # Only for compatibility with the existing model runner and scheduler.
-            req_id_to_index={req_id: i for i, req_id in enumerate(input_batch.req_ids)},
+            req_id_to_index={
+                req_id: i for i, req_id in enumerate(frame_request_ids)
+            },
             sampled_token_ids=None,  # type: ignore
             prompt_logprobs_dict=prompt_logprobs_dict,  # type: ignore[arg-type]
+            pap_decode_token_seq_lens=self.pap_runner.decode_token_seq_lens(
+                frame_request_ids,
+                input_batch.seq_lens_cpu_upper_bound[
+                    : input_batch.num_reqs
+                ].tolist(),
+            ),
         )
         # Start async output copy here so that it can overlap with speculator proposal.
         async_output = AsyncOutput(
@@ -1579,12 +1588,6 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             num_sampled_tokens=num_sampled,
             main_stream=self.main_stream,
             copy_stream=self.output_copy_stream,
-            output_ready_callback=self.pap_runner.sampled_token_callback(
-                request_ids=input_batch.req_ids[: input_batch.num_reqs],
-                seq_lens_cpu_upper_bound=input_batch.seq_lens_cpu_upper_bound[
-                    : input_batch.num_reqs
-                ].tolist(),
-            ),
         )
 
         mm_inputs: tuple[list[torch.Tensor], torch.Tensor] | None = None

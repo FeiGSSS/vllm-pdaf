@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from vllm.pap.integration import (
-    PAPDecodeTokenBridge,
+    PAPAcceptedDecodeTokenPublisher,
     PAPEngineAdapter,
     PAPModelRunnerAdapter,
     PAPProjectionRequestStore,
@@ -20,33 +20,12 @@ from vllm.v1.worker.gpu.model_runner import GPUModelRunner as GPUModelRunnerV2
 from vllm.v1.worker.gpu_model_runner import GPUModelRunner as GPUModelRunnerV1
 
 
-class _RequestStates:
-    def remove_request(self, _request_id: str) -> None:
-        return None
-
-
-class _ModelState:
+class _DecodeTokenClient:
     def __init__(self, events: list[str]) -> None:
         self._events = events
 
-    def remove_request(self, request_id: str) -> None:
-        self._events.append(f"remove:{request_id}")
-
-
-class _DecodeTokenClient:
-    def __init__(self, events: list[str], *, flush_succeeds: bool) -> None:
-        self._events = events
-        self._flush_succeeds = flush_succeeds
-
-    def publish_batch(self, _tokens) -> None:
-        raise AssertionError("not used by request-removal tests")
-
-    def flush_request(self, request_id: str) -> bool:
-        self._events.append(f"flush:{request_id}")
-        return self._flush_succeeds
-
-    def forget_request(self, request_id: str) -> None:
-        self._events.append(f"forget:{request_id}")
+    def publish_batch(self, tokens) -> None:
+        self._events.append(f"publish:{len(tokens)}")
 
     def shutdown(self) -> None:
         self._events.append("shutdown")
@@ -67,7 +46,11 @@ def _runner_adapter(
     )
 
 
-def _scheduler_request(params=None, *, prompt_tokens: int = 10):
+def _scheduler_request(
+    params=None,
+    *,
+    prompt_tokens: int = 10,
+):
     return SimpleNamespace(
         request_id="req-a",
         kv_transfer_params=params,
@@ -192,37 +175,6 @@ def test_api_adapter_installs_control_routes_only_for_unified_kv() -> None:
         {"PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS": "64"},
     )
     assert len(installed) == 1
-
-
-def _v2_runner_for_removal(
-    *,
-    flush_succeeds: bool,
-) -> tuple[GPUModelRunnerV2, list[str]]:
-    events: list[str] = []
-    runner = object.__new__(GPUModelRunnerV2)
-    runner.pap_runner = _runner_adapter(supports_async_sampled_tokens=True)
-    runner.pap_runner.store.update(
-        "req-a",
-        {
-            "pap_attention_tcp_endpoint": "tcp",
-            "pap_attention_endpoint": "http",
-            "pap_offload_exec_zmq_endpoint": "zmq",
-            "pap_remote_prefix_len": 16,
-            "pap_decode_capacity_tokens": 24,
-            "pap_prefill_kv_handle": "session-a",
-            "pap_import_prefill_kv_to_attention": True,
-            "pap_attention_kv_installed": True,
-        },
-    )
-    runner.pap_runner.decode_token_bridge = PAPDecodeTokenBridge(
-        client=_DecodeTokenClient(
-            events,
-            flush_succeeds=flush_succeeds,
-        )
-    )
-    runner.model_state = _ModelState(events)
-    runner.req_states = _RequestStates()
-    return runner, events
 
 
 @pytest.mark.parametrize("runner_type", [GPUModelRunnerV1, GPUModelRunnerV2])
@@ -380,28 +332,58 @@ def test_v2_runner_preserves_order_when_pap_grouping_is_not_safe(
     )
 
 
-def test_v2_runner_flushes_decode_tokens_before_removing_request() -> None:
-    runner, events = _v2_runner_for_removal(flush_succeeds=True)
+def test_v2_runner_captures_frame_local_pap_decode_sequence_keys() -> None:
+    adapter = _runner_adapter(
+        supports_async_sampled_tokens=True,
+        globally_enabled=False,
+    )
+    adapter.store.update(
+        "req-a",
+        {
+            "pap_attention_endpoint": "http://attention-0",
+            "pap_prefill_kv_handle": "session-a",
+        },
+    )
 
-    assert runner._remove_request("req-a") is False
+    seq_lens = adapter.decode_token_seq_lens(
+        ("req-a", "req-b"),
+        (16, 32),
+    )
 
-    assert events == ["flush:session-a", "forget:session-a", "remove:req-a"]
-    assert "req-a" not in runner.pap_runner.store.prefill_kv_handle_by_request
+    assert seq_lens == {"req-a": 17}
 
 
-def test_v2_runner_fails_closed_when_decode_token_flush_fails() -> None:
-    runner, events = _v2_runner_for_removal(flush_succeeds=False)
+def test_scheduler_publishes_only_accepted_decode_tokens() -> None:
+    events: list[str] = []
+    adapter = PAPSchedulerAdapter(PAPRuntimeSettings.from_environ({}))
+    adapter.accepted_token_publisher = PAPAcceptedDecodeTokenPublisher(
+        client=_DecodeTokenClient(events)
+    )
+    request = _scheduler_request(
+        {
+            "pap_projection_kv_unaware": True,
+            "pap_attention_endpoint": "http://attention",
+            "pap_prefill_kv_handle": "session-a",
+        },
+    )
 
-    with pytest.raises(RuntimeError, match="delivery failed before request removal"):
-        runner._remove_request("req-a")
-
-    assert events == ["flush:session-a"]
-    assert runner.pap_runner.store.prefill_kv_handle_by_request == {
-        "req-a": "session-a"
+    notification = adapter.accepted_decode_token_notification(
+        request,
+        (42,),
+        18,
+    )
+    assert notification == {
+        "request_id": "session-a",
+        "new_seq_len": 18,
+        "token_id": 42,
+        "endpoint": "http://attention",
     }
+    adapter.publish_accepted_decode_tokens((notification,))
+
+    assert events == ["publish:1"]
 
 
-def test_v1_runner_rejects_pap_without_async_sampled_token_callback() -> None:
+def test_v1_runner_rejects_async_pap_decode_token_delivery() -> None:
     adapter = _runner_adapter(
         supports_async_sampled_tokens=False,
         globally_enabled=True,

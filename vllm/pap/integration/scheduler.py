@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import time
 from collections import deque
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from vllm.pap.integration.decode_token import PAPAcceptedDecodeTokenPublisher
 from vllm.pap.integration.migration import PAPMigrationJob, PAPMigrationStatus
 from vllm.pap.integration.request import PAPRequestMetadata
 from vllm.pap.integration.settings import PAPRuntimeSettings
@@ -41,6 +42,9 @@ class PAPSchedulerAdapter:
     settings: PAPRuntimeSettings
     migration_jobs: dict[str, PAPMigrationJob] = field(default_factory=dict)
     pending_migration_ids: deque[str] = field(default_factory=deque)
+    accepted_token_publisher: PAPAcceptedDecodeTokenPublisher = field(
+        default_factory=PAPAcceptedDecodeTokenPublisher
+    )
 
     @classmethod
     def from_environ(
@@ -96,6 +100,30 @@ class PAPSchedulerAdapter:
         if metadata.decode_capacity_tokens is not None:
             return metadata.decode_capacity_tokens
         return self.settings.unified_kv_decode_capacity_tokens
+
+    def accepted_decode_token_notification(
+        self,
+        request: _SchedulerRequest,
+        token_ids: Sequence[int],
+        new_seq_len: int | None,
+    ) -> dict[str, object] | None:
+        """Build one sideband item after the scheduler accepts output."""
+        return self.accepted_token_publisher.build_notification(
+            request,
+            token_ids,
+            new_seq_len,
+        )
+
+    def publish_accepted_decode_tokens(
+        self,
+        notifications: Sequence[Mapping[str, object]],
+    ) -> None:
+        """Publish one accepted scheduler batch asynchronously."""
+        self.accepted_token_publisher.publish_batch(notifications)
+
+    def shutdown(self) -> None:
+        """Stop scheduler-owned PAP background workers."""
+        self.accepted_token_publisher.shutdown()
 
     @staticmethod
     def sweep_expired_leases() -> None:
