@@ -93,9 +93,7 @@ logger = init_logger(__name__)
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 
 
-def _pap_projection_decode_trace_enabled() -> bool:
-    if not pap_projection_critical_trace_enabled():
-        return False
+def _pap_projection_decode_active() -> bool:
     if not is_forward_context_available():
         return False
     additional_kwargs = get_forward_context().additional_kwargs or {}
@@ -113,6 +111,13 @@ def _pap_projection_decode_trace_enabled() -> bool:
         and len(num_scheduled_tokens) >= num_reqs
         and pap_request_ids_are_routable(request_ids, num_reqs)
         and all(num_tokens == 1 for num_tokens in num_scheduled_tokens[:num_reqs])
+    )
+
+
+def _pap_projection_decode_trace_enabled() -> bool:
+    return (
+        pap_projection_critical_trace_enabled()
+        and _pap_projection_decode_active()
     )
 
 
@@ -977,9 +982,22 @@ class Qwen3ForCausalLM(
         trace_projection = _pap_projection_decode_trace_enabled()
         trace_start = time.perf_counter() if trace_projection else 0.0
         trace_start_ns = time.perf_counter_ns() if trace_projection else 0
-        hidden_states = self.model(
-            input_ids, positions, intermediate_tensors, inputs_embeds
-        )
+        deferred_model_trace = None
+        if (
+            deferred_cuda_trace_enabled()
+            and deferred_trace_role() == "projection"
+            and _pap_projection_decode_active()
+        ):
+            deferred_model_trace = begin_deferred_cuda_span(
+                "projection_model_forward_gpu_ms",
+                torch.cuda.current_stream(positions.device),
+            )
+        try:
+            hidden_states = self.model(
+                input_ids, positions, intermediate_tensors, inputs_embeds
+            )
+        finally:
+            end_deferred_cuda_span(deferred_model_trace)
         if trace_projection:
             trace_done_ns = time.perf_counter_ns()
             num_tokens = 0

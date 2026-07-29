@@ -21,6 +21,7 @@ def _projection_trace(
     layer_count: int,
     peer_count: int | None = None,
     batched_fanout: bool = False,
+    model_forward_count: int | None = None,
 ) -> dict[str, object]:
     spans: dict[str, object] = {
         name: _span(layer_count)
@@ -37,6 +38,8 @@ def _projection_trace(
         spans["qkv_batched_fanout_gpu_ms"] = _span(layer_count)
     else:
         spans["qkv_p2p_copy_gpu_ms"] = _span(resolved_peer_count)
+    if model_forward_count is not None:
+        spans["projection_model_forward_gpu_ms"] = _span(model_forward_count)
     return {
         "enabled": True,
         "scope": "projection_process_critical_chain",
@@ -108,6 +111,7 @@ def test_projection_trace_accepts_batched_fanout() -> None:
         layer_count=72,
         peer_count=216,
         batched_fanout=True,
+        model_forward_count=2,
     )
 
     counts = validate_trace(
@@ -118,6 +122,23 @@ def test_projection_trace_accepts_batched_fanout() -> None:
     )
 
     assert counts == {"decode_forwards": 2, "layer_calls": 72}
+
+
+def test_projection_trace_rejects_model_forward_count_mismatch() -> None:
+    payload = _projection_trace(
+        layer_count=72,
+        peer_count=216,
+        batched_fanout=True,
+        model_forward_count=3,
+    )
+
+    with pytest.raises(ValueError, match="model-forward count mismatch"):
+        validate_trace(
+            payload,
+            scope="projection_process_critical_chain",
+            num_layers=36,
+            reference_peer_batches=216,
+        )
 
 
 def test_projection_trace_rejects_batched_fanout_count_mismatch() -> None:

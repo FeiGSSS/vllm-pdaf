@@ -113,6 +113,17 @@ def validate_trace(
     decode_forwards = layer_calls // layers
 
     if scope == _PROJECTION_SCOPE:
+        model_forward = spans.get("projection_model_forward_gpu_ms")
+        if isinstance(model_forward, Mapping):
+            model_forward_count = _span_count(
+                spans,
+                "projection_model_forward_gpu_ms",
+            )
+            if model_forward_count != decode_forwards:
+                raise ValueError(
+                    "deferred trace model-forward count mismatch: "
+                    f"{model_forward_count} != {decode_forwards}"
+                )
         batched_fanout = spans.get("qkv_batched_fanout_gpu_ms")
         if isinstance(batched_fanout, Mapping):
             batched_count = _span_count(
