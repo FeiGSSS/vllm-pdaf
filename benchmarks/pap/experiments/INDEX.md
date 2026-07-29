@@ -11,6 +11,7 @@ Current normalized AIPerf experiment bundles:
 
 Current development pilots:
 
+- [Research L01: fan-in dominance falsification](PAP-20260729-RESEARCH-L01/report.md)
 - [Attention allocator and kernel cold-start tail convergence](PAP-20260727-ATTENTION-TAIL-LATENCY/report.md)
 - [Same-node NIXL GET-zcopy diagnosis and correction](PAP-20260727-NIXL-READ-WRITE/report.md)
 - [History-local Prefill and post-Prefill Decode late binding](PAP-20260727-POST-PREFILL-LATE-BINDING/report.md)

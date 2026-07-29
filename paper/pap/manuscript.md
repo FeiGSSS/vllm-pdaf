@@ -32,7 +32,20 @@ To be established with primary-source citations and controlled evidence.
 
 ### 2.3 Motivation for PAP
 
-To be established without assuming that current observations generalize.
+Prior attention-disaggregation systems already demonstrate partial Decode
+Attention offload and load-aware admission, while recent analytical work
+models the slowest-worker barrier in \(rA\)-to-\(1F\) deployments
+[liang2025adrenaline; song2026analytical]. Barrier-aware KV-load placement is
+also prior art when requests remain sticky on Decode workers
+[chen2026universal].
+
+PAP's working research question is therefore not whether Attention can be
+disaggregated. It is whether full PA-side ownership of Prefill, Decode
+Attention, and KV state can support a stateless, highly batched Projection
+tier while using efficient KV migration at natural post-Prefill boundaries to
+repair multi-round placement. This position remains a hypothesis: current
+evidence has not established that migration benefit exceeds its cost or that
+PAP has a repeat-stable advantage over tuned PD and fused deployment.
 
 ## 3. Design
 

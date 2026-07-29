@@ -211,6 +211,25 @@ def _add_grouped_value(
     grouped.setdefault(group, {}).setdefault(field, []).append(float(value))
 
 
+def _summarize_by_integer_shape(
+    keys: list[float],
+    fields: dict[str, list[float]],
+) -> dict[str, dict[str, TraceStat]]:
+    grouped: dict[str, dict[str, list[float]]] = {}
+    for index, raw_key in enumerate(keys):
+        group = str(int(raw_key))
+        for field, values in fields.items():
+            if index < len(values):
+                _add_grouped_value(grouped, group, field, values[index])
+    return {
+        group: {field: _stat(values) for field, values in metrics.items()}
+        for group, metrics in sorted(
+            grouped.items(),
+            key=lambda item: int(item[0]),
+        )
+    }
+
+
 def _mailbox_actor_group(actor: str) -> str:
     if actor.startswith("projection-"):
         return "projection"
@@ -1107,6 +1126,12 @@ def summarize_pap_trace_logs(
         "projection_model_forward": {
             field: _stat(values) for field, values in projection_model_forward.items()
         },
+        "projection_model_forward_by_num_tokens": _summarize_by_integer_shape(
+            projection_model_forward["num_tokens"],
+            {
+                "model_forward_ms": projection_model_forward["model_forward_ms"],
+            },
+        ),
         "projection_logits": {
             field: _stat(values) for field, values in projection_logits.items()
         },
@@ -1132,9 +1157,25 @@ def summarize_pap_trace_logs(
         "projection_fanin": {
             field: _stat(values) for field, values in projection_fanin.items()
         },
+        "projection_fanin_by_peers": _summarize_by_integer_shape(
+            projection_fanin["peers"],
+            {
+                field: values
+                for field, values in projection_fanin.items()
+                if field != "peers"
+            },
+        ),
         "attention_trace": {
             field: _stat(values) for field, values in attention.items()
         },
+        "attention_trace_by_calls": _summarize_by_integer_shape(
+            attention["calls"],
+            {
+                field: values
+                for field, values in attention.items()
+                if field != "calls"
+            },
+        ),
         "projection_attention_correlation": {
             field: _stat(values)
             for field, values in projection_attention_correlation.items()

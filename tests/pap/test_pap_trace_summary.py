@@ -130,6 +130,10 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
     assert summary["projection_fanin"]["peers"].median == 3
     assert summary["projection_fanin"]["spread_ms"].median == 6.0
     assert (
+        summary["projection_fanin_by_peers"]["3"]["spread_ms"].median
+        == 6.0
+    )
+    assert (
         summary["projection_fanin"]["spread_over_fastest_pct"].median
         == 150.0
     )
@@ -145,6 +149,12 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
     assert summary["projection_critical_path"]["recv_ms"].median == 0.700
     assert summary["projection_critical_path"]["gaps_ms"].median == 0.390
     assert summary["projection_model_forward"]["model_forward_ms"].median == 93.600
+    assert (
+        summary["projection_model_forward_by_num_tokens"]["1"][
+            "model_forward_ms"
+        ].median
+        == 93.600
+    )
     assert summary["projection_logits"]["logits_ms"].median == 1.400
     assert summary["projection_runner_forward_detail"]["input_prep_ms"].median == 0.200
     assert summary["projection_runner_forward_detail"]["metadata_ms"].median == 0.300
@@ -169,6 +179,10 @@ def test_trace_summary_extracts_projection_attention_and_mailbox_stats(
         summary["projection_first_output"]["step_to_first_output_ms"].median == 94.200
     )
     assert summary["attention_trace"]["compute_ms"].median == 0.140
+    assert (
+        summary["attention_trace_by_calls"]["1"]["compute_ms"].median
+        == 0.140
+    )
     assert summary["attention_trace"]["append_kv_ms"].median == 0.050
     assert summary["attention_trace"]["recv_wait_ms"].median == 0.600
     assert summary["attention_trace"]["recv_read_ms"].median == 0.098
