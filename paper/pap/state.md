@@ -2,40 +2,40 @@
 
 - **Research lifecycle:** `active`
 - **Execution gate:** `open`
-- **Active loop:** `L04`
+- **Active loop:** `L05`
 - **Loop status:** `experiment`
-- **Baseline commit:** `15b5b90af`
+- **Baseline commit:** `734223485`
 - **Last checkpoint:** `2026-07-29`
 
-L01 falsified completion spread as the dominant cause. L02 found that
-fixed-C32 7PA1P runs at a higher-throughput operating point. L03 controlled
-throughput more closely but falsified its no-goodput-reduction criterion.
-L04 localizes the 7PA1P operating point more accurately.
+L01/L02 eliminated fan-in spread, copies, and dense Projection compute as
+dominant explanations. L03 exposed residual throughput mismatch. L04 found a
+matched standard/relaxed frontier point but retained a 9.33% ITL penalty and
+an unstable strict tail. L05 tests the fixed PA resource partition.
 
 ## Current loop
 
-- **Paper-level uncertainty:** At accurately matched achieved throughput, does
-  7PA1P provide a useful TTFT/ITL trade-off without losing SLO goodput?
-- **Hypothesis:** 7PA1P C21 matches 6PA2P C32 throughput within 1.5%, retains
-  at least a 40% mean TTFT advantage, stays within 12% mean ITL, and stays
-  within 2% of standard and relaxed goodput.
-- **Falsification condition:** Reject if any threshold is missed. If C21
-  misses the throughput range, test at most one adjacent concurrency point
-  selected from the direction of the mismatch.
-- **Expected paper delta:** Establish a defensible topology-frontier point or
-  retire 7PA1P as the preferred topology for this workload region.
-- **Minimal next evidence:** Two clean trace-off 7PA1P C21 repetitions on the
-  byte-identical L03 dataset, reusing its valid 6PA2P C32 control.
+- **Paper-level uncertainty:** Is the remaining 7PA1P ITL penalty caused by
+  the hard-coded 72/20-SM Prefill/Attention allocation rather than topology?
+- **Hypothesis:** A 16/7-chunk (64/28-SM) split improves 7PA1P C21 mean ITL by
+  at least 5% while preserving at least 40% lower mean TTFT and standard/
+  relaxed goodput within 2% of the 6PA2P C32 control.
+- **Falsification condition:** Reject if ITL improves by less than 5%, mean
+  TTFT loses the 40% advantage, throughput differs from control by more than
+  2%, or standard/relaxed goodput is more than 2% lower.
+- **Expected paper delta:** Establish resource allocation as a controllable
+  PAP mechanism or eliminate it before building a complex scheduler.
+- **Minimal next evidence:** Two clean 7PA1P C21 repetitions at 16/7 on the
+  byte-identical L04 dataset, with static-MPS audits proving 64/28 SMs.
 
 ## Evidence checkpoint
 
-- **Completed evidence:** `PAP-20260729-RESEARCH-L03` records two correct
-  repetitions per topology. Every repetition completed 640/640 requests and
-  passed all three SLO tiers on dataset SHA-256
+- **Completed evidence:** `PAP-20260729-RESEARCH-L04` records two correct
+  7PA1P C21 repetitions. It matches 6PA2P C32 throughput within 0.59%, lowers
+  mean TTFT by 61.9%, and raises mean ITL by 9.33% on dataset SHA-256
   `b694ba148a0789e4056a6c3f21fe1f3cbaf3d2c3a2eff2d4d663553f1a2546ed`.
-- **Known contradictions:** At C20 versus C32, 7PA1P has 60.5% lower mean
-  TTFT and 6.64% higher mean ITL, but its 2.55% lower request throughput leads
-  to 2.7--2.8% lower standard/relaxed goodput.
+- **Known contradictions:** One C21 repetition misses strict at 94.84%.
+  Standard and relaxed pass, but claim maturity remains `observed` because
+  the 6PA2P control was reused from L03.
 - **Current implementation state:** Refer to `docs/design/pap/status.md`.
 - **Current experiment state:** Refer to
   `benchmarks/pap/experiments/INDEX.md`.
@@ -45,7 +45,7 @@ L04 localizes the 7PA1P operating point more accurately.
 
 ## Paper gap queue
 
-- Core mechanism: pending L04 frontier decision
+- Core mechanism: pending L05 resource-allocation decision
 - Problem and motivation: L01/L02 narrow it to batching and synchronization
   domain size, not copy or dense Projection cost
 - Novelty and closest related work: initial pass rejects basic barrier-aware
@@ -60,14 +60,14 @@ L04 localizes the 7PA1P operating point more accurately.
 
 ## Next loop
 
-- **Loop ID:** `L04`
-- **Question:** Can 7PA1P match the 6PA2P C32 achieved throughput closely
-  enough to compare the latency/goodput frontier without a throughput
-  confound?
-- **Next action:** Run two clean 7PA1P C21 repetitions with tracing disabled.
-- **Stop or pivot condition:** If C21, or at most one direction-selected
-  adjacent point, misses C04, stop treating 7PA1P as the preferred topology
-  for this workload and search a different workload region or mechanism.
+- **Loop ID:** `L05`
+- **Question:** Can PA resource rebalancing turn the C04 trade-off into a
+  better frontier point?
+- **Next action:** Expose audited capacity-runner MPS chunk overrides, commit
+  them, then run 7PA1P C21 at 16/7.
+- **Stop or pivot condition:** If C05 fails, keep 18/5 as the workload
+  baseline and move to controlled workload-region sensitivity rather than
+  adding an adaptive partitioner.
 
 ## Pause and recovery
 
