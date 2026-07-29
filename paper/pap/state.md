@@ -42,8 +42,9 @@ workloads did not isolate: PAP's 2.63x larger aggregate KV-token pool.
   `benchmarks/pap/experiments/INDEX.md`.
 - **Dataset/config identity:** Generate 128 sessions and four turns with
   seed 42; every round targets 10K new input (range 8.5--9.9K), O16 output,
-  and the existing short delay schedule. The validated dataset SHA-256 is
-  `4e99a9ec2626899bb4625e36c135ee8609f4de473ab38f4a7097293145760876`.
+  the existing short delay schedule, and session prefix
+  `pap-pd-dp-s128-t4-seed42`. The validated dataset SHA-256 is
+  `c9c7b6e36d8a45b2d87d8af308ecdc66f9006b429502fbd7820a0ec85555f78b`.
 
 ## Paper gap queue
 
