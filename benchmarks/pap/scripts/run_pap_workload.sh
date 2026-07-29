@@ -237,8 +237,19 @@ PAP_STATIC_PREFILL_EXPECTED_SMS="${PAP_STATIC_PREFILL_EXPECTED_SMS:-72}"
 PAP_STATIC_ATTENTION_EXPECTED_SMS="${PAP_STATIC_ATTENTION_EXPECTED_SMS:-20}"
 PAP_ENABLE_MPS=1
 if ! [[ "${PAP_STATIC_PREFILL_CHUNKS}" =~ ^[1-9][0-9]*$ \
-  && "${PAP_STATIC_ATTENTION_CHUNKS}" =~ ^[1-9][0-9]*$ ]]; then
-  echo "ERROR: static MPS chunk counts must be positive integers" >&2
+  && "${PAP_STATIC_ATTENTION_CHUNKS}" =~ ^[1-9][0-9]*$ \
+  && "${PAP_STATIC_PREFILL_EXPECTED_SMS}" =~ ^[1-9][0-9]*$ \
+  && "${PAP_STATIC_ATTENTION_EXPECTED_SMS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: static MPS chunk and SM counts must be positive integers" >&2
+  exit 2
+fi
+if (( PAP_STATIC_PREFILL_CHUNKS + PAP_STATIC_ATTENTION_CHUNKS != 23 )); then
+  echo "ERROR: PAP AIPerf requires all 23 L20 MPS chunks" >&2
+  exit 2
+fi
+if (( PAP_STATIC_PREFILL_EXPECTED_SMS != PAP_STATIC_PREFILL_CHUNKS * 4 \
+  || PAP_STATIC_ATTENTION_EXPECTED_SMS != PAP_STATIC_ATTENTION_CHUNKS * 4 )); then
+  echo "ERROR: PAP AIPerf expects four visible SMs per L20 MPS chunk" >&2
   exit 2
 fi
 PAP_OFFLOAD_EXEC_TRANSPORT="${PAP_OFFLOAD_EXEC_TRANSPORT:-local_fast}"
@@ -1787,9 +1798,6 @@ cd "${ROOT_DIR}"
 [[ "${PAP_PREFIX_CACHE_AUDIT}" == "0" \
   && "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" == "1" ]] \
   || die "AIPerf requires prompt details and forbids cache audit"
-[[ "${PAP_STATIC_PREFILL_CHUNKS}" == "18" \
-  && "${PAP_STATIC_ATTENTION_CHUNKS}" == "5" ]] \
-  || die "the AIPerf PAP path requires 18/5 static-MPS chunks"
 if (( PA_COUNT > 1 )); then
   [[ "${PAP_ROUTING_POLICY}" == "conversation_affinity" \
     || "${PAP_ROUTING_POLICY}" == "attention_load" ]] \

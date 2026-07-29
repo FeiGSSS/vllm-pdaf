@@ -434,6 +434,21 @@ PAP_CAPACITY_REPETITIONS=1 \
 This still serves all 128 conversations and 640 randomized requests. It changes
 only the number of topology/concurrency points, not the workload definition.
 
+The canonical PA partition is 18 Prefill chunks and 5 Attention chunks
+(72/20 visible L20 SMs). Resource-sensitivity experiments may override it
+without changing the production default:
+
+```bash
+PAP_CAPACITY_PAP_PREFILL_CHUNKS=16 \
+PAP_CAPACITY_PAP_ATTENTION_CHUNKS=7 \
+PAP_CAPACITY_PAP_PREFILL_PERCENT=70 \
+PAP_CAPACITY_PAP_ATTENTION_PERCENT=30 \
+  bash benchmarks/pap/aiperf/run_capacity_matrix.sh
+```
+
+The capacity runner fails closed unless all 23 L20 chunks are assigned and
+the live static-MPS audit observes four SMs per chunk.
+
 The completed compact scan and strict-boundary refinement are recorded in
 [`PAP-20260725-8GPU-CAPACITY-SCAN`](../experiments/PAP-20260725-8GPU-CAPACITY-SCAN/report.md).
 The initial C32 comparison and trace-based explanation of the 7PA1P ITL tail
