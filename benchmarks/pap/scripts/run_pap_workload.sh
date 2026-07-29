@@ -1808,8 +1808,8 @@ else
     || "${PAP_ROUTING_POLICY}" == "attention_load" ]] \
     || die "single-PA AIPerf requires a supported PAP routing policy"
 fi
-(( PAP_AIPERF_TURNS >= 4 )) \
-  || die "AIPerf requires at least four turns"
+(( PAP_AIPERF_TURNS >= 2 )) \
+  || die "PAP multi-turn benchmarks require at least two turns"
 (( INPUT_LEN > 0 && PAP_AIPERF_APPEND_TOKENS > 0 && OUTPUT_LEN > 1 )) \
   || die "multi-turn token counts must be positive"
 (( PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS >= OUTPUT_LEN )) \
