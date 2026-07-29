@@ -57,6 +57,15 @@ or local copies (`PAP-20260729-RESEARCH-L02`). The evaluation must therefore
 compare throughput-latency frontiers and SLO goodput, not declare a topology
 winner at one shared concurrency.
 
+A first iso-throughput localization reinforces that requirement but does not
+yet establish a winning topology. At 9.41 versus 9.66 requests/s, 7PA1P
+reduces mean TTFT by 60.5% and increases mean ITL by 6.64%. Both topologies
+pass all three SLO tiers in two repetitions, yet 7PA1P standard and relaxed
+goodput remain 2.78% and 2.70% lower because its achieved throughput is still
+2.55% lower (`PAP-20260729-RESEARCH-L03`). The next experiment therefore
+localizes the frontier more accurately rather than interpreting this residual
+as an architectural capacity result.
+
 ## 3. Design
 
 ### 3.1 Architecture

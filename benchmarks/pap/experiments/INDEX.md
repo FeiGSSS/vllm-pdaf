@@ -11,6 +11,7 @@ Current normalized AIPerf experiment bundles:
 
 Current development pilots:
 
+- [Research L03: iso-throughput topology comparison](PAP-20260729-RESEARCH-L03/report.md)
 - [Research L02: batch aggregation and observer-effect diagnosis](PAP-20260729-RESEARCH-L02/report.md)
 - [Research L01: fan-in dominance falsification](PAP-20260729-RESEARCH-L01/report.md)
 - [Attention allocator and kernel cold-start tail convergence](PAP-20260727-ATTENTION-TAIL-LATENCY/report.md)

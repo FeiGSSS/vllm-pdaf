@@ -2,42 +2,40 @@
 
 - **Research lifecycle:** `active`
 - **Execution gate:** `open`
-- **Active loop:** `L03`
+- **Active loop:** `L04`
 - **Loop status:** `experiment`
-- **Baseline commit:** `f90dfc084`
+- **Baseline commit:** `15b5b90af`
 - **Last checkpoint:** `2026-07-29`
 
 L01 falsified completion spread as the dominant cause. L02 found that
-fixed-C32 7PA1P runs at a higher-throughput operating point and falsified the
-registered 75% phase-attribution threshold. L03 tests the topology trade-off
-at matched achieved throughput.
+fixed-C32 7PA1P runs at a higher-throughput operating point. L03 controlled
+throughput more closely but falsified its no-goodput-reduction criterion.
+L04 localizes the 7PA1P operating point more accurately.
 
 ## Current loop
 
-- **Paper-level uncertainty:** Does 7PA1P offer a better latency/goodput Pareto
-  point than 6PA2P, or does its larger synchronization domain merely exchange
-  ITL for throughput?
-- **Hypothesis:** At about 9.3 req/s, 7PA1P C20 retains at least a 40% mean
-  TTFT advantage, stays within 12% of 6PA2P C32 mean ITL, and does not reduce
-  standard or relaxed goodput.
-- **Falsification condition:** Reject if achieved throughput differs by more
-  than 5%, TTFT improves by less than 40%, mean ITL is more than 12% worse, or
-  standard/relaxed goodput is lower.
-- **Expected paper delta:** Replace fixed-concurrency topology comparisons with
-  a defensible Pareto/goodput methodology and decide whether PAP needs a
-  tail-aware scheduling mechanism.
-- **Minimal next evidence:** Two clean trace-off repetitions of 7PA1P C20 and
-  6PA2P C32 on the byte-identical L02 dataset.
+- **Paper-level uncertainty:** At accurately matched achieved throughput, does
+  7PA1P provide a useful TTFT/ITL trade-off without losing SLO goodput?
+- **Hypothesis:** 7PA1P C21 matches 6PA2P C32 throughput within 1.5%, retains
+  at least a 40% mean TTFT advantage, stays within 12% mean ITL, and stays
+  within 2% of standard and relaxed goodput.
+- **Falsification condition:** Reject if any threshold is missed. If C21
+  misses the throughput range, test at most one adjacent concurrency point
+  selected from the direction of the mismatch.
+- **Expected paper delta:** Establish a defensible topology-frontier point or
+  retire 7PA1P as the preferred topology for this workload region.
+- **Minimal next evidence:** Two clean trace-off 7PA1P C21 repetitions on the
+  byte-identical L03 dataset, reusing its valid 6PA2P C32 control.
 
 ## Evidence checkpoint
 
-- **Completed evidence:** `PAP-20260729-RESEARCH-L02` records clean trace-off
-  and valid deferred comparisons. Both topologies completed 640/640 requests
-  on dataset SHA-256
+- **Completed evidence:** `PAP-20260729-RESEARCH-L03` records two correct
+  repetitions per topology. Every repetition completed 640/640 requests and
+  passed all three SLO tiers on dataset SHA-256
   `b694ba148a0789e4056a6c3f21fe1f3cbaf3d2c3a2eff2d4d663553f1a2546ed`.
-- **Known contradictions:** At C32, 7PA1P has 28.3% higher throughput and
-  45.1% lower TTFT but 28.9% higher mean ITL. Historical iso-throughput C20
-  pilots have unstable strict-SLO outcomes and are not formal evidence.
+- **Known contradictions:** At C20 versus C32, 7PA1P has 60.5% lower mean
+  TTFT and 6.64% higher mean ITL, but its 2.55% lower request throughput leads
+  to 2.7--2.8% lower standard/relaxed goodput.
 - **Current implementation state:** Refer to `docs/design/pap/status.md`.
 - **Current experiment state:** Refer to
   `benchmarks/pap/experiments/INDEX.md`.
@@ -47,7 +45,7 @@ at matched achieved throughput.
 
 ## Paper gap queue
 
-- Core mechanism: pending L03 frontier decision
+- Core mechanism: pending L04 frontier decision
 - Problem and motivation: L01/L02 narrow it to batching and synchronization
   domain size, not copy or dense Projection cost
 - Novelty and closest related work: initial pass rejects basic barrier-aware
@@ -62,14 +60,14 @@ at matched achieved throughput.
 
 ## Next loop
 
-- **Loop ID:** `L03`
-- **Question:** Which topology has the better Pareto point at approximately
-  9.3 req/s?
-- **Next action:** After the NVIDIA driver recovers, run two clean repetitions
-  of 7PA1P C20 and 6PA2P C32 with tracing disabled.
-- **Stop or pivot condition:** If 7PA1P meets C03, target its strict-ITL tail;
-  otherwise stop treating 7PA1P as the preferred topology for this workload
-  and search a different workload region or mechanism.
+- **Loop ID:** `L04`
+- **Question:** Can 7PA1P match the 6PA2P C32 achieved throughput closely
+  enough to compare the latency/goodput frontier without a throughput
+  confound?
+- **Next action:** Run two clean 7PA1P C21 repetitions with tracing disabled.
+- **Stop or pivot condition:** If C21, or at most one direction-selected
+  adjacent point, misses C04, stop treating 7PA1P as the preferred topology
+  for this workload and search a different workload region or mechanism.
 
 ## Pause and recovery
 
