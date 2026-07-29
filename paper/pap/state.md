@@ -2,47 +2,44 @@
 
 - **Research lifecycle:** `active`
 - **Execution gate:** `open`
-- **Active loop:** `L08`
+- **Active loop:** `L09`
 - **Loop status:** `pre-registered`
-- **Baseline commit:** `163c2dfa1`
+- **Baseline commit:** `21a4f705e`
 - **Last checkpoint:** `2026-07-29`
 
-L07 cleanly confirms that PAP loses to corrected PD on the canonical O16
-workload. PAP beats fused DP only under the strict SLO, not the registered
-standard SLO. Because older O32 studies were PAP-favorable but changed several
-workload dimensions together, L08 isolates output length before considering a
-new mechanism.
+L08 finds that doubling only output length improves the fixed-point PAP/PD
+throughput ratio by 6.15 percentage points, below its registered 10-point
+threshold. Output length is directionally relevant but does not explain the
+historical reversal. L09 isolates input and append length, which increases
+both Prefill work and Decode Attention bytes.
 
 ## Current loop
 
-- **Paper-level uncertainty:** Is the reversal between historical O32 and
-  current O16 PAP/PD results caused materially by Decode output length?
-- **Hypothesis:** Doubling only the output-length distribution from O16 to O32
-  raises the fixed-point PAP 7PA1P C34 to PD 6P2D C48 mean raw
-  request-throughput ratio by at least 10 percentage points, from the L07
-  baseline ratio of 0.758.
-- **Falsification condition:** Reject if input text, session order, or delays
-  differ; either run fails correctness; or the O32 throughput ratio is below
-  0.858.
-- **Expected paper delta:** Bound the workload region in which PA-side
-  Attention ownership can amortize PAP's synchronization and Projection
-  costs. If falsified, output length is not the explanation and the next loop
-  isolates prompt length or arrival timing.
-- **Minimal next evidence:** Generate an input- and delay-identical O32
-  dataset, verify the identity programmatically, then run one clean diagnostic
-  repetition each at PAP 7PA1P C34 and PD 6P2D C48.
+- **Paper-level uncertainty:** Does long-context Prefill and Decode Attention
+  load, rather than output length, define PAP's favorable workload region?
+- **Hypothesis:** Doubling only initial and append input distributions raises
+  the fixed-point PAP 7PA1P C34 to PD 6P2D C48 mean raw request-throughput
+  ratio by at least 10 percentage points from the L07 O16 baseline of 0.758.
+- **Falsification condition:** Reject if output samples, session order, or
+  delays differ; either run fails correctness; the context budget exceeds
+  32,768; or the long-input throughput ratio is below 0.858.
+- **Expected paper delta:** Establish whether PAP's seven-way Attention
+  parallelism creates a defensible long-context region. If falsified, the old
+  PAP-favorable result likely depended on arrival timing, stale transport, or
+  combined effects rather than context length alone.
+- **Minimal next evidence:** Generate a long-input/O16 dataset with doubled
+  document and append distributions, verify all non-input fields, then run one
+  clean diagnostic repetition each at PAP 7PA1P C34 and PD 6P2D C48.
 
 ## Evidence checkpoint
 
-- **Completed evidence:** `PAP-20260729-RESEARCH-L07` provides 16 clean,
-  correct repetitions on common dataset SHA-256
-  `b694ba148a0789e4056a6c3f21fe1f3cbaf3d2c3a2eff2d4d663553f1a2546ed`.
-  PD leads PAP goodput by 32.2%, 36.9%, and 24.4% under the three SLO tiers.
-  PAP leads fused DP by 57.8% strict but loses by 12.1% standard and 17.2%
-  relaxed.
-- **Known contradictions:** Earlier O32 results favor PAP, but changed output
-  length, prompt length, and delay schedule together. They do not identify
-  which workload dimension causes the reversal.
+- **Completed evidence:** `PAP-20260729-RESEARCH-L08` proves exact non-output
+  dataset identity and completes both fixed points correctly. O32 improves the
+  PAP/PD raw throughput ratio from 0.758 to 0.820, while missing the registered
+  0.858 threshold.
+- **Known contradictions:** Longer output improves PAP's relative position,
+  but not enough to reproduce the older PAP advantage. Prompt length and
+  arrival timing remain confounded in the historical comparison.
 - **Current implementation state:** Refer to `docs/design/pap/status.md`.
 - **Current experiment state:** Refer to
   `benchmarks/pap/experiments/INDEX.md`.
@@ -68,16 +65,14 @@ new mechanism.
 
 ## Next loop
 
-- **Loop ID:** `L08`
-- **Question:** Does output length alone explain a material part of the PAP/PD
-  result reversal?
-- **Next action:** Commit L07 and this preregistration, generate the O32
-  derived dataset, prove non-output fields are unchanged, and run the two
-  fixed diagnostic points.
-- **Stop or pivot condition:** If the throughput-ratio improvement is below
-  10 percentage points, falsify C08 and isolate prompt length or arrival
-  timing. If supported, repeat and sweep output length before any mechanism
-  change.
+- **Loop ID:** `L09`
+- **Question:** Does doubling context input alone materially improve PAP's
+  position relative to PD?
+- **Next action:** Commit L08 and this preregistration, generate and validate
+  the doubled-input O16 dataset, then run the two fixed diagnostic points.
+- **Stop or pivot condition:** If the ratio improvement is below 10 percentage
+  points, falsify C09 and isolate the delay schedule. If supported, repeat and
+  map the input-length boundary before changing PAP.
 
 ## Pause and recovery
 

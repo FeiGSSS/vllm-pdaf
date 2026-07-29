@@ -86,6 +86,15 @@ longer think/tool delays, so they cannot identify a cause. The next controlled
 experiment changes output length alone before the design adopts another
 scheduler or transport mechanism.
 
+That output-only experiment moves PAP in the expected direction but does not
+explain the reversal (`PAP-20260729-RESEARCH-L08`). At fixed 7PA1P C34 and
+6P2D C48 points, doubling the sampled output mean from 16 to 32 reduces PAP
+request throughput by 13.2% and PD by 19.7%. The PAP/PD ratio rises from 0.758
+to 0.820, a 6.15-percentage-point improvement below the preregistered
+10-point threshold. The next ablation isolates input/context length, which
+simultaneously increases Prefill work and the memory traffic of each Decode
+Attention step.
+
 ## 3. Design
 
 ### 3.1 Architecture
