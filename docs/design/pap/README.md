@@ -57,6 +57,9 @@ New architecture guidance belongs here, and new experimental evidence belongs
 under `benchmarks/pap/experiments/`. Do not create another PAP documentation or
 result root. Benchmark automation is likewise project-owned under
 `benchmarks/pap/`; no repository skill defines PAP experiment behavior.
+The separate `paper/pap/` workspace synthesizes these canonical sources into a
+manuscript and research checkpoint. It is not a second runtime-documentation or
+experiment-result root and never overrides this directory.
 
 ## Current boundary
 

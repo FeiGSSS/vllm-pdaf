@@ -147,3 +147,6 @@ vulnerability process.
 - **PAP/PD same-node NIXL runtime, migration, or benchmark changes**:
   [`docs/contributing/pap-nixl-debugging.md`](docs/contributing/pap-nixl-debugging.md)
   — Required fail-closed runtime checks and diagnosis order.
+- **PAP research and paper development**:
+  [`docs/contributing/pap-research-workflow.md`](docs/contributing/pap-research-workflow.md)
+  — Required continuity, evidence, and manuscript-update protocol.
