@@ -6,6 +6,7 @@ import pytest
 
 from benchmarks.pap.aiperf.generate_multiturn_dataset import (
     TokenLengthDistribution,
+    _expand_corpus_tokens,
     build_delay_schedule,
 )
 from benchmarks.pap.aiperf.summarize_capacity_matrix import (
@@ -85,6 +86,25 @@ def test_lognormal_lengths_use_distinct_mean_and_median() -> None:
 def test_lognormal_lengths_reject_median_above_mean() -> None:
     with pytest.raises(ValueError, match="median must not exceed mean"):
         TokenLengthDistribution(mean=32, median=33)
+
+
+def test_corpus_expansion_is_explicit_and_records_repetition() -> None:
+    with pytest.raises(ValueError, match="corpus is too short"):
+        _expand_corpus_tokens([1, 2, 3], 7, repeat_to_fit=False)
+
+    expanded, summary = _expand_corpus_tokens(
+        [1, 2, 3],
+        7,
+        repeat_to_fit=True,
+    )
+
+    assert expanded == [1, 2, 3] * 3
+    assert summary == {
+        "source_tokens": 3,
+        "required_tokens": 7,
+        "repeat_to_fit": True,
+        "repeat_count": 3,
+    }
 
 
 def _write_pd_run(

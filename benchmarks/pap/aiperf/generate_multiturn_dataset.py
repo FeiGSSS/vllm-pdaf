@@ -206,6 +206,28 @@ def build_delay_schedule(
     ]
 
 
+def _expand_corpus_tokens(
+    token_ids: list[int],
+    required_tokens: int,
+    *,
+    repeat_to_fit: bool,
+) -> tuple[list[int], dict[str, int | bool]]:
+    if not token_ids:
+        raise ValueError("corpus must contain at least one token")
+    repeat_count = math.ceil(required_tokens / len(token_ids))
+    if repeat_count > 1 and not repeat_to_fit:
+        raise ValueError(
+            "corpus is too short for requested workload: "
+            f"{len(token_ids)} < {required_tokens}"
+        )
+    return token_ids * repeat_count, {
+        "source_tokens": len(token_ids),
+        "required_tokens": required_tokens,
+        "repeat_to_fit": repeat_to_fit,
+        "repeat_count": repeat_count,
+    }
+
+
 def build_records(
     tokenizer: Any,
     corpus: str,
@@ -231,6 +253,7 @@ def build_records(
     think_time_ms: int = 0,
     tool_time_ms: int = 0,
     tool_every: int = 3,
+    repeat_corpus_to_fit: bool = False,
 ) -> tuple[list[dict[str, object]], dict[str, object]]:
     """Build reproducible conversations with sampled per-turn lengths."""
 
@@ -289,11 +312,11 @@ def build_records(
     ]
     corpus_token_ids = tokenizer.encode(corpus, add_special_tokens=False)
     required_tokens = max(required_by_session)
-    if len(corpus_token_ids) < required_tokens:
-        raise ValueError(
-            "corpus is too short for requested workload: "
-            f"{len(corpus_token_ids)} < {required_tokens}"
-        )
+    corpus_token_ids, corpus_summary = _expand_corpus_tokens(
+        corpus_token_ids,
+        required_tokens,
+        repeat_to_fit=repeat_corpus_to_fit,
+    )
     delay_schedule = build_delay_schedule(
         turns,
         think_time_ms=think_time_ms,
@@ -388,6 +411,7 @@ def build_records(
         "distribution_semantics": "aiperf_lognormal_mean_median",
         "random_seed": random_seed,
         "sampled_mean_tolerance": sampled_mean_tolerance,
+        "corpus": corpus_summary,
         "length_distributions": {
             "document_content_tokens": document_summary,
             "append_content_tokens": append_summary,
@@ -452,6 +476,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--think-time-ms", type=int, default=0)
     parser.add_argument("--tool-time-ms", type=int, default=0)
     parser.add_argument("--tool-every", type=int, default=3)
+    parser.add_argument("--repeat-corpus-to-fit", action="store_true")
     return parser.parse_args()
 
 
@@ -489,6 +514,7 @@ def main() -> None:
         think_time_ms=args.think_time_ms,
         tool_time_ms=args.tool_time_ms,
         tool_every=args.tool_every,
+        repeat_corpus_to_fit=args.repeat_corpus_to_fit,
     )
     delay_schedule = build_delay_schedule(
         args.turns,

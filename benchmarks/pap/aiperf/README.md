@@ -95,12 +95,20 @@ session prefix, target and sampled statistics, tokenizer-measured text lengths,
 cumulative input estimates, and context headroom. Small decode/re-tokenize
 boundary differences are expected and recorded; they are not forced away.
 
+For a workload whose cumulative per-session text exceeds the source corpus,
+set `PAP_CAPACITY_REPEAT_CORPUS_TO_FIT=1` or pass
+`--repeat-corpus-to-fit` to the generator. This opt-in repeats the tokenized
+corpus only enough to satisfy the longest sampled session and records the
+source length, required length, and repeat count in the dataset manifest.
+The default remains fail-closed so an unintended short corpus cannot silently
+change a workload.
+
 ## SLOs and correctness gate
 
 Each completed request is evaluated against TTFT and its request-level mean
 ITL. A tier passes only when at least 95% of all expected requests meet both
 limits. Missing requests remain in the denominator. A run is eligible for an
-SLO pass/fail result only when all sessions complete all five turns, every
+SLO pass/fail result only when all sessions complete every configured turn, every
 response exactly matches that request's sampled output length, AIPerf reports
 no error/cancellation, runtime audits pass, and both Prefill/PA and
 Decode/Projection routing retain one owner per conversation. Incomplete or

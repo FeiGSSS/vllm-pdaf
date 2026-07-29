@@ -57,6 +57,7 @@ APPEND_TOKENS_MEDIAN="${PAP_CAPACITY_APPEND_TOKENS_MEDIAN:-400}"
 APPEND_TOKENS_MIN="${PAP_CAPACITY_APPEND_TOKENS_MIN:-4}"
 APPEND_TOKENS_MAX="${PAP_CAPACITY_APPEND_TOKENS_MAX:-2125}"
 SAMPLED_MEAN_TOLERANCE="${PAP_CAPACITY_SAMPLED_MEAN_TOLERANCE:-0.40}"
+REPEAT_CORPUS_TO_FIT="${PAP_CAPACITY_REPEAT_CORPUS_TO_FIT:-0}"
 THINK_TIME_MS="${PAP_CAPACITY_THINK_TIME_MS:-1000}"
 TOOL_TIME_MS="${PAP_CAPACITY_TOOL_TIME_MS:-300}"
 TOOL_EVERY="${PAP_CAPACITY_TOOL_EVERY:-3}"
@@ -115,6 +116,8 @@ done
   || die "PAP capacity MPS audit expects four visible SMs per L20 chunk"
 [[ "${RESTART_BETWEEN_POINTS}" =~ ^[01]$ ]] \
   || die "PAP_CAPACITY_RESTART_BETWEEN_POINTS must be 0 or 1"
+[[ "${REPEAT_CORPUS_TO_FIT}" =~ ^[01]$ ]] \
+  || die "PAP_CAPACITY_REPEAT_CORPUS_TO_FIT must be 0 or 1"
 [[ "${OUTPUT_TOKENS}" =~ ^[1-9][0-9]*$ ]] \
   || die "PAP_CAPACITY_OUTPUT_TOKENS must be positive"
 for value in "${OUTPUT_TOKENS_MEDIAN}" "${OUTPUT_TOKENS_MIN}" \
@@ -182,7 +185,7 @@ mkdir -p "${MATRIX_ROOT}/dataset" "${MATRIX_ROOT}/runs"
 DATASET_FILE="${MATRIX_ROOT}/dataset/multiturn_s${TOTAL_SESSIONS}_longtail_random_o${OUTPUT_TOKENS}_t${TURNS}_seed${RANDOM_SEED}.jsonl"
 
 if [[ ! -f "${DATASET_FILE}" ]]; then
-  "${PYTHON_BIN}" "${DATASET_GENERATOR}" \
+  dataset_generator_args=(
     --model "${MODEL_PATH}" \
     --corpus "${CORPUS_PATH}" \
     --output "${DATASET_FILE}" \
@@ -207,6 +210,11 @@ if [[ ! -f "${DATASET_FILE}" ]]; then
     --tool-time-ms "${TOOL_TIME_MS}" \
     --tool-every "${TOOL_EVERY}" \
     --session-prefix "${DATASET_SESSION_PREFIX}"
+  )
+  if [[ "${REPEAT_CORPUS_TO_FIT}" == "1" ]]; then
+    dataset_generator_args+=(--repeat-corpus-to-fit)
+  fi
+  "${PYTHON_BIN}" "${DATASET_GENERATOR}" "${dataset_generator_args[@]}"
 fi
 DATASET_MANIFEST="${DATASET_FILE}.manifest.json"
 if ! jq -e \
@@ -229,6 +237,7 @@ if ! jq -e \
   --argjson think_time_ms "${THINK_TIME_MS}" \
   --argjson tool_time_ms "${TOOL_TIME_MS}" \
   --argjson tool_every "${TOOL_EVERY}" \
+  --argjson repeat_corpus_to_fit "${REPEAT_CORPUS_TO_FIT}" \
   '.schema_version == 2
     and .session_prefix == $session_prefix
     and .sessions == $sessions
@@ -256,7 +265,8 @@ if ! jq -e \
     and .validation.status == "passed"
     and .delay_profile.think_time_ms == $think_time_ms
     and .delay_profile.tool_time_ms == $tool_time_ms
-    and .delay_profile.tool_every == $tool_every' \
+    and .delay_profile.tool_every == $tool_every
+    and .corpus.repeat_to_fit == ($repeat_corpus_to_fit == 1)' \
   "${DATASET_MANIFEST}" >/dev/null; then
   die "dataset manifest does not match the randomized testbed"
 fi
@@ -327,6 +337,7 @@ PY
   printf 'APPEND_TOKENS_MIN=%q\nAPPEND_TOKENS_MAX=%q\n' \
     "${APPEND_TOKENS_MIN}" "${APPEND_TOKENS_MAX}"
   printf 'SAMPLED_MEAN_TOLERANCE=%q\n' "${SAMPLED_MEAN_TOLERANCE}"
+  printf 'REPEAT_CORPUS_TO_FIT=%q\n' "${REPEAT_CORPUS_TO_FIT}"
   printf 'APPEND_SAMPLED_MEAN=%q\nAPPEND_SAMPLED_MEDIAN=%q\n' \
     "$(jq -r '.length_distributions.append_content_tokens.sampled.mean' \
       "${DATASET_MANIFEST}")" \
