@@ -2,44 +2,42 @@
 
 - **Research lifecycle:** `active`
 - **Execution gate:** `open`
-- **Active loop:** `L02`
-- **Loop status:** `diagnosis`
-- **Baseline commit:** `ee6b307c7`
+- **Active loop:** `L03`
+- **Loop status:** `experiment`
+- **Baseline commit:** `f90dfc084`
 - **Last checkpoint:** `2026-07-29`
 
-L01 falsified fan-in completion spread as the dominant explanation of the
-7PA1P latency gap. L02 separates intrinsic Decode load aggregation from
-instrumentation and topology effects before selecting a mechanism.
+L01 falsified completion spread as the dominant cause. L02 found that
+fixed-C32 7PA1P runs at a higher-throughput operating point and falsified the
+registered 75% phase-attribution threshold. L03 tests the topology trade-off
+at matched achieved throughput.
 
 ## Current loop
 
-- **Paper-level uncertainty:** Is 7PA1P's ITL cost an avoidable implementation
-  penalty, or the expected service time of aggregating more Decode work behind
-  one Projection domain?
-- **Hypothesis:** One Projection domain forms larger Decode batches in 7PA1P;
-  matched Projection and PA kernels are topology-neutral, and a phase model
-  using batch rows, KV load, communication, and the slowest PA explains at
-  least 75% of the trace-free ITL gap.
-- **Falsification condition:** Reject the hypothesis if a non-intrusive phase
-  model leaves more than 25% of the gap unexplained or matched-shape execution
-  retains a material topology-specific penalty.
-- **Expected paper delta:** Establish a measured PAP scaling model and identify
-  whether the next mechanism should control placement, batch formation,
-  provisioning, or runtime overhead.
-- **Minimal next evidence:** Once the GPU driver is stable, rerun the same
-  byte-identical C32 workload with trace disabled, then collect deferred CUDA
-  spans without per-layer synchronization. Do not implement a scheduler before
-  this decomposition.
+- **Paper-level uncertainty:** Does 7PA1P offer a better latency/goodput Pareto
+  point than 6PA2P, or does its larger synchronization domain merely exchange
+  ITL for throughput?
+- **Hypothesis:** At about 9.3 req/s, 7PA1P C20 retains at least a 40% mean
+  TTFT advantage, stays within 12% of 6PA2P C32 mean ITL, and does not reduce
+  standard or relaxed goodput.
+- **Falsification condition:** Reject if achieved throughput differs by more
+  than 5%, TTFT improves by less than 40%, mean ITL is more than 12% worse, or
+  standard/relaxed goodput is lower.
+- **Expected paper delta:** Replace fixed-concurrency topology comparisons with
+  a defensible Pareto/goodput methodology and decide whether PAP needs a
+  tail-aware scheduling mechanism.
+- **Minimal next evidence:** Two clean trace-off repetitions of 7PA1P C20 and
+  6PA2P C32 on the byte-identical L02 dataset.
 
 ## Evidence checkpoint
 
-- **Completed evidence:** `PAP-20260729-RESEARCH-L01` records the current
-  trace-mode matched comparison. Both topologies completed 640/640 requests on
-  dataset SHA-256
+- **Completed evidence:** `PAP-20260729-RESEARCH-L02` records clean trace-off
+  and valid deferred comparisons. Both topologies completed 640/640 requests
+  on dataset SHA-256
   `b694ba148a0789e4056a6c3f21fe1f3cbaf3d2c3a2eff2d4d663553f1a2546ed`.
-- **Known contradictions:** 7PA1P has higher throughput and lower TTFT but
-  worse ITL. Blocking trace inflates its Attention wall time while matched
-  CUDA kernel time remains similar, so trace E2E numbers are diagnostic only.
+- **Known contradictions:** At C32, 7PA1P has 28.3% higher throughput and
+  45.1% lower TTFT but 28.9% higher mean ITL. Historical iso-throughput C20
+  pilots have unstable strict-SLO outcomes and are not formal evidence.
 - **Current implementation state:** Refer to `docs/design/pap/status.md`.
 - **Current experiment state:** Refer to
   `benchmarks/pap/experiments/INDEX.md`.
@@ -49,8 +47,9 @@ instrumentation and topology effects before selecting a mechanism.
 
 ## Paper gap queue
 
-- Core mechanism: active in L02
-- Problem and motivation: L01 narrows it to aggregation versus state movement
+- Core mechanism: pending L03 frontier decision
+- Problem and motivation: L01/L02 narrow it to batching and synchronization
+  domain size, not copy or dense Projection cost
 - Novelty and closest related work: initial pass rejects basic barrier-aware
   placement and A/F ratio selection as novelty
 - Correct implementation
@@ -63,14 +62,14 @@ instrumentation and topology effects before selecting a mechanism.
 
 ## Next loop
 
-- **Loop ID:** `L02`
-- **Question:** Can a non-intrusive per-step service model explain the
-  7PA1P/6PA2P ITL gap from their actual Decode batch shapes?
-- **Next action:** Recover the trace-off C32 baseline and collect deferred CUDA
-  spans after the recurring NVIDIA driver fault clears.
-- **Stop or pivot condition:** If the service model succeeds, use it to choose
-  a scheduling/provisioning mechanism; if it fails, isolate the residual with
-  matched-shape microbenchmarks before changing runtime code.
+- **Loop ID:** `L03`
+- **Question:** Which topology has the better Pareto point at approximately
+  9.3 req/s?
+- **Next action:** After the NVIDIA driver recovers, run two clean repetitions
+  of 7PA1P C20 and 6PA2P C32 with tracing disabled.
+- **Stop or pivot condition:** If 7PA1P meets C03, target its strict-ITL tail;
+  otherwise stop treating 7PA1P as the preferred topology for this workload
+  and search a different workload region or mechanism.
 
 ## Pause and recovery
 

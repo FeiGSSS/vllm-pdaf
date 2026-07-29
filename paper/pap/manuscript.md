@@ -47,6 +47,16 @@ repair multi-round placement. This position remains a hypothesis: current
 evidence has not established that migration benefit exceeds its cost or that
 PAP has a repeat-stable advantage over tuned PD and fused deployment.
 
+Current controlled evidence also shows why fixed client concurrency is an
+insufficient comparison. On the same C32 workload, 7PA1P executes roughly
+three times more rows per Projection forward than 6PA2P. It achieves 28.3%
+higher request throughput and 45.1% lower mean TTFT, while mean ITL is 28.9%
+higher. Non-blocking CUDA timing attributes most of the complete-forward
+median difference to the remote-Attention stage, not dense Projection compute
+or local copies (`PAP-20260729-RESEARCH-L02`). The evaluation must therefore
+compare throughput-latency frontiers and SLO goodput, not declare a topology
+winner at one shared concurrency.
+
 ## 3. Design
 
 ### 3.1 Architecture
