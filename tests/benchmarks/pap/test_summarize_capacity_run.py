@@ -6,6 +6,41 @@ from pathlib import Path
 from benchmarks.pap.aiperf import summarize_capacity_run
 
 
+def test_runtime_audit_accepts_effective_mps_split(tmp_path: Path) -> None:
+    for name in (
+        "correctness_audit.env",
+        "routing_audit.env",
+        "session_drain.env",
+        "decode_token_join_audit.env",
+    ):
+        (tmp_path / name).write_text("STATUS=passed\n", encoding="utf-8")
+    (tmp_path / "effective_config.env").write_text(
+        "PAP_STATIC_PREFILL_CHUNKS=16\n"
+        "PAP_STATIC_ATTENTION_CHUNKS=7\n"
+        "PAP_STATIC_PREFILL_EXPECTED_SMS=64\n"
+        "PAP_STATIC_ATTENTION_EXPECTED_SMS=28\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "mps_static_audit_pa_0.env").write_text(
+        "MPS_MODE=static\n"
+        "PREFILL_CHUNKS=16\n"
+        "ATTENTION_CHUNKS=7\n"
+        "PREFILL_VISIBLE_SMS=64\n"
+        "ATTENTION_VISIBLE_SMS=28\n",
+        encoding="utf-8",
+    )
+    errors: list[str] = []
+
+    summarize_capacity_run._check_runtime_audits(
+        tmp_path,
+        "pap",
+        "1pa1p",
+        errors,
+    )
+
+    assert errors == []
+
+
 def test_runtime_repetitions_scale_shared_pap_audits(
     tmp_path: Path,
     monkeypatch,

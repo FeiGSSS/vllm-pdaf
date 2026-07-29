@@ -405,6 +405,22 @@ def _check_runtime_audits(
         ("decode_token_join_audit.env", "decode-token join audit"),
     ):
         _check_status(run_root / filename, label, errors)
+    effective_config = _read_env(run_root / "effective_config.env")
+    try:
+        prefill_chunks = int(effective_config["PAP_STATIC_PREFILL_CHUNKS"])
+        attention_chunks = int(effective_config["PAP_STATIC_ATTENTION_CHUNKS"])
+        prefill_sms = int(effective_config["PAP_STATIC_PREFILL_EXPECTED_SMS"])
+        attention_sms = int(effective_config["PAP_STATIC_ATTENTION_EXPECTED_SMS"])
+    except (KeyError, ValueError):
+        errors.append("PAP static-MPS effective configuration is invalid")
+        return
+    if (
+        prefill_chunks + attention_chunks != 23
+        or prefill_sms != prefill_chunks * 4
+        or attention_sms != attention_chunks * 4
+    ):
+        errors.append("PAP static-MPS effective allocation is invalid")
+        return
     mps_audits = sorted(run_root.glob("mps_static_audit_pa_*.env"))
     expected_pa_audits = int(topology.partition("pa")[0])
     if len(mps_audits) != expected_pa_audits:
@@ -413,8 +429,10 @@ def _check_runtime_audits(
         values = _read_env(path)
         if (
             values.get("MPS_MODE") != "static"
-            or values.get("PREFILL_VISIBLE_SMS") != "72"
-            or values.get("ATTENTION_VISIBLE_SMS") != "20"
+            or values.get("PREFILL_CHUNKS") != str(prefill_chunks)
+            or values.get("ATTENTION_CHUNKS") != str(attention_chunks)
+            or values.get("PREFILL_VISIBLE_SMS") != str(prefill_sms)
+            or values.get("ATTENTION_VISIBLE_SMS") != str(attention_sms)
         ):
             errors.append(f"static-MPS audit is invalid: {path.name}")
 
