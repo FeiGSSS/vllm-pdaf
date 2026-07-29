@@ -486,6 +486,7 @@ def test_decode_token_bridge_uses_captured_route_and_next_seq_len() -> None:
     )
 
     assert callback is not None
+    output.req_ids[:] = ["reused-slot", "projection-b"]
     callback(output)
 
     assert published == [
@@ -511,5 +512,10 @@ def test_decode_token_bridge_uses_captured_route_and_next_seq_len() -> None:
         seq_lens_cpu_upper_bound=(16,),
     )
     assert incomplete_callback is not None
+    incomplete_output = ModelRunnerOutput(
+        req_ids=["projection-a"],
+        req_id_to_index={"projection-a": 0},
+        sampled_token_ids=[[42]],
+    )
     with pytest.raises(RuntimeError, match="missing routing metadata"):
-        incomplete_callback(output)
+        incomplete_callback(incomplete_output)

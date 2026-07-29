@@ -29,12 +29,22 @@ def _publish_sampled_tokens(
     *,
     client: _DecodeTokenClient,
     pap_request_ids: frozenset[str],
+    request_ids: Sequence[str],
     session_request_id_by_request: Mapping[str, str],
     attention_endpoint_by_request: Mapping[str, str],
     next_seq_len_by_request: Mapping[str, int],
 ) -> None:
     notifications: list[dict[str, object]] = []
-    for request_id, token_ids in zip(output.req_ids, output.sampled_token_ids):
+    if len(request_ids) != len(output.sampled_token_ids):
+        raise RuntimeError(
+            "PAP asynchronous decode-token delivery request/token count "
+            f"mismatch: {len(request_ids)} != {len(output.sampled_token_ids)}"
+        )
+    for request_id, token_ids in zip(
+        request_ids,
+        output.sampled_token_ids,
+        strict=True,
+    ):
         if not token_ids or request_id not in pap_request_ids:
             continue
         session_request_id = session_request_id_by_request.get(request_id)
@@ -106,6 +116,7 @@ class PAPDecodeTokenBridge:
             _publish_sampled_tokens,
             client=self.client,
             pap_request_ids=pap_request_ids,
+            request_ids=normalized_ids,
             session_request_id_by_request=session_request_id_by_request,
             attention_endpoint_by_request=attention_endpoint_by_request,
             next_seq_len_by_request=next_seq_len_by_request,
