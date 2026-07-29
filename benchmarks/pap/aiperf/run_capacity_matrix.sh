@@ -407,6 +407,7 @@ summarize_aiperf_variation() {
   local repetition="${6:-1}"
   local summary_root="$7"
   local exit_code="${8:-0}"
+  local runtime_repetitions="${9:-1}"
 
   ${PYTHON_BIN} "${SUMMARY_RUNNER}" \
     --run-root "${run_root}" \
@@ -419,6 +420,7 @@ summarize_aiperf_variation() {
     --output-tokens "${OUTPUT_TOKENS}" \
     --dataset-file "${DATASET_FILE}" \
     --repetition "${repetition}" \
+    --runtime-repetitions "${runtime_repetitions}" \
     --launcher-exit-code "${exit_code}" \
     --output "${summary_root}"
 }
@@ -432,6 +434,8 @@ summarize_sweep_run() {
   local point output
   local -a points
   local point_root repetition found_point has_point_dirs point_count=0 trial_root
+  local runtime_repetitions
+  local -a profile_run_roots
 
   if [[ -z "${concurrency_points}" ]]; then
     return
@@ -458,6 +462,30 @@ summarize_sweep_run() {
         exit_code="$(
           cat "${point_root}/launcher_exit_code.txt" 2>/dev/null || echo 1
         )"
+      fi
+      shopt -s nullglob
+      profile_run_roots=(
+        "${point_root}/aiperf/profile_runs/run_"[0-9]*
+      )
+      shopt -u nullglob
+      if (( ${#profile_run_roots[@]} > 0 )); then
+        runtime_repetitions="${#profile_run_roots[@]}"
+        for trial_root in "${profile_run_roots[@]}"; do
+          repetition="${trial_root##*/run_}"
+          repetition="$((10#${repetition}))"
+          output="${run_root}/capacity_summary_c${point}_r${repetition}.json"
+          summarize_aiperf_variation \
+            "${point_root}" \
+            "${trial_root}" \
+            "${architecture}" \
+            "${topology}" \
+            "${point}" \
+            "${repetition}" \
+            "${output}" \
+            "${exit_code}" \
+            "${runtime_repetitions}"
+        done
+        continue
       fi
       output="${run_root}/capacity_summary_c${point}_r1.json"
       summarize_aiperf_variation \

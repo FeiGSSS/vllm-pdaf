@@ -431,11 +431,16 @@ def summarize_run(
     output_tokens: int | None,
     dataset_file: Path | None = None,
     repetition: int = 1,
+    runtime_repetitions: int = 1,
     launcher_exit_code: int = 0,
 ) -> dict[str, Any]:
     """Build a compact correctness and three-tier SLO summary."""
 
     expected_requests = sessions * turns
+    if runtime_repetitions <= 0:
+        raise ValueError("runtime_repetitions must be positive")
+    runtime_sessions = sessions * runtime_repetitions
+    runtime_expected_requests = expected_requests * runtime_repetitions
     errors: list[str] = []
     if launcher_exit_code != 0:
         errors.append(f"launcher exited with code {launcher_exit_code}")
@@ -549,15 +554,15 @@ def summarize_run(
     if architecture == "pap":
         routing = _check_pap_routing(
             run_root,
-            sessions=sessions,
+            sessions=runtime_sessions,
             turns=turns,
-            expected_requests=expected_requests,
+            expected_requests=runtime_expected_requests,
             errors=errors,
         )
     elif architecture == "pd":
         routing = _check_pd_routing(
             run_root,
-            sessions=sessions,
+            sessions=runtime_sessions,
             turns=turns,
             errors=errors,
         )
@@ -671,6 +676,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-tokens", type=int, default=256)
     parser.add_argument("--dataset-file", type=Path)
     parser.add_argument("--repetition", type=int, default=1)
+    parser.add_argument("--runtime-repetitions", type=int, default=1)
     parser.add_argument("--launcher-exit-code", type=int)
     parser.add_argument("--output", type=Path)
     return parser.parse_args()
@@ -697,6 +703,7 @@ def main() -> None:
         output_tokens=args.output_tokens,
         dataset_file=args.dataset_file,
         repetition=args.repetition,
+        runtime_repetitions=args.runtime_repetitions,
         launcher_exit_code=launcher_exit_code,
     )
     output = args.output or args.run_root / "capacity_summary.json"
