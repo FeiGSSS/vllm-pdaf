@@ -22,7 +22,8 @@ This file records claim maturity separately from experiment evidence grades.
 | C03 | Fixed-concurrency 7PA1P/6PA2P latency comparisons confound topology with achieved throughput; at about 9.3 req/s, 7PA1P retains materially lower TTFT with comparable mean ITL and SLO goodput. | Same dataset and runtime, 7PA1P C20 versus 6PA2P C32, achieved throughput within 5%, two clean repetitions. | `falsified` | PAP-20260729-RESEARCH-L03: 7PA1P lowers mean TTFT by 60.5% and raises mean ITL by only 6.64% at a 2.55% throughput mismatch. | Standard and relaxed goodput are 2.78% and 2.70% lower, violating the registered no-reduction criterion even though every SLO tier passes. | Reopen only with an operating point that matches throughput within 1.5% and meets a prospectively registered goodput bound. |
 | C04 | At an accurately matched achieved-throughput point, 7PA1P preserves its TTFT advantage with a bounded ITL cost and comparable standard/relaxed goodput. | Same L03 dataset and runtime; 7PA1P C21 versus the valid 6PA2P C32 control; two clean repetitions; tracing disabled. | `observed` | PAP-20260729-RESEARCH-L04: throughput differs by 0.59%, TTFT is 61.9% lower, ITL is 9.33% higher, and standard/relaxed goodput differs by -0.20%/+0.19%. | One 7PA1P repetition fails strict at 94.84%; the control is reused rather than contemporaneous. | Repeat treatment and control contemporaneously; reject if the registered standard/relaxed bounds no longer hold. |
 | C05 | The fixed 18/5 PA MPS partition is Pareto-suboptimal at the C04 operating point; shifting two chunks from Prefill to Attention reduces ITL while retaining TTFT and goodput advantages. | Same dataset and 7PA1P C21; compare 16/7 against the repeated 18/5 L04 baseline; two clean repetitions; topology and routing unchanged. | `falsified` | PAP-20260729-RESEARCH-L05 verifies 64/28 visible SMs on every PA. | Mean ITL regresses 0.45%, throughput drops 4.98%, TTFT rises 18.2%, and standard/relaxed goodput drops about 5%. | Reopen only for a different workload shape with a prospective phase-level reason to expect an Attention-SM bottleneck. |
-| C06 | With corrected same-node PD transport and the reduced canonical O16 workload, the current PAP implementation is not the tuned goodput winner over PD, although it retains selected concurrency and DP advantages. | Same dataset SHA, Qwen3-8B, eight L20 GPUs, eager mode, correct points, and at least two repetitions at each selected boundary. | `hypothesis` | The merged July 28 scan reports PAP versus PD goodput deltas of -37.4%, -21.9%, and -22.5% under strict/standard/relaxed SLOs. | The merged scan combines several matrices and commits; selected-point provenance and current NIXL configuration have not been audited into a normalized research claim. | Reject if any selected winner lacks dataset identity, correctness, clean runtime provenance, corrected NIXL settings, or repeat support. |
+| C06 | With corrected same-node PD transport and the reduced canonical O16 workload, the current PAP implementation is not the tuned goodput winner over PD, although it retains selected concurrency and DP advantages. | Same dataset SHA, Qwen3-8B, eight L20 GPUs, eager mode, correct points, and at least two repetitions at each selected boundary. | `superseded` | PAP-20260729-RESEARCH-L06 verifies common data, correctness, repetitions, and corrected NIXL settings. | Every selected row records a 52,776-byte dirty patch that includes a PAP runtime file, so the performance statement is not qualified. | Replaced by clean confirmation C07. |
+| C07 | On clean current code and the canonical O16 workload, tuned PD materially exceeds PAP goodput, while PAP exceeds fused DP only under strict and standard SLOs. | Exact eight preselected boundaries, same dataset SHA, two repetitions, clean tracked worktree, corrected NIXL, eager Qwen3-8B on eight L20 GPUs. | `hypothesis` | Dirty directional scan: PAP versus PD is -37.4%/-21.9%/-22.5%; PAP versus DP is +49.8%/+14.2%/-12.5% for strict/standard/relaxed. | The directional rows fail clean provenance and current PAP has received subsequent benchmark/runtime corrections. | Reject if PD leads PAP by less than 15% in any tier, PAP leads DP by less than 30% strict or 5% standard, or any selected point fails correctness/repeat eligibility. |
 
 ### C01: Fan-in amplification limits 7PA1P scaling
 
@@ -139,20 +140,42 @@ This file records claim maturity separately from experiment evidence grades.
 - **Conditions:** Qwen3-8B on eight L20 GPUs; eager mode; byte-identical
   canonical dataset; correct runs; at least two repetitions for every
   selected strict/standard/relaxed boundary.
-- **Status:** `hypothesis`
+- **Status:** `superseded`
 - **Paper section:** Motivation; Evaluation; Limitations.
-- **Supporting evidence:** The July 28 merged scan reports PAP-versus-PD
-  goodput deltas of -37.4%, -21.9%, and -22.5% for strict, standard, and
-  relaxed. PAP reports +49.8%/+14.2%/-12.5% versus fused DP.
-- **Counterevidence:** The report merges points from multiple matrices and
-  commits. It has not yet qualified all selected rows against clean runtime
-  provenance and the corrected NIXL configuration.
+- **Supporting evidence:** `PAP-20260729-RESEARCH-L06` verifies a common
+  dataset digest, request correctness, repeated selected points, and corrected
+  UCX 1.22 GET-zcopy settings.
+- **Counterevidence:** Every selected row records
+  `GIT_TRACKED_WORKTREE_DIRTY=1`. Its 52,776-byte patch includes benchmark
+  launchers and `vllm/pap/lifecycle/decode_token_client.py`.
 - **Falsification condition:** Reject the evidence audit if any selected
   winner lacks the same dataset digest, complete correctness audits, clean
   tracked runtime provenance, corrected UCX/NIXL settings where applicable,
   or two valid repetitions.
-- **Next test:** Trace the selected boundary rows back to their source
-  matrices and effective configurations; normalize only qualifying evidence.
+- **Next test:** Replaced by C07 clean confirmation.
+
+### C07: Clean current three-way confirmation
+
+- **Statement:** On clean current code and the canonical O16 workload, tuned
+  PD materially exceeds PAP goodput, while PAP exceeds fused DP only under
+  strict and standard SLOs.
+- **Conditions:** Qwen3-8B on eight L20 GPUs; eager; same dataset SHA; two
+  repetitions; clean tracked worktree; corrected NIXL; exact points PAP
+  6PA2P C32, PAP 7PA1P C34, PD 6P2D C31/C44/C48, and fused DP C8/C18/C28.
+- **Status:** `hypothesis`
+- **Paper section:** Motivation; End-to-End Evaluation; Limitations.
+- **Supporting evidence:** The unqualified July 28 scan reports PAP versus PD
+  at -37.4%/-21.9%/-22.5% and PAP versus DP at
+  +49.8%/+14.2%/-12.5% under strict/standard/relaxed SLOs.
+- **Counterevidence:** Those directional runs contain a PAP runtime patch.
+  Subsequent clean PAP topology measurements also show meaningful run-to-run
+  strict-tail variation.
+- **Falsification condition:** Reject if PD leads PAP by less than 15% in any
+  tier, PAP leads DP by less than 30% strict or 5% standard, or any selected
+  point fails correctness or two-repetition eligibility. No relaxed PAP-over-
+  DP benefit is hypothesized.
+- **Next test:** Run the eight preselected points only; do not add or retune
+  concurrency during this loop.
 
 ## Entry requirements
 

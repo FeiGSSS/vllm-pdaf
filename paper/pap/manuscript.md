@@ -71,6 +71,14 @@ reducing throughput by 4.98% and increasing TTFT by 18.2%
 (`PAP-20260729-RESEARCH-L05`). Static resource repartitioning is therefore not
 the missing mechanism for this workload.
 
+The existing broad O16 PAP/PD/fused-DP scan is not yet admissible as paper
+evidence. Although its selected points share the same dataset, pass
+correctness, and use the corrected UCX 1.22 GET-zcopy runtime, every point was
+captured with a dirty tracked patch that includes a PAP lifecycle source file
+(`PAP-20260729-RESEARCH-L06`). Its directional finding—that tuned PD exceeds
+PAP while PAP retains advantages over fused DP only under tighter SLOs—must be
+repeated on clean committed code before it can motivate the next mechanism.
+
 ## 3. Design
 
 ### 3.1 Architecture

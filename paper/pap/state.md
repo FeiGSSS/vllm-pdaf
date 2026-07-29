@@ -2,39 +2,40 @@
 
 - **Research lifecycle:** `active`
 - **Execution gate:** `open`
-- **Active loop:** `L06`
-- **Loop status:** `evidence-audit`
-- **Baseline commit:** `57926aac2`
+- **Active loop:** `L07`
+- **Loop status:** `experiment`
+- **Baseline commit:** `a0f0189d8`
 - **Last checkpoint:** `2026-07-29`
 
-L04 found a matched standard/relaxed frontier point with a 9.33% ITL penalty.
-L05 falsified static PA repartitioning as the remedy: 16/7 does not improve
-ITL and reduces throughput by 4.98%. L06 re-audits the current three-way
-capacity evidence before selecting another implementation direction.
+L05 falsified static PA repartitioning as the remedy. L06 found that the
+directional July 28 three-way result has correct workload/runtime settings but
+was collected with a dirty tracked PAP runtime. L07 repeats only the selected
+boundaries on clean current code.
 
 ## Current loop
 
-- **Paper-level uncertainty:** Which PAP advantages remain after correcting
-  the PD NIXL path and reducing the canonical workload?
-- **Hypothesis:** Current tuned PAP loses goodput to PD under all three SLO
-  tiers, but retains higher tested standard concurrency and strict/standard
-  goodput over fused DP.
-- **Falsification condition:** Reject the audit if a selected point lacks the
-  same dataset digest, correctness, clean tracked runtime provenance,
-  corrected NIXL settings where applicable, or two valid repetitions.
-- **Expected paper delta:** Remove superseded universal PAP-win language and
-  identify the precise workload or mechanism gap the next loop must address.
-- **Minimal next evidence:** Provenance audit of the selected July 28 PAP, PD,
-  and DP boundary summaries and their effective configurations.
+- **Paper-level uncertainty:** Does the current clean implementation reproduce
+  the directional result that PAP loses to corrected PD but beats fused DP
+  under tighter SLOs?
+- **Hypothesis:** PD leads PAP goodput by at least 15% in every tier; PAP leads
+  DP by at least 30% strict and 5% standard. No relaxed PAP-over-DP benefit is
+  hypothesized.
+- **Falsification condition:** Reject if any margin is missed or any selected
+  point fails correctness or two-repetition eligibility.
+- **Expected paper delta:** Establish the honest current baseline that the
+  next scheduling or workload-region mechanism must improve.
+- **Minimal next evidence:** Two clean repetitions of the eight preselected
+  boundary points, without a new concurrency search.
 
 ## Evidence checkpoint
 
-- **Completed evidence:** `PAP-20260729-RESEARCH-L05` records two correct
-  16/7 treatment repetitions and verifies 64/28 visible SMs on all PAs on
-  dataset SHA-256
+- **Completed evidence:** `PAP-20260729-RESEARCH-L06` verifies common dataset
+  SHA-256
   `b694ba148a0789e4056a6c3f21fe1f3cbaf3d2c3a2eff2d4d663553f1a2546ed`.
-- **Known contradictions:** The treatment leaves ITL unchanged (+0.45%) and
-  loses roughly 5% throughput and standard/relaxed goodput versus 18/5.
+  It also verifies corrected NIXL settings and repeated correctness for the
+  directional selected points.
+- **Known contradictions:** Every directional selected point has a dirty
+  52,776-byte tracked patch including a PAP runtime file.
 - **Current implementation state:** Refer to `docs/design/pap/status.md`.
 - **Current experiment state:** Refer to
   `benchmarks/pap/experiments/INDEX.md`.
@@ -44,7 +45,7 @@ capacity evidence before selecting another implementation direction.
 
 ## Paper gap queue
 
-- Core mechanism: no validated adaptive mechanism; pending L06 reorientation
+- Core mechanism: no validated adaptive mechanism; pending L07 clean baseline
 - Problem and motivation: L01/L02 narrow it to batching and synchronization
   domain size, not copy or dense Projection cost
 - Novelty and closest related work: initial pass rejects basic barrier-aware
@@ -59,14 +60,13 @@ capacity evidence before selecting another implementation direction.
 
 ## Next loop
 
-- **Loop ID:** `L06`
-- **Question:** Does the existing current-workload three-way scan qualify as
-  evidence that PAP loses to corrected PD while retaining narrower benefits?
-- **Next action:** Audit source matrices, commits, dataset hashes, runtime
-  settings, repetitions, and correctness for every selected boundary.
-- **Stop or pivot condition:** If the audit passes, use the negative result to
-  preregister controlled workload-region sensitivity; if it fails, rerun only
-  the missing boundary points.
+- **Loop ID:** `L07`
+- **Question:** What are the clean current three-way goodput margins at the
+  preselected boundaries?
+- **Next action:** Commit this audit, copy the canonical dataset, and launch
+  the exact eight-point, two-repetition matrix.
+- **Stop or pivot condition:** After the clean comparison, move to controlled
+  workload-region sensitivity regardless of whether C07 is supported.
 
 ## Pause and recovery
 
