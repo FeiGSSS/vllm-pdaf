@@ -11,6 +11,7 @@ Current normalized AIPerf experiment bundles:
 
 Current development pilots:
 
+- [Research L07: clean three-way boundary confirmation](PAP-20260729-RESEARCH-L07/report.md)
 - [Research L06: three-way evidence provenance audit](PAP-20260729-RESEARCH-L06/report.md)
 - [Research L05: PA resource repartitioning](PAP-20260729-RESEARCH-L05/report.md)
 - [Research L04: accurately matched topology frontier](PAP-20260729-RESEARCH-L04/report.md)
