@@ -806,14 +806,11 @@ run_isolated_architecture_points() {
       launcher_code="$(
         cat "${point_root}/launcher_exit_code.txt" 2>/dev/null || echo 0
       )"
-      summarize_aiperf_variation \
-        "${point_root}" \
-        "${point_root}/aiperf" \
+      summarize_sweep_run \
+        "${run_root}" \
         "${architecture}" \
         "${topology}" \
         "${point}" \
-        1 \
-        "${run_root}/capacity_summary_c${point}_r1.json" \
         "${launcher_code}"
       continue
     fi
@@ -858,14 +855,11 @@ run_isolated_architecture_points() {
         printf 'DATASET_FILE=%q\n' "${DATASET_FILE}"
       } > "${point_root}/aiperf_sweep_complete.env"
     fi
-    summarize_aiperf_variation \
-      "${point_root}" \
-      "${point_root}/aiperf" \
+    summarize_sweep_run \
+      "${run_root}" \
       "${architecture}" \
       "${topology}" \
       "${point}" \
-      1 \
-      "${run_root}/capacity_summary_c${point}_r1.json" \
       "${launcher_code}"
   done
 
