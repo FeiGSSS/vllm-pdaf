@@ -86,14 +86,20 @@ def _slo_point_label(row: dict[str, Any], tier: str) -> str:
     )
 
 
-def load_summaries(matrix_root: Path) -> list[dict[str, Any]]:
+def load_summaries(matrix_roots: list[Path]) -> list[dict[str, Any]]:
     summaries = []
-    for path in sorted((matrix_root / "runs").glob("*/capacity_summary.json")):
-        value = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(value, dict):
-            raise ValueError(f"capacity summary is not an object: {path}")
-        value["summary_path"] = str(path.relative_to(matrix_root))
-        summaries.append(value)
+    for matrix_root in matrix_roots:
+        runs_root = matrix_root / "runs"
+        for path in sorted(runs_root.rglob("capacity_summary*.json")):
+            value = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(value, dict):
+                raise ValueError(f"capacity summary is not an object: {path}")
+            relative_path = str(path.relative_to(matrix_root))
+            if len(matrix_roots) > 1:
+                value["summary_path"] = f"{matrix_root.name}/{relative_path}"
+            else:
+                value["summary_path"] = relative_path
+            summaries.append(value)
     return summaries
 
 
@@ -128,10 +134,20 @@ def build_rows(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
             for item in repetitions
             if item["metrics"]["ttft_ms"]["p95"] is not None
         ]
+        ttft_p99 = [
+            item["metrics"]["ttft_ms"].get("p99")
+            for item in repetitions
+            if item["metrics"]["ttft_ms"].get("p99") is not None
+        ]
         itl_p95 = [
             item["metrics"]["itl_ms"]["p95"]
             for item in repetitions
             if item["metrics"]["itl_ms"]["p95"] is not None
+        ]
+        itl_p99 = [
+            item["metrics"]["itl_ms"].get("p99")
+            for item in repetitions
+            if item["metrics"]["itl_ms"].get("p99") is not None
         ]
         throughput = [
             item["metrics"]["request_throughput_per_second"]
@@ -142,6 +158,11 @@ def build_rows(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
             item["metrics"].get("output_token_throughput_per_second")
             for item in repetitions
             if item["metrics"].get("output_token_throughput_per_second") is not None
+        ]
+        request_error_count = [
+            item.get("correctness", {}).get("error_count")
+            for item in repetitions
+            if isinstance(item.get("correctness", {}).get("error_count"), int)
         ]
         ttft_average = [
             item["metrics"]["ttft_ms"].get("average")
@@ -166,17 +187,24 @@ def build_rows(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "expected_requests": max(expected_requests) if expected_requests else None,
             "correctness": all(item["correctness"]["passed"] for item in repetitions),
             "ttft_p95_ms": max(ttft_p95) if ttft_p95 else None,
+            "ttft_p99_ms": max(ttft_p99) if ttft_p99 else None,
             "ttft_average_mean_ms": _mean(ttft_average),
             "ttft_p95_mean_ms": _mean(ttft_p95),
             "itl_p95_ms": max(itl_p95) if itl_p95 else None,
+            "itl_p99_ms": max(itl_p99) if itl_p99 else None,
             "itl_average_mean_ms": _mean(itl_average),
             "itl_p95_mean_ms": _mean(itl_p95),
+            "itl_p99_mean_ms": _mean(itl_p99),
             "request_throughput_per_second": min(throughput) if throughput else None,
             "request_throughput_mean_per_second": _mean(throughput),
             "request_throughput_max_per_second": (
                 max(throughput) if throughput else None
             ),
             "output_token_throughput_mean_per_second": _mean(output_throughput),
+            "request_error_count": max(request_error_count)
+            if request_error_count
+            else None,
+            "request_error_count_mean": _mean(request_error_count),
         }
         for tier in SLO_TIER_NAMES:
             row[tier] = all(item["slo"][tier]["passed"] for item in repetitions)
@@ -325,14 +353,20 @@ def write_tsv(rows: list[dict[str, Any]], path: Path) -> None:
         "expected_requests",
         "correctness",
         "ttft_p95_ms",
+        "ttft_p99_ms",
         "ttft_average_mean_ms",
         "ttft_p95_mean_ms",
+        "ttft_p99_mean_ms",
         "itl_p95_ms",
+        "itl_p99_ms",
         "itl_average_mean_ms",
         "itl_p95_mean_ms",
+        "itl_p99_mean_ms",
         "request_throughput_per_second",
         "request_throughput_mean_per_second",
         "request_throughput_max_per_second",
+        "request_error_count",
+        "request_error_count_mean",
         "output_token_throughput_mean_per_second",
         "strict",
         "standard",
@@ -373,19 +407,20 @@ def write_markdown(
         "# PAP/PD/DP AIPerf capacity matrix",
         "",
         "Repeated-point metrics and SLO eligibility are conservative: throughput "
-        "and goodput use the minimum repetition, latency p95 uses the maximum "
+        "and goodput use the minimum repetition, latency p95/p99 uses the maximum "
         "repetition, and every repetition must pass for the point to pass.",
         "",
         "| Architecture | Topology | C | Run status | Completed (worst) | "
-        "Validation | TTFT p95 ms | ITL p95 ms | Req/s | Strict | "
-        "Standard | Relaxed |",
-        "| --- | --- | ---: | --- | ---: | --- | ---: | ---: | ---: | "
-        "--- | --- | --- |",
+        "Validation | TTFT p95 | TTFT p99 | ITL p95 | ITL p99 | Req/s | "
+        "Req/s mean | Errors | Strict | Standard | Relaxed |",
+        "| --- | --- | ---: | --- | ---: | --- | ---: | ---: | ---: | ---: |"
+        " ---: | ---: | ---: | --- | --- | --- |",
     ]
     for row in rows:
         lines.append(
             "| {architecture} | {topology} | {concurrency} | {run_status} | "
-            "{completed} | {validation} | {ttft} | {itl} | {throughput} | "
+            "{completed} | {validation} | {ttft_p95} | {ttft_p99} | {itl_p95} | "
+            "{itl_p99} | {throughput} | {throughput_mean} | {errors} | "
             "{strict} | {standard} | {relaxed} |".format(
                 architecture=row["architecture"].upper(),
                 topology=row["topology"],
@@ -393,9 +428,13 @@ def write_markdown(
                 run_status=_run_status_label(row),
                 completed=_completion_label(row),
                 validation=_validation_label(row),
-                ttft=_fmt(row["ttft_p95_ms"]),
-                itl=_fmt(row["itl_p95_ms"]),
+                ttft_p95=_fmt(row["ttft_p95_ms"]),
+                ttft_p99=_fmt(row["ttft_p99_ms"]),
+                itl_p95=_fmt(row["itl_p95_ms"]),
+                itl_p99=_fmt(row["itl_p99_ms"]),
                 throughput=_fmt(row["request_throughput_per_second"], 3),
+                throughput_mean=_fmt(row["request_throughput_mean_per_second"], 3),
+                errors=_fmt(row["request_error_count"]),
                 strict=_slo_label(row, "strict"),
                 standard=_slo_label(row, "standard"),
                 relaxed=_slo_label(row, "relaxed"),
@@ -476,36 +515,54 @@ def write_markdown(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("matrix_root", type=Path)
+    parser.add_argument(
+        "matrix_root",
+        nargs="+",
+        type=Path,
+        help="one or more matrix roots containing runs/capacity_summary*.json",
+    )
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=None,
+        help="where merged results are written (defaults to first matrix root)",
+    )
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    summaries = load_summaries(args.matrix_root)
+    matrix_roots = args.matrix_root
+    output_root = args.output_root or matrix_roots[0]
+    output_root.mkdir(parents=True, exist_ok=True)
+    summaries = load_summaries(matrix_roots)
     if not summaries:
-        raise SystemExit(f"no capacity summaries under {args.matrix_root}")
+        raise SystemExit(
+            "no capacity summaries under "
+            + ", ".join(str(path) for path in matrix_roots)
+        )
     rows = build_rows(summaries)
     envelope = build_envelope(rows)
-    write_tsv(rows, args.matrix_root / "capacity_results.tsv")
-    write_markdown(rows, envelope, args.matrix_root / "capacity_results.md")
-    (args.matrix_root / "capacity_results.json").write_text(
+    write_tsv(rows, output_root / "capacity_results.tsv")
+    write_markdown(rows, envelope, output_root / "capacity_results.md")
+    (output_root / "capacity_results.json").write_text(
         json.dumps(
             {
                 "schema_version": 1,
                 "rows": rows,
                 "envelope": envelope,
+                "matrix_roots": [str(path) for path in matrix_roots],
             },
             indent=2,
         )
         + "\n",
         encoding="utf-8",
     )
-    (args.matrix_root / "capacity_envelope.json").write_text(
+    (output_root / "capacity_envelope.json").write_text(
         json.dumps(envelope, indent=2) + "\n",
         encoding="utf-8",
     )
-    print(args.matrix_root / "capacity_results.md")
+    print(output_root / "capacity_results.md")
 
 
 if __name__ == "__main__":

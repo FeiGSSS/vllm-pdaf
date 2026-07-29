@@ -174,15 +174,18 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     text = CAPACITY_RUNNER.read_text(encoding="utf-8")
 
     assert "PAP_CAPACITY_TURNS:-5" in text
-    assert "PAP_CAPACITY_DOCUMENT_TOKENS_MEAN:-8192" in text
-    assert "PAP_CAPACITY_APPEND_TOKENS_MEAN:-2200" in text
-    assert "PAP_CAPACITY_APPEND_TOKENS_MEDIAN:-800" in text
+    assert "PAP_CAPACITY_DOCUMENT_TOKENS_MEAN:-4096" in text
+    assert "PAP_CAPACITY_DOCUMENT_TOKENS_MEDIAN:-4000" in text
+    assert "PAP_CAPACITY_DOCUMENT_TOKENS_MIN:-2048" in text
+    assert "PAP_CAPACITY_DOCUMENT_TOKENS_MAX:-5632" in text
+    assert "PAP_CAPACITY_APPEND_TOKENS_MEAN:-1100" in text
+    assert "PAP_CAPACITY_APPEND_TOKENS_MEDIAN:-400" in text
     assert "PAP_CAPACITY_APPEND_TOKENS_MIN:-4" in text
-    assert "PAP_CAPACITY_APPEND_TOKENS_MAX:-4250" in text
-    assert "PAP_CAPACITY_OUTPUT_TOKENS:-32" in text
-    assert "multiturn_s${TOTAL_SESSIONS}_8k_longtail_random_o" in text
-    assert "PAP_CAPACITY_THINK_TIME_MS:-3000" in text
-    assert "PAP_CAPACITY_TOOL_TIME_MS:-1000" in text
+    assert "PAP_CAPACITY_APPEND_TOKENS_MAX:-2125" in text
+    assert "PAP_CAPACITY_OUTPUT_TOKENS:-16" in text
+    assert "multiturn_s${TOTAL_SESSIONS}_longtail_random_o" in text
+    assert "PAP_CAPACITY_THINK_TIME_MS:-1000" in text
+    assert "PAP_CAPACITY_TOOL_TIME_MS:-300" in text
     assert "PAP_CAPACITY_TOOL_EVERY:-3" in text
     assert "PAP_CAPACITY_SESSIONS:-128" in text
     assert 'DATASET_SESSION_PREFIX="pap-pd-dp-s${TOTAL_SESSIONS}' in text
@@ -203,7 +206,7 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     assert "PAP_CAPACITY_EXECUTION_MODE" in text
     assert 'PAP_EXECUTION_MODE="${EXECUTION_MODE}"' in text
     assert 'PD_LOAD_EXECUTION_MODE="${EXECUTION_MODE}"' in text
-    assert "pap_7pa1p,pap_6pa2p,pd_4p4d,pd_6p2d,dp_8" in text
+    assert "dp_8,pd_6p2d,pap_6pa2p" in text
     assert "PAP_CAPACITY_POINTS:-16,24,32,48" in text
     assert '--sessions "${TOTAL_SESSIONS}"' in text
     assert 'PAP_AIPERF_SESSIONS="${TOTAL_SESSIONS}"' in text

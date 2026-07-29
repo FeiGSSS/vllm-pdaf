@@ -234,7 +234,13 @@ class DecodeTokenClient:
                     raise RuntimeError("decode-token response did not accept payload")
                 return
             except Exception as exc:
-                last_error = exc
+                if isinstance(exc, httpx.HTTPStatusError):
+                    response_body = exc.response.text.strip()
+                    last_error = RuntimeError(
+                        f"{exc}; response_body={response_body or '<empty>'}"
+                    )
+                else:
+                    last_error = exc
                 if attempt >= self.max_attempts:
                     break
                 if delay_s > 0:

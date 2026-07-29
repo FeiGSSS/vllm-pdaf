@@ -422,6 +422,7 @@ def _check_runtime_audits(
 def summarize_run(
     run_root: Path,
     *,
+    aiperf_root: Path | None = None,
     architecture: str,
     topology: str,
     concurrency: int,
@@ -457,8 +458,9 @@ def summarize_run(
     else:
         errors.append("no expected output lengths were provided")
 
-    records_path = run_root / "aiperf/profile.jsonl"
-    profile_path = run_root / "aiperf/profile.json"
+    aiperf_root = aiperf_root or run_root / "aiperf"
+    records_path = aiperf_root / "profile.jsonl"
+    profile_path = aiperf_root / "profile.json"
     records: list[dict[str, Any]] = []
     profile: dict[str, Any] = {}
     try:
@@ -635,14 +637,19 @@ def summarize_run(
             "ttft_ms": {
                 "average": sum(ttft_values) / len(ttft_values) if ttft_values else None,
                 "p95": _percentile(ttft_values, 0.95),
+                "p99": _percentile(ttft_values, 0.99),
             },
             "itl_ms": {
                 "average": sum(itl_values) / len(itl_values) if itl_values else None,
                 "p95": _percentile(itl_values, 0.95),
+                "p99": _percentile(itl_values, 0.99),
             },
             "request_throughput_per_second": request_throughput,
             "output_token_throughput_per_second": _aggregate_metric(
                 profile, "output_token_throughput"
+            ),
+            "output_token_throughput_per_user_per_second": _aggregate_metric(
+                profile, "output_token_throughput_per_user"
             ),
             "benchmark_duration_seconds": _aggregate_metric(
                 profile, "benchmark_duration"
@@ -655,6 +662,7 @@ def summarize_run(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-root", type=Path, required=True)
+    parser.add_argument("--aiperf-root", type=Path)
     parser.add_argument("--architecture", choices=("pap", "pd", "dp"), required=True)
     parser.add_argument("--topology", required=True)
     parser.add_argument("--concurrency", type=int, required=True)
@@ -680,6 +688,7 @@ def main() -> None:
         )
     summary = summarize_run(
         args.run_root,
+        aiperf_root=args.aiperf_root,
         architecture=args.architecture,
         topology=args.topology,
         concurrency=args.concurrency,

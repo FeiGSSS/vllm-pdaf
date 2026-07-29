@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# PAP/PD/DP randomized-length comparison. AIPerf owns each concurrency sweep.
+# PAP/PD/DP randomized-length comparison using AIPerf workloads.
 
 ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
@@ -17,20 +17,21 @@ DATASET_GENERATOR="${ROOT_DIR}/benchmarks/pap/aiperf/generate_multiturn_dataset.
 
 EXPERIMENTS_ROOT="${PAP_EXPERIMENTS_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments}"
 RESULTS_ROOT="${RESULTS_ROOT:-${EXPERIMENTS_ROOT}/_staging}"
-OUTPUT_TOKENS="${PAP_CAPACITY_OUTPUT_TOKENS_MEAN:-${PAP_CAPACITY_OUTPUT_TOKENS:-32}}"
+OUTPUT_TOKENS="${PAP_CAPACITY_OUTPUT_TOKENS_MEAN:-${PAP_CAPACITY_OUTPUT_TOKENS:-16}}"
 OUTPUT_TOKENS_MEDIAN="${PAP_CAPACITY_OUTPUT_TOKENS_MEDIAN:-$((OUTPUT_TOKENS * 15 / 16))}"
 OUTPUT_TOKENS_MIN="${PAP_CAPACITY_OUTPUT_TOKENS_MIN:-$((OUTPUT_TOKENS / 2))}"
 OUTPUT_TOKENS_MAX="${PAP_CAPACITY_OUTPUT_TOKENS_MAX:-$((OUTPUT_TOKENS * 2))}"
 RANDOM_SEED="${PAP_CAPACITY_RANDOM_SEED:-42}"
 MATRIX_ID="${PAP_CAPACITY_MATRIX_ID:-$(date +%Y%m%d_%H%M%S)_aiperf_capacity_random_o${OUTPUT_TOKENS}}"
 MATRIX_ROOT="${PAP_CAPACITY_MATRIX_ROOT:-${RESULTS_ROOT}/capacity/${MATRIX_ID}}"
-ARCHITECTURES_CSV="${PAP_CAPACITY_ARCHITECTURES:-pap_7pa1p,pap_6pa2p,pd_4p4d,pd_6p2d,dp_8}"
+ARCHITECTURES_CSV="${PAP_CAPACITY_ARCHITECTURES:-dp_8,pd_6p2d,pap_6pa2p}"
 TOTAL_SESSIONS="${PAP_CAPACITY_SESSIONS:-128}"
 GPU_COUNT="${PAP_CAPACITY_GPU_COUNT:-8}"
 DEFAULT_POINTS_CSV="${PAP_CAPACITY_POINTS:-16,24,32,48}"
 REPETITIONS="${PAP_CAPACITY_REPETITIONS:-1}"
 RESUME="${PAP_CAPACITY_RESUME:-1}"
 WAIT_FOR_GPUS="${PAP_CAPACITY_WAIT_FOR_GPUS:-1}"
+RESTART_BETWEEN_POINTS="${PAP_CAPACITY_RESTART_BETWEEN_POINTS:-1}"
 GPU_IDLE_STABILITY_SECONDS="${PAP_CAPACITY_GPU_IDLE_STABILITY_SECONDS:-15}"
 AIPERF_SWEEP_COOLDOWN_SECONDS="${PAP_CAPACITY_SWEEP_COOLDOWN_SECONDS:-30}"
 AIPERF_PROFILE_RUN_COOLDOWN_SECONDS="${PAP_CAPACITY_PROFILE_RUN_COOLDOWN_SECONDS:-30}"
@@ -39,22 +40,25 @@ AIPERF_GOODPUT_SLO="${PAP_CAPACITY_GOODPUT_SLO:-${DEFAULT_AIPERF_GOODPUT_SLO}}"
 EXECUTION_MODE="${PAP_CAPACITY_EXECUTION_MODE:-eager}"
 PAP_ROUTING_POLICY="${PAP_CAPACITY_PAP_ROUTING_POLICY:-conversation_affinity}"
 PAP_MIGRATION_MIN_PEAK_GAIN_RATIO="${PAP_CAPACITY_PAP_MIGRATION_MIN_PEAK_GAIN_RATIO:-0.30}"
+SLO_STRICT="${PAP_CAPACITY_SLO_STRICT:-TTFT<=5000ms,ITL<=50ms,good>=0.95}"
+SLO_STANDARD="${PAP_CAPACITY_SLO_STANDARD:-TTFT<=10000ms,ITL<=75ms,good>=0.95}"
+SLO_RELAXED="${PAP_CAPACITY_SLO_RELAXED:-TTFT<=20000ms,ITL<=100ms,good>=0.95}"
 
 TURNS="${PAP_CAPACITY_TURNS:-5}"
 DATASET_SESSION_PREFIX="pap-pd-dp-s${TOTAL_SESSIONS}-t${TURNS}-seed${RANDOM_SEED}"
-DOCUMENT_TOKENS="${PAP_CAPACITY_DOCUMENT_TOKENS_MEAN:-8192}"
-DOCUMENT_TOKENS_MEDIAN="${PAP_CAPACITY_DOCUMENT_TOKENS_MEDIAN:-8000}"
-DOCUMENT_TOKENS_MIN="${PAP_CAPACITY_DOCUMENT_TOKENS_MIN:-4096}"
-DOCUMENT_TOKENS_MAX="${PAP_CAPACITY_DOCUMENT_TOKENS_MAX:-11264}"
+DOCUMENT_TOKENS="${PAP_CAPACITY_DOCUMENT_TOKENS_MEAN:-4096}"
+DOCUMENT_TOKENS_MEDIAN="${PAP_CAPACITY_DOCUMENT_TOKENS_MEDIAN:-4000}"
+DOCUMENT_TOKENS_MIN="${PAP_CAPACITY_DOCUMENT_TOKENS_MIN:-2048}"
+DOCUMENT_TOKENS_MAX="${PAP_CAPACITY_DOCUMENT_TOKENS_MAX:-5632}"
 # The upper bound truncates the log-normal tail. With seed 42 and 128x5
-# requests, these parameters sample an append mean near 1.4K (about 44:1).
-APPEND_TOKENS="${PAP_CAPACITY_APPEND_TOKENS_MEAN:-2200}"
-APPEND_TOKENS_MEDIAN="${PAP_CAPACITY_APPEND_TOKENS_MEDIAN:-800}"
+# requests, these parameters sample an append mean near 0.7K (about 44:1).
+APPEND_TOKENS="${PAP_CAPACITY_APPEND_TOKENS_MEAN:-1100}"
+APPEND_TOKENS_MEDIAN="${PAP_CAPACITY_APPEND_TOKENS_MEDIAN:-400}"
 APPEND_TOKENS_MIN="${PAP_CAPACITY_APPEND_TOKENS_MIN:-4}"
-APPEND_TOKENS_MAX="${PAP_CAPACITY_APPEND_TOKENS_MAX:-4250}"
+APPEND_TOKENS_MAX="${PAP_CAPACITY_APPEND_TOKENS_MAX:-2125}"
 SAMPLED_MEAN_TOLERANCE="${PAP_CAPACITY_SAMPLED_MEAN_TOLERANCE:-0.40}"
-THINK_TIME_MS="${PAP_CAPACITY_THINK_TIME_MS:-3000}"
-TOOL_TIME_MS="${PAP_CAPACITY_TOOL_TIME_MS:-1000}"
+THINK_TIME_MS="${PAP_CAPACITY_THINK_TIME_MS:-1000}"
+TOOL_TIME_MS="${PAP_CAPACITY_TOOL_TIME_MS:-300}"
 TOOL_EVERY="${PAP_CAPACITY_TOOL_EVERY:-3}"
 MAX_MODEL_LEN="${PAP_CAPACITY_MAX_MODEL_LEN:-32768}"
 PREFILL_MAX_NUM_BATCHED_TOKENS="${PAP_CAPACITY_PREFILL_MAX_NUM_BATCHED_TOKENS:-32768}"
@@ -70,6 +74,7 @@ PAP_PREFILL_PERCENT=80
 PAP_ATTENTION_PERCENT=20
 REQUEST_TIMEOUT_SECONDS=600
 PAP_RUN_TIMEOUT_SECONDS=3600
+SUMMARY_RUNNER="${ROOT_DIR}/benchmarks/pap/aiperf/summarize_capacity_run.py"
 
 IFS=, read -r -a ARCHITECTURES <<< "${ARCHITECTURES_CSV}"
 
@@ -98,6 +103,8 @@ done
   || die "PAP_CAPACITY_SESSIONS must be positive"
 [[ "${GPU_COUNT}" =~ ^[1-9][0-9]*$ ]] \
   || die "PAP_CAPACITY_GPU_COUNT must be positive"
+[[ "${RESTART_BETWEEN_POINTS}" =~ ^[01]$ ]] \
+  || die "PAP_CAPACITY_RESTART_BETWEEN_POINTS must be 0 or 1"
 [[ "${OUTPUT_TOKENS}" =~ ^[1-9][0-9]*$ ]] \
   || die "PAP_CAPACITY_OUTPUT_TOKENS must be positive"
 for value in "${OUTPUT_TOKENS_MEDIAN}" "${OUTPUT_TOKENS_MIN}" \
@@ -162,7 +169,7 @@ for architecture in "${ARCHITECTURES[@]}"; do
 done
 
 mkdir -p "${MATRIX_ROOT}/dataset" "${MATRIX_ROOT}/runs"
-DATASET_FILE="${MATRIX_ROOT}/dataset/multiturn_s${TOTAL_SESSIONS}_8k_longtail_random_o${OUTPUT_TOKENS}_t${TURNS}_seed${RANDOM_SEED}.jsonl"
+DATASET_FILE="${MATRIX_ROOT}/dataset/multiturn_s${TOTAL_SESSIONS}_longtail_random_o${OUTPUT_TOKENS}_t${TURNS}_seed${RANDOM_SEED}.jsonl"
 
 if [[ ! -f "${DATASET_FILE}" ]]; then
   "${PYTHON_BIN}" "${DATASET_GENERATOR}" \
@@ -287,6 +294,8 @@ PY
   done
   printf 'REPETITIONS=%q\n' "${REPETITIONS}"
   printf 'SWEEP_OWNER=aiperf\nSWEEP_MODE=repeated\n'
+  printf 'SERVICE_RESTART_BETWEEN_POINTS=%q\n' \
+    "${RESTART_BETWEEN_POINTS}"
   printf 'AIPERF_SWEEP_SAME_SEED=1\n'
   printf 'AIPERF_SWEEP_COOLDOWN_SECONDS=%q\n' \
     "${AIPERF_SWEEP_COOLDOWN_SECONDS}"
@@ -341,9 +350,9 @@ PY
     "${PAP_PREFILL_CHUNKS}/${PAP_ATTENTION_CHUNKS}" \
     "${PAP_PREFILL_SMS}/${PAP_ATTENTION_SMS}"
   printf 'SLO_STRICT=%q\nSLO_STANDARD=%q\nSLO_RELAXED=%q\n' \
-    'TTFT<=5000ms,ITL<=50ms,good>=0.95' \
-    'TTFT<=10000ms,ITL<=75ms,good>=0.95' \
-    'TTFT<=20000ms,ITL<=100ms,good>=0.95'
+    "${SLO_STRICT}" \
+    "${SLO_STANDARD}" \
+    "${SLO_RELAXED}"
 } > "${MATRIX_ROOT}/matrix_config.env"
 
 wait_for_gpus() {
@@ -352,10 +361,12 @@ wait_for_gpus() {
   while true; do
     busy=0
     for (( gpu=0; gpu<GPU_COUNT; gpu++ )); do
-      processes="$(
+      if ! processes="$(
         nvidia-smi -i "${gpu}" --query-compute-apps=pid \
-          --format=csv,noheader,nounits 2>/dev/null || true
-      )"
+          --format=csv,noheader,nounits
+      )"; then
+        die "nvidia-smi failed when checking GPU ${gpu}; set WAIT_FOR_GPUS=0 or fix NVIDIA runtime"
+      fi
       if [[ -n "${processes//[[:space:]]/}" ]]; then
         echo "GPU ${gpu} is occupied by PID(s): ${processes//$'\n'/,}"
         busy=1
@@ -381,6 +392,198 @@ gpu_csv() {
   seq -s, "${start}" "$((start + count - 1))"
 }
 
+read_env_value() {
+  local file="$1"
+  local key="$2"
+  awk -F= -v key="$key" '$1==key {print $2}' "${file}"
+}
+
+summarize_aiperf_variation() {
+  local run_root="$1"
+  local aiperf_root="$2"
+  local architecture="$3"
+  local topology="$4"
+  local concurrency="$5"
+  local repetition="${6:-1}"
+  local summary_root="$7"
+  local exit_code="${8:-0}"
+
+  ${PYTHON_BIN} "${SUMMARY_RUNNER}" \
+    --run-root "${run_root}" \
+    --aiperf-root "${aiperf_root}" \
+    --architecture "${architecture}" \
+    --topology "${topology}" \
+    --concurrency "${concurrency}" \
+    --sessions "${TOTAL_SESSIONS}" \
+    --turns "${TURNS}" \
+    --output-tokens "${OUTPUT_TOKENS}" \
+    --dataset-file "${DATASET_FILE}" \
+    --repetition "${repetition}" \
+    --launcher-exit-code "${exit_code}" \
+    --output "${summary_root}"
+}
+
+summarize_sweep_run() {
+  local run_root="$1"
+  local architecture="$2"
+  local topology="$3"
+  local concurrency_points="$4"
+  local exit_code="${5:-0}"
+  local point output
+  local -a points
+  local point_root repetition found_point has_point_dirs point_count=0 trial_root
+
+  if [[ -z "${concurrency_points}" ]]; then
+    return
+  fi
+  IFS=, read -r -a points <<< "${concurrency_points//\\,/,}"
+
+  for point in "${points[@]}"; do
+    [[ -n "${point}" ]] && (( ++point_count ))
+  done
+  if (( point_count == 0 )); then
+    return
+  fi
+
+  if [[ -d "${run_root}/points" ]]; then
+    for point in "${points[@]}"; do
+      [[ -n "${point}" ]] || continue
+      point_root="${run_root}/points/concurrency_${point}"
+      if [[ ! -d "${point_root}/aiperf" ]]; then
+        echo "WARNING: missing isolated AIPerf point C=${point}" >&2
+        continue
+      fi
+      exit_code=0
+      if [[ -f "${point_root}/launcher_exit_code.txt" ]]; then
+        exit_code="$(
+          cat "${point_root}/launcher_exit_code.txt" 2>/dev/null || echo 1
+        )"
+      fi
+      output="${run_root}/capacity_summary_c${point}_r1.json"
+      summarize_aiperf_variation \
+        "${point_root}" \
+        "${point_root}/aiperf" \
+        "${architecture}" \
+        "${topology}" \
+        "${point}" \
+        1 \
+        "${output}" \
+        "${exit_code}"
+    done
+    return
+  fi
+
+  if [[ -d "${run_root}/aiperf/profile_runs" ]]; then
+    shopt -s nullglob
+    for trial_root in "${run_root}/aiperf/profile_runs/trial_"*; do
+      [[ -d "${trial_root}" ]] || continue
+      repetition="${trial_root##*/}"
+      repetition="${repetition#trial_}"
+      [[ "${repetition}" =~ ^[0-9]+$ ]] || repetition="1"
+      found_point=0
+      for point in "${points[@]}"; do
+        [[ -z "${point}" ]] && continue
+        point_root="${trial_root}/concurrency_${point}"
+        if [[ -d "${point_root}" ]]; then
+          output="${run_root}/capacity_summary_c${point}_r${repetition}.json"
+          summarize_aiperf_variation \
+            "${run_root}" \
+            "${point_root}" \
+            "${architecture}" \
+            "${topology}" \
+            "${point}" \
+            "${repetition}" \
+            "${output}" \
+            "${exit_code}"
+          found_point=1
+          continue
+        fi
+        if [[ -d "${point_root}/aggregate/sweep_aggregate" ]]; then
+          output="${run_root}/capacity_summary_c${point}_r${repetition}.json"
+          summarize_aiperf_variation \
+            "${run_root}" \
+            "${point_root}/aggregate/sweep_aggregate" \
+            "${architecture}" \
+            "${topology}" \
+            "${point}" \
+            "${repetition}" \
+            "${output}" \
+            "${exit_code}"
+          found_point=1
+        fi
+      done
+      if (( found_point == 0 )); then
+        point="${points[0]}"
+        output="${run_root}/capacity_summary_c${point}_r${repetition}.json"
+        summarize_aiperf_variation \
+          "${run_root}" \
+          "${trial_root}" \
+          "${architecture}" \
+          "${topology}" \
+          "${point}" \
+          "${repetition}" \
+          "${output}" \
+          "${exit_code}"
+      fi
+    done
+    shopt -u nullglob
+    return
+  fi
+
+  if [[ -d "${run_root}/aiperf" ]]; then
+    has_point_dirs=0
+    for point in "${points[@]}"; do
+      [[ -z "${point}" ]] && continue
+      if [[ -d "${run_root}/aiperf/concurrency_${point}" ]] \
+        || [[ -d "${run_root}/aiperf/concurrency_${point}/aggregate/sweep_aggregate" ]]; then
+        has_point_dirs=1
+        break
+      fi
+    done
+
+    if (( has_point_dirs == 1 )); then
+      for point in "${points[@]}"; do
+        [[ -z "${point}" ]] && continue
+        point_root="${run_root}/aiperf/concurrency_${point}"
+        if [[ -d "${point_root}/aggregate/sweep_aggregate" ]]; then
+          point_root="${point_root}/aggregate/sweep_aggregate"
+        fi
+        if [[ -d "${point_root}" ]] || [[ -f "${point_root}/profile.json" ]]; then
+          output="${run_root}/capacity_summary_c${point}_r1.json"
+          summarize_aiperf_variation \
+            "${run_root}" \
+            "${point_root}" \
+            "${architecture}" \
+            "${topology}" \
+            "${point}" \
+            1 \
+            "${output}" \
+            "${exit_code}"
+        else
+          echo "WARNING: missing aiperf point data for C=${point} in ${run_root}" >&2
+        fi
+      done
+      return
+    fi
+
+    if (( point_count == 1 )); then
+      point="${points[0]}"
+      point_root="${run_root}/aiperf"
+      output="${run_root}/capacity_summary_c${point}_r1.json"
+      summarize_aiperf_variation \
+        "${run_root}" \
+        "${point_root}" \
+        "${architecture}" \
+        "${topology}" \
+        "${point}" \
+        1 \
+        "${output}" \
+        "${exit_code}"
+    fi
+    return
+  fi
+}
+
 run_pap_architecture() {
   local topology="$1"
   local concurrency_points="$2"
@@ -399,7 +602,7 @@ run_pap_architecture() {
     RUN_ID="$(basename "${run_root}")" \
     RUN_ROOT="${run_root}" \
     RESULTS_ROOT="${RESULTS_ROOT}" \
-    PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE=1 \
+    PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE="${PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE:-1}" \
     PAP_BENCH_STRICT_CORRECTNESS_AUDIT=1 \
     PAP_TOPOLOGY="${topology}" \
     PAP_PREFILL_GPUS="$(gpu_csv 0 "${pa_count}")" \
@@ -540,10 +743,127 @@ run_dp_architecture() {
     "${DP_RUNNER}"
 }
 
+run_architecture_launcher() {
+  local architecture="$1"
+  local topology="$2"
+  local concurrency_points="$3"
+  local run_root="$4"
+
+  if [[ "${architecture}" == "pap" ]]; then
+    run_pap_architecture "${topology}" "${concurrency_points}" "${run_root}"
+  elif [[ "${architecture}" == "pd" ]]; then
+    run_pd_architecture "${topology}" "${concurrency_points}" "${run_root}"
+  else
+    run_dp_architecture "${topology}" "${concurrency_points}" "${run_root}"
+  fi
+}
+
+run_isolated_architecture_points() {
+  local architecture="$1"
+  local topology="$2"
+  local concurrency_points="$3"
+  local run_root="$4"
+  local point point_root launcher_code failed_points=0
+  local completion_file status
+  local -a points
+
+  IFS=, read -r -a points <<< "${concurrency_points//\,/,}"
+  mkdir -p "${run_root}/points"
+  for point in "${points[@]}"; do
+    [[ -n "${point}" ]] || continue
+    point_root="${run_root}/points/concurrency_${point}"
+    if [[ "${RESUME}" == "1" \
+      && -f "${point_root}/aiperf_sweep_complete.env" ]]; then
+      echo "Reusing isolated ${architecture} ${topology} C=${point}"
+      launcher_code="$(
+        cat "${point_root}/launcher_exit_code.txt" 2>/dev/null || echo 0
+      )"
+      summarize_aiperf_variation \
+        "${point_root}" \
+        "${point_root}/aiperf" \
+        "${architecture}" \
+        "${topology}" \
+        "${point}" \
+        1 \
+        "${run_root}/capacity_summary_c${point}_r1.json" \
+        "${launcher_code}"
+      continue
+    fi
+    if [[ -d "${point_root}" ]]; then
+      if [[ "${RESUME}" == "1" ]]; then
+        echo "Cleaning incomplete isolated point ${point_root}" >&2
+        rm -rf "${point_root}"
+      elif [[ -n "$(find "${point_root}" -mindepth 1 -print -quit)" ]]; then
+        die "isolated point directory already has data: ${point_root}"
+      fi
+    fi
+
+    wait_for_gpus
+    mkdir -p "${point_root}"
+    echo "=== ${architecture} ${topology} isolated C=${point} ==="
+    set +e
+    run_architecture_launcher \
+      "${architecture}" \
+      "${topology}" \
+      "${point}" \
+      "${point_root}" \
+      > "${point_root}/launcher.log" 2>&1
+    launcher_code="$?"
+    set -e
+    printf '%s\n' "${launcher_code}" > "${point_root}/launcher_exit_code.txt"
+    if [[ -z "$(find "${point_root}/aiperf" -type f \
+      -name 'profile*.json' -size +0c -print -quit 2>/dev/null)" ]]; then
+      echo "WARNING: ${architecture} ${topology} C=${point} produced no profile" >&2
+      (( ++failed_points ))
+      continue
+    fi
+    if (( launcher_code != 0 )); then
+      echo "WARNING: ${architecture} ${topology} C=${point} exited ${launcher_code}" >&2
+      (( ++failed_points ))
+    else
+      {
+        printf 'STATUS=passed\n'
+        printf 'ARCHITECTURE=%q\nTOPOLOGY=%q\n' \
+          "${architecture}" "${topology}"
+        printf 'CONCURRENCY_POINTS=%q\n' "${point}"
+        printf 'PROFILE_RUNS=%q\n' "${REPETITIONS}"
+        printf 'DATASET_FILE=%q\n' "${DATASET_FILE}"
+      } > "${point_root}/aiperf_sweep_complete.env"
+    fi
+    summarize_aiperf_variation \
+      "${point_root}" \
+      "${point_root}/aiperf" \
+      "${architecture}" \
+      "${topology}" \
+      "${point}" \
+      1 \
+      "${run_root}/capacity_summary_c${point}_r1.json" \
+      "${launcher_code}"
+  done
+
+  completion_file="${run_root}/aiperf_sweep_complete.env"
+  status=passed
+  if (( failed_points > 0 )); then
+    completion_file="${run_root}/aiperf_sweep_incomplete.env"
+    status=incomplete
+  fi
+  {
+    printf 'STATUS=%q\n' "${status}"
+    printf 'ARCHITECTURE=%q\nTOPOLOGY=%q\n' \
+      "${architecture}" "${topology}"
+    printf 'CONCURRENCY_POINTS=%q\n' "${concurrency_points}"
+    printf 'PROFILE_RUNS=%q\n' "${REPETITIONS}"
+    printf 'DATASET_FILE=%q\n' "${DATASET_FILE}"
+    printf 'FAILED_POINTS=%q\n' "${failed_points}"
+  } > "${completion_file}"
+  printf '%s\n' "$((failed_points > 0))" > "${run_root}/launcher_exit_code.txt"
+}
+
 run_architecture() {
   local architecture_tag="$1"
   local concurrency_points="$2"
   local architecture topology run_root launcher_code
+  local resume_code=0
   if [[ "${architecture_tag}" == pap_* ]]; then
     architecture=pap
     topology="${architecture_tag#pap_}"
@@ -558,30 +878,67 @@ run_architecture() {
 
   if [[ "${RESUME}" == "1" \
     && -f "${run_root}/aiperf_sweep_complete.env" ]]; then
+    if [[ -f "${run_root}/launcher_exit_code.txt" ]]; then
+      resume_code="$(cat "${run_root}/launcher_exit_code.txt" 2>/dev/null || echo 0)"
+      if [[ -z "${resume_code}" ]]; then
+        resume_code=0
+      fi
+    fi
     echo "Reusing completed AIPerf sweep for ${architecture_tag}"
+    summarize_sweep_run \
+      "${run_root}" \
+      "${architecture}" \
+      "${topology}" \
+      "${concurrency_points}" \
+      "${resume_code}"
     return
   fi
-  if [[ -d "${run_root}" && -n "$(find "${run_root}" -mindepth 1 -print -quit)" ]]; then
-    die "run directory already has data: ${run_root}"
+  if [[ "${RESTART_BETWEEN_POINTS}" == "1" ]]; then
+    mkdir -p "${run_root}"
+    run_isolated_architecture_points \
+      "${architecture}" \
+      "${topology}" \
+      "${concurrency_points}" \
+      "${run_root}"
+    return
+  fi
+  if [[ -d "${run_root}" ]]; then
+    if [[ "${RESUME}" == "1" ]]; then
+      if [[ -n "$(find "${run_root}" -mindepth 1 -type f -name 'launcher_exit_code.txt' -print -quit)" ]]; then
+        existing_code=""
+        existing_code="$(cat "${run_root}/launcher_exit_code.txt" 2>/dev/null || echo '')"
+        if [[ "${existing_code}" == "0" ]]; then
+          if [[ -n "$(find "${run_root}/aiperf" -type f -name 'profile*.json' -size +0c -print -quit)" ]]; then
+            echo "Found completed sweep artifacts for ${architecture_tag}."
+            summarize_sweep_run \
+              "${run_root}" \
+              "${architecture}" \
+              "${topology}" \
+              "${concurrency_points}" \
+              "${existing_code}"
+            return
+          fi
+          echo "Launcher exit=0 but no profile output for ${architecture_tag}; will rerun." >&2
+        fi
+      fi
+      echo "Resume enabled: cleaning stale/incomplete run directory ${run_root}" >&2
+      rm -rf "${run_root}"
+    elif [[ -n "$(find "${run_root}" -mindepth 1 -print -quit)" ]]; then
+      die "run directory already has data: ${run_root}"
+    fi
   fi
 
   wait_for_gpus
   mkdir -p "${run_root}"
   echo "=== ${architecture_tag} AIPerf concurrency=${concurrency_points} ==="
   set +e
-  if [[ "${architecture}" == "pap" ]]; then
-    run_pap_architecture "${topology}" "${concurrency_points}" "${run_root}" \
-      > "${run_root}/launcher.log" 2>&1
-    launcher_code="$?"
-  elif [[ "${architecture}" == "pd" ]]; then
-    run_pd_architecture "${topology}" "${concurrency_points}" "${run_root}" \
-      > "${run_root}/launcher.log" 2>&1
-    launcher_code="$?"
-  else
-    run_dp_architecture "${topology}" "${concurrency_points}" "${run_root}" \
-      > "${run_root}/launcher.log" 2>&1
-    launcher_code="$?"
-  fi
+  run_architecture_launcher \
+    "${architecture}" \
+    "${topology}" \
+    "${concurrency_points}" \
+    "${run_root}" \
+    > "${run_root}/launcher.log" 2>&1
+  launcher_code="$?"
   set -e
   printf '%s\n' "${launcher_code}" > "${run_root}/launcher_exit_code.txt"
   (( launcher_code == 0 )) \
@@ -598,6 +955,13 @@ run_architecture() {
     printf 'PROFILE_RUNS=%q\n' "${REPETITIONS}"
     printf 'DATASET_FILE=%q\n' "${DATASET_FILE}"
   } > "${run_root}/aiperf_sweep_complete.env"
+
+  summarize_sweep_run \
+    "${run_root}" \
+    "${architecture}" \
+    "${topology}" \
+    "${concurrency_points}" \
+    "${launcher_code}"
 }
 
 for architecture in "${ARCHITECTURES[@]}"; do

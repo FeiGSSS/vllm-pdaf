@@ -1585,10 +1585,10 @@ expected_group_indices = []
 dynamic_pa_routing = routing_policy == "attention_load"
 if routing_policy == "conversation_affinity":
     expected_group_indices = [
-        conversation % pa_count
-        for _ in range(load_repetitions)
-        for _ in range(load_rounds)
+        (repetition * load_conversations + conversation) % pa_count
+        for repetition in range(load_repetitions)
         for conversation in range(load_conversations)
+        for _ in range(load_rounds)
     ]
 elif dynamic_pa_routing:
     # PA selection depends on live committed Attention tokens. A static audit

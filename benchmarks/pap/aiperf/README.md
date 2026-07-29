@@ -45,25 +45,25 @@ lengths reproducibly:
 | --- | --- |
 | Turns per session | 5 |
 | Total sessions per matrix point | 128 |
-| Initial user document | log-normal: mean 8192, median 8000, range 4096-11264 |
-| New user text on turns 2-5 | bounded log-normal: parameter mean 2200, median 800, range 4-4250 |
-| Assistant output | log-normal: mean 32, median 30, range 16-64 |
-| Normal think time | 3 seconds |
-| Tool execution time | 1 second every third continuation |
-| Maximum model length | 20000 tokens |
+| Initial user document | log-normal: mean 4096, median 4000, range 2048-5632 |
+| New user text on turns 2-5 | bounded log-normal: parameter mean 1100, median 400, range 4-2125 |
+| Assistant output | log-normal: mean 16, median 15, range 8-32 |
+| Normal think time | 1 second |
+| Tool execution time | 0.3 second every third continuation |
+| Maximum model length | 32768 tokens |
 
 AIPerf treats `{mean, stddev}` as a truncated normal distribution and
 `{mean, median}` as a right-skewed log-normal distribution. This testbed uses
 the latter semantics and then bounds its long tail. Truncation means the
-distribution's `mean=2200` parameter is not the resulting arithmetic mean:
-seed 42 samples about 1.4K appended tokens, with values from tens of tokens to
-4250. The adjacent manifest is authoritative for the actual mean, median,
-percentiles, and context headroom. This produces an effective append/output
-ratio near 45:1 without making every turn the same length.
+distribution's `mean=1100` parameter is not the resulting arithmetic mean:
+the adjacent manifest is authoritative for the actual mean, median, percentiles,
+and context headroom. This keeps per-turn append/output length variation
+large enough to stress decode scheduling without creating a synthetic fixed-shape
+workload.
 
-The deterministic delay schedule is `0,3,3,1,3` seconds. The first turn has no
-delay; ordinary continuations model user think time, while turn 4 models a
-faster external-tool return. Each session waits for 10 seconds in total while
+The deterministic delay schedule is `0,1,1,0.3,1` seconds. The first turn has
+no delay; ordinary continuations model user think time, while turn 4 models a
+faster external-tool return. Each session waits for 3.3 seconds in total while
 retaining its concurrency slot.
 
 The capacity runner generates 128 sessions with this shape:
@@ -73,16 +73,16 @@ The capacity runner generates 128 sessions with this shape:
   --model /data/ssd1/llm-models/Qwen3-8B \
   --corpus /path/to/sonnet_4x.txt \
   --sessions 128 --turns 5 \
-  --document-tokens 8192 --document-tokens-median 8000 \
-  --document-tokens-min 4096 --document-tokens-max 11264 \
-  --append-tokens 2200 --append-tokens-median 800 \
-  --append-tokens-min 4 --append-tokens-max 4250 \
-  --output-tokens 32 --output-tokens-median 30 \
-  --output-tokens-min 16 --output-tokens-max 64 \
+  --document-tokens 4096 --document-tokens-median 4000 \
+  --document-tokens-min 2048 --document-tokens-max 5632 \
+  --append-tokens 1100 --append-tokens-median 400 \
+  --append-tokens-min 4 --append-tokens-max 2125 \
+  --output-tokens 16 --output-tokens-median 15 \
+  --output-tokens-min 8 --output-tokens-max 32 \
   --random-seed 42 --sampled-mean-tolerance 0.40 \
   --max-model-len 32768 \
-  --think-time-ms 3000 --tool-time-ms 1000 --tool-every 3 \
-  --output /tmp/pap-aiperf-8gpu-longtail-o32-t5.jsonl
+  --think-time-ms 1000 --tool-time-ms 300 --tool-every 3 \
+  --output /tmp/pap-aiperf-8gpu-longtail-o16-t5.jsonl
 ```
 
 The generator gives every session a stable, unique `cache_salt`, preventing
@@ -119,10 +119,9 @@ views rather than separate load sweeps.
 
 AIPerf owns the per-variation records, sweep aggregates, repeated-run
 confidence data, and error counts. Project launchers add architecture-level
-runtime audits and preserve the AIPerf directory without translating it into
-a second project-specific scan format. The older
-`summarize_capacity_{run,matrix}.py` files only read historical, pre-native-
-sweep experiments.
+runtime audits and preserve the AIPerf directory. The
+`summarize_capacity_{run,matrix}.py` readers build compact, traceable
+cross-architecture tables from those native artifacts.
 
 ## Fixed-length historical shapes
 
@@ -167,20 +166,21 @@ PD_AIPERF_TIMING_MODE=concurrency \
 
 Supply the normal PAP GPU-list variables alongside the first command. Use the
 identical generated file for every PAP, one-way PD, and fused-replica sweep.
-The architecture starts once, then AIPerf runs every comma-separated
-concurrency variation and repeated trial. `--parameter-sweep-same-seed`,
-sequential dataset sampling, and the fixed JSONL make request contents,
-target lengths, delays, session order, and random choices identical across
-variations.
+These direct launcher examples start the architecture once, then AIPerf runs
+every comma-separated concurrency variation and repeated trial.
+`--parameter-sweep-same-seed`, sequential dataset sampling, and the fixed
+JSONL make request contents, target lengths, delays, session order, and random
+choices identical across variations.
 
-This is a steady-state sweep, not a cold-cache-per-point experiment. AIPerf
-does not restart vLLM between variations, so allocator state and prefix-cache
-contents can carry over. The canonical order is therefore fixed and recorded.
-Use separate single-point launcher invocations when cold-cache isolation is
-the research question. The `attention_load` PAP migration policy also retains
-conversation history in the gateway and is not eligible for a native
-multi-point sweep until a variation-boundary reset exists; the canonical
-capacity sweep uses `conversation_affinity`.
+The direct multi-point launcher is a steady-state sweep: AIPerf does not
+restart vLLM between variations, so allocator state and prefix-cache contents
+can carry over. It is useful for diagnostics, but it is not the canonical
+cross-concurrency capacity comparison. `run_capacity_matrix.sh` defaults to
+one service restart per concurrency point and reuses the byte-identical
+dataset. This prevents an earlier point from warming the prefix cache for a
+later point. Set `PAP_CAPACITY_RESTART_BETWEEN_POINTS=0` only when explicitly
+studying steady-state variation ordering. The canonical capacity sweep uses
+`conversation_affinity`.
 
 The default `records` export retains aggregate and per-request metrics without
 duplicating every long prompt and response. Set `AIPERF_EXPORT_LEVEL=raw` only
@@ -188,23 +188,39 @@ when wire-level debugging is required.
 
 ## Run the lean randomized matrix
 
-For a complete eight-GPU goodput campaign, use the checked-in scan preset:
+For a focused eight-GPU DP/PD/PAP goodput campaign, use the checked-in scan
+preset:
 
 ```bash
-bash benchmarks/pap/aiperf/run_goodput_scan.sh
+PAP_CAPACITY_MATRIX_ID=20260727_dp_pd_pap_goodput_scan \
+PAP_CAPACITY_ARCHITECTURES=dp_8,pd_6p2d,pap_6pa2p \
+  bash benchmarks/pap/aiperf/run_goodput_scan.sh
 ```
 
-It runs PAP 7PA1P/6PA2P, PD 4P4D/6P2D, and fused DP across topology-specific
-concurrency points around their known Strict, Standard, and Relaxed
-boundaries. It performs one discovery repetition by default. Override
+It runs one-way PD 6P2D, fused DP, and one PAP topology across
+topology-specific concurrency points around their known Strict, Standard, and
+Relaxed boundaries.
+It performs one discovery repetition by default. Override
 `PAP_CAPACITY_REPETITIONS=3` only when confirming already selected points, and
 override an architecture's point list to avoid repeating the whole discovery
 matrix:
 
 ```bash
-PAP_CAPACITY_ARCHITECTURES=pap_7pa1p,pd_4p4d \
-PAP_CAPACITY_PAP_7PA1P_POINTS=24 \
-PAP_CAPACITY_PD_4P4D_POINTS=28 \
+PAP_CAPACITY_ARCHITECTURES=dp_8,pd_6p2d,pap_6pa2p \
+PAP_CAPACITY_PAP_6PA2P_POINTS=24 \
+PAP_CAPACITY_PD_6P2D_POINTS=24 \
+PAP_CAPACITY_DP_8_POINTS=16,20,24 \
+PAP_CAPACITY_REPETITIONS=3 \
+  bash benchmarks/pap/aiperf/run_goodput_scan.sh
+
+# Example including extra PD/PAP variants:
+PAP_CAPACITY_ARCHITECTURES=dp_8,pd_4p4d,pd_6p2d,pd_7p1d,pap_6pa2p,pap_7pa1p \
+PAP_CAPACITY_PAP_7PA1P_POINTS=16,20,24 \
+PAP_CAPACITY_PAP_6PA2P_POINTS=20,24,28 \
+PAP_CAPACITY_PD_4P4D_POINTS=16,20,24 \
+PAP_CAPACITY_PD_6P2D_POINTS=20,24 \
+PAP_CAPACITY_PD_7P1D_POINTS=16,20,24 \
+PAP_CAPACITY_DP_8_POINTS=16,20,24 \
 PAP_CAPACITY_REPETITIONS=3 \
   bash benchmarks/pap/aiperf/run_goodput_scan.sh
 ```
@@ -215,19 +231,103 @@ directory. Single-trial sweeps use `concurrency_<C>/`; repeated sweeps use
 aggregate under `sweep_aggregate/` (or `aggregate/sweep_aggregate/` for
 repeated runs).
 
-The default matrix compares PAP 7PA1P and 6PA2P, one-way PD 4P4D and 6P2D,
-and an eight-replica fused vLLM pool with sticky conversation routing. PAP
-uses the accepted static 72/20-SM path. Its
-Prefill executor and every PD/DP executor use
-`gpu_memory_utilization=0.90`. Projection is sized automatically to 120% of
-checkpoint weight bytes per TP rank on the smallest selected Projection GPU.
-Scheduler limits, model, dataset, and AIPerf settings remain identical across
-architectures and concurrency points.
+After the sweep, generate the architecture-level capacity/goodput comparison:
+
+```bash
+MATRIX_ROOT=benchmarks/pap/experiments/_staging/capacity/${PAP_CAPACITY_MATRIX_ID}
+.venv/bin/python benchmarks/pap/aiperf/summarize_capacity_matrix.py "${MATRIX_ROOT}"
+```
+
+To aggregate multiple matrix runs (for example, `primary` + `refine` + `final_edges`
+when they were launched as separate IDs), pass each root positionally and set one
+output root:
+
+```bash
+MATRIX_ROOTS=(
+  benchmarks/pap/experiments/_staging/capacity/primary
+  benchmarks/pap/experiments/_staging/capacity/refine
+  benchmarks/pap/experiments/_staging/capacity/final_edges
+)
+MERGED_ROOT=benchmarks/pap/experiments/_staging/capacity/merged_primary_refine_final
+.venv/bin/python benchmarks/pap/aiperf/summarize_capacity_matrix.py "${MATRIX_ROOTS[@]}" --output-root "${MERGED_ROOT}"
+```
+
+The default matrix compares the main DP/PD/PAP variants together (depending on the
+topologies launched in this run):
+
+- DP: `8dp`
+- PD: `4p4d`, `6p2d` (and `7p1d` if included in this run)
+- PAP: `6pa2p`, `7pa1p`
+
+All runs use the same Qwen3-8B/8-GPU dataset and random seed. DP and all PD
+components use `gpu_memory_utilization=0.90`. Scheduler limits, model, dataset,
+and AIPerf settings remain identical across architectures and concurrency points.
 
 The latest completed eager and piecewise four-GPU scans are recorded in
 [`PAP-20260722-AIPERF-PROJECTION-AUTO`](../experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
 They validate automatic Projection sizing at `0.4070` for Qwen3-8B TP1 on an
 L20 and remain single-repetition controlled development evidence.
+
+To run with local uncommitted worktree changes, set
+`PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE=0` (default remains `1` for
+reproducibility checks).
+
+For a single command that runs matrix + summary (recommended for your recurring
+SLO comparison), use:
+
+```bash
+bash benchmarks/pap/aiperf/run_three_way_slo_capacity.sh
+```
+
+If you want to constrain this sweep to a sub-set (for quick smoke), set
+architecture and/or per-topology point sets explicitly.
+
+```bash
+PAP_CAPACITY_MATRIX_ID=20260728_dp_pd_pap_slo_fullscan \
+PAP_CAPACITY_ARCHITECTURES=dp_8,pd_4p4d,pd_6p2d,pd_7p1d,pap_6pa2p,pap_7pa1p \
+PAP_CAPACITY_DP_8_POINTS=8,12,16,20,24,28,32 \
+PAP_CAPACITY_PD_4P4D_POINTS=12,16,20,24,28,32 \
+PAP_CAPACITY_PD_6P2D_POINTS=12,16,20,24,28,32 \
+PAP_CAPACITY_PD_7P1D_POINTS=12,16,20,24,28,32 \
+PAP_CAPACITY_PAP_6PA2P_POINTS=12,16,20,24,28,32,40,48 \
+PAP_CAPACITY_PAP_7PA1P_POINTS=12,16,20,24,28,32,40,48 \
+PAP_CAPACITY_REPETITIONS=1 \
+PAP_CAPACITY_WAIT_FOR_GPUS=1 \
+  bash benchmarks/pap/aiperf/run_three_way_slo_capacity.sh
+```
+
+To compare variants already in a completed matrix (skip re-running jobs):
+
+```bash
+PAP_CAPACITY_MATRIX_ROOT=benchmarks/pap/experiments/_staging/capacity/20260725_8gpu_capacity_fullscan_c16_48 \
+PAP_CAPACITY_ARCHITECTURES=dp_8,pd_4p4d,pd_6p2d,pap_6pa2p,pap_7pa1p \
+PAP_CAPACITY_SKIP_RUN=1 \
+PAP_CAPACITY_WAIT_FOR_GPUS=0 \
+PAP_CAPACITY_OUTPUT_TOKENS=16 \
+PAP_CAPACITY_SKIP_MISMATCH=0 \
+bash benchmarks/pap/aiperf/run_three_way_slo_capacity.sh
+
+# If you intentionally want to reuse a matrix that was generated with different
+# architecture/points definitions, set this override explicitly:
+# PAP_CAPACITY_SKIP_MISMATCH=0
+```
+
+You can also directly regenerate a compact one-page three-way summary (contains
+best points and full per-concurrency sweep rows):
+
+```bash
+.venv/bin/python benchmarks/pap/aiperf/compare_three_way_slo.py \
+  benchmarks/pap/experiments/_staging/capacity/20260725_8gpu_capacity_fullscan_c16_48
+```
+
+The generated file is:
+
+```
+benchmarks/pap/experiments/_staging/capacity/20260725_8gpu_capacity_fullscan_c16_48/three_way_slo_summary.md
+```
+
+Set `PAP_CAPACITY_WAIT_FOR_GPUS=0` if you want to skip the GPU availability
+gate and fail fast in non-GPU contexts.
 
 ### Capacity-parameter audit
 
@@ -243,8 +343,9 @@ larger number as automatically safer:
 - AIPerf can have at most 128 live sessions, with one request per live session.
   Therefore 256 sequences cannot be the admission bottleneck.
 - vLLM defines `max_num_batched_tokens` as the per-iteration compute-token
-  budget and recommends values above 8192 for throughput on small models and
-  large GPUs. A 32768 Prefill budget holds roughly four mean 8K prompts.
+  budget and recommends values above 8192 for throughput in many small-model
+  regimes. A 32768 Prefill budget here is consistent with the replay workload and
+  leaves ample headroom for multi-turn growth.
 - Decode and PAP Projection execute at most one new model token per live
   request. KV-connector prompt tokens are externally computed, and PAP
   Projection owns no local prompt slots. A budget of 256 covers every possible
@@ -339,7 +440,7 @@ The initial C32 comparison and trace-based explanation of the 7PA1P ITL tail
 remain in
 [`PAP-20260725-8GPU-CAPACITY-PILOT`](../experiments/PAP-20260725-8GPU-CAPACITY-PILOT/report.md).
 
-The output distribution defaults to mean 32, median 30, and range 16-64. The
+The output distribution defaults to mean 16, median 15, and range 8-32. The
 mean is encoded in the default matrix ID and dataset filename; all four values,
 the seed, and the actual sampled statistics are recorded in the matrix and
 dataset manifests.
