@@ -3,7 +3,7 @@
 - **Research lifecycle:** `active`
 - **Execution gate:** `open`
 - **Active loop:** `L12`
-- **Loop status:** `pre-registered`
+- **Loop status:** `executing`
 - **Baseline commit:** `5299b5087`
 - **Last checkpoint:** `2026-07-29`
 
@@ -27,8 +27,10 @@ workloads did not isolate: PAP's 2.63x larger aggregate KV-token pool.
 - **Expected paper delta:** Establish PAP's first mechanism-backed positive
   region, or show that remote execution overhead dominates even with a 2.63x
   aggregate KV pool.
-- **Minimal next evidence:** One clean scan at PD C8/C10/C12/C16 and PAP
-  C8/C12/C16/C20/C24, followed by repetitions only at selected boundaries.
+- **Minimal next evidence:** Use a 48-session, four-turn discovery scan at PD
+  C12/C16 and PAP C12/C16/C20/C24. This is 192 requests per point and gives
+  two complete waves even at C24. Confirm only the selected boundary and its
+  neighbor with the 128-session dataset before promoting the claim.
 
 ## Evidence checkpoint
 
@@ -40,11 +42,21 @@ workloads did not isolate: PAP's 2.63x larger aggregate KV-token pool.
 - **Current implementation state:** Refer to `docs/design/pap/status.md`.
 - **Current experiment state:** Refer to
   `benchmarks/pap/experiments/INDEX.md`.
-- **Dataset/config identity:** Generate 128 sessions and four turns with
-  seed 42; every round targets 10K new input (range 8.5--9.9K), O16 output,
-  the existing short delay schedule, and session prefix
-  `pap-pd-dp-s128-t4-seed42`. The validated dataset SHA-256 is
+- **Dataset/config identity:** Both datasets use seed 42, four turns, about
+  10K new input per turn (configured range 8.5--9.9K), O16 output, and the
+  existing short delay schedule. Discovery uses 48 sessions, prefix
+  `pap-pd-dp-s48-t4-seed42`, and SHA-256
+  `8ef6c8017930b8549ba077f14c1592d683fbd69d9de3795931657ba9f9dd1e73`.
+  Its final-turn input averages 37,818 tokens and peaks at 39,732. Final
+  confirmation uses 128 sessions, prefix `pap-pd-dp-s128-t4-seed42`, and
+  SHA-256
   `c9c7b6e36d8a45b2d87d8af308ecdc66f9006b429502fbd7820a0ec85555f78b`.
+- **Completed L12 evidence:** The clean 128-session PD scan completed C8,
+  C10, C12, and C16. Standard goodput rises from 1.859 to 2.233 req/s through
+  C12, then falls to 1.491 req/s at C16; C16 fails even Relaxed with 63/512
+  bad requests. This brackets the PD SLO boundary between C12 and C16. These
+  full-size points remain authoritative controls; the shorter discovery scan
+  must not be pooled with them as repetitions.
 
 ## Paper gap queue
 
@@ -67,9 +79,10 @@ workloads did not isolate: PAP's 2.63x larger aggregate KV-token pool.
 - **Loop ID:** `L12`
 - **Question:** Does the measured 2.63x aggregate KV-token pool produce a
   usable-capacity advantage near 38K final contexts?
-- **Next action:** Commit this pre-registration, run the fixed scan, and
-  inspect Decode/PA KV usage plus waiting/deferred evidence before assigning
-  causality.
+- **Next action:** Commit the shortened discovery protocol, run its matched
+  PD/PAP points, and inspect Decode/PA KV usage plus waiting/deferred evidence
+  before assigning causality. Then repeat only the selected full-size
+  boundary points.
 - **Stop or pivot condition:** If both architectures remain below capacity,
   extend only the nearest registered edge. If PAP wins, repeat selected
   boundaries and add a context-length ablation; if not, retain the negative
