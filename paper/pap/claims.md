@@ -21,7 +21,8 @@ This file records claim maturity separately from experiment evidence grades.
 | C02 | A non-intrusive phase model explains at least 75% of the 7PA1P versus 6PA2P ITL gap from Decode load aggregation. | Qwen3-8B FP16 eager, eight L20 GPUs, current reduced multi-turn workload, matched concurrency and clean code. | `falsified` | PAP-20260729-RESEARCH-L02: the remote stage explains 88.2% of the complete-forward median difference. | The complete-forward difference explains only 62.6% of the trace-off ITL p50 gap, leaving a scheduler/cadence residual above the registered 25% limit. | Reopen only with request-aligned, non-intrusive evidence that closes the residual. |
 | C03 | Fixed-concurrency 7PA1P/6PA2P latency comparisons confound topology with achieved throughput; at about 9.3 req/s, 7PA1P retains materially lower TTFT with comparable mean ITL and SLO goodput. | Same dataset and runtime, 7PA1P C20 versus 6PA2P C32, achieved throughput within 5%, two clean repetitions. | `falsified` | PAP-20260729-RESEARCH-L03: 7PA1P lowers mean TTFT by 60.5% and raises mean ITL by only 6.64% at a 2.55% throughput mismatch. | Standard and relaxed goodput are 2.78% and 2.70% lower, violating the registered no-reduction criterion even though every SLO tier passes. | Reopen only with an operating point that matches throughput within 1.5% and meets a prospectively registered goodput bound. |
 | C04 | At an accurately matched achieved-throughput point, 7PA1P preserves its TTFT advantage with a bounded ITL cost and comparable standard/relaxed goodput. | Same L03 dataset and runtime; 7PA1P C21 versus the valid 6PA2P C32 control; two clean repetitions; tracing disabled. | `observed` | PAP-20260729-RESEARCH-L04: throughput differs by 0.59%, TTFT is 61.9% lower, ITL is 9.33% higher, and standard/relaxed goodput differs by -0.20%/+0.19%. | One 7PA1P repetition fails strict at 94.84%; the control is reused rather than contemporaneous. | Repeat treatment and control contemporaneously; reject if the registered standard/relaxed bounds no longer hold. |
-| C05 | The fixed 18/5 PA MPS partition is Pareto-suboptimal at the C04 operating point; shifting two chunks from Prefill to Attention reduces ITL while retaining TTFT and goodput advantages. | Same dataset and 7PA1P C21; compare 16/7 against the repeated 18/5 L04 baseline; two clean repetitions; topology and routing unchanged. | `hypothesis` | C04 has 61.9% TTFT headroom but 9.33% worse mean ITL than 6PA2P; L02 identifies remote Attention as the dominant complete-forward difference. | The lower Prefill share can increase queueing or reduce achieved throughput, and more Attention SMs need not remove request-level tails. | Reject if mean ITL improves by less than 5%, mean TTFT is not at least 40% below the 6PA2P control, throughput differs from that control by more than 2%, or standard/relaxed goodput is more than 2% lower. |
+| C05 | The fixed 18/5 PA MPS partition is Pareto-suboptimal at the C04 operating point; shifting two chunks from Prefill to Attention reduces ITL while retaining TTFT and goodput advantages. | Same dataset and 7PA1P C21; compare 16/7 against the repeated 18/5 L04 baseline; two clean repetitions; topology and routing unchanged. | `falsified` | PAP-20260729-RESEARCH-L05 verifies 64/28 visible SMs on every PA. | Mean ITL regresses 0.45%, throughput drops 4.98%, TTFT rises 18.2%, and standard/relaxed goodput drops about 5%. | Reopen only for a different workload shape with a prospective phase-level reason to expect an Attention-SM bottleneck. |
+| C06 | With corrected same-node PD transport and the reduced canonical O16 workload, the current PAP implementation is not the tuned goodput winner over PD, although it retains selected concurrency and DP advantages. | Same dataset SHA, Qwen3-8B, eight L20 GPUs, eager mode, correct points, and at least two repetitions at each selected boundary. | `hypothesis` | The merged July 28 scan reports PAP versus PD goodput deltas of -37.4%, -21.9%, and -22.5% under strict/standard/relaxed SLOs. | The merged scan combines several matrices and commits; selected-point provenance and current NIXL configuration have not been audited into a normalized research claim. | Reject if any selected winner lacks dataset identity, correctness, clean runtime provenance, corrected NIXL settings, or repeat support. |
 
 ### C01: Fan-in amplification limits 7PA1P scaling
 
@@ -116,20 +117,42 @@ This file records claim maturity separately from experiment evidence grades.
 - **Conditions:** Same Qwen3-8B dataset and 7PA1P C21 as L04; two clean
   repetitions; topology, routing, execution mode, and Projection resources
   unchanged; 16/7 treatment versus 18/5 baseline.
-- **Status:** `hypothesis`
+- **Status:** `falsified`
 - **Paper section:** Design; Resource Allocation; Sensitivity.
-- **Supporting evidence:** C04 shows 61.9% mean TTFT headroom but 9.33% worse
-  mean ITL. L02 attributes most of the complete-forward difference to the
-  remote-Attention stage.
-- **Counterevidence:** Moving SMs away from Prefill can increase queueing and
-  reduce throughput. More visible Attention SMs may also leave request-level
-  scheduler and tail effects unchanged.
+- **Supporting evidence:** `PAP-20260729-RESEARCH-L05` verifies the 16/7
+  treatment as 64/28 visible SMs on all seven PA GPUs.
+- **Counterevidence:** Relative to 18/5, mean ITL regresses 0.45%, request
+  throughput falls 4.98%, mean TTFT rises 18.2%, and standard/relaxed
+  goodput falls 5.06%/4.98%.
 - **Falsification condition:** Reject if mean ITL improves by less than 5%
   against L04, mean TTFT is not at least 40% below the 6PA2P control,
   throughput differs from that control by more than 2%, or standard/relaxed
   goodput is more than 2% lower.
-- **Next test:** Add benchmark-level, audited MPS-chunk overrides and run two
-  clean 7PA1P C21 repetitions at 16/7 on the byte-identical L04 dataset.
+- **Next test:** Reopen only for a different workload shape with a prospective
+  phase-level reason to expect an Attention-SM bottleneck.
+
+### C06: Re-audit PAP against corrected PD and fused DP
+
+- **Statement:** With corrected same-node PD transport and the reduced
+  canonical O16 workload, current PAP is not the tuned goodput winner over
+  PD, although it retains selected concurrency and fused-DP advantages.
+- **Conditions:** Qwen3-8B on eight L20 GPUs; eager mode; byte-identical
+  canonical dataset; correct runs; at least two repetitions for every
+  selected strict/standard/relaxed boundary.
+- **Status:** `hypothesis`
+- **Paper section:** Motivation; Evaluation; Limitations.
+- **Supporting evidence:** The July 28 merged scan reports PAP-versus-PD
+  goodput deltas of -37.4%, -21.9%, and -22.5% for strict, standard, and
+  relaxed. PAP reports +49.8%/+14.2%/-12.5% versus fused DP.
+- **Counterevidence:** The report merges points from multiple matrices and
+  commits. It has not yet qualified all selected rows against clean runtime
+  provenance and the corrected NIXL configuration.
+- **Falsification condition:** Reject the evidence audit if any selected
+  winner lacks the same dataset digest, complete correctness audits, clean
+  tracked runtime provenance, corrected UCX/NIXL settings where applicable,
+  or two valid repetitions.
+- **Next test:** Trace the selected boundary rows back to their source
+  matrices and effective configurations; normalize only qualifying evidence.
 
 ## Entry requirements
 

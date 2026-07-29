@@ -11,6 +11,7 @@ Current normalized AIPerf experiment bundles:
 
 Current development pilots:
 
+- [Research L05: PA resource repartitioning](PAP-20260729-RESEARCH-L05/report.md)
 - [Research L04: accurately matched topology frontier](PAP-20260729-RESEARCH-L04/report.md)
 - [Research L03: iso-throughput topology comparison](PAP-20260729-RESEARCH-L03/report.md)
 - [Research L02: batch aggregation and observer-effect diagnosis](PAP-20260729-RESEARCH-L02/report.md)

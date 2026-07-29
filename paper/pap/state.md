@@ -2,40 +2,39 @@
 
 - **Research lifecycle:** `active`
 - **Execution gate:** `open`
-- **Active loop:** `L05`
-- **Loop status:** `experiment`
-- **Baseline commit:** `734223485`
+- **Active loop:** `L06`
+- **Loop status:** `evidence-audit`
+- **Baseline commit:** `57926aac2`
 - **Last checkpoint:** `2026-07-29`
 
-L01/L02 eliminated fan-in spread, copies, and dense Projection compute as
-dominant explanations. L03 exposed residual throughput mismatch. L04 found a
-matched standard/relaxed frontier point but retained a 9.33% ITL penalty and
-an unstable strict tail. L05 tests the fixed PA resource partition.
+L04 found a matched standard/relaxed frontier point with a 9.33% ITL penalty.
+L05 falsified static PA repartitioning as the remedy: 16/7 does not improve
+ITL and reduces throughput by 4.98%. L06 re-audits the current three-way
+capacity evidence before selecting another implementation direction.
 
 ## Current loop
 
-- **Paper-level uncertainty:** Is the remaining 7PA1P ITL penalty caused by
-  the hard-coded 72/20-SM Prefill/Attention allocation rather than topology?
-- **Hypothesis:** A 16/7-chunk (64/28-SM) split improves 7PA1P C21 mean ITL by
-  at least 5% while preserving at least 40% lower mean TTFT and standard/
-  relaxed goodput within 2% of the 6PA2P C32 control.
-- **Falsification condition:** Reject if ITL improves by less than 5%, mean
-  TTFT loses the 40% advantage, throughput differs from control by more than
-  2%, or standard/relaxed goodput is more than 2% lower.
-- **Expected paper delta:** Establish resource allocation as a controllable
-  PAP mechanism or eliminate it before building a complex scheduler.
-- **Minimal next evidence:** Two clean 7PA1P C21 repetitions at 16/7 on the
-  byte-identical L04 dataset, with static-MPS audits proving 64/28 SMs.
+- **Paper-level uncertainty:** Which PAP advantages remain after correcting
+  the PD NIXL path and reducing the canonical workload?
+- **Hypothesis:** Current tuned PAP loses goodput to PD under all three SLO
+  tiers, but retains higher tested standard concurrency and strict/standard
+  goodput over fused DP.
+- **Falsification condition:** Reject the audit if a selected point lacks the
+  same dataset digest, correctness, clean tracked runtime provenance,
+  corrected NIXL settings where applicable, or two valid repetitions.
+- **Expected paper delta:** Remove superseded universal PAP-win language and
+  identify the precise workload or mechanism gap the next loop must address.
+- **Minimal next evidence:** Provenance audit of the selected July 28 PAP, PD,
+  and DP boundary summaries and their effective configurations.
 
 ## Evidence checkpoint
 
-- **Completed evidence:** `PAP-20260729-RESEARCH-L04` records two correct
-  7PA1P C21 repetitions. It matches 6PA2P C32 throughput within 0.59%, lowers
-  mean TTFT by 61.9%, and raises mean ITL by 9.33% on dataset SHA-256
+- **Completed evidence:** `PAP-20260729-RESEARCH-L05` records two correct
+  16/7 treatment repetitions and verifies 64/28 visible SMs on all PAs on
+  dataset SHA-256
   `b694ba148a0789e4056a6c3f21fe1f3cbaf3d2c3a2eff2d4d663553f1a2546ed`.
-- **Known contradictions:** One C21 repetition misses strict at 94.84%.
-  Standard and relaxed pass, but claim maturity remains `observed` because
-  the 6PA2P control was reused from L03.
+- **Known contradictions:** The treatment leaves ITL unchanged (+0.45%) and
+  loses roughly 5% throughput and standard/relaxed goodput versus 18/5.
 - **Current implementation state:** Refer to `docs/design/pap/status.md`.
 - **Current experiment state:** Refer to
   `benchmarks/pap/experiments/INDEX.md`.
@@ -45,7 +44,7 @@ an unstable strict tail. L05 tests the fixed PA resource partition.
 
 ## Paper gap queue
 
-- Core mechanism: pending L05 resource-allocation decision
+- Core mechanism: no validated adaptive mechanism; pending L06 reorientation
 - Problem and motivation: L01/L02 narrow it to batching and synchronization
   domain size, not copy or dense Projection cost
 - Novelty and closest related work: initial pass rejects basic barrier-aware
@@ -60,14 +59,14 @@ an unstable strict tail. L05 tests the fixed PA resource partition.
 
 ## Next loop
 
-- **Loop ID:** `L05`
-- **Question:** Can PA resource rebalancing turn the C04 trade-off into a
-  better frontier point?
-- **Next action:** Expose audited capacity-runner MPS chunk overrides, commit
-  them, then run 7PA1P C21 at 16/7.
-- **Stop or pivot condition:** If C05 fails, keep 18/5 as the workload
-  baseline and move to controlled workload-region sensitivity rather than
-  adding an adaptive partitioner.
+- **Loop ID:** `L06`
+- **Question:** Does the existing current-workload three-way scan qualify as
+  evidence that PAP loses to corrected PD while retaining narrower benefits?
+- **Next action:** Audit source matrices, commits, dataset hashes, runtime
+  settings, repetitions, and correctness for every selected boundary.
+- **Stop or pivot condition:** If the audit passes, use the negative result to
+  preregister controlled workload-region sensitivity; if it fails, rerun only
+  the missing boundary points.
 
 ## Pause and recovery
 

@@ -64,8 +64,12 @@ mean ITL by 9.33% relative to 6PA2P C32, while standard and relaxed goodput
 differ by only -0.20% and +0.19% (`PAP-20260729-RESEARCH-L04`). This is a
 useful latency trade-off, not a strict-SLO result: one 7PA1P repetition has a
 94.84% strict-good fraction. The large TTFT headroom and smaller ITL deficit
-motivate testing PA Prefill/Attention resource allocation before introducing
-a more complex scheduler.
+motivated testing PA Prefill/Attention resource allocation before introducing
+a more complex scheduler. That treatment is negative: moving each PA from
+72/20 to 64/28 visible Prefill/Attention SMs changes mean ITL by +0.45% while
+reducing throughput by 4.98% and increasing TTFT by 18.2%
+(`PAP-20260729-RESEARCH-L05`). Static resource repartitioning is therefore not
+the missing mechanism for this workload.
 
 ## 3. Design
 
