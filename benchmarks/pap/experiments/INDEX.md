@@ -11,6 +11,7 @@ Current normalized AIPerf experiment bundles:
 
 Current development pilots:
 
+- [Research L09: long-input sensitivity](PAP-20260729-RESEARCH-L09/report.md)
 - [Research L08: output-length sensitivity](PAP-20260729-RESEARCH-L08/report.md)
 - [Research L07: clean three-way boundary confirmation](PAP-20260729-RESEARCH-L07/report.md)
 - [Research L06: three-way evidence provenance audit](PAP-20260729-RESEARCH-L06/report.md)

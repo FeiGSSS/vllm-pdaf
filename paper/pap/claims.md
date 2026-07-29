@@ -25,7 +25,8 @@ This file records claim maturity separately from experiment evidence grades.
 | C06 | With corrected same-node PD transport and the reduced canonical O16 workload, the current PAP implementation is not the tuned goodput winner over PD, although it retains selected concurrency and DP advantages. | Same dataset SHA, Qwen3-8B, eight L20 GPUs, eager mode, correct points, and at least two repetitions at each selected boundary. | `superseded` | PAP-20260729-RESEARCH-L06 verifies common data, correctness, repetitions, and corrected NIXL settings. | Every selected row records a 52,776-byte dirty patch that includes a PAP runtime file, so the performance statement is not qualified. | Replaced by clean confirmation C07. |
 | C07 | On clean current code and the canonical O16 workload, tuned PD materially exceeds PAP goodput, while PAP exceeds fused DP only under strict and standard SLOs. | Exact eight preselected boundaries, same dataset SHA, two repetitions, clean tracked worktree, corrected NIXL, eager Qwen3-8B on eight L20 GPUs. | `falsified` | PAP-20260729-RESEARCH-L07: PD leads PAP by 32.2%/36.9%/24.4%; PAP leads fused DP by 57.8% strict. | PAP loses to fused DP by 12.1% standard and 17.2% relaxed; 7PA1P C34 is not repeat-eligible under standard. | Reopen only after a prospectively registered mechanism or workload dimension changes the standard result in repeated clean runs. |
 | C08 | Decode output length materially determines PAP's throughput position relative to PD. | Preserve current O16 input text, session order, and delays; change only output distribution to O32; fixed PAP 7PA1P C34 and PD 6P2D C48; clean eager runs. | `falsified` | PAP-20260729-RESEARCH-L08: the raw throughput ratio improves from 0.758 to 0.820. | The 6.15-point improvement misses the registered 10-point threshold; PAP remains 16.0% behind in standard goodput. | Reopen only with repeated output-length sensitivity that prospectively defines a different materiality threshold. |
-| C09 | Doubling long-context input and append lengths materially improves PAP's throughput position relative to PD. | Preserve O16 outputs, session order, and delays; double document and append distributions; fixed PAP 7PA1P C34 and PD 6P2D C48; clean eager runs. | `hypothesis` | PAP exposes seven PA Attention engines and longer contexts increase Decode Attention bytes; C08 shows a directional Decode-residence effect. | PAP has slightly less aggregate Prefill allocation than 6P2D and no isolated long-input evidence yet. | Reject if non-input fields differ, correctness or context-budget checks fail, or the PAP/PD raw throughput ratio improves by less than 10 percentage points to 0.858. |
+| C09 | Doubling long-context input and append lengths materially improves PAP's throughput position relative to PD. | Preserve O16 outputs, session order, and delays; double document and append distributions; fixed PAP 7PA1P C34 and PD 6P2D C48; clean eager runs. | `observed` | PAP-20260729-RESEARCH-L09: ratio improves from 0.758 to 0.870 (+11.17 points); PAP mean TTFT/ITL are 33.3%/46.0% lower. | Both fixed points fail every SLO and the treatment has one repetition. | Find and repeat each architecture's long-input SLO boundary; reject a goodput extension if PAP does not retain an advantage. |
+| C10 | PAP's long-input fixed-point latency advantage translates into at least 10% higher standard and relaxed SLO goodput than tuned PD. | Exact L09 dataset; one clean bracket repetition at PAP C20/C27/C32 and PD C20/C28/C36; Qwen3-8B eager on eight L20 GPUs. | `hypothesis` | C09 shows PAP degrades more slowly and has substantially better latency at overloaded points. | C09 PAP raw throughput remains 13.0% below PD and neither point is SLO-eligible. | Reject if PAP misses 10% in either tier, correctness fails, or the bracket lacks both an eligible point and a higher-pressure boundary per architecture. |
 
 ### C01: Fan-in amplification limits 7PA1P scaling
 
@@ -209,20 +210,41 @@ This file records claim maturity separately from experiment evidence grades.
   samples, session order, and think/tool delays; double document distribution
   to mean 8192/median 8000/range 4096--11264 and append distribution to mean
   2200/median 800/range 8--4250; compare fixed PAP 7PA1P C34 and PD 6P2D C48.
-- **Status:** `hypothesis`
+- **Status:** `observed`
 - **Paper section:** Motivation; Evaluation Methodology; Sensitivity.
-- **Supporting evidence:** PAP exposes seven PA-side Attention engines, while
-  longer contexts increase the memory traffic of every Decode Attention step.
-  L08 also shows a directional relative improvement as Decode work increases.
-- **Counterevidence:** PAP's 18/5 PA partition provides about 5.5
-  full-GPU-equivalent Prefill shares, slightly below the six dedicated PD
-  Prefill GPUs. No isolated long-input comparison exists.
+- **Supporting evidence:** `PAP-20260729-RESEARCH-L09` preserves O16 outputs
+  and delays. The PAP/PD raw throughput ratio rises from 0.758 to 0.870,
+  exceeding the registered threshold by 1.17 percentage points. PAP mean TTFT
+  and ITL are 33.3% and 46.0% lower at the fixed points.
+- **Counterevidence:** Both treatment points fail all SLO tiers, PAP raw
+  throughput remains 13.0% below PD, and only one repetition was collected.
 - **Falsification condition:** Reject if output samples, session order, or
   delays differ; either run fails correctness; maximum estimated request
   tokens exceed 32,768; or the mean raw throughput ratio is below 0.858.
-- **Next test:** One clean fixed-point diagnostic per architecture. If
-  supported, repeat and map the input-length boundary; if falsified, isolate
-  think/tool timing.
+- **Next test:** Find each architecture's long-input SLO boundary and repeat
+  the selected points before extending this observation to goodput.
+
+### C10: Long-input SLO capacity
+
+- **Statement:** PAP's long-input fixed-point latency advantage translates
+  into at least 10% higher standard and relaxed SLO goodput than tuned PD.
+- **Conditions:** Exact L09 dataset and runtime; Qwen3-8B eager on eight L20
+  GPUs; one clean bracket repetition at PAP 7PA1P C20/C27/C32 and PD 6P2D
+  C20/C28/C36; isolated service restart per point.
+- **Status:** `hypothesis`
+- **Paper section:** Motivation; End-to-End Evaluation; Sensitivity.
+- **Supporting evidence:** C09 shows PAP degrades more slowly with doubled
+  context and has substantially better TTFT and ITL at overloaded fixed
+  points.
+- **Counterevidence:** PAP raw request throughput remains 13.0% below PD at
+  C34/C48, and neither point is SLO-eligible.
+- **Falsification condition:** Reject if the best tested PAP standard or
+  relaxed goodput is less than 10% above best tested PD, any run fails
+  correctness, or the points fail to bracket at least one eligible and one
+  higher-pressure boundary per architecture.
+- **Next test:** Run the six-point bracket. If valid and supportive, repeat
+  only the selected standard/relaxed boundaries; otherwise record the
+  negative result before testing arrival timing.
 
 ## Entry requirements
 

@@ -95,6 +95,15 @@ to 0.820, a 6.15-percentage-point improvement below the preregistered
 simultaneously increases Prefill work and the memory traffic of each Decode
 Attention step.
 
+The input-only ablation provides the first positive workload-region signal
+(`PAP-20260729-RESEARCH-L09`). Doubling document and append distributions
+while preserving every O16 output and delay raises the fixed-point PAP/PD raw
+throughput ratio from 0.758 to 0.870. At the overloaded C34/C48 points, PAP
+has 33.3% lower mean TTFT and 46.0% lower mean ITL. Both points fail every SLO,
+however, so this remains an observation rather than an end-to-end goodput
+claim. A clean concurrency bracket is required to determine whether the
+latency headroom survives fair retuning.
+
 ## 3. Design
 
 ### 3.1 Architecture

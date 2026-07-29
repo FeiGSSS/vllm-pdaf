@@ -2,44 +2,43 @@
 
 - **Research lifecycle:** `active`
 - **Execution gate:** `open`
-- **Active loop:** `L09`
+- **Active loop:** `L10`
 - **Loop status:** `pre-registered`
-- **Baseline commit:** `21a4f705e`
+- **Baseline commit:** `5c19606e9`
 - **Last checkpoint:** `2026-07-29`
 
-L08 finds that doubling only output length improves the fixed-point PAP/PD
-throughput ratio by 6.15 percentage points, below its registered 10-point
-threshold. Output length is directionally relevant but does not explain the
-historical reversal. L09 isolates input and append length, which increases
-both Prefill work and Decode Attention bytes.
+L09 observes that doubling input and append lengths improves the fixed-point
+PAP/PD raw throughput ratio by 11.17 percentage points, above its registered
+threshold. PAP also has much lower mean TTFT and ITL at the fixed points, but
+both points fail every SLO. L10 now brackets each architecture's long-input
+capacity instead of treating overloaded raw throughput as goodput.
 
 ## Current loop
 
-- **Paper-level uncertainty:** Does long-context Prefill and Decode Attention
-  load, rather than output length, define PAP's favorable workload region?
-- **Hypothesis:** Doubling only initial and append input distributions raises
-  the fixed-point PAP 7PA1P C34 to PD 6P2D C48 mean raw request-throughput
-  ratio by at least 10 percentage points from the L07 O16 baseline of 0.758.
-- **Falsification condition:** Reject if output samples, session order, or
-  delays differ; either run fails correctness; the context budget exceeds
-  32,768; or the long-input throughput ratio is below 0.858.
-- **Expected paper delta:** Establish whether PAP's seven-way Attention
-  parallelism creates a defensible long-context region. If falsified, the old
-  PAP-favorable result likely depended on arrival timing, stale transport, or
-  combined effects rather than context length alone.
-- **Minimal next evidence:** Generate a long-input/O16 dataset with doubled
-  document and append distributions, verify all non-input fields, then run one
-  clean diagnostic repetition each at PAP 7PA1P C34 and PD 6P2D C48.
+- **Paper-level uncertainty:** Does PAP's fixed-point long-context latency
+  advantage translate into higher SLO goodput after both architectures are
+  retuned for concurrency?
+- **Hypothesis:** On the L09 dataset, the best tested 7PA1P standard and
+  relaxed goodput exceeds the best tested 6P2D goodput by at least 10%.
+- **Falsification condition:** Reject if PAP misses the 10% margin in either
+  standard or relaxed, any selected run fails correctness, or the tested
+  points do not include at least one eligible point and one higher-pressure
+  boundary for each architecture.
+- **Expected paper delta:** Convert the long-context observation into an SLO
+  operating-region claim, or show that PAP's latency benefit still cannot
+  overcome PD raw capacity.
+- **Minimal next evidence:** One clean repetition at PAP C20/C27/C32 and PD
+  C20/C28/C36 on the exact L09 dataset. Repeat only selected boundaries in the
+  following loop if the bracket is valid.
 
 ## Evidence checkpoint
 
-- **Completed evidence:** `PAP-20260729-RESEARCH-L08` proves exact non-output
-  dataset identity and completes both fixed points correctly. O32 improves the
-  PAP/PD raw throughput ratio from 0.758 to 0.820, while missing the registered
-  0.858 threshold.
-- **Known contradictions:** Longer output improves PAP's relative position,
-  but not enough to reproduce the older PAP advantage. Prompt length and
-  arrival timing remain confounded in the historical comparison.
+- **Completed evidence:** `PAP-20260729-RESEARCH-L09` preserves O16 outputs
+  and delays and completes both fixed points correctly. The PAP/PD raw
+  throughput ratio improves from 0.758 to 0.870; PAP mean TTFT and ITL are
+  33.3% and 46.0% lower at the overloaded points.
+- **Known contradictions:** Both fixed points fail strict, standard, and
+  relaxed SLO eligibility. No tuned long-input goodput advantage exists yet.
 - **Current implementation state:** Refer to `docs/design/pap/status.md`.
 - **Current experiment state:** Refer to
   `benchmarks/pap/experiments/INDEX.md`.
@@ -65,14 +64,14 @@ both Prefill work and Decode Attention bytes.
 
 ## Next loop
 
-- **Loop ID:** `L09`
-- **Question:** Does doubling context input alone materially improve PAP's
-  position relative to PD?
-- **Next action:** Commit L08 and this preregistration, generate and validate
-  the doubled-input O16 dataset, then run the two fixed diagnostic points.
-- **Stop or pivot condition:** If the ratio improvement is below 10 percentage
-  points, falsify C09 and isolate the delay schedule. If supported, repeat and
-  map the input-length boundary before changing PAP.
+- **Loop ID:** `L10`
+- **Question:** What are the PAP and PD standard/relaxed capacity boundaries
+  on the long-input workload?
+- **Next action:** Commit L09 and this bracket, then run the six preselected
+  points with isolated service restarts.
+- **Stop or pivot condition:** If the bracket lacks a passing and failing
+  side, add at most one adjacent point per architecture. Otherwise decide C10
+  and repeat only the selected boundary points.
 
 ## Pause and recovery
 
