@@ -11,6 +11,7 @@ Current normalized AIPerf experiment bundles:
 
 Current development pilots:
 
+- [Research L12: near-limit KV capacity falsification](PAP-20260729-RESEARCH-L12/report.md)
 - [Research L11: invalidated boundary refinement and token-ownership fix](PAP-20260729-RESEARCH-L11/report.md)
 - [Research L10: long-input capacity bracket](PAP-20260729-RESEARCH-L10/report.md)
 - [Research L09: long-input sensitivity](PAP-20260729-RESEARCH-L09/report.md)

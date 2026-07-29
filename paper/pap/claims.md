@@ -28,7 +28,8 @@ This file records claim maturity separately from experiment evidence grades.
 | C09 | Doubling long-context input and append lengths materially improves PAP's throughput position relative to PD. | Preserve O16 outputs, session order, and delays; double document and append distributions; fixed PAP 7PA1P C34 and PD 6P2D C48; clean eager runs. | `observed` | PAP-20260729-RESEARCH-L09: ratio improves from 0.758 to 0.870 (+11.17 points); PAP mean TTFT/ITL are 33.3%/46.0% lower. | Both fixed points fail every SLO and the treatment has one repetition. | Find and repeat each architecture's long-input SLO boundary; reject a goodput extension if PAP does not retain an advantage. |
 | C10 | PAP's long-input fixed-point latency advantage translates into at least 10% higher standard and relaxed SLO goodput than tuned PD. | Exact L09 dataset; one clean bracket repetition at PAP C20/C27/C32 and PD C20/C28/C36; Qwen3-8B eager on eight L20 GPUs. | `falsified` | PAP-20260729-RESEARCH-L10 provides a valid passing/failing bracket for both architectures. | PAP trails PD by 23.1% standard and 21.8% relaxed at the best eligible tested points. | Reopen only if finer boundary search or a new mechanism prospectively reverses the repeated result. |
 | C11 | The coarse L10 PAP goodput deficit remains material after refining the long-input concurrency boundary. | Exact L09 dataset; combine L10 C20 with PAP C21/C23/C25 and PD C22/C24/C26; clean eager runs. | `superseded` | PAP-20260729-RESEARCH-L11 records valid partial points and the correctness diagnosis. | PAP C25 produced 161 request errors, so the registered comparison is invalid; it cannot tune the boundary. | Replaced by C12's mechanism-directed near-capacity workload. |
-| C12 | PAP's larger aggregate KV pool yields at least 10% higher Standard and Relaxed goodput than PD for four-round, near-model-limit conversations. | A matched 48-session discovery scan selects boundaries; the claim requires confirmation on the same 128-session seed-42 dataset. Both use four approximately 10K-token turns, O16 output, 6PA2P versus 6P2D, eager FP16 Qwen3-8B on eight L20 GPUs. | `hypothesis` | Startup logs expose 932,544 PAP PA KV tokens versus 355,008 PD Decode KV tokens, a 2.63x pool ratio. The clean 128-session PD scan brackets its SLO boundary between C12 and C16. | Existing L07/L10 workloads do not reach this registered final-context regime. | Reject if the confirmed goodput lead is below 10% in either tier, correctness fails, PAP fails at or below C16, or the matched scans do not bracket the PAP boundary. |
+| C12 | PAP's larger aggregate KV pool yields at least 10% higher Standard and Relaxed goodput than PD for four-round, near-model-limit conversations. | A matched 48-session discovery scan selects boundaries; four approximately 10K-token turns, O16 output, 6PA2P versus 6P2D, eager FP16 Qwen3-8B on eight L20 GPUs. | `falsified` | PAP-20260729-RESEARCH-L12 cleanly brackets both Standard boundaries at C12--C16. | At C12, PAP Standard goodput is 34.4% below PD; PAP C16 fails both Standard and Relaxed despite lower mean ITL than PD. | Reopen only after a mechanism removes the near-limit Prefill/TTFT bottleneck and prospectively restores a PAP boundary above C16. |
+| C13 | PAP's fixed 18/5 PA MPS split is the primary cause of its near-limit TTFT deficit. | Exact L12 48-session dataset and PAP 6PA2P C12; compare 20/3 against the clean 18/5 control with all other settings fixed. | `hypothesis` | L12 PAP C16 has 13.1% lower mean ITL but 41.4% higher mean TTFT than PD, localizing the SLO loss to Prefill/TTFT. | A 20/3 split leaves only 12 visible Attention SMs and may trade TTFT for an ITL regression. | Reject if mean TTFT improves by less than 10%, raw throughput by less than 8%, mean ITL exceeds 55 ms, Standard good fraction falls below 95%, or correctness fails. |
 
 ### C01: Fan-in amplification limits 7PA1P scaling
 
@@ -269,23 +270,44 @@ This file records claim maturity separately from experiment evidence grades.
 - **Statement:** PAP's larger aggregate KV pool yields at least 10% higher
   Standard and Relaxed goodput than PD for four-round, near-model-limit
   conversations.
-- **Conditions:** Byte-identical 128-session seed-42 dataset; four turns with
-  configured 10K new input and sampled range 8.5--9.9K; O16 output; short
-  delays; 6PA2P versus 6P2D; eager FP16 Qwen3-8B on eight L20 GPUs.
-- **Status:** `hypothesis`
+- **Conditions:** Matched 48-session seed-42 discovery dataset; four turns
+  with configured 10K new input and sampled range 8.5--9.9K; O16 output;
+  short delays; 6PA2P versus 6P2D; eager FP16 Qwen3-8B on eight L20 GPUs.
+- **Status:** `falsified`
 - **Paper section:** Motivation; End-to-End Evaluation; Workload Sensitivity.
-- **Supporting evidence:** Runtime startup logs report 155,424 KV tokens per
-  PAP PA and 177,504 per PD Decode GPU. The aggregate pools are therefore
-  932,544 and 355,008 tokens, respectively, or 2.63x.
-- **Counterevidence:** L07 and L10 favor PD, and no existing valid scan uses
-  the registered final-context distribution (mean 37.6K, max 39,733).
+- **Supporting evidence:** Runtime startup logs report a 2.63x aggregate
+  KV-token pool. L12 validly brackets both Standard boundaries at C12--C16.
+- **Counterevidence:** At C12, PAP Standard goodput is 1.502 req/s versus
+  2.290 req/s for PD, a 34.4% deficit. PAP C16 fails both Standard and
+  Relaxed even though its mean ITL is lower than PD, so the larger pool does
+  not become usable SLO capacity.
 - **Falsification condition:** Reject if best tested PAP Standard or Relaxed
   goodput is less than 10% above PD, any selected run fails correctness, PD
   lacks capacity pressure by C16, PAP fails at or below C16, or either scan
   lacks a passing and a higher-pressure point.
-- **Next test:** Run PD C8/C10/C12/C16 and PAP C8/C12/C16/C20/C24. Repeat
-  only selected boundaries, then vary context length while holding all other
-  workload dimensions fixed if the mechanism is supported.
+- **Next test:** Reopen only after a mechanism removes the measured
+  Prefill/TTFT bottleneck and restores a PAP boundary above C16.
+
+### C13: Near-limit PA resource split
+
+- **Statement:** The fixed 18-Prefill/5-Attention MPS chunk split is the
+  primary cause of PAP's near-limit TTFT deficit.
+- **Conditions:** Exact L12 48-session dataset; PAP 6PA2P C12; compare a
+  20/3 treatment against the clean 18/5 control; no routing, topology, model,
+  execution-mode, or workload change.
+- **Status:** `hypothesis`
+- **Paper section:** Design; Resource Allocation; End-to-End Evaluation.
+- **Supporting evidence:** At L12 C16, PAP mean ITL is 13.1% below PD while
+  mean TTFT is 41.4% above it. Each PA exposes only 72 of 92 SMs to Prefill
+  under the current static split.
+- **Counterevidence:** Reducing Attention from 20 to 12 visible SMs can
+  increase long-context ITL enough to erase the Prefill gain.
+- **Falsification condition:** Reject if 20/3 improves mean TTFT by less than
+  10% or raw throughput by less than 8%, raises mean ITL above 55 ms, drops
+  Standard good fraction below 95%, or fails correctness.
+- **Next test:** Run one clean C12 treatment. If supported, test C16; if
+  falsified, profile the remaining Prefill/control-plane gap before proposing
+  dynamic resource allocation.
 
 ## Entry requirements
 

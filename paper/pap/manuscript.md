@@ -130,6 +130,15 @@ across six PA owners, versus 355,008 across two Decode owners in 6P2D, a
 goodput with four approximately 10K-token turns, reaching 37.6K mean final
 context without exceeding the model's 40,960-token limit.
 
+That test rejects KV pooling as a sufficient mechanism
+(`PAP-20260729-RESEARCH-L12`). On the valid 48-session discovery workload,
+both 6P2D and 6PA2P pass Standard at C12 and fail at C16. At C12, PAP
+Standard goodput is 1.502 req/s versus 2.290 req/s for PD, a 34.4% deficit.
+At C16, PAP retains 13.1% lower mean ITL but has 41.4% higher mean TTFT.
+Thus PAP does not exhaust its aggregate KV pool; it first loses the SLO to
+near-limit Prefill work while every PA statically reserves 20 of 92 visible
+SMs for Attention. The next causal test changes only this resource split.
+
 ## 3. Design
 
 ### 3.1 Architecture
