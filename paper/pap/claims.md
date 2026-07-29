@@ -1,7 +1,6 @@
 # PAP Claim Ledger
 
-No paper claim is registered yet. This file records claim maturity separately
-from experiment evidence grades.
+This file records claim maturity separately from experiment evidence grades.
 
 ## Claim maturity
 
@@ -18,6 +17,25 @@ from experiment evidence grades.
 
 | ID | Claim | Conditions | Status | Evidence | Counterevidence | Next falsification |
 | --- | --- | --- | --- | --- | --- | --- |
+| C01 | Multi-PA completion skew amplified by the fan-in join dominates the current 7PA1P latency loss relative to 6PA2P. | Same eight-GPU model, request trace, concurrency, runtime mode, and valid participant-count accounting. | `hypothesis` | Existing reports and traces require admission audit. | Matched-shape summaries indicate that 7PA1P forward execution can be faster; Projection and workload effects remain unresolved. | Attribute at least half of the matched ITL gap to measured skew and reduce the gap with an equal-load intervention. |
+
+### C01: Fan-in amplification limits 7PA1P scaling
+
+- **Statement:** Multi-PA completion skew, amplified at the Projection fan-in
+  join, is the dominant cause of the current 7PA1P latency loss relative to
+  6PA2P.
+- **Conditions:** Same eight-GPU model, request trace, concurrency, runtime
+  mode, and valid participant-count accounting.
+- **Status:** `hypothesis`
+- **Paper section:** Background and Motivation; Scheduling and Placement.
+- **Supporting evidence:** Pending admission audit.
+- **Counterevidence:** Existing summaries report faster matched-shape 7PA1P
+  forward execution, while Projection and workload effects remain unresolved.
+- **Falsification condition:** Measured fan-in skew explains less than half of
+  the matched E2E ITL gap, or an equal-load intervention does not materially
+  narrow the gap.
+- **Next test:** Reconstruct per-layer PA completion and join distributions
+  from authoritative matched traces before collecting new evidence.
 
 ## Entry requirements
 
