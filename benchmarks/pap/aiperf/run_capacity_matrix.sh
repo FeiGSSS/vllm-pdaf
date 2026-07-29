@@ -37,6 +37,9 @@ AIPERF_SWEEP_COOLDOWN_SECONDS="${PAP_CAPACITY_SWEEP_COOLDOWN_SECONDS:-30}"
 AIPERF_PROFILE_RUN_COOLDOWN_SECONDS="${PAP_CAPACITY_PROFILE_RUN_COOLDOWN_SECONDS:-30}"
 DEFAULT_AIPERF_GOODPUT_SLO="time_to_first_token:10000 inter_token_latency:75"
 AIPERF_GOODPUT_SLO="${PAP_CAPACITY_GOODPUT_SLO:-${DEFAULT_AIPERF_GOODPUT_SLO}}"
+AIPERF_TIMING_MODE="${PAP_CAPACITY_TIMING_MODE:-concurrency}"
+AIPERF_REQUEST_RATE="${PAP_CAPACITY_REQUEST_RATE:-}"
+AIPERF_ARRIVAL_PATTERN="${PAP_CAPACITY_ARRIVAL_PATTERN:-poisson}"
 EXECUTION_MODE="${PAP_CAPACITY_EXECUTION_MODE:-eager}"
 PAP_ROUTING_POLICY="${PAP_CAPACITY_PAP_ROUTING_POLICY:-conversation_affinity}"
 PAP_MIGRATION_MIN_PEAK_GAIN_RATIO="${PAP_CAPACITY_PAP_MIGRATION_MIN_PEAK_GAIN_RATIO:-0.30}"
@@ -140,6 +143,22 @@ case "${EXECUTION_MODE}" in
   eager | piecewise) ;;
   *) die "PAP_CAPACITY_EXECUTION_MODE must be eager or piecewise" ;;
 esac
+case "${AIPERF_TIMING_MODE}" in
+  concurrency)
+    [[ -z "${AIPERF_REQUEST_RATE}" ]] \
+      || die "PAP_CAPACITY_REQUEST_RATE must be empty in concurrency mode"
+    ;;
+  request_rate)
+    [[ "${AIPERF_REQUEST_RATE}" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+      && [[ "${AIPERF_REQUEST_RATE}" != "0" ]] \
+      || die "PAP_CAPACITY_REQUEST_RATE must be positive in request_rate mode"
+    ;;
+  *) die "unsupported PAP_CAPACITY_TIMING_MODE: ${AIPERF_TIMING_MODE}" ;;
+esac
+case "${AIPERF_ARRIVAL_PATTERN}" in
+  constant | poisson | gamma) ;;
+  *) die "unsupported PAP_CAPACITY_ARRIVAL_PATTERN: ${AIPERF_ARRIVAL_PATTERN}" ;;
+esac
 case "${PAP_ROUTING_POLICY}" in
   conversation_affinity | attention_load) ;;
   *) die "unsupported PAP capacity routing policy: ${PAP_ROUTING_POLICY}" ;;
@@ -163,6 +182,8 @@ for architecture in "${ARCHITECTURES[@]}"; do
   elif [[ "${architecture}" =~ ^dp_([1-9][0-9]*)$ ]]; then
     (( BASH_REMATCH[1] == GPU_COUNT )) \
       || die "${architecture} does not use ${GPU_COUNT} GPUs"
+    [[ "${AIPERF_TIMING_MODE}" == "concurrency" ]] \
+      || die "DP capacity runner does not support request_rate timing"
   else
     die "unsupported architecture: ${architecture}"
   fi
@@ -303,7 +324,9 @@ PY
   printf 'SCHEMA_VERSION=2\nMATRIX_ID=%q\n' "${MATRIX_ID}"
   printf 'MODEL_PATH=%q\nCORPUS_PATH=%q\n' \
     "${MODEL_PATH}" "${CORPUS_PATH}"
-  printf 'AIPERF_TIMING_MODE=concurrency\nAIPERF_REQUEST_RATE=\n'
+  printf 'AIPERF_TIMING_MODE=%q\nAIPERF_REQUEST_RATE=%q\n' \
+    "${AIPERF_TIMING_MODE}" "${AIPERF_REQUEST_RATE}"
+  printf 'AIPERF_ARRIVAL_PATTERN=%q\n' "${AIPERF_ARRIVAL_PATTERN}"
   printf 'ARCHITECTURES=%q\nTOTAL_SESSIONS=%q\n' \
     "${ARCHITECTURES_CSV}" "${TOTAL_SESSIONS}"
   printf 'GPU_COUNT=%q\nDEFAULT_POINTS=%q\n' \
@@ -678,8 +701,9 @@ run_pap_architecture() {
     PAP_AIPERF_INPUT_FILE="${DATASET_FILE}" \
     PAP_AIPERF_OUTPUT_DIR="${run_root}/aiperf" \
     PAP_AIPERF_CONCURRENCY="${concurrency_points}" \
-    PAP_AIPERF_TIMING_MODE=concurrency \
-    PAP_AIPERF_REQUEST_RATE= \
+    PAP_AIPERF_TIMING_MODE="${AIPERF_TIMING_MODE}" \
+    PAP_AIPERF_REQUEST_RATE="${AIPERF_REQUEST_RATE}" \
+    AIPERF_ARRIVAL_PATTERN="${AIPERF_ARRIVAL_PATTERN}" \
     AIPERF_RANDOM_SEED="${RANDOM_SEED}" \
     AIPERF_NUM_PROFILE_RUNS="${REPETITIONS}" \
     AIPERF_PROFILE_RUN_COOLDOWN_SECONDS=\
@@ -737,8 +761,9 @@ run_pd_architecture() {
     PD_AIPERF_INPUT_FILE="${DATASET_FILE}" \
     PD_AIPERF_OUTPUT_DIR="${run_root}/aiperf" \
     PD_AIPERF_CONCURRENCY="${concurrency_points}" \
-    PD_AIPERF_TIMING_MODE=concurrency \
-    PD_AIPERF_REQUEST_RATE= \
+    PD_AIPERF_TIMING_MODE="${AIPERF_TIMING_MODE}" \
+    PD_AIPERF_REQUEST_RATE="${AIPERF_REQUEST_RATE}" \
+    AIPERF_ARRIVAL_PATTERN="${AIPERF_ARRIVAL_PATTERN}" \
     AIPERF_RANDOM_SEED="${RANDOM_SEED}" \
     AIPERF_NUM_PROFILE_RUNS="${REPETITIONS}" \
     AIPERF_PROFILE_RUN_COOLDOWN_SECONDS=\
