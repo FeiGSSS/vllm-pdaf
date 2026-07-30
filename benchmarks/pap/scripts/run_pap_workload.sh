@@ -315,6 +315,7 @@ PAP_LEASE_RELEASE_MAX_ATTEMPTS="${PAP_LEASE_RELEASE_MAX_ATTEMPTS:-5}"
 PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS="${PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS:-0.05}"
 PAP_LEASE_RELEASE_RETRY_MAX_SECONDS="${PAP_LEASE_RELEASE_RETRY_MAX_SECONDS:-0.5}"
 PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS:-300}"
+PAP_NIXL_CONNECTOR_LEASE_SECONDS="${PAP_NIXL_CONNECTOR_LEASE_SECONDS:-1}"
 
 case "${PAP_DEFERRED_CUDA_TRACE,,}" in
   1|true|yes|on)
@@ -350,6 +351,10 @@ if ! [[ "${PAP_DEFERRED_TRACE_FLUSH_TIMEOUT}" =~ ^[1-9][0-9]*$ ]]; then
 fi
 if ! [[ "${PAP_PREFILL_MAX_INFLIGHT_PER_PA}" =~ ^[0-9]+$ ]]; then
   echo "PAP_PREFILL_MAX_INFLIGHT_PER_PA must be a non-negative integer" >&2
+  exit 2
+fi
+if ! [[ "${PAP_NIXL_CONNECTOR_LEASE_SECONDS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "PAP_NIXL_CONNECTOR_LEASE_SECONDS must be a positive integer" >&2
   exit 2
 fi
 
@@ -431,6 +436,7 @@ export PAP_LEASE_RELEASE_MAX_ATTEMPTS
 export PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS
 export PAP_LEASE_RELEASE_RETRY_MAX_SECONDS
 export PAP_KV_LEASE_TTL_SECONDS
+export PAP_NIXL_CONNECTOR_LEASE_SECONDS
 
 export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
 export VLLM_USE_V1=1
@@ -1310,6 +1316,8 @@ write_effective_config() {
     printf 'PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS=%q\n' "${PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS}"
     printf 'PAP_LEASE_RELEASE_RETRY_MAX_SECONDS=%q\n' "${PAP_LEASE_RELEASE_RETRY_MAX_SECONDS}"
     printf 'PAP_KV_LEASE_TTL_SECONDS=%q\n' "${PAP_KV_LEASE_TTL_SECONDS}"
+    printf 'PAP_NIXL_CONNECTOR_LEASE_SECONDS=%q\n' \
+      "${PAP_NIXL_CONNECTOR_LEASE_SECONDS}"
     printf 'MAX_MODEL_LEN=%q\n' "${MAX_MODEL_LEN}"
     printf 'MAX_NUM_BATCHED_TOKENS=%q\n' "${MAX_NUM_BATCHED_TOKENS}"
     printf 'MAX_NUM_SEQS=%q\n' "${MAX_NUM_SEQS}"
@@ -2038,7 +2046,8 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       --tensor-parallel-size "${PAP_TP_SIZE}" \
       --gpu-memory-utilization "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}" \
       "${prefill_profiler_args[@]}" \
-      --kv-transfer-config '{"kv_connector":"NixlConnector","kv_role":"kv_producer","kv_connector_extra_config":{"bidirectional_kv_xfer":true,"kv_recompute_threshold":0,"enable_cross_layers_blocks":"True"}}' \
+      --kv-transfer-config \
+        "{\"kv_connector\":\"NixlConnector\",\"kv_role\":\"kv_producer\",\"kv_connector_extra_config\":{\"bidirectional_kv_xfer\":true,\"kv_recompute_threshold\":0,\"kv_lease_duration\":${PAP_NIXL_CONNECTOR_LEASE_SECONDS},\"enable_cross_layers_blocks\":\"True\"}}" \
       > "${RUN_LOG_DIR}/prefill_${idx}.log" 2>&1 &
   PIDS+=("$!")
 done
