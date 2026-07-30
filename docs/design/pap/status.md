@@ -249,15 +249,22 @@ the measured 12-SM exact-shape latency by 12.3%. A redundant generic NIXL
 producer lease is shortened from 30 seconds to one second; PAP's independent
 300-second pressure-evictable Attention lease remains the safety owner. This
 removes the observed third-turn cache-displacement tail: no Prefill execution
-exceeds five seconds across the new C16--C32 scan.
+exceeds five seconds across the new C16--C36 scan.
 
-All ten PAP 7PA1P and PD 6P2D points complete 180/180 requests. PAP's best
+All eighteen PAP 7PA1P, PD 6P2D, and fused-DP8 points complete 180/180
+requests. PAP's best
 passing Standard goodput is 2.252 requests/s at C32 versus corrected PD's
 1.586 at C20 (+42.0%); best Relaxed goodput is 2.343 versus 1.891 (+23.9%);
-raw throughput is 2.343 versus 1.891 (+23.9%). At matched C32, PAP reduces
+raw throughput is 2.343 versus corrected PD's 1.891 (+23.9%) and the best
+tested fused-DP value of 2.223 (+5.4%). At matched C32, PAP reduces
 average TTFT by 18.8% and average ITL by 24.2%. These are controlled
 one-repetition results. The initial PD curve with Prefill `max_num_seqs=256`
 is configuration-confounded and no longer supplies the comparison claim.
+The PAP/PD C36 extension places both architectures beyond their throughput
+peaks: PAP remains 24.9% faster in raw throughput and passes Relaxed, but its
+Standard-good fraction falls to 92.8%, so C32 remains the selected PAP point.
+Fused DP has no passing Standard point and passes Relaxed only through C20;
+its raw curve is still rising at C36, so its raw maximum is not bracketed.
 The selected boundary points still require repetition before becoming a paper
 or release-level claim.
 

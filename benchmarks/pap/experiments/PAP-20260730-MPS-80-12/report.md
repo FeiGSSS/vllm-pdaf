@@ -229,37 +229,66 @@ evidence, but it is not an eligible best-configured baseline.
 PD was rerun on the current clean commit with only its Prefill sequence limit
 changed to one. Decode remains at 256 sequences. Every point restarted all
 services and replayed the byte-identical 60-session, three-turn dataset. All
-five corrected PD points and the five PAP points completed 180/180 requests
-and 60/60 sessions with correctness, routing, NIXL-runtime, and
-architecture-specific runtime audits passing.
+six corrected PD points, six PAP points, and six fused-DP points completed
+180/180 requests and 60/60 sessions with correctness, routing, and
+architecture-specific runtime audits passing. The DP topology uses eight
+independent full-model replicas and AIPerf sticky-user-session routing, so
+each conversation retains its local KV on one replica.
 
 | Architecture | C | Raw req/s | TTFT avg / p99 | ITL avg / p99 | Standard goodput | Relaxed goodput |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Fused DP8 | 16 | 1.795 | **2.71 / 5.13 s** | 44.65 / 89.76 ms | 1.666 fail | 1.795 pass |
+| Fused DP8 | 20 | 1.917 | **3.11 / 7.13 s** | 52.89 / 104.19 ms | 1.640 fail | **1.874 pass** |
+| Fused DP8 | 24 | 1.965 | **3.31 / 7.98 s** | 59.05 / 106.61 ms | 1.452 fail | 1.856 fail |
+| Fused DP8 | 28 | 2.082 | **3.60 / 8.03 s** | 71.41 / 161.40 ms | 1.191 fail | 1.723 fail |
+| Fused DP8 | 32 | 2.167 | **4.19 / 10.20 s** | 74.01 / 160.10 ms | 1.156 fail | 1.662 fail |
+| Fused DP8 | 36 | **2.223** | **4.50 / 10.17 s** | 77.38 / 173.06 ms | 1.161 fail | 1.618 fail |
 | PD 6P2D | 16 | 1.543 | 3.10 / 6.35 s | 51.97 / 68.90 ms | 1.543 pass | 1.543 pass |
 | PD 6P2D | 20 | 1.631 | 3.82 / 9.04 s | 57.92 / 75.29 ms | **1.586 pass** | 1.631 pass |
 | PD 6P2D | 24 | 1.761 | 4.56 / 11.75 s | 61.58 / 77.19 ms | 1.556 fail | 1.761 pass |
 | PD 6P2D | 28 | 1.709 | 5.79 / 14.11 s | 66.01 / 89.57 ms | 1.310 fail | 1.709 pass |
 | PD 6P2D | 32 | **1.891** | 7.03 / 15.66 s | 67.82 / 89.61 ms | 1.198 fail | **1.891 pass** |
+| PD 6P2D | 36 | 1.860 | 8.09 / 20.35 s | 68.51 / 106.56 ms | 1.157 fail | 1.787 pass |
 | PAP 7PA1P | 16 | 1.722 | 3.30 / 6.05 s | 42.88 / 52.40 ms | 1.722 pass | 1.722 pass |
 | PAP 7PA1P | 20 | 1.975 | 3.50 / 6.58 s | 46.05 / 57.29 ms | 1.975 pass | 1.975 pass |
 | PAP 7PA1P | 24 | 2.062 | 4.04 / 8.06 s | 48.63 / 60.28 ms | 2.062 pass | 2.062 pass |
 | PAP 7PA1P | 28 | 2.126 | 4.75 / 8.57 s | 50.45 / 62.12 ms | 2.126 pass | 2.126 pass |
 | PAP 7PA1P | 32 | **2.343** | 5.71 / 10.51 s | 51.39 / 64.74 ms | **2.252 pass** | **2.343 pass** |
+| PAP 7PA1P | 36 | 2.322 | 6.26 / 11.79 s | 51.96 / 63.74 ms | 2.154 fail | 2.322 pass |
 
-Neither architecture has a point at which 95% of requests meet the Strict
+None of the three architectures has a point at which 95% of requests meet the Strict
 5-second-TTFT/50-ms-ITL tier, so the observed Strict goodput values are not
 reported as capacity. For the two passing tiers:
 
-| SLO / metric | Best PD | Best PAP | PAP delta |
-| --- | ---: | ---: | ---: |
-| Standard goodput | 1.586 req/s, C20 | **2.252 req/s, C32** | **+42.0%** |
-| Relaxed goodput | 1.891 req/s, C32 | **2.343 req/s, C32** | **+23.9%** |
-| Raw throughput | 1.891 req/s, C32 | **2.343 req/s, C32** | **+23.9%** |
+| SLO / metric | Best fused DP | Best PD | Best PAP | PAP vs best baseline |
+| --- | ---: | ---: | ---: | ---: |
+| Standard goodput | no passing point | 1.586 req/s, C20 | **2.252 req/s, C32** | **+42.0% vs PD** |
+| Relaxed goodput | 1.874 req/s, C20 | 1.891 req/s, C32 | **2.343 req/s, C32** | **+23.9% vs PD** |
+| Raw throughput, tested range | 2.223 req/s, C36 | 1.891 req/s, C32 | **2.343 req/s, C32** | **+5.4% vs DP** |
 
 At the matched C32 point, PAP lowers average TTFT by 18.8%, TTFT p99 by
 32.9%, average ITL by 24.2%, and ITL p99 by 27.8% relative to corrected PD.
 PAP passes Standard with 173/180 good requests, just above the predeclared
 95% gate; corrected PD passes Standard through C20.
+
+Fused DP has the lowest average TTFT at every matched concurrency because all
+eight GPUs can execute complete Prefills locally and there is no KV handoff.
+That benefit does not translate into SLO goodput. Its ITL p99 rises from
+89.76 ms at C16 to 173.06 ms at C36 as long Prefill and Decode share each
+replica. DP already misses Standard at C16 with 167/180 good requests and
+stops passing Relaxed after C20. PAP keeps ITL p99 below 65 ms at all six
+points and passes Standard through C32. The tested DP raw curve is still
+rising at C36, so 2.223 requests/s is only the best observed raw point, not a
+bracketed raw-throughput maximum.
+
+C36 brackets the upper edge rather than producing a new peak. Relative to
+C32, PD raw throughput falls 1.6%, average TTFT rises 15.2%, and TTFT p99
+rises 30.0%. PAP raw throughput falls 0.9%, average TTFT rises 9.6%, and
+average ITL is nearly flat (+1.1%). PAP still leads corrected PD at matched
+C36 by 24.9% raw throughput, 22.7% lower average TTFT, and 24.2% lower average
+ITL. Its Standard good fraction is 167/180 (92.8%), below the 95% gate, while
+all 180 requests pass Relaxed. Corrected PD has 112/180 Standard-good requests
+and 173/180 Relaxed-good requests.
 
 The PD correction has a material effect:
 
@@ -281,11 +310,13 @@ Standard point.
 
 The long-tail diagnosis also remains stable across the scan. PAP's maximum
 individual Prefill execution is 3.50 seconds and no Prefill execution exceeds
-five seconds at any point. The maximum single-slot admission wait grows from
-4.00 seconds at C16 to 9.08 seconds at C32. Consequently, the C32 TTFT maximum
-of 11.51 seconds is capacity queueing, not a recurrence of the old
-30-second-lease cache displacement. C16--C28 have TTFT maxima of 6.95, 7.48,
-8.28, and 9.17 seconds respectively.
+five seconds at any point through C32. C36 has the same healthy signature:
+its longest Prefill execution is 3.72 seconds, while the longest admission
+wait reaches 10.56 seconds. The maximum single-slot admission wait grows from
+4.00 seconds at C16 to 9.08 seconds at C32. Consequently, the C32--C36 TTFT
+tail is capacity queueing, not a recurrence of the old 30-second-lease cache
+displacement. C16--C28 have TTFT maxima of 6.95, 7.48, 8.28, and 9.17 seconds
+respectively.
 
 ## Implementation decision
 
@@ -331,6 +362,10 @@ Qwen3-8B shapes and keeps the generic vLLM kernel defaults unchanged.
   `benchmarks/pap/experiments/_staging/capacity/20260730_pap80_12_nixllease1_pd_full_concurrency_r1`
 - corrected PD Prefill-serialization scan:
   `benchmarks/pap/experiments/_staging/capacity/20260730_pd6p2d_prefill_maxseq1_current_c16_c32_r1`
+- matched C36 extension:
+  `benchmarks/pap/experiments/_staging/capacity/20260730_pd_pap_c36_corrected_r1`
+- fused-DP C16--C36 extension:
+  `benchmarks/pap/experiments/_staging/capacity/20260730_dp8_c16_c36_longctx_o100_r1`
 
 ## Scope
 
@@ -338,7 +373,8 @@ Kernel evidence has two exact-shape repetitions plus four cross-shape checks.
 The selected kernel has three complete C20 end-to-end observations: the
 initial result, an independent stage trace, and the one-second producer-lease
 treatment. All completed 180/180 requests with strict correctness audits.
-The fair comparison contains one complete repetition at each of ten
+The fair comparison contains one complete repetition at each of eighteen
 architecture/concurrency points, split across byte-identical clean PAP and PD
-runs. It is controlled development evidence; a paper or release claim still
+runs and a byte-identical DP run with documentation-only worktree changes.
+It is controlled development evidence; a paper or release claim still
 requires repeated boundary points.

@@ -468,7 +468,7 @@ The initial C32 comparison and trace-based explanation of the 7PA1P ITL tail
 remain in
 [`PAP-20260725-8GPU-CAPACITY-PILOT`](../experiments/PAP-20260725-8GPU-CAPACITY-PILOT/report.md).
 The accepted 80/12 baseline and its fixed-dataset long-context O100
-C16--C32 PAP 7PA1P versus PD 6P2D scan are recorded in
+C16--C36 fused-DP8, PAP 7PA1P, and PD 6P2D scan are recorded in
 [`PAP-20260730-MPS-80-12`](../experiments/PAP-20260730-MPS-80-12/report.md).
 That long-Prefill comparison sets PD Prefill `max_num_seqs=1`; leaving it at
 the generic capacity default of 256 is a known scheduling confound for

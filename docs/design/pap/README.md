@@ -95,11 +95,14 @@ test falsifies aggregate KV pooling as a sufficient advantage, and the first
 L13 20/3 MPS attempt remains invalid because lifecycle correctness failed.
 After that lifecycle path was repaired, the exact production Triton Attention
 kernel was specialized for low-SM execution and 80/12 became the accepted
-baseline. On the 60-session, three-turn O100 scan, 7PA1P improves best passing
-Standard goodput by 42.0%, Relaxed goodput by 23.9%, and raw throughput by
-23.9% over Prefill-serialized 6P2D. This is controlled one-repetition evidence,
-not yet a paper
-or release-level claim.
+baseline. On the 60-session, three-turn O100 C16--C36 scan, 7PA1P improves
+best passing Standard goodput by 42.0%, Relaxed goodput by 23.9%, and raw
+throughput by 23.9% over Prefill-serialized 6P2D. Against fused DP8, PAP
+improves best passing Relaxed goodput by 25.0% and best raw throughput in the
+tested range by 5.4%; fused DP has no passing Standard point. This is
+controlled one-repetition evidence, not yet a paper or release-level claim.
+C36 is above the measured PAP/PD throughput peaks and does not replace the
+selected C32 PAP point; the fused-DP raw maximum is not yet bracketed.
 Eager remains the default execution mode. Optional piecewise CUDA Graph has a
 completed development comparison, while host transport, remote Attention, and
 KV publication remain outside captured regions. The former P17 lane is
