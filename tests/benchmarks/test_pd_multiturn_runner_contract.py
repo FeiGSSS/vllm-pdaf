@@ -146,7 +146,9 @@ def test_aiperf_capacity_lane_uses_concurrency_without_request_rate() -> None:
     assert "--num-profile-runs" in profile_text
     assert "--profile-run-cooldown-seconds" in profile_text
     assert "--parameter-sweep-cooldown-seconds" in profile_text
-    assert "AIPERF_TIMING_MODE=concurrency" in capacity_text
+    assert 'AIPERF_TIMING_MODE="${PAP_CAPACITY_TIMING_MODE:-concurrency}"' in (
+        capacity_text
+    )
     assert "PAP_AIPERF_REQUEST_RATE=" in capacity_text
     assert "PD_AIPERF_REQUEST_RATE=" in capacity_text
 
@@ -200,6 +202,13 @@ def test_capacity_lane_freezes_workload_and_memory_configuration() -> None:
     assert "PAP_CAPACITY_PREFILL_MAX_NUM_BATCHED_TOKENS:-32768" in text
     assert "PAP_CAPACITY_DECODE_MAX_NUM_BATCHED_TOKENS:-256" in text
     assert "PAP_CAPACITY_MAX_NUM_SEQS:-256" in text
+    assert "PAP_CAPACITY_PAP_PREFILL_CHUNKS:-20" in text
+    assert "PAP_CAPACITY_PAP_ATTENTION_CHUNKS:-3" in text
+    assert "PAP_CAPACITY_PAP_NIXL_CONNECTOR_LEASE_SECONDS:-1" in text
+    assert (
+        'PAP_NIXL_CONNECTOR_LEASE_SECONDS="${PAP_NIXL_CONNECTOR_LEASE_SECONDS}"'
+        in text
+    )
     assert "MAX_NUM_PARTIAL_PREFILLS=default_1" in text
     assert "--max-num-partial-prefills" not in text
     assert 'PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${OUTPUT_TOKENS_MAX}"' in text

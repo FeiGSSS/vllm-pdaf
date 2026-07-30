@@ -7,6 +7,16 @@ PAP_RUNNER = ROOT / "benchmarks/pap/scripts/run_pap_workload.sh"
 def test_static_mps_lifecycle_is_partitioned_and_audited() -> None:
     runner = PAP_RUNNER.read_text(encoding="utf-8")
 
+    assert 'PAP_STATIC_PREFILL_CHUNKS="${PAP_STATIC_PREFILL_CHUNKS:-20}"' in runner
+    assert 'PAP_STATIC_ATTENTION_CHUNKS="${PAP_STATIC_ATTENTION_CHUNKS:-3}"' in runner
+    assert (
+        'PAP_STATIC_PREFILL_EXPECTED_SMS="${PAP_STATIC_PREFILL_EXPECTED_SMS:-80}"'
+        in runner
+    )
+    assert (
+        'PAP_STATIC_ATTENTION_EXPECTED_SMS="${PAP_STATIC_ATTENTION_EXPECTED_SMS:-12}"'
+        in runner
+    )
     assert "nvidia-cuda-mps-control -d -S" in runner
     assert "sm_partition add" in runner
     assert "sm_partition rm" in runner
@@ -14,6 +24,17 @@ def test_static_mps_lifecycle_is_partitioned_and_audited() -> None:
     assert "CUDA_MPS_ACTIVE_THREAD_PERCENTAGE" not in runner
     assert "validate_static_partition_visible_sms" in runner
     assert "mps_static_audit_pa_" in runner
+
+
+def test_pap_uses_its_own_kv_lease_for_long_lived_attention_ownership() -> None:
+    runner = PAP_RUNNER.read_text(encoding="utf-8")
+
+    assert (
+        'PAP_NIXL_CONNECTOR_LEASE_SECONDS="${PAP_NIXL_CONNECTOR_LEASE_SECONDS:-1}"'
+        in runner
+    )
+    assert r'\"kv_lease_duration\":${PAP_NIXL_CONNECTOR_LEASE_SECONDS}' in runner
+    assert 'PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS:-300}"' in runner
 
 
 def test_conversation_affinity_audit_counts_sessions_for_aiperf() -> None:

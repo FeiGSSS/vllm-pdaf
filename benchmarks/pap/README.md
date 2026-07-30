@@ -157,7 +157,11 @@ only when the Attention process exposes at most 20 SMs:
 On the B3, 17K-context Qwen3-8B shape, this reduces 12-SM kernel latency from
 0.4680 to 0.4105 ms and 80/12 end-to-end mean ITL from 48.76 to 45.40 ms.
 See the [low-SM experiment report](experiments/PAP-20260730-MPS-80-12/report.md)
-for the resource analysis, cross-shape results, and TTFT-tail limitation.
+for the resource analysis, cross-shape results, and TTFT-tail correction.
+The AIPerf runner now uses 80/12 as its default static-MPS allocation. PAP's
+own KV lease retains Attention ownership, while the redundant generic NIXL
+producer bookkeeping lease expires after one second so KV-unaware Projection
+does not pin completed Prefill requests for 30 seconds.
 
 #### Deferred alternative: low-smem FA2 decode specialization
 

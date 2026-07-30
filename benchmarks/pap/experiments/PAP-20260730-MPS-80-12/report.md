@@ -170,11 +170,54 @@ Relative to the old 80/12 path, the selected kernel improves mean ITL by
 Relative to the old 72/20 path, mean ITL is now only 1.54% worse while mean
 TTFT remains 6.47% better.
 
-The TTFT tail is not yet a stable positive claim. The five Standard-SLO
-failures in the selected run are all third-turn TTFT failures; their ITLs
-remain between 36.9 and 55.9 ms. This separates the observed tail from the
-decode-kernel latency gain, but one repetition cannot determine whether it
-is run variance or increased HBM contention with concurrent Prefill.
+The five Standard-SLO failures in this first selected-kernel run were all
+third-turn TTFT failures; their ITLs remained between 36.9 and 55.9 ms. A
+second run reproduced the phase boundary: Projection first output accounted
+for only about 0.15 seconds, while the slow requests accumulated several
+seconds before Projection.
+
+## TTFT-tail diagnosis and fix
+
+Stage-level tracing found two coupled sources:
+
+1. several third-turn Prefills took 5--11 seconds instead of the normal
+   3--4 seconds because their reusable prefix had been displaced; and
+2. per-PA single-slot admission amplified one slow Prefill into a FIFO convoy,
+   with later requests waiting up to 7.27 seconds.
+
+The capacity pressure was caused by duplicate lease ownership. PAP Attention
+already pins each live request through its own exact KV lease, but the generic
+NIXL producer also retained the same completed Prefill request for its
+30-second PD handoff window. Projection is KV-unaware and never performs that
+PD read. Logs consequently showed every request expiring after being retrieved
+by zero remote workers, while per-PA KV usage climbed above 90%.
+
+PAP now keeps its 300-second, pressure-evictable ownership lease and uses a
+one-second NIXL producer bookkeeping lease. This does not change NIXL transfer
+metadata or the later migration data plane. Once the generic connector
+finishes bookkeeping, the vLLM free path observes the still-active PAP lease
+and transfers block ownership to it rather than returning live Attention
+blocks to the allocator.
+
+On the same dataset and C20 point:
+
+| Tail metric | Before | One-second producer lease |
+| --- | ---: | ---: |
+| Prefill executions above 5 s | 3 | **0** |
+| Admission waits above 5 s | 3 | **0** |
+| Third-turn Prefill maximum | 7.29 s | **3.85 s** |
+| Third-turn admission maximum | 7.27 s | **4.86 s** |
+| Request TTFT maximum | 10.90 s | **8.85 s** |
+| Standard-SLO good requests | 179/180 | **180/180** |
+| Mean ITL | 45.62 ms | **43.36 ms** |
+| Raw throughput | 1.920 req/s | 1.920 req/s |
+
+Mean TTFT in the treatment run was 4.127 seconds versus 3.783 seconds in the
+immediately preceding run because all three turns had 10%--13% slower normal
+Prefill execution. The pathological multi-second cache-miss and convoy tail
+nevertheless disappeared, throughput was unchanged, and every Standard-SLO
+request passed. The following concurrency scan is the stability check for
+normal Prefill variance.
 
 ## Implementation decision
 
@@ -189,11 +232,11 @@ The threshold keeps full-GPU and unverified xPAyP paths on the old launch.
 The generic vLLM Triton defaults are unchanged; only PAP passes the new
 optional launch parameters.
 
-This establishes that the current kernel can preserve most of Attention's
-latency under a small SM allocation. It does not establish that HBM
-bandwidth is fully saturated or that 80/12 should replace 72/20 as the
-system default. A repeated interleaved end-to-end A/B is still required for
-the TTFT-tail and Standard-goodput decision.
+Together with the corrected lease ownership, this establishes 80/12 as the
+PAP AIPerf baseline. The runner defaults are 20 Prefill MPS chunks and 3
+Attention chunks, audited as 80 and 12 visible L20 SMs. This does not establish
+that HBM bandwidth is fully saturated; the decision is limited to the measured
+Qwen3-8B shapes and keeps the generic vLLM kernel defaults unchanged.
 
 ## Evidence
 
@@ -212,11 +255,14 @@ the TTFT-tail and Standard-goodput decision.
   `benchmarks/pap/experiments/_staging/capacity/20260730_pap7pa1p_c20_mps80_12_admit1_r1`
 - selected-kernel 80/12 C20:
   `benchmarks/pap/experiments/_staging/capacity/20260730_pap7pa1p_c20_mps80_12_low_resource_kernel_r1`
+- independent selected-kernel TTFT trace:
+  `benchmarks/pap/experiments/_staging/capacity/20260730_pap7pa1p_c20_mps80_12_low_resource_kernel_ttft_trace_r2`
+- one-second producer-lease treatment:
+  `benchmarks/pap/experiments/_staging/capacity/20260730_pap7pa1p_c20_mps80_12_nixl_lease1_ttft_fix_r2`
 
 ## Scope
 
-Kernel evidence has two exact-shape repetitions plus four cross-shape
-checks. End-to-end evidence has one complete repetition. A second
-end-to-end attempt could not start because the host GPU device nodes became
-unavailable before service launch; it produced no benchmark profile and is
-not counted as evidence.
+Kernel evidence has two exact-shape repetitions plus four cross-shape checks.
+The selected kernel has three complete C20 end-to-end observations: the
+initial result, an independent stage trace, and the one-second producer-lease
+treatment. All completed 180/180 requests with strict correctness audits.
