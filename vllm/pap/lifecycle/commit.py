@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Reliable asynchronous HTTP client for PAP decode commit notifications.
+"""Reliable asynchronous HTTP client for PAP decode commit submissions.
 
 The Attention executor uses this client to notify the Prefill engine about
 decode KV commits that are ready on the remote side.  The client is designed
@@ -24,11 +24,11 @@ logger = logging.getLogger(__name__)
 
 
 class DecodeCommitClient:
-    """Asynchronously deliver PAP decode commits with acknowledged ordering.
+    """Asynchronously deliver PAP decode commits with accepted ordering.
 
     The caller only enqueues payloads. A daemon worker preserves queue order,
-    retries failed POSTs, and advances a per-request watermark only after the
-    Prefill endpoint acknowledges the commit sequence.
+    retries failed POSTs, and advances a per-request watermark after the
+    Prefill endpoint accepts the commit into its EngineCore input queue.
     """
 
     def __init__(
@@ -136,10 +136,7 @@ class DecodeCommitClient:
             request_id = str(request_id)
             session_request_id = str(session_request_id or request_id)
             existing_session = self._session_by_target.get(request_id)
-            if (
-                existing_session is not None
-                and existing_session != session_request_id
-            ):
+            if existing_session is not None and existing_session != session_request_id:
                 raise RuntimeError(
                     "PAP decode commit target changed logical session "
                     f"request_id={request_id} old_session={existing_session} "
@@ -161,6 +158,7 @@ class DecodeCommitClient:
                 "new_seq_len": new_seq_len,
                 "new_token_ids": [int(t) for t in new_token_ids],
                 "layer_complete": bool(layer_complete),
+                "submit_only": True,
             }
             queued_item = self._queued_item_by_request.get(request_id)
             if (
@@ -196,12 +194,14 @@ class DecodeCommitClient:
             self._latest_seen_seq_len_by_request[request_id] = new_seq_len
             self._latest_commit_seq_by_request[request_id] = commit_seq
 
-    def flush_request(self, request_id: str, timeout_s: float | None = None) -> bool:
-        """Wait for Prefill to ACK all commits issued for *request_id*."""
+    def flush_submitted_request(
+        self,
+        request_id: str,
+        timeout_s: float | None = None,
+    ) -> bool:
+        """Wait for Prefill to accept all commits issued for *request_id*."""
         if timeout_s is None:
-            timeout_s = float(
-                os.environ.get("PAP_DECODE_COMMIT_FLUSH_TIMEOUT", "15.0")
-            )
+            timeout_s = float(os.environ.get("PAP_DECODE_COMMIT_FLUSH_TIMEOUT", "15.0"))
         deadline = time.monotonic() + max(0.0, float(timeout_s))
         request_id = str(request_id)
         with self._pending_done:
@@ -229,16 +229,16 @@ class DecodeCommitClient:
                 self._pending_done.wait(timeout=remaining)
         return True
 
+    def flush_request(self, request_id: str, timeout_s: float | None = None) -> bool:
+        """Compatibility alias for :meth:`flush_submitted_request`."""
+        return self.flush_submitted_request(request_id, timeout_s)
+
     def forget_request(self, request_id: str) -> None:
         """Drop duplicate-suppression state for a completed request."""
         with self._pending_done:
             request_id = str(request_id)
-            session_request_id = self._session_by_target.get(
-                request_id, request_id
-            )
-            targets = self._targets_by_session.pop(
-                session_request_id, {request_id}
-            )
+            session_request_id = self._session_by_target.get(request_id, request_id)
+            targets = self._targets_by_session.pop(session_request_id, {request_id})
             for target in targets:
                 self._session_by_target.pop(target, None)
                 self._queued_item_by_request.pop(target, None)
@@ -345,7 +345,12 @@ class DecodeCommitClient:
                 resp = httpx.post(endpoint, json=payload, timeout=self.timeout_s)
                 resp.raise_for_status()
                 body = resp.json()
-                acked_commit_seq = int(body.get("acked_commit_seq", 0))
+                acked_commit_seq = int(
+                    body.get(
+                        "accepted_commit_seq",
+                        body.get("acked_commit_seq", 0),
+                    )
+                )
                 expected_commit_seq = int(payload["commit_seq"])
                 if acked_commit_seq < expected_commit_seq:
                     raise RuntimeError(

@@ -57,6 +57,13 @@ or local copies (`PAP-20260729-RESEARCH-L02`). The evaluation must therefore
 compare throughput-latency frontiers and SLO goodput, not declare a topology
 winner at one shared concurrency.
 
+An earlier trace suggested that the wider 7PA1P fan-in synchronization domain
+might itself dominate this ITL difference. A matched attribution rejects that
+interpretation (`PAP-20260729-RESEARCH-L01`): the median PA-completion-spread
+delta contributes only 3.20 ms per 36-layer step, or 16.6% of the trace-mode
+ITL gap. Fan-in skew remains measurable, but synchronization-domain routing is
+not currently a supported headline mechanism.
+
 A first iso-throughput localization reinforces that requirement but does not
 yet establish a universal winner. The refined point matches request
 throughput within 0.59%: 7PA1P C21 reduces mean TTFT by 61.9% and increases
@@ -72,13 +79,23 @@ reducing throughput by 4.98% and increasing TTFT by 18.2%
 the missing mechanism for this workload.
 
 The clean O16 confirmation establishes an unfavorable but necessary baseline
-(`PAP-20260729-RESEARCH-L07`). Across eight preselected capacity boundaries
-and two isolated repetitions per point, all 10,240 requests complete
-correctly. Conservative goodput places PAP 32.2%, 36.9%, and 24.4% below
-corrected PD under strict, standard, and relaxed SLOs. PAP exceeds fused DP by
-57.8% under strict, but loses by 12.1% and 17.2% under standard and relaxed.
-Thus PAP currently offers a tight-latency operating point, not a general
-goodput advantage on this short-output workload.
+(`PAP-20260729-RESEARCH-L07`). It also retires the earlier large PAP-over-PD
+headline. The historical PD path was not a healthy architecture baseline:
+an old pull GET had fallen back to approximately 0.42 GiB/s TCP emulation
+instead of the 22--24.5 GiB/s CUDA-IPC path, and later four-GPU scans still
+recorded severe per-lane transfer instability. Those results remain useful
+transport diagnostics but cannot support a PAP performance claim.
+
+Across eight preselected L07 capacity boundaries and two isolated repetitions
+per point, all 10,240 requests complete correctly. Conservative goodput places
+PAP 32.2%, 36.9%, and 24.4% below corrected PD under strict, standard, and
+relaxed SLOs. PAP exceeds fused DP by 57.8% under strict, but loses by 12.1%
+and 17.2% under standard and relaxed. Thus PAP currently offers a
+tight-latency operating point, not a general goodput advantage on this
+short-output workload. Because the historical and L07 studies also differ in
+workload, topology, and search envelope, the old headline is classified as
+baseline-contaminated rather than assigning its entire numerical reversal to
+transport alone.
 
 This result also makes workload sensitivity a first-order paper question.
 Earlier PAP-favorable O32 experiments simultaneously used longer prompts and
@@ -137,7 +154,28 @@ Standard goodput is 1.502 req/s versus 2.290 req/s for PD, a 34.4% deficit.
 At C16, PAP retains 13.1% lower mean ITL but has 41.4% higher mean TTFT.
 Thus PAP does not exhaust its aggregate KV pool; it first loses the SLO to
 near-limit Prefill work while every PA statically reserves 20 of 92 visible
-SMs for Attention. The next causal test changes only this resource split.
+SMs for Attention.
+
+The first registered 20/3 Prefill/Attention treatment cannot answer that
+question (`PAP-20260730-RESEARCH-L13`). It verifies 80/12 visible SMs and
+completes all 192 requests, but the launcher fails correctness because three
+lease-release acknowledgements are missing and several decode commits carry
+one fewer token than their requested sequence-length advance. Its latency and
+throughput numbers are diagnostic only. Because subsequent submit-only
+control-path work changes more than the MPS split, any retained implementation
+must be measured with a contemporaneous 18/5 control on the same clean commit.
+
+A separate O100 scan identifies a more promising but bounded workload region
+(`PAP-20260729-LONGCTX-O100-CONCURRENCY-SCAN`). With 60 sessions, three
+approximately 10K-token turns, randomized mean-102-token outputs, and pure
+concurrency, 7PA1P C20 passes Standard at 1.611 good req/s while 6P2D C20
+fails at 1.337 good req/s, a 20.5% difference. PAP also has 27.5% lower mean
+ITL and 16.7% lower TTFT p95. This is not monotonic scaling: both systems fail
+Standard at C24, and PD retains the best passing Relaxed goodput by 0.8%.
+PD logs show no explicit KV-pressure event, while 6PA2P fails Standard at the
+same C20 point. The evidence therefore supports a narrow 7PA1P operating
+region and motivates testing PA Prefill capacity, not a general KV-capacity
+wall or universal PAP advantage.
 
 ## 3. Design
 

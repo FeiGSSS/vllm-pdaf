@@ -28,6 +28,16 @@ escape sticky placement in multi-round workloads, while retaining the capacity
 and batching benefits of full Attention/KV ownership on PA nodes. This is a
 candidate position, not an approved claim.
 
+The current experiments further narrow what cannot be claimed. L01 falsifies
+fan-in completion skew as the dominant 7PA1P ITL loss, so PAP cannot present
+synchronization-domain modeling or barrier-aware routing as its primary
+novelty. The O100 development scan instead exposes a workload-dependent
+operating region in which 7PA1P passes Standard while 6P2D fails, but the
+advantage disappears on the higher-concurrency Relaxed frontier. Because
+Attention/FFN ratio selection is already prior art, this observation becomes
+a paper contribution only if a PAP-specific, real-system mechanism explains
+and expands that region beyond static topology search.
+
 For each entry:
 
 1. add the primary source to `references.bib`;

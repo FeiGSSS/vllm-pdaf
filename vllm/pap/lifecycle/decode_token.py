@@ -20,7 +20,7 @@ class DeferredDecodeCommit:
 
 
 class DeferredDecodeTokenCommitter:
-    """Match token-ready and KV-ready notifications for one decode position."""
+    """Join decode positions locally and publish one final request commit."""
 
     def __init__(
         self,
@@ -32,6 +32,7 @@ class DeferredDecodeTokenCommitter:
         self._tokens: dict[tuple[str, int], tuple[int, ...]] = {}
         self._kv_targets: dict[tuple[str, int], tuple[str, str | None]] = {}
         self._committed_tokens: dict[tuple[str, int], tuple[int, ...]] = {}
+        self._ready_commits: dict[str, dict[int, DeferredDecodeCommit]] = {}
         self._dispatching_by_request: dict[str, int] = {}
         self._failure_by_request: dict[str, str] = {}
         self._received = 0
@@ -68,11 +69,8 @@ class DeferredDecodeTokenCommitter:
                 return "duplicate"
             self._tokens[key] = new_token_ids
             self._received += 1
-            commit = self._take_commit_locked(key)
-        if commit is None:
-            return "pending"
-        self._dispatch_commit(commit)
-        return "matched"
+            matched = self._stage_commit_locked(key)
+        return "matched" if matched else "pending"
 
     def record_kv_ready(
         self,
@@ -106,32 +104,62 @@ class DeferredDecodeTokenCommitter:
                 return "duplicate"
             self._kv_targets[key] = target
             self._kv_ready += 1
-            commit = self._take_commit_locked(key)
-        if commit is None:
-            return "pending"
-        self._dispatch_commit(commit)
-        return "matched"
+            matched = self._stage_commit_locked(key)
+        return "matched" if matched else "pending"
 
-    def _take_commit_locked(
+    def _stage_commit_locked(
         self,
         key: tuple[str, int],
-    ) -> DeferredDecodeCommit | None:
+    ) -> bool:
         token_ids = self._tokens.get(key)
         target = self._kv_targets.get(key)
         if token_ids is None or target is None:
-            return None
+            return False
         endpoint, commit_request_id = target
         self._tokens.pop(key)
         self._kv_targets.pop(key)
         self._committed_tokens[key] = token_ids
         request_id = key[0]
-        self._dispatching_by_request[request_id] = (
-            self._dispatching_by_request.get(request_id, 0) + 1
-        )
-        return DeferredDecodeCommit(
+        self._ready_commits.setdefault(request_id, {})[key[1]] = DeferredDecodeCommit(
             request_id=request_id,
             new_seq_len=key[1],
             token_ids=token_ids,
+            endpoint=endpoint,
+            commit_request_id=commit_request_id,
+        )
+        self._matched += 1
+        self._done.notify_all()
+        return True
+
+    def _take_final_commit_locked(
+        self,
+        request_id: str,
+    ) -> DeferredDecodeCommit | None:
+        ready_by_seq_len = self._ready_commits.pop(request_id, None)
+        if not ready_by_seq_len:
+            return None
+        commits = sorted(ready_by_seq_len.values(), key=lambda item: item.new_seq_len)
+        endpoint = commits[0].endpoint
+        commit_request_id = commits[0].commit_request_id
+        expected_base = commits[0].new_seq_len - len(commits[0].token_ids)
+        token_ids: list[int] = []
+        for commit in commits:
+            commit_base = commit.new_seq_len - len(commit.token_ids)
+            if (
+                commit.endpoint != endpoint
+                or commit.commit_request_id != commit_request_id
+                or commit_base != expected_base
+            ):
+                raise ValueError(
+                    "PAP deferred decode commits are not one contiguous target "
+                    f"request_id={request_id}"
+                )
+            token_ids.extend(commit.token_ids)
+            expected_base = commit.new_seq_len
+        return DeferredDecodeCommit(
+            request_id=request_id,
+            new_seq_len=commits[-1].new_seq_len,
+            token_ids=tuple(token_ids),
             endpoint=endpoint,
             commit_request_id=commit_request_id,
         )
@@ -146,7 +174,6 @@ class DeferredDecodeTokenCommitter:
                 self._finish_dispatch_locked(commit.request_id)
             raise
         with self._done:
-            self._matched += 1
             self._finish_dispatch_locked(commit.request_id)
 
     def _finish_dispatch_locked(self, request_id: str) -> None:
@@ -158,7 +185,7 @@ class DeferredDecodeTokenCommitter:
         self._done.notify_all()
 
     def flush_request(self, request_id: str, timeout_s: float = 5.0) -> bool:
-        """Wait until every KV-ready position is dispatched for a request."""
+        """Publish all ready positions as one final commit for a request."""
         request_id = str(request_id)
         deadline = time.monotonic() + max(0.0, float(timeout_s))
         with self._done:
@@ -169,7 +196,22 @@ class DeferredDecodeTokenCommitter:
                 if remaining <= 0:
                     return False
                 self._done.wait(timeout=remaining)
-            return request_id not in self._failure_by_request
+            if request_id in self._failure_by_request:
+                return False
+            try:
+                commit = self._take_final_commit_locked(request_id)
+            except ValueError as exc:
+                self._mismatches += 1
+                self._failure_by_request[request_id] = str(exc)
+                return False
+            if commit is None:
+                return True
+            self._dispatching_by_request[request_id] = 1
+        try:
+            self._dispatch_commit(commit)
+        except Exception:
+            return False
+        return True
 
     def _request_has_pending_kv_locked(self, request_id: str) -> bool:
         return any(key[0] == request_id for key in self._kv_targets) or (
@@ -189,6 +231,7 @@ class DeferredDecodeTokenCommitter:
             ):
                 for key in [key for key in mapping if key[0] == request_id]:
                     mapping.pop(key, None)
+            self._ready_commits.pop(request_id, None)
             self._failure_by_request.pop(request_id, None)
             self._done.notify_all()
 
@@ -203,8 +246,6 @@ class DeferredDecodeTokenCommitter:
                 "decode_token_dispatch_failures": self._dispatch_failures,
                 "decode_token_pending_tokens": len(self._tokens),
                 "decode_token_pending_kv": len(self._kv_targets),
-                "decode_token_dispatching": sum(
-                    self._dispatching_by_request.values()
-                ),
+                "decode_token_dispatching": sum(self._dispatching_by_request.values()),
                 "decode_token_only_dropped": self._token_only_dropped,
             }

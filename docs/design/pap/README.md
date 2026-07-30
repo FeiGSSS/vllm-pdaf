@@ -4,6 +4,11 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260730-RESEARCH-L13
+  - PAP-20260729-LONGCTX-O100-CONCURRENCY-SCAN
+  - PAP-20260729-RESEARCH-L12
+  - PAP-20260729-RESEARCH-L07
+  - PAP-20260729-RESEARCH-L01
   - PAP-20260725-8GPU-CAPACITY-SCAN
   - PAP-20260725-8GPU-CAPACITY-PILOT
   - PAP-20260724-STEP-OVERLAP
@@ -64,11 +69,12 @@ experiment-result root and never overrides this directory.
 ## Current boundary
 
 The accepted runtime path is Qwen3-8B FP16, same-host `local_fast`, static MPS
-72/20 on each PA GPU, asynchronous decode-token delivery,
-asynchronous Prefill KV import, sealed manifest handoff, and Prefill-owned
-unified KV. The active runner is the eight-GPU AIPerf matrix; the latest
-normalized milestone remains the four-GPU result, while an initial eight-GPU
-C32 development pilot and the compact capacity scan are complete.
+72/20 on each PA GPU, asynchronous decode-token delivery, asynchronous
+Prefill KV import, sealed manifest handoff, and Prefill-owned unified KV. The
+active runner is the eight-GPU AIPerf matrix. July 22 and July 25 results
+remain runtime milestones, but corrected same-node PD transport and the
+prospectively controlled L01--L13 research loops now define the current
+PAP-versus-PD evidence.
 PAP-to-vLLM glue is isolated behind owner-specific adapters in
 `vllm/pap/integration/`; vLLM owners do not implement alternate PAP paths.
 PAP keeps each vLLM scheduler batch intact and may split it only into
@@ -76,12 +82,20 @@ same-step PA route shards. vLLM async scheduling remains enabled for CPU-side
 next-step preparation; PAP does not interleave microbatches across model
 layers.
 
-The current eight-GPU development lane compares PAP 7PA1P/6PA2P, one-way PD
-4P4D/6P2D, and an eight-replica fused vLLM pool under a 128-conversation,
-five-turn randomized long-context workload. The C32 pilot finds 6PA2P to be
-the only topology passing both Standard and Relaxed. The completed
-C16/24/32/48 scan finds PAP leading PD and fused DP under Strict and Standard
-goodput; fused DP leads under Relaxed.
+The long-lived eight-GPU regression testbed compares PAP 7PA1P/6PA2P, one-way
+PD 4P4D/6P2D, and an eight-replica fused vLLM pool under a 128-conversation,
+five-turn randomized O16 workload. The clean corrected-PD comparison reverses
+the earlier development-scan direction: PD leads PAP goodput by 32.2%, 36.9%,
+and 24.4% under Strict, Standard, and Relaxed SLOs. PAP leads fused DP only
+under Strict.
+
+Research workload variants are recorded separately. The near-model-limit L12
+test falsifies aggregate KV pooling as a sufficient advantage, and the first
+L13 20/3 MPS treatment is invalid because lifecycle correctness fails. The
+60-session, three-turn O100 scan identifies a narrower positive region:
+7PA1P C20 has 20.5% higher Standard goodput than 6P2D C20, but does not beat
+PD's best passing Relaxed frontier. This is one-repetition evidence, not a
+general PAP scaling claim or proof of a PD KV-capacity wall.
 Eager remains the default execution mode. Optional piecewise CUDA Graph has a
 completed development comparison, while host transport, remote Attention, and
 KV publication remain outside captured regions. The former P17 lane is
@@ -115,6 +129,14 @@ and normalized experiments rather than a repository skill plan.
   [capacity pilot](../../../benchmarks/pap/experiments/PAP-20260725-8GPU-CAPACITY-PILOT/report.md)
 - Completed PAP/PD/fused-DP capacity comparison:
   [capacity scan](../../../benchmarks/pap/experiments/PAP-20260725-8GPU-CAPACITY-SCAN/report.md)
+- Clean corrected-PD O16 comparison:
+  [research L07](../../../benchmarks/pap/experiments/PAP-20260729-RESEARCH-L07/report.md)
+- Near-model-limit KV-capacity test:
+  [research L12](../../../benchmarks/pap/experiments/PAP-20260729-RESEARCH-L12/report.md)
+- Long-context O100 concurrency scan:
+  [O100 report](../../../benchmarks/pap/experiments/PAP-20260729-LONGCTX-O100-CONCURRENCY-SCAN/report.md)
+- Invalid first 20/3 MPS treatment:
+  [research L13](../../../benchmarks/pap/experiments/PAP-20260730-RESEARCH-L13/report.md)
 - Current eager and Graph capacity report:
   [automatic Projection-memory milestone](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md)
 - Current Projection scheduling regression:

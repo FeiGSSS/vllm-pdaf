@@ -71,6 +71,7 @@ class LeaseReleaseClient:
                 payload: dict[str, str | bool] = {
                     "request_id": request_id,
                     "lease_id": lease_id,
+                    "submit_only": True,
                 }
                 if retain:
                     payload["retain"] = True
@@ -81,6 +82,8 @@ class LeaseReleaseClient:
                 )
                 response.raise_for_status()
                 body = response.json()
+                if body.get("accepted", False):
+                    return True
                 completed = body.get("retained" if retain else "released", False)
                 if completed or body.get("reason") in {
                     "unknown_or_released_lease",

@@ -11,6 +11,7 @@ from vllm.pap.gateway.app import (
     PAPAttentionLoadRouter,
     PAPConversationRouter,
     PAPGroup,
+    PAPPrefillAdmission,
     PAPProjectionAdmission,
     ProjectionInstance,
     _estimate_context_tokens,
@@ -1103,6 +1104,81 @@ def test_projection_admission_switches_pa_owner_only_between_waves() -> None:
                 "waiting_requests": 0,
             }
         ]
+
+    asyncio.run(run())
+
+
+def test_prefill_admission_bounds_each_pa_independently() -> None:
+    async def run() -> None:
+        groups = [
+            PAPGroup("127.0.0.1", 8100 + index, 5559, "127.0.0.1", 8300)
+            for index in range(2)
+        ]
+        admission = PAPPrefillAdmission(groups, max_inflight_per_pa=1)
+        await admission.acquire(groups[0])
+        second_admitted = asyncio.Event()
+
+        async def acquire_second() -> None:
+            await admission.acquire(groups[0])
+            second_admitted.set()
+
+        task = asyncio.create_task(acquire_second())
+        await admission.acquire(groups[1])
+        await asyncio.sleep(0)
+        assert not second_admitted.is_set()
+
+        await admission.release(groups[0])
+        await asyncio.wait_for(second_admitted.wait(), timeout=1)
+        await admission.release(groups[0])
+        await admission.release(groups[1])
+        await task
+
+        snapshot = await admission.snapshot()
+        assert snapshot["max_inflight_per_pa"] == 1
+        group_0 = dict(snapshot["groups"][0])
+        assert group_0.pop("wait_ms_total") > 0
+        assert group_0.pop("wait_ms_max") > 0
+        assert group_0 == {
+            "pa_index": 0,
+            "active_requests": 0,
+            "waiting_requests": 0,
+            "admitted_requests": 2,
+            "queued_requests": 1,
+        }
+        group_1 = dict(snapshot["groups"][1])
+        assert group_1.pop("wait_ms_total") >= 0
+        assert group_1.pop("wait_ms_max") >= 0
+        assert group_1 == {
+            "pa_index": 1,
+            "active_requests": 0,
+            "waiting_requests": 0,
+            "admitted_requests": 1,
+            "queued_requests": 0,
+        }
+
+    asyncio.run(run())
+
+
+def test_prefill_admission_preserves_fifo_order_per_pa() -> None:
+    async def run() -> None:
+        group = PAPGroup("127.0.0.1", 8100, 5559, "127.0.0.1", 8300)
+        admission = PAPPrefillAdmission([group], max_inflight_per_pa=1)
+        await admission.acquire(group)
+        admitted: list[int] = []
+
+        async def wait_for_slot(index: int) -> None:
+            await admission.acquire(group)
+            admitted.append(index)
+            await admission.release(group)
+
+        tasks = []
+        for index in range(3):
+            tasks.append(asyncio.create_task(wait_for_slot(index)))
+            await asyncio.sleep(0)
+
+        await admission.release(group)
+        await asyncio.gather(*tasks)
+        assert admitted == [0, 1, 2]
 
     asyncio.run(run())
 

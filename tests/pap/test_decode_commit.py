@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from vllm.pap.lifecycle.commit import DecodeCommitClient
@@ -50,6 +52,54 @@ def test_commit_endpoint_applies_to_manager():
     assert resp.status_code == 200
     assert resp.json()["acked_commit_seq"] == 1
     assert calls == [("req-1", 17, [1, 2, 3])]
+
+
+def test_commit_endpoint_can_ack_engine_queue_submission():
+    """Submit-only commit returns before EngineCore executes the utility."""
+    import anyio
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from vllm.pap.prefill_control_router import build_prefill_control_router
+
+    async def run_request():
+        execution = asyncio.get_running_loop().create_future()
+
+        class StubEngineClient:
+            async def pap_submit_decode_commit_async(
+                self, request_id, new_seq_len, new_token_ids
+            ):
+                return execution
+
+        app = FastAPI()
+        app.state.engine_client = StubEngineClient()
+        app.include_router(build_prefill_control_router())
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+        ) as client:
+            with anyio.fail_after(0.5):
+                response = await client.post(
+                    "/v1/pap/prefill/decode-commit",
+                    json={
+                        "request_id": "req-1",
+                        "commit_seq": 1,
+                        "new_seq_len": 17,
+                        "new_token_ids": [1, 2, 3],
+                        "submit_only": True,
+                    },
+                )
+            assert not execution.done()
+            execution.set_result({"request_id": "req-1", "applied": True})
+            await asyncio.sleep(0)
+            return response
+
+    response = anyio.run(run_request)
+
+    assert response.status_code == 200
+    assert response.json()["accepted"] is True
+    assert response.json()["accepted_commit_seq"] == 1
 
 
 def test_commit_endpoint_falls_back_to_sync_engine_client():
@@ -395,6 +445,62 @@ def test_prefill_control_router_marks_completed_turn_lease_retained():
     assert calls == [("req-1", "lease-1", True)]
 
 
+def test_lease_release_endpoint_can_ack_engine_queue_submission():
+    import anyio
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from vllm.pap.prefill_control_router import build_prefill_control_router
+
+    async def run_request():
+        execution = asyncio.get_running_loop().create_future()
+
+        class StubEngineClient:
+            async def pap_submit_release_kv_lease_async(
+                self, request_id, lease_id, retain=False
+            ):
+                return execution
+
+        app = FastAPI()
+        app.state.engine_client = StubEngineClient()
+        app.include_router(build_prefill_control_router())
+        transport = ASGITransport(app=app)
+        async with AsyncClient(
+            transport=transport,
+            base_url="http://testserver",
+        ) as client:
+            with anyio.fail_after(0.5):
+                response = await client.post(
+                    "/v1/pap/prefill/lease-release",
+                    json={
+                        "request_id": "req-1",
+                        "lease_id": "lease-1",
+                        "retain": True,
+                        "submit_only": True,
+                    },
+                )
+            assert not execution.done()
+            execution.set_result(
+                {
+                    "request_id": "req-1",
+                    "lease_id": "lease-1",
+                    "retained": True,
+                }
+            )
+            await asyncio.sleep(0)
+            return response
+
+    response = anyio.run(run_request)
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "request_id": "req-1",
+        "lease_id": "lease-1",
+        "accepted": True,
+        "retain": True,
+    }
+
+
 def test_prefill_control_router_release_falls_back_to_sync_engine_client():
     import anyio
     from fastapi import FastAPI
@@ -490,6 +596,57 @@ def test_async_llm_pap_control_methods_delegate_to_engine_core():
     }
     assert engine_core.commit_calls == [("req-1", 7, (42,))]
     assert engine_core.release_calls == [("req-1", "lease-1")]
+
+
+def test_async_mp_submit_utility_returns_before_execution():
+    from types import SimpleNamespace
+
+    import anyio
+
+    from vllm.v1.engine import EngineCoreRequestType
+    from vllm.v1.engine.core_client import AsyncMPClient
+
+    async def run_submission():
+        sent = []
+        client = object.__new__(AsyncMPClient)
+        client.client_index = 0
+        client.core_engine = b"engine-0"
+        client.utility_results = {}
+
+        class StubEncoder:
+            @staticmethod
+            def encode(value):
+                return (b"encoded",)
+
+        async def send_input(message, engine, objects):
+            sent.append((message, engine, objects))
+
+        client.encoder = StubEncoder()
+        client._send_input_message = send_input
+        client._ensure_output_queue_task = lambda: None
+
+        execution = await client._submit_utility_async(
+            "pap_apply_decode_commit",
+            "req-1",
+            17,
+            (1, 2, 3),
+            engine=b"engine-0",
+        )
+        request = SimpleNamespace(client_index=None)
+        await client.add_request_async(request)
+
+        assert not execution.done()
+        assert [message[0][0] for message in sent] == [
+            EngineCoreRequestType.UTILITY.value,
+            EngineCoreRequestType.ADD.value,
+        ]
+        execution.set_result({"request_id": "req-1", "applied": True})
+        return await execution
+
+    assert anyio.run(run_submission) == {
+        "request_id": "req-1",
+        "applied": True,
+    }
 
 
 def test_apply_decode_commit_advances_tokens():
@@ -968,6 +1125,7 @@ def test_commit_client_posts_to_endpoint(monkeypatch):
     assert posted["json"]["new_seq_len"] == 10
     assert posted["json"]["new_token_ids"] == [1, 2]
     assert posted["json"]["layer_complete"] is True
+    assert posted["json"]["submit_only"] is True
 
 
 def test_commit_client_can_route_each_request_to_its_prefill(monkeypatch):
@@ -1290,7 +1448,11 @@ def test_lease_release_client_can_route_to_session_prefill(monkeypatch):
     )
     assert posted == {
         "url": endpoint,
-        "json": {"request_id": "pa3-request", "lease_id": "lease-pa3"},
+        "json": {
+            "request_id": "pa3-request",
+            "lease_id": "lease-pa3",
+            "submit_only": True,
+        },
     }
 
 
@@ -1332,6 +1494,7 @@ def test_lease_release_client_can_mark_retained_lease(monkeypatch):
     assert posted["json"] == {
         "request_id": "r",
         "lease_id": "lease-1",
+        "submit_only": True,
         "retain": True,
     }
 

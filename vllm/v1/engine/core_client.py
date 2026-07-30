@@ -270,12 +270,30 @@ class EngineCoreClient(ABC):
     ) -> dict[str, Any]:
         raise NotImplementedError
 
+    async def pap_submit_decode_commit_async(
+        self,
+        request_id: str,
+        new_seq_len: int,
+        new_token_ids: Sequence[int],
+    ) -> AnyFuture:
+        """Submit a PAP decode commit without waiting for its execution."""
+        raise NotImplementedError
+
     async def pap_release_kv_lease_async(
         self,
         request_id: str,
         lease_id: str,
         retain: bool = False,
     ) -> dict[str, Any]:
+        raise NotImplementedError
+
+    async def pap_submit_release_kv_lease_async(
+        self,
+        request_id: str,
+        lease_id: str,
+        retain: bool = False,
+    ) -> AnyFuture:
+        """Submit a PAP lease update without waiting for its execution."""
         raise NotImplementedError
 
     async def pap_export_kv_lease_async(
@@ -1245,9 +1263,10 @@ class AsyncMPClient(MPClient):
     async def call_utility_async(self, method: str, *args) -> Any:
         return await self._call_utility_async(method, *args, engine=self.core_engine)
 
-    async def _call_utility_async(
+    async def _submit_utility_async(
         self, method: str, *args, engine: EngineIdentity
-    ) -> Any:
+    ) -> asyncio.Future[Any]:
+        """Send a utility call and return its eventual result future."""
         call_id = uuid.uuid1().int >> 64
         future = asyncio.get_running_loop().create_future()
         self.utility_results[call_id] = future
@@ -1255,8 +1274,18 @@ class AsyncMPClient(MPClient):
             EngineCoreRequestType.UTILITY.value,
             *self.encoder.encode((self.client_index, call_id, method, args)),
         )
-        await self._send_input_message(message, engine, args)
+        try:
+            await self._send_input_message(message, engine, args)
+        except BaseException:
+            self.utility_results.pop(call_id, None)
+            raise
         self._ensure_output_queue_task()
+        return future
+
+    async def _call_utility_async(
+        self, method: str, *args, engine: EngineIdentity
+    ) -> Any:
+        future = await self._submit_utility_async(method, *args, engine=engine)
         return await future
 
     async def get_supported_tasks_async(self) -> tuple[SupportedTask, ...]:
@@ -1313,6 +1342,20 @@ class AsyncMPClient(MPClient):
             tuple(int(t) for t in new_token_ids),
         )
 
+    async def pap_submit_decode_commit_async(
+        self,
+        request_id: str,
+        new_seq_len: int,
+        new_token_ids: Sequence[int],
+    ) -> asyncio.Future[Any]:
+        return await self._submit_utility_async(
+            "pap_apply_decode_commit",
+            request_id,
+            int(new_seq_len),
+            tuple(int(t) for t in new_token_ids),
+            engine=self.core_engine,
+        )
+
     async def pap_release_kv_lease_async(
         self,
         request_id: str,
@@ -1330,6 +1373,19 @@ class AsyncMPClient(MPClient):
             request_id,
             lease_id,
             True,
+        )
+
+    async def pap_submit_release_kv_lease_async(
+        self,
+        request_id: str,
+        lease_id: str,
+        retain: bool = False,
+    ) -> asyncio.Future[Any]:
+        args = (request_id, lease_id, True) if retain else (request_id, lease_id)
+        return await self._submit_utility_async(
+            "pap_release_kv_lease",
+            *args,
+            engine=self.core_engine,
         )
 
     async def pap_export_kv_lease_async(

@@ -4,6 +4,11 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260730-RESEARCH-L13
+  - PAP-20260729-LONGCTX-O100-CONCURRENCY-SCAN
+  - PAP-20260729-RESEARCH-L12
+  - PAP-20260729-RESEARCH-L07
+  - PAP-20260729-RESEARCH-L01
   - PAP-20260725-8GPU-CAPACITY-SCAN
   - PAP-20260725-8GPU-CAPACITY-PILOT
   - PAP-20260724-STEP-OVERLAP
@@ -20,7 +25,7 @@ last_validated_commit: 4a3e36820
 
 # Current PAP development status
 
-Snapshot date: 2026-07-29.
+Snapshot date: 2026-07-30.
 
 PAP has completed its runtime refactor and the first capacity-oriented
 performance milestone. The source milestone at `cb6fe3500` has one accepted
@@ -84,6 +89,12 @@ the selected eight-GPU boundary points have three repetitions.
 The former P17 1PA1P client, runner, and release gate are retired. Its profile
 and results remain archived solely for historical manifest validation.
 
+Paper research loops may use prospectively registered workload variants
+without redefining the canonical regression testbed. The current long-context
+O100 lane uses 60 sessions, three approximately 10K-token turns, randomized
+50--200-token outputs, and pure AIPerf concurrency. Its evidence is scoped to
+`PAP-20260729-LONGCTX-O100-CONCURRENCY-SCAN`.
+
 The capacity lane deliberately avoids artificial scheduler limits:
 
 | Role | `max_num_seqs` | `max_num_batched_tokens` |
@@ -113,9 +124,15 @@ PAP point started without OOM or Graph-capture failure. Explicit legacy
 Projection budgets are not current configuration inputs; historical details
 remain isolated in archived records and Git history.
 
-## Current performance milestone
+## Performance milestones and current research evidence
 
-The current eager scan finds PAP best-goodput advantages of +46.0%, +85.5%,
+The July 22 and July 25 scans below remain valid runtime and benchmark
+milestones for their recorded code and methodology. They are no longer the
+current fair PAP-versus-PD paper comparison: corrected same-node PD transport,
+clean repeated boundaries, and workload-controlled research loops L01--L13
+supersede their directional performance conclusion.
+
+The July 22 eager scan finds PAP best-goodput advantages of +46.0%, +85.5%,
 and +95.2% under the strict, standard, and relaxed SLOs. Its concurrency
 envelope is C12/C20/C32, versus best PD C8/C10/C16. Relative to the preceding
 eager milestone, PAP goodput changes by -1.3%, +1.6%, and -1.4%; automatic
@@ -163,10 +180,12 @@ concurrency to establish SLO capacity.
 
 7PA1P is not a liveness failure: it completes 640/640 requests, improves raw
 throughput by 14.1% and mean TTFT by 45.5% relative to 6PA2P, but only
-599/640 requests meet Relaxed. A matched trace attributes the tail to its
-single seven-PA fan-in barrier: Projection join-wait p99 is 3.654 ms per layer,
-versus 0.625 and 0.663 ms for the two independent 6PA2P Projection domains.
-QKV preparation and P2P-copy costs remain essentially unchanged. See the
+599/640 requests meet Relaxed. The initial trace suggested its single
+seven-PA fan-in barrier as the cause because Projection join-wait p99 is
+3.654 ms per layer, versus 0.625 and 0.663 ms for the two independent 6PA2P
+Projection domains. L01 later rejects fan-in completion skew as the dominant
+explanation: the matched median spread delta accounts for only 16.6% of the
+trace-mode ITL gap. See the
 [eight-GPU pilot](../../../benchmarks/pap/experiments/PAP-20260725-8GPU-CAPACITY-PILOT/report.md).
 
 The completed compact scan finds the following best compliant request
@@ -184,24 +203,66 @@ Relaxed goodput is 4.443 requests/s: 17.4% above PD and 14.2% below fused DP.
 See the
 [full eight-GPU scan](../../../benchmarks/pap/experiments/PAP-20260725-8GPU-CAPACITY-SCAN/report.md).
 
+The clean corrected-PD O16 comparison reverses that earlier direction
+(`PAP-20260729-RESEARCH-L07`). At its preselected repeated boundaries, PD
+leads PAP goodput by 32.2%, 36.9%, and 24.4% under strict, standard, and
+relaxed SLOs. PAP leads fused DP only under strict; it loses by 12.1% and
+17.2% under standard and relaxed. These are the current short-output paper
+baselines.
+
+The earlier large PAP-over-PD margins are not architecture evidence. The old
+PD KV-transfer path included TCP-emulated GET at approximately 0.42 GiB/s and
+later severe lane instability, rather than a healthy 22--24.5 GiB/s
+CUDA-IPC path. Since workload, topology, and capacity search also changed
+before L07, the evidence supports “baseline-contaminated,” not the stronger
+claim that transport alone explains every percentage point of the reversal.
+
+The topology evidence is a trade-off rather than a universal winner. At an
+achieved-throughput mismatch of only 0.59%, 7PA1P C21 lowers mean TTFT by
+61.9% and raises mean ITL by 9.33% relative to 6PA2P C32, with
+standard/relaxed goodput differences of -0.20%/+0.19%
+(`PAP-20260729-RESEARCH-L04`). L01 also falsifies the earlier claim that
+fan-in completion skew dominates the 7PA1P ITL loss: the median spread delta
+explains only 16.6% of the trace-mode gap.
+
+Near the model context limit, the larger PAP KV pool is not sufficient
+(`PAP-20260729-RESEARCH-L12`). Both 6PA2P and 6P2D bracket their Standard
+boundary at C12--C16, while PAP C12 Standard goodput is 34.4% below PD. PAP
+C16 has lower mean ITL but much higher TTFT, motivating a Prefill-resource
+test. The first 20/3 MPS treatment is invalid because lifecycle correctness
+fails (`PAP-20260730-RESEARCH-L13`); its metrics are diagnostic only.
+
+The long-context O100 development scan finds one narrower positive region
+(`PAP-20260729-LONGCTX-O100-CONCURRENCY-SCAN`). On 60 sessions at C20,
+7PA1P passes Standard at 1.611 good req/s while 6P2D fails at 1.337, a 20.5%
+difference. At C24 both fail Standard, and PD retains the best passing Relaxed
+goodput by 0.8%. This one-repetition result motivates clean confirmation and
+causal attribution; it does not establish monotonic PAP scaling or a
+KV-capacity-wall mechanism.
+
 ## Remaining work
 
-1. Run three repetitions only for the selected eight-GPU boundary points:
-   PAP 7PA1P C16, PAP 6PA2P C32, PD 6P2D C12/C24, and fused DP C8/C16/C24.
-2. Diagnose PD NIXL transfer variance, including the observed 2P2D single-lane
-   stalls, before treating exact PD tail latency as stable.
-3. Keep piecewise CUDA Graph optional until repeated evidence shows a
+1. Finish and commit the current lifecycle correctness repair. If it changes
+   decode-commit or lease-release timing, rerun both L13 18/5 and 20/3 points
+   contemporaneously rather than reusing the old control.
+2. Repeat the long-context O100 C20 boundary on clean committed code and
+   causally separate seventh-PA Prefill capacity, KV capacity, and Decode
+   Attention effects.
+3. Keep corrected NIXL settings and clean tracked provenance mandatory for
+   every PAP/PD comparison; do not merge dirty submit-only diagnostics into
+   committed baselines.
+4. Keep piecewise CUDA Graph optional until repeated evidence shows a
    consistent latency or goodput benefit worth changing the eager default.
-4. Keep cross-host NIXL source-compatible without a fresh performance claim.
+5. Keep cross-host NIXL source-compatible without a fresh performance claim.
    Same-host 7PA1P and 6PA2P now have fresh C32 E2E evidence; other xPAyP
    shapes remain preserved-unverified.
-5. Profile the independent multi-PA output streams before attributing a
+6. Profile the independent multi-PA output streams before attributing a
    specific E2E gain to them, and continue only metadata/control overlap that
    preserves the complete scheduler-batch and layer order.
-6. Continue owner-driven splits in unified-KV and transport internals only
+7. Continue owner-driven splits in unified-KV and transport internals only
    when they simplify a concrete feature; do not restore retired experiment
    selectors or per-layer scheduling paths.
-7. Consider chunked asynchronous growth of sealed Prefill-owned KV
+8. Consider chunked asynchronous growth of sealed Prefill-owned KV
    reservations. The current path reserves and leases the request's complete
    decode capacity before handoff, using `max_completion_tokens` or
    `max_tokens` with an environment fallback, and fails closed beyond the

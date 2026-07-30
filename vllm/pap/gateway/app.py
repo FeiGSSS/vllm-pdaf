@@ -11,7 +11,7 @@ import math
 import os
 import time
 import uuid
-from collections import Counter
+from collections import Counter, deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from itertools import count
@@ -631,6 +631,84 @@ class PAPAttentionLoadRouter:
                 for group in self._groups
             },
         }
+
+
+class PAPPrefillAdmission:
+    """Bound in-flight Prefill requests independently on each PA."""
+
+    def __init__(self, groups: list[PAPGroup], max_inflight_per_pa: int) -> None:
+        if max_inflight_per_pa < 0:
+            raise ValueError("max_inflight_per_pa must be >= 0")
+        self._condition = asyncio.Condition()
+        self._max_inflight_per_pa = max_inflight_per_pa
+        self._active = {group: 0 for group in groups}
+        self._waiters = {group: deque[object]() for group in groups}
+        self._admitted = Counter[PAPGroup]()
+        self._queued = Counter[PAPGroup]()
+        self._wait_ms_total = {group: 0.0 for group in groups}
+        self._wait_ms_max = {group: 0.0 for group in groups}
+        self._group_indices = {group: index for index, group in enumerate(groups)}
+
+    async def acquire(self, group: PAPGroup) -> float:
+        """Wait for one FIFO Prefill slot; zero slots means unbounded."""
+        if self._max_inflight_per_pa == 0:
+            return 0.0
+        started = time.perf_counter()
+        async with self._condition:
+            ticket = object()
+            waiters = self._waiters[group]
+            waiters.append(ticket)
+            queued = (
+                len(waiters) > 1 or self._active[group] >= self._max_inflight_per_pa
+            )
+            try:
+                while (
+                    waiters[0] is not ticket
+                    or self._active[group] >= self._max_inflight_per_pa
+                ):
+                    await self._condition.wait()
+                waiters.popleft()
+                self._active[group] += 1
+            except BaseException:
+                waiters.remove(ticket)
+                self._condition.notify_all()
+                raise
+            wait_ms = (time.perf_counter() - started) * 1000.0
+            self._admitted[group] += 1
+            if queued:
+                self._queued[group] += 1
+            self._wait_ms_total[group] += wait_ms
+            self._wait_ms_max[group] = max(self._wait_ms_max[group], wait_ms)
+            return wait_ms
+
+    async def release(self, group: PAPGroup) -> None:
+        """Release one bounded Prefill slot."""
+        if self._max_inflight_per_pa == 0:
+            return
+        async with self._condition:
+            if self._active[group] <= 0:
+                raise RuntimeError("invalid PAP Prefill admission release")
+            self._active[group] -= 1
+            self._condition.notify_all()
+
+    async def snapshot(self) -> dict[str, Any]:
+        """Return the current Prefill admission state for audits."""
+        async with self._condition:
+            return {
+                "max_inflight_per_pa": self._max_inflight_per_pa,
+                "groups": [
+                    {
+                        "pa_index": self._group_indices[group],
+                        "active_requests": self._active[group],
+                        "waiting_requests": len(self._waiters[group]),
+                        "admitted_requests": self._admitted[group],
+                        "queued_requests": self._queued[group],
+                        "wait_ms_total": self._wait_ms_total[group],
+                        "wait_ms_max": self._wait_ms_max[group],
+                    }
+                    for group in self._active
+                ],
+            }
 
 
 def _request_text_bytes(value: Any) -> int:
@@ -1419,6 +1497,10 @@ async def lifespan(app: FastAPI):
         ),
         migration_max_inflight=args.attention_load_migration_max_inflight,
     )
+    app.state.prefill_admission = PAPPrefillAdmission(
+        app.state.groups,
+        args.prefill_max_inflight_per_pa,
+    )
     app.state.projection_admission = PAPProjectionAdmission(app.state.groups)
     yield
     attention_clients = [
@@ -1518,9 +1600,14 @@ async def _handle_openai_request(api_path: str, request: Request):
 
     attention_sessions: list[dict[str, Any]] | None = None
     handed_off_stream_cleanup = False
+    prefill_admitted = False
     projection_admitted = False
     attention_load_finished = False
     try:
+        prefill_admission_wait_ms = await request.app.state.prefill_admission.acquire(
+            prefill_group
+        )
+        prefill_admitted = True
         register_start = time.perf_counter() if profile else 0.0
         attention_sessions = await register_attention_handles(
             attention_clients,
@@ -1548,7 +1635,18 @@ async def _handle_openai_request(api_path: str, request: Request):
             (time.perf_counter() - prefill_payload_start) * 1000.0 if profile else 0.0
         )
         t0 = time.time()
-        prefill_resp = await _post_json(prefill, api_path, prefill_payload, request_id)
+        try:
+            prefill_resp = await _post_json(
+                prefill,
+                api_path,
+                prefill_payload,
+                request_id,
+            )
+        finally:
+            try:
+                await request.app.state.prefill_admission.release(prefill_group)
+            finally:
+                prefill_admitted = False
         prefill_ms = int((time.time() - t0) * 1000)
         migration_ms = 0
         migration_attention_ready = False
@@ -1702,7 +1800,8 @@ async def _handle_openai_request(api_path: str, request: Request):
         logger.info(
             "request_id=%s pa=%s:%d attention=%s:%s projection=%s:%d "
             "pa_index=%d projection_index=%d pair=%s "
-            "prefill_pa_index=%d prefill_ms=%d migration_ms=%d "
+            "prefill_pa_index=%d prefill_admission_wait_ms=%.3f "
+            "prefill_ms=%d migration_ms=%d "
             "prefill_prefix_len=%s attention_ready=%s "
             "projection_kv_keys=%s",
             request_id,
@@ -1716,6 +1815,7 @@ async def _handle_openai_request(api_path: str, request: Request):
             projection_index,
             pair_name,
             prefill_group_index,
+            prefill_admission_wait_ms,
             prefill_ms,
             migration_ms,
             prefix_len,
@@ -1725,10 +1825,12 @@ async def _handle_openai_request(api_path: str, request: Request):
         if profile:
             logger.info(
                 "PAP proxy prefill IPC profile request_id=%s register_ms=%.3f "
-                "prefill_payload_ms=%.3f prefill_ms=%d migration_ms=%d "
+                "prefill_admission_wait_ms=%.3f prefill_payload_ms=%.3f "
+                "prefill_ms=%d migration_ms=%d "
                 "projection_payload_ms=%.3f pre_projection_ms=%.3f",
                 request_id,
                 register_ms,
+                prefill_admission_wait_ms,
                 prefill_payload_ms,
                 prefill_ms,
                 migration_ms,
@@ -1737,6 +1839,7 @@ async def _handle_openai_request(api_path: str, request: Request):
             )
 
         response_headers = {
+            "X-PAP-Prefill-Admission-Wait-Ms": f"{prefill_admission_wait_ms:.3f}",
             "X-PAP-Prefill-Ms": str(prefill_ms),
             "X-PAP-Migration-Ms": str(migration_ms),
             "X-PAP-Prefill-Group": str(prefill_group_index),
@@ -1801,6 +1904,8 @@ async def _handle_openai_request(api_path: str, request: Request):
             headers=response_headers,
         )
     finally:
+        if prefill_admitted:
+            await request.app.state.prefill_admission.release(prefill_group)
         if not handed_off_stream_cleanup:
             try:
                 if attention_sessions is not None:
@@ -1845,6 +1950,7 @@ async def health() -> dict[str, Any]:
         "pair_counts": dict(sorted(app.state.pair_counts.items())),
         "conversation_routing": app.state.conversation_router.snapshot(),
         "attention_load_routing": app.state.attention_load_router.snapshot(),
+        "prefill_admission": await app.state.prefill_admission.snapshot(),
         "projection_admission": await app.state.projection_admission.snapshot(),
     }
 
@@ -1860,6 +1966,7 @@ async def topology_stats() -> dict[str, Any]:
         "pair_counts": pair_counts,
         "conversation_routing": app.state.conversation_router.snapshot(),
         "attention_load_routing": app.state.attention_load_router.snapshot(),
+        "prefill_admission": await app.state.prefill_admission.snapshot(),
         "projection_admission": await app.state.projection_admission.snapshot(),
     }
 
@@ -1913,6 +2020,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=int(os.environ.get("PAP_ATTENTION_LOAD_MIGRATION_MAX_INFLIGHT", "1")),
         help="Maximum unresolved historical KV migrations; zero disables them",
+    )
+    parser.add_argument(
+        "--prefill-max-inflight-per-pa",
+        type=int,
+        default=int(os.environ.get("PAP_PREFILL_MAX_INFLIGHT_PER_PA", "0")),
+        help="Maximum in-flight Prefill requests per PA; zero is unbounded",
     )
     return parser.parse_args()
 

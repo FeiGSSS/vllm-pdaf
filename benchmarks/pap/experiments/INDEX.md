@@ -9,8 +9,13 @@ Current normalized AIPerf experiment bundles:
 - [Current eager and Graph PAP/PD milestone](PAP-20260722-AIPERF-PROJECTION-AUTO/report.md)
 - [Current step/control-overlap regression](PAP-20260724-STEP-OVERLAP/report.md)
 
+These remain current runtime-regression bundles. Their directional
+PAP-versus-PD result is superseded for paper claims by the corrected-transport
+research evidence below.
+
 Current development pilots:
 
+- [Research L13: invalid first near-limit MPS treatment](PAP-20260730-RESEARCH-L13/report.md)
 - [Long-context O100 fixed-concurrency scan](PAP-20260729-LONGCTX-O100-CONCURRENCY-SCAN/report.md)
 - [Research L12: near-limit KV capacity falsification](PAP-20260729-RESEARCH-L12/report.md)
 - [Research L11: invalidated boundary refinement and token-ownership fix](PAP-20260729-RESEARCH-L11/report.md)

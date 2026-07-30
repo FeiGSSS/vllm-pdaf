@@ -940,6 +940,19 @@ class AsyncLLM(EngineClient):
             tuple(int(t) for t in new_token_ids),
         )
 
+    async def pap_submit_decode_commit_async(
+        self,
+        request_id: str,
+        new_seq_len: int,
+        new_token_ids: Sequence[int],
+    ) -> asyncio.Future[Any]:
+        """Submit a PAP decode commit to EngineCore without waiting for it."""
+        return await self.engine_core.pap_submit_decode_commit_async(
+            request_id,
+            int(new_seq_len),
+            tuple(int(t) for t in new_token_ids),
+        )
+
     async def pap_release_kv_lease_async(
         self,
         request_id: str,
@@ -955,6 +968,19 @@ class AsyncLLM(EngineClient):
             request_id,
             lease_id,
             True,
+        )
+
+    async def pap_submit_release_kv_lease_async(
+        self,
+        request_id: str,
+        lease_id: str,
+        retain: bool = False,
+    ) -> asyncio.Future[Any]:
+        """Submit a PAP lease update to EngineCore without waiting for it."""
+        return await self.engine_core.pap_submit_release_kv_lease_async(
+            request_id,
+            lease_id,
+            retain,
         )
 
     async def pap_export_kv_lease_async(

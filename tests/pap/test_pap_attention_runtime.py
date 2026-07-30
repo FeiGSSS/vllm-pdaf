@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Attention runtime, service composition, and unified-KV integration tests."""
 
 import base64
@@ -1104,6 +1106,8 @@ def test_unified_offload_exec_commit_waits_for_async_decode_token(
         )
         == "matched"
     )
+    assert commits == []
+    assert registry._decode_token_committer.flush_request("req-a")
     assert commits == [
         (
             "cmpl-req-a-0",
@@ -1246,6 +1250,8 @@ def test_attention_step_context_reuses_plan_and_publishes_once(
     assert len(workspace_builds) == 1
     assert len(workspaces) == 2
     assert all(workspace is workspace_builds[0] for workspace in workspaces)
+    assert commits == []
+    assert registry._decode_token_committer.flush_request("req-step")
     assert commits == [
         (
             "req-step",
@@ -2557,9 +2563,7 @@ def test_attention_registry_can_detach_session_and_retain_prefill_lease(
             {
                 "request_id": "req-retain",
                 "lease_id": "lease-1",
-                "endpoint": (
-                    "http://localhost:8100/v1/pap/prefill/lease-release"
-                ),
+                "endpoint": ("http://localhost:8100/v1/pap/prefill/lease-release"),
                 "retain": True,
             },
         ),
@@ -3474,9 +3478,7 @@ def test_run_offload_exec_mailbox_loop_emits_trace(monkeypatch, caplog) -> None:
             if self.recv_calls > 1:
                 raise KeyboardInterrupt
             message = SimpleNamespace(
-                tensor=torch.tensor(
-                    [[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]]
-                ),
+                tensor=torch.tensor([[1.0, 0.0, 1.0, 0.0, 2.0, 0.0]]),
                 release=lambda: None,
                 recv_trace={},
             )

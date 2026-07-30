@@ -334,9 +334,15 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                 request_id
             )
         commit_client = _get_commit_client()
-        if not commit_client.flush_request(request_id):
+        flush_submitted = getattr(
+            commit_client,
+            "flush_submitted_request",
+            commit_client.flush_request,
+        )
+        if not flush_submitted(request_id):
             logger.warning(
-                "PAP decode commit flush timed out before lease release request_id=%s",
+                "PAP decode commit submission timed out before lease release "
+                "request_id=%s",
                 request_id,
             )
             self._decode_token_committer.forget_request(request_id)
@@ -425,9 +431,7 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                 "offload_exec_compute_calls_by_layer": dict(
                     sorted(self._offload_exec_compute_calls_by_layer.items())
                 ),
-                "paged_decode_warmup_started": (
-                    self._paged_decode_warmup_started
-                ),
+                "paged_decode_warmup_started": (self._paged_decode_warmup_started),
                 "paged_decode_warmup_done": self._paged_decode_warmup_done,
                 "paged_decode_warmup_failed": self._paged_decode_warmup_failed,
             }
@@ -706,16 +710,21 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
             )
         if replaced_lease_id is not None:
             commit_client = _get_commit_client()
-            commits_acked = commit_client.flush_request(registration.request_id)
-            if not commits_acked:
+            flush_submitted = getattr(
+                commit_client,
+                "flush_submitted_request",
+                commit_client.flush_request,
+            )
+            commits_submitted = flush_submitted(registration.request_id)
+            if not commits_submitted:
                 logger.warning(
-                    "PAP decode commit flush timed out before replaced "
+                    "PAP decode commit submission timed out before replaced "
                     "lease release request_id=%s",
                     registration.request_id,
                 )
-            if commits_acked:
+            if commits_submitted:
                 commit_client.forget_request(registration.request_id)
-            if commits_acked:
+            if commits_submitted:
                 release_endpoint = (
                     None
                     if replaced_prefill_endpoint is None
@@ -992,9 +1001,8 @@ class PAPAttentionRegistry(_PAPDecodeStateMixin):
                     f"PAP Attention step received unexpected layer {layer_name}"
                 )
             context.completed_layers.add(layer_name)
-            if (
-                context.kv_ready_published
-                or len(context.completed_layers) != len(context.expected_layers)
+            if context.kv_ready_published or len(context.completed_layers) != len(
+                context.expected_layers
             ):
                 return 0
 

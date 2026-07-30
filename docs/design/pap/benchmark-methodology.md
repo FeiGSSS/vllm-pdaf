@@ -4,6 +4,10 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260730-RESEARCH-L13
+  - PAP-20260729-LONGCTX-O100-CONCURRENCY-SCAN
+  - PAP-20260729-RESEARCH-L12
+  - PAP-20260729-RESEARCH-L07
   - PAP-20260725-8GPU-CAPACITY-SCAN
   - PAP-20260725-8GPU-CAPACITY-PILOT
   - PAP-20260724-STEP-OVERLAP
@@ -65,6 +69,16 @@ boundary. Its PAP/PD/fused-DP goodput, raw-throughput, TTFT, and ITL comparison
 is recorded in the
 [eight-GPU capacity report](../../../benchmarks/pap/experiments/PAP-20260725-8GPU-CAPACITY-SCAN/report.md).
 
+That July 25 scan remains a runtime milestone, not the current fair paper
+comparison. The clean corrected-transport O16 confirmation in
+[`PAP-20260729-RESEARCH-L07`](../../../benchmarks/pap/experiments/PAP-20260729-RESEARCH-L07/report.md)
+is the current short-output comparison. Registered research variants may
+change one workload or mechanism dimension while keeping AIPerf concurrency,
+request-level SLO accounting, correctness, and provenance gates unchanged:
+L12 tests four approximately 10K-token turns with O16 output, and the O100
+scan tests three such turns with randomized mean-102-token output. Those
+variants do not silently redefine the long-lived regression workload.
+
 ## Archived P17 evidence
 
 The former P17 custom client and runner are retired. Its TOML profile remains
@@ -93,12 +107,12 @@ PA-GPU headroom for the colocated Attention runtime.
 The full parameter rationale and reproducible commands live in the
 [AIPerf testbed documentation](../../../benchmarks/pap/aiperf/README.md).
 
-The latest four-GPU comparison validates the `0.90` PA/PD baseline together
+The July 22 four-GPU comparison validates the `0.90` PA/PD baseline together
 with automatic Projection sizing at `0.4070`. It covers eager and piecewise
 CUDA Graph execution with the same byte-identical dataset. PD 2P2D uses stable
 conversation affinity over the complete Cartesian P/D pair set.
 
-Best SLO-compliant goodput from the current single-repetition development
+Best SLO-compliant goodput from that single-repetition development
 scans is:
 
 | Mode | SLO | PAP | Best PD | PAP versus PD |
@@ -114,8 +128,9 @@ All included points completed every request and passed routing, output, and
 runtime audits. One persistent single-lane PD Graph transport anomaly is
 retained as a diagnostic and excluded; its targeted repeat and independent PD
 topologies remain in the comparison. These are development results, not a
-formal three-repetition claim. See the
-[current milestone report](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
+formal three-repetition claim or the current eight-GPU paper comparison. See
+the
+[dated runtime milestone report](../../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
 
 ## Evidence and decisions
 

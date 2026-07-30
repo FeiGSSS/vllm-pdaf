@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 from __future__ import annotations
 
 import threading
@@ -38,6 +40,8 @@ def test_deferred_decode_token_dispatches_after_token_and_kv_are_ready() -> None
         )
         == "matched"
     )
+    assert dispatched == []
+    assert committer.flush_request("req-a")
     assert dispatched == [
         DeferredDecodeCommit(
             request_id="req-a",
@@ -68,6 +72,8 @@ def test_deferred_decode_token_dispatches_when_token_arrives_last() -> None:
         )
         == "matched"
     )
+    assert dispatched == []
+    assert committer.flush_request("req-a")
     assert len(dispatched) == 1
 
 
@@ -114,6 +120,7 @@ def test_deferred_decode_token_retries_are_idempotent_and_mismatch_fails() -> No
         )
         == "duplicate"
     )
+    assert committer.flush_request("req-a")
     assert len(dispatched) == 1
 
 
@@ -132,15 +139,14 @@ def test_deferred_decode_token_flush_waits_for_token_and_dispatch() -> None:
         endpoint="http://127.0.0.1:8100/commit",
     )
 
-    token_thread = threading.Thread(
-        target=lambda: committer.record_token(
+    assert (
+        committer.record_token(
             request_id="req-a",
             new_seq_len=17,
             token_ids=(42,),
         )
+        == "matched"
     )
-    token_thread.start()
-    assert dispatch_started.wait(timeout=1.0)
 
     flush_results: list[bool] = []
     flush_thread = threading.Thread(
@@ -149,13 +155,47 @@ def test_deferred_decode_token_flush_waits_for_token_and_dispatch() -> None:
         )
     )
     flush_thread.start()
+    assert dispatch_started.wait(timeout=1.0)
     time.sleep(0.02)
     assert flush_thread.is_alive()
 
     release_dispatch.set()
-    token_thread.join(timeout=1.0)
     flush_thread.join(timeout=1.0)
     assert flush_results == [True]
+
+
+def test_deferred_decode_token_flush_combines_contiguous_positions() -> None:
+    dispatched: list[DeferredDecodeCommit] = []
+    committer = DeferredDecodeTokenCommitter(dispatched.append)
+
+    for new_seq_len, token_id in ((17, 42), (18, 43), (19, 44)):
+        assert (
+            committer.record_token(
+                request_id="req-a",
+                new_seq_len=new_seq_len,
+                token_ids=(token_id,),
+            )
+            == "pending"
+        )
+        assert (
+            committer.record_kv_ready(
+                request_id="req-a",
+                new_seq_len=new_seq_len,
+                endpoint="http://127.0.0.1:8100/commit",
+            )
+            == "matched"
+        )
+
+    assert dispatched == []
+    assert committer.flush_request("req-a")
+    assert dispatched == [
+        DeferredDecodeCommit(
+            request_id="req-a",
+            new_seq_len=19,
+            token_ids=(42, 43, 44),
+            endpoint="http://127.0.0.1:8100/commit",
+        )
+    ]
 
 
 def test_deferred_decode_token_forget_drops_only_unmatched_final_token() -> None:
@@ -356,16 +396,8 @@ def test_decode_token_client_publish_is_nonblocking_and_flush_waits(
     flush_thread.join(timeout=1.0)
     assert flush_results == [True]
     assert [payload["json"] for payload in payloads] == [
-        {
-            "tokens": [
-                {"request_id": "req-a", "new_seq_len": 17, "token_id": 42}
-            ]
-        },
-        {
-            "tokens": [
-                {"request_id": "req-a", "new_seq_len": 17, "token_id": 42}
-            ]
-        },
+        {"tokens": [{"request_id": "req-a", "new_seq_len": 17, "token_id": 42}]},
+        {"tokens": [{"request_id": "req-a", "new_seq_len": 17, "token_id": 42}]},
     ]
     assert all(
         payload["url"] == "http://127.0.0.1:8300/v1/pap/attention/decode-tokens"
