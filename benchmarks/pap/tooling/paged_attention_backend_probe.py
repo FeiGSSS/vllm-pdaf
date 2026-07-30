@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import json
 import math
 import statistics
@@ -29,6 +30,7 @@ class KernelCase:
 
     name: str
     run: Callable[[], torch.Tensor]
+    config: dict[str, int] | None = None
 
 
 def _positive_int(value: str) -> int:
@@ -47,7 +49,15 @@ def _split_list(value: str) -> tuple[int, ...]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--seq-lens",
+        type=_split_list,
+        default=ProbeShape().seq_lens,
+    )
     parser.add_argument("--triton-splits", type=_split_list, default=(4, 8, 16))
+    parser.add_argument("--triton-warps", type=_split_list, default=(4, 8))
+    parser.add_argument("--triton-block-hs", type=_split_list, default=(4, 8, 16))
+    parser.add_argument("--triton-stages", type=_split_list, default=(1, 2))
     parser.add_argument("--warmup-calls", type=_positive_int, default=20)
     parser.add_argument("--samples", type=_positive_int, default=5)
     parser.add_argument("--calls-per-sample", type=_positive_int, default=60)
@@ -61,9 +71,11 @@ def _build_cases(
     inputs: ProbeInputs,
     shape: ProbeShape,
     triton_splits: tuple[int, ...],
+    triton_warps: tuple[int, ...],
+    triton_block_hs: tuple[int, ...],
+    triton_stages: tuple[int, ...],
 ) -> list[KernelCase]:
     from vllm.pap.attention.kernels import (
-        PAP_TRITON_DECODE_NUM_SPLITS,
         build_paged_decode_workspace,
         run_paged_decode_attention,
     )
@@ -86,30 +98,51 @@ def _build_cases(
         max_seq_len=max(shape.seq_lens),
     )
     workspace = build_paged_decode_workspace(inputs.query)
+    pap_config = workspace.kernel_config
     k_scale = torch.ones((), dtype=torch.float32, device=inputs.query.device)
     v_scale = torch.ones((), dtype=torch.float32, device=inputs.query.device)
-    for num_splits in triton_splits:
-        if num_splits == PAP_TRITON_DECODE_NUM_SPLITS:
+    def run_pap_triton() -> torch.Tensor:
+        return run_paged_decode_attention(
+            query=inputs.query,
+            key_cache=inputs.key_cache,
+            value_cache=inputs.value_cache,
+            metadata=metadata,
+            workspace=workspace,
+            scale=scale,
+            block_size=shape.block_size,
+        )
 
-            def run_pap_triton() -> torch.Tensor:
-                return run_paged_decode_attention(
-                    query=inputs.query,
-                    key_cache=inputs.key_cache,
-                    value_cache=inputs.value_cache,
-                    metadata=metadata,
-                    workspace=workspace,
-                    scale=scale,
-                    block_size=shape.block_size,
-                )
-
-            cases.append(
-                KernelCase(
-                    f"pap_triton_decode_splits{num_splits}",
-                    run_pap_triton,
-                )
-            )
+    cases.append(
+        KernelCase(
+            (
+                f"pap_triton_current_s{pap_config.num_splits}"
+                f"_w{pap_config.num_warps}"
+                f"_h{pap_config.block_h}"
+                f"_st{pap_config.num_stages}"
+            ),
+            run_pap_triton,
+            config={
+                "num_splits": pap_config.num_splits,
+                "num_warps": pap_config.num_warps,
+                "block_h": pap_config.block_h,
+                "num_stages": pap_config.num_stages,
+            },
+        )
+    )
+    configs = itertools.product(
+        triton_splits,
+        triton_warps,
+        triton_block_hs,
+        triton_stages,
+    )
+    for num_splits, num_warps, block_h, num_stages in configs:
+        if (num_splits, num_warps, block_h, num_stages) == (
+            pap_config.num_splits,
+            pap_config.num_warps,
+            pap_config.block_h,
+            pap_config.num_stages,
+        ):
             continue
-
         output = torch.empty_like(inputs.query)
         lse = torch.empty(
             (shape.batch_size, shape.num_q_heads),
@@ -133,6 +166,9 @@ def _build_cases(
             lse: torch.Tensor = lse,
             partial: torch.Tensor = partial,
             num_splits: int = num_splits,
+            num_warps: int = num_warps,
+            block_h: int = block_h,
+            num_stages: int = num_stages,
         ) -> torch.Tensor:
             decode_attention_fwd(
                 inputs.query,
@@ -148,11 +184,26 @@ def _build_cases(
                 page_size=shape.block_size,
                 k_scale=k_scale,
                 v_scale=v_scale,
+                grouped_block_h=block_h,
+                grouped_num_warps=num_warps,
+                grouped_num_stages=num_stages,
             )
             return output
 
         cases.append(
-            KernelCase(f"triton_decode_splits{num_splits}", run_triton)
+            KernelCase(
+                (
+                    f"triton_s{num_splits}_w{num_warps}"
+                    f"_h{block_h}_st{num_stages}"
+                ),
+                run_triton,
+                config={
+                    "num_splits": num_splits,
+                    "num_warps": num_warps,
+                    "block_h": block_h,
+                    "num_stages": num_stages,
+                },
+            )
         )
     return cases
 
@@ -202,7 +253,10 @@ def _time_case(
 
 def main() -> None:
     args = parse_args()
-    shape = ProbeShape()
+    shape = ProbeShape(
+        seq_lens=args.seq_lens,
+        table_blocks=math.ceil(max(args.seq_lens) / ProbeShape().block_size),
+    )
     inputs = build_inputs(shape, layer_index=args.layer_index)
     visible_sms = torch.cuda.get_device_properties(0).multi_processor_count
     if args.expected_sms is not None and visible_sms != args.expected_sms:
@@ -213,7 +267,14 @@ def main() -> None:
     inputs.key_cache.normal_(mean=0.0, std=0.1)
     inputs.value_cache.normal_(mean=0.0, std=0.1)
     torch.cuda.synchronize()
-    cases = _build_cases(inputs, shape, args.triton_splits)
+    cases = _build_cases(
+        inputs,
+        shape,
+        args.triton_splits,
+        args.triton_warps,
+        args.triton_block_hs,
+        args.triton_stages,
+    )
     correctness = _correctness(cases)
 
     measurements: dict[str, dict[str, object]] = {}
@@ -226,6 +287,7 @@ def main() -> None:
         )
         mean_ms = statistics.mean(samples_ms)
         measurements[case.name] = {
+            "config": case.config,
             "samples_ms_per_call": samples_ms,
             "mean_ms_per_call": mean_ms,
             "median_ms_per_call": statistics.median(samples_ms),

@@ -12,7 +12,40 @@ import torch
 
 from vllm.pap.kv.metadata import PAPPagedFlashMetadata
 
-PAP_TRITON_DECODE_NUM_SPLITS = 4
+PAP_TRITON_DECODE_LOW_RESOURCE_MAX_SMS = 20
+
+
+@dataclass(frozen=True)
+class PAPPagedDecodeKernelConfig:
+    """Launch specialization for PAP grouped-query decode Attention."""
+
+    num_splits: int
+    block_h: int
+    num_warps: int
+    num_stages: int
+
+
+PAP_TRITON_DECODE_DEFAULT_CONFIG = PAPPagedDecodeKernelConfig(
+    num_splits=4,
+    block_h=16,
+    num_warps=4,
+    num_stages=2,
+)
+PAP_TRITON_DECODE_LOW_RESOURCE_CONFIG = PAPPagedDecodeKernelConfig(
+    num_splits=8,
+    block_h=4,
+    num_warps=4,
+    num_stages=1,
+)
+
+
+def paged_decode_kernel_config_for_sms(
+    visible_sms: int,
+) -> PAPPagedDecodeKernelConfig:
+    """Select the measured low-SM specialization without changing full GPUs."""
+    if 0 < int(visible_sms) <= PAP_TRITON_DECODE_LOW_RESOURCE_MAX_SMS:
+        return PAP_TRITON_DECODE_LOW_RESOURCE_CONFIG
+    return PAP_TRITON_DECODE_DEFAULT_CONFIG
 
 
 @dataclass(frozen=True)
@@ -29,7 +62,7 @@ class PAPPagedDecodeWorkspace:
     head_dim: int
     dtype: torch.dtype
     device: torch.device
-    num_splits: int = PAP_TRITON_DECODE_NUM_SPLITS
+    kernel_config: PAPPagedDecodeKernelConfig
 
     def validate(self, query: torch.Tensor) -> None:
         signature = (
@@ -144,18 +177,24 @@ class PAPAttentionStepTensorCache:
 def build_paged_decode_workspace(
     query: torch.Tensor,
 ) -> PAPPagedDecodeWorkspace:
-    """Allocate the fixed split-4 scratch once for a decode step."""
+    """Allocate the fixed PAP decode scratch once for a decode step."""
 
     if query.ndim != 3:
         raise ValueError("PAP paged decode query must be rank 3")
     batch_size, num_heads, head_dim = map(int, query.shape)
+    visible_sms = (
+        torch.cuda.get_device_properties(query.device).multi_processor_count
+        if query.device.type == "cuda"
+        else 0
+    )
+    kernel_config = paged_decode_kernel_config_for_sms(visible_sms)
     return PAPPagedDecodeWorkspace(
         output=torch.empty_like(query),
         partial=torch.empty(
             (
                 batch_size,
                 num_heads,
-                PAP_TRITON_DECODE_NUM_SPLITS,
+                kernel_config.num_splits,
                 head_dim + 1,
             ),
             dtype=torch.float32,
@@ -173,6 +212,7 @@ def build_paged_decode_workspace(
         head_dim=head_dim,
         dtype=query.dtype,
         device=query.device,
+        kernel_config=kernel_config,
     )
 
 
@@ -211,11 +251,14 @@ def run_paged_decode_attention(
         metadata.block_table,
         metadata.seq_lens,
         workspace.partial,
-        workspace.num_splits,
+        workspace.kernel_config.num_splits,
         float(scale),
         page_size=int(block_size),
         k_scale=workspace.k_scale,
         v_scale=workspace.v_scale,
+        grouped_block_h=workspace.kernel_config.block_h,
+        grouped_num_warps=workspace.kernel_config.num_warps,
+        grouped_num_stages=workspace.kernel_config.num_stages,
     )
     return workspace.output
 
@@ -270,9 +313,14 @@ def warm_paged_decode_attention(
 
 __all__ = [
     "PAPAttentionStepTensorCache",
+    "PAPPagedDecodeKernelConfig",
     "PAPPagedDecodeWorkspace",
     "PAPPagedDecodeWorkspaceCache",
+    "PAP_TRITON_DECODE_DEFAULT_CONFIG",
+    "PAP_TRITON_DECODE_LOW_RESOURCE_CONFIG",
+    "PAP_TRITON_DECODE_LOW_RESOURCE_MAX_SMS",
     "build_paged_decode_workspace",
+    "paged_decode_kernel_config_for_sms",
     "run_paged_decode_attention",
     "warm_paged_decode_attention",
 ]

@@ -2405,6 +2405,13 @@ def test_attention_fast_path_stats_endpoint() -> None:
     assert response.json() == {
         "attention_dispatch_mode": "direct",
         "attention_active_peer_tracking": False,
+        "paged_decode_visible_sms": 0,
+        "paged_decode_kernel_config": {
+            "num_splits": 4,
+            "block_h": 16,
+            "num_warps": 4,
+            "num_stages": 2,
+        },
         "attention_active_source_ids": [],
         "attention_membership_generations": {},
         "attention_membership_updates": 0,

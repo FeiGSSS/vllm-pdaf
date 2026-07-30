@@ -135,27 +135,29 @@ geometry, and raw NSYS/NCU/torch traces. It is a diagnostic experiment, not a
 current correctness or release gate.
 
 The backend comparison tool reuses the same archived shape and exact
-cross-layer KV stride to compare FA2 with the PAP-owned kernel integration:
+cross-layer KV stride to compare FA2 with PAP Triton launch specializations.
+The static-MPS sweep tests 12 and 20 visible SMs by default:
 
 ```bash
-.venv/bin/python \
-  benchmarks/pap/tooling/paged_attention_backend_probe.py \
-  --triton-splits 4 --expected-sms 92
+bash benchmarks/pap/scripts/run_paged_attention_backend_sm_sweep.sh
 ```
 
-The 2026-07-16 diagnostic used one dirty-worktree repetition, so it is decision
-evidence rather than a formal release record:
+Its split, warp, grouped-head (`BLOCK_H`), stage, sequence-length, placement,
+and output settings are exposed as `PAP_ATTENTION_SWEEP_*` environment
+variables. Every candidate is checked against FA2 before timing.
 
-| Condition | FA2 | PAP Triton split-4 | Max error vs FA2 |
-| --- | ---: | ---: | ---: |
-| full 92 SM | 0.3511 ms | 0.3313 ms | 1.91e-6 |
-| static-MPS 28 SM | 0.5727 ms | 0.3383 ms | 1.91e-6 |
+The current PAP integration selects the measured low-resource specialization
+only when the Attention process exposes at most 20 SMs:
 
-The matching historical C4 quick run reduced steady TPOT from 49.75 ms to 42.47 ms;
-the PD control is 41.97 ms. All 20 requests, token digests, cache checks,
-lifecycle audits, static-MPS checks, and session drain passed. C1/C4 raw
-diagnostics remain machine-local legacy artifacts; the tracked accepted
-experiment record is linked above.
+```text
+<= 20 SM: split8 / BLOCK_H4 / four warps / one stage
+ > 20 SM: split4 / BLOCK_H16 / four warps / two stages
+```
+
+On the B3, 17K-context Qwen3-8B shape, this reduces 12-SM kernel latency from
+0.4680 to 0.4105 ms and 80/12 end-to-end mean ITL from 48.76 to 45.40 ms.
+See the [low-SM experiment report](experiments/PAP-20260730-MPS-80-12/report.md)
+for the resource analysis, cross-shape results, and TTFT-tail limitation.
 
 #### Deferred alternative: low-smem FA2 decode specialization
 

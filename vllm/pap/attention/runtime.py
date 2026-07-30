@@ -5,8 +5,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from dataclasses import asdict
 from typing import Any
 
+import torch
+
+from vllm.pap.attention.kernels import paged_decode_kernel_config_for_sms
 from vllm.pap.attention.dispatcher import PAPAttentionDispatcher
 from vllm.pap.attention.execution import (
     _execute_offload_exec_work_items,
@@ -75,9 +79,19 @@ class PAPAttentionRuntime:
         self,
         membership: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        storage_device = self.registry.storage_device
+        visible_sms = (
+            torch.cuda.get_device_properties(storage_device).multi_processor_count
+            if storage_device.type == "cuda"
+            else 0
+        )
         stats = {
             "attention_dispatch_mode": self.dispatch_mode,
             "attention_active_peer_tracking": self.active_peer_tracking,
+            "paged_decode_visible_sms": visible_sms,
+            "paged_decode_kernel_config": asdict(
+                paged_decode_kernel_config_for_sms(visible_sms)
+            ),
             **dict(membership or {}),
             **self.registry.decode_append_fast_path_stats(),
             **self.registry.attention_step_context_stats(),

@@ -4,8 +4,26 @@ import torch
 
 from vllm.pap.attention.kernels import (
     PAPAttentionStepTensorCache,
+    PAP_TRITON_DECODE_DEFAULT_CONFIG,
+    PAP_TRITON_DECODE_LOW_RESOURCE_CONFIG,
     PAPPagedDecodeWorkspaceCache,
+    paged_decode_kernel_config_for_sms,
 )
+
+
+def test_paged_decode_kernel_config_is_low_sm_specific() -> None:
+    assert (
+        paged_decode_kernel_config_for_sms(12)
+        is PAP_TRITON_DECODE_LOW_RESOURCE_CONFIG
+    )
+    assert (
+        paged_decode_kernel_config_for_sms(20)
+        is PAP_TRITON_DECODE_LOW_RESOURCE_CONFIG
+    )
+    assert (
+        paged_decode_kernel_config_for_sms(21)
+        is PAP_TRITON_DECODE_DEFAULT_CONFIG
+    )
 
 
 def test_paged_decode_workspace_cache_reuses_shape() -> None:

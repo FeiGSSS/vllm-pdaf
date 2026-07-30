@@ -483,6 +483,10 @@ def _decode_grouped_att_m_fwd(
     k_scale,
     v_scale,
     is_mla=False,
+    *,
+    block_h=16,
+    num_warps=4,
+    num_stages_override=None,
 ):
     # with is_mla there is only a single c_kv in smem.
     # could increase BLOCK or num_stages.
@@ -512,7 +516,22 @@ def _decode_grouped_att_m_fwd(
     batch, head_num = q.shape[0], q.shape[1]
     kv_group_num = q.shape[1] // k_buffer.shape[-2]
 
-    BLOCK_H = 16
+    if block_h not in (1, 2, 4, 8, 16, 32):
+        raise ValueError(f"Unsupported grouped decode BLOCK_H: {block_h}")
+    if num_warps not in (1, 2, 4, 8):
+        raise ValueError(f"Unsupported grouped decode num_warps: {num_warps}")
+    if num_stages_override is not None and num_stages_override not in (
+        1,
+        2,
+        3,
+        4,
+    ):
+        raise ValueError(
+            "Unsupported grouped decode num_stages: "
+            f"{num_stages_override}"
+        )
+
+    BLOCK_H = block_h
     NUM_KV_SPLITS = num_kv_splits
     grid = (
         batch,
@@ -532,6 +551,8 @@ def _decode_grouped_att_m_fwd(
         # like non-MLA D_QK=576, BLOCK_DMODEL=1024, BLOCK_H=16
         # exceeds 101376 bytes limit
         num_stages = 1
+    if num_stages_override is not None:
+        num_stages = num_stages_override
 
     _fwd_grouped_kernel_stage1[grid](
         q,
@@ -565,7 +586,7 @@ def _decode_grouped_att_m_fwd(
         NUM_KV_SPLITS=NUM_KV_SPLITS,
         PAGE_SIZE=page_size,
         logit_cap=logit_cap,
-        num_warps=4,
+        num_warps=num_warps,
         num_stages=num_stages,
         Lk=Lk,
         Lv=Lv,
@@ -734,6 +755,10 @@ def decode_attention_fwd_grouped(
     k_scale=None,
     v_scale=None,
     is_mla=False,
+    *,
+    block_h=16,
+    num_warps=4,
+    num_stages=None,
 ):
     _decode_grouped_att_m_fwd(
         q,
@@ -749,6 +774,9 @@ def decode_attention_fwd_grouped(
         k_scale,
         v_scale,
         is_mla=is_mla,
+        block_h=block_h,
+        num_warps=num_warps,
+        num_stages_override=num_stages,
     )
     _decode_softmax_reducev_fwd(
         attn_logits, q, o, lse, v_buffer, b_seq_len, num_kv_splits
@@ -771,6 +799,10 @@ def decode_attention_fwd(
     k_scale=None,
     v_scale=None,
     is_mla=False,
+    *,
+    grouped_block_h=16,
+    grouped_num_warps=4,
+    grouped_num_stages=None,
 ):
     assert num_kv_splits == attn_logits.shape[2]
 
@@ -817,4 +849,7 @@ def decode_attention_fwd(
             k_scale,
             v_scale,
             is_mla=is_mla,
+            block_h=grouped_block_h,
+            num_warps=grouped_num_warps,
+            num_stages=grouped_num_stages,
         )
