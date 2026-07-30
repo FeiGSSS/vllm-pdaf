@@ -15,7 +15,7 @@ research evidence below.
 
 Current development pilots:
 
-- [PAP 80/12 MPS resource split](PAP-20260730-MPS-80-12/report.md)
+- [PAP 80/12 baseline, low-SM kernel, and PD comparison](PAP-20260730-MPS-80-12/report.md)
 - [Research L13: invalid first near-limit MPS treatment](PAP-20260730-RESEARCH-L13/report.md)
 - [Long-context O100 fixed-concurrency scan](PAP-20260729-LONGCTX-O100-CONCURRENCY-SCAN/report.md)
 - [Research L12: near-limit KV capacity falsification](PAP-20260729-RESEARCH-L12/report.md)

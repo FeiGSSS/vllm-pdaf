@@ -21,11 +21,10 @@ UCX, or enabled software emulation instead of silently measuring TCP.
 
 The canonical [AIPerf lane](aiperf/README.md) provides standardized serving
 load generation and metrics alongside project-owned runtime audits. Its
-current eight-GPU testbed uses 128 five-turn conversations, randomized 8K
-initial input, a broad bounded append distribution sampled around 1.4K tokens,
-and output mean 32. It compares PAP 7PA1P/6PA2P, one-way PD 4P4D/6P2D,
-and an eight-replica fused vLLM pool under the same concurrency and three SLO
-tiers. The completed compact scan is recorded in
+default eight-GPU testbed uses 128 five-turn conversations, randomized input
+lengths, and three SLO tiers. It compares PAP 7PA1P/6PA2P, one-way PD
+4P4D/6P2D, and an eight-replica fused vLLM pool under the same workload. The
+completed compact scan is recorded in
 [`PAP-20260725-8GPU-CAPACITY-SCAN`](experiments/PAP-20260725-8GPU-CAPACITY-SCAN/report.md).
 The initial C32 results and 7PA1P fan-in analysis are recorded in the
 [`PAP-20260725-8GPU-CAPACITY-PILOT`](experiments/PAP-20260725-8GPU-CAPACITY-PILOT/report.md).
@@ -44,6 +43,10 @@ completed four-GPU eager and piecewise CUDA Graph results remain documented in
 [`PAP-20260722-AIPERF-PROJECTION-AUTO`](experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
 The current step/control-overlap regression is recorded in
 [`PAP-20260724-STEP-OVERLAP`](experiments/PAP-20260724-STEP-OVERLAP/report.md).
+The current 80/12 PAP baseline, low-SM Attention specialization,
+TTFT-tail correction, and long-context O100 PAP/PD concurrency scan are
+recorded in
+[`PAP-20260730-MPS-80-12`](experiments/PAP-20260730-MPS-80-12/report.md).
 Its scheduler-overlap predecessor is retained in
 [`PAP-20260724-PROJECTION-SCHEDULER-OVERLAP`](experiments/PAP-20260724-PROJECTION-SCHEDULER-OVERLAP/report.md).
 The rejected Projection no-async treatment is retained as a negative control in

@@ -467,6 +467,9 @@ The completed compact scan and strict-boundary refinement are recorded in
 The initial C32 comparison and trace-based explanation of the 7PA1P ITL tail
 remain in
 [`PAP-20260725-8GPU-CAPACITY-PILOT`](../experiments/PAP-20260725-8GPU-CAPACITY-PILOT/report.md).
+The accepted 80/12 baseline and its fixed-dataset long-context O100
+C16--C32 PAP 7PA1P versus PD 6P2D scan are recorded in
+[`PAP-20260730-MPS-80-12`](../experiments/PAP-20260730-MPS-80-12/report.md).
 
 The output distribution defaults to mean 16, median 15, and range 8-32. The
 mean is encoded in the default matrix ID and dataset filename; all four values,

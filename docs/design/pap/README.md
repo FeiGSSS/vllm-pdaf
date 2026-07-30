@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260730-MPS-80-12
   - PAP-20260730-RESEARCH-L13
   - PAP-20260729-LONGCTX-O100-CONCURRENCY-SCAN
   - PAP-20260729-RESEARCH-L12
@@ -20,7 +21,7 @@ related_experiments:
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
-last_validated_commit: 152f64445cd12ffda91ec1d46330c563a36ab475
+last_validated_commit: 9207a5538a336a85b721342e19297007d85bc182
 ---
 
 # PAP documentation
@@ -69,7 +70,7 @@ experiment-result root and never overrides this directory.
 ## Current boundary
 
 The accepted runtime path is Qwen3-8B FP16, same-host `local_fast`, static MPS
-72/20 on each PA GPU, asynchronous decode-token delivery, asynchronous
+80/12 on each PA GPU, asynchronous decode-token delivery, asynchronous
 Prefill KV import, sealed manifest handoff, and Prefill-owned unified KV. The
 active runner is the eight-GPU AIPerf matrix. July 22 and July 25 results
 remain runtime milestones, but corrected same-node PD transport and the
@@ -91,11 +92,13 @@ under Strict.
 
 Research workload variants are recorded separately. The near-model-limit L12
 test falsifies aggregate KV pooling as a sufficient advantage, and the first
-L13 20/3 MPS treatment is invalid because lifecycle correctness fails. The
-60-session, three-turn O100 scan identifies a narrower positive region:
-7PA1P C20 has 20.5% higher Standard goodput than 6P2D C20, but does not beat
-PD's best passing Relaxed frontier. This is one-repetition evidence, not a
-general PAP scaling claim or proof of a PD KV-capacity wall.
+L13 20/3 MPS attempt remains invalid because lifecycle correctness failed.
+After that lifecycle path was repaired, the exact production Triton Attention
+kernel was specialized for low-SM execution and 80/12 became the accepted
+baseline. On the 60-session, three-turn O100 scan, 7PA1P improves best passing
+Standard goodput by 50.0%, Relaxed goodput by 38.1%, and raw throughput by
+36.6% over 6P2D. This is controlled one-repetition evidence, not yet a paper
+or release-level claim.
 Eager remains the default execution mode. Optional piecewise CUDA Graph has a
 completed development comparison, while host transport, remote Attention, and
 KV publication remain outside captured regions. The former P17 lane is

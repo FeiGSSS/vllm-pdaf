@@ -4,6 +4,7 @@ status: current
 canonical: null
 superseded_by: null
 related_experiments:
+  - PAP-20260730-MPS-80-12
   - PAP-20260730-RESEARCH-L13
   - PAP-20260729-LONGCTX-O100-CONCURRENCY-SCAN
   - PAP-20260729-RESEARCH-L12
@@ -20,7 +21,7 @@ related_experiments:
   - PAP-20260722-AIPERF-CONVERGENCE
   - PAP-20260721-AIPERF-AUDITED-CAPACITY
   - PAP-20260721-AIPERF-PIECEWISE-CUDAGRAPH
-last_validated_commit: 4a3e36820
+last_validated_commit: 9207a5538
 ---
 
 # Current PAP development status
@@ -28,7 +29,7 @@ last_validated_commit: 4a3e36820
 Snapshot date: 2026-07-30.
 
 PAP has completed its runtime refactor and the first capacity-oriented
-performance milestone. The source milestone at `cb6fe3500` has one accepted
+performance milestone. The source milestone at `9207a5538` has one accepted
 runtime architecture, a source-audited long-context testbed, and an optional
 piecewise CUDA Graph execution mode. Historical experimental algorithms are
 not selectable branches in the current runtime.
@@ -41,7 +42,7 @@ not selectable branches in the current runtime.
 | Same-host xPAyP | Implemented | Multi-Projection 6PA2P C32 E2E complete |
 | Cross-host xPAyP over NIXL | Preserved | Contract coverage only; no fresh E2E claim |
 | Prefill-owned unified KV | Main path | AIPerf runtime and lifecycle audits |
-| Triton split-4 paged decode | Main Attention kernel | AIPerf eager/Graph baselines |
+| Low-SM Triton paged decode | Main Attention kernel | 12/20-SM microbench and 7PA1P scan |
 | Piecewise CUDA Graph | Optional development mode | Nine valid PAP/PD four-GPU points |
 | Full-model CUDA Graph | Unsupported | Host transport and KV publication cannot be replayed safely |
 
@@ -93,7 +94,8 @@ Paper research loops may use prospectively registered workload variants
 without redefining the canonical regression testbed. The current long-context
 O100 lane uses 60 sessions, three approximately 10K-token turns, randomized
 50--200-token outputs, and pure AIPerf concurrency. Its evidence is scoped to
-`PAP-20260729-LONGCTX-O100-CONCURRENCY-SCAN`.
+`PAP-20260729-LONGCTX-O100-CONCURRENCY-SCAN` and its accepted 80/12 successor,
+`PAP-20260730-MPS-80-12`.
 
 The capacity lane deliberately avoids artificial scheduler limits:
 
@@ -240,14 +242,29 @@ goodput by 0.8%. This one-repetition result motivates clean confirmation and
 causal attribution; it does not establish monotonic PAP scaling or a
 KV-capacity-wall mechanism.
 
+That confirmation is now complete on the accepted 80/12 baseline
+(`PAP-20260730-MPS-80-12`). The production PAP Triton launch changes from
+split4/BLOCK_H16 to split8/BLOCK_H4 when at most 20 SMs are visible, reducing
+the measured 12-SM exact-shape latency by 12.3%. A redundant generic NIXL
+producer lease is shortened from 30 seconds to one second; PAP's independent
+300-second pressure-evictable Attention lease remains the safety owner. This
+removes the observed third-turn cache-displacement tail: no Prefill execution
+exceeds five seconds across the new C16--C32 scan.
+
+All ten PAP 7PA1P and PD 6P2D points complete 180/180 requests. PAP's best
+passing Standard goodput is 2.252 requests/s at C32 versus PD's 1.501 at C16
+(+50.0%); best Relaxed goodput is 2.343 versus 1.696 (+38.1%); raw throughput
+is 2.343 versus 1.715 (+36.6%). At matched C32, PAP reduces average TTFT by
+32.0% and average ITL by 28.4%. These are controlled one-repetition results.
+The selected boundary points still require repetition before becoming a paper
+or release-level claim.
+
 ## Remaining work
 
-1. Finish and commit the current lifecycle correctness repair. If it changes
-   decode-commit or lease-release timing, rerun both L13 18/5 and 20/3 points
-   contemporaneously rather than reusing the old control.
-2. Repeat the long-context O100 C20 boundary on clean committed code and
-   causally separate seventh-PA Prefill capacity, KV capacity, and Decode
-   Attention effects.
+1. Repeat the selected long-context boundaries on clean committed code before
+   using the +50.0%/+38.1% goodput result as a paper claim.
+2. Retain 80/12 plus the low-SM Triton specialization as the PAP baseline;
+   re-audit launch geometry before generalizing it beyond Qwen3-8B/L20.
 3. Keep corrected NIXL settings and clean tracked provenance mandatory for
    every PAP/PD comparison; do not merge dirty submit-only diagnostics into
    committed baselines.

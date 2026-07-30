@@ -219,6 +219,50 @@ nevertheless disappeared, throughput was unchanged, and every Standard-SLO
 request passed. The following concurrency scan is the stability check for
 normal Prefill variance.
 
+## Full concurrency comparison
+
+The committed 80/12 configuration and one-second connector lease were then
+compared with one-way PD 6P2D at C16/C20/C24/C28/C32. Every point restarted
+all services and replayed the same 60-session, three-turn dataset. All ten
+points completed 180/180 requests and 60/60 sessions with correctness,
+routing, NIXL-runtime, and architecture-specific runtime audits passing.
+
+| Architecture | C | Raw req/s | TTFT avg / p99 | ITL avg / p99 | Standard goodput | Relaxed goodput |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| PD 6P2D | 16 | 1.518 | 3.38 / 7.50 s | 53.37 / 74.50 ms | **1.501 pass** | 1.518 pass |
+| PD 6P2D | 20 | 1.513 | 4.42 / 10.94 s | 61.89 / 106.56 ms | 1.337 fail | 1.488 pass |
+| PD 6P2D | 24 | 1.588 | 5.53 / 12.09 s | 63.94 / 86.02 ms | 1.358 fail | 1.588 pass |
+| PD 6P2D | 28 | 1.446 | 8.07 / 18.67 s | 72.29 / 134.21 ms | 0.578 fail | 1.382 pass |
+| PD 6P2D | 32 | **1.715** | 8.40 / 17.91 s | 71.76 / 97.24 ms | 0.648 fail | **1.696 pass** |
+| PAP 7PA1P | 16 | 1.722 | 3.30 / 6.05 s | 42.88 / 52.40 ms | 1.722 pass | 1.722 pass |
+| PAP 7PA1P | 20 | 1.975 | 3.50 / 6.58 s | 46.05 / 57.29 ms | 1.975 pass | 1.975 pass |
+| PAP 7PA1P | 24 | 2.062 | 4.04 / 8.06 s | 48.63 / 60.28 ms | 2.062 pass | 2.062 pass |
+| PAP 7PA1P | 28 | 2.126 | 4.75 / 8.57 s | 50.45 / 62.12 ms | 2.126 pass | 2.126 pass |
+| PAP 7PA1P | 32 | **2.343** | 5.71 / 10.51 s | 51.39 / 64.74 ms | **2.252 pass** | **2.343 pass** |
+
+Neither architecture has a point at which 95% of requests meet the Strict
+5-second-TTFT/50-ms-ITL tier, so the observed Strict goodput values are not
+reported as capacity. For the two passing tiers:
+
+| SLO / metric | Best PD | Best PAP | PAP delta |
+| --- | ---: | ---: | ---: |
+| Standard goodput | 1.501 req/s, C16 | **2.252 req/s, C32** | **+50.0%** |
+| Relaxed goodput | 1.696 req/s, C32 | **2.343 req/s, C32** | **+38.1%** |
+| Raw throughput | 1.715 req/s, C32 | **2.343 req/s, C32** | **+36.6%** |
+
+At the matched C32 point, PAP lowers average TTFT by 32.0%, TTFT p99 by
+41.3%, average ITL by 28.4%, and ITL p99 by 33.4% relative to PD. PAP passes
+Standard with 173/180 good requests, just above the predeclared 95% gate;
+PD passes Standard only at C16.
+
+The long-tail diagnosis also remains stable across the scan. PAP's maximum
+individual Prefill execution is 3.50 seconds and no Prefill execution exceeds
+five seconds at any point. The maximum single-slot admission wait grows from
+4.00 seconds at C16 to 9.08 seconds at C32. Consequently, the C32 TTFT maximum
+of 11.51 seconds is capacity queueing, not a recurrence of the old
+30-second-lease cache displacement. C16--C28 have TTFT maxima of 6.95, 7.48,
+8.28, and 9.17 seconds respectively.
+
 ## Implementation decision
 
 Accept the specialization for PAP processes that expose at most 20 SMs:
@@ -259,6 +303,8 @@ Qwen3-8B shapes and keeps the generic vLLM kernel defaults unchanged.
   `benchmarks/pap/experiments/_staging/capacity/20260730_pap7pa1p_c20_mps80_12_low_resource_kernel_ttft_trace_r2`
 - one-second producer-lease treatment:
   `benchmarks/pap/experiments/_staging/capacity/20260730_pap7pa1p_c20_mps80_12_nixl_lease1_ttft_fix_r2`
+- full 80/12 PAP-versus-PD concurrency scan:
+  `benchmarks/pap/experiments/_staging/capacity/20260730_pap80_12_nixllease1_pd_full_concurrency_r1`
 
 ## Scope
 
@@ -266,3 +312,6 @@ Kernel evidence has two exact-shape repetitions plus four cross-shape checks.
 The selected kernel has three complete C20 end-to-end observations: the
 initial result, an independent stage trace, and the one-second producer-lease
 treatment. All completed 180/180 requests with strict correctness audits.
+The subsequent comparison contains one complete repetition at each of ten
+architecture/concurrency points. It is controlled development evidence; a
+paper or release claim still requires repeated boundary points.
