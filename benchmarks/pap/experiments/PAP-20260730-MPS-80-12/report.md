@@ -219,21 +219,27 @@ nevertheless disappeared, throughput was unchanged, and every Standard-SLO
 request passed. The following concurrency scan is the stability check for
 normal Prefill variance.
 
-## Full concurrency comparison
+## Fair concurrency comparison
 
-The committed 80/12 configuration and one-second connector lease were then
-compared with one-way PD 6P2D at C16/C20/C24/C28/C32. Every point restarted
-all services and replayed the same 60-session, three-turn dataset. All ten
-points completed 180/180 requests and 60/60 sessions with correctness,
-routing, NIXL-runtime, and architecture-specific runtime audits passing.
+The first full scan left PD Prefill at `max_num_seqs=256`, despite the earlier
+long-Prefill saturation result showing that one 10K-token request already
+saturates useful Prefill throughput. That PD curve is retained as diagnostic
+evidence, but it is not an eligible best-configured baseline.
+
+PD was rerun on the current clean commit with only its Prefill sequence limit
+changed to one. Decode remains at 256 sequences. Every point restarted all
+services and replayed the byte-identical 60-session, three-turn dataset. All
+five corrected PD points and the five PAP points completed 180/180 requests
+and 60/60 sessions with correctness, routing, NIXL-runtime, and
+architecture-specific runtime audits passing.
 
 | Architecture | C | Raw req/s | TTFT avg / p99 | ITL avg / p99 | Standard goodput | Relaxed goodput |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| PD 6P2D | 16 | 1.518 | 3.38 / 7.50 s | 53.37 / 74.50 ms | **1.501 pass** | 1.518 pass |
-| PD 6P2D | 20 | 1.513 | 4.42 / 10.94 s | 61.89 / 106.56 ms | 1.337 fail | 1.488 pass |
-| PD 6P2D | 24 | 1.588 | 5.53 / 12.09 s | 63.94 / 86.02 ms | 1.358 fail | 1.588 pass |
-| PD 6P2D | 28 | 1.446 | 8.07 / 18.67 s | 72.29 / 134.21 ms | 0.578 fail | 1.382 pass |
-| PD 6P2D | 32 | **1.715** | 8.40 / 17.91 s | 71.76 / 97.24 ms | 0.648 fail | **1.696 pass** |
+| PD 6P2D | 16 | 1.543 | 3.10 / 6.35 s | 51.97 / 68.90 ms | 1.543 pass | 1.543 pass |
+| PD 6P2D | 20 | 1.631 | 3.82 / 9.04 s | 57.92 / 75.29 ms | **1.586 pass** | 1.631 pass |
+| PD 6P2D | 24 | 1.761 | 4.56 / 11.75 s | 61.58 / 77.19 ms | 1.556 fail | 1.761 pass |
+| PD 6P2D | 28 | 1.709 | 5.79 / 14.11 s | 66.01 / 89.57 ms | 1.310 fail | 1.709 pass |
+| PD 6P2D | 32 | **1.891** | 7.03 / 15.66 s | 67.82 / 89.61 ms | 1.198 fail | **1.891 pass** |
 | PAP 7PA1P | 16 | 1.722 | 3.30 / 6.05 s | 42.88 / 52.40 ms | 1.722 pass | 1.722 pass |
 | PAP 7PA1P | 20 | 1.975 | 3.50 / 6.58 s | 46.05 / 57.29 ms | 1.975 pass | 1.975 pass |
 | PAP 7PA1P | 24 | 2.062 | 4.04 / 8.06 s | 48.63 / 60.28 ms | 2.062 pass | 2.062 pass |
@@ -246,14 +252,32 @@ reported as capacity. For the two passing tiers:
 
 | SLO / metric | Best PD | Best PAP | PAP delta |
 | --- | ---: | ---: | ---: |
-| Standard goodput | 1.501 req/s, C16 | **2.252 req/s, C32** | **+50.0%** |
-| Relaxed goodput | 1.696 req/s, C32 | **2.343 req/s, C32** | **+38.1%** |
-| Raw throughput | 1.715 req/s, C32 | **2.343 req/s, C32** | **+36.6%** |
+| Standard goodput | 1.586 req/s, C20 | **2.252 req/s, C32** | **+42.0%** |
+| Relaxed goodput | 1.891 req/s, C32 | **2.343 req/s, C32** | **+23.9%** |
+| Raw throughput | 1.891 req/s, C32 | **2.343 req/s, C32** | **+23.9%** |
 
-At the matched C32 point, PAP lowers average TTFT by 32.0%, TTFT p99 by
-41.3%, average ITL by 28.4%, and ITL p99 by 33.4% relative to PD. PAP passes
-Standard with 173/180 good requests, just above the predeclared 95% gate;
-PD passes Standard only at C16.
+At the matched C32 point, PAP lowers average TTFT by 18.8%, TTFT p99 by
+32.9%, average ITL by 24.2%, and ITL p99 by 27.8% relative to corrected PD.
+PAP passes Standard with 173/180 good requests, just above the predeclared
+95% gate; corrected PD passes Standard through C20.
+
+The PD correction has a material effect:
+
+| C | Raw throughput change | Average TTFT change | Standard decision |
+| ---: | ---: | ---: | --- |
+| 16 | +1.6% | -8.2% | pass -> pass |
+| 20 | +7.8% | -13.6% | **fail -> pass** |
+| 24 | +10.9% | -17.6% | fail -> fail |
+| 28 | +18.2% | -28.3% | fail -> fail |
+| 32 | +10.2% | -16.3% | fail -> fail |
+
+The correction reduces the effect size but does not reverse the result.
+PAP has 11.6%--24.4% higher matched-concurrency raw throughput across the
+five points and 17.5%--24.2% lower average ITL. Corrected PD has 6.3% lower
+average TTFT at C16; PAP has 8.4%--18.8% lower average TTFT at C20--C32.
+For a less boundary-sensitive Standard comparison, PAP C28 passes all
+180 requests at 2.126 requests/s, 34.0% above corrected PD's best passing
+Standard point.
 
 The long-tail diagnosis also remains stable across the scan. PAP's maximum
 individual Prefill execution is 3.50 seconds and no Prefill execution exceeds
@@ -305,6 +329,8 @@ Qwen3-8B shapes and keeps the generic vLLM kernel defaults unchanged.
   `benchmarks/pap/experiments/_staging/capacity/20260730_pap7pa1p_c20_mps80_12_nixl_lease1_ttft_fix_r2`
 - full 80/12 PAP-versus-PD concurrency scan:
   `benchmarks/pap/experiments/_staging/capacity/20260730_pap80_12_nixllease1_pd_full_concurrency_r1`
+- corrected PD Prefill-serialization scan:
+  `benchmarks/pap/experiments/_staging/capacity/20260730_pd6p2d_prefill_maxseq1_current_c16_c32_r1`
 
 ## Scope
 
@@ -312,6 +338,7 @@ Kernel evidence has two exact-shape repetitions plus four cross-shape checks.
 The selected kernel has three complete C20 end-to-end observations: the
 initial result, an independent stage trace, and the one-second producer-lease
 treatment. All completed 180/180 requests with strict correctness audits.
-The subsequent comparison contains one complete repetition at each of ten
-architecture/concurrency points. It is controlled development evidence; a
-paper or release claim still requires repeated boundary points.
+The fair comparison contains one complete repetition at each of ten
+architecture/concurrency points, split across byte-identical clean PAP and PD
+runs. It is controlled development evidence; a paper or release claim still
+requires repeated boundary points.

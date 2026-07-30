@@ -96,8 +96,9 @@ L13 20/3 MPS attempt remains invalid because lifecycle correctness failed.
 After that lifecycle path was repaired, the exact production Triton Attention
 kernel was specialized for low-SM execution and 80/12 became the accepted
 baseline. On the 60-session, three-turn O100 scan, 7PA1P improves best passing
-Standard goodput by 50.0%, Relaxed goodput by 38.1%, and raw throughput by
-36.6% over 6P2D. This is controlled one-repetition evidence, not yet a paper
+Standard goodput by 42.0%, Relaxed goodput by 23.9%, and raw throughput by
+23.9% over Prefill-serialized 6P2D. This is controlled one-repetition evidence,
+not yet a paper
 or release-level claim.
 Eager remains the default execution mode. Optional piecewise CUDA Graph has a
 completed development comparison, while host transport, remote Attention, and

@@ -470,6 +470,9 @@ remain in
 The accepted 80/12 baseline and its fixed-dataset long-context O100
 C16--C32 PAP 7PA1P versus PD 6P2D scan are recorded in
 [`PAP-20260730-MPS-80-12`](../experiments/PAP-20260730-MPS-80-12/report.md).
+That long-Prefill comparison sets PD Prefill `max_num_seqs=1`; leaving it at
+the generic capacity default of 256 is a known scheduling confound for
+approximately 10K-token Prefill requests. PD Decode remains at 256.
 
 The output distribution defaults to mean 16, median 15, and range 8-32. The
 mean is encoded in the default matrix ID and dataset filename; all four values,

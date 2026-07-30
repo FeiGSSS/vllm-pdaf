@@ -252,17 +252,19 @@ removes the observed third-turn cache-displacement tail: no Prefill execution
 exceeds five seconds across the new C16--C32 scan.
 
 All ten PAP 7PA1P and PD 6P2D points complete 180/180 requests. PAP's best
-passing Standard goodput is 2.252 requests/s at C32 versus PD's 1.501 at C16
-(+50.0%); best Relaxed goodput is 2.343 versus 1.696 (+38.1%); raw throughput
-is 2.343 versus 1.715 (+36.6%). At matched C32, PAP reduces average TTFT by
-32.0% and average ITL by 28.4%. These are controlled one-repetition results.
+passing Standard goodput is 2.252 requests/s at C32 versus corrected PD's
+1.586 at C20 (+42.0%); best Relaxed goodput is 2.343 versus 1.891 (+23.9%);
+raw throughput is 2.343 versus 1.891 (+23.9%). At matched C32, PAP reduces
+average TTFT by 18.8% and average ITL by 24.2%. These are controlled
+one-repetition results. The initial PD curve with Prefill `max_num_seqs=256`
+is configuration-confounded and no longer supplies the comparison claim.
 The selected boundary points still require repetition before becoming a paper
 or release-level claim.
 
 ## Remaining work
 
 1. Repeat the selected long-context boundaries on clean committed code before
-   using the +50.0%/+38.1% goodput result as a paper claim.
+   using the +42.0%/+23.9% goodput result as a paper claim.
 2. Retain 80/12 plus the low-SM Triton specialization as the PAP baseline;
    re-audit launch geometry before generalizing it beyond Qwen3-8B/L20.
 3. Keep corrected NIXL settings and clean tracked provenance mandatory for
