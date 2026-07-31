@@ -279,9 +279,13 @@ or release-level claim.
    committed baselines.
 4. Keep piecewise CUDA Graph optional until repeated evidence shows a
    consistent latency or goodput benefit worth changing the eager default.
-5. Keep cross-host NIXL source-compatible without a fresh performance claim.
-   Same-host 7PA1P and 6PA2P now have fresh C32 E2E evidence; other xPAyP
-   shapes remain preserved-unverified.
+5. Develop and validate the
+   [cross-host step-planned fast path](cross-host-fast-path.md). Preserve the
+   same-host contract of one metadata plan per Decode step and one batched
+   asynchronous submission per layer; compare NIXL/UCX with NCCL before
+   considering raw verbs. Cross-host and other xPAyP shapes remain
+   preserved-unverified until GPU-direct selection, correctness, layer
+   latency, and E2E evidence pass.
 6. Profile the independent multi-PA output streams before attributing a
    specific E2E gain to them, and continue only metadata/control overlap that
    preserves the complete scheduler-batch and layer order.

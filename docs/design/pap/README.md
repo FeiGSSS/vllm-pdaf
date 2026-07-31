@@ -33,13 +33,15 @@ Prefill–Attention–Projection implementation. Read these documents in order:
    lanes, current performance milestone, and remaining work.
 2. [Architecture](architecture.md) — roles, ownership, topology, transports,
    and support boundaries.
-3. [Runtime](runtime.md) — the accepted request, KV, token, commit, lease, and
+3. [Cross-host fast-path proposal](cross-host-fast-path.md) — the step-planned
+   RDMA/NIXL/NCCL design TODO and its validation gate.
+4. [Runtime](runtime.md) — the accepted request, KV, token, commit, lease, and
    drain paths.
-4. [Benchmark methodology](benchmark-methodology.md) — the AIPerf testbeds,
+5. [Benchmark methodology](benchmark-methodology.md) — the AIPerf testbeds,
    evidence grades, experiment records, and release criteria.
-5. [Compatibility retirement](compatibility.md) — removed legacy façades and
+6. [Compatibility retirement](compatibility.md) — removed legacy façades and
    the current import-ownership rule.
-6. [Historical runtime refactor milestone](milestones/2026-07-runtime-refactor.md)
+7. [Historical runtime refactor milestone](milestones/2026-07-runtime-refactor.md)
    — frozen scope, decisions, and validation result from the 64/28-SM stage.
 
 The detailed historical ledger remains at

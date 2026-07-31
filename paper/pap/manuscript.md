@@ -28,9 +28,70 @@ To be established with primary-source citations.
 
 ### 2.2 Limits of existing deployment architectures
 
-To be established with primary-source citations and controlled evidence.
+The paper's working motivation considers a fixed GPU budget, long-context
+multi-turn traffic, and a Prefill-heavy PD allocation with \(N_P > N_D\).
+It is organized around four structural observations. These observations define
+the mechanism to test; they are not yet all paper-ready empirical claims.
+
+First, PD concentrates both Decode KV capacity and Decode Attention bandwidth
+on the \(N_D\) Decode GPUs. Ignoring runtime reservations, the aggregate
+resident-KV budget is approximately \(N_D C_{\mathrm{KV}}\), while the
+aggregate HBM bandwidth available to long-context Decode Attention is
+approximately \(N_D B_{\mathrm{HBM}}\). When the active KV working set exceeds
+the former, requests must queue, evict or recompute state, or fail admission,
+which can reduce goodput and increase TTFT. When long-context Attention
+saturates the latter, its KV reads increase TPOT/ITL. This mechanism is
+conditional: it does not imply that every workload reaches either limit, and
+our evaluation must distinguish an actual KV-capacity wall from Prefill
+compute, scheduler, and transport bottlenecks.
+
+Second, Prefill and long-context Decode Attention stress complementary hardware
+resources. Prefill is dominated by high-arithmetic-intensity dense operations,
+whereas Decode Attention performs comparatively little computation per byte of
+KV state read. A Prefill-only GPU therefore leaves memory-bandwidth headroom,
+while an Attention-dominated Decode phase leaves compute headroom. Treating
+entire P and D GPUs as phase-exclusive resource bundles can strand one resource
+while the other is saturated. This statement applies to the relevant phases
+and operators; Decode still contains compute-intensive projections and MLPs.
+
+Third, conventional PD crosses the ownership boundary by moving prompt KV from
+Prefill to Decode. Long-context multi-turn requests generate a large new KV
+segment on every turn, so this handoff can become a material bandwidth,
+latency, and software-progress cost. One-way implementations can avoid moving
+Decode-generated KV back immediately, but then a later Prefill must recover
+that state through retention, transfer, or recomputation. Systems such as
+Mooncake and LMCache motivate treating KV movement and placement as first-class
+serving concerns; final manuscript wording requires primary citations and a
+mechanism-matched comparison.
+
+Fourth, low-latency multi-turn reuse creates a retain-or-rebuild dilemma. After
+Prefill KV is copied to Decode, keeping the Prefill-side common prefix makes
+the next turn cheap but duplicates that prefix in two HBM pools while Decode
+runs. Releasing it saves memory but makes the next turn pay for transfer,
+reload, or recomputation. The defensible claim is therefore conditional
+common-prefix duplication, not that every PD implementation always retains two
+complete KV copies.
 
 ### 2.3 Motivation for PAP
+
+PAP's proposed response is to replace the P/D KV-ownership boundary with
+Prefill--Attention ownership. Each PA GPU retains one paged KV copy and uses it
+for both future Prefill and Decode Attention, while a KV-stateless Projection
+tier executes the dense Decode operators. Under a fixed GPU budget, this can
+make the KV capacity and HBM bandwidth of all PA GPUs available to Decode
+Attention instead of concentrating them on the smaller D subset. It also
+removes the bulk Prefill-to-Decode KV handoff and the associated
+retain-or-rebuild dilemma.
+
+This reorganization does not make communication disappear. PAP replaces bulk
+phase-boundary KV movement with QKV fan-out and Attention-output fan-in on
+every model layer. Its viability therefore depends on low-overhead,
+step-planned communication, efficient low-SM Attention, and scheduling that
+does not amplify PA skew. Same-host `local_fast` addresses the first part by
+preparing route ranges, peer addresses, byte counts, and layer generations
+once per Decode step, then issuing one batched transfer per layer. Extending
+the same contract across hosts is an explicit open implementation and
+generality task, not a capability claimed by the current evaluation.
 
 Prior attention-disaggregation systems already demonstrate partial Decode
 Attention offload and load-aware admission, while recent analytical work

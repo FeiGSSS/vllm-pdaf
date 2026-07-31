@@ -90,9 +90,17 @@ margins must not be used as architecture evidence.
 
 - Core mechanism: no validated adaptive mechanism; pending workload-region
   diagnosis
-- Problem and motivation: L01/L02 narrow it to batching and synchronization
-  cadence/load aggregation, not fan-in skew dominance, copy, or dense
-  Projection cost
+- Problem and motivation: the working story now has four structural PD
+  tensions for long-context multi-turn serving: concentrated Decode KV
+  capacity and HBM bandwidth, complementary Prefill/Attention utilization,
+  bulk P-to-D KV movement, and the retain-or-rebuild common-prefix dilemma.
+  Section 2.2 of `manuscript.md` records their precise conditional scope.
+  L01/L02 additionally narrow the measured current bottleneck to batching and
+  synchronization cadence/load aggregation, not fan-in skew dominance, copy,
+  or dense Projection cost.
+- Cross-host generality: same-host `local_fast` is the evaluated path.
+  `docs/design/pap/cross-host-fast-path.md` records the step-planned
+  NIXL/UCX-versus-NCCL TODO; it is not yet an active performance claim.
 - Novelty and closest related work: initial pass rejects basic barrier-aware
   placement and A/F ratio selection as novelty
 - Correct implementation: accepted-token/frame-key fix validated at C25
