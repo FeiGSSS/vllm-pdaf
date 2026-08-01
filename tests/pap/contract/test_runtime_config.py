@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
@@ -40,11 +42,16 @@ def test_runtime_config_preserves_python_defaults() -> None:
     assert config.placement.prefill_devices == (0,)
     assert config.placement.attention_devices == (0,)
     assert config.placement.projection_devices == (1,)
-    assert config.offload_exec_transport is PAPOffloadExecTransport.NIXL_MAILBOX
+    assert config.offload_exec_transport is PAPOffloadExecTransport.LOCAL_FAST
     assert config.offload_kv_transport is PAPOffloadKVTransport.CUDA_IPC
-    assert config.same_host is False
+    assert config.same_host is True
     assert config.mps.mode is PAPMPSMode.STATIC
-    assert config.mps.profile_id == "static_72_20"
+    assert config.mps.profile_id == "static_80_12"
+    assert config.mps.prefill_chunks == 20
+    assert config.mps.attention_chunks == 3
+    assert config.mps.prefill_visible_sms == 80
+    assert config.mps.attention_visible_sms == 12
+    assert config.mps.total_visible_sms == 92
     assert config.features.direct_mailbox_output is False
     assert config.attention.dispatch_mode is PAPAttentionDispatchMode.DIRECT
     assert config.decode_commit.timeout_s == 5.0
@@ -62,7 +69,7 @@ def test_runtime_config_supports_arbitrary_xpayp_and_tp() -> None:
             "PAP_ATTENTION_GPUS": "0,1,2,3,4,5",
             "PAP_PROJECTION_GPUS": "6,7,8,9",
             "PAP_OFFLOAD_EXEC_TRANSPORT": "nixl_mailbox",
-            "PAP_OFFLOAD_KV_TRANSPORT": "nixl",
+            "PAP_OFFLOAD_KV_TRANSPORT": "cuda_ipc",
             "PAP_ROUTING_POLICY": "crossbar_round_robin",
         }
     )
@@ -71,7 +78,7 @@ def test_runtime_config_supports_arbitrary_xpayp_and_tp() -> None:
     assert config.topology.prefill_device_count == 6
     assert config.topology.projection_device_count == 4
     assert config.offload_exec_transport is PAPOffloadExecTransport.NIXL_MAILBOX
-    assert config.offload_kv_transport is PAPOffloadKVTransport.NIXL_MAILBOX
+    assert config.offload_kv_transport is PAPOffloadKVTransport.CUDA_IPC
     assert config.same_host is False
     assert config.attention.dispatch_mode is PAPAttentionDispatchMode.CENTRAL_COMBINE
     assert config.attention.combine_wait_us == 1000.0
@@ -96,6 +103,7 @@ def test_runtime_config_accepts_attention_load() -> None:
         ({"PAP_TOPOLOGY": "0pa1p"}, "PAP_TOPOLOGY"),
         ({"PAP_TOPOLOGY": "2pa1p", "PAP_PA_COUNT": "1"}, "disagrees"),
         ({"PAP_OFFLOAD_EXEC_TRANSPORT": "nccl"}, "nixl_mailbox"),
+        ({"PAP_OFFLOAD_KV_TRANSPORT": "nixl_mailbox"}, "must be cuda_ipc"),
         (
             {
                 "PAP_TOPOLOGY": "2pa1p",

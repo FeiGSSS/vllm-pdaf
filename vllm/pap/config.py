@@ -33,7 +33,10 @@ class PAPOffloadKVTransport(str, Enum):
     """Prefill-to-Attention KV transport."""
 
     CUDA_IPC = "cuda_ipc"
-    NIXL_MAILBOX = "nixl_mailbox"
+
+
+PAP_DEFAULT_OFFLOAD_EXEC_TRANSPORT = PAPOffloadExecTransport.LOCAL_FAST
+PAP_DEFAULT_OFFLOAD_KV_TRANSPORT = PAPOffloadKVTransport.CUDA_IPC
 
 
 class PAPAttentionDispatchMode(str, Enum):
@@ -133,28 +136,16 @@ class PAPPlacement:
 
 @dataclass(frozen=True)
 class PAPMPSConfig:
-    """MPS partition requested by a PAP launcher."""
+    """Static MPS partition expected by a PAP launcher."""
 
     mode: PAPMPSMode
     profile_id: str
-    prefill_requested_percent: int
-    attention_requested_percent: int
     prefill_chunks: int
     attention_chunks: int
     prefill_visible_sms: int
     attention_visible_sms: int
 
     def __post_init__(self) -> None:
-        for role, percent in (
-            ("Prefill", self.prefill_requested_percent),
-            ("Attention", self.attention_requested_percent),
-        ):
-            if not 1 <= percent <= 100:
-                raise PAPConfigError(
-                    f"PAP {role} MPS percentage must be between 1 and 100"
-                )
-        if self.prefill_requested_percent + self.attention_requested_percent > 100:
-            raise PAPConfigError("PAP MPS requested percentages must not exceed 100")
         if self.prefill_chunks < 1 or self.attention_chunks < 1:
             raise PAPConfigError("PAP static MPS chunk counts must be positive")
         if self.prefill_visible_sms < 1 or self.attention_visible_sms < 1:
@@ -301,7 +292,7 @@ PAP_REMOVED_FLAGS = (
     ),
     PAPRemovedFlag(
         name="PAP_MPS_MODE",
-        replacement="the current static 72/20 MPS partition",
+        replacement="the current static 80/12 MPS partition",
         experiment_id="PAP-20260714-ASYNC-STATIC-BASELINE",
     ),
     PAPRemovedFlag(
@@ -457,10 +448,18 @@ class PAPRuntimeConfig:
         )
 
         exec_transport = parse_offload_exec_transport(
-            _env_text(env, "PAP_OFFLOAD_EXEC_TRANSPORT", "nixl_mailbox")
+            _env_text(
+                env,
+                "PAP_OFFLOAD_EXEC_TRANSPORT",
+                PAP_DEFAULT_OFFLOAD_EXEC_TRANSPORT.value,
+            )
         )
         kv_transport = _parse_kv_transport(
-            _env_text(env, "PAP_OFFLOAD_KV_TRANSPORT", "cuda_ipc")
+            _env_text(
+                env,
+                "PAP_OFFLOAD_KV_TRANSPORT",
+                PAP_DEFAULT_OFFLOAD_KV_TRANSPORT.value,
+            )
         )
         same_host = _env_bool(
             env,
@@ -470,13 +469,11 @@ class PAPRuntimeConfig:
 
         mps = PAPMPSConfig(
             mode=PAPMPSMode.STATIC,
-            profile_id="static_72_20",
-            prefill_requested_percent=80,
-            attention_requested_percent=20,
-            prefill_chunks=18,
-            attention_chunks=5,
-            prefill_visible_sms=72,
-            attention_visible_sms=20,
+            profile_id="static_80_12",
+            prefill_chunks=20,
+            attention_chunks=3,
+            prefill_visible_sms=80,
+            attention_visible_sms=12,
         )
 
         features = PAPRuntimeFeatures(
@@ -852,13 +849,11 @@ def parse_offload_exec_transport(
 
 def _parse_kv_transport(value: str) -> PAPOffloadKVTransport:
     normalized = _normalize_flag_value(value)
-    if normalized == "nixl":
-        normalized = "nixl_mailbox"
     try:
         return PAPOffloadKVTransport(normalized)
     except ValueError as exc:
         raise PAPConfigError(
-            f"PAP_OFFLOAD_KV_TRANSPORT must be cuda_ipc or nixl_mailbox, got {value!r}"
+            f"PAP_OFFLOAD_KV_TRANSPORT must be cuda_ipc, got {value!r}"
         ) from exc
 
 

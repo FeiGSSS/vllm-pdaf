@@ -21,7 +21,8 @@ Design highlights:
   instead of selecting an unvalidated synchronization fallback.
 * Receiver spin-wait falls back to ``os.sched_yield`` after a configurable
   number of tight iterations to avoid pinning a core forever.
-* Default OFF.  Activate with ``PAP_OFFLOAD_EXEC_TRANSPORT=local_fast``.
+* This is the default same-host transport. Cross-host deployments must select
+  ``PAP_OFFLOAD_EXEC_TRANSPORT=nixl_mailbox`` explicitly.
 
 This implementation is intentionally lightweight on error-handling for
 unusual states such as peer death. It is meant for controlled same-host runs
@@ -36,6 +37,7 @@ import os
 import threading
 import time
 from collections import OrderedDict
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -47,7 +49,7 @@ from vllm.pap.cuda_stream_memops import (
 from vllm.pap.deferred_cuda_trace import (
     deferred_cuda_trace_enabled,
 )
-from vllm.pap.protocol import PAPTensorTransport
+from vllm.pap.protocol import PAPOffloadExecTransportClosed, PAPTensorTransport
 from vllm.pap.transport.local.endpoint import (
     _doorbell_path,
     _ensure_peer_access,
@@ -200,6 +202,10 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         self._peer: _PeerState | None = None
         self._started = False
         self._bound = False
+        self._receive_stopped = threading.Event()
+        self._close_requested = threading.Event()
+        self._close_lock = threading.Lock()
+        self._closed = False
         self._trace = _env_bool(
             "PAP_LOCAL_FAST_TRACE",
             _env_bool("PAP_OFFLOAD_EXEC_TRACE", False),
@@ -276,12 +282,8 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         peer_tensor = _unpack_cuda_ipc_handle(ipc_blob)
         peer_device = peer_tensor.device
         if not bool(payload.get("stream_ordered", False)):
-            raise RuntimeError(
-                "PAP local transport requires a stream-ordered peer"
-            )
-        peer_signal_tensor = _unpack_cuda_ipc_handle(
-            str(payload["signal_ipc_handle"])
-        )
+            raise RuntimeError("PAP local transport requires a stream-ordered peer")
+        peer_signal_tensor = _unpack_cuda_ipc_handle(str(payload["signal_ipc_handle"]))
 
         # Enable peer access (local -> peer).  If unsupported, refuse to
         # start: per the spec we do not silently fall back.
@@ -371,6 +373,8 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
             ack = _doorbell_read_ack(peer.peer_doorbell_mm, record_offset)
             if ack >= previous_seq:
                 return
+            if self._close_requested.is_set():
+                raise PAPOffloadExecTransportClosed("PAP local transport is closed")
             if time.monotonic() - start >= 30.0:
                 raise TimeoutError(
                     "timed out waiting for PAP local fast receive buffer "
@@ -384,7 +388,8 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
                 continue
             waited_us = (time.monotonic() - start) * 1_000_000.0
             if waited_us >= SPIN_SLEEP_AFTER_US:
-                time.sleep(max(SPIN_SLEEP_US, 0) / 1_000_000.0)
+                if self._close_requested.wait(max(SPIN_SLEEP_US, 0) / 1_000_000.0):
+                    raise PAPOffloadExecTransportClosed("PAP local transport is closed")
             else:
                 _sched_yield()
 
@@ -423,7 +428,28 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
             self._json_records,
         )
 
+    def stop_receiving(self) -> None:
+        """Wake and stop the receive side without releasing shared resources."""
+        receive_stopped = getattr(self, "_receive_stopped", None)
+        if receive_stopped is not None:
+            receive_stopped.set()
+
     def close(self) -> None:
+        """Release transport resources after the receive loop has stopped."""
+        close_lock = getattr(self, "_close_lock", None)
+        if close_lock is None:
+            return
+        with close_lock:
+            if self._closed:
+                return
+            self.stop_receiving()
+            self._close_requested.set()
+            try:
+                self._close_locked()
+            finally:
+                self._closed = True
+
+    def _close_locked(self) -> None:
         try:
             self.flush()
             self._report_stats()
@@ -436,8 +462,6 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
                 self._doorbell_mm.close()
             if self._doorbell_fd is not None:
                 os.close(self._doorbell_fd)
-        except Exception:
-            pass
         finally:
             self._peer = None
             self._started = False
@@ -461,7 +485,8 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
         return None
 
     def __del__(self) -> None:
-        self.close()
+        with suppress(Exception):
+            self.close()
         return None
 
     def __repr__(self) -> str:
@@ -469,6 +494,7 @@ class PAPLocalFastTransport(_PAPLocalFastIOMixin):
             f"PAPLocalFastTransport(actor_id={self.actor_id!r}, "
             f"device={self.device!s}, buffer_bytes={self.buffer_bytes})"
         )
+
 
 # ---------------------------------------------------------------------------
 # Factory

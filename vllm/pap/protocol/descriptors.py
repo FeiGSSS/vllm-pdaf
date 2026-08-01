@@ -9,7 +9,7 @@ import hashlib
 import pickle
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 import torch
 
@@ -358,6 +358,10 @@ class PAPOffloadExecMessage(Protocol):
     def release(self) -> None: ...
 
 
+class PAPOffloadExecTransportClosed(RuntimeError):
+    """Raised when a transport receive loop is intentionally stopped."""
+
+
 class PAPOffloadExecTransport(Protocol):
     """Projection<->Attention QKV/O data-plane transport."""
 
@@ -412,3 +416,44 @@ class PAPOffloadExecTransport(Protocol):
         *,
         remote_address: str,
     ) -> PAPOffloadExecMessage: ...
+
+    def stop_receiving(self) -> None: ...
+
+    def close(self) -> None: ...
+
+
+@runtime_checkable
+class PAPStepPlannedOffloadExecTransport(Protocol):
+    """Optional step-planned execution capability.
+
+    The same-host local transport implements this capability. General mailbox
+    transports remain on :class:`PAPOffloadExecTransport` and must not claim
+    step-planned fan-out or prepared receive semantics.
+    """
+
+    def send_step_prepare(
+        self,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        *,
+        dtype: torch.dtype,
+        remote_address: str,
+        descriptorless_qkv: bool = False,
+        qkv_width: int = 0,
+        layer_count: int = 0,
+    ) -> None: ...
+
+    def reserve_qkv_fanout(self, *, num_layers: int) -> dict[str, int]: ...
+
+    def send_qkv_batch_fanout(
+        self,
+        descriptor: PAPOffloadExecBatchDescriptor,
+        qkv: torch.Tensor,
+        *,
+        remote_address: str,
+    ) -> None: ...
+
+    def set_step_prepare_handler(self, handler: Any) -> None: ...
+
+    def output_receive_stream(self) -> torch.cuda.Stream: ...
+
+    def step_prepare_stream(self) -> torch.cuda.Stream: ...

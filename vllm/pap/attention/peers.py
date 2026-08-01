@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import hashlib
+import time
+from collections.abc import Callable
 from threading import Lock, Thread
 from typing import Any
 
@@ -26,11 +28,15 @@ from vllm.pap.deferred_cuda_trace import (
     end_deferred_cuda_span,
 )
 from vllm.pap.kv.metadata import PAPPagedBlockTableBuffer
+from vllm.pap.protocol import PAPStepPlannedOffloadExecTransport
 from vllm.pap.transport.factory import build_offload_exec_transport
 
 
 class PAPAttentionPeerConflict(ValueError):
     """Raised when a peer reuses an existing identity inconsistently."""
+
+
+_RECEIVER_JOIN_TIMEOUT_SECONDS = 5.0
 
 
 class PAPAttentionPeerManager:
@@ -52,9 +58,12 @@ class PAPAttentionPeerManager:
         self.membership_updates = 0
         self.membership_stale_updates = 0
         self.mailbox_loop_peers: set[str] = set()
+        self.receiver_threads: dict[str, Thread] = {}
         self.local_rank = config.attention.local_rank
         self.actor_base = config.attention.actor_id
         self._lock = Lock()
+        self._stopping = False
+        self._stopped = False
 
     @property
     def dispatch_mode(self) -> str:
@@ -95,9 +104,7 @@ class PAPAttentionPeerManager:
                     sorted(self.membership_generations.items())
                 ),
                 "attention_membership_updates": self.membership_updates,
-                "attention_membership_stale_updates": (
-                    self.membership_stale_updates
-                ),
+                "attention_membership_stale_updates": (self.membership_stale_updates),
             }
 
     def update_activity(
@@ -152,6 +159,8 @@ class PAPAttentionPeerManager:
         peer_key = hashlib.sha1(peer_metadata).hexdigest()[:16]
         stable_source_id = str(source_id or peer_key)
         with self._lock:
+            if self._stopping or self._stopped:
+                raise PAPAttentionPeerConflict("PAP Attention peer manager is stopping")
             existing_source_id = self.source_ids.get(peer_key)
             if (
                 existing_source_id is not None
@@ -161,13 +170,10 @@ class PAPAttentionPeerManager:
                     "PAP mailbox peer changed its stable source id"
                 )
             if any(
-                existing_peer_key != peer_key
-                and bound_source_id == stable_source_id
+                existing_peer_key != peer_key and bound_source_id == stable_source_id
                 for existing_peer_key, bound_source_id in self.source_ids.items()
             ):
-                raise PAPAttentionPeerConflict(
-                    "PAP mailbox source id is already bound"
-                )
+                raise PAPAttentionPeerConflict("PAP mailbox source id is already bound")
             transport = self.transports.get(peer_key)
             if transport is None:
                 if not self.transports and self.initial_transport is not None:
@@ -182,20 +188,11 @@ class PAPAttentionPeerManager:
                     )
                 transport.bind_peer(peer_metadata)
                 transport._pap_mailbox_bound = True
-                set_step_prepare_handler = getattr(
+                if isinstance(
                     transport,
-                    "set_step_prepare_handler",
-                    None,
-                )
-                step_prepare_stream = getattr(
-                    transport,
-                    "step_prepare_stream",
-                    None,
-                )
-                if callable(set_step_prepare_handler) and callable(
-                    step_prepare_stream
+                    PAPStepPlannedOffloadExecTransport,
                 ):
-                    stream = step_prepare_stream()
+                    stream = transport.step_prepare_stream()
                     workspace_cache = PAPPagedDecodeWorkspaceCache()
                     step_tensor_cache = PAPAttentionStepTensorCache()
                     block_table_buffer = PAPPagedBlockTableBuffer()
@@ -232,12 +229,14 @@ class PAPAttentionPeerManager:
                             finally:
                                 end_deferred_cuda_span(prepare_trace)
 
-                    set_step_prepare_handler(prepare_step)
+                    transport.set_step_prepare_handler(prepare_step)
                 self.transports[peer_key] = transport
             self.source_ids[peer_key] = stable_source_id
             self._sync_dispatcher_membership_locked()
             if peer_key not in self.mailbox_loop_peers:
                 dispatcher = self.dispatcher
+                target: Callable[..., None]
+                kwargs: dict[str, Any]
                 if self.dispatch_mode == (
                     PAPAttentionDispatchMode.CENTRAL_COMBINE.value
                 ):
@@ -259,15 +258,62 @@ class PAPAttentionPeerManager:
                         "peer_id": peer_key,
                     }
                     thread_kind = "loop"
-                Thread(
+                thread = Thread(
                     target=target,
                     kwargs=kwargs,
                     daemon=True,
                     name=f"pap-offload-exec-mailbox-{thread_kind}-{peer_key}",
-                ).start()
+                )
+                self.receiver_threads[peer_key] = thread
                 self.mailbox_loop_peers.add(peer_key)
+                thread.start()
             return transport.local_agent_metadata
 
     def stop(self) -> None:
-        """Stop the runtime-owned dispatcher."""
+        """Quiesce receivers before releasing transport-owned resources."""
+        with self._lock:
+            if self._stopped:
+                return
+            if self._stopping:
+                raise RuntimeError("PAP Attention peer manager is already stopping")
+            self._stopping = True
+            threads = tuple(self.receiver_threads.values())
+            candidates = [self.initial_transport, *self.transports.values()]
+            transports: list[Any] = []
+            seen_transport_ids: set[int] = set()
+            for transport in candidates:
+                if transport is None or id(transport) in seen_transport_ids:
+                    continue
+                seen_transport_ids.add(id(transport))
+                transports.append(transport)
+
+        for transport in transports:
+            transport.stop_receiving()
+
+        deadline = time.monotonic() + _RECEIVER_JOIN_TIMEOUT_SECONDS
+        for thread in threads:
+            thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        alive = [thread.name for thread in threads if thread.is_alive()]
+        if alive:
+            raise RuntimeError(
+                "PAP Attention receiver threads did not stop: " + ", ".join(alive)
+            )
+
         self.runtime.stop()
+        close_error: BaseException | None = None
+        for transport in transports:
+            try:
+                transport.close()
+            except BaseException as exc:
+                if close_error is None:
+                    close_error = exc
+
+        with self._lock:
+            self.initial_transport = None
+            self.transports.clear()
+            self.source_ids.clear()
+            self.mailbox_loop_peers.clear()
+            self.receiver_threads.clear()
+            self._stopped = True
+        if close_error is not None:
+            raise close_error

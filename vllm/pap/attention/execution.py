@@ -24,6 +24,7 @@ from vllm.pap.kv.observability import pap_env_flag as _pap_env_flag
 from vllm.pap.kv.registry import PAPAttentionRegistry
 from vllm.pap.protocol import (
     PAPOffloadExecBatchDescriptor,
+    PAPOffloadExecTransportClosed,
     pap_offload_exec_trace_id,
 )
 
@@ -156,9 +157,10 @@ def run_offload_exec_mailbox_receiver_loop(
         trace_total_start = time.perf_counter() if trace_offload_exec else 0.0
         trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
         trace_recv_start_ns = time.perf_counter_ns() if trace_offload_exec else 0
-        descriptor, qkv_message, qkv_batch = _recv_next_qkv_batch_message(
-            transport
-        )
+        try:
+            descriptor, qkv_message, qkv_batch = _recv_next_qkv_batch_message(transport)
+        except PAPOffloadExecTransportClosed:
+            return
         arrival_ns = time.perf_counter_ns()
         trace_recv_ms = (
             (time.perf_counter() - trace_recv_start) * 1000.0
@@ -523,7 +525,10 @@ def run_offload_exec_mailbox_loop(
         if trace_offload_exec:
             trace_recv_start_ns = time.perf_counter_ns()
         qkv_message = None
-        descriptor, qkv_message, qkv_batch = _recv_next_qkv_batch_message(transport)
+        try:
+            descriptor, qkv_message, qkv_batch = _recv_next_qkv_batch_message(transport)
+        except PAPOffloadExecTransportClosed:
+            return
         arrival_ns = time.perf_counter_ns()
         trace_recv_ms = (
             (time.perf_counter() - trace_recv_start) * 1000.0

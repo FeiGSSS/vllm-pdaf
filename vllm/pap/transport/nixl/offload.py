@@ -20,6 +20,7 @@ from vllm.pap.protocol.offload_exec import (
 )
 from vllm.pap.transport.nixl.message import PAPMailboxMessage
 
+
 def _record_tensor_ready_event(tensor: torch.Tensor) -> Any | None:
     if not tensor.is_cuda:
         return None
@@ -140,6 +141,12 @@ class PAPNixlMailboxOffloadExecTransport:
         remote_address: str,
     ) -> Any:
         return self.endpoint.recv(descriptor.output_tensor_id)
+
+    def stop_receiving(self) -> None:
+        self.endpoint.stop_receiving()
+
+    def close(self) -> None:
+        self.endpoint.close()
 
     def _send_message(
         self,

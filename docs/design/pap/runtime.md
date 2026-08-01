@@ -33,7 +33,9 @@ cleanup debt rather than alternate runtime paths.
 The sealed handoff has two levels:
 
 - A static catalog describes each stable Prefill KV backing tensor and its
-  CUDA IPC/NIXL metadata. Attention opens and reuses it.
+  CUDA IPC metadata. Colocated Attention opens and reuses it. Cross-PA
+  migration uses the official vLLM NIXL Connector before the target Prefill
+  publishes this catalog; it is not an alternate catalog transport.
 - A request manifest binds a request and session generation to its catalog,
   block layout, prefix length, and GPU ready event.
 
@@ -143,10 +145,23 @@ The execution transport is built through `transport/factory.py`:
 - NIXL uses `transport/nixl/`: mailbox messages, endpoint metadata,
   notification and transfer progress.
 
-The transport interface exposes ownership-bearing receive messages and an
-optional pre-submitted output receive. Callers no longer probe backend methods
-or fall back to clone-based receive APIs. Cross-host NIXL is preserved but is
-not an E2E gate in this milestone.
+The base transport interface exposes ownership-bearing receive messages and an
+optional pre-submitted output receive. The explicit
+`PAPStepPlannedOffloadExecTransport` capability owns step preparation, batched
+fan-out, and peer-local streams; current `local_fast` implements it and NIXL
+does not. Projection resolves this optional capability once per endpoint rather
+than structurally probing it in the per-layer path. Callers no longer probe
+backend methods or fall back to clone-based receive APIs.
+
+Transport shutdown has two phases. `stop_receiving()` wakes only the external
+Attention receive loop; it does not release mmap, CUDA IPC, or NIXL state.
+`attention/peers.py` retains every receiver thread, joins them while the
+dispatcher can still finish in-flight work, drains the runtime, and only then
+calls `close()` on each unique transport. A join timeout fails closed without
+releasing resources that a live thread may still use. This contract covers
+orderly process shutdown, not peer failure or cancellation of a half-submitted
+GPU step. Cross-host NIXL is preserved but is not an E2E gate in this
+milestone.
 
 ## Observability
 

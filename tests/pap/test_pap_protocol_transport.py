@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """PAP protocol and transport contract tests."""
 
 import pytest
@@ -9,15 +11,24 @@ from vllm.pap.protocol import (
     PAPOffloadExecDescriptor,
     PAPPrefillKVCacheCatalogDescriptor,
     PAPPrefillKVSessionManifest,
+    PAPStepPlannedOffloadExecTransport,
 )
 from vllm.pap.protocol.offload_exec import (
     _offload_exec_batch_descriptor_from_metadata,
     _offload_exec_batch_descriptor_to_metadata,
 )
-from vllm.pap.transport.nixl.message import PAPMailboxMessage
+from vllm.pap.transport.local.transport import PAPLocalFastTransport
 from vllm.pap.transport.nixl.offload import (
     PAPNixlMailboxOffloadExecTransport,
 )
+
+
+def test_step_planned_transport_capability_is_local_only() -> None:
+    local_transport = object.__new__(PAPLocalFastTransport)
+    nixl_transport = PAPNixlMailboxOffloadExecTransport(object())
+
+    assert isinstance(local_transport, PAPStepPlannedOffloadExecTransport)
+    assert not isinstance(nixl_transport, PAPStepPlannedOffloadExecTransport)
 
 
 def test_nixl_mailbox_sends_direct_qkv_batch_without_copy_payload() -> None:

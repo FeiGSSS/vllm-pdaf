@@ -16,9 +16,12 @@ import torch
 
 from vllm.logger import init_logger
 from vllm.pap.config import (
+    PAP_DEFAULT_OFFLOAD_EXEC_TRANSPORT,
+    parse_offload_exec_transport,
+)
+from vllm.pap.config import (
     PAPOffloadExecTransport as PAPOffloadExecTransportKind,
 )
-from vllm.pap.config import parse_offload_exec_transport
 from vllm.pap.deferred_cuda_trace import (
     begin_deferred_cuda_span,
     end_deferred_cuda_span,
@@ -31,6 +34,7 @@ from vllm.pap.model.context import (
 )
 from vllm.pap.protocol import (
     PAPOffloadExecBatchDescriptor,
+    PAPStepPlannedOffloadExecTransport,
     pap_offload_exec_trace_id,
 )
 
@@ -38,9 +42,7 @@ logger = init_logger(__name__)
 
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 _PAP_STEP_GROUPS_KEY = "_pap_qwen3_offload_exec_step_groups"
-_PAP_LOCAL_BATCHED_FANOUT_PLAN_KEY = (
-    "_pap_qwen3_local_qkv_batched_fanout_plan"
-)
+_PAP_LOCAL_BATCHED_FANOUT_PLAN_KEY = "_pap_qwen3_local_qkv_batched_fanout_plan"
 
 
 def _pap_env_enabled(name: str) -> bool:
@@ -195,9 +197,7 @@ def _pap_offload_exec_step_groups(
         return tuple(cached)
 
     request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
-    route_groups = tuple(
-        additional_kwargs.get("pap_offload_exec_route_groups") or ()
-    )
+    route_groups = tuple(additional_kwargs.get("pap_offload_exec_route_groups") or ())
     if not route_groups:
         raise RuntimeError("PAP attention missing OFFLOAD_EXEC route groups")
 
@@ -239,12 +239,11 @@ def _pap_offload_exec_step_groups(
             raise RuntimeError("PAP OFFLOAD_EXEC route group is malformed")
 
         prepared_session_request_ids = tuple(
-            str(request_id)
-            for request_id in route_group.get("session_request_ids", ())
+            str(request_id) for request_id in route_group.get("session_request_ids", ())
         )
-        if prepared_session_request_ids and len(
-            prepared_session_request_ids
-        ) != len(group_request_ids):
+        if prepared_session_request_ids and len(prepared_session_request_ids) != len(
+            group_request_ids
+        ):
             raise RuntimeError("PAP OFFLOAD_EXEC session route is malformed")
         session_request_ids: list[str] = []
         for group_offset, req_index in enumerate(req_indices):
@@ -270,8 +269,7 @@ def _pap_offload_exec_step_groups(
             )
             if (
                 prepared_session_request_ids
-                and prepared_session_request_ids[group_offset]
-                != session_request_id
+                and prepared_session_request_ids[group_offset] != session_request_id
             ):
                 raise RuntimeError("PAP OFFLOAD_EXEC session route is stale")
             session_request_ids.append(session_request_id)
@@ -289,8 +287,7 @@ def _pap_offload_exec_step_groups(
             raise RuntimeError("PAP OFFLOAD_EXEC batch route is stale")
         prepared_metadata_template = route_group.get("metadata_template")
         if prepared_metadata_template is not None and (
-            tuple(prepared_metadata_template.get("r", ()))
-            != tuple(session_request_ids)
+            tuple(prepared_metadata_template.get("r", ())) != tuple(session_request_ids)
             or tuple(prepared_metadata_template.get("s", ())) != group_steps
         ):
             raise RuntimeError("PAP OFFLOAD_EXEC metadata route is stale")
@@ -318,7 +315,10 @@ def _pap_offload_exec_step_groups(
 
 def _pap_offload_exec_transport_kind() -> PAPOffloadExecTransportKind:
     return parse_offload_exec_transport(
-        os.environ.get("PAP_OFFLOAD_EXEC_TRANSPORT", "nixl_mailbox")
+        os.environ.get(
+            "PAP_OFFLOAD_EXEC_TRANSPORT",
+            PAP_DEFAULT_OFFLOAD_EXEC_TRANSPORT.value,
+        )
     )
 
 
@@ -335,6 +335,17 @@ def _pap_cached_offload_exec_transport(attention_endpoint: str):
         actor_id=actor_id,
         local_rank=local_rank,
     )
+
+
+@cache
+def _pap_cached_step_planned_transport(
+    attention_endpoint: str,
+) -> PAPStepPlannedOffloadExecTransport | None:
+    """Resolve the optional local capability once per bound endpoint."""
+    transport = _pap_cached_offload_exec_transport(attention_endpoint)
+    if isinstance(transport, PAPStepPlannedOffloadExecTransport):
+        return transport
+    return None
 
 
 def _pap_offload_exec_transport_for_attention_endpoint(
@@ -397,9 +408,7 @@ class PAPProjectionAttentionAdapter:
     def __post_init__(self) -> None:
         """Resolve process-lifetime runtime switches once per model layer."""
         self._direct_qkv_send = _pap_direct_qkv_send_enabled()
-        self._direct_mailbox_output = _pap_env_enabled(
-            "PAP_DIRECT_MAILBOX_OUTPUT"
-        )
+        self._direct_mailbox_output = _pap_env_enabled("PAP_DIRECT_MAILBOX_OUTPUT")
         self._trace_offload_exec = _pap_env_enabled("PAP_OFFLOAD_EXEC_TRACE")
         self._debug_decision = _pap_env_enabled("PAP_DEBUG_DECISION")
 
@@ -424,7 +433,13 @@ class PAPProjectionAttentionAdapter:
             num_reqs=batch.num_reqs,
             scaling=float(self.scaling),
         )
-        prepared_groups: list[tuple[_PAPOffloadExecStepGroup, Any]] = []
+        prepared_groups: list[
+            tuple[
+                _PAPOffloadExecStepGroup,
+                Any,
+                PAPStepPlannedOffloadExecTransport | None,
+            ]
+        ] = []
         for step_group in step_groups:
             transport = _pap_offload_exec_transport_for_attention_endpoint(
                 step_group.attention_endpoint,
@@ -434,11 +449,16 @@ class PAPProjectionAttentionAdapter:
                 transport,
                 step_group.attention_endpoint,
             )
-            prepared_groups.append((step_group, transport))
+            prepared_groups.append(
+                (
+                    step_group,
+                    transport,
+                    _pap_cached_step_planned_transport(step_group.attention_endpoint),
+                )
+            )
 
         qkv_width = (
-            self.num_heads * self.head_dim
-            + 2 * self.num_kv_heads * self.head_dim
+            self.num_heads * self.head_dim + 2 * self.num_kv_heads * self.head_dim
         )
         from vllm.pap.transport.local.batched_fanout import (
             local_qkv_batched_fanout_available,
@@ -455,17 +475,14 @@ class PAPProjectionAttentionAdapter:
             in _TRUE_ENV_VALUES
             and all(
                 _pap_req_indices_are_contiguous(step_group.req_indices)
-                and callable(
-                    getattr(transport, "reserve_qkv_fanout", None)
-                )
-                for step_group, transport in prepared_groups
+                and step_planned_transport is not None
+                for step_group, _transport, step_planned_transport in prepared_groups
             )
         )
-        for step_group, transport in prepared_groups:
-            send_step_prepare = getattr(transport, "send_step_prepare", None)
-            if not callable(send_step_prepare):
+        for step_group, _transport, step_planned_transport in prepared_groups:
+            if step_planned_transport is None:
                 continue
-            send_step_prepare(
+            step_planned_transport.send_step_prepare(
                 PAPOffloadExecBatchDescriptor(
                     layer_name=self.layer_name,
                     items=(),
@@ -476,9 +493,7 @@ class PAPProjectionAttentionAdapter:
                 remote_address=step_group.offload_exec_zmq_endpoint,
                 descriptorless_qkv=batched_fanout,
                 qkv_width=qkv_width if batched_fanout else 0,
-                layer_count=(
-                    self.num_hidden_layers if batched_fanout else 0
-                ),
+                layer_count=(self.num_hidden_layers if batched_fanout else 0),
             )
         if batched_fanout:
             from vllm.pap.transport.local.batched_fanout import (
@@ -491,7 +506,7 @@ class PAPProjectionAttentionAdapter:
                     int(step_group.req_indices[0]),
                     len(step_group.req_indices),
                 )
-                for step_group, transport in prepared_groups
+                for step_group, transport, _step_planned_transport in prepared_groups
             ]
             batch.additional_kwargs[_PAP_LOCAL_BATCHED_FANOUT_PLAN_KEY] = (
                 build_local_qkv_batched_fanout_plan(
@@ -559,10 +574,7 @@ class PAPProjectionAttentionAdapter:
                 f"{batch.num_scheduled_tokens[: batch.num_reqs]}"
             )
         installed = set(
-            batch.additional_kwargs.get(
-                "pap_attention_kv_installed_by_request"
-            )
-            or ()
+            batch.additional_kwargs.get("pap_attention_kv_installed_by_request") or ()
         )
         active_request_ids = batch.request_ids[: batch.num_reqs]
         if not all(request_id in installed for request_id in active_request_ids):
@@ -689,6 +701,7 @@ class PAPProjectionAttentionAdapter:
                 PAPOffloadExecBatchDescriptor,
                 tuple[int, ...],
                 Any,
+                PAPStepPlannedOffloadExecTransport | None,
                 torch.Tensor | None,
             ]
         ] = []
@@ -715,6 +728,9 @@ class PAPProjectionAttentionAdapter:
                 attention_endpoint,
                 offload_exec_zmq_endpoint,
             )
+            step_planned_transport = _pap_cached_step_planned_transport(
+                attention_endpoint
+            )
             batch_descriptor = PAPOffloadExecBatchDescriptor(
                 layer_name=self.layer_name,
                 items=(),
@@ -722,22 +738,15 @@ class PAPProjectionAttentionAdapter:
                 metadata_template=step_group.metadata_template,
             )
             _pap_bind_offload_exec_mailbox_peer(transport, attention_endpoint)
-            send_qkv_batch_direct = getattr(transport, "send_qkv_batch_direct", None)
-            send_qkv_batch_fanout = getattr(transport, "send_qkv_batch_fanout", None)
-            use_fanout_stream = len(step_groups) > 1 and callable(
-                send_qkv_batch_fanout
+            use_fanout_stream = (
+                len(step_groups) > 1 and step_planned_transport is not None
             )
             qkv_width = (
-                self.num_heads * self.head_dim
-                + 2 * self.num_kv_heads * self.head_dim
+                self.num_heads * self.head_dim + 2 * self.num_kv_heads * self.head_dim
             )
             direct_qkv_batch: torch.Tensor | None = None
             direct_layout = False
-            if (
-                local_batched_fanout_plan is None
-                and direct_qkv_send_enabled
-                and callable(send_qkv_batch_direct)
-            ):
+            if local_batched_fanout_plan is None and direct_qkv_send_enabled:
                 direct_qkv_batch, direct_layout = _pap_qkv_batch_for_indices(
                     direct_qkv_send_buffer,
                     req_indices,
@@ -758,13 +767,14 @@ class PAPProjectionAttentionAdapter:
                 if int(direct_qkv_batch.shape[-1]) != qkv_width:
                     raise RuntimeError("PAP direct QKV batch width mismatch")
                 if use_fanout_stream:
-                    send_qkv_batch_fanout(
+                    assert step_planned_transport is not None
+                    step_planned_transport.send_qkv_batch_fanout(
                         batch_descriptor,
                         direct_qkv_batch,
                         remote_address=offload_exec_zmq_endpoint,
                     )
                 else:
-                    send_qkv_batch_direct(
+                    transport.send_qkv_batch_direct(
                         batch_descriptor,
                         direct_qkv_batch,
                         remote_address=offload_exec_zmq_endpoint,
@@ -786,7 +796,8 @@ class PAPProjectionAttentionAdapter:
                 ]
                 qkv_batch = _pap_pack_qkv_group_items(group_items)
                 if use_fanout_stream:
-                    send_qkv_batch_fanout(
+                    assert step_planned_transport is not None
+                    step_planned_transport.send_qkv_batch_fanout(
                         batch_descriptor,
                         qkv_batch,
                         remote_address=offload_exec_zmq_endpoint,
@@ -800,22 +811,13 @@ class PAPProjectionAttentionAdapter:
             if trace_offload_exec and local_batched_fanout_plan is None:
                 trace_group_submit_done_ns = time.perf_counter_ns()
                 trace_fanout_prepare_us.append(
-                    (
-                        trace_group_submit_start_ns
-                        - trace_group_prepare_start_ns
-                    )
+                    (trace_group_submit_start_ns - trace_group_prepare_start_ns)
                     / 1_000.0
                 )
                 trace_fanout_submit_us.append(
-                    (
-                        trace_group_submit_done_ns
-                        - trace_group_submit_start_ns
-                    )
-                    / 1_000.0
+                    (trace_group_submit_done_ns - trace_group_submit_start_ns) / 1_000.0
                 )
-                trace_fanout_submit_start_ns.append(
-                    trace_group_submit_start_ns
-                )
+                trace_fanout_submit_start_ns.append(trace_group_submit_start_ns)
             offload_exec_batches.append(
                 (
                     attention_endpoint,
@@ -823,6 +825,7 @@ class PAPProjectionAttentionAdapter:
                     batch_descriptor,
                     req_indices,
                     transport,
+                    step_planned_transport,
                     route_index_tensor,
                 )
             )
@@ -854,17 +857,12 @@ class PAPProjectionAttentionAdapter:
             batch_descriptor,
             req_indices,
             transport,
+            step_planned_transport,
             _route_index_tensor,
         ) in offload_exec_batches:
-            output_receive_stream = getattr(
-                transport,
-                "output_receive_stream",
-                None,
-            )
             receive_stream = (
-                output_receive_stream()
-                if parallel_output_receives
-                and callable(output_receive_stream)
+                step_planned_transport.output_receive_stream()
+                if parallel_output_receives and step_planned_transport is not None
                 else None
             )
             if receive_stream is None:
@@ -916,6 +914,18 @@ class PAPProjectionAttentionAdapter:
             nonlocal trace_batch_keys
             if not trace_offload_exec or not offload_exec_batches:
                 return
+
+            def route_kv_tokens(
+                descriptor: PAPOffloadExecBatchDescriptor,
+            ) -> str:
+                template = descriptor.metadata_template
+                if template is None:
+                    return "0"
+                total = 0
+                for step in template.get("s", ()):
+                    total += int(step)
+                return str(total)
+
             trace_batch_keys = "|".join(
                 pap_offload_exec_trace_id(item[2].output_tensor_id)
                 for item in offload_exec_batches
@@ -924,13 +934,7 @@ class PAPProjectionAttentionAdapter:
                 str(item[2].item_count) for item in offload_exec_batches
             )
             trace_route_kv_tokens = "|".join(
-                str(
-                    sum(
-                        int(step)
-                        for step in item[2].metadata_template.get("s", ())
-                    )
-                )
-                for item in offload_exec_batches
+                route_kv_tokens(item[2]) for item in offload_exec_batches
             )
             calls = sum(item[2].item_count for item in offload_exec_batches)
             if projection_timeline is not None:
@@ -994,10 +998,7 @@ class PAPProjectionAttentionAdapter:
                 trace_direct_output_rows,
                 trace_scattered_output_rows,
             )
-            if (
-                trace_output_origin is not None
-                and len(trace_output_ready_events) > 1
-            ):
+            if trace_output_origin is not None and len(trace_output_ready_events) > 1:
                 for ready_event in trace_output_ready_events:
                     ready_event.synchronize()
                 ready_times_ms = [
@@ -1008,9 +1009,7 @@ class PAPProjectionAttentionAdapter:
                 last_ready_ms = max(ready_times_ms)
                 spread_ms = last_ready_ms - first_ready_ms
                 spread_pct = (
-                    spread_ms / first_ready_ms * 100.0
-                    if first_ready_ms > 0
-                    else 0.0
+                    spread_ms / first_ready_ms * 100.0 if first_ready_ms > 0 else 0.0
                 )
                 logger.info(
                     "PAP OFFLOAD_EXEC projection fan-in trace layer=%s "
@@ -1034,20 +1033,11 @@ class PAPProjectionAttentionAdapter:
                     len(trace_fanout_submit_us),
                     max(
                         0.0,
-                        (first_submit_ns - pre_attn_done_ns)
-                        / 1_000.0,
+                        (first_submit_ns - pre_attn_done_ns) / 1_000.0,
                     ),
-                    (
-                        trace_send_done_ns
-                        - pre_attn_done_ns
-                    )
-                    / 1_000.0,
-                    "|".join(
-                        f"{value:.3f}" for value in trace_fanout_prepare_us
-                    ),
-                    "|".join(
-                        f"{value:.3f}" for value in trace_fanout_submit_us
-                    ),
+                    (trace_send_done_ns - pre_attn_done_ns) / 1_000.0,
+                    "|".join(f"{value:.3f}" for value in trace_fanout_prepare_us),
+                    "|".join(f"{value:.3f}" for value in trace_fanout_submit_us),
                     "|".join(
                         f"{(value - first_submit_ns) / 1_000.0:.3f}"
                         for value in trace_fanout_submit_start_ns
@@ -1069,6 +1059,7 @@ class PAPProjectionAttentionAdapter:
             batch_descriptor,
             req_indices,
             transport,
+            _step_planned_transport,
             route_index_tensor,
         ) in enumerate(offload_exec_batches):
             output_message = prepared_output_messages[batch_index]
@@ -1132,9 +1123,7 @@ class PAPProjectionAttentionAdapter:
                         scatter_output.record_stream(output_receive_stream)
                         output_batch.record_stream(output_receive_stream)
                         if route_index_tensor is not None:
-                            route_index_tensor.record_stream(
-                                output_receive_stream
-                            )
+                            route_index_tensor.record_stream(output_receive_stream)
                         scatter_trace = begin_deferred_cuda_span(
                             "output_scatter_gpu_ms",
                             output_receive_stream,

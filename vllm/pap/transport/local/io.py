@@ -22,7 +22,10 @@ from vllm.pap.deferred_cuda_trace import (
     end_deferred_cuda_span,
     record_deferred_host_duration,
 )
-from vllm.pap.protocol import PAPOffloadExecBatchDescriptor
+from vllm.pap.protocol import (
+    PAPOffloadExecBatchDescriptor,
+    PAPOffloadExecTransportClosed,
+)
 from vllm.pap.protocol.offload_exec import (
     _offload_exec_batch_descriptor_from_metadata,
     _offload_exec_batch_plan_id,
@@ -203,9 +206,7 @@ class _PAPLocalFastIOMixin:
                     flags=RECORD_FLAG_FIXED_TENSOR | RECORD_FLAG_PLAN_REF,
                 )
 
-        raise RuntimeError(
-            "PAP local QKV descriptor is missing a valid step plan"
-        )
+        raise RuntimeError("PAP local QKV descriptor is missing a valid step plan")
 
     def _send_to_peer(
         self,
@@ -238,13 +239,10 @@ class _PAPLocalFastIOMixin:
             wire = self._wire_metadata(direction, descriptor, tensor)
         else:
             if direction != DIR_OUTPUT:
-                raise ValueError(
-                    f"invalid PAP local transport direction: {direction}"
-                )
+                raise ValueError(f"invalid PAP local transport direction: {direction}")
             if tensor.ndim != 2 or tensor.dtype not in _DTYPE_TO_CODE:
                 raise RuntimeError(
-                    "PAP descriptorless output requires a rank-2 "
-                    "FP16/BF16/FP32 tensor"
+                    "PAP descriptorless output requires a rank-2 FP16/BF16/FP32 tensor"
                 )
             plan_key = descriptor.batch_id_suffix or descriptor.batch_id
             if (
@@ -260,14 +258,10 @@ class _PAPLocalFastIOMixin:
             seq = self._next_seq(peer, direction)
             offset = 0
             previous_seq = (
-                peer.last_qkv_seq
-                if direction == DIR_QKV
-                else peer.last_output_seq
+                peer.last_qkv_seq if direction == DIR_QKV else peer.last_output_seq
             )
             previous_payload_seq = (
-                peer.last_qkv_payload_seq
-                if direction == DIR_QKV
-                else previous_seq
+                peer.last_qkv_payload_seq if direction == DIR_QKV else previous_seq
             )
             if publish_descriptor:
                 self._wait_control_buffer(
@@ -363,10 +357,7 @@ class _PAPLocalFastIOMixin:
             wire_flags = (
                 wire.flags
                 if wire is not None
-                else (
-                    RECORD_FLAG_FIXED_TENSOR
-                    | RECORD_FLAG_OUTPUT_DESCRIPTORLESS
-                )
+                else (RECORD_FLAG_FIXED_TENSOR | RECORD_FLAG_OUTPUT_DESCRIPTORLESS)
             )
             logger.info(
                 "PAP local fast transport send trace kind=%s layer=%s "
@@ -406,6 +397,10 @@ class _PAPLocalFastIOMixin:
             seq = _doorbell_read_seq(mm, record_offset)
             if seq == expected:
                 break
+            if self._receive_stopped.is_set():
+                raise PAPOffloadExecTransportClosed(
+                    "PAP local transport receive loop stopped"
+                )
             if seq > expected:
                 raise RuntimeError(
                     "PAP local fast control record skipped a message: "
@@ -419,7 +414,10 @@ class _PAPLocalFastIOMixin:
                 continue
             waited_us = (time.perf_counter() - t_start) * 1_000_000.0
             if waited_us >= SPIN_SLEEP_AFTER_US:
-                time.sleep(max(SPIN_SLEEP_US, 0) / 1_000_000.0)
+                if self._receive_stopped.wait(max(SPIN_SLEEP_US, 0) / 1_000_000.0):
+                    raise PAPOffloadExecTransportClosed(
+                        "PAP local transport receive loop stopped"
+                    )
             else:
                 _sched_yield()
         record = _doorbell_read_record(mm, record_offset)
@@ -548,9 +546,7 @@ class _PAPLocalFastIOMixin:
             else RECORD_FLAG_PLAN_REF
         )
         if descriptorless_qkv and (qkv_width <= 0 or layer_count <= 0):
-            raise RuntimeError(
-                "PAP descriptorless QKV requires width and layer count"
-            )
+            raise RuntimeError("PAP descriptorless QKV requires width and layer count")
         peer = self._require_peer()
         with peer.send_lock:
             seq = self._next_seq(peer, DIR_QKV)
@@ -588,11 +584,7 @@ class _PAPLocalFastIOMixin:
                         RECORD_FLAG_FIXED_TENSOR
                         | RECORD_FLAG_STEP_PREPARE
                         | plan_flag
-                        | (
-                            RECORD_FLAG_QKV_DESCRIPTORLESS
-                            if descriptorless_qkv
-                            else 0
-                        )
+                        | (RECORD_FLAG_QKV_DESCRIPTORLESS if descriptorless_qkv else 0)
                     ),
                 ),
             )
@@ -735,9 +727,7 @@ class _PAPLocalFastIOMixin:
         *,
         remote_address: str,
     ) -> Any:
-        seq, nbytes, offset, metadata = self._recv_from_peer(
-            direction=DIR_OUTPUT
-        )
+        seq, nbytes, offset, metadata = self._recv_from_peer(direction=DIR_OUTPUT)
         self._validate_output_record(descriptor, metadata)
         tensor = self._materialize_recv(
             nbytes=nbytes,
@@ -829,26 +819,15 @@ class _PAPLocalFastIOMixin:
         if getattr(self, "_descriptorless_qkv_plan", None) is not None:
             return self._recv_descriptorless_qkv_batch_message()
         while True:
-            seq, nbytes, offset, metadata = self._recv_from_peer(
-                direction=DIR_QKV
-            )
-            descriptor, descriptor_metadata = self._decode_qkv_descriptor(
-                metadata
-            )
-            if not (
-                int(metadata.get("_fixed_flags", 0))
-                & RECORD_FLAG_STEP_PREPARE
-            ):
+            seq, nbytes, offset, metadata = self._recv_from_peer(direction=DIR_QKV)
+            descriptor, descriptor_metadata = self._decode_qkv_descriptor(metadata)
+            if not (int(metadata.get("_fixed_flags", 0)) & RECORD_FLAG_STEP_PREPARE):
                 break
-            if int(metadata.get("_fixed_flags", 0)) & (
-                RECORD_FLAG_QKV_DESCRIPTORLESS
-            ):
+            if int(metadata.get("_fixed_flags", 0)) & (RECORD_FLAG_QKV_DESCRIPTORLESS):
                 qkv_width = int(metadata.get("qkv_width", 0))
                 layer_count = int(metadata.get("layer_count", 0))
                 if qkv_width <= 0 or layer_count <= 0:
-                    raise RuntimeError(
-                        "PAP descriptorless QKV step plan is malformed"
-                    )
+                    raise RuntimeError("PAP descriptorless QKV step plan is malformed")
                 self._descriptorless_qkv_plan = _DescriptorlessQKVPlan(
                     descriptor=descriptor,
                     dtype=_dtype_from_name(str(metadata["dtype"])),
@@ -904,8 +883,7 @@ class _PAPLocalFastIOMixin:
         )
         if nbytes > self.buffer_bytes:
             raise RuntimeError(
-                f"PAP descriptorless QKV {nbytes}B exceeds buffer "
-                f"{self.buffer_bytes}B"
+                f"PAP descriptorless QKV {nbytes}B exceeds buffer {self.buffer_bytes}B"
             )
         stream = torch.cuda.current_stream(self.device)
         stream_wait_value32(

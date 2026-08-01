@@ -2,11 +2,16 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """PAP transport construction and public contracts."""
 
-from vllm.pap.protocol import PAPOffloadExecTransport, PAPTensorTransport
+from vllm.pap.protocol import (
+    PAPOffloadExecTransport,
+    PAPOffloadExecTransportClosed,
+    PAPTensorTransport,
+)
 from vllm.pap.transport.factory import build_offload_exec_transport
 
 __all__ = [
     "PAPOffloadExecTransport",
+    "PAPOffloadExecTransportClosed",
     "PAPTensorTransport",
     "build_offload_exec_transport",
 ]

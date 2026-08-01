@@ -619,7 +619,7 @@ def test_attention_executor_starts_offload_exec_transport(monkeypatch) -> None:
 
     assert app.state.pap_peer_manager.initial_transport is fake_transport
     assert fake_build_transport.kwargs == {
-        "transport": PAPOffloadExecTransport.NIXL_MAILBOX,
+        "transport": PAPOffloadExecTransport.LOCAL_FAST,
         "actor_id": "attention",
         "local_rank": 2,
     }
@@ -649,7 +649,7 @@ def test_attention_executor_binds_each_projection_to_distinct_transport(
         local_rank: int,
         transport,
     ) -> FakeTransport:
-        assert transport.value == "nixl_mailbox"
+        assert transport.value == "local_fast"
         fake_transport = FakeTransport(actor_id, local_rank)
         transports.append(fake_transport)
         return fake_transport
@@ -724,7 +724,7 @@ def test_attention_executor_central_mode_shares_one_dispatcher(
     receivers_ready = Event()
 
     def fake_build_transport(*, actor_id, local_rank, transport):
-        assert transport.value == "nixl_mailbox"
+        assert transport.value == "local_fast"
         fake_transport = FakeTransport(actor_id, local_rank)
         transports.append(fake_transport)
         return fake_transport

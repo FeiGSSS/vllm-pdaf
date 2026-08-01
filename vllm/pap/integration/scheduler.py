@@ -17,6 +17,8 @@ from vllm.pap.integration.request import PAPRequestMetadata
 from vllm.pap.integration.settings import PAPRuntimeSettings
 from vllm.pap.lifecycle import lease as pap_lease
 
+PAP_MIGRATION_TERMINAL_HISTORY_LIMIT = 1024
+
 
 class _SchedulerRequest(Protocol):
     request_id: str
@@ -45,6 +47,16 @@ class PAPSchedulerAdapter:
     accepted_token_publisher: PAPAcceptedDecodeTokenPublisher = field(
         default_factory=PAPAcceptedDecodeTokenPublisher
     )
+    migration_terminal_history_limit: int = PAP_MIGRATION_TERMINAL_HISTORY_LIMIT
+    _terminal_migration_ids: deque[str] = field(
+        default_factory=deque,
+        init=False,
+        repr=False,
+    )
+
+    def __post_init__(self) -> None:
+        if self.migration_terminal_history_limit < 1:
+            raise ValueError("PAP migration terminal history limit must be positive")
 
     @classmethod
     def from_environ(
@@ -279,6 +291,17 @@ class PAPSchedulerAdapter:
         cls._publish_migration_started(job)
         cls._publish_migration_completion(job)
 
+    def _remember_terminal_migration(self, job: PAPMigrationJob) -> None:
+        self._terminal_migration_ids.append(job.job_id)
+        while len(self._terminal_migration_ids) > self.migration_terminal_history_limit:
+            expired_job_id = self._terminal_migration_ids.popleft()
+            expired_job = self.migration_jobs.get(expired_job_id)
+            if expired_job is not None and expired_job.status in {
+                PAPMigrationStatus.READY,
+                PAPMigrationStatus.FAILED,
+            }:
+                self.migration_jobs.pop(expired_job_id, None)
+
     def has_migration_work(self) -> bool:
         """Return whether a migration still needs scheduler or worker progress."""
         return any(
@@ -323,6 +346,7 @@ class PAPSchedulerAdapter:
                 job.completed_at = time.monotonic()
                 self.pending_migration_ids.popleft()
                 self._publish_migration_failure(job)
+                self._remember_terminal_migration(job)
                 return []
             all_block_ids = tuple(
                 tuple(int(block_id) for block_id in group)
@@ -374,6 +398,7 @@ class PAPSchedulerAdapter:
                 job.completed_at = time.monotonic()
                 self.pending_migration_ids.popleft()
                 self._publish_migration_failure(job)
+                self._remember_terminal_migration(job)
                 return []
 
             job.block_ids = all_block_ids
@@ -425,6 +450,7 @@ class PAPSchedulerAdapter:
         job.status = PAPMigrationStatus.READY
         job.completed_at = time.monotonic()
         self._publish_migration_completion(job)
+        self._remember_terminal_migration(job)
         return True
 
     def fail_migration(
@@ -451,4 +477,5 @@ class PAPSchedulerAdapter:
             job.error = str(error)
             job.completed_at = time.monotonic()
             self._publish_migration_failure(job)
+            self._remember_terminal_migration(job)
         return True

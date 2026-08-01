@@ -25,6 +25,7 @@ from typing import Any
 import msgspec
 import torch
 
+from vllm.pap.protocol import PAPOffloadExecTransportClosed
 from vllm.pap.transport.nixl.message import (
     PAPMailboxMessage,
     _merge_message_recv_trace,
@@ -234,6 +235,9 @@ class PAPNixlMailboxEndpoint:
         self._cv = Condition(self._lock)
         self._poll_lock = RLock()
         self._closed = Event()
+        self._receive_stopped = Event()
+        self._close_lock = RLock()
+        self._resources_released = False
         self._sender_thread: Thread | None = None
         self._receiver_thread: Thread | None = None
         self._send_queue: Queue[PAPMailboxMessage] = Queue()
@@ -429,14 +433,37 @@ class PAPNixlMailboxEndpoint:
             )
             self._receiver_thread.start()
 
+    def stop_receiving(self) -> None:
+        """Wake external consumers without stopping NIXL progress threads."""
+        with self._cv:
+            self._receive_stopped.set()
+            self._cv.notify_all()
+
     def close(self) -> None:
-        self._closed.set()
-        for thread in (self._sender_thread, self._receiver_thread):
-            if thread is not None:
-                thread.join(timeout=2)
-        self._release_cached_xfer_handles()
-        self._release_cached_write_xfer_handles()
-        self._release_cached_xfer_dlists()
+        with self._close_lock:
+            if self._resources_released:
+                return
+            self.stop_receiving()
+            with self._cv:
+                self._closed.set()
+                self._cv.notify_all()
+            threads = tuple(
+                thread
+                for thread in (self._sender_thread, self._receiver_thread)
+                if thread is not None
+            )
+            deadline = time.monotonic() + 2.0
+            for thread in threads:
+                thread.join(timeout=max(0.0, deadline - time.monotonic()))
+            alive = [thread.name for thread in threads if thread.is_alive()]
+            if alive:
+                raise RuntimeError(
+                    "PAP NIXL mailbox threads did not stop: " + ", ".join(alive)
+                )
+            self._release_cached_xfer_handles()
+            self._release_cached_write_xfer_handles()
+            self._release_cached_xfer_dlists()
+            self._resources_released = True
 
     def _release_cached_xfer_handles(self) -> None:
         cache = getattr(self, "_xfer_handle_cache", None)
@@ -499,6 +526,8 @@ class PAPNixlMailboxEndpoint:
         cv, leases, by_msg = self._ensure_send_slot_state()
         with cv:
             while True:
+                if self._closed.is_set():
+                    raise PAPOffloadExecTransportClosed("PAP NIXL mailbox is closed")
                 start_slot = int(getattr(self, "_next_send_slot", 0))
                 for offset in range(self._slot_count):
                     slot_id = (start_slot + offset) % self._slot_count
@@ -562,6 +591,8 @@ class PAPNixlMailboxEndpoint:
         cv, leases, by_msg = self._ensure_peer_recv_slot_state()
         with cv:
             while True:
+                if self._closed.is_set():
+                    raise PAPOffloadExecTransportClosed("PAP NIXL mailbox is closed")
                 start_slot = int(getattr(self, "_next_peer_recv_slot", 0))
                 for offset in range(peer_recv_slot_count):
                     slot_id = (start_slot + offset) % peer_recv_slot_count
@@ -688,6 +719,8 @@ class PAPNixlMailboxEndpoint:
         return PAPMailboxDirectSendPayload(tensor=tensor, slot_id=slot_id)
 
     def send(self, message: PAPMailboxMessage) -> None:
+        if self._closed.is_set():
+            raise PAPOffloadExecTransportClosed("PAP NIXL mailbox is closed")
         if self._inline_publish_enabled:
             self._send_inline(message)
             return
@@ -766,6 +799,10 @@ class PAPNixlMailboxEndpoint:
 
         while True:
             with self._cv:
+                if self._receive_stopped.is_set():
+                    raise PAPOffloadExecTransportClosed(
+                        "PAP NIXL mailbox receive loop stopped"
+                    )
                 if msg_id is None and self._incoming:
                     _, message = self._incoming.popitem(last=False)
                     trace_recv_wait(message)
@@ -1039,6 +1076,8 @@ class PAPNixlMailboxEndpoint:
         deadline = time.monotonic() + 30.0
         while True:
             with self._cv:
+                if self._closed.is_set():
+                    raise PAPOffloadExecTransportClosed("PAP NIXL mailbox is closed")
                 if msg_id not in self._output_pool:
                     self._send_enqueued_at.pop(msg_id, None)
                     self._acked.discard(msg_id)
@@ -1071,7 +1110,7 @@ class PAPNixlMailboxEndpoint:
         while not self._closed.is_set():
             did_work = self._poll_notifications()
             if not did_work and self._poll_sleep_seconds > 0:
-                time.sleep(self._poll_sleep_seconds)
+                self._closed.wait(self._poll_sleep_seconds)
 
     def _poll_notifications(self) -> bool:
         poll_lock = getattr(self, "_poll_lock", None)
@@ -1182,6 +1221,8 @@ class PAPNixlMailboxEndpoint:
         cv, leases = self._ensure_recv_slot_state()
         with cv:
             while True:
+                if self._closed.is_set():
+                    raise PAPOffloadExecTransportClosed("PAP NIXL mailbox is closed")
                 for recv_slot_id in candidates:
                     if recv_slot_id not in leases:
                         leases[recv_slot_id] = msg_id
@@ -1225,6 +1266,8 @@ class PAPNixlMailboxEndpoint:
         cv, leases = self._ensure_recv_slot_state()
         with cv:
             while True:
+                if self._closed.is_set():
+                    raise PAPOffloadExecTransportClosed("PAP NIXL mailbox is closed")
                 if recv_slot_id not in leases:
                     leases[recv_slot_id] = msg_id
                     recv_offset, local_addr = self._recv_slot_location(recv_slot_id)

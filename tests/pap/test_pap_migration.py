@@ -173,6 +173,54 @@ def test_scheduler_fails_migration_when_target_has_no_capacity() -> None:
     assert not adapter.has_migration_work()
 
 
+def test_scheduler_bounds_terminal_migration_history() -> None:
+    adapter = PAPSchedulerAdapter(
+        PAPRuntimeSettings.from_environ({}),
+        migration_terminal_history_limit=2,
+    )
+    manager = SimpleNamespace(
+        allocate_external_transfer_slots=lambda **kwargs: None,
+    )
+    prefix_token_ids, prefix_block_hashes = _prefix_identity()
+    job_ids = []
+
+    for index in range(3):
+        submitted = adapter.submit_migration(
+            request_id=f"pap-request-{index}",
+            source_kv_params=_source_params(),
+            prefix_len=32,
+            prefix_token_ids=prefix_token_ids,
+            prefix_block_hashes=prefix_block_hashes,
+            decode_capacity_tokens=32,
+            session_handle=f"attention-session-{index}",
+            attention_tcp_endpoint="tcp://127.0.0.1:9300",
+        )
+        job_ids.append(submitted["job_id"])
+        assert (
+            adapter.attach_next_migration(
+                metadata=object(),
+                kv_cache_manager=manager,
+                connector=object(),
+                reserved_blocks=7,
+            )
+            == []
+        )
+
+    assert tuple(adapter.migration_jobs) == tuple(job_ids[1:])
+    assert adapter.migration_status(job_ids[0])["status"] == "unknown"
+    assert adapter.migration_status(job_ids[1])["status"] == "failed"
+    assert adapter.migration_status(job_ids[2])["status"] == "failed"
+    assert not adapter.has_migration_work()
+
+
+def test_scheduler_rejects_empty_terminal_migration_history() -> None:
+    with pytest.raises(ValueError, match="history limit must be positive"):
+        PAPSchedulerAdapter(
+            PAPRuntimeSettings.from_environ({}),
+            migration_terminal_history_limit=0,
+        )
+
+
 def test_nixl_migration_export_uses_connector_config() -> None:
     from vllm.distributed.kv_transfer.kv_connector.v1.nixl.connector import (
         NixlBaseConnector,

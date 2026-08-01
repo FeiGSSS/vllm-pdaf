@@ -38,9 +38,10 @@ whole request.
 5. For each layer, Projection sends Q/K/V to Attention and receives the
    attention output. Multi-PA output waits and disjoint scatters use
    peer-local CUDA streams.
-6. Attention opens the Prefill-owned KV through CUDA IPC or NIXL, appends the
+6. Attention opens its colocated Prefill-owned KV through CUDA IPC, appends the
    current decode K/V, runs vLLM's Triton paged-decode kernel, and returns the
-   output.
+   output. Post-Prefill PA-to-PA migration separately uses vLLM's NIXL
+   Connector to populate the target Prefill pool before this handoff.
 7. Sampled tokens, decode commits, ACKs, leases, and session drain close the
    request without transferring KV ownership to Projection.
 
@@ -144,7 +145,9 @@ executor.
 - `transport/`: `factory.py` is the composition boundary. `local/` owns the
   same-host CUDA IPC endpoint, stream-ordered protocol, and send/receive hot
   path. `nixl/` owns the cross-host mailbox message, endpoint, and OFFLOAD_EXEC
-  adapter. The shared ownership-bearing interface lives in `protocol/`.
+  adapter. The shared ownership-bearing and two-phase shutdown interfaces live
+  in `protocol/`; `attention/peers.py` owns receiver quiesce, join, runtime
+  drain, and final transport close ordering.
 - `service.py`: thin Attention HTTP/TCP composition and process entry point.
 
 Legacy top-level compatibility façades have been removed; the retirement record
@@ -166,12 +169,14 @@ tests import `attention/`, `gateway/`, `kv/`, `lifecycle/`, `protocol/`,
 Historical experimental branches are reproduced from their Git commits and raw
 artifacts, not from selectable code paths in the current runtime.
 
-The Attention kernel selection is one main path, not a runtime experiment switch.
-`PAPAttentionStepContext` prepares block metadata and a fixed split-4 Triton
-workspace once per decode step, then reuses them across all model layers. The
-runtime does not retain the former per-layer FA2 fallback. Historical
-`paged_flash_*` trace field names remain stable so old and new runs can be
-compared without rewriting experiment data.
+The Attention kernel selection is one main path, not a runtime experiment
+switch. `PAPAttentionStepContext` prepares block metadata and the SM-aware
+Triton workspace once per decode step, then reuses them across all model
+layers. The low-SM specialization uses the accepted split-8/BLOCK_H=4 shape;
+larger partitions retain split-4/BLOCK_H=16. The runtime does not retain the
+former per-layer FA2 fallback. Historical `paged_flash_*` trace field names
+remain stable so old and new runs can be compared without rewriting
+experiment data.
 
 Offline trace analysis and remote-Attention reports live under
 `benchmarks/pap/tooling/` and are invoked through `tools/pap_*`; the runtime

@@ -31,6 +31,9 @@ usage() {
     cat <<'EOF'
 Usage: launch_pap_nixl.sh [--model MODEL_PATH_OR_NAME]
 
+Functional NIXL/control-plane smoke only. This launcher is not the validated
+same-host local_fast/80-12-SM performance configuration.
+
 Environment overrides:
   PAP_MODEL_PATH          Model path or Hugging Face model id.
   PAP_TOPOLOGY           Topology such as 1pa1p or 6pa2p.

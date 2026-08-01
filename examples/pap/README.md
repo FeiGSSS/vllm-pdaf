@@ -3,6 +3,10 @@
 This directory contains thin launchers and request examples for the
 Prefill-Attention-Projection service. Gateway implementation lives in
 `vllm/pap/gateway/`; Attention implementation lives in `vllm/pap/attention/`.
+`launch_pap_nixl.sh` is a functional NIXL/control-plane smoke launcher. Its
+small-model, legacy percentage-MPS defaults are not a performance or regression
+configuration. Use the AIPerf runner for the validated same-host
+`local_fast`/80-12-SM path.
 The current runtime testbed is the eight-GPU AIPerf matrix, validated through
 the owner-specific `vllm/pap/integration/` boundary. Same-host `xPAyP` has a
 controlled correctness smoke; cross-host `xPAyP` remains available but is not
@@ -19,10 +23,10 @@ Roles:
 - **Prefill** runs normal vLLM prompt processing and owns prompt paged KV blocks.
 - **Attention** is an internal service colocated with Prefill. It opens
   Prefill paged KV through CUDA IPC and appends decode K/V directly to those
-  Prefill-owned blocks. The current path runs vLLM's Triton paged-decode kernel
-  with one split-4 workspace shared by all layers in a decode step. A
-  payload-free step descriptor lets it prepare QKV-independent state before
-  layer-0 QKV arrives.
+  Prefill-owned blocks. The current path runs vLLM's SM-aware Triton
+  paged-decode specialization with one workspace shared by all layers in a
+  decode step. A payload-free step descriptor lets it prepare QKV-independent
+  state before layer-0 QKV arrives.
 - **Projection** runs the model decode path and sends current-token Q/K/V to
   Attention. It does not receive Prefill prompt KV bytes. PAP keeps each vLLM
   scheduler batch intact; requests for different PA groups are same-step
@@ -54,11 +58,16 @@ PA, the Gateway admits requests from one Projection source at a time and
 switches sources only after that request wave drains. Separate PA groups
 continue independently.
 
-Run a local PAP service:
+Run the functional NIXL smoke service:
 
 ```bash
 bash examples/pap/launch_pap_nixl.sh --model /data/ssd1/llm-models/Qwen3-0.6B
 ```
+
+The smoke defaults to NIXL OFFLOAD_EXEC, Qwen3-0.6B, short sequences, and
+70/30 `CUDA_MPS_ACTIVE_THREAD_PERCENTAGE`. These settings test wiring and
+failure handling; they are intentionally separate from the AIPerf performance
+profile.
 
 Useful environment overrides:
 

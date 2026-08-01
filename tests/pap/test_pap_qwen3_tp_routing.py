@@ -8,15 +8,14 @@ from vllm.pap.model.context import pap_endpoint_for_tp_rank
 from vllm.pap.model.projection import (
     _pap_bind_offload_exec_mailbox_peer,
     _pap_cached_offload_exec_transport,
+    _pap_cached_step_planned_transport,
     _pap_offload_exec_session_request_id,
     _pap_offload_exec_step_groups,
 )
 
 
 def test_pap_endpoint_for_tp_rank_keeps_scalar_endpoint() -> None:
-    assert pap_endpoint_for_tp_rank("127.0.0.1:10300", tp_rank=1) == (
-        "127.0.0.1:10300"
-    )
+    assert pap_endpoint_for_tp_rank("127.0.0.1:10300", tp_rank=1) == ("127.0.0.1:10300")
 
 
 def test_bilateral_qkv_trace_selects_only_target_decode_roles() -> None:
@@ -85,16 +84,19 @@ def test_pap_projection_mailbox_actor_id_includes_tp_rank(
         return object()
 
     monkeypatch.setenv("PAP_NIXL_MAILBOX_ACTOR_ID", "projection-3")
+    monkeypatch.setenv("PAP_OFFLOAD_EXEC_TRANSPORT", "nixl_mailbox")
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_LOCAL_RANK", "1")
     monkeypatch.setattr(
         "vllm.pap.transport.factory.build_nixl_mailbox_offload_exec_transport",
         fake_build_transport,
     )
     _pap_cached_offload_exec_transport.cache_clear()
+    _pap_cached_step_planned_transport.cache_clear()
     try:
         _pap_cached_offload_exec_transport("http://127.0.0.1:8302")
     finally:
         _pap_cached_offload_exec_transport.cache_clear()
+        _pap_cached_step_planned_transport.cache_clear()
 
     assert len(built) == 1
     actor_id, local_rank = built[0]
