@@ -6,24 +6,28 @@ import asyncio
 
 import pytest
 
-import vllm.pap.gateway.app as gateway_app
-from vllm.pap.gateway.app import (
-    PAPAttentionLoadRouter,
-    PAPConversationRouter,
-    PAPGroup,
+import vllm.pap.gateway.handoff as gateway_handoff
+from vllm.pap.gateway.admission import (
     PAPPrefillAdmission,
     PAPProjectionAdmission,
-    ProjectionInstance,
+)
+from vllm.pap.gateway.observability import _prefill_usage_headers
+from vllm.pap.gateway.payloads import build_prefill_payload
+from vllm.pap.gateway.request_pipeline import _pop_conversation_id
+from vllm.pap.gateway.routing import (
+    PAPAttentionLoadRouter,
+    PAPConversationRouter,
     _estimate_context_tokens,
     _migration_prefix_kv_params,
-    _pop_conversation_id,
-    _prefill_usage_headers,
+    select_instances,
+)
+from vllm.pap.gateway.topology import (
+    PAPGroup,
+    ProjectionInstance,
     build_projection_payload_for_group,
     parse_pap_groups,
     parse_projection_instances,
-    select_instances,
 )
-from vllm.pap.gateway.payloads import build_prefill_payload
 
 
 def test_conversation_id_body_takes_priority_over_session_header() -> None:
@@ -819,9 +823,11 @@ def test_wait_prefill_kv_export_tolerates_scheduler_finalize_race(
             return None
         return {"lease_id": "lease"}
 
-    monkeypatch.setattr(gateway_app, "_export_prefill_kv", fake_export)
+    monkeypatch.setattr(gateway_handoff, "_export_prefill_kv", fake_export)
 
-    exported = asyncio.run(gateway_app._wait_prefill_kv_export(object(), "request-0"))
+    exported = asyncio.run(
+        gateway_handoff._wait_prefill_kv_export(object(), "request-0")
+    )
 
     assert exported == {"lease_id": "lease"}
     assert attempts == 3
@@ -885,19 +891,23 @@ def test_completed_prefill_migration_installs_target_before_decode(
         del attention_clients
         cleaned.append(request_id)
 
-    monkeypatch.setattr(gateway_app, "register_attention_handles", fake_register)
-    monkeypatch.setattr(gateway_app, "_post_json", fake_post)
-    monkeypatch.setattr(gateway_app, "wait_attention_prefill_ready", fake_ready)
-    monkeypatch.setattr(gateway_app, "_export_prefill_kv", fake_export)
-    monkeypatch.setattr(gateway_app, "_release_prefill_kv", fake_release)
+    monkeypatch.setattr(gateway_handoff, "register_attention_handles", fake_register)
+    monkeypatch.setattr(gateway_handoff, "_post_json", fake_post)
     monkeypatch.setattr(
-        gateway_app,
+        gateway_handoff,
+        "wait_attention_prefill_ready",
+        fake_ready,
+    )
+    monkeypatch.setattr(gateway_handoff, "_export_prefill_kv", fake_export)
+    monkeypatch.setattr(gateway_handoff, "_release_prefill_kv", fake_release)
+    monkeypatch.setattr(
+        gateway_handoff,
         "_cleanup_attention_sessions",
         fake_cleanup,
     )
 
     sessions, response, migration_ms = asyncio.run(
-        gateway_app._install_completed_prefill_on_group(
+        gateway_handoff._install_completed_prefill_on_group(
             req_data={"model": "qwen", "prompt": "hello", "max_tokens": 32},
             request_id="request-0",
             conversation_id="conv-0",
@@ -982,18 +992,18 @@ def test_completed_prefill_migration_cleans_partial_target_on_failure(
             "prefix_block_hashes": ["aa" * 32, "bb" * 32],
         }
 
-    monkeypatch.setattr(gateway_app, "register_attention_handles", fake_register)
-    monkeypatch.setattr(gateway_app, "_post_json", fake_post)
-    monkeypatch.setattr(gateway_app, "_export_prefill_kv", fake_export)
+    monkeypatch.setattr(gateway_handoff, "register_attention_handles", fake_register)
+    monkeypatch.setattr(gateway_handoff, "_post_json", fake_post)
+    monkeypatch.setattr(gateway_handoff, "_export_prefill_kv", fake_export)
     monkeypatch.setattr(
-        gateway_app,
+        gateway_handoff,
         "_cleanup_attention_sessions",
         fake_cleanup,
     )
 
     with pytest.raises(RuntimeError, match="length mismatch"):
         asyncio.run(
-            gateway_app._install_completed_prefill_on_group(
+            gateway_handoff._install_completed_prefill_on_group(
                 req_data={"model": "qwen", "prompt": "hello", "max_tokens": 32},
                 request_id="request-0",
                 conversation_id="conv-0",
@@ -1225,7 +1235,7 @@ def test_stream_cleanup_precedes_done_event(monkeypatch) -> None:
     async def run() -> None:
         group = PAPGroup("127.0.0.1", 8100, 5559, "127.0.0.1", 8300)
         projection = ProjectionInstance("127.0.0.1", 8200)
-        stream = gateway_app._stream_projection_with_cleanup(
+        stream = gateway_handoff._stream_projection_with_cleanup(
             None,
             "/v1/completions",
             {},
@@ -1238,9 +1248,9 @@ def test_stream_cleanup_precedes_done_event(monkeypatch) -> None:
         async for chunk in stream:
             events.append(chunk)
 
-    monkeypatch.setattr(gateway_app, "_stream_projection", fake_stream)
+    monkeypatch.setattr(gateway_handoff, "_stream_projection", fake_stream)
     monkeypatch.setattr(
-        gateway_app,
+        gateway_handoff,
         "_cleanup_attention_sessions",
         fake_cleanup,
     )
@@ -1275,7 +1285,7 @@ def test_stream_cleanup_detects_done_split_across_chunks(monkeypatch) -> None:
     async def run() -> None:
         group = PAPGroup("127.0.0.1", 8100, 5559, "127.0.0.1", 8300)
         projection = ProjectionInstance("127.0.0.1", 8200)
-        stream = gateway_app._stream_projection_with_cleanup(
+        stream = gateway_handoff._stream_projection_with_cleanup(
             None,
             "/v1/completions",
             {},
@@ -1288,9 +1298,9 @@ def test_stream_cleanup_detects_done_split_across_chunks(monkeypatch) -> None:
         async for chunk in stream:
             events.append(chunk)
 
-    monkeypatch.setattr(gateway_app, "_stream_projection", fake_stream)
+    monkeypatch.setattr(gateway_handoff, "_stream_projection", fake_stream)
     monkeypatch.setattr(
-        gateway_app,
+        gateway_handoff,
         "_cleanup_attention_sessions",
         fake_cleanup,
     )

@@ -29,10 +29,15 @@ from vllm.pap.model.projection_routing import (
     _pap_offload_exec_step_groups,
     _PAPOffloadExecStepGroup,
 )
+from vllm.pap.model.projection_trace import (
+    PAPProjectionTraceState,
+)
+from vllm.pap.model.projection_trace import (
+    record_projection_trace as record_projection_trace_snapshot,
+)
 from vllm.pap.protocol import (
     PAPOffloadExecBatchDescriptor,
     PAPStepPlannedOffloadExecTransport,
-    pap_offload_exec_trace_id,
 )
 from vllm.pap.transport.projection import (
     _pap_bind_offload_exec_mailbox_peer,
@@ -334,7 +339,6 @@ class PAPProjectionAttentionAdapter:
         trace_recv_done_ns = 0
         trace_recv_ms = 0.0
         trace_total_ms = 0.0
-        trace_batch_keys = ""
         trace_contiguous_route_groups = 0
         trace_direct_qkv_groups = 0
         trace_packed_qkv_groups = 0
@@ -587,146 +591,37 @@ class PAPProjectionAttentionAdapter:
         trace_recv_start = time.perf_counter() if trace_offload_exec else 0.0
 
         def record_projection_trace() -> None:
-            nonlocal trace_batch_keys
-            if not trace_offload_exec or not offload_exec_batches:
-                return
-
-            def route_kv_tokens(
-                descriptor: PAPOffloadExecBatchDescriptor,
-            ) -> str:
-                template = descriptor.metadata_template
-                if template is None:
-                    return "0"
-                total = 0
-                for step in template.get("s", ()):
-                    total += int(step)
-                return str(total)
-
-            trace_batch_keys = "|".join(
-                pap_offload_exec_trace_id(item[2].output_tensor_id)
-                for item in offload_exec_batches
+            record_projection_trace_snapshot(
+                PAPProjectionTraceState(
+                    offload_exec_batches=offload_exec_batches,
+                    step_groups=step_groups,
+                    projection_timeline=projection_timeline,
+                    pre_attn_compute_ms=pre_attn_compute_ms,
+                    send_ms=trace_send_ms,
+                    trigger_ms=trace_trigger_ms,
+                    yield_ms=trace_yield_ms,
+                    recv_ms=trace_recv_ms,
+                    total_ms=trace_total_ms,
+                    pre_attn_start_ns=pre_attn_start_ns,
+                    pre_attn_done_ns=pre_attn_done_ns,
+                    send_done_ns=trace_send_done_ns,
+                    yield_start_ns=trace_yield_start_ns,
+                    yield_end_ns=trace_yield_end_ns,
+                    recv_done_ns=trace_recv_done_ns,
+                    contiguous_route_groups=trace_contiguous_route_groups,
+                    direct_qkv_groups=trace_direct_qkv_groups,
+                    packed_qkv_groups=trace_packed_qkv_groups,
+                    direct_output_rows=trace_direct_output_rows,
+                    scattered_output_rows=trace_scattered_output_rows,
+                    output_origin=trace_output_origin,
+                    output_ready_events=trace_output_ready_events,
+                    fanout_prepare_us=trace_fanout_prepare_us,
+                    fanout_submit_us=trace_fanout_submit_us,
+                    fanout_submit_start_ns=trace_fanout_submit_start_ns,
+                    local_batched_fanout_plan=local_batched_fanout_plan,
+                    batched_fanout_submit_us=batched_fanout_submit_us,
+                )
             )
-            trace_route_rows = "|".join(
-                str(item[2].item_count) for item in offload_exec_batches
-            )
-            trace_route_kv_tokens = "|".join(
-                route_kv_tokens(item[2]) for item in offload_exec_batches
-            )
-            calls = sum(item[2].item_count for item in offload_exec_batches)
-            if projection_timeline is not None:
-                projection_timeline.update(
-                    {
-                        "layer": offload_exec_batches[0][2].layer_name,
-                        "batches": len(offload_exec_batches),
-                        "calls": calls,
-                        "pre_attn_compute_ms": pre_attn_compute_ms,
-                        "send_ms": trace_send_ms,
-                        "trigger_ms": trace_trigger_ms,
-                        "yield_ms": trace_yield_ms,
-                        "recv_ms": trace_recv_ms,
-                        "remote_total_ms": trace_total_ms,
-                        "batch_keys": trace_batch_keys,
-                        "route_rows": trace_route_rows,
-                        "route_kv_tokens": trace_route_kv_tokens,
-                        "pre_attn_start_ns": pre_attn_start_ns,
-                        "pre_attn_done_ns": pre_attn_done_ns,
-                        "send_done_ns": trace_send_done_ns,
-                        "yield_start_ns": trace_yield_start_ns,
-                        "yield_end_ns": trace_yield_end_ns,
-                        "recv_done_ns": trace_recv_done_ns,
-                        "route_groups": len(step_groups),
-                        "contiguous_route_groups": trace_contiguous_route_groups,
-                        "direct_qkv_groups": trace_direct_qkv_groups,
-                        "packed_qkv_groups": trace_packed_qkv_groups,
-                        "direct_output_rows": trace_direct_output_rows,
-                        "scattered_output_rows": trace_scattered_output_rows,
-                    }
-                )
-            logger.info(
-                "PAP OFFLOAD_EXEC projection trace layer=%s batches=%d "
-                "calls=%d send_ms=%.3f trigger_ms=%.3f "
-                "yield_ms=%.3f recv_ms=%.3f total_ms=%.3f batch_keys=%s "
-                "route_rows=%s route_kv_tokens=%s "
-                "send_done_ns=%d yield_start_ns=%d yield_end_ns=%d "
-                "recv_done_ns=%d route_groups=%d "
-                "contiguous_route_groups=%d direct_qkv_groups=%d "
-                "packed_qkv_groups=%d direct_output_rows=%d "
-                "scattered_output_rows=%d",
-                offload_exec_batches[0][2].layer_name,
-                len(offload_exec_batches),
-                calls,
-                trace_send_ms,
-                trace_trigger_ms,
-                trace_yield_ms,
-                trace_recv_ms,
-                trace_total_ms,
-                trace_batch_keys,
-                trace_route_rows,
-                trace_route_kv_tokens,
-                trace_send_done_ns,
-                trace_yield_start_ns,
-                trace_yield_end_ns,
-                trace_recv_done_ns,
-                len(step_groups),
-                trace_contiguous_route_groups,
-                trace_direct_qkv_groups,
-                trace_packed_qkv_groups,
-                trace_direct_output_rows,
-                trace_scattered_output_rows,
-            )
-            if trace_output_origin is not None and len(trace_output_ready_events) > 1:
-                for ready_event in trace_output_ready_events:
-                    ready_event.synchronize()
-                ready_times_ms = [
-                    trace_output_origin.elapsed_time(ready_event)
-                    for ready_event in trace_output_ready_events
-                ]
-                first_ready_ms = min(ready_times_ms)
-                last_ready_ms = max(ready_times_ms)
-                spread_ms = last_ready_ms - first_ready_ms
-                spread_pct = (
-                    spread_ms / first_ready_ms * 100.0 if first_ready_ms > 0 else 0.0
-                )
-                logger.info(
-                    "PAP OFFLOAD_EXEC projection fan-in trace layer=%s "
-                    "peers=%d first_ready_ms=%.3f last_ready_ms=%.3f "
-                    "spread_ms=%.3f spread_over_fastest_pct=%.3f",
-                    offload_exec_batches[0][2].layer_name,
-                    len(ready_times_ms),
-                    first_ready_ms,
-                    last_ready_ms,
-                    spread_ms,
-                    spread_pct,
-                )
-            if trace_fanout_submit_us:
-                first_submit_ns = trace_fanout_submit_start_ns[0]
-                logger.info(
-                    "PAP OFFLOAD_EXEC projection fan-out trace layer=%s "
-                    "peers=%d qkv_host_to_first_submit_us=%.3f "
-                    "total_host_send_us=%.3f prepare_us=%s submit_us=%s "
-                    "submit_start_offsets_us=%s",
-                    offload_exec_batches[0][2].layer_name,
-                    len(trace_fanout_submit_us),
-                    max(
-                        0.0,
-                        (first_submit_ns - pre_attn_done_ns) / 1_000.0,
-                    ),
-                    (trace_send_done_ns - pre_attn_done_ns) / 1_000.0,
-                    "|".join(f"{value:.3f}" for value in trace_fanout_prepare_us),
-                    "|".join(f"{value:.3f}" for value in trace_fanout_submit_us),
-                    "|".join(
-                        f"{(value - first_submit_ns) / 1_000.0:.3f}"
-                        for value in trace_fanout_submit_start_ns
-                    ),
-                )
-            if local_batched_fanout_plan is not None:
-                logger.info(
-                    "PAP OFFLOAD_EXEC batched fan-out trace layer=%s "
-                    "peers=%d submit_us=%.3f",
-                    offload_exec_batches[0][2].layer_name,
-                    len(offload_exec_batches),
-                    batched_fanout_submit_us,
-                )
 
         output_scatter_events: list[torch.cuda.Event] = []
         for batch_index, (

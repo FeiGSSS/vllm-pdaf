@@ -41,6 +41,7 @@ from vllm.pap.kv import (
 )
 from vllm.pap.kv import metadata as kv_metadata_module
 from vllm.pap.kv import registry as kv_registry_module
+from vllm.pap.kv import session_registry as kv_session_registry_module
 from vllm.pap.protocol import (
     PAPAttentionRegistration,
     PAPCudaIPCTensorHandle,
@@ -2485,12 +2486,12 @@ def test_attention_registry_release_session_notifies_prefill_lease(
             released.append((request_id, lease_id))
 
     monkeypatch.setattr(
-        kv_registry_module,
+        kv_session_registry_module,
         "_get_commit_client",
         lambda: FakeCommitClient(),
     )
     monkeypatch.setattr(
-        kv_registry_module,
+        kv_session_registry_module,
         "_get_lease_release_client",
         lambda: FakeLeaseReleaseClient(),
     )
@@ -2542,12 +2543,12 @@ def test_attention_registry_can_detach_session_and_retain_prefill_lease(
             events.append(("release", kwargs))
 
     monkeypatch.setattr(
-        kv_registry_module,
+        kv_session_registry_module,
         "_get_commit_client",
         lambda: FakeCommitClient(),
     )
     monkeypatch.setattr(
-        kv_registry_module,
+        kv_session_registry_module,
         "_get_lease_release_client",
         lambda: FakeLeaseReleaseClient(),
     )
@@ -2599,12 +2600,12 @@ def test_attention_registry_does_not_release_lease_before_commit_ack(
             events.append(("release", request_id, lease_id, endpoint))
 
     monkeypatch.setattr(
-        kv_registry_module,
+        kv_session_registry_module,
         "_get_commit_client",
         lambda: FakeCommitClient(),
     )
     monkeypatch.setattr(
-        kv_registry_module,
+        kv_session_registry_module,
         "_get_lease_release_client",
         lambda: FakeLeaseReleaseClient(),
     )
@@ -2647,12 +2648,12 @@ def test_attention_registry_reregister_releases_replaced_prefill_lease(
             released.append((request_id, lease_id))
 
     monkeypatch.setattr(
-        kv_registry_module,
+        kv_session_registry_module,
         "_get_commit_client",
         lambda: FakeCommitClient(),
     )
     monkeypatch.setattr(
-        kv_registry_module,
+        kv_session_registry_module,
         "_get_lease_release_client",
         lambda: FakeLeaseReleaseClient(),
     )
