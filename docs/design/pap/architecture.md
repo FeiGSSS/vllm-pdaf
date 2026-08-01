@@ -128,6 +128,9 @@ executor.
 - `model/`: typed forward-batch access, Projection Attention execution,
   Prefill sealed-KV publication, piecewise CUDA Graph boundaries, and the
   Projection checkpoint-weight memory planner used by launchers.
+  `projection.py` is the model-facing orchestration adapter;
+  `projection_routing.py` owns route validation and decode-step grouping;
+  `projection_io.py` owns QKV layout selection and output placement.
 - `protocol/`: wire models, descriptors, sealed KV codec, and transport
   contracts.
 - `topology/`: route groups and Projection peer membership.
@@ -145,9 +148,11 @@ executor.
 - `transport/`: `factory.py` is the composition boundary. `local/` owns the
   same-host CUDA IPC endpoint, stream-ordered protocol, and send/receive hot
   path. `nixl/` owns the cross-host mailbox message, endpoint, and OFFLOAD_EXEC
-  adapter. The shared ownership-bearing and two-phase shutdown interfaces live
-  in `protocol/`; `attention/peers.py` owns receiver quiesce, join, runtime
-  drain, and final transport close ordering.
+  adapter. `projection.py` owns Projection-side endpoint transport caching,
+  binding, and optional capability resolution. The shared ownership-bearing
+  and two-phase shutdown interfaces live in `protocol/`; `attention/peers.py`
+  owns receiver quiesce, join, runtime drain, and final transport close
+  ordering.
 - `service.py`: thin Attention HTTP/TCP composition and process entry point.
 
 Legacy top-level compatibility façades have been removed; the retirement record

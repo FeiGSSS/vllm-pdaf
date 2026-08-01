@@ -5,12 +5,14 @@ from vllm.model_executor.models.qwen3 import (
     _qwen3_deferred_qkv_trace_selected_role,
 )
 from vllm.pap.model.context import pap_endpoint_for_tp_rank
-from vllm.pap.model.projection import (
+from vllm.pap.model.projection_routing import (
+    _pap_offload_exec_session_request_id,
+    _pap_offload_exec_step_groups,
+)
+from vllm.pap.transport.projection import (
     _pap_bind_offload_exec_mailbox_peer,
     _pap_cached_offload_exec_transport,
     _pap_cached_step_planned_transport,
-    _pap_offload_exec_session_request_id,
-    _pap_offload_exec_step_groups,
 )
 
 

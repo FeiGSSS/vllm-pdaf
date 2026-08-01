@@ -174,6 +174,10 @@ diagnostic and cannot be promoted to normal performance results.
 
 The major responsibilities now have explicit packages, and Qwen3 delegates PAP
 forward-batch, Projection Attention, and Prefill KV publication to `model/`.
+The Projection adapter delegates route validation and step grouping to
+`model/projection_routing.py`, QKV/output tensor placement to
+`model/projection_io.py`, and endpoint binding/capability caching to
+`transport/projection.py`.
 Surface-specific `integration/` adapters now isolate scheduler, engine, worker,
 API, KV-cache, and model-runner glue from vLLM internals. One
 `integration/runner.py` owner supplies both model runners, and

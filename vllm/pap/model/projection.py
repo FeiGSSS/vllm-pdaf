@@ -4,44 +4,45 @@
 
 from __future__ import annotations
 
-import hashlib
-import math
 import os
 import time
 from dataclasses import dataclass, field
-from functools import cache
 from typing import Any
 
 import torch
 
 from vllm.logger import init_logger
-from vllm.pap.config import (
-    PAP_DEFAULT_OFFLOAD_EXEC_TRANSPORT,
-    parse_offload_exec_transport,
-)
-from vllm.pap.config import (
-    PAPOffloadExecTransport as PAPOffloadExecTransportKind,
-)
 from vllm.pap.deferred_cuda_trace import (
     begin_deferred_cuda_span,
     end_deferred_cuda_span,
 )
-from vllm.pap.mode import is_pap_request_id, pap_request_ids_are_routable
-from vllm.pap.model.context import (
-    PAPModelForwardBatch,
-    pap_endpoint_for_tp_rank,
-    pap_tensor_parallel_rank,
+from vllm.pap.mode import pap_request_ids_are_routable
+from vllm.pap.model.context import PAPModelForwardBatch
+from vllm.pap.model.projection_io import (
+    _pap_pack_qkv_group_items,
+    _pap_qkv_batch_for_indices,
+    _pap_req_indices_are_contiguous,
+    _pap_route_index_tensor,
+    _pap_scatter_attention_output_group,
+)
+from vllm.pap.model.projection_routing import (
+    _pap_offload_exec_step_groups,
+    _PAPOffloadExecStepGroup,
 )
 from vllm.pap.protocol import (
     PAPOffloadExecBatchDescriptor,
     PAPStepPlannedOffloadExecTransport,
     pap_offload_exec_trace_id,
 )
+from vllm.pap.transport.projection import (
+    _pap_bind_offload_exec_mailbox_peer,
+    _pap_cached_step_planned_transport,
+    _pap_offload_exec_transport_for_attention_endpoint,
+)
 
 logger = init_logger(__name__)
 
 _TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
-_PAP_STEP_GROUPS_KEY = "_pap_qwen3_offload_exec_step_groups"
 _PAP_LOCAL_BATCHED_FANOUT_PLAN_KEY = "_pap_qwen3_local_qkv_batched_fanout_plan"
 
 
@@ -54,331 +55,6 @@ def _pap_direct_qkv_send_enabled() -> bool:
         os.environ.get("PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND", "1").lower()
         in _TRUE_ENV_VALUES
     )
-
-
-def _pap_offload_exec_session_request_id(
-    request_id: str,
-    prefill_kv_handle: Any,
-) -> str:
-    return str(prefill_kv_handle or request_id)
-
-
-def _pap_pack_qkv_group_items(
-    group_items: list[tuple[int, Any, tuple[torch.Tensor, ...]]],
-) -> torch.Tensor:
-    if len(group_items) == 1:
-        return torch.cat(group_items[0][2], dim=-1)
-    return torch.cat(
-        [torch.cat(item[2], dim=-1) for item in group_items],
-        dim=0,
-    )
-
-
-def _pap_req_indices_are_contiguous(req_indices: tuple[int, ...]) -> bool:
-    if not req_indices:
-        return False
-    start = int(req_indices[0])
-    return start >= 0 and req_indices == tuple(range(start, start + len(req_indices)))
-
-
-def _pap_direct_qkv_batch_for_indices(
-    qkv_batch: torch.Tensor | None,
-    req_indices: tuple[int, ...],
-) -> torch.Tensor | None:
-    if qkv_batch is None or not req_indices:
-        return None
-    if qkv_batch.ndim != 2 or not qkv_batch.is_contiguous():
-        return None
-    if not _pap_req_indices_are_contiguous(req_indices):
-        return None
-    start = int(req_indices[0])
-    stop = start + len(req_indices)
-    if stop > int(qkv_batch.shape[0]):
-        return None
-    direct = qkv_batch[start:stop]
-    return direct if direct.is_contiguous() else None
-
-
-def _pap_route_index_tensor(
-    additional_kwargs: dict[str, Any],
-    req_indices: tuple[int, ...],
-    *,
-    device: torch.device,
-) -> torch.Tensor:
-    route_cache = additional_kwargs.setdefault(
-        "_pap_qwen3_route_index_tensors",
-        {},
-    )
-    cache_key = (str(torch.device(device)), req_indices)
-    cached = route_cache.get(cache_key)
-    if cached is not None:
-        return cached
-    index_tensor = torch.tensor(
-        req_indices,
-        dtype=torch.long,
-        device=device,
-    )
-    route_cache[cache_key] = index_tensor
-    return index_tensor
-
-
-def _pap_qkv_batch_for_indices(
-    qkv_batch: torch.Tensor | None,
-    req_indices: tuple[int, ...],
-    *,
-    index_tensor: torch.Tensor | None,
-) -> tuple[torch.Tensor | None, bool]:
-    direct = _pap_direct_qkv_batch_for_indices(qkv_batch, req_indices)
-    if direct is not None:
-        return direct, True
-    if (
-        qkv_batch is None
-        or qkv_batch.ndim != 2
-        or not qkv_batch.is_contiguous()
-        or not req_indices
-        or index_tensor is None
-    ):
-        return None, False
-    return torch.index_select(qkv_batch, 0, index_tensor), False
-
-
-def _pap_scatter_attention_output_group(
-    output: torch.Tensor,
-    remote_output: torch.Tensor,
-    *,
-    req_indices: tuple[int, ...],
-    index_tensor: torch.Tensor | None,
-) -> None:
-    if not req_indices:
-        raise RuntimeError("PAP remote attention output has no route rows")
-    remote_output = remote_output.to(
-        device=output.device,
-        dtype=output.dtype,
-        non_blocking=True,
-    )
-    target_shape = (len(req_indices), *output.shape[1:])
-    target_numel = math.prod(target_shape)
-    if int(remote_output.numel()) != int(target_numel):
-        raise RuntimeError(
-            "PAP remote attention output shape mismatch: "
-            f"got {tuple(remote_output.shape)}, expected {target_shape}"
-        )
-    remote_output = remote_output.reshape(target_shape)
-    if _pap_req_indices_are_contiguous(req_indices):
-        start = int(req_indices[0])
-        output[start : start + len(req_indices)].copy_(remote_output)
-        return
-    if index_tensor is None:
-        index_tensor = torch.tensor(
-            req_indices,
-            dtype=torch.long,
-            device=output.device,
-        )
-    output.index_copy_(0, index_tensor, remote_output)
-
-
-@dataclass(frozen=True)
-class _PAPOffloadExecStepGroup:
-    attention_endpoint: str
-    offload_exec_zmq_endpoint: str
-    req_indices: tuple[int, ...]
-    batch_id_suffix: str
-    metadata_template: dict[str, Any]
-
-
-def _pap_offload_exec_step_groups(
-    additional_kwargs: dict[str, Any],
-    *,
-    num_reqs: int,
-    scaling: float,
-) -> tuple[_PAPOffloadExecStepGroup, ...]:
-    cached = additional_kwargs.get(_PAP_STEP_GROUPS_KEY)
-    if cached is not None:
-        return tuple(cached)
-
-    request_ids = tuple(additional_kwargs.get("pap_request_ids") or ())
-    route_groups = tuple(additional_kwargs.get("pap_offload_exec_route_groups") or ())
-    if not route_groups:
-        raise RuntimeError("PAP attention missing OFFLOAD_EXEC route groups")
-
-    attention_kv_installed = set(
-        additional_kwargs.get("pap_attention_kv_installed_by_request") or ()
-    )
-    prefix_len_by_request = (
-        additional_kwargs.get("pap_prefill_prefix_len_by_request") or {}
-    )
-    prefill_kv_handle_by_request = (
-        additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
-    )
-    step_groups: list[_PAPOffloadExecStepGroup] = []
-    routed_req_indices: set[int] = set()
-    for route_group in route_groups:
-        attention_endpoint = pap_endpoint_for_tp_rank(
-            route_group.get("attention_endpoint")
-        )
-        offload_exec_zmq_endpoint = pap_endpoint_for_tp_rank(
-            route_group.get("offload_exec_zmq_endpoint")
-        )
-        if not attention_endpoint:
-            raise RuntimeError(
-                "PAP NIXL mailbox OFFLOAD_EXEC requires pap_attention_endpoint"
-            )
-        if not offload_exec_zmq_endpoint:
-            raise RuntimeError(
-                "PAP OFFLOAD_EXEC mailbox path missing pap_offload_exec_zmq_endpoint"
-            )
-
-        req_indices = tuple(
-            int(req_index) for req_index in route_group.get("req_indices", ())
-        )
-        group_request_ids = tuple(
-            str(request_id) for request_id in route_group.get("request_ids", ())
-        )
-        group_steps = tuple(int(step) for step in route_group.get("steps", ()))
-        if not (len(req_indices) == len(group_request_ids) == len(group_steps)):
-            raise RuntimeError("PAP OFFLOAD_EXEC route group is malformed")
-
-        prepared_session_request_ids = tuple(
-            str(request_id) for request_id in route_group.get("session_request_ids", ())
-        )
-        if prepared_session_request_ids and len(prepared_session_request_ids) != len(
-            group_request_ids
-        ):
-            raise RuntimeError("PAP OFFLOAD_EXEC session route is malformed")
-        session_request_ids: list[str] = []
-        for group_offset, req_index in enumerate(req_indices):
-            if req_index < 0 or req_index >= num_reqs:
-                raise RuntimeError("PAP OFFLOAD_EXEC route index out of range")
-            request_id = group_request_ids[group_offset]
-            if request_id != str(request_ids[req_index]):
-                raise RuntimeError("PAP OFFLOAD_EXEC route request mismatch")
-            if not is_pap_request_id(request_id):
-                raise RuntimeError(
-                    f"PAP attention cannot route non-OpenAI request id {request_id}"
-                )
-            routed_req_indices.add(req_index)
-            prefix_len = int(prefix_len_by_request.get(request_id) or 0)
-            prefill_kv_handle = prefill_kv_handle_by_request.get(request_id)
-            if prefix_len > 0 and request_id not in attention_kv_installed:
-                if not prefill_kv_handle:
-                    raise RuntimeError("PAP missing local prefill KV handle")
-                raise RuntimeError("PAP attention KV is not installed")
-            session_request_id = _pap_offload_exec_session_request_id(
-                request_id,
-                prefill_kv_handle,
-            )
-            if (
-                prepared_session_request_ids
-                and prepared_session_request_ids[group_offset] != session_request_id
-            ):
-                raise RuntimeError("PAP OFFLOAD_EXEC session route is stale")
-            session_request_ids.append(session_request_id)
-
-        computed_batch_id_suffix = ",".join(
-            f"{request_id}@{step}"
-            for request_id, step in zip(session_request_ids, group_steps)
-        )
-        batch_id_suffix = str(
-            route_group.get("batch_id_suffix") or computed_batch_id_suffix
-        )
-        if prepared_session_request_ids and (
-            batch_id_suffix != computed_batch_id_suffix
-        ):
-            raise RuntimeError("PAP OFFLOAD_EXEC batch route is stale")
-        prepared_metadata_template = route_group.get("metadata_template")
-        if prepared_metadata_template is not None and (
-            tuple(prepared_metadata_template.get("r", ())) != tuple(session_request_ids)
-            or tuple(prepared_metadata_template.get("s", ())) != group_steps
-        ):
-            raise RuntimeError("PAP OFFLOAD_EXEC metadata route is stale")
-        step_groups.append(
-            _PAPOffloadExecStepGroup(
-                attention_endpoint=str(attention_endpoint),
-                offload_exec_zmq_endpoint=str(offload_exec_zmq_endpoint),
-                req_indices=req_indices,
-                batch_id_suffix=batch_id_suffix,
-                metadata_template={
-                    "r": tuple(session_request_ids),
-                    "s": group_steps,
-                    "a": (float(scaling),) * len(group_steps),
-                },
-            )
-        )
-
-    if len(routed_req_indices) != num_reqs:
-        raise RuntimeError("PAP OFFLOAD_EXEC route groups do not cover batch")
-
-    result = tuple(step_groups)
-    additional_kwargs[_PAP_STEP_GROUPS_KEY] = result
-    return result
-
-
-def _pap_offload_exec_transport_kind() -> PAPOffloadExecTransportKind:
-    return parse_offload_exec_transport(
-        os.environ.get(
-            "PAP_OFFLOAD_EXEC_TRANSPORT",
-            PAP_DEFAULT_OFFLOAD_EXEC_TRANSPORT.value,
-        )
-    )
-
-
-@cache
-def _pap_cached_offload_exec_transport(attention_endpoint: str):
-    from vllm.pap.transport.factory import build_offload_exec_transport
-
-    local_rank = pap_tensor_parallel_rank()
-    actor_base = os.environ.get("PAP_NIXL_MAILBOX_ACTOR_ID", "projection")
-    endpoint_hash = hashlib.sha1(attention_endpoint.encode("utf-8")).hexdigest()[:12]
-    actor_id = f"{actor_base}-r{local_rank}-{endpoint_hash}"
-    return build_offload_exec_transport(
-        transport=_pap_offload_exec_transport_kind(),
-        actor_id=actor_id,
-        local_rank=local_rank,
-    )
-
-
-@cache
-def _pap_cached_step_planned_transport(
-    attention_endpoint: str,
-) -> PAPStepPlannedOffloadExecTransport | None:
-    """Resolve the optional local capability once per bound endpoint."""
-    transport = _pap_cached_offload_exec_transport(attention_endpoint)
-    if isinstance(transport, PAPStepPlannedOffloadExecTransport):
-        return transport
-    return None
-
-
-def _pap_offload_exec_transport_for_attention_endpoint(
-    attention_endpoint: str | None,
-    offload_exec_zmq_endpoint: str | None = None,
-):
-    del offload_exec_zmq_endpoint
-    return _pap_cached_offload_exec_transport(str(attention_endpoint or ""))
-
-
-def _pap_bind_offload_exec_mailbox_peer(
-    transport: Any,
-    attention_endpoint: str | None,
-) -> None:
-    if not attention_endpoint:
-        raise RuntimeError(
-            "PAP NIXL mailbox OFFLOAD_EXEC requires pap_attention_endpoint"
-        )
-    if getattr(transport, "_pap_mailbox_bound", False):
-        return
-    from vllm.pap.attention.client import bind_offload_exec_mailbox
-
-    peer_metadata = bind_offload_exec_mailbox(
-        attention_endpoint=attention_endpoint,
-        local_agent_metadata=transport.local_agent_metadata,
-        source_id=(
-            f"{os.environ.get('PAP_NIXL_MAILBOX_ACTOR_ID', 'projection')}"
-            f"-r{pap_tensor_parallel_rank()}"
-        ),
-    )
-    transport.bind_peer(peer_metadata)
-    transport._pap_mailbox_bound = True
-    transport._pap_mailbox_bound_attention_endpoint = attention_endpoint
 
 
 @dataclass(slots=True)

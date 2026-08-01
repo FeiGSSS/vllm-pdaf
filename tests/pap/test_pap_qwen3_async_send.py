@@ -5,7 +5,7 @@ import torch
 
 
 def test_direct_qkv_batch_for_indices_reuses_contiguous_projection_layout() -> None:
-    from vllm.pap.model.projection import _pap_direct_qkv_batch_for_indices
+    from vllm.pap.model.projection_io import _pap_direct_qkv_batch_for_indices
 
     qkv = torch.arange(20, dtype=torch.float32).reshape(5, 4)
 
@@ -17,7 +17,7 @@ def test_direct_qkv_batch_for_indices_reuses_contiguous_projection_layout() -> N
 
 
 def test_direct_qkv_batch_for_indices_rejects_non_contiguous_rows() -> None:
-    from vllm.pap.model.projection import _pap_direct_qkv_batch_for_indices
+    from vllm.pap.model.projection_io import _pap_direct_qkv_batch_for_indices
 
     qkv = torch.arange(20, dtype=torch.float32).reshape(5, 4)
 
@@ -25,7 +25,7 @@ def test_direct_qkv_batch_for_indices_rejects_non_contiguous_rows() -> None:
 
 
 def test_qkv_batch_for_indices_gathers_non_contiguous_rows_once() -> None:
-    from vllm.pap.model.projection import _pap_qkv_batch_for_indices
+    from vllm.pap.model.projection_io import _pap_qkv_batch_for_indices
 
     qkv = torch.arange(20, dtype=torch.float32).reshape(5, 4)
     indices = torch.tensor([3, 1], dtype=torch.long)
@@ -43,7 +43,7 @@ def test_qkv_batch_for_indices_gathers_non_contiguous_rows_once() -> None:
 
 
 def test_route_index_tensor_is_cached_for_all_layers() -> None:
-    from vllm.pap.model.projection import _pap_route_index_tensor
+    from vllm.pap.model.projection_io import _pap_route_index_tensor
 
     additional_kwargs = {}
 
@@ -73,7 +73,7 @@ def test_batched_route_copy_can_be_disabled_for_ab(
 
 
 def test_scatter_attention_output_group_uses_non_contiguous_indices() -> None:
-    from vllm.pap.model.projection import (
+    from vllm.pap.model.projection_io import (
         _pap_scatter_attention_output_group,
     )
 
@@ -99,7 +99,7 @@ def test_scatter_attention_output_group_uses_non_contiguous_indices() -> None:
 
 
 def test_scatter_attention_output_group_reuses_contiguous_slice() -> None:
-    from vllm.pap.model.projection import (
+    from vllm.pap.model.projection_io import (
         _pap_scatter_attention_output_group,
     )
 
