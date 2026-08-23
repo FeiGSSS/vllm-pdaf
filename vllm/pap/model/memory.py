@@ -28,6 +28,7 @@ class ProjectionMemoryBudget:
     utilization: float
     model_weight_bytes: int
     per_rank_weight_bytes: int
+    validation_kv_bytes: int
     target_bytes: int
     gpu_total_bytes: int
 
@@ -98,20 +99,24 @@ def plan_projection_memory(
     model_weight_bytes: int,
     tensor_parallel_size: int,
     gpu_total_bytes: int,
+    validation_kv_bytes: int = 0,
 ) -> ProjectionMemoryBudget:
-    """Reserve 120% of each Projection rank's checkpoint weight bytes."""
+    """Reserve model headroom plus vLLM's temporary KV capacity check."""
     if model_weight_bytes <= 0:
         raise ValueError("model weight size must be positive")
     if tensor_parallel_size <= 0:
         raise ValueError("tensor parallel size must be positive")
     if gpu_total_bytes <= 0:
         raise ValueError("GPU total memory must be positive")
+    if validation_kv_bytes < 0:
+        raise ValueError("Projection validation KV bytes must be non-negative")
 
     per_rank_weight_bytes = _ceil_div(model_weight_bytes, tensor_parallel_size)
-    target_bytes = _ceil_div(
+    model_target_bytes = _ceil_div(
         per_rank_weight_bytes * _HEADROOM_NUMERATOR,
         _HEADROOM_DENOMINATOR,
     )
+    target_bytes = model_target_bytes + validation_kv_bytes
     utilization_steps = _ceil_div(
         target_bytes * _UTILIZATION_SCALE,
         gpu_total_bytes,
@@ -125,6 +130,7 @@ def plan_projection_memory(
         utilization=utilization_steps / _UTILIZATION_SCALE,
         model_weight_bytes=model_weight_bytes,
         per_rank_weight_bytes=per_rank_weight_bytes,
+        validation_kv_bytes=validation_kv_bytes,
         target_bytes=target_bytes,
         gpu_total_bytes=gpu_total_bytes,
     )
@@ -135,6 +141,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-path", type=Path, required=True)
     parser.add_argument("--tensor-parallel-size", type=int, required=True)
     parser.add_argument("--gpu-id", action="append", required=True)
+    parser.add_argument("--validation-kv-bytes", type=int, default=0)
     return parser.parse_args()
 
 
@@ -146,11 +153,13 @@ def main() -> None:
         model_weight_bytes=model_weight_bytes,
         tensor_parallel_size=args.tensor_parallel_size,
         gpu_total_bytes=gpu_total_bytes,
+        validation_kv_bytes=args.validation_kv_bytes,
     )
     print(
         f"{budget.utilization:.4f}",
         budget.model_weight_bytes,
         budget.per_rank_weight_bytes,
+        budget.validation_kv_bytes,
         budget.target_bytes,
         budget.gpu_total_bytes,
     )

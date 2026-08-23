@@ -1322,13 +1322,16 @@ write_effective_config() {
     printf 'no_proxy=%q\n' "${no_proxy}"
     printf 'PAP_PROXY_PORT=%q\n' "${PAP_PROXY_PORT}"
     printf 'PAP_PREFILL_GPU_MEMORY_UTILIZATION=%q\n' "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}"
-    printf 'PROJECTION_MEMORY_POLICY=%q\n' "model_weights_x1.20"
+    printf 'PROJECTION_MEMORY_POLICY=%q\n' \
+      "model_weights_x1.20_plus_kv_validation"
     printf 'PROJECTION_GPU_MEMORY_UTILIZATION=%q\n' \
       "${PROJECTION_GPU_MEMORY_UTILIZATION}"
     printf 'PROJECTION_MODEL_WEIGHT_BYTES=%q\n' \
       "${PROJECTION_MODEL_WEIGHT_BYTES}"
     printf 'PROJECTION_PER_RANK_WEIGHT_BYTES=%q\n' \
       "${PROJECTION_PER_RANK_WEIGHT_BYTES}"
+    printf 'PROJECTION_VALIDATION_KV_BYTES=%q\n' \
+      "${PROJECTION_VALIDATION_KV_BYTES}"
     printf 'PROJECTION_MEMORY_TARGET_BYTES=%q\n' \
       "${PROJECTION_MEMORY_TARGET_BYTES}"
     printf 'PROJECTION_GPU_TOTAL_BYTES=%q\n' \
@@ -1890,17 +1893,37 @@ require_count "PAP_PREFILL_GPUS" "${#PREFILL_GPUS[@]}" "${PA_COUNT}"
 require_count \
   "PAP_PROJECTION_GPUS" "${#PROJECTION_GPUS[@]}" "${PROJECTION_COUNT}"
 
+read -r MODEL_NUM_LAYERS MODEL_NUM_HEADS MODEL_NUM_KV_HEADS \
+  MODEL_HEAD_DIM < <(
+  "${PYTHON_BIN}" - "${MODEL_PATH}/config.json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    config = json.load(f)
+num_layers = int(config["num_hidden_layers"])
+num_heads = int(config["num_attention_heads"])
+num_kv_heads = int(config["num_key_value_heads"])
+head_dim = int(config.get("head_dim") or config["hidden_size"] // num_heads)
+print(num_layers, num_heads, num_kv_heads, head_dim)
+PY
+)
+
 projection_memory_args=(
   "${PROJECTION_MEMORY_PLANNER}"
   --model-path "${MODEL_PATH}"
   --tensor-parallel-size "${PAP_TP_SIZE}"
+  --validation-kv-bytes "$((
+    MODEL_NUM_LAYERS * MAX_MODEL_LEN * 2
+    * MODEL_NUM_KV_HEADS * MODEL_HEAD_DIM * 2 / PAP_TP_SIZE
+  ))"
 )
 for gpu in "${PROJECTION_GPUS[@]}"; do
   projection_memory_args+=(--gpu-id "${gpu}")
 done
 read -r PROJECTION_GPU_MEMORY_UTILIZATION PROJECTION_MODEL_WEIGHT_BYTES \
-  PROJECTION_PER_RANK_WEIGHT_BYTES PROJECTION_MEMORY_TARGET_BYTES \
-  PROJECTION_GPU_TOTAL_BYTES < <(
+  PROJECTION_PER_RANK_WEIGHT_BYTES PROJECTION_VALIDATION_KV_BYTES \
+  PROJECTION_MEMORY_TARGET_BYTES PROJECTION_GPU_TOTAL_BYTES < <(
     "${PYTHON_BIN}" "${projection_memory_args[@]}"
   )
 echo "Projection memory budget: utilization=${PROJECTION_GPU_MEMORY_UTILIZATION}, target_bytes=${PROJECTION_MEMORY_TARGET_BYTES}"
@@ -1921,20 +1944,6 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
   )
 done
 ensure_ports_free "${ports[@]}"
-
-read -r MODEL_NUM_HEADS MODEL_NUM_KV_HEADS MODEL_HEAD_DIM < <(
-  "${PYTHON_BIN}" - "${MODEL_PATH}/config.json" <<'PY'
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as f:
-    config = json.load(f)
-num_heads = int(config["num_attention_heads"])
-num_kv_heads = int(config["num_key_value_heads"])
-head_dim = int(config.get("head_dim") or config["hidden_size"] // num_heads)
-print(num_heads, num_kv_heads, head_dim)
-PY
-)
 
 PAP_OFFLOAD_EXEC_NUM_HEADS="${PAP_OFFLOAD_EXEC_NUM_HEADS:-${MODEL_NUM_HEADS}}"
 PAP_OFFLOAD_EXEC_NUM_KV_HEADS="${PAP_OFFLOAD_EXEC_NUM_KV_HEADS:-${MODEL_NUM_KV_HEADS}}"

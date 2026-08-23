@@ -15,8 +15,6 @@ from urllib.parse import urlsplit
 import torch
 from torch.multiprocessing.reductions import reduce_tensor
 
-from vllm.platforms import current_platform
-
 if TYPE_CHECKING:
     from vllm.pap.kv.registry import PAPAttentionRegistry
     from vllm.pap.protocol import PAPCudaIPCTensorHandle
@@ -98,7 +96,7 @@ def _gpu_uuid_for_tensor(tensor: torch.Tensor) -> str:
     device_index = tensor.device.index
     if device_index is None:
         device_index = torch.accelerator.current_device_index()
-    return str(current_platform.get_device_uuid(device_index))
+    return str(torch.cuda.get_device_properties(device_index).uuid)
 
 
 def _make_cuda_ipc_tensor_handle(
