@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 import torch
@@ -12,6 +13,9 @@ from vllm.config import CacheConfig, get_current_vllm_config
 from vllm.config.vllm import VllmConfig
 from vllm.forward_context import ForwardContext, get_forward_context
 from vllm.logger import init_logger
+from vllm.model_executor.layers.attention.execution import (
+    resolve_attention_execution,
+)
 from vllm.model_executor.layers.attention.kv_transfer_utils import (
     maybe_transfer_kv_layer,
 )
@@ -445,6 +449,9 @@ class Attention(nn.Module, AttentionLayerBase):
             raise ValueError(f"Duplicate layer name: {prefix}")
         compilation_config.static_forward_context[prefix] = self
         self.attn_type = attn_type
+        self.execution_override: Callable[..., None] | None = (
+            resolve_attention_execution(self, vllm_config)
+        )
 
         if kv_sharing_target_layer_name is not None:
             validate_kv_sharing_target(
@@ -484,6 +491,10 @@ class Attention(nn.Module, AttentionLayerBase):
                 if is_per_head
                 else GroupShape.PER_TENSOR,
             )
+
+    def set_execution_override(self, override: Callable[..., None] | None) -> None:
+        """Bind an optional external implementation of this Attention layer."""
+        self.execution_override = override
 
     def forward(
         self,
@@ -831,6 +842,20 @@ def unified_attention_with_output(
     del kv_cache_dummy_dep
     layer_name = _resolve_layer_name(layer_name)
     attn_metadata, self, kv_cache, _ = get_attention_context(layer_name)
+
+    if self.execution_override is not None:
+        self.execution_override(
+            self,
+            query,
+            key,
+            value,
+            output,
+            kv_cache,
+            attn_metadata,
+            output_scale=output_scale,
+            output_block_scale=output_block_scale,
+        )
+        return
 
     self.impl.forward(
         self,

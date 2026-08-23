@@ -1,0 +1,38 @@
+schema_version = 1
+profile_id = "aiperf_qwen3_8b_s128_c32_graph"
+profile_version = 2
+status = "current"
+architecture = "multi-architecture"
+release_gate = false
+mode = "controlled"
+repetitions = 1
+metric_definition = "aiperf-0.11-streaming-request-weighted-v1"
+aggregation_method = "one isolated process-start run per architecture"
+
+[model]
+name = "Qwen3-8B"
+dtype = "float16"
+tensor_parallel_size = 1
+max_model_len = 32768
+
+[workload]
+sessions = 128
+requests = 455
+conversation_concurrency = 32
+turns = "2--5"
+turn_delay_seconds = 0
+input_sha256 = "f1da7ff22ef2446ddf9ae5670f28175fadd90fa37af8eba52d1d562fda22cc69"
+source_path = "/data/ssd1/llm-datasets/aiperf-research/pap-synthetic-longctx-i28k-o50-200-t2-5-seed42/aiperf_multiturn_s128.jsonl"
+source_sha256 = "5421e2d4f9868d4b0dc3f36b5a9aa8e256fadfd929dffd789dbb62692591bd9a"
+
+[runtime]
+gpu_count = 8
+gpu = "NVIDIA L20"
+cuda_graph_required = true
+max_num_seqs = 256
+prefill_max_num_batched_tokens = 2048
+
+[baselines]
+pd = "project proxy; 6P2D; vLLM 0.26.0; early conversation-pair binding"
+dynamo = "Dynamo 1.4.1; 6P2D; vLLM 0.26.0; KV-aware routing"
+launcher = "benchmarks/pap/scripts/run_s128_graph_baseline.sh"

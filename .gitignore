@@ -38,6 +38,7 @@ vllm/vllm-rs
 # Distribution / packaging
 .Python
 build/
+.local/
 !requirements/build/
 cmake-build-*/
 CMakeUserPresets.json
@@ -235,6 +236,10 @@ hip_compat.h
 
 # Benchmark dataset
 benchmarks/**/*.json
+benchmarks/pap/experiments/_staging/
+benchmarks/pap/experiments/**/raw/
+benchmarks/pap/experiments/legacy/capacity/
+benchmarks/pap/experiments/legacy/runs/
 
 # Linting
 actionlint
@@ -257,3 +262,7 @@ vllm/grpc/vllm_engine_pb2.pyi
 
 # Ignore generated cpu headers 
 csrc/cpu/cpu_attn_dispatch_generated.h
+
+# PAP local runtime artifacts
+examples/pap/logs/
+HANDOFF.md

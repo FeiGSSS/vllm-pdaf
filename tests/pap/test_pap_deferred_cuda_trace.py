@@ -1,0 +1,270 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
+from __future__ import annotations
+
+import json
+import threading
+import time
+from pathlib import Path
+from typing import Any
+
+from vllm.pap.deferred_cuda_trace import (
+    DeferredCudaTraceCollector,
+    DeferredTraceFileExporter,
+)
+
+
+class _FakeEvent:
+    def __init__(self) -> None:
+        self.ready = False
+        self.duration_ms = 0.0
+        self.record_calls = 0
+        self.query_calls = 0
+        self.synchronize_calls = 0
+        self.elapsed_time_calls = 0
+
+    def record(self, stream: Any) -> None:
+        del stream
+        self.record_calls += 1
+
+    def query(self) -> bool:
+        self.query_calls += 1
+        return self.ready
+
+    def synchronize(self) -> None:
+        self.synchronize_calls += 1
+        self.ready = True
+
+    def elapsed_time(self, end_event: _FakeEvent) -> float:
+        self.elapsed_time_calls += 1
+        assert end_event.ready
+        return end_event.duration_ms
+
+
+class _FakeEventFactory:
+    def __init__(self) -> None:
+        self.events: list[_FakeEvent] = []
+
+    def __call__(self) -> _FakeEvent:
+        event = _FakeEvent()
+        self.events.append(event)
+        return event
+
+
+def _wait_until(predicate: Any, timeout_s: float = 1.0) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return predicate()
+
+
+def test_deferred_trace_records_host_duration_without_cuda_event() -> None:
+    collector = DeferredCudaTraceCollector(event_factory=lambda: None)
+
+    collector.record_duration(
+        "request_dispatch_wall_ms",
+        0.25,
+    )
+
+    assert collector.raw_snapshot(blocking=False)["durations"] == {
+        "request_dispatch_wall_ms": [0.25]
+    }
+
+
+def test_deferred_trace_exporter_flushes_on_trigger(tmp_path: Path) -> None:
+    output = tmp_path / "trace.json"
+    exporter = DeferredTraceFileExporter(
+        output_path=str(output),
+        scope="projection_process_critical_chain",
+        role="projection",
+        snapshot_fn=lambda *, blocking: {
+            "enabled": blocking,
+            "collector_count": 1,
+            "pending_records": 0,
+            "dropped_records": 0,
+            "error_records": 0,
+            "spans": {},
+        },
+        poll_interval_s=0.005,
+    )
+
+    exporter.start()
+    Path(f"{output}.flush").touch()
+    assert _wait_until(output.exists)
+    exporter.stop()
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["scope"] == "projection_process_critical_chain"
+    assert payload["role"] == "projection"
+    assert payload["enabled"] is True
+    assert not Path(f"{output}.flush").exists()
+
+
+def test_deferred_cuda_trace_nonblocking_collection_reuses_events() -> None:
+    factory = _FakeEventFactory()
+    collector = DeferredCudaTraceCollector(
+        max_pending=1,
+        event_factory=factory,
+    )
+
+    span = collector.begin("paged_fa_gpu_ms", object())
+    assert span is not None
+    span.end_event.duration_ms = 0.25
+    collector.end(span)
+
+    pending = collector.raw_snapshot(blocking=False)
+    assert pending["pending_records"] == 1
+    assert pending["durations"] == {}
+    assert span.end_event.synchronize_calls == 0
+    assert span.start_event.elapsed_time_calls == 0
+
+    span.end_event.ready = True
+    ready = collector.raw_snapshot(blocking=False)
+    assert ready["pending_records"] == 0
+    assert ready["durations"] == {"paged_fa_gpu_ms": [0.25]}
+    assert span.end_event.synchronize_calls == 0
+    assert span.start_event.elapsed_time_calls == 1
+
+    reused = collector.begin("kv_append_gpu_ms", object())
+    assert reused is not None
+    assert len(factory.events) == 2
+
+
+def test_deferred_cuda_trace_blocks_only_when_explicitly_flushed() -> None:
+    factory = _FakeEventFactory()
+    collector = DeferredCudaTraceCollector(
+        max_pending=1,
+        event_factory=factory,
+    )
+
+    span = collector.begin("qkv_ready_wait_gpu_ms", object())
+    assert span is not None
+    span.end_event.duration_ms = 0.125
+    collector.end(span)
+
+    snapshot = collector.raw_snapshot(blocking=True)
+
+    assert span.end_event.synchronize_calls == 1
+    assert snapshot["pending_records"] == 0
+    assert snapshot["durations"] == {"qkv_ready_wait_gpu_ms": [0.125]}
+
+
+def test_deferred_cuda_trace_records_cross_stream_fanin_without_waiting() -> None:
+    factory = _FakeEventFactory()
+    collector = DeferredCudaTraceCollector(
+        max_pending=1,
+        event_factory=factory,
+    )
+
+    fanin = collector.begin_fanin(
+        "projection_output",
+        object(),
+        peers=2,
+        layer=7,
+        calls=11,
+    )
+    assert fanin is not None
+    fanin.ready_events[0].duration_ms = 0.25
+    fanin.ready_events[1].duration_ms = 0.40
+    collector.record_fanin_ready(fanin, index=0, stream=object())
+    collector.record_fanin_ready(fanin, index=1, stream=object())
+    collector.end_fanin(fanin)
+
+    pending = collector.raw_snapshot(blocking=False)
+    assert pending["pending_records"] == 1
+    assert pending["fanins"] == {}
+    assert all(event.synchronize_calls == 0 for event in fanin.ready_events)
+
+    for event in fanin.ready_events:
+        event.ready = True
+    ready = collector.raw_snapshot(blocking=False)
+    assert ready["pending_records"] == 0
+    sample = ready["fanins"]["projection_output"][0]
+    assert sample[:5] == (7, 2, 11, 0.25, 0.40)
+    assert abs(sample[5] - 0.15) < 1e-12
+    assert sample[6] == (0.25, 0.40)
+    assert all(event.synchronize_calls == 0 for event in fanin.ready_events)
+
+    reused = collector.begin_fanin(
+        "projection_output",
+        object(),
+        peers=2,
+        layer=8,
+        calls=12,
+    )
+    assert reused is not None
+    assert len(factory.events) == 3
+
+
+def test_deferred_cuda_trace_drops_when_event_pool_is_saturated() -> None:
+    factory = _FakeEventFactory()
+    collector = DeferredCudaTraceCollector(
+        max_pending=1,
+        event_factory=factory,
+    )
+
+    first = collector.begin("kv_append_gpu_ms", object())
+    assert first is not None
+    collector.end(first)
+
+    second = collector.begin("paged_fa_gpu_ms", object())
+
+    assert second is None
+    snapshot = collector.raw_snapshot(blocking=False)
+    assert snapshot["pending_records"] == 1
+    assert snapshot["dropped_records"] == 1
+    assert first.end_event.synchronize_calls == 0
+
+
+def test_deferred_cuda_trace_end_is_idempotent() -> None:
+    factory = _FakeEventFactory()
+    collector = DeferredCudaTraceCollector(
+        max_pending=1,
+        event_factory=factory,
+    )
+
+    span = collector.begin("output_p2p_copy_gpu_ms", object())
+    assert span is not None
+    collector.end(span)
+    collector.end(span)
+
+    assert span.end_event.record_calls == 1
+    assert collector.raw_snapshot(blocking=False)["pending_records"] == 1
+
+
+def test_deferred_cuda_trace_snapshot_is_thread_safe() -> None:
+    factory = _FakeEventFactory()
+    collector = DeferredCudaTraceCollector(
+        max_pending=16,
+        event_factory=factory,
+    )
+    producer_done = threading.Event()
+
+    def produce() -> None:
+        for _ in range(200):
+            span = collector.begin("paged_fa_gpu_ms", object())
+            assert span is not None
+            span.end_event.duration_ms = 0.5
+            span.end_event.ready = True
+            collector.end(span)
+        producer_done.set()
+
+    def snapshot() -> None:
+        while not producer_done.is_set():
+            collector.raw_snapshot(blocking=False)
+
+    producer = threading.Thread(target=produce)
+    reader = threading.Thread(target=snapshot)
+    producer.start()
+    reader.start()
+    producer.join()
+    reader.join()
+
+    result = collector.raw_snapshot(blocking=True)
+    assert result["pending_records"] == 0
+    assert result["dropped_records"] == 0
+    assert result["error_records"] == 0
+    assert len(result["durations"]["paged_fa_gpu_ms"]) == 200

@@ -1,0 +1,20 @@
+{
+  global:
+    pap_nvshmem_device_bridge_version;
+    pap_nvshmem_device_bridge_init;
+    pap_nvshmem_device_bridge_finalize;
+    pap_nvshmem_device_bridge_my_pe;
+    pap_nvshmem_device_bridge_n_pes;
+    pap_nvshmem_device_bridge_malloc;
+    pap_nvshmem_device_bridge_free;
+    pap_nvshmem_device_bridge_barrier;
+    pap_nvshmem_device_bridge_put_signal_on_stream;
+    pap_nvshmem_device_bridge_signal_on_stream;
+    pap_nvshmem_graph_advance_epoch;
+    pap_nvshmem_graph_wait_signal;
+    pap_nvshmem_graph_put_signal;
+    pap_nvshmem_graph_dispatch_qkv;
+    pap_nvshmem_graph_gather_output;
+  local:
+    *;
+};

@@ -1,0 +1,125 @@
+# Historical schema reference for archived P17 run manifests. Not runnable.
+schema_version = 1
+profile_id = "p17_1pa1p"
+profile_version = 2
+status = "archived"
+architecture = "pap"
+release_gate = false
+mode = "formal"
+repetitions = 3
+metric_definition = "last_output_token_v2"
+aggregation_method = "pooled request-level samples across repetitions; nearest-rank p90"
+
+[model]
+root_id = "model-store"
+relative_path = "Qwen3-8B"
+dtype = "float16"
+tensor_parallel_size = 1
+max_model_len = 20000
+max_num_batched_tokens = 4096
+max_num_seqs = 4
+block_size = 16
+
+[workload]
+profile_id = "qwen3_8b_token_16k_5turn_o256_c4_v2"
+profile_version = 2
+dataset = "sonnet"
+api = "/v1/completions"
+semantics = "exact_token_continuous_multiturn"
+prompt_input = "token_ids"
+history_rule = "previous_prompt_plus_full_output_plus_suffix"
+document_tokens = 16000
+append_tokens_per_later_round = 120
+output_tokens_per_round = 256
+rounds = 5
+active_conversations = 4
+requests_per_repetition = 20
+request_rate_per_round = 2.0
+arrival_mode = "fixed_rate_round_barrier_closed_loop"
+temperature = 0
+seed = 0
+ignore_eos = true
+return_token_ids = true
+warmups = 0
+
+[workload.corpus]
+root_id = "reference-benchmarks"
+relative_path = "sonnet_4x.txt"
+sha256 = "4a53bd26108f9193c693ab6a9482ee5ce5102b545b70a5ca3a8cb11ca1171859"
+
+[topology]
+name = "1pa1p"
+pa_count = 1
+projection_count = 1
+routing_policy = "round_robin"
+
+[placement]
+prefill_devices = [1]
+attention_devices = [1]
+projection_devices = [2]
+
+[transport]
+offload_exec = "local_fast"
+offload_kv = "cuda_ipc"
+same_host = true
+
+[mps]
+mode = "static"
+profile_id = "baseline_static_72_20"
+prefill_requested_percent = 80
+attention_requested_percent = 20
+prefill_chunks = 18
+attention_chunks = 5
+prefill_visible_sms = 72
+attention_visible_sms = 20
+total_visible_sms = 92
+
+[runtime]
+decode_token_delivery = "async"
+prefill_kv_import = "async"
+kv_handoff = "sealed_manifest"
+kv_ownership = "prefill_owned_unified"
+route_copy = "batched_with_input_fallback"
+metadata_lookup = "fast_key"
+attention_execution = "topology_derived_direct"
+direct_mailbox_output = true
+local_fast_stream_ordered = true
+decode_slot_plan_cache_limit = 256
+
+[runner]
+offload_exec_direct_qkv_send = true
+local_fast_batch_plan = true
+prompt_token_details = true
+prefix_cache_audit = false
+unified_kv_decode_capacity_tokens = 256
+
+[audit]
+require_clean_tracked_worktree = true
+strict_correctness = true
+session_drain_timeout_seconds = 60
+required_gates = [
+  "client",
+  "cache",
+  "attention_stats",
+  "correctness",
+  "decode_token_join",
+  "routing",
+  "commit",
+  "lease",
+  "session_drain",
+  "mps",
+]
+completed_requests_per_repetition = 20
+failed_requests_per_repetition = 0
+active_sessions_after_drain = 0
+prefill_visible_sms = 72
+attention_visible_sms = 20
+
+[baseline_fingerprints]
+workload_profile = "1cabd2226607a6af2a4cbfcd70c1daada8c8272ceda757bb7cc6622569c9b533"
+implementation = "54eb60419dab3c5613b825d253f34c54ab0d41a4fb4fc94b0c0de3a92777924f"
+request_shape = "68c42d5ba9115b950afbe09feeb736f45280bca00b8bbade25bba3f06e0dfdae"
+
+[compatibility]
+xpayp = "preserved-unverified"
+cross_host_nixl = "preserved-unverified"

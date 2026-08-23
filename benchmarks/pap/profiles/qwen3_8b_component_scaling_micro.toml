@@ -1,0 +1,35 @@
+schema_version = 1
+profile_id = "qwen3_8b_component_scaling_micro"
+profile_version = 1
+status = "diagnostic"
+architecture = "pap"
+release_gate = false
+mode = "diagnostic"
+repetitions = 1
+metric_definition = "cuda_event_latency_and_nvtx_gpu_metrics_v1"
+aggregation_method = "per-point warm-sample median; separate synchronized counter runs"
+
+[model]
+name = "Qwen3-8B"
+dtype = "float16"
+tensor_parallel_size = 1
+max_model_len = 32768
+
+[projection]
+batch_sizes = [1, 2, 4, 8, 16, 32, 64, 128, 256]
+visible_sms = 92
+
+[attention]
+request_counts = [1, 2, 4, 8, 16, 32, 64, 128]
+context_lengths = [1024, 2048, 4096, 8192, 16384, 32768]
+fixed_total_contexts = [32768, 65536, 131072]
+visible_sms = 12
+
+[prefill]
+prompt_lengths = [256, 1000, 10000, 30000]
+visible_sms = 80
+
+[measurement]
+timing = "cuda-events"
+counters = "nsight-systems-nvtx"
+counter_latency_eligible = false

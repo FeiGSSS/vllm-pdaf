@@ -1,0 +1,232 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+"""PAP ownership boundary for vLLM model runners."""
+
+from __future__ import annotations
+
+import os
+from collections.abc import Iterable, Mapping, Sequence
+from dataclasses import dataclass, field
+from typing import Any
+
+from vllm.logger import init_logger
+from vllm.pap.config import reject_removed_pap_flags
+from vllm.pap.integration.projection import (
+    build_projection_forward_context,
+    select_projection_request_ids,
+)
+from vllm.pap.integration.request import PAPProjectionRequestStore
+from vllm.pap.integration.settings import PAPRuntimeSettings
+
+logger = init_logger(__name__)
+
+
+@dataclass(slots=True)
+class PAPModelRunnerAdapter:
+    """Own PAP request state and hooks used by a vLLM model runner."""
+
+    globally_enabled: bool
+    attention_tcp_endpoint: Any
+    block_size: int
+    supports_async_sampled_tokens: bool
+    projection_kv_unaware: bool
+    debug_decision: bool
+    critical_trace: bool = False
+    store: PAPProjectionRequestStore = field(default_factory=PAPProjectionRequestStore)
+
+    @classmethod
+    def from_vllm_config(
+        cls,
+        vllm_config: Any,
+        *,
+        supports_async_sampled_tokens: bool,
+    ) -> PAPModelRunnerAdapter:
+        """Create one adapter from the model-runner composition root."""
+        reject_removed_pap_flags(os.environ)
+        settings = PAPRuntimeSettings.from_environ()
+        kv_transfer_config = vllm_config.kv_transfer_config
+        extra = (
+            kv_transfer_config.kv_connector_extra_config
+            if kv_transfer_config is not None
+            else {}
+        ) or {}
+        attention_tcp_endpoint = (
+            kv_transfer_config.get_from_extra_config(
+                "pap_attention_tcp_endpoint",
+                None,
+            )
+            if kv_transfer_config is not None
+            else None
+        )
+        return cls(
+            globally_enabled=bool(extra.get("pap_enabled", False)),
+            attention_tcp_endpoint=attention_tcp_endpoint,
+            block_size=int(vllm_config.cache_config.block_size),
+            supports_async_sampled_tokens=supports_async_sampled_tokens,
+            projection_kv_unaware=settings.projection_kv_unaware,
+            debug_decision=settings.debug_decision,
+            critical_trace=settings.critical_trace,
+        )
+
+    def update_request(
+        self,
+        request_id: str,
+        params: Mapping[str, Any] | None,
+    ) -> None:
+        """Merge scheduler metadata for one request."""
+        if not params:
+            if self.debug_decision:
+                logger.info(
+                    "PAP request update skipped req_id=%s: empty KV params",
+                    request_id,
+                )
+            return
+        if self.debug_decision:
+            logger.info(
+                "PAP request update req_id=%s kv_keys=%s",
+                request_id,
+                sorted(params.keys()),
+            )
+        self.store.update(request_id, params)
+
+    def remove_request(self, request_id: str) -> None:
+        """Remove Projection request state."""
+        self.store.remove(request_id)
+
+    def request_ids(self, request_ids: Sequence[str]) -> frozenset[str]:
+        """Return PAP-enabled request IDs in one runner batch."""
+        return select_projection_request_ids(
+            self.store,
+            request_ids,
+            globally_enabled=self.globally_enabled,
+        )
+
+    def decode_token_seq_lens(
+        self,
+        request_ids: Sequence[str],
+        seq_lens_cpu_upper_bound: Iterable[int],
+    ) -> dict[str, int]:
+        """Capture frame-local sequence keys for PAP sampled tokens."""
+        normalized_ids = tuple(str(request_id) for request_id in request_ids)
+        pap_request_ids = self.request_ids(normalized_ids)
+        if pap_request_ids and not self.supports_async_sampled_tokens:
+            raise RuntimeError(
+                "PAP sampled-token delivery requires the V2 model runner"
+            )
+        return {
+            request_id: int(seq_len) + 1
+            for request_id, seq_len in zip(
+                normalized_ids,
+                seq_lens_cpu_upper_bound,
+                strict=True,
+            )
+            if request_id in pap_request_ids
+        }
+
+    def group_decode_request_ids(
+        self,
+        request_ids: Sequence[str],
+        num_scheduled_tokens: Mapping[str, int],
+    ) -> tuple[str, ...]:
+        """Group one-token PAP requests by their Attention peer."""
+        normalized_ids = tuple(str(request_id) for request_id in request_ids)
+        if not normalized_ids or any(
+            int(num_scheduled_tokens[request_id]) != 1 for request_id in normalized_ids
+        ):
+            return normalized_ids
+        if self.request_ids(normalized_ids) != frozenset(normalized_ids):
+            return normalized_ids
+
+        groups: dict[str, list[str]] = {}
+        for request_id in normalized_ids:
+            attention_endpoint = self.store.attention_endpoint_by_request.get(
+                request_id
+            )
+            if not attention_endpoint:
+                return normalized_ids
+            groups.setdefault(attention_endpoint, []).append(request_id)
+        return tuple(
+            request_id
+            for group_request_ids in groups.values()
+            for request_id in group_request_ids
+        )
+
+    def build_forward_context(
+        self,
+        *,
+        request_ids: Sequence[str],
+        num_scheduled_tokens: Iterable[int],
+        num_actual_tokens: int,
+        positions: Any,
+        seq_lens_cpu_upper_bound: Iterable[int],
+        finished_request_ids: Iterable[str] = (),
+    ) -> dict[str, Any]:
+        """Build the PAP forward context for one model batch."""
+        normalized_ids = tuple(str(request_id) for request_id in request_ids)
+        pap_enabled = bool(self.request_ids(normalized_ids))
+        if pap_enabled and not self.supports_async_sampled_tokens:
+            raise RuntimeError(
+                "PAP asynchronous decode-token delivery requires the V2 model "
+                "runner; set VLLM_USE_V2_MODEL_RUNNER=1"
+            )
+        context = build_projection_forward_context(
+            self.store,
+            request_ids=normalized_ids,
+            num_scheduled_tokens=num_scheduled_tokens,
+            num_actual_tokens=num_actual_tokens,
+            positions=positions,
+            seq_lens_cpu_upper_bound=seq_lens_cpu_upper_bound,
+            pap_enabled=pap_enabled,
+            attention_tcp_endpoint=self.attention_tcp_endpoint,
+            block_size=self.block_size,
+            finished_request_ids=finished_request_ids,
+        )
+        if self.debug_decision:
+            logger.info(
+                "PAP forward context enabled=%s req_ids=%s tcp_keys=%s installed=%s",
+                context["pap_enabled"],
+                context["pap_request_ids"][:4],
+                tuple(context["pap_attention_tcp_endpoint_by_request"]),
+                tuple(context["pap_attention_kv_installed_by_request"]),
+            )
+        return context
+
+    def build_capture_forward_context(
+        self,
+        model_inputs: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Build the complete PAP schema used by Graph capture warmup."""
+        positions = model_inputs.get("positions")
+        if positions is None:
+            return {}
+        return build_projection_forward_context(
+            self.store,
+            request_ids=(),
+            num_scheduled_tokens=(),
+            num_actual_tokens=int(positions.numel()),
+            positions=positions,
+            seq_lens_cpu_upper_bound=(),
+            pap_enabled=False,
+            attention_tcp_endpoint=self.attention_tcp_endpoint,
+            block_size=self.block_size,
+        )
+
+    def log_prepared_batch(
+        self,
+        request_ids: Sequence[str],
+        num_scheduled_tokens: Mapping[str, int],
+    ) -> None:
+        """Emit optional request-selection diagnostics."""
+        if not self.debug_decision:
+            return
+        first_ids = tuple(request_ids[:4])
+        logger.info(
+            "PAP prepare_inputs req_ids=%s endpoint_keys=%s num_tokens=%s",
+            first_ids,
+            tuple(list(self.store.attention_tcp_endpoint_by_request)[:4]),
+            {request_id: num_scheduled_tokens[request_id] for request_id in first_ids},
+        )
+
+    def shutdown(self) -> None:
+        """Release runner-owned PAP state."""
+        return None

@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+
+# Official Dynamo distribution with its compatible upstream vLLM backend.
+ai-dynamo[vllm]==1.4.1

@@ -1,0 +1,52 @@
+schema_version = 1
+profile_id = "aiperf_qwen3_8b_4gpu_o32"
+profile_version = 1
+status = "current"
+release_gate = false
+mode = "controlled"
+client = "aiperf"
+repetitions = 1
+
+[model]
+name = "Qwen3-8B"
+dtype = "float16"
+tensor_parallel_size = 1
+max_model_len = 20000
+
+[workload]
+sessions = 32
+turns = 10
+requests = 320
+timing_mode = "conversation_concurrency"
+document_tokens_mean = 8192
+document_tokens_median = 8000
+append_tokens_mean = 512
+append_tokens_median = 500
+output_tokens_mean = 32
+output_tokens_median = 30
+length_distribution = "lognormal"
+random_seed = 42
+think_time_ms = 3000
+tool_time_ms = 1000
+tool_every = 3
+
+[scheduler]
+max_num_seqs = 64
+prefill_max_num_batched_tokens = 16384
+decode_max_num_batched_tokens = 64
+max_num_partial_prefills = 1
+
+[slo.strict]
+ttft_ms = 5000
+itl_ms = 50
+minimum_good_fraction = 0.95
+
+[slo.standard]
+ttft_ms = 10000
+itl_ms = 75
+minimum_good_fraction = 0.95
+
+[slo.relaxed]
+ttft_ms = 20000
+itl_ms = 100
+minimum_good_fraction = 0.95
