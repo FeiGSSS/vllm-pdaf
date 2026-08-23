@@ -120,8 +120,8 @@ def parse_args() -> argparse.Namespace:
         "--pap-groups",
         required=True,
         help=(
-            "Comma-separated prefill_host:prefill_port:prefill_nixl_port:"
-            "attention_host:attention_port entries"
+            "Comma-separated prefill_host:prefill_port:attention_host:"
+            "attention_port[:attention_tcp_port] entries"
         ),
     )
     parser.add_argument(

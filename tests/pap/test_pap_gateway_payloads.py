@@ -5,11 +5,10 @@
 from vllm.pap.gateway.payloads import (
     build_prefill_payload,
     build_projection_kv_unaware_payload,
-    enrich_prefill_kv_params,
 )
 
 
-def test_build_prefill_payload_sets_native_nixl_pd_flags() -> None:
+def test_build_prefill_payload_sets_pap_decode_capacity() -> None:
     payload = build_prefill_payload(
         {
             "model": "qwen",
@@ -25,15 +24,7 @@ def test_build_prefill_payload_sets_native_nixl_pd_flags() -> None:
     assert payload["stream"] is False
     assert payload["max_tokens"] == 1
     assert payload["return_token_ids"] is True
-    assert payload["kv_transfer_params"] == {
-        "do_remote_decode": True,
-        "do_remote_prefill": False,
-        "remote_engine_id": None,
-        "remote_block_ids": None,
-        "remote_host": None,
-        "remote_port": None,
-        "pap_decode_capacity_tokens": 32,
-    }
+    assert payload["kv_transfer_params"] == {"pap_decode_capacity_tokens": 32}
     assert "max_completion_tokens" not in payload
     assert "min_tokens" not in payload
     assert "stream_options" not in payload
@@ -94,14 +85,3 @@ def test_build_projection_kv_unaware_payload_strips_remote_kv_transport() -> Non
         "pap_prefill_kv_handle": "req-7",
         "pap_attention_kv_installed": True,
     }
-
-
-def test_enrich_prefill_kv_params_fills_missing_nixl_endpoint() -> None:
-    kv_params = enrich_prefill_kv_params(
-        {"remote_engine_id": "prefill-0", "remote_host": "host-from-prefill"},
-        prefill_host="127.0.0.1",
-        prefill_nixl_port=5559,
-    )
-
-    assert kv_params["remote_host"] == "host-from-prefill"
-    assert kv_params["remote_port"] == 5559

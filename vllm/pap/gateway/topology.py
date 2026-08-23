@@ -40,7 +40,6 @@ def _format_ranked_endpoints(
 class PAPGroup:
     prefill_host: str
     prefill_port: int
-    prefill_nixl_port: int
     attention_host: str
     attention_port: PortSpec
     attention_tcp_port: PortSpec | None = None
@@ -95,21 +94,20 @@ def parse_pap_groups(spec: str) -> list[PAPGroup]:
         if not item:
             continue
         parts = item.split(":")
-        if len(parts) not in {5, 6} or any(part == "" for part in parts):
+        if len(parts) not in {4, 5} or any(part == "" for part in parts):
             raise argparse.ArgumentTypeError(
-                f"invalid PAP group spec {item!r}; expected 5 or 6 "
+                f"invalid PAP group spec {item!r}; expected 4 or 5 "
                 "colon-separated fields"
             )
         groups.append(
             PAPGroup(
                 prefill_host=parts[0],
                 prefill_port=int(parts[1]),
-                prefill_nixl_port=int(parts[2]),
-                attention_host=parts[3],
-                attention_port=_parse_port_spec(parts[4]),
+                attention_host=parts[2],
+                attention_port=_parse_port_spec(parts[3]),
                 attention_tcp_port=None
-                if len(parts) == 5
-                else _parse_port_spec(parts[5]),
+                if len(parts) == 4
+                else _parse_port_spec(parts[4]),
             )
         )
     if not groups:

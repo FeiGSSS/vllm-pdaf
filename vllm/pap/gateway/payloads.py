@@ -41,14 +41,7 @@ def build_prefill_payload(
     # Returning the IDs avoids rendering and tokenizing the same long Chat
     # request again on the Projection API process.
     payload["return_token_ids"] = True
-    kv_params: dict[str, Any] = {
-        "do_remote_decode": True,
-        "do_remote_prefill": False,
-        "remote_engine_id": None,
-        "remote_block_ids": None,
-        "remote_host": None,
-        "remote_port": None,
-    }
+    kv_params: dict[str, Any] = {}
     payload["kv_transfer_params"] = kv_params
     if decode_capacity is not None:
         payload["kv_transfer_params"]["pap_decode_capacity_tokens"] = decode_capacity
@@ -124,16 +117,3 @@ def build_projection_kv_unaware_payload(
 
     payload["kv_transfer_params"] = kv_params
     return payload
-
-
-def enrich_prefill_kv_params(
-    kv_transfer_params: dict[str, Any],
-    *,
-    prefill_host: str,
-    prefill_nixl_port: int | None,
-) -> dict[str, Any]:
-    kv_params = dict(kv_transfer_params)
-    kv_params.setdefault("remote_host", prefill_host)
-    if prefill_nixl_port is not None:
-        kv_params.setdefault("remote_port", prefill_nixl_port)
-    return kv_params

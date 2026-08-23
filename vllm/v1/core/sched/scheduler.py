@@ -31,6 +31,7 @@ from vllm.model_executor.layers.fused_moe.routed_experts_capturer import (
 from vllm.multimodal import MULTIMODAL_REGISTRY, MultiModalRegistry
 from vllm.multimodal.encoder_budget import MultiModalBudget
 from vllm.multimodal.utils import get_mm_features_in_window
+from vllm.pap.integration.scheduler import PAPSchedulerAdapter
 from vllm.v1.core.encoder_cache_manager import (
     EncoderCacheManager,
     EncoderDecoderCacheManager,
@@ -95,6 +96,7 @@ class Scheduler(SchedulerInterface):
             )
         self.structured_output_manager = structured_output_manager
         self.is_encoder_decoder = vllm_config.model_config.is_encoder_decoder
+        self.pap_scheduler = PAPSchedulerAdapter.from_environ()
 
         # include_finished_set controls whether a separate set of finished
         # request ids should be included in the EngineCoreOutputs returned
@@ -560,11 +562,13 @@ class Scheduler(SchedulerInterface):
 
             # Schedule newly needed KV blocks for the request.
             with record_function_or_nullcontext("schedule: allocate_slots"):
+                pap_projection_state = self.pap_scheduler.projection_state(request)
                 while True:
                     new_blocks = self.kv_cache_manager.allocate_slots(
                         request,
                         num_new_tokens,
                         num_lookahead_tokens=self.num_lookahead_tokens,
+                        allocate_local_slots=pap_projection_state is None,
                     )
 
                     if new_blocks is not None:
@@ -710,11 +714,23 @@ class Scheduler(SchedulerInterface):
                 num_external_computed_tokens = 0
                 load_kv_async = False
                 connector_prefix_cache_queries, connector_prefix_cache_hits = 0, 0
+                pap_projection_state = self.pap_scheduler.projection_state(request)
 
                 # Get already-cached tokens.
                 if request.num_computed_tokens == 0:
+                    if pap_projection_state is not None:
+                        new_computed_blocks = (
+                            self.kv_cache_manager.empty_kv_cache_blocks
+                        )
+                        num_new_local_computed_tokens = 0
+                        num_external_computed_tokens = (
+                            pap_projection_state.remote_computed_tokens
+                        )
+                        num_computed_tokens = (
+                            pap_projection_state.remote_computed_tokens
+                        )
                     # Get locally-cached tokens.
-                    if (
+                    elif (
                         self.connector is not None
                         and self.has_mamba_layers
                         and isinstance(
@@ -762,7 +778,7 @@ class Scheduler(SchedulerInterface):
                         ) = self.kv_cache_manager.get_computed_blocks(request)
 
                     # Get externally-cached tokens if using a KVConnector.
-                    if self.connector is not None:
+                    if self.connector is not None and pap_projection_state is None:
                         ext_tokens, load_kv_async = (
                             self.connector.get_num_new_matched_tokens(
                                 request, num_new_local_computed_tokens
@@ -785,9 +801,10 @@ class Scheduler(SchedulerInterface):
                         connector_prefix_cache_hits = num_external_computed_tokens
 
                     # Total computed tokens (local + external).
-                    num_computed_tokens = (
-                        num_new_local_computed_tokens + num_external_computed_tokens
-                    )
+                    if pap_projection_state is None:
+                        num_computed_tokens = (
+                            num_new_local_computed_tokens + num_external_computed_tokens
+                        )
                     assert num_computed_tokens <= request.num_tokens
 
                     # Skip request with pending mm encoding prefetches
@@ -944,6 +961,7 @@ class Scheduler(SchedulerInterface):
                     full_sequence_must_fit=self.scheduler_reserve_full_isl,
                     reserved_blocks=reserved_blocks,
                     has_scheduled_reqs=bool(self.running),
+                    allocate_local_slots=pap_projection_state is None,
                 )
 
                 if new_blocks is None:
@@ -959,7 +977,7 @@ class Scheduler(SchedulerInterface):
                 # if a load is needed. Note that
                 # This information is used to determine if a load is
                 # needed for this request.
-                if self.connector is not None:
+                if self.connector is not None and pap_projection_state is None:
                     self.connector.update_state_after_alloc(
                         request,
                         self.kv_cache_manager.get_blocks(request_id),
@@ -1022,8 +1040,10 @@ class Scheduler(SchedulerInterface):
 
                 if self.lora_config and request.lora_request:
                     scheduled_loras.add(request.lora_request.lora_int_id)
-                req_to_new_blocks[request_id] = self.kv_cache_manager.get_blocks(
-                    request_id
+                req_to_new_blocks[request_id] = (
+                    new_blocks
+                    if pap_projection_state is not None
+                    else self.kv_cache_manager.get_blocks(request_id)
                 )
                 num_scheduled_tokens[request_id] = num_new_tokens
                 token_budget -= num_new_tokens
@@ -1222,7 +1242,8 @@ class Scheduler(SchedulerInterface):
         self.encoder_cache_manager.free(request)
         self._inflight_prefills.discard(request)
         request.status = RequestStatus.PREEMPTED
-        request.num_computed_tokens = 0
+        if self.pap_scheduler.projection_state(request) is None:
+            request.num_computed_tokens = 0
         if request.spec_token_ids:
             request.spec_token_ids = []
         request.num_preemptions += 1
@@ -1599,6 +1620,9 @@ class Scheduler(SchedulerInterface):
         num_nans_in_logits = model_runner_output.num_nans_in_logits
         kv_connector_output = model_runner_output.kv_connector_output
         cudagraph_stats = model_runner_output.cudagraph_stats
+        pap_decode_seq_lens = model_runner_output.extension_data.get(
+            "pap_decode_token_seq_lens", {}
+        )
 
         # Every GPU write enqueued by this and earlier steps has completed, so it is
         # safe to return deferred-free blocks to the pool.
@@ -1649,6 +1673,7 @@ class Scheduler(SchedulerInterface):
         # to avoid expensive operations inside the loop.
         stopped_running_reqs: set[Request] = set()
         stopped_preempted_reqs: set[Request] = set()
+        pap_decode_token_notifications: list[dict[str, object]] = []
         for req_id, num_tokens_scheduled in num_scheduled_tokens.items():
             assert num_tokens_scheduled > 0
             request = self.requests.get(req_id)
@@ -1728,6 +1753,14 @@ class Scheduler(SchedulerInterface):
                 # Pooling stops as soon as there is output.
                 request.status = RequestStatus.FINISHED_STOPPED
                 stopped = True
+
+            pap_notification = self.pap_scheduler.accepted_decode_token_notification(
+                request,
+                new_token_ids,
+                pap_decode_seq_lens.get(req_id),
+            )
+            if pap_notification is not None:
+                pap_decode_token_notifications.append(pap_notification)
 
             if new_token_ids and self.structured_output_manager.should_advance(request):
                 struct_output_request = request.structured_output_request
@@ -1862,6 +1895,10 @@ class Scheduler(SchedulerInterface):
         if stopped_preempted_reqs:
             # This is a rare case and unlikely to impact performance.
             self.waiting.remove_requests(stopped_preempted_reqs)
+
+        self.pap_scheduler.publish_accepted_decode_tokens(
+            pap_decode_token_notifications
+        )
 
         error_req_ids = set(self.grammar_compile_error_reqs)
         self.grammar_compile_error_reqs.clear()
@@ -2118,6 +2155,10 @@ class Scheduler(SchedulerInterface):
         return len(self.running), len(self.waiting) + len(self.skipped_waiting)
 
     def add_request(self, request: Request) -> None:
+        pap_projection_state = self.pap_scheduler.validate_projection_admission(
+            request,
+            num_speculative_tokens=self.num_spec_tokens,
+        )
         existing = self.requests.get(request.request_id)
         if existing is not None:
             update = StreamingUpdate.from_request(request)
@@ -2136,7 +2177,7 @@ class Scheduler(SchedulerInterface):
                 request.streaming_queue = deque()
             self._enqueue_waiting_request(request)
             self.requests[request.request_id] = request
-            if self.connector is not None:
+            if self.connector is not None and pap_projection_state is None:
                 self.connector.on_new_request(request)
             if self.log_stats:
                 request.record_event(EngineCoreEventType.QUEUED)
@@ -2469,6 +2510,7 @@ class Scheduler(SchedulerInterface):
 
         if self.ec_connector is not None:
             self.ec_connector.shutdown()
+        self.pap_scheduler.shutdown()
 
         logger.debug_once("[shutdown] Scheduler: complete")
 
@@ -2491,7 +2533,10 @@ class Scheduler(SchedulerInterface):
         Returns optional kv transfer parameters to be included with the
         request outputs.
         """
-        if self.connector is None:
+        if (
+            self.connector is None
+            or self.pap_scheduler.projection_state(request) is not None
+        ):
             return False, None
 
         # Free any out-of-window prefix blocks before we hand the block table to
@@ -2521,6 +2566,8 @@ class Scheduler(SchedulerInterface):
 
     def _request_remaining_blocks(self, request: Request) -> int:
         """Blocks `request` still needs to allocate to hold its full sequence."""
+        if self.pap_scheduler.projection_state(request) is not None:
+            return 0
         full_num_tokens = min(request.num_tokens, self.max_model_len)
         return self.kv_cache_manager.coordinator.get_num_blocks_to_allocate(
             request_id=request.request_id,

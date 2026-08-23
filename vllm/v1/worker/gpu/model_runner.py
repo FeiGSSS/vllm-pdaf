@@ -43,6 +43,8 @@ from vllm.model_executor.layers.mamba.ops.ssu_dispatch import (
 )
 from vllm.model_executor.model_loader import get_model_loader
 from vllm.multimodal import MULTIMODAL_REGISTRY
+from vllm.pap.integration.kv_cache import PAPKVCacheAdapter
+from vllm.pap.integration.runner import PAPModelRunnerAdapter
 from vllm.sequence import IntermediateTensors
 from vllm.tasks import SupportedTask
 from vllm.utils.math_utils import cdiv
@@ -130,6 +132,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         self.scheduler_config = vllm_config.scheduler_config
         self.speculative_config = vllm_config.speculative_config
         self.observability_config = vllm_config.observability_config
+        self.pap_runner = PAPModelRunnerAdapter.from_vllm_config(
+            vllm_config,
+            supports_async_sampled_tokens=True,
+        )
 
         self.device = device
         self.dtype = self.model_config.dtype
@@ -410,6 +416,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
     def initialize_kv_cache(self, kv_cache_config: KVCacheConfig) -> None:
         kv_cache_config = deepcopy(kv_cache_config)
+        kv_cache_config = PAPKVCacheAdapter.projection_scratch_config(
+            kv_cache_config,
+            enabled=self.pap_runner.projection_kv_unaware,
+        )
         self.kv_cache_config = kv_cache_config
 
         block_table_max_model_len = self.max_model_len
@@ -752,6 +762,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         return cuda_graph_size
 
     def _remove_request(self, req_id: str) -> bool:
+        self.pap_runner.remove_request(req_id)
         # Call model_state.remove_request *before* req_states.remove_request
         # so the model_state can still look up the slot index.
         self.model_state.remove_request(req_id)
@@ -818,6 +829,10 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 req_index, new_req_data.block_ids, overwrite=True
             )
             self.lora_state.add_request(req_id, req_index, new_req_data.lora_request)
+            self.pap_runner.update_request(
+                req_id,
+                new_req_data.kv_transfer_params,
+            )
 
             if self.is_last_pp_rank and new_req_data.sampling_params is not None:
                 assert self.sampler is not None
@@ -889,6 +904,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
 
         # batch_idx -> req_id
         req_ids = sort_batch_req_ids(num_tokens_per_req, self.decode_query_len)
+        req_ids = list(
+            self.pap_runner.group_decode_request_ids(req_ids, num_tokens_per_req)
+        )
         numtoks_iter = map(num_tokens_per_req.get, req_ids)
         num_scheduled_tokens = np.fromiter(numtoks_iter, dtype=np.int32, count=num_reqs)
 
@@ -1320,6 +1338,23 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         # Update the EPLB meta.
         self.eplb.prepare_forward(self.model_config, input_batch.num_tokens)
 
+        pap_forward = None
+        if not dummy_run:
+            pap_forward = self.pap_runner.prepare_model_forward(
+                request_ids=input_batch.req_ids[: input_batch.num_reqs],
+                num_scheduled_tokens=input_batch.num_scheduled_tokens[
+                    : input_batch.num_reqs
+                ],
+                num_actual_tokens=input_batch.num_tokens,
+                positions=input_batch.positions[: input_batch.num_tokens],
+                seq_lens_cpu_upper_bound=input_batch.seq_lens_cpu_upper_bound[
+                    : input_batch.num_reqs
+                ],
+                finished_request_ids=scheduler_output.finished_req_ids,
+                dtype=self.dtype,
+                native_cudagraph_mode=batch_desc.cg_mode,
+            )
+
         # Run model.
         if batch_desc.cg_mode == CUDAGraphMode.FULL:
             # Use explicit cudagraph replay for FULL mode.
@@ -1346,6 +1381,9 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                 slot_mapping=slot_mappings_by_layer,
                 skip_compiled=skip_compiled,
                 is_padding=input_batch.is_padding,
+                additional_forward_context=(
+                    pap_forward.additional_kwargs if pap_forward is not None else None
+                ),
             ):
                 self.kv_connector.pre_forward(scheduler_output)
                 if batch_desc.cg_mode == CUDAGraphMode.PIECEWISE:
@@ -1358,7 +1396,15 @@ class GPUModelRunner(LoRAModelRunnerMixin):
                     )
                 else:
                     # Eager (NONE): call the raw model directly.
-                    model_output = self.model(**model_inputs)
+                    assert pap_forward is not None or dummy_run
+                    if pap_forward is None:
+                        model_output = self.model(**model_inputs)
+                    else:
+                        model_output = self.pap_runner.run_model_forward(
+                            pap_forward,
+                            model_inputs=model_inputs,
+                            forward=lambda: self.model(**model_inputs),
+                        )
 
         if self.is_last_pp_rank:
             if self.use_aux_hidden_state_outputs:
@@ -1461,6 +1507,12 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             req_id_to_index={req_id: i for i, req_id in enumerate(input_batch.req_ids)},
             sampled_token_ids=None,  # type: ignore
             prompt_logprobs_dict=prompt_logprobs_dict,  # type: ignore[arg-type]
+        )
+        model_runner_output.extension_data["pap_decode_token_seq_lens"] = (
+            self.pap_runner.decode_token_seq_lens(
+                input_batch.req_ids[: input_batch.num_reqs],
+                input_batch.seq_lens_cpu_upper_bound[: input_batch.num_reqs],
+            )
         )
         # Start async output copy here so that it can overlap with speculator proposal.
         async_output = AsyncOutput(
@@ -1590,6 +1642,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
         """Release GPU tensors (model weights, KV caches, workspace) so that
         memory is reclaimable when running in the same process."""
         torch.accelerator.synchronize()
+        self.pap_runner.shutdown()
         if hasattr(self, "kv_caches"):
             self.kv_caches.clear()
         if hasattr(self, "attn_groups"):

@@ -496,6 +496,20 @@ class Attention(nn.Module, AttentionLayerBase):
         """Bind an optional external implementation of this Attention layer."""
         self.execution_override = override
 
+    def _should_update_local_kv_cache(
+        self,
+        key: torch.Tensor | None,
+        value: torch.Tensor | None,
+    ) -> bool:
+        """Return whether this Attention invocation owns a local KV write."""
+        return (
+            self.execution_override is None
+            and not self.attn_backend.forward_includes_kv_cache_update
+            and self.kv_sharing_target_layer_name is None
+            and key is not None
+            and value is not None
+        )
+
     def forward(
         self,
         query: torch.Tensor,
@@ -553,12 +567,7 @@ class Attention(nn.Module, AttentionLayerBase):
         kv_cache_dummy_dep = None
         if self.use_direct_call:
             # Skip this if sharing KV cache with an earlier attention layer.
-            if (
-                not self.attn_backend.forward_includes_kv_cache_update
-                and self.kv_sharing_target_layer_name is None
-                and key is not None
-                and value is not None
-            ):
+            if self._should_update_local_kv_cache(key, value):
                 kv_cache_dummy_dep = unified_kv_cache_update(
                     key, value, self.layer_name
                 )
@@ -573,12 +582,7 @@ class Attention(nn.Module, AttentionLayerBase):
         else:
             # Skip this if sharing KV cache with an earlier attention layer.
             encoded = _encode_layer_name(self.layer_name)
-            if (
-                not self.attn_backend.forward_includes_kv_cache_update
-                and self.kv_sharing_target_layer_name is None
-                and key is not None
-                and value is not None
-            ):
+            if self._should_update_local_kv_cache(key, value):
                 kv_cache_dummy_dep = torch.ops.vllm.unified_kv_cache_update(
                     key, value, encoded
                 )

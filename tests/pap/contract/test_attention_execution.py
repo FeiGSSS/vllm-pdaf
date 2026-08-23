@@ -3,8 +3,10 @@
 from types import SimpleNamespace
 
 import pytest
+import torch
 
 from vllm.model_executor.layers.attention import attention as attention_module
+from vllm.model_executor.layers.attention.attention import Attention
 from vllm.model_executor.layers.attention.execution import (
     register_attention_execution_factory,
     resolve_attention_execution,
@@ -68,3 +70,17 @@ def test_attention_execution_factory_is_model_independent() -> None:
 
     assert resolve_attention_execution(selected_attention, object()) is execution
     assert resolve_attention_execution(object(), object()) is None
+
+
+def test_execution_override_disables_local_kv_update() -> None:
+    attention = object.__new__(Attention)
+    attention.attn_backend = SimpleNamespace(forward_includes_kv_cache_update=False)
+    attention.kv_sharing_target_layer_name = None
+    key = torch.empty(1)
+    value = torch.empty(1)
+
+    attention.execution_override = None
+    assert attention._should_update_local_kv_cache(key, value)
+
+    attention.execution_override = lambda *args, **kwargs: None
+    assert not attention._should_update_local_kv_cache(key, value)

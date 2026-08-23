@@ -3,7 +3,7 @@
 
 from dataclasses import dataclass
 from functools import cached_property
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     import numpy as np
@@ -41,6 +41,7 @@ class NewRequestData:
     lora_request: LoRARequest | None
     prompt_embeds: "torch.Tensor | None" = None
     prompt_is_token_ids: list[bool] | None = None
+    kv_transfer_params: dict[str, Any] | None = None
 
     # Only used for v2 model runner.
     prefill_token_ids: list[int] | None = None
@@ -64,6 +65,11 @@ class NewRequestData:
             prompt_embeds=request.prompt_embeds,
             prompt_is_token_ids=request.prompt_is_token_ids,
             prefill_token_ids=prefill_token_ids,
+            kv_transfer_params=(
+                dict(request.kv_transfer_params)
+                if request.kv_transfer_params is not None
+                else None
+            ),
         )
 
     def __repr__(self) -> str:

@@ -27,7 +27,6 @@ def _groups(count: int) -> list[PAPGroup]:
         PAPGroup(
             "127.0.0.1",
             8100 + index,
-            5559 + index,
             "127.0.0.1",
             8300 + index,
         )
@@ -59,7 +58,7 @@ def test_gateway_defaults_to_conversation_affinity(monkeypatch) -> None:
         [
             "pap-gateway",
             "--pap-groups",
-            "127.0.0.1:8100:5559:127.0.0.1:8300",
+            "127.0.0.1:8100:127.0.0.1:8300",
             "--projections",
             "127.0.0.1:8200",
         ],
@@ -70,21 +69,21 @@ def test_gateway_defaults_to_conversation_affinity(monkeypatch) -> None:
 
 def test_parse_pap_groups_from_compact_spec() -> None:
     groups = parse_pap_groups(
-        "127.0.0.1:8100:5559:127.0.0.1:8300,127.0.0.1:8101:5560:127.0.0.1:8301"
+        "127.0.0.1:8100:127.0.0.1:8300,127.0.0.1:8101:127.0.0.1:8301"
     )
 
     assert groups == _groups(2)
 
 
 def test_parse_pap_groups_accepts_attention_tcp_port() -> None:
-    groups = parse_pap_groups("127.0.0.1:8100:5559:127.0.0.1:8300:9300")
+    groups = parse_pap_groups("127.0.0.1:8100:127.0.0.1:8300:9300")
 
     assert groups[0].attention_tcp_port == 9300
     assert groups[0].attention_tcp_endpoint == "tcp://127.0.0.1:9300"
 
 
 def test_parse_pap_groups_accepts_ranked_attention_ports() -> None:
-    groups = parse_pap_groups("127.0.0.1:8100:5559:127.0.0.1:8300|8301:9300")
+    groups = parse_pap_groups("127.0.0.1:8100:127.0.0.1:8300|8301:9300")
 
     assert groups[0].attention_port == (8300, 8301)
     assert groups[0].attention_base_url == (
@@ -215,7 +214,7 @@ def test_conversation_affinity_round_robins_new_conversations() -> None:
 
 
 def test_build_projection_payload_for_group_keeps_kv_uninstalled() -> None:
-    group = PAPGroup("127.0.0.1", 8103, 5562, "127.0.0.1", 8303, 9303)
+    group = PAPGroup("127.0.0.1", 8103, "127.0.0.1", 8303, 9303)
     kv_params = {
         "remote_engine_id": "prefill-3",
         "remote_host": "127.0.0.1",
@@ -239,7 +238,7 @@ def test_build_projection_payload_for_group_keeps_kv_uninstalled() -> None:
 
 
 def test_build_projection_payload_for_group_attaches_prefill_kv_handle() -> None:
-    group = PAPGroup("127.0.0.1", 8103, 5562, "127.0.0.1", 8303)
+    group = PAPGroup("127.0.0.1", 8103, "127.0.0.1", 8303)
 
     payload = build_projection_payload_for_group(
         {"model": "qwen", "prompt": "hello"},

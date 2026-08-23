@@ -16,6 +16,7 @@ import logging
 import socket
 import socketserver
 import time
+from contextlib import asynccontextmanager
 from threading import Thread
 from typing import Any
 
@@ -118,7 +119,15 @@ def create_app(
         runtime=runtime,
         config=runtime_config,
     )
-    app = FastAPI(title="PAP Attention Service")
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        try:
+            yield
+        finally:
+            peer_manager.stop()
+
+    app = FastAPI(title="PAP Attention Service", lifespan=lifespan)
     app.state.pap_config = runtime_config
     app.state.pap_runtime = runtime
     app.state.pap_peer_manager = peer_manager
@@ -193,11 +202,6 @@ def create_app(
         except PAPAttentionPeerConflict as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return {"agent_metadata_b64": base64.b64encode(local_metadata).decode("ascii")}
-
-    async def stop_peer_manager() -> None:
-        peer_manager.stop()
-
-    app.add_event_handler("shutdown", stop_peer_manager)
 
     @app.get("/v1/pap/attention/sessions")
     async def get_active_session_count() -> dict[str, int]:

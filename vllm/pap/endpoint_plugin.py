@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from argparse import Namespace
+from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI
@@ -31,13 +32,23 @@ class PAPEndpointPlugin:
         if not self._enabled:
             return
         app.include_router(build_prefill_control_router())
+        parent_lifespan = app.router.lifespan_context
 
-        async def close_dispatcher() -> None:
-            dispatcher = getattr(app.state, "pap_control_dispatcher", None)
-            if dispatcher is not None:
-                await dispatcher.close()
+        @asynccontextmanager
+        async def pap_lifespan(lifespan_app: FastAPI):
+            async with parent_lifespan(lifespan_app):
+                try:
+                    yield
+                finally:
+                    dispatcher = getattr(
+                        lifespan_app.state,
+                        "pap_control_dispatcher",
+                        None,
+                    )
+                    if dispatcher is not None:
+                        await dispatcher.close()
 
-        app.add_event_handler("shutdown", close_dispatcher)
+        app.router.lifespan_context = pap_lifespan
 
     async def init_state(
         self,

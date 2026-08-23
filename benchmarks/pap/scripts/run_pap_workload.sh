@@ -85,8 +85,6 @@ for removed_flag in \
 done
 
 ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
-source "${ROOT_DIR}/benchmarks/pap/scripts/configure_same_node_nixl.sh"
-pap_configure_same_node_nixl "${ROOT_DIR}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 VLLM_BIN="${VLLM_BIN:-${ROOT_DIR}/.venv/bin/vllm}"
 CUDA_GRAPH_AUDITOR="${ROOT_DIR}/benchmarks/pap/scripts/audit_cuda_graph_logs.sh"
@@ -232,7 +230,6 @@ PREFILL_PORT_BASE="${PAP_PREFILL_PORT_BASE:-${PAP_PREFILL_PORT:-8100}}"
 PROJECTION_PORT_BASE="${PAP_PROJECTION_PORT_BASE:-${PAP_PROJECTION_PORT:-8200}}"
 ATTENTION_PORT_BASE="${PAP_ATTENTION_PORT_BASE:-${PAP_ATTENTION_PORT:-8300}}"
 ATTENTION_TCP_PORT_BASE="${PAP_ATTENTION_TCP_PORT_BASE:-${PAP_ATTENTION_TCP_PORT:-9300}}"
-PREFILL_NIXL_PORT_BASE="${PAP_PREFILL_NIXL_PORT_BASE:-${PAP_PREFILL_NIXL_PORT:-5559}}"
 VLLM_PREFILL_PORT_BASE="${PAP_VLLM_PREFILL_PORT_BASE:-${PAP_VLLM_PREFILL_PORT:-50000}}"
 VLLM_PROJECTION_PORT_BASE="${PAP_VLLM_PROJECTION_PORT_BASE:-${PAP_VLLM_PROJECTION_PORT:-$((VLLM_PREFILL_PORT_BASE + PA_COUNT * 20))}}"
 
@@ -247,13 +244,13 @@ PAP_PREFILL_GPUS="${PAP_PREFILL_GPUS:-${DEFAULT_PREFILL_GPUS}}"
 PAP_PROJECTION_GPUS="${PAP_PROJECTION_GPUS:-${DEFAULT_PROJECTION_GPUS}}"
 PAP_TP_SIZE="${PAP_TP_SIZE:-1}"
 PAP_VLLM_DTYPE="${PAP_VLLM_DTYPE:-float16}"
-MAX_MODEL_LEN="${MAX_MODEL_LEN:-20000}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-32768}"
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-16384}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
 PAP_PREFILL_MAX_NUM_BATCHED_TOKENS="${PAP_PREFILL_MAX_NUM_BATCHED_TOKENS:-2048}"
 PAP_PREFILL_MAX_NUM_SEQS="${PAP_PREFILL_MAX_NUM_SEQS:-256}"
-PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS="${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS:-64}"
-PAP_PROJECTION_MAX_NUM_SEQS="${PAP_PROJECTION_MAX_NUM_SEQS:-${MAX_NUM_SEQS}}"
+PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS="${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS:-256}"
+PAP_PROJECTION_MAX_NUM_SEQS="${PAP_PROJECTION_MAX_NUM_SEQS:-256}"
 PAP_PREFILL_GPU_MEMORY_UTILIZATION="${PAP_PREFILL_GPU_MEMORY_UTILIZATION:-0.90}"
 PAP_STATIC_PREFILL_CHUNKS="${PAP_STATIC_PREFILL_CHUNKS:-20}"
 PAP_STATIC_ATTENTION_CHUNKS="${PAP_STATIC_ATTENTION_CHUNKS:-3}"
@@ -327,7 +324,6 @@ PAP_LEASE_RELEASE_MAX_ATTEMPTS="${PAP_LEASE_RELEASE_MAX_ATTEMPTS:-5}"
 PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS="${PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS:-0.05}"
 PAP_LEASE_RELEASE_RETRY_MAX_SECONDS="${PAP_LEASE_RELEASE_RETRY_MAX_SECONDS:-0.5}"
 PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS:-300}"
-PAP_NIXL_CONNECTOR_LEASE_SECONDS="${PAP_NIXL_CONNECTOR_LEASE_SECONDS:-1}"
 
 case "${PAP_DEFERRED_CUDA_TRACE,,}" in
   1|true|yes|on)
@@ -367,11 +363,6 @@ if ! [[ "${PAP_DEFERRED_TRACE_FLUSH_TIMEOUT}" =~ ^[1-9][0-9]*$ \
   echo "PAP drain and trace timeouts must be positive integers" >&2
   exit 2
 fi
-if ! [[ "${PAP_NIXL_CONNECTOR_LEASE_SECONDS}" =~ ^[1-9][0-9]*$ ]]; then
-  echo "PAP_NIXL_CONNECTOR_LEASE_SECONDS must be a positive integer" >&2
-  exit 2
-fi
-
 PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES="${PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES:-1,2,4,8,16,32,64,128}"
 for capture_sizes in "${PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES}"; do
   if ! [[ "${capture_sizes}" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]]; then
@@ -429,7 +420,6 @@ export PAP_LEASE_RELEASE_MAX_ATTEMPTS
 export PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS
 export PAP_LEASE_RELEASE_RETRY_MAX_SECONDS
 export PAP_KV_LEASE_TTL_SECONDS
-export PAP_NIXL_CONNECTOR_LEASE_SECONDS
 
 export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
 export VLLM_USE_V1=1
@@ -506,7 +496,7 @@ build_pap_groups_spec() {
   local idx
   for (( idx=0; idx<PA_COUNT; idx++ )); do
     items+=(
-      "127.0.0.1:$((PREFILL_PORT_BASE + idx)):$((PREFILL_NIXL_PORT_BASE + idx)):127.0.0.1:$((ATTENTION_PORT_BASE + idx)):$((ATTENTION_TCP_PORT_BASE + idx))"
+      "127.0.0.1:$((PREFILL_PORT_BASE + idx)):127.0.0.1:$((ATTENTION_PORT_BASE + idx)):$((ATTENTION_TCP_PORT_BASE + idx))"
     )
   done
   join_by_comma "${items[@]}"
@@ -1329,12 +1319,6 @@ write_effective_config() {
     printf 'PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE=%q\n' "${PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE}"
     printf 'PAP_BENCH_STRICT_CORRECTNESS_AUDIT=%q\n' "${PAP_BENCH_STRICT_CORRECTNESS_AUDIT}"
     printf 'VLLM_USE_FLASHINFER_SAMPLER=%q\n' "${VLLM_USE_FLASHINFER_SAMPLER}"
-    printf 'PAP_NIXL_RUNTIME_MODE=%q\nPAP_NIXL_UCX_VERSION=%q\n' \
-      "${PAP_NIXL_RUNTIME_MODE}" "${PAP_NIXL_UCX_VERSION}"
-    printf 'NIXL_PLUGIN_DIR=%q\nUCX_PROTO_EMULATION_ENABLE=%q\n' \
-      "${NIXL_PLUGIN_DIR}" "${UCX_PROTO_EMULATION_ENABLE}"
-    printf 'UCX_CUDA_IPC_ENABLE_GET_ZCOPY=%q\n' \
-      "${UCX_CUDA_IPC_ENABLE_GET_ZCOPY}"
     printf 'NO_PROXY=%q\n' "${NO_PROXY}"
     printf 'no_proxy=%q\n' "${no_proxy}"
     printf 'PAP_PROXY_PORT=%q\n' "${PAP_PROXY_PORT}"
@@ -1416,8 +1400,6 @@ write_effective_config() {
     printf 'PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS=%q\n' "${PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS}"
     printf 'PAP_LEASE_RELEASE_RETRY_MAX_SECONDS=%q\n' "${PAP_LEASE_RELEASE_RETRY_MAX_SECONDS}"
     printf 'PAP_KV_LEASE_TTL_SECONDS=%q\n' "${PAP_KV_LEASE_TTL_SECONDS}"
-    printf 'PAP_NIXL_CONNECTOR_LEASE_SECONDS=%q\n' \
-      "${PAP_NIXL_CONNECTOR_LEASE_SECONDS}"
     printf 'MAX_MODEL_LEN=%q\n' "${MAX_MODEL_LEN}"
     printf 'MAX_NUM_BATCHED_TOKENS=%q\n' "${MAX_NUM_BATCHED_TOKENS}"
     printf 'MAX_NUM_SEQS=%q\n' "${MAX_NUM_SEQS}"
@@ -1452,7 +1434,6 @@ write_topology_manifest() {
   PREFILL_GPUS="${PAP_PREFILL_GPUS}" \
   PROJECTION_GPUS="${PAP_PROJECTION_GPUS}" \
   PREFILL_PORT_BASE="${PREFILL_PORT_BASE}" \
-  PREFILL_NIXL_PORT_BASE="${PREFILL_NIXL_PORT_BASE}" \
   ATTENTION_PORT_BASE="${ATTENTION_PORT_BASE}" \
   ATTENTION_TCP_PORT_BASE="${ATTENTION_TCP_PORT_BASE}" \
   PROJECTION_PORT_BASE="${PROJECTION_PORT_BASE}" \
@@ -1477,7 +1458,6 @@ manifest = {
             "id": index,
             "gpu": prefill_gpus[index],
             "prefill": f"http://127.0.0.1:{base('PREFILL_PORT_BASE') + index}",
-            "prefill_nixl_port": base("PREFILL_NIXL_PORT_BASE") + index,
             "attention": (
                 f"http://127.0.0.1:{base('ATTENTION_PORT_BASE') + index}"
             ),
@@ -1628,7 +1608,7 @@ audit_correctness_logs() {
   local matches_path="${RUN_ROOT}/correctness_audit_matches.log"
   local summary_path="${RUN_ROOT}/correctness_audit.env"
   local pattern
-  pattern='CUDA out of memory|EngineDeadError|Traceback|NIXL.*failed|PAP local fast.*failed|PAP decode commit failed|new_token_ids length must match new_seq_len delta|PAP decode commit flush timed out|PAP decode commit queue full|PAP decode-token delivery failed|PAP decode-token queue is full|PAP decode-token join flush timed out|PAP lease release failed|PAP unified KV append out of range|PAP unified KV state missing|PAP unified KV state changed during decode append|PAP unified KV seq_len changed during decode append|prefill KV must reach the registered prefix before unified decode attention|PAP unified paged FlashAttention failed'
+  pattern='CUDA out of memory|EngineDeadError|Traceback|PAP decode commit failed|non-contiguous PAP decode commit|conflicting duplicate PAP decode commit|PAP lease release raced|PAP Prefill request .* without a KV lease|PAP control is not initialized|deferred PAP EngineCore control failed|new_token_ids length must match new_seq_len delta|PAP decode-token delivery failed|PAP decode-token queue is full|PAP decode-token join flush timed out|PAP lease release failed|PAP unified KV append out of range|PAP unified KV state missing|PAP unified KV state changed during decode append|PAP unified KV seq_len changed during decode append|prefill KV must reach the registered prefix before unified decode attention|PAP unified paged FlashAttention failed'
 
   if rg -n --no-heading "${pattern}" "${RUN_LOG_DIR}" > "${matches_path}"; then
     {
@@ -1870,8 +1850,28 @@ fi
   || die "Missing CUDA Graph auditor: ${CUDA_GRAPH_AUDITOR}"
 [[ -d "${MODEL_PATH}" ]] || die "Model path does not exist: ${MODEL_PATH}"
 
-"${PYTHON_BIN}" -c 'import nixl' >/dev/null 2>&1 \
-  || die "Python package 'nixl' is not installed in .venv"
+"${PYTHON_BIN}" - <<'PY' || die "PAP v0.26 plugin preflight failed"
+import importlib.metadata as metadata
+import vllm
+
+version = vllm.__version__.split("+", 1)[0]
+parts = version.split(".")
+if len(parts) < 2 or tuple(map(int, parts[:2])) != (0, 26):
+    raise SystemExit(f"expected vLLM 0.26, got {vllm.__version__}")
+
+expected = {
+    ("vllm.general_plugins", "pap"): "vllm.pap.plugin:register_pap_plugin",
+    ("vllm.endpoint_plugins", "pap"): (
+        "vllm.pap.endpoint_plugin:PAPEndpointPlugin"
+    ),
+}
+for (group, name), value in expected.items():
+    entries = [entry for entry in metadata.entry_points(group=group) if entry.name == name]
+    if len(entries) != 1 or entries[0].value != value:
+        raise SystemExit(f"invalid {group}/{name} entry point: {entries}")
+
+from vllm.pap.kv_connector import PAPPrefillConnector  # noqa: F401
+PY
 
 ensure_dataset
 mkdir -p "${RUN_ROOT}" "${RUN_LOG_DIR}"
@@ -1904,7 +1904,6 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     "$((PREFILL_PORT_BASE + idx))"
     "$((ATTENTION_PORT_BASE + idx))"
     "$((ATTENTION_TCP_PORT_BASE + idx))"
-    "$((PREFILL_NIXL_PORT_BASE + idx))"
     "$((VLLM_PREFILL_PORT_BASE + idx * 20))"
   )
 done
@@ -2039,7 +2038,6 @@ done
 
 for (( idx=0; idx<PA_COUNT; idx++ )); do
   prefill_port=$((PREFILL_PORT_BASE + idx))
-  prefill_nixl_port=$((PREFILL_NIXL_PORT_BASE + idx))
   prefill_env=("CUDA_VISIBLE_DEVICES=${PREFILL_GPUS[idx]}")
   if [[ "${PAP_ENABLE_MPS}" == "1" ]]; then
     prefill_env=(
@@ -2084,8 +2082,6 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_CUDAGRAPH_COMPATIBLE=1 \
     PAP_CUDAGRAPH_ROLE=prefill \
     PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS}" \
-    VLLM_NIXL_SIDE_CHANNEL_HOST=127.0.0.1 \
-    VLLM_NIXL_SIDE_CHANNEL_PORT="${prefill_nixl_port}" \
     "${VLLM_BIN}" serve "${MODEL_PATH}" \
       --port "${prefill_port}" \
       --host 127.0.0.1 \
@@ -2158,6 +2154,13 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
   wait_for_http \
     "http://127.0.0.1:$((PREFILL_PORT_BASE + idx))/health" \
     "PAP Prefill ${idx}"
+  curl -fsS "http://127.0.0.1:$((PREFILL_PORT_BASE + idx))/openapi.json" \
+    | jq -e '
+        .paths
+        | has("/v1/pap/prefill/decode-commit")
+          and has("/v1/pap/prefill/lease-release")
+      ' >/dev/null \
+    || die "PAP Prefill ${idx} control plugin routes are missing"
 done
 for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
   wait_for_http \

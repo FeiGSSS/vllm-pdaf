@@ -4,7 +4,7 @@
 from abc import ABC, abstractmethod
 from copy import copy
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, NamedTuple, TypeAlias
+from typing import TYPE_CHECKING, Any, NamedTuple, TypeAlias
 
 import numpy as np
 import torch
@@ -279,6 +279,9 @@ class ModelRunnerOutput:
     # its slot buffer via ``slot_buffer[slot_mapping] = routing_data``.
     # ``None`` when ``enable_return_routed_experts`` is off.
     routed_experts: RoutedExpertsLists | None = None
+
+    # Framework extensions may attach small CPU-only per-step metadata here.
+    extension_data: dict[str, Any] = field(default_factory=dict)
 
     @staticmethod
     def with_kv_conn_output_only(

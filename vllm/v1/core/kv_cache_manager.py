@@ -293,6 +293,7 @@ class KVCacheManager:
         full_sequence_must_fit: bool = False,
         reserved_blocks: int = 0,
         has_scheduled_reqs: bool = True,
+        allocate_local_slots: bool = True,
     ) -> KVCacheBlocks | None:
         """Add slots for a request with new tokens to append.
 
@@ -325,6 +326,9 @@ class KVCacheManager:
                 blocks an already in-flight (prefilling) sequence is relying on.
             has_scheduled_reqs: Whether any requests are already scheduled to run
                 this step, controls whether watermark is applied.
+            allocate_local_slots: Whether this request owns local KV slots. Remote
+                compute-only execution may advance sequence state without allocating
+                local blocks.
 
         Blocks layout:
         ```
@@ -383,6 +387,9 @@ class KVCacheManager:
                 "num_new_tokens must be greater than 0 when there are no "
                 "external computed tokens"
             )
+
+        if not allocate_local_slots:
+            return self.empty_kv_cache_blocks
 
         if new_computed_blocks is not None:
             new_computed_block_list = new_computed_blocks.blocks

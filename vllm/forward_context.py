@@ -3,6 +3,7 @@
 
 import time
 from collections import defaultdict
+from collections.abc import Mapping
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
@@ -268,6 +269,7 @@ def set_forward_context(
     slot_mapping: dict[str, torch.Tensor] | list[dict[str, torch.Tensor]] | None = None,
     skip_compiled: bool = False,
     is_padding: torch.Tensor | None = None,
+    additional_forward_context: Mapping[str, Any] | None = None,
 ):
     """A context manager that stores the current forward context,
     can be attention metadata, etc.
@@ -325,6 +327,14 @@ def set_forward_context(
         batch_descriptor=batch_descriptor,
         ubatch_slices=ubatch_slices,
     )
+    if additional_forward_context:
+        duplicate_keys = additional_kwargs.keys() & additional_forward_context.keys()
+        if duplicate_keys:
+            raise ValueError(
+                "additional forward context collides with platform keys: "
+                f"{sorted(duplicate_keys)}"
+            )
+        additional_kwargs.update(additional_forward_context)
 
     forward_context = create_forward_context(
         attn_metadata,

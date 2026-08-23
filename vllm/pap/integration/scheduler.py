@@ -16,7 +16,7 @@ from vllm.pap.lifecycle import lease as pap_lease
 
 class _SchedulerRequest(Protocol):
     request_id: str
-    kv_transfer_params: Mapping[str, Any] | None
+    kv_transfer_params: dict[str, Any] | None
     num_prompt_tokens: int
 
 
@@ -85,6 +85,19 @@ class PAPSchedulerAdapter:
             remote_computed_tokens=remote_computed_tokens,
             local_computed_token_offset=remote_computed_tokens,
         )
+
+    @classmethod
+    def validate_projection_admission(
+        cls,
+        request: _SchedulerRequest,
+        *,
+        num_speculative_tokens: int,
+    ) -> PAPProjectionScheduleState | None:
+        """Validate a metadata-only Projection request before it is queued."""
+        state = cls.projection_state(request)
+        if state is not None and num_speculative_tokens > 0:
+            raise ValueError("PAP Projection does not support speculative decoding")
+        return state
 
     def decode_capacity_tokens(self, request: _SchedulerRequest) -> int:
         """Return the local decode reservation for unified Prefill KV."""

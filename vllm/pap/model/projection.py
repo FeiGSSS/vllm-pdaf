@@ -156,7 +156,7 @@ class PAPProjectionAttentionAdapter:
             dtype=query.dtype,
             device=query.device,
         )
-        stream = torch.cuda.current_stream(query.device)
+        stream = torch.accelerator.current_stream(query.device)
         layer_index = context.layer_index(self.layer_name)
         qkv_batch = (
             direct_qkv_send_buffer

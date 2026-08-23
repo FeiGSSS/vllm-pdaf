@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from vllm.pap.integration.request import PAPRequestMetadata
 from vllm.pap.lifecycle.decode_token_client import DecodeTokenClient
@@ -20,7 +20,7 @@ class _DecodeTokenClient(Protocol):
 
 class _SchedulerRequest(Protocol):
     request_id: str
-    kv_transfer_params: Mapping[str, object] | None
+    kv_transfer_params: dict[str, Any] | None
 
 
 @dataclass(slots=True)

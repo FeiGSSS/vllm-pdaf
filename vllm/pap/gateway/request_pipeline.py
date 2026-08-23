@@ -30,7 +30,6 @@ from vllm.pap.gateway.observability import (
 from vllm.pap.gateway.payloads import (
     attach_pap_prefill_attention_params,
     build_prefill_payload,
-    enrich_prefill_kv_params,
 )
 from vllm.pap.gateway.routing import select_instances
 from vllm.pap.gateway.topology import build_projection_payload_for_group
@@ -128,11 +127,7 @@ async def _handle_openai_request(api_path: str, request: Request):
             prompt_text = None
 
         projection_payload_start = time.perf_counter() if profile else 0.0
-        kv_params = enrich_prefill_kv_params(
-            prefill_resp.get("kv_transfer_params") or {},
-            prefill_host=group.prefill_host,
-            prefill_nixl_port=group.prefill_nixl_port,
-        )
+        kv_params = dict(prefill_resp.get("kv_transfer_params") or {})
         prefill_kv_handle = prefill_kv_handle_from_kv_params(
             kv_params,
             fallback=attention_session.get("prefill_kv_handle"),

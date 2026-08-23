@@ -7,7 +7,6 @@ from vllm.pap.gateway.payloads import (
     attach_pap_prefill_attention_params,
     build_prefill_payload,
     build_projection_kv_unaware_payload,
-    enrich_prefill_kv_params,
 )
 
 __all__ = [
@@ -15,5 +14,4 @@ __all__ = [
     "attach_pap_prefill_attention_params",
     "build_prefill_payload",
     "build_projection_kv_unaware_payload",
-    "enrich_prefill_kv_params",
 ]

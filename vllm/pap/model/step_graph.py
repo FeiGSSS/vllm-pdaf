@@ -56,6 +56,8 @@ class PAPProjectionStepGraphRoute:
 class _RoutedGraphBuffers:
     host_indices: torch.Tensor
     host_counts: torch.Tensor
+    copy_done_events: list[torch.Event | None]
+    next_host_slot: int
     indices: torch.Tensor
     counts: torch.Tensor
     peer_ranks: torch.Tensor
@@ -128,13 +130,13 @@ def _update_routed_graph_buffers(
         if buffers is None:
             peer_count = len(peer_rank_values)
             host_indices = torch.empty(
-                (peer_count, batch_rows),
+                (2, peer_count, batch_rows),
                 dtype=torch.int64,
                 device="cpu",
                 pin_memory=True,
             )
             host_counts = torch.empty(
-                peer_count,
+                (2, peer_count),
                 dtype=torch.int32,
                 device="cpu",
                 pin_memory=True,
@@ -162,6 +164,8 @@ def _update_routed_graph_buffers(
             buffers = _RoutedGraphBuffers(
                 host_indices=host_indices,
                 host_counts=host_counts,
+                copy_done_events=[None, None],
+                next_host_slot=0,
                 indices=indices,
                 counts=counts,
                 peer_ranks=peer_ranks,
@@ -169,23 +173,33 @@ def _update_routed_graph_buffers(
                 controller=controller,
             )
             _ROUTED_GRAPH_BUFFERS[key] = buffers
-        buffers.host_indices.zero_()
-        buffers.host_counts.zero_()
+        host_slot = buffers.next_host_slot
+        buffers.next_host_slot = (host_slot + 1) % len(buffers.copy_done_events)
+        copy_done = buffers.copy_done_events[host_slot]
+        if copy_done is not None:
+            copy_done.synchronize()
+        host_indices = buffers.host_indices[host_slot]
+        host_counts = buffers.host_counts[host_slot]
+        host_indices.zero_()
+        host_counts.zero_()
         peer_slots = {rank: slot for slot, rank in enumerate(peer_rank_values)}
         routed_rows = 0
         for route in routes:
             peer_rank = int(route.transport.peer_rank)
             peer_slot = peer_slots[peer_rank]
             row_count = len(route.req_indices)
-            buffers.host_counts[peer_slot] = row_count
-            buffers.host_indices[peer_slot, :row_count].copy_(
+            host_counts[peer_slot] = row_count
+            host_indices[peer_slot, :row_count].copy_(
                 torch.tensor(route.req_indices, dtype=torch.int64)
             )
             routed_rows += row_count
         if routed_rows != batch_rows:
             raise RuntimeError("PAP Projection routed graph row count mismatch")
-        buffers.indices.copy_(buffers.host_indices, non_blocking=True)
-        buffers.counts.copy_(buffers.host_counts, non_blocking=True)
+        buffers.indices.copy_(host_indices, non_blocking=True)
+        buffers.counts.copy_(host_counts, non_blocking=True)
+        copy_done = torch.Event()
+        copy_done.record(torch.accelerator.current_stream(device))
+        buffers.copy_done_events[host_slot] = copy_done
         return buffers
 
 
@@ -276,7 +290,7 @@ def prepare_projection_step_graph(
 @dataclass
 class _PAPProjectionGraphEntry:
     graph: torch.cuda.CUDAGraph
-    stream: torch.cuda.Stream
+    stream: torch.Stream
     output: Any
 
 
@@ -298,21 +312,31 @@ class PAPProjectionStepGraphManager:
         """Capture or replay one complete Projection decode step."""
         if not inputs:
             raise RuntimeError("PAP Projection graph has no CUDA inputs")
-        addresses = tuple(int(tensor.data_ptr()) for tensor in inputs)
-        key = (*preparation.key, addresses)
+        input_signatures = tuple(
+            (
+                int(tensor.data_ptr()),
+                tuple(tensor.shape),
+                tuple(tensor.stride()),
+                str(tensor.dtype),
+                str(tensor.device),
+            )
+            for tensor in inputs
+        )
+        key = (*preparation.key, input_signatures)
         entry = self._entries.get(key)
-        current_stream = torch.cuda.current_stream(inputs[0].device)
+        current_stream = torch.accelerator.current_stream(inputs[0].device)
         if entry is not None:
             entry.stream.wait_stream(current_stream)
-            with torch.cuda.stream(entry.stream):
+            with torch.accelerator.stream(entry.stream):
                 entry.graph.replay()
             current_stream.wait_stream(entry.stream)
             return entry.output
 
-        graph_stream = torch.cuda.Stream(device=inputs[0].device)
+        graph_stream = torch.Stream(device=inputs[0].device)
         graph_stream.wait_stream(current_stream)
         graph = torch.cuda.CUDAGraph()
         route_is_new = preparation.key not in self._route_keys
+        addresses = tuple(int(tensor.data_ptr()) for tensor in inputs)
         addresses_are_new = addresses not in self._address_keys
         self._route_keys.add(preparation.key)
         self._address_keys.add(addresses)
@@ -327,7 +351,7 @@ class PAPProjectionStepGraphManager:
             preparation.key[0],
         )
         with (
-            torch.cuda.stream(graph_stream),
+            torch.accelerator.stream(graph_stream),
             projection_step_graph_capture_context(preparation.context),
             torch.cuda.graph(
                 graph,
@@ -336,7 +360,7 @@ class PAPProjectionStepGraphManager:
             ),
         ):
             output = forward()
-        with torch.cuda.stream(graph_stream):
+        with torch.accelerator.stream(graph_stream):
             graph.replay()
         current_stream.wait_stream(graph_stream)
         entry = _PAPProjectionGraphEntry(
@@ -348,6 +372,21 @@ class PAPProjectionStepGraphManager:
         logger.info("PAP Projection whole-step CUDA Graph capture complete")
         return output
 
+    def shutdown(self) -> None:
+        """Synchronize and release all runner-owned Graph specializations."""
+        for entry in self._entries.values():
+            entry.stream.synchronize()
+        self._entries.clear()
+        self._route_keys.clear()
+        self._address_keys.clear()
+
+
+def shutdown_projection_step_graph() -> None:
+    """Release process-wide layer registrations and routed scratch buffers."""
+    with _ROUTE_INDEX_LOCK:
+        _PROJECTION_ADAPTERS.clear()
+        _ROUTED_GRAPH_BUFFERS.clear()
+
 
 __all__ = [
     "PAPProjectionStepGraphContext",
@@ -356,4 +395,5 @@ __all__ = [
     "pap_projection_step_graph_enabled",
     "prepare_projection_step_graph",
     "register_projection_step_graph_adapter",
+    "shutdown_projection_step_graph",
 ]
