@@ -71,6 +71,14 @@ Do not silently replace these observations. A new baseline must use this
 wrapper, preserve both input digests and the recorded software versions, and
 be added as a new versioned result rather than overwriting the current point.
 
+The PAP v0.26 port at `63a313b365` uses the same wrapper with Prefill async
+scheduling disabled. Its three-run medians are 4797.06-ms mean TTFT,
+55.210-ms mean ITL, 65.039-ms P99 ITL, and 2.395 requests/s. Relative to the
+source PAP milestone, mean TTFT is 1.95% higher, while mean ITL improves 9.02%,
+P99 ITL improves 11.66%, and throughput improves 4.67%. See
+`../porting/v026/performance_20260824.md` for the individual runs and gate
+interpretation.
+
 ## Run one PAP workload
 
 The PAP launcher starts all services and then calls `run_profile.sh`:
