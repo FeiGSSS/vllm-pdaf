@@ -9,6 +9,7 @@ implementation is recovered from Git, not kept as runnable code here.
 The supported PAP benchmark topology is same-host `xPA1P`, TP1, with:
 
 - static 80/12-SM Prefill/Attention MPS partitions;
+- synchronous v0.26 Prefill scheduling for immediate KV handoff;
 - CUDA IPC for colocated Prefill--Attention KV sharing;
 - NVSHMEM P2P inside the whole-step Projection--Attention CUDA Graph;
 - static `conversation_affinity` placement and no PA-to-PA KV relocation;

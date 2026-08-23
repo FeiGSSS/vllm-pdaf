@@ -8,6 +8,8 @@ ROOT_DIR="${PAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 LANE="${1:-}"
 DATASET="${PAP_S128_BASELINE_DATASET:-/data/ssd1/llm-datasets/aiperf-research/pap-synthetic-longctx-i28k-o50-200-t2-5-seed42/aiperf_multiturn_s128.jsonl}"
 DATASET_SHA256="5421e2d4f9868d4b0dc3f36b5a9aa8e256fadfd929dffd789dbb62692591bd9a"
+PAP_EXPECTED_AIPERF_VERSION=0.11.0
+export PAP_EXPECTED_AIPERF_VERSION
 
 case "${LANE}" in
   pap | pd | dynamo | dp8) ;;
@@ -45,6 +47,7 @@ if [[ "${LANE}" == "pap" ]]; then
     MAX_MODEL_LEN=32768 \
     PAP_PREFILL_MAX_NUM_BATCHED_TOKENS=2048 \
     PAP_PREFILL_MAX_NUM_SEQS=256 \
+    PAP_PREFILL_ASYNC_SCHEDULING=off \
     PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS=256 \
     PAP_PROJECTION_MAX_NUM_SEQS=256 \
     PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.90 \

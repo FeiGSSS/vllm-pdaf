@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import math
+
+import pytest
 import torch
 
 import vllm.pap.attention.kernels as kernels
@@ -210,3 +213,84 @@ def test_default_decode_uses_v026_public_abi(monkeypatch) -> None:
         "k_scale": workspace.k_scale,
         "v_scale": workspace.v_scale,
     }
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_qwen3_gqa_paged_decode_matches_reference() -> None:
+    """Check the low-SM PAP kernel on the Qwen3 attention shape."""
+    torch.manual_seed(7)
+    device = torch.device("cuda", 0)
+    dtype = torch.float16
+    batch_size = 3
+    num_heads = 32
+    num_kv_heads = 8
+    head_dim = 128
+    block_size = 16
+    seq_lens = (17, 33, 49)
+    block_rows = (
+        (7, 1, 6, 4),
+        (10, 3, 5, 8),
+        (9, 0, 11, 2),
+    )
+    query = torch.randn(
+        (batch_size, num_heads, head_dim),
+        dtype=dtype,
+        device=device,
+    )
+    key_cache = torch.randn(
+        (12, block_size, num_kv_heads, head_dim),
+        dtype=dtype,
+        device=device,
+    )
+    value_cache = torch.randn_like(key_cache)
+    block_table = torch.tensor(block_rows, dtype=torch.int32, device=device)
+    seq_lens_tensor = torch.tensor(seq_lens, dtype=torch.int32, device=device)
+    metadata = PAPPagedFlashMetadata(
+        block_table=block_table,
+        seq_lens=seq_lens_tensor,
+        cu_seqlens_q=torch.arange(batch_size + 1, dtype=torch.int32, device=device),
+        max_seq_len=max(seq_lens),
+    )
+    config = PAP_TRITON_DECODE_LOW_RESOURCE_CONFIG
+    workspace = PAPPagedDecodeWorkspace(
+        output=torch.empty_like(query),
+        partial=torch.empty(
+            (batch_size, num_heads, config.num_splits, head_dim + 1),
+            dtype=torch.float32,
+            device=device,
+        ),
+        lse=torch.empty((batch_size, num_heads), dtype=torch.float32, device=device),
+        k_scale=torch.ones((), dtype=torch.float32, device=device),
+        v_scale=torch.ones((), dtype=torch.float32, device=device),
+        batch_size=batch_size,
+        num_heads=num_heads,
+        head_dim=head_dim,
+        dtype=dtype,
+        device=device,
+        kernel_config=config,
+    )
+
+    actual = run_paged_decode_attention(
+        query=query,
+        key_cache=key_cache,
+        value_cache=value_cache,
+        metadata=metadata,
+        workspace=workspace,
+        scale=1.0 / math.sqrt(head_dim),
+        block_size=block_size,
+    )
+
+    references = []
+    repeats = num_heads // num_kv_heads
+    for batch_index, seq_len in enumerate(seq_lens):
+        block_count = math.ceil(seq_len / block_size)
+        block_ids = block_table[batch_index, :block_count].long()
+        keys = key_cache[block_ids].reshape(-1, num_kv_heads, head_dim)[:seq_len]
+        values = value_cache[block_ids].reshape(-1, num_kv_heads, head_dim)[:seq_len]
+        keys = keys.repeat_interleave(repeats, dim=1).float()
+        values = values.repeat_interleave(repeats, dim=1).float()
+        scores = torch.einsum("hd,thd->ht", query[batch_index].float(), keys)
+        probabilities = torch.softmax(scores / math.sqrt(head_dim), dim=-1)
+        references.append(torch.einsum("ht,thd->hd", probabilities, values))
+    reference = torch.stack(references).to(dtype)
+    torch.testing.assert_close(actual, reference, rtol=2e-2, atol=2e-2)

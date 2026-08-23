@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+import asyncio
 from types import SimpleNamespace
 
 from vllm.pap.service import create_app, maybe_start_offload_exec_transport
@@ -26,3 +27,17 @@ def test_attention_transport_start_is_unconditional(monkeypatch) -> None:
     )
     maybe_start_offload_exec_transport(app=app)
     assert calls == [{"enabled": True}]
+
+
+def test_attention_health_returns_503_for_dead_receiver(monkeypatch) -> None:
+    app = create_app()
+    monkeypatch.setattr(
+        app.state.pap_peer_manager,
+        "health",
+        lambda: {"status": "error", "receiver_state": "dead"},
+    )
+
+    health_route = next(route for route in app.routes if route.path == "/health")
+    response = asyncio.run(health_route.endpoint())
+
+    assert response.status_code == 503

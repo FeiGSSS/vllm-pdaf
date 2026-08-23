@@ -73,6 +73,24 @@ class PAPAttentionPeerManager:
                 "attention_bound_source_ids": sorted(self.source_ids.values()),
             }
 
+    def health(self) -> dict[str, Any]:
+        """Report runtime health together with the bound receiver state."""
+        with self._lock:
+            threads = tuple(self.receiver_threads.values())
+            bound = bool(self.transports)
+            stopping = self._stopping or self._stopped
+        dead = sorted(thread.name for thread in threads if not thread.is_alive())
+        health = self.runtime.health()
+        health["receiver_threads"] = len(threads)
+        if dead or (bound and not threads) or stopping:
+            health["status"] = "error"
+            health["receiver_state"] = "stopping" if stopping else "dead"
+            if dead:
+                health["dead_receiver_threads"] = dead
+        else:
+            health["receiver_state"] = "running" if threads else "unbound"
+        return health
+
     def bind(self, *, peer_metadata: bytes, source_id: str | None) -> bytes:
         """Bind the Projection peer and start its Graph receiver exactly once."""
         peer_key = hashlib.sha1(peer_metadata).hexdigest()[:16]

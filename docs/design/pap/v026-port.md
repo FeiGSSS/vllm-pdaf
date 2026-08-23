@@ -7,6 +7,10 @@ without copying the old vLLM hot-path forks. The candidate must preserve PAP's
 current correctness and lifecycle semantics and must be performance
 non-inferior on the frozen S128/C32 workload.
 
+The source milestone reports package version 0.23.1 and was developed through
+the project's 0.24-era experiments. It is not a v0.26 runtime with a different
+launcher.
+
 The supported runtime is Qwen3-8B FP16 TP1, same-host xPA1P with one
 Projection, Prefill-owned KV shared through CUDA IPC, Attention--Projection
 communication through the minimal NVSHMEM whole-step Graph, static
@@ -28,6 +32,9 @@ of this port.
 5. HTTP control routes use endpoint plugins. Engine control uses the generic
    utility channel and an isolated PAP lifecycle adapter.
 6. With PAP disabled, vLLM behavior and performance remain unchanged.
+7. Prefill workers explicitly disable v0.26 asynchronous scheduling. PAP uses
+   Prefill completion as a control-plane handoff, and the asynchronous output
+   pipeline delayed that handoff and increased closed-loop Prefill queueing.
 
 The first generic extension is an Attention execution-factory registry. PAP's
 general plugin binds a Projection executor to each Attention instance during
@@ -70,3 +77,33 @@ crosses a non-inferiority boundary.
 Capture without replay, configured NIXL without a live data-path audit,
 455 requests with length-only correctness, or stale tests that assert removed
 architectures do not satisfy these gates.
+
+## Runtime lifecycle boundary
+
+The same-host NVSHMEM world and its symmetric allocations are process-lifetime
+resources. A normal launcher shutdown first drains requests, wakes any blocked
+Attention Graph receiver through its device abort signal, joins the receiver,
+and then exits every PE process. An abort that wakes a pending Graph replay
+also suppresses that step's KV commit. The runtime intentionally does not call a
+collective `nvshmem_free`/`nvshmem_finalize` after a peer has crashed, because
+collective teardown cannot be made fail-safe when that PE is gone.
+
+The device abort guarantees that a Graph still waiting for QKV can be woken and
+will not start a later output put. It cannot recall a remote put that had
+already passed its abort check before shutdown began.
+
+Attention health is fail-closed after binding: a stopped or dead Graph receiver
+changes `/health` from `ok` to `error`.
+
+## Current validation evidence
+
+- Qwen3 GQA paged decode matches a PyTorch reference for 32 Q heads, 8 KV
+  heads, head dimension 128, mixed sequence lengths, and non-contiguous block
+  tables.
+- A fixed greedy subset matched native vLLM output; one additional FP16 prompt
+  diverged after 27 matching tokens, so cross-kernel bitwise parity is not a
+  supported contract.
+- 1PA1P and 7PA1P completed live CUDA-IPC/NVSHMEM Graph, routing, drain, and
+  correctness audits. The frozen S128/C32 input completed 455/455 requests in
+  every accepted repetition.
+- PAP-disabled scheduler/KV tests and a native v0.26 Qwen3 service run passed.

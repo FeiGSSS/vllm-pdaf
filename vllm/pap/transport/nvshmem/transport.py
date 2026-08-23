@@ -40,6 +40,7 @@ _METADATA_VERSION = 3
 _READY_QKV = 0
 _READY_OUTPUT = 1
 _RELEASE_QKV = 2
+_GRAPH_ABORT = 3
 
 
 @dataclass
@@ -233,6 +234,7 @@ class PAPNVSHMEMTransport:
         self._world_ready = False
         self._stopped = threading.Event()
         self._closed = False
+        self._lifecycle_lock = threading.Lock()
         self._send_lock = threading.Lock()
         self._step_prepare_handler: Any = None
         self._qkv_send_generation = 1
@@ -472,18 +474,40 @@ class PAPNVSHMEMTransport:
         return self._qkv_stream
 
     def stop_receiving(self) -> None:
-        self._stopped.set()
-        if not self._world_ready or self.peer_rank is None:
-            return
-        signal_i32 = self._signals().int32_tensor
-        if signal_i32 is None:
-            return
-        signal_index = self.world.signal_offset(
-            _READY_QKV,
-            self.peer_rank,
-        ) // struct.calcsize("i")
-        with torch.accelerator.device_index(self.device.index):
-            signal_i32[signal_index].fill_((1 << 31) - 1)
+        with self._lifecycle_lock:
+            self._stopped.set()
+            if not self._world_ready or self.peer_rank is None:
+                return
+            signal_i32 = self._signals().int32_tensor
+            graph_signal_i32 = self._graph_signals().int32_tensor
+            if signal_i32 is None or graph_signal_i32 is None:
+                return
+            control_signal_index = self.world.signal_offset(
+                _READY_QKV,
+                self.peer_rank,
+            ) // struct.calcsize("i")
+            graph_signal_index = self.world.signal_offset(
+                _READY_QKV,
+                self.peer_rank,
+            ) // struct.calcsize("i")
+            abort_signal_index = self.world.signal_offset(
+                _GRAPH_ABORT,
+                self.world.rank,
+            ) // struct.calcsize("i")
+            with torch.accelerator.device_index(self.device.index):
+                stream = torch.cuda.current_stream(self.device)
+                graph_signal_i32[abort_signal_index].fill_(1)
+                graph_signal_i32[graph_signal_index].fill_((1 << 31) - 1)
+                signal_i32[control_signal_index].fill_((1 << 31) - 1)
+                stream.synchronize()
+
+    def commit_received_step(self, callback: Any) -> bool:
+        """Commit a completed Graph step unless shutdown won the race."""
+        with self._lifecycle_lock:
+            if self._closed or self._stopped.is_set():
+                return False
+            callback()
+            return True
 
     def close(self) -> None:
         self._closed = True
@@ -680,6 +704,10 @@ class PAPNVSHMEMTransport:
             signal=self._graph_signals(),
             signal_offset=self.world.signal_offset(
                 ready_kind,
+                self.world.rank,
+            ),
+            abort_signal_offset=self.world.signal_offset(
+                _GRAPH_ABORT,
                 self.world.rank,
             ),
             epoch=self._graph_epoch_tensor(),

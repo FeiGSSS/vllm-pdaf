@@ -23,6 +23,7 @@ upstream Git commit. `AIPERF_BIN` selects the client executable and defaults
 to `.venv-aiperf/bin/aiperf`. Every run records the PyPI package version and
 executable in `aiperf_install.env`; a source-checkout commit, when available,
 is supplemental provenance and does not describe the installed package.
+`run_profile.sh` fails closed unless the executable reports AIPerf 0.11.0.
 
 ## Files
 
@@ -65,6 +66,10 @@ The frozen one-run observations are project PD: 7432.34-ms mean TTFT,
 61.391-ms mean ITL, and 1.949 requests/s. These are the default comparison
 points, not repeated paper-ready estimates. The former project-source vLLM
 0.23 PD result is retained only as a version-control observation.
+
+Do not silently replace these observations. A new baseline must use this
+wrapper, preserve both input digests and the recorded software versions, and
+be added as a new versioned result rather than overwriting the current point.
 
 ## Run one PAP workload
 

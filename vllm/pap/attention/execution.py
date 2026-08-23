@@ -29,11 +29,13 @@ def run_offload_exec_nvshmem_graph_loop(
             peer_id=peer_id,
             rows=descriptor.item_count,
         )
-        graph_executor.execute(
+        committed = graph_executor.execute(
             descriptor=descriptor,
             qkv_batch=qkv_batch,
             context=step_context,
         )
+        if not committed:
+            return
         for layer_name in step_context.expected_layers:
             registry.record_offload_exec_compute(
                 layer_name=layer_name,

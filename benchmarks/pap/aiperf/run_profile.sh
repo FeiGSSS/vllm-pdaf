@@ -102,6 +102,11 @@ esac
 
 mkdir -p "${AIPERF_OUTPUT_DIR}"
 AIPERF_VERSION="$("${AIPERF_BIN}" --version)"
+EXPECTED_AIPERF_VERSION="${PAP_EXPECTED_AIPERF_VERSION:-0.11.0}"
+if [[ "${AIPERF_VERSION}" != "${EXPECTED_AIPERF_VERSION}" ]]; then
+  echo "AIPerf version mismatch: expected ${EXPECTED_AIPERF_VERSION}, got ${AIPERF_VERSION}" >&2
+  exit 1
+fi
 printf '%s\n' "${AIPERF_VERSION}" \
   > "${AIPERF_OUTPUT_DIR}/aiperf_version.txt"
 {

@@ -39,8 +39,12 @@ __global__ void wait_signal_kernel(std::uint64_t* signal,
 
 __global__ void put_signal_kernel(void* destination, const void* source,
                                   std::size_t num_bytes, std::uint64_t* signal,
+                                  const std::uint64_t* abort_signal,
                                   const std::uint64_t* epoch, int layer_count,
                                   int layer_index, int peer) {
+  if (*abort_signal != 0) {
+    return;
+  }
   const std::uint64_t value = generation(epoch, layer_count, layer_index);
   nvshmemx_putmem_signal_block(destination, source, num_bytes, signal, value,
                                NVSHMEM_SIGNAL_SET, peer);
@@ -127,7 +131,7 @@ int launch_status() { return static_cast<int>(cudaGetLastError()); }
 
 }  // namespace
 
-extern "C" int pap_nvshmem_device_bridge_version() { return 4; }
+extern "C" int pap_nvshmem_device_bridge_version() { return 5; }
 
 extern "C" int pap_nvshmem_device_bridge_get_unique_id(void* output,
                                                        std::size_t num_bytes) {
@@ -208,13 +212,15 @@ extern "C" int pap_nvshmem_graph_wait_signal(std::uint64_t* signal,
 
 extern "C" int pap_nvshmem_graph_put_signal(
     void* destination, const void* source, std::size_t num_bytes,
-    std::uint64_t* signal, const std::uint64_t* epoch, int layer_count,
-    int layer_index, int peer, cudaStream_t stream) {
+    std::uint64_t* signal, const std::uint64_t* abort_signal,
+    const std::uint64_t* epoch, int layer_count, int layer_index, int peer,
+    cudaStream_t stream) {
   void* arguments[] = {
       &destination,
       const_cast<void**>(&source),
       &num_bytes,
       &signal,
+      const_cast<std::uint64_t**>(&abort_signal),
       const_cast<std::uint64_t**>(&epoch),
       &layer_count,
       &layer_index,

@@ -151,7 +151,7 @@ class _NVSHMEMBindings:
         device = self.device_library
         device.pap_nvshmem_device_bridge_version.argtypes = []
         device.pap_nvshmem_device_bridge_version.restype = ctypes.c_int
-        if int(device.pap_nvshmem_device_bridge_version()) != 4:
+        if int(device.pap_nvshmem_device_bridge_version()) != 5:
             raise PAPNVSHMEMError("PAP NVSHMEM GPU graph bridge version mismatch")
         device.pap_nvshmem_device_bridge_get_unique_id.argtypes = [
             ctypes.c_void_p,
@@ -214,6 +214,7 @@ class _NVSHMEMBindings:
             ctypes.c_void_p,
             ctypes.c_void_p,
             ctypes.c_size_t,
+            ctypes.c_void_p,
             ctypes.c_void_p,
             ctypes.c_void_p,
             ctypes.c_int,
@@ -433,6 +434,7 @@ class PAPNVSHMEMRuntime:
         num_bytes: int,
         signal: PAPNVSHMEMAllocation,
         signal_offset: int,
+        abort_signal_offset: int,
         epoch: torch.Tensor,
         layer_count: int,
         layer_index: int,
@@ -445,6 +447,11 @@ class PAPNVSHMEMRuntime:
         self._validate_peer(peer)
         self._validate_range(destination, destination_offset, num_bytes)
         self._validate_range(signal, signal_offset, ctypes.sizeof(ctypes.c_uint64))
+        self._validate_range(
+            signal,
+            abort_signal_offset,
+            ctypes.sizeof(ctypes.c_uint64),
+        )
         if (
             source.device != torch.device("cuda", self.device_index)
             or not source.is_contiguous()
@@ -462,6 +469,7 @@ class PAPNVSHMEMRuntime:
                 ctypes.c_void_p(source.data_ptr()),
                 num_bytes,
                 ctypes.c_void_p(signal.pointer_at(signal_offset)),
+                ctypes.c_void_p(signal.pointer_at(abort_signal_offset)),
                 ctypes.c_void_p(epoch.data_ptr()),
                 layer_count,
                 layer_index,

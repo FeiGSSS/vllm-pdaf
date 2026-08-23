@@ -22,6 +22,7 @@ from typing import Any
 
 import pybase64 as base64
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import JSONResponse
 
 from vllm.pap.attention import PAPAttentionRuntime
 from vllm.pap.attention.peers import (
@@ -134,8 +135,11 @@ def create_app(
     app.state.registry = registry
 
     @app.get("/health")
-    async def health() -> dict[str, Any]:
-        return runtime.health()
+    async def health() -> Any:
+        payload = peer_manager.health()
+        if payload["status"] != "ok":
+            return JSONResponse(payload, status_code=503)
+        return payload
 
     @app.get("/v1/pap/attention/stats")
     async def attention_stats() -> dict[str, Any]:

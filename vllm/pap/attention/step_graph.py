@@ -51,7 +51,7 @@ class PAPAttentionStepGraphExecutor:
         descriptor: Any,
         qkv_batch: torch.Tensor,
         context: PAPAttentionStepContext,
-    ) -> None:
+    ) -> bool:
         """Replay one complete Attention step and commit its KV state."""
         if context is None:
             raise RuntimeError("PAP Attention graph has no prepared step context")
@@ -91,7 +91,9 @@ class PAPAttentionStepGraphExecutor:
         with torch.cuda.stream(entry.stream):
             entry.graph.replay()
         entry.stream.synchronize()
-        self._commit_context(context, layer_names)
+        return self.transport.commit_received_step(
+            lambda: self._commit_context(context, layer_names)
+        )
 
     def _entry_key(
         self,

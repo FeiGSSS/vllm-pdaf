@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-from threading import Event, Thread
+from threading import Event, Lock, Thread
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +11,7 @@ from vllm.pap.attention.peers import (
     PAPAttentionPeerManager,
 )
 from vllm.pap.protocol import PAPOffloadExecTransportClosed
+from vllm.pap.transport.nvshmem.transport import PAPNVSHMEMTransport
 
 
 def test_graph_receive_loop_treats_transport_stop_as_normal() -> None:
@@ -64,3 +65,16 @@ def test_peer_manager_stops_receiver_before_runtime_and_transport() -> None:
     assert events == ["stop_receiving", "runtime_stop", "close"]
     with pytest.raises(PAPAttentionPeerConflict, match="stopping"):
         manager.bind(peer_metadata=b"peer", source_id=None)
+
+
+def test_transport_does_not_commit_after_receive_stop() -> None:
+    transport = object.__new__(PAPNVSHMEMTransport)
+    transport._lifecycle_lock = Lock()
+    transport._stopped = Event()
+    transport._closed = False
+    commits = []
+
+    assert transport.commit_received_step(lambda: commits.append("first"))
+    transport._stopped.set()
+    assert not transport.commit_received_step(lambda: commits.append("late"))
+    assert commits == ["first"]

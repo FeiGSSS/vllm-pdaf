@@ -364,6 +364,16 @@ if ! [[ "${PAP_DEFERRED_TRACE_FLUSH_TIMEOUT}" =~ ^[1-9][0-9]*$ \
   exit 2
 fi
 PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES="${PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES:-1,2,4,8,16,32,64,128}"
+PAP_PREFILL_ASYNC_SCHEDULING="${PAP_PREFILL_ASYNC_SCHEDULING:-off}"
+case "${PAP_PREFILL_ASYNC_SCHEDULING}" in
+  auto) PREFILL_ASYNC_SCHEDULING_ARGS=() ;;
+  on) PREFILL_ASYNC_SCHEDULING_ARGS=(--async-scheduling) ;;
+  off) PREFILL_ASYNC_SCHEDULING_ARGS=(--no-async-scheduling) ;;
+  *)
+    echo "PAP_PREFILL_ASYNC_SCHEDULING must be auto, on, or off" >&2
+    exit 2
+    ;;
+esac
 for capture_sizes in "${PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES}"; do
   if ! [[ "${capture_sizes}" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]]; then
     echo "ERROR: CUDA Graph capture sizes must be positive integer CSV" >&2
@@ -1418,6 +1428,8 @@ write_effective_config() {
     printf 'PAP_PROJECTION_EXECUTION_MODE=pap_whole_step_cuda_graph\n'
     printf 'PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES=%q\n' \
       "${PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES}"
+    printf 'PAP_PREFILL_ASYNC_SCHEDULING=%q\n' \
+      "${PAP_PREFILL_ASYNC_SCHEDULING}"
     printf 'PAP_ATTENTION_PROJECTION_GRAPH_MODE=whole_step\n'
     printf 'CLUSTER_READY_WAIT_SECONDS=%q\n' "${CLUSTER_READY_WAIT_SECONDS}"
     printf 'PAP_BENCH_GATEWAY_DRAIN_TIMEOUT=%q\n' \
@@ -2114,6 +2126,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       --max-num-seqs "${PAP_PREFILL_MAX_NUM_SEQS}" \
       --max-num-batched-tokens \
         "${PAP_PREFILL_MAX_NUM_BATCHED_TOKENS}" \
+      "${PREFILL_ASYNC_SCHEDULING_ARGS[@]}" \
       "${TOOL_ARGS[@]}" \
       --tensor-parallel-size "${PAP_TP_SIZE}" \
       --gpu-memory-utilization "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}" \
