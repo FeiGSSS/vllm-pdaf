@@ -422,7 +422,6 @@ export PAP_LEASE_RELEASE_RETRY_MAX_SECONDS
 export PAP_KV_LEASE_TTL_SECONDS
 
 export VLLM_USE_FLASHINFER_SAMPLER="${VLLM_USE_FLASHINFER_SAMPLER:-0}"
-export VLLM_USE_V1=1
 export VLLM_USE_V2_MODEL_RUNNER=1
 export VLLM_ENABLE_V1_MULTIPROCESSING="${VLLM_ENABLE_V1_MULTIPROCESSING:-1}"
 export VLLM_WORKER_MULTIPROC_METHOD="${VLLM_WORKER_MULTIPROC_METHOD:-spawn}"
@@ -1608,7 +1607,7 @@ audit_correctness_logs() {
   local matches_path="${RUN_ROOT}/correctness_audit_matches.log"
   local summary_path="${RUN_ROOT}/correctness_audit.env"
   local pattern
-  pattern='CUDA out of memory|EngineDeadError|Traceback|PAP decode commit failed|non-contiguous PAP decode commit|conflicting duplicate PAP decode commit|PAP lease release raced|PAP Prefill request .* without a KV lease|PAP control is not initialized|deferred PAP EngineCore control failed|new_token_ids length must match new_seq_len delta|PAP decode-token delivery failed|PAP decode-token queue is full|PAP decode-token join flush timed out|PAP lease release failed|PAP unified KV append out of range|PAP unified KV state missing|PAP unified KV state changed during decode append|PAP unified KV seq_len changed during decode append|prefill KV must reach the registered prefix before unified decode attention|PAP unified paged FlashAttention failed'
+  pattern='CUDA out of memory|EngineDeadError|^Traceback| ERROR .*Traceback|Exception in thread|PAP decode commit failed|non-contiguous PAP decode commit|conflicting duplicate PAP decode commit|PAP lease release raced|PAP Prefill request .* without a KV lease|PAP control is not initialized|deferred PAP EngineCore control failed|new_token_ids length must match new_seq_len delta|PAP decode-token delivery failed|PAP decode-token queue is full|PAP decode-token join flush timed out|PAP lease release failed|PAP unified KV append out of range|PAP unified KV state missing|PAP unified KV state changed during decode append|PAP unified KV seq_len changed during decode append|prefill KV must reach the registered prefix before unified decode attention|PAP unified paged FlashAttention failed'
 
   if rg -n --no-heading "${pattern}" "${RUN_LOG_DIR}" > "${matches_path}"; then
     {
@@ -1871,6 +1870,14 @@ for (group, name), value in expected.items():
         raise SystemExit(f"invalid {group}/{name} entry point: {entries}")
 
 from vllm.pap.kv_connector import PAPPrefillConnector  # noqa: F401
+
+flashinfer = metadata.version("flashinfer-python")
+cubin = metadata.version("flashinfer-cubin")
+if flashinfer != cubin:
+    raise SystemExit(
+        f"FlashInfer package mismatch: flashinfer-python={flashinfer}, "
+        f"flashinfer-cubin={cubin}"
+    )
 PY
 
 ensure_dataset
@@ -2078,6 +2085,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       fi
     )" \
     PAP_RUNTIME_CUDA_CONTEXT_ROLE=prefill \
+    VLLM_PLUGINS=pap \
     PAP_MODEL_HOOKS=1 \
     PAP_CUDAGRAPH_COMPATIBLE=1 \
     PAP_CUDAGRAPH_ROLE=prefill \
@@ -2128,6 +2136,7 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     PAP_ATTENTION_PORT_BASE="${ATTENTION_PORT_BASE}" \
     PAP_TP_SIZE="${PAP_TP_SIZE}" \
     PAP_PROJECTION_KV_UNAWARE=1 \
+    VLLM_PLUGINS=pap \
     PAP_MODEL_HOOKS=1 \
     PAP_CUDAGRAPH_COMPATIBLE=1 \
     PAP_CUDAGRAPH_ROLE=projection \

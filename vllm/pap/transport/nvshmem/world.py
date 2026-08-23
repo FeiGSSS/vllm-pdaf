@@ -152,6 +152,13 @@ class PAPNVSHMEMWorld:
     def _initialize(self) -> None:
         try:
             torch.accelerator.set_device_index(self.config.device_index)
+            # set_device alone does not materialize a current CUDA context.
+            # NVSHMEM UID initialization requires one before get_cucontext.
+            torch.empty(
+                0,
+                dtype=torch.uint8,
+                device=torch.device("cuda", self.config.device_index),
+            )
             self.runtime.initialize_uid(
                 unique_id=self._exchange_unique_id(),
                 rank=self.config.rank,

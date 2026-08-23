@@ -136,6 +136,7 @@ class GPUModelRunner(LoRAModelRunnerMixin):
             vllm_config,
             supports_async_sampled_tokens=True,
         )
+        self.pap_runner.bootstrap_projection_transport(device)
 
         self.device = device
         self.dtype = self.model_config.dtype

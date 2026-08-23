@@ -5,7 +5,9 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+import torch
 
+from vllm.config import CUDAGraphMode
 from vllm.model_executor.layers.attention import attention as attention_module
 from vllm.model_executor.layers.attention.execution import (
     register_attention_execution_factory,
@@ -409,6 +411,25 @@ def test_runner_builds_complete_graph_capture_context() -> None:
     assert context["pap_request_ids"] == ()
     assert context["pap_num_actual_tokens"] == 8
     assert not context["pap_enabled"]
+
+
+def test_projection_warmup_has_no_network_side_effects() -> None:
+    adapter = _runner_adapter(supports_async_sampled_tokens=True)
+    positions = SimpleNamespace(numel=lambda: 8)
+
+    prepared = adapter.prepare_model_forward(
+        request_ids=("_warmup_0_",),
+        num_scheduled_tokens=(8,),
+        num_actual_tokens=8,
+        positions=positions,  # type: ignore[arg-type]
+        seq_lens_cpu_upper_bound=(8,),
+        finished_request_ids=(),
+        dtype=torch.float16,
+        native_cudagraph_mode=CUDAGraphMode.NONE,
+    )
+
+    assert prepared.step_preparation is None
+    assert prepared.additional_kwargs["pap_enabled"] is False
 
 
 @pytest.mark.parametrize(

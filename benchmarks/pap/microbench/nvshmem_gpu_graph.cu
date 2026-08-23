@@ -13,9 +13,6 @@
 
 extern "C" int pap_nvshmem_graph_advance_epoch(std::uint64_t* epoch,
                                                cudaStream_t stream);
-extern "C" int pap_nvshmem_device_bridge_init(unsigned int flags,
-                                              nvshmemx_init_attr_t* attributes);
-extern "C" void pap_nvshmem_device_bridge_finalize();
 extern "C" int pap_nvshmem_graph_wait_signal(std::uint64_t* signal,
                                              const std::uint64_t* epoch,
                                              int layer_count, int layer_index,
@@ -123,12 +120,18 @@ __global__ void validate_payload(const int* payload, const std::uint64_t* epoch,
 
 int main(int argc, char** argv) {
   const Options options = parse_args(argc, argv);
-  nvshmem_init();
-  if (pap_nvshmem_device_bridge_init(0, nullptr) != 0) {
-    std::fprintf(stderr, "failed to initialize NVSHMEM bridge component\n");
-    nvshmem_finalize();
+  const char* pmi_rank = std::getenv("PMI_RANK");
+  if (pmi_rank == nullptr) {
+    std::fprintf(stderr, "PMI_RANK is required to select a GPU before init\n");
     return 2;
   }
+  const int selected_device = std::atoi(pmi_rank);
+  if (selected_device < 0) {
+    std::fprintf(stderr, "PMI_RANK must be non-negative\n");
+    return 2;
+  }
+  CUDA_CHECK(cudaSetDevice(selected_device));
+  nvshmem_init();
   const int mype = nvshmem_my_pe();
   const int npes = nvshmem_n_pes();
   if (npes != 2) {
@@ -140,7 +143,12 @@ int main(int argc, char** argv) {
   }
 
   const int local_pe = nvshmem_team_my_pe(NVSHMEMX_TEAM_NODE);
-  CUDA_CHECK(cudaSetDevice(local_pe));
+  if (local_pe != selected_device) {
+    std::fprintf(stderr, "PE %d selected GPU %d but NVSHMEM assigned GPU %d\n",
+                 mype, selected_device, local_pe);
+    nvshmem_finalize();
+    return 2;
+  }
   cudaDeviceProp properties{};
   CUDA_CHECK(cudaGetDeviceProperties(&properties, local_pe));
   if (!properties.cooperativeLaunch) {
@@ -277,7 +285,6 @@ int main(int argc, char** argv) {
   cudaFree(epoch);
   nvshmem_free(signals);
   nvshmem_free(payload);
-  pap_nvshmem_device_bridge_finalize();
   nvshmem_finalize();
   return host_errors == 0 ? 0 : 1;
 }

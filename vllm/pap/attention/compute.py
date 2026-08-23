@@ -22,6 +22,7 @@ from vllm.pap.deferred_cuda_trace import (
     record_deferred_host_duration,
 )
 from vllm.pap.kv.decode_state import _DEFERRED_CUDA_TRACE_ENABLED
+from vllm.pap.kv.layout import split_paged_kv_cache
 from vllm.pap.kv.metadata import (
     PAPPagedBlockTableBuffer,
     PAPPagedFlashMetadata,
@@ -63,7 +64,10 @@ def _compute_unified_paged_attention_batch(
 
     if metadata.max_seq_len <= 0:
         return None
-    key_cache, value_cache = base_kv.unbind(1)
+    key_cache, value_cache = split_paged_kv_cache(
+        base_kv,
+        int(query_batch.shape[-1]),
+    )
     _log_kv_locality_profile(
         mode="unified",
         layer_name=layer_name,

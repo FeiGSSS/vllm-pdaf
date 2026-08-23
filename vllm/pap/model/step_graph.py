@@ -197,8 +197,8 @@ def _update_routed_graph_buffers(
             raise RuntimeError("PAP Projection routed graph row count mismatch")
         buffers.indices.copy_(host_indices, non_blocking=True)
         buffers.counts.copy_(host_counts, non_blocking=True)
-        copy_done = torch.Event()
-        copy_done.record(torch.accelerator.current_stream(device))
+        copy_done = torch.cuda.Event()
+        copy_done.record(torch.cuda.current_stream(device))
         buffers.copy_done_events[host_slot] = copy_done
         return buffers
 
@@ -324,15 +324,15 @@ class PAPProjectionStepGraphManager:
         )
         key = (*preparation.key, input_signatures)
         entry = self._entries.get(key)
-        current_stream = torch.accelerator.current_stream(inputs[0].device)
+        current_stream = torch.cuda.current_stream(inputs[0].device)
         if entry is not None:
             entry.stream.wait_stream(current_stream)
-            with torch.accelerator.stream(entry.stream):
+            with torch.cuda.stream(entry.stream):
                 entry.graph.replay()
             current_stream.wait_stream(entry.stream)
             return entry.output
 
-        graph_stream = torch.Stream(device=inputs[0].device)
+        graph_stream = torch.cuda.Stream(device=inputs[0].device)
         graph_stream.wait_stream(current_stream)
         graph = torch.cuda.CUDAGraph()
         route_is_new = preparation.key not in self._route_keys
@@ -351,7 +351,7 @@ class PAPProjectionStepGraphManager:
             preparation.key[0],
         )
         with (
-            torch.accelerator.stream(graph_stream),
+            torch.cuda.stream(graph_stream),
             projection_step_graph_capture_context(preparation.context),
             torch.cuda.graph(
                 graph,
@@ -360,7 +360,7 @@ class PAPProjectionStepGraphManager:
             ),
         ):
             output = forward()
-        with torch.accelerator.stream(graph_stream):
+        with torch.cuda.stream(graph_stream):
             graph.replay()
         current_stream.wait_stream(graph_stream)
         entry = _PAPProjectionGraphEntry(

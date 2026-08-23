@@ -15,47 +15,13 @@ import torch
 
 from vllm.pap.cuda_stream_memops import cuda_stream_handle, stream_wait_value32
 
-_NVSHMEM_VERSION = "3.2.5"
+_NVSHMEM_VERSION = "3.3.24"
 _UNIQUE_ID_BYTES = 128
-_INIT_WITH_UNIQUE_ID = 1 << 3
 _SIGNAL_SET = 9
-_VERSION_BASE = 1 << 16
 
 
 class PAPNVSHMEMError(RuntimeError):
     """Raised when the NVSHMEM runtime contract is not satisfied."""
-
-
-class _UniqueID(ctypes.Structure):
-    _fields_ = [
-        ("version", ctypes.c_int),
-        ("internal", ctypes.c_char * 124),
-    ]
-
-
-class _UniqueIDArgs(ctypes.Structure):
-    _fields_ = [
-        ("version", ctypes.c_int),
-        ("unique_id", ctypes.POINTER(_UniqueID)),
-        ("rank", ctypes.c_int),
-        ("world_size", ctypes.c_int),
-    ]
-
-
-class _InitArgs(ctypes.Structure):
-    _fields_ = [
-        ("version", ctypes.c_int),
-        ("unique_id_args", _UniqueIDArgs),
-        ("content", ctypes.c_char * 96),
-    ]
-
-
-class _InitAttr(ctypes.Structure):
-    _fields_ = [
-        ("version", ctypes.c_int),
-        ("mpi_comm", ctypes.c_void_p),
-        ("args", _InitArgs),
-    ]
 
 
 class _DLDevice(ctypes.Structure):
@@ -119,7 +85,7 @@ def _default_prefix() -> Path:
     configured = os.environ.get("PAP_NVSHMEM_PREFIX")
     if configured:
         return Path(configured)
-    return _repo_root() / ".local" / "nvshmem-3.2.5-cuda12"
+    return _repo_root() / ".local" / "nvshmem-3.3.24-cuda13"
 
 
 def _tensor_from_device_pointer(
@@ -179,36 +145,26 @@ class _NVSHMEMBindings:
             str(device_library_path),
             mode=ctypes.RTLD_GLOBAL,
         )
-        library_path = prefix / "lib" / "libnvshmem_host.so.3"
-        if not library_path.is_file():
-            raise PAPNVSHMEMError(f"NVSHMEM library is missing: {library_path}")
-        self.library = ctypes.CDLL(
-            str(library_path),
-            mode=ctypes.RTLD_GLOBAL,
-        )
         self._bind()
 
     def _bind(self) -> None:
-        library = self.library
-        library.nvshmemx_get_uniqueid.argtypes = [ctypes.POINTER(_UniqueID)]
-        library.nvshmemx_get_uniqueid.restype = ctypes.c_int
-        library.nvshmemx_set_attr_uniqueid_args.argtypes = [
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.POINTER(_UniqueID),
-            ctypes.POINTER(_InitAttr),
-        ]
-        library.nvshmemx_set_attr_uniqueid_args.restype = ctypes.c_int
         device = self.device_library
         device.pap_nvshmem_device_bridge_version.argtypes = []
         device.pap_nvshmem_device_bridge_version.restype = ctypes.c_int
-        if int(device.pap_nvshmem_device_bridge_version()) != 3:
+        if int(device.pap_nvshmem_device_bridge_version()) != 4:
             raise PAPNVSHMEMError("PAP NVSHMEM GPU graph bridge version mismatch")
-        device.pap_nvshmem_device_bridge_init.argtypes = [
-            ctypes.c_uint,
+        device.pap_nvshmem_device_bridge_get_unique_id.argtypes = [
             ctypes.c_void_p,
+            ctypes.c_size_t,
         ]
-        device.pap_nvshmem_device_bridge_init.restype = ctypes.c_int
+        device.pap_nvshmem_device_bridge_get_unique_id.restype = ctypes.c_int
+        device.pap_nvshmem_device_bridge_init_uid.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+            ctypes.c_int,
+            ctypes.c_int,
+        ]
+        device.pap_nvshmem_device_bridge_init_uid.restype = ctypes.c_int
         device.pap_nvshmem_device_bridge_finalize.argtypes = []
         device.pap_nvshmem_device_bridge_finalize.restype = None
         device.pap_nvshmem_device_bridge_my_pe.argtypes = []
@@ -338,8 +294,11 @@ class PAPNVSHMEMRuntime:
 
     def get_unique_id(self) -> bytes:
         """Create the root bootstrap identifier before collective init."""
-        unique_id = _UniqueID()
-        status = self._bindings.library.nvshmemx_get_uniqueid(ctypes.byref(unique_id))
+        unique_id = (ctypes.c_ubyte * _UNIQUE_ID_BYTES)()
+        status = self._bindings.device_library.pap_nvshmem_device_bridge_get_unique_id(
+            ctypes.byref(unique_id),
+            len(unique_id),
+        )
         if status != 0:
             raise PAPNVSHMEMError(f"NVSHMEM unique ID failed: {status}")
         return bytes(unique_id)
@@ -369,35 +328,13 @@ class PAPNVSHMEMRuntime:
             if self._finalized:
                 raise PAPNVSHMEMError("NVSHMEM runtime was already finalized")
 
-            torch.accelerator.set_device_index(device_index)
-            uid = _UniqueID.from_buffer_copy(unique_id)
-            uid_args = _UniqueIDArgs(
-                version=_VERSION_BASE + ctypes.sizeof(_UniqueIDArgs),
-                unique_id=ctypes.pointer(uid),
-                rank=rank,
-                world_size=world_size,
-            )
-            init_args = _InitArgs(
-                version=_VERSION_BASE + ctypes.sizeof(_InitArgs),
-                unique_id_args=uid_args,
-            )
-            attr = _InitAttr(
-                version=_VERSION_BASE + ctypes.sizeof(_InitAttr),
-                mpi_comm=None,
-                args=init_args,
-            )
-            status = self._bindings.library.nvshmemx_set_attr_uniqueid_args(
+            device_library = self._bindings.device_library
+            uid = (ctypes.c_ubyte * _UNIQUE_ID_BYTES).from_buffer_copy(unique_id)
+            status = device_library.pap_nvshmem_device_bridge_init_uid(
+                ctypes.byref(uid),
+                len(uid),
                 rank,
                 world_size,
-                ctypes.byref(uid),
-                ctypes.byref(attr),
-            )
-            if status != 0:
-                raise PAPNVSHMEMError(f"NVSHMEM UID attributes failed: {status}")
-            device_library = self._bindings.device_library
-            status = device_library.pap_nvshmem_device_bridge_init(
-                _INIT_WITH_UNIQUE_ID,
-                ctypes.byref(attr),
             )
             if status != 0:
                 raise PAPNVSHMEMError(
@@ -846,9 +783,3 @@ class PAPNVSHMEMRuntime:
     ) -> None:
         if offset < 0 or num_bytes < 0 or offset + num_bytes > allocation.num_bytes:
             raise PAPNVSHMEMError("NVSHMEM allocation range is out of bounds")
-
-
-assert ctypes.sizeof(_UniqueID) == 128
-assert ctypes.sizeof(_UniqueIDArgs) == 24
-assert ctypes.sizeof(_InitArgs) == 128
-assert ctypes.sizeof(_InitAttr) == 144

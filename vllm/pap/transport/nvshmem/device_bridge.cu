@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 
 namespace {
 
@@ -126,11 +127,36 @@ int launch_status() { return static_cast<int>(cudaGetLastError()); }
 
 }  // namespace
 
-extern "C" int pap_nvshmem_device_bridge_version() { return 3; }
+extern "C" int pap_nvshmem_device_bridge_version() { return 4; }
 
-extern "C" int pap_nvshmem_device_bridge_init(
-    unsigned int flags, nvshmemx_init_attr_t* attributes) {
-  return nvshmemx_init_attr(flags, attributes);
+extern "C" int pap_nvshmem_device_bridge_get_unique_id(void* output,
+                                                       std::size_t num_bytes) {
+  if (output == nullptr || num_bytes != sizeof(nvshmemx_uniqueid_t)) {
+    return 22;
+  }
+  nvshmemx_uniqueid_t unique_id = NVSHMEMX_UNIQUEID_INITIALIZER;
+  const int status = nvshmemx_get_uniqueid(&unique_id);
+  if (status == 0) {
+    std::memcpy(output, &unique_id, sizeof(unique_id));
+  }
+  return status;
+}
+
+extern "C" int pap_nvshmem_device_bridge_init_uid(const void* unique_id_bytes,
+                                                  std::size_t num_bytes,
+                                                  int rank, int world_size) {
+  if (unique_id_bytes == nullptr || num_bytes != sizeof(nvshmemx_uniqueid_t)) {
+    return 22;
+  }
+  nvshmemx_uniqueid_t unique_id = NVSHMEMX_UNIQUEID_INITIALIZER;
+  std::memcpy(&unique_id, unique_id_bytes, sizeof(unique_id));
+  nvshmemx_init_attr_t attributes = NVSHMEMX_INIT_ATTR_INITIALIZER;
+  int status = nvshmemx_set_attr_uniqueid_args(rank, world_size, &unique_id,
+                                               &attributes);
+  if (status != 0) {
+    return status;
+  }
+  return nvshmemx_init_attr(NVSHMEMX_INIT_WITH_UNIQUEID, &attributes);
 }
 
 extern "C" void pap_nvshmem_device_bridge_finalize() { nvshmem_finalize(); }

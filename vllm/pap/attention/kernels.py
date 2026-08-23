@@ -10,6 +10,7 @@ from threading import Lock
 
 import torch
 
+from vllm.pap.kv.layout import split_paged_kv_cache
 from vllm.pap.kv.metadata import PAPPagedFlashMetadata
 from vllm.platforms import current_platform
 
@@ -176,8 +177,8 @@ class PAPAttentionStepTensorCache:
             )
             if normalized_device.type == "cuda":
                 if copy_done is None:
-                    copy_done = torch.Event()
-                copy_done.record(torch.accelerator.current_stream(normalized_device))
+                    copy_done = torch.cuda.Event()
+                copy_done.record(torch.cuda.current_stream(normalized_device))
                 self._entries[key] = (host, target, copy_done)
             return target
 
@@ -378,12 +379,12 @@ def warm_paged_decode_attention(
     """Compile the PAP paged-decode kernel before the first decode step."""
     if (
         kv_cache.device.type != "cuda"
-        or kv_cache.ndim != 5
+        or kv_cache.ndim not in (4, 5)
         or int(num_heads) <= 0
         or int(head_dim) <= 0
     ):
         return
-    key_cache, value_cache = kv_cache.unbind(1)
+    key_cache, value_cache = split_paged_kv_cache(kv_cache, int(head_dim))
     device = kv_cache.device
     query = torch.empty(
         (1, int(num_heads), int(head_dim)),
@@ -402,7 +403,7 @@ def warm_paged_decode_attention(
         cu_seqlens_q=torch.arange(2, dtype=torch.int32, device=device),
         max_seq_len=1,
     )
-    stream = torch.Stream(device=device)
+    stream = torch.cuda.Stream(device=device)
     with stream:
         run_paged_decode_attention(
             query=query,

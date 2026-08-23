@@ -19,6 +19,7 @@ from vllm.pap.deferred_cuda_trace import (
     deferred_cuda_trace_enabled,
     end_deferred_cuda_span,
 )
+from vllm.pap.kv.layout import split_paged_kv_cache
 from vllm.pap.kv.metadata import _coerce_block_id
 from vllm.pap.kv.models import (
     PAPAttentionSession,
@@ -514,7 +515,10 @@ class _PAPDecodeStateMixin:
 
             record_start = time.perf_counter() if trace_stats is not None else 0.0
             k_scale, v_scale = scales
-            key_cache, value_cache = base_v_cache.unbind(1)
+            key_cache, value_cache = split_paged_kv_cache(
+                base_v_cache,
+                int(kb.shape[-1]),
+            )
             if (
                 _DEFERRED_CUDA_TRACE_ENABLED
                 and base_v_cache.is_cuda

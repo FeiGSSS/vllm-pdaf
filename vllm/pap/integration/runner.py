@@ -128,6 +128,27 @@ class PAPModelRunnerAdapter:
             )
         self.store.update(request_id, params)
 
+    def bootstrap_projection_transport(self, device: torch.device) -> None:
+        """Complete the Projection NVSHMEM collective before serving requests."""
+        if not self.projection_kv_unaware:
+            return
+        from vllm.pap.transport.nvshmem.world import get_pap_nvshmem_world
+
+        device_index = device.index
+        if device_index is None:
+            device_index = torch.accelerator.current_device_index()
+        try:
+            buffer_bytes = int(os.environ["PAP_NVSHMEM_BUFFER_BYTES"])
+        except (KeyError, ValueError) as exc:
+            raise RuntimeError(
+                "PAP Projection requires PAP_NVSHMEM_BUFFER_BYTES"
+            ) from exc
+        world = get_pap_nvshmem_world(
+            device_index=device_index,
+            buffer_bytes=buffer_bytes,
+        )
+        world.wait_ready()
+
     def remove_request(self, request_id: str) -> None:
         """Remove Projection request state."""
         self.store.remove(request_id)
@@ -263,6 +284,14 @@ class PAPModelRunnerAdapter:
         """Validate and prepare one real model forward before network effects."""
         if not self.projection_kv_unaware:
             return PAPPreparedModelForward({}, None)
+        normalized_ids = tuple(str(request_id) for request_id in request_ids)
+        if normalized_ids and all(
+            request_id.startswith("_warmup_") for request_id in normalized_ids
+        ):
+            return PAPPreparedModelForward(
+                self.build_capture_forward_context({"positions": positions}),
+                None,
+            )
         if native_cudagraph_mode != CUDAGraphMode.NONE:
             raise RuntimeError(
                 "PAP Projection requires native cudagraph_mode=NONE; "

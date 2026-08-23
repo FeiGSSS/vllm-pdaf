@@ -1,7 +1,8 @@
 {
   global:
     pap_nvshmem_device_bridge_version;
-    pap_nvshmem_device_bridge_init;
+    pap_nvshmem_device_bridge_get_unique_id;
+    pap_nvshmem_device_bridge_init_uid;
     pap_nvshmem_device_bridge_finalize;
     pap_nvshmem_device_bridge_my_pe;
     pap_nvshmem_device_bridge_n_pes;

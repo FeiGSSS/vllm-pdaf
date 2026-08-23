@@ -14,6 +14,25 @@ from vllm.pap.protocol import (
 )
 
 
+def _normalize_gpu_uuid(value: object) -> str:
+    return str(value).removeprefix("GPU-").lower()
+
+
+def _resolve_ipc_gpu_uuid(
+    physical_gpu_id: object,
+    available_gpu_ids: list[str],
+) -> str | None:
+    normalized = _normalize_gpu_uuid(physical_gpu_id)
+    return next(
+        (
+            gpu_id
+            for gpu_id in available_gpu_ids
+            if _normalize_gpu_uuid(gpu_id) == normalized
+        ),
+        None,
+    )
+
+
 def open_ipc_tensor_handle(handle: PAPCudaIPCTensorHandle) -> torch.Tensor:
     """Open one CUDA IPC tensor handle on the current physical GPU."""
     from torch.multiprocessing.reductions import rebuild_cuda_tensor
@@ -22,12 +41,13 @@ def open_ipc_tensor_handle(handle: PAPCudaIPCTensorHandle) -> torch.Tensor:
     props = torch.cuda.get_device_properties(device_index)
     physical_gpu_id = str(props.uuid)
     ipc_handle = handle.ipc_handle
-    if physical_gpu_id not in ipc_handle:
+    ipc_gpu_id = _resolve_ipc_gpu_uuid(physical_gpu_id, list(ipc_handle))
+    if ipc_gpu_id is None:
         raise ValueError(
             f"IPC handle not found for GPU UUID {physical_gpu_id}. "
             f"Available UUIDs: {list(ipc_handle.keys())}"
         )
-    args = list(ipc_handle[physical_gpu_id])
+    args = list(ipc_handle[ipc_gpu_id])
     args[6] = device_index
     return rebuild_cuda_tensor(*args)
 

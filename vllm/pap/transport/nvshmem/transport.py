@@ -243,7 +243,7 @@ class PAPNVSHMEMTransport:
             tuple[int, tuple[int, int], torch.dtype, int], torch.Tensor
         ] = {}
         with torch.accelerator.device_index(self.device.index):
-            self._qkv_stream = torch.Stream(device=self.device)
+            self._qkv_stream = torch.cuda.Stream(device=self.device)
             control_bytes = self.world.config.control_bytes
             self._control_host = torch.empty(
                 control_bytes,
@@ -500,7 +500,7 @@ class PAPNVSHMEMTransport:
         with self._send_lock:
             generation = self._qkv_send_generation
             stream = self._qkv_stream
-            current = torch.accelerator.current_stream(self.device)
+            current = torch.cuda.current_stream(self.device)
             stream.wait_stream(current)
             if self._last_qkv_sent:
                 self.world.runtime.wait_signal_on_stream(
@@ -513,7 +513,7 @@ class PAPNVSHMEMTransport:
                     stream=stream,
                 )
             self._control_host[:record_bytes].copy_(source)
-            with torch.accelerator.stream(stream):
+            with torch.cuda.stream(stream):
                 self._control_send[:record_bytes].copy_(
                     self._control_host[:record_bytes],
                     non_blocking=True,
@@ -544,7 +544,7 @@ class PAPNVSHMEMTransport:
         )
         control = self._control()
         offset = self.world.control_slot_offset(peer_rank)
-        with torch.accelerator.stream(stream):
+        with torch.cuda.stream(stream):
             self._control_host.copy_(
                 control.tensor.narrow(0, offset, self.world.config.control_bytes),
                 non_blocking=True,
@@ -583,7 +583,7 @@ class PAPNVSHMEMTransport:
             stream=stream,
         )
         if self._step_prepare_handler is not None:
-            with torch.accelerator.stream(stream):
+            with torch.cuda.stream(stream):
                 plan.step_context = self._step_prepare_handler(descriptor, plan.dtype)
         self._qkv_plan = plan
 

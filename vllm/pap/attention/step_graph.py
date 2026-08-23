@@ -11,6 +11,7 @@ import torch
 
 from vllm.logger import init_logger
 from vllm.pap.attention.kernels import run_paged_decode_attention
+from vllm.pap.kv.layout import split_paged_kv_cache
 from vllm.pap.kv.models import PAPAttentionStepContext
 from vllm.pap.protocol.offload_exec import layer_index_and_template
 
@@ -268,7 +269,7 @@ class PAPAttentionStepGraphExecutor:
         if graph_slot_tensor is None:
             raise RuntimeError("PAP Attention graph KV slots are missing")
         kv_cache = context.layer_states[layer_name][0].kv_cache
-        key_cache, value_cache = kv_cache.unbind(1)
+        key_cache, value_cache = split_paged_kv_cache(kv_cache, context.head_dim)
         workspace = context.paged_decode_workspace
         assert workspace is not None
         torch.ops._C_cache_ops.reshape_and_cache_flash(
@@ -283,7 +284,7 @@ class PAPAttentionStepGraphExecutor:
         )
         states = context.layer_states[layer_name]
         kv_cache = states[0].kv_cache
-        key_cache, value_cache = kv_cache.unbind(1)
+        key_cache, value_cache = split_paged_kv_cache(kv_cache, context.head_dim)
         metadata = context.metadata
         workspace = context.paged_decode_workspace
         assert metadata is not None and workspace is not None

@@ -80,7 +80,12 @@ class PAPControlDispatcher:
     async def _run(self) -> None:
         while (item := await self._queue.get()) is not None:
             try:
-                value = await self._engine_client.call_utility_async(
+                utility_client = getattr(
+                    self._engine_client,
+                    "engine_core",
+                    self._engine_client,
+                )
+                value = await utility_client.call_utility_async(
                     "pap_control", item.operation, item.payload
                 )
             except Exception as exc:

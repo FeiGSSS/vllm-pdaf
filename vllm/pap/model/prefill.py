@@ -292,8 +292,9 @@ class PAPPrefillKVPublisher:
         if kv_cache.device.type != "cuda":
             raise RuntimeError("sealed Prefill KV handoff requires CUDA KV cache")
 
-        ready_event = torch.Event(interprocess=True)
-        ready_event.record(torch.accelerator.current_stream(kv_cache.device))
+        # torch.Event does not implement CUDA IPC handles in PyTorch 2.11.
+        ready_event = torch.cuda.Event(interprocess=True)
+        ready_event.record(torch.cuda.current_stream(kv_cache.device))
         ready_event_handle = ready_event.ipc_handle()
         seq_lens_cpu = seq_lens.detach().to(device="cpu", dtype=torch.long)
         published = 0

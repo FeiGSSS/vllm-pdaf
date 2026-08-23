@@ -202,7 +202,7 @@ def probe_stream_mem_ops(device: torch.device) -> bool:
     try:
         with torch.accelerator.device_index(device.index):
             signal = torch.zeros(1, dtype=torch.int32, device=device)
-            stream = torch.accelerator.current_stream(device)
+            stream = torch.cuda.current_stream(device)
             stream_write_value32(signal, 0, 1, stream)
             stream_wait_value32(signal, 0, 1, stream)
             stream.synchronize()
