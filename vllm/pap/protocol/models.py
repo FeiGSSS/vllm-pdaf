@@ -18,7 +18,7 @@ class PAPAttentionRegistration(BaseModel):
     kv_transfer_params: dict[str, Any] = Field(default_factory=dict)
     prefix_len: int | None = None
     block_size: int = 16
-    max_seq_len: int = 32768
+    max_seq_len: int = 131072
     q_size: int | None = None
     kv_size: int | None = None
 

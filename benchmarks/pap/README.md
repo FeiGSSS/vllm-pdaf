@@ -13,6 +13,7 @@ The supported PAP benchmark topology is same-host `xPA1P`, TP1, with:
 - CUDA IPC for colocated Prefill--Attention KV sharing;
 - NVSHMEM P2P inside the whole-step Projection--Attention CUDA Graph;
 - static `conversation_affinity` placement and no PA-to-PA KV relocation;
+- Qwen3-8B static YaRN with a 131,072-token serving limit;
 - AIPerf as the serving workload client.
 
 The primary eight-GPU comparison is PAP 7PA1P, PD 6P2D, and fused DP8.
@@ -41,9 +42,20 @@ PAP_AIPERF_SESSIONS=128 \
 PAP_AIPERF_VARIABLE_TURNS=1 \
 PAP_AIPERF_EXPECTED_REQUESTS=455 \
 PAP_AIPERF_CONCURRENCY=32 \
-MAX_MODEL_LEN=32768 \
+MAX_MODEL_LEN=131072 \
   bash benchmarks/pap/scripts/run_pap_workload.sh
 ```
+
+The direct PAP runner supplies Qwen's official static-YaRN configuration to
+both Prefill and Projection by default:
+
+```json
+{"rope_parameters":{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":32768}}
+```
+
+Set `PAP_HF_OVERRIDES=` and an explicit `MAX_MODEL_LEN` to run a native-context
+control. Frozen comparison scripts may continue to pin their historical 32K
+configuration explicitly.
 
 Run the current three-architecture matrix with:
 

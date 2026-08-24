@@ -244,13 +244,22 @@ PAP_PREFILL_GPUS="${PAP_PREFILL_GPUS:-${DEFAULT_PREFILL_GPUS}}"
 PAP_PROJECTION_GPUS="${PAP_PROJECTION_GPUS:-${DEFAULT_PROJECTION_GPUS}}"
 PAP_TP_SIZE="${PAP_TP_SIZE:-1}"
 PAP_VLLM_DTYPE="${PAP_VLLM_DTYPE:-float16}"
-MAX_MODEL_LEN="${MAX_MODEL_LEN:-32768}"
+MAX_MODEL_LEN="${MAX_MODEL_LEN:-131072}"
+PAP_DEFAULT_HF_OVERRIDES='{"rope_parameters":{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":32768}}'
+if [[ -z "${PAP_HF_OVERRIDES+x}" ]]; then
+  PAP_HF_OVERRIDES="${PAP_DEFAULT_HF_OVERRIDES}"
+fi
+PAP_MODEL_CONFIG_ARGS=()
+if [[ -n "${PAP_HF_OVERRIDES}" ]]; then
+  PAP_MODEL_CONFIG_ARGS=(--hf-overrides "${PAP_HF_OVERRIDES}")
+fi
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-16384}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
 PAP_PREFILL_MAX_NUM_BATCHED_TOKENS="${PAP_PREFILL_MAX_NUM_BATCHED_TOKENS:-2048}"
 PAP_PREFILL_MAX_NUM_SEQS="${PAP_PREFILL_MAX_NUM_SEQS:-256}"
 PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS="${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS:-256}"
 PAP_PROJECTION_MAX_NUM_SEQS="${PAP_PROJECTION_MAX_NUM_SEQS:-256}"
+PAP_PROJECTION_RUNTIME_HEADROOM_BYTES="${PAP_PROJECTION_RUNTIME_HEADROOM_BYTES:-536870912}"
 PAP_PREFILL_GPU_MEMORY_UTILIZATION="${PAP_PREFILL_GPU_MEMORY_UTILIZATION:-0.90}"
 PAP_STATIC_PREFILL_CHUNKS="${PAP_STATIC_PREFILL_CHUNKS:-20}"
 PAP_STATIC_ATTENTION_CHUNKS="${PAP_STATIC_ATTENTION_CHUNKS:-3}"
@@ -1333,7 +1342,7 @@ write_effective_config() {
     printf 'PAP_PROXY_PORT=%q\n' "${PAP_PROXY_PORT}"
     printf 'PAP_PREFILL_GPU_MEMORY_UTILIZATION=%q\n' "${PAP_PREFILL_GPU_MEMORY_UTILIZATION}"
     printf 'PROJECTION_MEMORY_POLICY=%q\n' \
-      "model_weights_x1.20_plus_kv_validation"
+      "model_weights_x1.20_plus_kv_validation_plus_runtime_headroom"
     printf 'PROJECTION_GPU_MEMORY_UTILIZATION=%q\n' \
       "${PROJECTION_GPU_MEMORY_UTILIZATION}"
     printf 'PROJECTION_MODEL_WEIGHT_BYTES=%q\n' \
@@ -1370,6 +1379,7 @@ write_effective_config() {
     printf 'PAP_PREFILL_GPUS=%q\n' "${PAP_PREFILL_GPUS}"
     printf 'PAP_PROJECTION_GPUS=%q\n' "${PAP_PROJECTION_GPUS}"
     printf 'PAP_VLLM_DTYPE=%q\n' "${PAP_VLLM_DTYPE}"
+    printf 'PAP_HF_OVERRIDES=%q\n' "${PAP_HF_OVERRIDES}"
     printf 'ENABLE_AUTO_TOOL_CHOICE=%q\nTOOL_CALL_PARSER=%q\n' \
       "${ENABLE_AUTO_TOOL_CHOICE}" "${TOOL_CALL_PARSER}"
     printf 'PAP_ROUTING_POLICY=%q\n' "${PAP_ROUTING_POLICY}"
@@ -1423,6 +1433,8 @@ write_effective_config() {
       "${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS}"
     printf 'PAP_PROJECTION_MAX_NUM_SEQS=%q\n' \
       "${PAP_PROJECTION_MAX_NUM_SEQS}"
+    printf 'PAP_PROJECTION_RUNTIME_HEADROOM_BYTES=%q\n' \
+      "${PAP_PROJECTION_RUNTIME_HEADROOM_BYTES}"
     printf 'PAP_PROJECTION_ASYNC_SCHEDULING=%q\n' "1"
     printf 'PAP_PREFILL_EXECUTION_MODE=piecewise_cuda_graph\n'
     printf 'PAP_PROJECTION_EXECUTION_MODE=pap_whole_step_cuda_graph\n'
@@ -1524,6 +1536,7 @@ write_run_metadata() {
   PAP_AIPERF_TIMING_MODE="${PAP_AIPERF_TIMING_MODE}" \
   PAP_AIPERF_REQUEST_RATE="${PAP_AIPERF_REQUEST_RATE}" \
   PAP_VLLM_DTYPE="${PAP_VLLM_DTYPE}" \
+  PAP_HF_OVERRIDES="${PAP_HF_OVERRIDES}" \
   GIT_COMMIT="${GIT_COMMIT}" \
   GIT_COMMIT_SHORT="${GIT_COMMIT_SHORT}" \
   GIT_TRACKED_WORKTREE_DIRTY="${GIT_TRACKED_WORKTREE_DIRTY}" \
@@ -1553,6 +1566,11 @@ metadata = {
     "output_lens": [os.environ["OUTPUT_LEN"]],
     "expected_requests": int(os.environ["NUM_PROMPTS"]),
     "model_path": os.environ["MODEL_PATH"],
+    "hf_overrides": (
+        json.loads(os.environ["PAP_HF_OVERRIDES"])
+        if os.environ["PAP_HF_OVERRIDES"]
+        else None
+    ),
     "max_model_len": os.environ["MAX_MODEL_LEN"],
     "max_num_seqs": os.environ["MAX_NUM_SEQS"],
     "offload_exec_transport": "nvshmem_graph",
@@ -1863,6 +1881,12 @@ fi
 [[ -x "${CUDA_GRAPH_AUDITOR}" ]] \
   || die "Missing CUDA Graph auditor: ${CUDA_GRAPH_AUDITOR}"
 [[ -d "${MODEL_PATH}" ]] || die "Model path does not exist: ${MODEL_PATH}"
+if [[ -n "${PAP_HF_OVERRIDES}" ]]; then
+  "${PYTHON_BIN}" -c \
+    'import json,sys; value=json.loads(sys.argv[1]); assert isinstance(value,dict)' \
+    "${PAP_HF_OVERRIDES}" \
+    || die "PAP_HF_OVERRIDES must be a JSON object"
+fi
 
 "${PYTHON_BIN}" - <<'PY' || die "PAP v0.26 plugin preflight failed"
 import importlib.metadata as metadata
@@ -1929,6 +1953,7 @@ projection_memory_args=(
     MODEL_NUM_LAYERS * MAX_MODEL_LEN * 2
     * MODEL_NUM_KV_HEADS * MODEL_HEAD_DIM * 2 / PAP_TP_SIZE
   ))"
+  --runtime-headroom-bytes "${PAP_PROJECTION_RUNTIME_HEADROOM_BYTES}"
 )
 for gpu in "${PROJECTION_GPUS[@]}"; do
   projection_memory_args+=(--gpu-id "${gpu}")
@@ -2112,6 +2137,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_CUDAGRAPH_ROLE=prefill \
     PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS}" \
     "${VLLM_BIN}" serve "${MODEL_PATH}" \
+      "${PAP_MODEL_CONFIG_ARGS[@]}" \
       --port "${prefill_port}" \
       --host 127.0.0.1 \
       "${PREFILL_EXECUTION_ARGS[@]}" \
@@ -2163,6 +2189,7 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     PAP_CUDAGRAPH_COMPATIBLE=1 \
     PAP_CUDAGRAPH_ROLE=projection \
     "${VLLM_BIN}" serve "${MODEL_PATH}" \
+      "${PAP_MODEL_CONFIG_ARGS[@]}" \
       --port "${projection_port}" \
       --host 127.0.0.1 \
       "${PROJECTION_EXECUTION_ARGS[@]}" \

@@ -144,9 +144,12 @@ Aggregate one or more matrices with:
 | PD Decode | 256 | 2048 |
 | Fused DP | 256 | 32768 |
 
-PAP uses `max_model_len=32768`, static 80/12-SM MPS, and a Projection memory
-budget of 120% of checkpoint weight bytes per TP rank. PAP's vLLM processes
-run eager because PAP owns the separate whole-step CUDA Graph.
+The direct PAP runner defaults to Qwen3 static YaRN and
+`max_model_len=131072`, static 80/12-SM MPS, and a Projection memory budget of
+120% of checkpoint weight bytes plus 512 MiB runtime headroom per TP rank.
+Frozen capacity matrices may explicitly retain their historical 32K model
+limit. PAP's Projection vLLM process runs without a native outer Graph because
+PAP owns the separate whole-step CUDA Graph.
 
 ## Required run artifacts
 

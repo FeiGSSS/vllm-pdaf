@@ -100,6 +100,7 @@ def plan_projection_memory(
     tensor_parallel_size: int,
     gpu_total_bytes: int,
     validation_kv_bytes: int = 0,
+    runtime_headroom_bytes: int = 0,
 ) -> ProjectionMemoryBudget:
     """Reserve model headroom plus vLLM's temporary KV capacity check."""
     if model_weight_bytes <= 0:
@@ -110,13 +111,15 @@ def plan_projection_memory(
         raise ValueError("GPU total memory must be positive")
     if validation_kv_bytes < 0:
         raise ValueError("Projection validation KV bytes must be non-negative")
+    if runtime_headroom_bytes < 0:
+        raise ValueError("Projection runtime headroom must be non-negative")
 
     per_rank_weight_bytes = _ceil_div(model_weight_bytes, tensor_parallel_size)
     model_target_bytes = _ceil_div(
         per_rank_weight_bytes * _HEADROOM_NUMERATOR,
         _HEADROOM_DENOMINATOR,
     )
-    target_bytes = model_target_bytes + validation_kv_bytes
+    target_bytes = model_target_bytes + validation_kv_bytes + runtime_headroom_bytes
     utilization_steps = _ceil_div(
         target_bytes * _UTILIZATION_SCALE,
         gpu_total_bytes,
@@ -142,6 +145,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tensor-parallel-size", type=int, required=True)
     parser.add_argument("--gpu-id", action="append", required=True)
     parser.add_argument("--validation-kv-bytes", type=int, default=0)
+    parser.add_argument("--runtime-headroom-bytes", type=int, default=0)
     return parser.parse_args()
 
 
@@ -154,6 +158,7 @@ def main() -> None:
         tensor_parallel_size=args.tensor_parallel_size,
         gpu_total_bytes=gpu_total_bytes,
         validation_kv_bytes=args.validation_kv_bytes,
+        runtime_headroom_bytes=args.runtime_headroom_bytes,
     )
     print(
         f"{budget.utilization:.4f}",
