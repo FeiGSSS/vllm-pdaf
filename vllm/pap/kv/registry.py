@@ -101,7 +101,7 @@ class PAPAttentionRegistry(
             OrderedDict()
         )
         self._offload_exec_session_entry_cache: dict[
-            tuple[str, int, int, int, int, int], PAPOffloadExecSessionEntry
+            tuple[str, int, int, int, int, int, int], PAPOffloadExecSessionEntry
         ] = {}
         self._attention_step_context_cache: OrderedDict[
             tuple[Any, ...], PAPAttentionStepContext
@@ -172,6 +172,27 @@ class PAPAttentionRegistry(
 
     def decode_token_stats(self) -> dict[str, int]:
         return self._decode_token_committer.stats()
+
+    def record_decode_kv_ready(
+        self,
+        *,
+        request_id: str,
+        session_epoch: int,
+        new_seq_len: int,
+        endpoint: str,
+        commit_request_id: str | None = None,
+    ) -> str:
+        """Join KV readiness only while the originating session is active."""
+        request_id = str(request_id)
+        with self._lock:
+            if self._session_epochs.get(request_id) != int(session_epoch):
+                return "released"
+            return self._decode_token_committer.record_kv_ready(
+                request_id=request_id,
+                new_seq_len=new_seq_len,
+                endpoint=endpoint,
+                commit_request_id=commit_request_id,
+            )
 
     @staticmethod
     def _resolve_storage_device(

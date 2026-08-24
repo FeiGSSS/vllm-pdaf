@@ -143,6 +143,7 @@ class PAPOffloadExecSessionEntry:
     """Shape metadata for one OFFLOAD_EXEC request in a batch."""
 
     session_request_id: str
+    session_epoch: int
     prefill_endpoint: str
     q_size: int
     kv_size: int

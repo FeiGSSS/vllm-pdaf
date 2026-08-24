@@ -30,54 +30,37 @@ is supplemental provenance and does not describe the installed package.
 | File | Purpose |
 | --- | --- |
 | `run_profile.sh` | Invoke one AIPerf profile against an existing endpoint |
-| `run_capacity_matrix.sh` | Restart and run PAP/PD/DP capacity points |
+| `aiperf_compat_entry.py` | Preserve local tokenizer paths in AIPerf 0.11 worker processes |
+| `run_agentic_code_profile.sh` | Replay the no-delay Agentic Coding workload at a Poisson request rate |
+| `run_capacity_matrix.sh` | Restart and run PAP/Dynamo capacity points |
 | `generate_multiturn_dataset.py` | Generate fixed-turn randomized workloads |
 | `build_synthetic_longctx_dataset.py` | Generate long-context workloads |
 | `summarize_capacity_run.py` | Validate and summarize one run |
 | `summarize_capacity_matrix.py` | Aggregate architecture/concurrency points |
 
-The current default matrix is `dp_8,pd_6p2d,pap_7pa1p`. Removed PAP
+The current default matrix is `dynamo_dp8,dynamo_6p2d,pap_7pa1p`. Removed PAP
 multi-Projection topologies and retired custom-client presets are not
 runnable lanes.
 
-## Frozen S128 Graph baselines
+## Default Dynamo baselines
 
-The canonical PD baselines use the same 128-conversation, 455-request input,
-conversation concurrency 32, Qwen3-8B FP16, eight L20 GPUs, 6P2D, a 2K token
-budget on both worker roles, `max_num_seqs=256`, and piecewise CUDA Graphs.
-Run either lane through the digest- and version-checked wrapper:
+Both non-PAP baselines use Dynamo 1.4.1, official vLLM 0.26.0, one shared
+frontend configuration, and the KV-aware router. The only serving-architecture
+choice is `dp8` (eight aggregated Prefill+Decode workers) versus `6p2d` (six
+Prefill and two Decode workers with same-node NIXL KV transfer):
 
 ```bash
-bash benchmarks/pap/scripts/run_s128_graph_baseline.sh pd
-bash benchmarks/pap/scripts/run_s128_graph_baseline.sh dynamo
+DYNAMO_ARCHITECTURE=dp8 \
+  bash benchmarks/pap/scripts/run_dynamo_workload.sh
+DYNAMO_ARCHITECTURE=6p2d \
+  bash benchmarks/pap/scripts/run_dynamo_workload.sh
 ```
 
-The project PD lane is the project conversation-pair proxy with workers from
-`.venv-dynamo` vLLM 0.26.0. The Dynamo lane is Dynamo 1.4.1 with its KV-aware
-router and the same vLLM 0.26.0 environment. Both enter through the project's
-fail-closed same-node NIXL/UCX configuration. The wrapper requires source
-SHA-256
-`5421e2d4f9868d4b0dc3f36b5a9aa8e256fadfd929dffd789dbb62692591bd9a`
-and 455 completed requests; AIPerf expands that source to input SHA-256
-`f1da7ff22ef2446ddf9ae5670f28175fadd90fa37af8eba52d1d562fda22cc69`.
-
-The frozen one-run observations are project PD: 7432.34-ms mean TTFT,
-60.196-ms mean ITL, and 1.895 requests/s; Dynamo: 7229.00-ms mean TTFT,
-61.391-ms mean ITL, and 1.949 requests/s. These are the default comparison
-points, not repeated paper-ready estimates. The former project-source vLLM
-0.23 PD result is retained only as a version-control observation.
-
-Do not silently replace these observations. A new baseline must use this
-wrapper, preserve both input digests and the recorded software versions, and
-be added as a new versioned result rather than overwriting the current point.
-
-The PAP v0.26 port at `63a313b365` uses the same wrapper with Prefill async
-scheduling disabled. Its three-run medians are 4797.06-ms mean TTFT,
-55.210-ms mean ITL, 65.039-ms P99 ITL, and 2.395 requests/s. Relative to the
-source PAP milestone, mean TTFT is 1.95% higher, while mean ITL improves 9.02%,
-P99 ITL improves 11.66%, and throughput improves 4.67%. See
-`../porting/v026/performance_20260824.md` for the individual runs and gate
-interpretation.
+The default workload is the fixed 128-session Agentic Coding subset documented
+below: request rate 2 turn/s, Poisson arrivals, concurrency 64, no authored
+turn delay, Qwen3-8B FP16, 131K static YaRN, and piecewise CUDA Graphs.
+The first complete fixed-protocol results are in
+`../experiments/PAP-20260824-DYNAMO-ARCH-BASELINES/report.md`.
 
 ## Run one PAP workload
 
@@ -108,7 +91,7 @@ sessions; it does not rewrite request lengths or turn order.
 
 ```bash
 PAP_CAPACITY_MATRIX_ID=<name> \
-PAP_CAPACITY_ARCHITECTURES=dp_8,pd_6p2d,pap_7pa1p \
+PAP_CAPACITY_ARCHITECTURES=dynamo_dp8,dynamo_6p2d,pap_7pa1p \
 PAP_CAPACITY_POINTS=16,24,32,48 \
 PAP_CAPACITY_REPETITIONS=1 \
   bash benchmarks/pap/aiperf/run_capacity_matrix.sh
@@ -169,3 +152,20 @@ commit to close on the same statically selected PA.
 
 Large raw artifacts may stay outside Git only when their experiment report
 records their path, commit, configuration, size, and digest.
+
+## Agentic Coding request-rate replay
+
+Replay 128 deterministic, sequentially sampled conversations with Poisson
+arrivals, a session concurrency cap of 64, and all authored inter-turn delays
+removed. The default fixed subset keeps complete sessions with 5--32 turns;
+it contains 1,630 turns and avoids the original trace's 68-turn drain tail:
+
+```bash
+bash benchmarks/pap/aiperf/run_agentic_code_profile.sh 2 128 64
+```
+
+The three positional parameters are `request_rate`, `num_conversations`, and
+`concurrency`. The endpoint defaults to `http://127.0.0.1:9460`; override it
+with `AIPERF_TARGET_URL`. Each run writes its no-delay input, source and input
+SHA-256 digests, and effective workload settings under
+`aiperf-artifacts/agentic-code/`.

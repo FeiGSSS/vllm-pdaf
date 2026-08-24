@@ -281,13 +281,15 @@ class _PAPAttentionStepContextMixin:
                     entry.prefill_endpoint,
                     _DECODE_COMMIT_PATH,
                 )
-                self._decode_token_committer.record_kv_ready(
+                status = self.record_decode_kv_ready(
                     request_id=entry.session_request_id,
+                    session_epoch=entry.session_epoch,
                     new_seq_len=new_seq_len,
                     endpoint=endpoint,
                     commit_request_id=request_id,
                 )
-                published += 1
+                if status != "released":
+                    published += 1
             context.kv_ready_published = True
         if published:
             with self._lock:
@@ -328,6 +330,12 @@ class _PAPAttentionStepContextMixin:
                 if session_request_id is None:
                     raise KeyError(request_id)
                 session = self._sessions[session_request_id]
+                session_epoch = self._session_epochs.get(session_request_id)
+                if session_epoch is None:
+                    raise RuntimeError(
+                        "PAP OFFLOAD_EXEC session has no active epoch "
+                        f"request_id={session_request_id}"
+                    )
                 q_size = int(session.q_size or default_q_size)
                 kv_size = int(session.kv_size or default_kv_size)
                 if q_size <= 0 or kv_size <= 0:
@@ -338,6 +346,7 @@ class _PAPAttentionStepContextMixin:
                     )
                 cache_key = (
                     session_request_id,
+                    int(session_epoch),
                     q_size,
                     kv_size,
                     int(num_heads),
@@ -348,12 +357,13 @@ class _PAPAttentionStepContextMixin:
                 if session_entry is None:
                     session_entry = PAPOffloadExecSessionEntry(
                         session_request_id=session_request_id,
+                        session_epoch=int(session_epoch),
                         prefill_endpoint=session.prefill_endpoint,
                         q_size=q_size,
                         kv_size=kv_size,
-                        num_heads=cache_key[3],
-                        num_kv_heads=cache_key[4],
-                        head_dim=cache_key[5],
+                        num_heads=int(num_heads),
+                        num_kv_heads=int(num_kv_heads),
+                        head_dim=int(head_dim),
                     )
                     self._offload_exec_session_entry_cache[cache_key] = session_entry
                 entries.append(session_entry)

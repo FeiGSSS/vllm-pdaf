@@ -1,4 +1,4 @@
-# Official Dynamo PD baseline
+# Official Dynamo DP8 and 6P2D baselines
 
 This lane isolates the official Dynamo and vLLM distributions from the PAP
 development environment. It reuses the project-wide PyPI AIPerf 0.11
@@ -30,16 +30,16 @@ host's default CUDA 12.0 compiler cannot JIT FlashInfer 0.6 sampling kernels
 against the official CUDA 13 headers; vLLM's native sampler avoids that
 unrelated host-toolkit mismatch.
 
-## Smoke test
+## Smoke tests
 
-The zero-dependency smoke uses file discovery and Dynamo round-robin routing:
+The default baseline uses etcd discovery and KV-aware routing. Select only the
+worker architecture:
 
 ```bash
-DYNAMO_PD_TOPOLOGY=1p1d \
-DYNAMO_PD_ROUTER_MODE=round-robin \
-DYNAMO_PD_DISCOVERY_BACKEND=file \
-DYNAMO_PD_SMOKE_ONLY=1 \
-  bash benchmarks/pap/scripts/run_dynamo_pd_workload.sh
+DYNAMO_ARCHITECTURE=dp8 DYNAMO_SMOKE_ONLY=1 \
+  bash benchmarks/pap/scripts/run_dynamo_workload.sh
+DYNAMO_ARCHITECTURE=6p2d DYNAMO_SMOKE_ONLY=1 \
+  bash benchmarks/pap/scripts/run_dynamo_workload.sh
 ```
 
 ## AIPerf run
@@ -49,25 +49,22 @@ vLLM, and etcd all run directly on the host; the runner removes the etcd data
 when its run directory is removed.
 
 ```bash
-DYNAMO_PD_TOPOLOGY=6p2d \
-DYNAMO_PD_ROUTER_MODE=kv \
-DYNAMO_PD_AIPERF_INPUT_FILE=/path/to/multiturn.jsonl \
-DYNAMO_PD_AIPERF_SESSIONS=128 \
-DYNAMO_PD_AIPERF_CONCURRENCY=32 \
-  bash benchmarks/pap/scripts/run_dynamo_pd_workload.sh
+DYNAMO_ARCHITECTURE=dp8 \
+  bash benchmarks/pap/scripts/run_dynamo_workload.sh
+DYNAMO_ARCHITECTURE=6p2d \
+  bash benchmarks/pap/scripts/run_dynamo_workload.sh
 ```
 
-The worker configuration matches the current PD comparison lane: Qwen3-8B
-FP16, TP1, audited piecewise CUDA Graph execution, 32K model length, block
-size 16, `gpu_memory_utilization=0.90`, and 2,048 batched tokens for both
-Prefill and Decode. The launcher fails before the workload if any worker
-enables eager execution or does not finish Graph capture.
+Both architectures use Qwen3-8B FP16, TP1, audited piecewise CUDA Graphs,
+131K static YaRN, block size 16, and `gpu_memory_utilization=0.90`. DP8 uses
+eight aggregated workers; 6P2D uses six Prefill and two Decode workers. The
+launcher fails before the workload if any worker enables eager execution or
+does not finish Graph capture.
 
-The runner fails closed onto the project UCX 1.22 same-node runtime with CUDA
-IPC GET zero-copy. It requests NIXL cross-layer block coalescing, although
-vLLM 0.26 transfer metrics still report tens of thousands of descriptors for
-long requests. The reliable runtime gate is measured transfer throughput:
-full runs fail if aggregate KV transfer throughput is below 5 GB/s.
+Only 6P2D initializes the project UCX 1.22 same-node runtime and NIXL CUDA IPC
+GET zero-copy. Its reliable runtime gate is measured transfer throughput: a
+full 6P2D run fails if aggregate KV transfer throughput is below 5 GB/s. DP8
+has no KV transfer and records that audit as not applicable.
 
 The benchmark launcher intentionally has no eager switch. Fast-start eager
 diagnostics must use a separate ad hoc command and are not valid comparison

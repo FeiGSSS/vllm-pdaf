@@ -3,7 +3,8 @@
 ## Protocol
 
 - Commit: `63a313b365`
-- Entry point: `bash benchmarks/pap/scripts/run_s128_graph_baseline.sh pap`
+- Historical entry point is recoverable from source commit `63a313b365`; the
+  retired mixed S128 baseline wrapper is no longer active.
 - Model/topology: Qwen3-8B FP16 TP1, 7PA1P, eight L20 GPUs
 - Load: 128 conversations, concurrency 32, 455 requests
 - Dataset SHA-256:
@@ -52,16 +53,3 @@ The asynchronous output pipeline delayed that handoff and increased closed-loop
 Prefill queueing, so the v0.26 PAP profile explicitly disables it on Prefill
 workers. This setting does not disable the Projection whole-step CUDA Graph or
 Attention's GPU-side NVSHMEM communication.
-
-## Fixed comparison points
-
-The aligned one-run v0.26 comparison points remain:
-
-| Architecture | TTFT mean (ms) | ITL mean (ms) | Requests/s |
-| --- | ---: | ---: | ---: |
-| Project PD 6P2D | 7432.340 | 60.196 | 1.8946 |
-| Dynamo 1.4.1 6P2D | 7229.000 | 61.391 | 1.9489 |
-
-These PD/Dynamo values are fixed observations, not three-run paper estimates.
-New results must be added under a new versioned profile rather than replacing
-them.

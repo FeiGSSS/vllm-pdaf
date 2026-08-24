@@ -242,45 +242,6 @@ def _balanced(values: list[int]) -> bool:
     return bool(values) and max(values) - min(values) <= 1
 
 
-def _check_owner_snapshot(
-    snapshot: dict[str, Any],
-    *,
-    label: str,
-    sessions: int,
-    turns: int | None,
-    expected_requests: int,
-    errors: list[str],
-) -> bool:
-    assignments = snapshot.get("assignments")
-    requests = snapshot.get("requests")
-    if not isinstance(assignments, list) or not all(
-        isinstance(value, int) for value in assignments
-    ):
-        errors.append(f"{label} routing assignments are invalid")
-        return False
-    if not isinstance(requests, list) or not all(
-        isinstance(value, int) for value in requests
-    ):
-        errors.append(f"{label} routing request counts are invalid")
-        return False
-    if snapshot.get("conversations") != sessions:
-        errors.append(f"{label} routing conversation count does not match")
-    if sum(assignments) != sessions or not _balanced(assignments):
-        errors.append(f"{label} routing assignments are not balanced")
-    if sum(requests) != expected_requests:
-        errors.append(f"{label} routing request count does not match")
-        return False
-    if turns is not None:
-        expected_by_owner = [value * turns for value in assignments]
-        if requests != expected_by_owner:
-            errors.append(f"{label} conversation affinity was not retained")
-            return False
-    elif any(requests[index] < assignments[index] for index in range(len(requests))):
-        errors.append(f"{label} has fewer requests than assigned sessions")
-        return False
-    return True
-
-
 def _check_pap_routing(
     run_root: Path,
     *,
@@ -340,57 +301,6 @@ def _check_pap_routing(
         "passed": passed,
         "conversations": conversation.get("conversations"),
         "owner_assignments": assignments,
-    }
-
-
-def _check_pd_routing(
-    run_root: Path,
-    *,
-    sessions: int,
-    turns: int | None,
-    expected_requests: int,
-    errors: list[str],
-) -> dict[str, Any]:
-    health_path = run_root / "proxy_health.json"
-    if not health_path.is_file():
-        errors.append("missing PD structured proxy routing audit")
-        return {"passed": False}
-
-    health = _load_json(health_path)
-    if health.get("status") != "ok":
-        errors.append("PD proxy health did not pass")
-    before = len(errors)
-    prefill_passed = _check_owner_snapshot(
-        health.get("prefill_routing", {}),
-        label="PD Prefill",
-        sessions=sessions,
-        turns=turns,
-        expected_requests=expected_requests,
-        errors=errors,
-    )
-    decode_passed = _check_owner_snapshot(
-        health.get("decode_routing", {}),
-        label="PD Decode",
-        sessions=sessions,
-        turns=turns,
-        expected_requests=expected_requests,
-        errors=errors,
-    )
-    pair_passed = _check_owner_snapshot(
-        health.get("pair_routing", {}),
-        label="PD Prefill/Decode pair",
-        sessions=sessions,
-        turns=turns,
-        expected_requests=expected_requests,
-        errors=errors,
-    )
-    affinity_passed = prefill_passed and decode_passed and pair_passed
-    return {
-        "passed": health.get("status") == "ok" and len(errors) == before,
-        "conversations": sessions if affinity_passed else None,
-        "prefill_assignments": health.get("prefill_routing", {}).get("assignments"),
-        "decode_assignments": health.get("decode_routing", {}).get("assignments"),
-        "pair_assignments": health.get("pair_routing", {}).get("assignments"),
     }
 
 
@@ -614,18 +524,10 @@ def summarize_run(
             expected_requests=runtime_expected_requests,
             errors=errors,
         )
-    elif architecture == "pd":
-        routing = _check_pd_routing(
-            run_root,
-            sessions=runtime_sessions,
-            turns=fixed_turns,
-            expected_requests=runtime_expected_requests,
-            errors=errors,
-        )
     else:
         routing = {
             "passed": True,
-            "policy": "vllm_internal_load_balancer",
+            "policy": "dynamo_kv_router",
         }
 
     correctness_passed = not errors

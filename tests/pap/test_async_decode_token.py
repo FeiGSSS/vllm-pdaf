@@ -11,11 +11,13 @@ import pytest
 from vllm.pap.integration import (
     PAPAcceptedDecodeTokenPublisher,
 )
+from vllm.pap.kv.registry import PAPAttentionRegistry
 from vllm.pap.lifecycle.decode_token import (
     DeferredDecodeCommit,
     DeferredDecodeTokenCommitter,
 )
 from vllm.pap.lifecycle.decode_token_client import DecodeTokenClient
+from vllm.pap.protocol import PAPAttentionRegistration
 
 
 def test_deferred_decode_token_dispatches_after_token_and_kv_are_ready() -> None:
@@ -221,6 +223,55 @@ def test_deferred_decode_token_forget_drops_only_unmatched_final_token() -> None
         "decode_token_dispatching": 0,
         "decode_token_only_dropped": 1,
     }
+
+
+def test_attention_kv_ready_ignores_released_session(monkeypatch) -> None:
+    class CommitClient:
+        @staticmethod
+        def flush_submitted_request(_request_id: str) -> bool:
+            return True
+
+        flush_request = flush_submitted_request
+
+        @staticmethod
+        def forget_request(_request_id: str) -> None:
+            pass
+
+    monkeypatch.setattr(
+        "vllm.pap.kv.session_registry._get_commit_client",
+        lambda: CommitClient(),
+    )
+    registry = PAPAttentionRegistry(storage_device="cpu")
+    registry.register_prefill_kv(
+        PAPAttentionRegistration(
+            request_id="req-a",
+            prefill_endpoint="http://127.0.0.1:8100",
+            q_size=4096,
+            kv_size=1024,
+        )
+    )
+    entry = registry.offload_exec_batch_session_entries(
+        ("req-a",),
+        default_q_size=4096,
+        default_kv_size=1024,
+        num_heads=32,
+        num_kv_heads=8,
+        head_dim=128,
+    )[0]
+
+    assert registry.release_session("req-a")
+    assert (
+        registry.record_decode_kv_ready(
+            request_id="req-a",
+            session_epoch=entry.session_epoch,
+            new_seq_len=17,
+            endpoint="http://127.0.0.1:8100/commit",
+        )
+        == "released"
+    )
+    stats = registry.decode_token_stats()
+    assert stats["decode_kv_ready"] == 0
+    assert stats["decode_token_pending_kv"] == 0
 
 
 class _FakeResponse:

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# PAP/PD/DP randomized-length comparison using AIPerf workloads.
+# PAP and Dynamo-managed DP/PD comparison using AIPerf workloads.
 
 ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
@@ -11,8 +11,7 @@ AIPERF_ROOT="${AIPERF_ROOT:-/home/fei/research/PD/refer_codes/aiperf}"
 AIPERF_BIN="${AIPERF_BIN:-${ROOT_DIR}/.venv-aiperf/bin/aiperf}"
 AIPERF_PYTHON="${AIPERF_PYTHON:-${ROOT_DIR}/.venv-aiperf/bin/python}"
 PAP_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_pap_workload.sh"
-PD_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_pd_multiturn_topology.sh"
-DP_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_dp_multiturn.sh"
+DYNAMO_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_dynamo_workload.sh"
 DATASET_GENERATOR="${ROOT_DIR}/benchmarks/pap/aiperf/generate_multiturn_dataset.py"
 
 EXPERIMENTS_ROOT="${PAP_EXPERIMENTS_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments}"
@@ -24,7 +23,7 @@ OUTPUT_TOKENS_MAX="${PAP_CAPACITY_OUTPUT_TOKENS_MAX:-$((OUTPUT_TOKENS * 2))}"
 RANDOM_SEED="${PAP_CAPACITY_RANDOM_SEED:-42}"
 MATRIX_ID="${PAP_CAPACITY_MATRIX_ID:-$(date +%Y%m%d_%H%M%S)_aiperf_capacity_random_o${OUTPUT_TOKENS}}"
 MATRIX_ROOT="${PAP_CAPACITY_MATRIX_ROOT:-${RESULTS_ROOT}/capacity/${MATRIX_ID}}"
-ARCHITECTURES_CSV="${PAP_CAPACITY_ARCHITECTURES:-dp_8,pd_6p2d,pap_7pa1p}"
+ARCHITECTURES_CSV="${PAP_CAPACITY_ARCHITECTURES:-dynamo_dp8,dynamo_6p2d,pap_7pa1p}"
 TOTAL_SESSIONS="${PAP_CAPACITY_SESSIONS:-128}"
 GPU_COUNT="${PAP_CAPACITY_GPU_COUNT:-8}"
 DEFAULT_POINTS_CSV="${PAP_CAPACITY_POINTS:-16,24,32,48}"
@@ -67,14 +66,12 @@ PREFILL_MAX_NUM_BATCHED_TOKENS="${PAP_CAPACITY_PREFILL_MAX_NUM_BATCHED_TOKENS:-3
 PAP_PREFILL_MAX_NUM_BATCHED_TOKENS="${PAP_CAPACITY_PAP_PREFILL_MAX_NUM_BATCHED_TOKENS:-2048}"
 DECODE_MAX_NUM_BATCHED_TOKENS="${PAP_CAPACITY_DECODE_MAX_NUM_BATCHED_TOKENS:-256}"
 MAX_NUM_SEQS="${PAP_CAPACITY_MAX_NUM_SEQS:-256}"
-PD_PREFILL_MAX_NUM_BATCHED_TOKENS="${PAP_CAPACITY_PD_PREFILL_MAX_NUM_BATCHED_TOKENS:-2048}"
-PD_DECODE_MAX_NUM_BATCHED_TOKENS="${PAP_CAPACITY_PD_DECODE_MAX_NUM_BATCHED_TOKENS:-2048}"
-PD_PREFILL_MAX_NUM_SEQS="${PAP_CAPACITY_PD_PREFILL_MAX_NUM_SEQS:-}"
-PD_PREFILL_MAX_NUM_SEQS="${PD_PREFILL_MAX_NUM_SEQS:-${MAX_NUM_SEQS}}"
-PD_DECODE_MAX_NUM_SEQS="${PAP_CAPACITY_PD_DECODE_MAX_NUM_SEQS:-}"
-PD_DECODE_MAX_NUM_SEQS="${PD_DECODE_MAX_NUM_SEQS:-${MAX_NUM_SEQS}}"
+DYNAMO_PREFILL_MAX_NUM_BATCHED_TOKENS="${PAP_CAPACITY_DYNAMO_PREFILL_MAX_NUM_BATCHED_TOKENS:-2048}"
+DYNAMO_DECODE_MAX_NUM_BATCHED_TOKENS="${PAP_CAPACITY_DYNAMO_DECODE_MAX_NUM_BATCHED_TOKENS:-2048}"
+DYNAMO_PREFILL_MAX_NUM_SEQS="${PAP_CAPACITY_DYNAMO_PREFILL_MAX_NUM_SEQS:-${MAX_NUM_SEQS}}"
+DYNAMO_DECODE_MAX_NUM_SEQS="${PAP_CAPACITY_DYNAMO_DECODE_MAX_NUM_SEQS:-${MAX_NUM_SEQS}}"
 PAP_PREFILL_GPU_MEMORY_UTILIZATION=0.90
-PD_GPU_MEMORY_UTILIZATION=0.90
+DYNAMO_GPU_MEMORY_UTILIZATION=0.90
 PAP_PREFILL_CHUNKS="${PAP_CAPACITY_PAP_PREFILL_CHUNKS:-20}"
 PAP_ATTENTION_CHUNKS="${PAP_CAPACITY_PAP_ATTENTION_CHUNKS:-3}"
 PAP_PREFILL_SMS="${PAP_CAPACITY_PAP_PREFILL_EXPECTED_SMS:-$((PAP_PREFILL_CHUNKS * 4))}"
@@ -101,7 +98,7 @@ points_for_architecture() {
 }
 
 for required in "${PYTHON_BIN}" "${AIPERF_BIN}" "${AIPERF_PYTHON}" "${MODEL_PATH}" \
-  "${CORPUS_PATH}" "${PAP_RUNNER}" "${PD_RUNNER}" "${DP_RUNNER}" \
+  "${CORPUS_PATH}" "${PAP_RUNNER}" "${DYNAMO_RUNNER}" \
   "${DATASET_GENERATOR}"; do
   [[ -e "${required}" ]] || die "required path is missing: ${required}"
 done
@@ -121,8 +118,8 @@ for value in "${PAP_PREFILL_CHUNKS}" "${PAP_ATTENTION_CHUNKS}" \
 done
 for value in "${PREFILL_MAX_NUM_BATCHED_TOKENS}" \
   "${PAP_PREFILL_MAX_NUM_BATCHED_TOKENS}" \
-  "${PD_PREFILL_MAX_NUM_BATCHED_TOKENS}" \
-  "${PD_DECODE_MAX_NUM_BATCHED_TOKENS}"; do
+  "${DYNAMO_PREFILL_MAX_NUM_BATCHED_TOKENS}" \
+  "${DYNAMO_DECODE_MAX_NUM_BATCHED_TOKENS}"; do
   [[ "${value}" =~ ^[1-9][0-9]*$ ]] \
     || die "Prefill token budgets must be positive"
 done
@@ -173,10 +170,10 @@ case "${PAP_ROUTING_POLICY}" in
   conversation_affinity) ;;
   *) die "unsupported PAP capacity routing policy: ${PAP_ROUTING_POLICY}" ;;
 esac
-[[ "${PD_PREFILL_MAX_NUM_SEQS}" =~ ^[1-9][0-9]*$ ]] \
-  || die "PAP_CAPACITY_PD_PREFILL_MAX_NUM_SEQS must be positive"
-[[ "${PD_DECODE_MAX_NUM_SEQS}" =~ ^[1-9][0-9]*$ ]] \
-  || die "PAP_CAPACITY_PD_DECODE_MAX_NUM_SEQS must be positive"
+[[ "${DYNAMO_PREFILL_MAX_NUM_SEQS}" =~ ^[1-9][0-9]*$ ]] \
+  || die "PAP_CAPACITY_DYNAMO_PREFILL_MAX_NUM_SEQS must be positive"
+[[ "${DYNAMO_DECODE_MAX_NUM_SEQS}" =~ ^[1-9][0-9]*$ ]] \
+  || die "PAP_CAPACITY_DYNAMO_DECODE_MAX_NUM_SEQS must be positive"
 
 IFS=, read -r -a ALL_POINTS <<< "${DEFAULT_POINTS_CSV}"
 for concurrency in "${ALL_POINTS[@]}"; do
@@ -190,14 +187,9 @@ for architecture in "${ARCHITECTURES[@]}"; do
   if [[ "${architecture}" =~ ^pap_([1-9][0-9]*)pa1p$ ]]; then
     (( BASH_REMATCH[1] + 1 == GPU_COUNT )) \
       || die "${architecture} does not use ${GPU_COUNT} GPUs"
-  elif [[ "${architecture}" =~ ^pd_([1-9][0-9]*)p([1-9][0-9]*)d$ ]]; then
-    (( BASH_REMATCH[1] + BASH_REMATCH[2] == GPU_COUNT )) \
-      || die "${architecture} does not use ${GPU_COUNT} GPUs"
-  elif [[ "${architecture}" =~ ^dp_([1-9][0-9]*)$ ]]; then
-    (( BASH_REMATCH[1] == GPU_COUNT )) \
-      || die "${architecture} does not use ${GPU_COUNT} GPUs"
-    [[ "${AIPERF_TIMING_MODE}" == "concurrency" ]] \
-      || die "DP capacity runner does not support request_rate timing"
+  elif [[ "${architecture}" == "dynamo_6p2d" \
+    || "${architecture}" == "dynamo_dp8" ]]; then
+    (( GPU_COUNT == 8 )) || die "${architecture} requires eight GPUs"
   else
     die "unsupported architecture: ${architecture}"
   fi
@@ -383,18 +375,20 @@ PY
     "${THINK_TIME_MS}" "${TOOL_TIME_MS}" "${TOOL_EVERY}"
   printf 'MAX_MODEL_LEN=%q\nMAX_NUM_SEQS=%q\n' \
     "${MAX_MODEL_LEN}" "${MAX_NUM_SEQS}"
-  printf 'PD_PREFILL_MAX_NUM_SEQS=%q\nPD_DECODE_MAX_NUM_SEQS=%q\n' \
-    "${PD_PREFILL_MAX_NUM_SEQS}" "${PD_DECODE_MAX_NUM_SEQS}"
+  printf 'DYNAMO_PREFILL_MAX_NUM_SEQS=%q\n' \
+    "${DYNAMO_PREFILL_MAX_NUM_SEQS}"
+  printf 'DYNAMO_DECODE_MAX_NUM_SEQS=%q\n' \
+    "${DYNAMO_DECODE_MAX_NUM_SEQS}"
   printf 'PREFILL_MAX_NUM_BATCHED_TOKENS=%q\n' \
     "${PREFILL_MAX_NUM_BATCHED_TOKENS}"
   printf 'PAP_PREFILL_MAX_NUM_BATCHED_TOKENS=%q\n' \
     "${PAP_PREFILL_MAX_NUM_BATCHED_TOKENS}"
   printf 'DECODE_MAX_NUM_BATCHED_TOKENS=%q\n' \
     "${DECODE_MAX_NUM_BATCHED_TOKENS}"
-  printf 'PD_PREFILL_MAX_NUM_BATCHED_TOKENS=%q\n' \
-    "${PD_PREFILL_MAX_NUM_BATCHED_TOKENS}"
-  printf 'PD_DECODE_MAX_NUM_BATCHED_TOKENS=%q\n' \
-    "${PD_DECODE_MAX_NUM_BATCHED_TOKENS}"
+  printf 'DYNAMO_PREFILL_MAX_NUM_BATCHED_TOKENS=%q\n' \
+    "${DYNAMO_PREFILL_MAX_NUM_BATCHED_TOKENS}"
+  printf 'DYNAMO_DECODE_MAX_NUM_BATCHED_TOKENS=%q\n' \
+    "${DYNAMO_DECODE_MAX_NUM_BATCHED_TOKENS}"
   printf 'MAX_NUM_PARTIAL_PREFILLS=default_1\n'
   printf 'LONG_PREFILL_TOKEN_THRESHOLD=default_0\n'
   printf 'PAP_DECODE_CAPACITY=request_max_tokens_fallback_64\n'
@@ -404,8 +398,8 @@ PY
   printf 'PAP_NIXL_CONNECTOR_LEASE_SECONDS=%q\n' \
     "${PAP_NIXL_CONNECTOR_LEASE_SECONDS}"
   printf 'PAP_PROJECTION_MEMORY_POLICY=%q\n' 'model_weights_x1.20'
-  printf 'PD_GPU_MEMORY_UTILIZATION=%q\n' \
-    "${PD_GPU_MEMORY_UTILIZATION}"
+  printf 'DYNAMO_GPU_MEMORY_UTILIZATION=%q\n' \
+    "${DYNAMO_GPU_MEMORY_UTILIZATION}"
   printf 'PAP_STATIC_MPS_CHUNKS=%q\nPAP_STATIC_MPS_SMS=%q\n' \
     "${PAP_PREFILL_CHUNKS}/${PAP_ATTENTION_CHUNKS}" \
     "${PAP_PREFILL_SMS}/${PAP_ATTENTION_SMS}"
@@ -738,41 +732,36 @@ run_pap_architecture() {
     "${PAP_RUNNER}"
 }
 
-run_pd_architecture() {
-  local topology="$1"
+run_dynamo_architecture() {
+  local dynamo_architecture="$1"
   local concurrency_points="$2"
   local run_root="$3"
   env \
     PAP_ROOT="${ROOT_DIR}" \
-    PYTHON_BIN="${PYTHON_BIN}" \
+    DYNAMO_PYTHON="${ROOT_DIR}/.venv-dynamo/bin/python" \
     MODEL_PATH="${MODEL_PATH}" \
-    DATASET_PATH="${CORPUS_PATH}" \
     AIPERF_ROOT="${AIPERF_ROOT}" \
     AIPERF_BIN="${AIPERF_BIN}" \
-    RESULTS_ROOT="${RESULTS_ROOT}" \
-    PD_LOAD_RUN_ID="$(basename "${run_root}")" \
-    PD_LOAD_RUN_ROOT="${run_root}" \
-    PD_LOAD_TOPOLOGY="${topology}" \
-    PD_LOAD_ROUNDS="${TURNS}" \
-    PD_LOAD_CONVERSATIONS="${TOTAL_SESSIONS}" \
-    PD_LOAD_DOCUMENT_TOKENS="${DOCUMENT_TOKENS}" \
-    PD_LOAD_APPEND_TOKENS="${APPEND_TOKENS}" \
-    PD_LOAD_OUTPUT_TOKENS="${OUTPUT_TOKENS}" \
-    PD_LOAD_MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
-    PD_LOAD_MAX_NUM_BATCHED_TOKENS="${PREFILL_MAX_NUM_BATCHED_TOKENS}" \
-    PD_LOAD_MAX_NUM_SEQS="${MAX_NUM_SEQS}" \
-    PD_LOAD_PREFILL_MAX_NUM_BATCHED_TOKENS="${PD_PREFILL_MAX_NUM_BATCHED_TOKENS}" \
-    PD_LOAD_PREFILL_MAX_NUM_SEQS="${PD_PREFILL_MAX_NUM_SEQS}" \
-    PD_LOAD_DECODE_MAX_NUM_BATCHED_TOKENS="${PD_DECODE_MAX_NUM_BATCHED_TOKENS}" \
-    PD_LOAD_DECODE_MAX_NUM_SEQS="${PD_DECODE_MAX_NUM_SEQS}" \
-    PD_LOAD_GPU_MEMORY_UTILIZATION="${PD_GPU_MEMORY_UTILIZATION}" \
-    PD_LOAD_REQUEST_TIMEOUT_SECONDS="${REQUEST_TIMEOUT_SECONDS}" \
-    PD_AIPERF_INPUT_FILE="${DATASET_FILE}" \
-    PD_AIPERF_OUTPUT_DIR="${run_root}/aiperf" \
-    PD_AIPERF_CONCURRENCY="${concurrency_points}" \
-    PD_AIPERF_TIMING_MODE="${AIPERF_TIMING_MODE}" \
-    PD_AIPERF_REQUEST_RATE="${AIPERF_REQUEST_RATE}" \
-    AIPERF_ARRIVAL_PATTERN="${AIPERF_ARRIVAL_PATTERN}" \
+    DYNAMO_ARCHITECTURE="${dynamo_architecture}" \
+    DYNAMO_RUN_ID="$(basename "${run_root}")" \
+    DYNAMO_RUN_ROOT="${run_root}" \
+    DYNAMO_MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
+    DYNAMO_HF_OVERRIDES= \
+    DYNAMO_AGG_MAX_NUM_BATCHED_TOKENS="${PREFILL_MAX_NUM_BATCHED_TOKENS}" \
+    DYNAMO_PREFILL_MAX_NUM_BATCHED_TOKENS="${DYNAMO_PREFILL_MAX_NUM_BATCHED_TOKENS}" \
+    DYNAMO_DECODE_MAX_NUM_BATCHED_TOKENS="${DYNAMO_DECODE_MAX_NUM_BATCHED_TOKENS}" \
+    DYNAMO_MAX_NUM_SEQS="${MAX_NUM_SEQS}" \
+    DYNAMO_GPU_MEMORY_UTILIZATION="${DYNAMO_GPU_MEMORY_UTILIZATION}" \
+    DYNAMO_AIPERF_INPUT_FILE="${DATASET_FILE}" \
+    DYNAMO_AIPERF_OUTPUT_DIR="${run_root}/aiperf" \
+    DYNAMO_AIPERF_SESSIONS="${TOTAL_SESSIONS}" \
+    DYNAMO_AIPERF_CONCURRENCY="${concurrency_points}" \
+    DYNAMO_AIPERF_TIMING_MODE="${AIPERF_TIMING_MODE}" \
+    DYNAMO_AIPERF_REQUEST_RATE="${AIPERF_REQUEST_RATE}" \
+    DYNAMO_AIPERF_ARRIVAL_PATTERN="${AIPERF_ARRIVAL_PATTERN}" \
+    DYNAMO_AIPERF_CUSTOM_DATASET_TYPE=multi-turn \
+    DYNAMO_AIPERF_EXPECTED_REQUESTS="$((TOTAL_SESSIONS * TURNS))" \
+    DYNAMO_AIPERF_REQUEST_TIMEOUT_SECONDS="${REQUEST_TIMEOUT_SECONDS}" \
     AIPERF_RANDOM_SEED="${RANDOM_SEED}" \
     AIPERF_NUM_PROFILE_RUNS="${REPETITIONS}" \
     AIPERF_PROFILE_RUN_COOLDOWN_SECONDS=\
@@ -782,47 +771,7 @@ run_pd_architecture() {
     AIPERF_PARAMETER_SWEEP_MODE=repeated \
     AIPERF_GOODPUT_SLO="${AIPERF_GOODPUT_SLO}" \
     AIPERF_EXPORT_LEVEL=records \
-    "${PD_RUNNER}" oneway
-}
-
-run_dp_architecture() {
-  local topology="$1"
-  local concurrency_points="$2"
-  local run_root="$3"
-  [[ "${topology}" =~ ^([1-9][0-9]*)dp$ ]] \
-    || die "invalid DP topology: ${topology}"
-  local dp_size="${BASH_REMATCH[1]}"
-  env \
-    PAP_ROOT="${ROOT_DIR}" \
-    PYTHON_BIN="${PYTHON_BIN}" \
-    MODEL_PATH="${MODEL_PATH}" \
-    AIPERF_ROOT="${AIPERF_ROOT}" \
-    AIPERF_BIN="${AIPERF_BIN}" \
-    RESULTS_ROOT="${RESULTS_ROOT}" \
-    DP_LOAD_RUN_ID="$(basename "${run_root}")" \
-    DP_LOAD_RUN_ROOT="${run_root}" \
-    DP_LOAD_SIZE="${dp_size}" \
-    DP_LOAD_GPUS="$(gpu_csv 0 "${dp_size}")" \
-    DP_LOAD_ROUNDS="${TURNS}" \
-    DP_LOAD_CONVERSATIONS="${TOTAL_SESSIONS}" \
-    DP_LOAD_MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
-    DP_LOAD_MAX_NUM_BATCHED_TOKENS="${PREFILL_MAX_NUM_BATCHED_TOKENS}" \
-    DP_LOAD_MAX_NUM_SEQS="${MAX_NUM_SEQS}" \
-    DP_LOAD_GPU_MEMORY_UTILIZATION="${PD_GPU_MEMORY_UTILIZATION}" \
-    DP_LOAD_REQUEST_TIMEOUT_SECONDS="${REQUEST_TIMEOUT_SECONDS}" \
-    DP_AIPERF_INPUT_FILE="${DATASET_FILE}" \
-    DP_AIPERF_OUTPUT_DIR="${run_root}/aiperf" \
-    DP_AIPERF_CONCURRENCY="${concurrency_points}" \
-    AIPERF_RANDOM_SEED="${RANDOM_SEED}" \
-    AIPERF_NUM_PROFILE_RUNS="${REPETITIONS}" \
-    AIPERF_PROFILE_RUN_COOLDOWN_SECONDS=\
-"${AIPERF_PROFILE_RUN_COOLDOWN_SECONDS}" \
-    AIPERF_PARAMETER_SWEEP_COOLDOWN_SECONDS=\
-"${AIPERF_SWEEP_COOLDOWN_SECONDS}" \
-    AIPERF_PARAMETER_SWEEP_MODE=repeated \
-    AIPERF_GOODPUT_SLO="${AIPERF_GOODPUT_SLO}" \
-    AIPERF_EXPORT_LEVEL=records \
-    "${DP_RUNNER}"
+    "${DYNAMO_RUNNER}"
 }
 
 run_architecture_launcher() {
@@ -834,9 +783,9 @@ run_architecture_launcher() {
   if [[ "${architecture}" == "pap" ]]; then
     run_pap_architecture "${topology}" "${concurrency_points}" "${run_root}"
   elif [[ "${architecture}" == "pd" ]]; then
-    run_pd_architecture "${topology}" "${concurrency_points}" "${run_root}"
+    run_dynamo_architecture "6p2d" "${concurrency_points}" "${run_root}"
   else
-    run_dp_architecture "${topology}" "${concurrency_points}" "${run_root}"
+    run_dynamo_architecture "dp8" "${concurrency_points}" "${run_root}"
   fi
 }
 
@@ -943,12 +892,14 @@ run_architecture() {
   if [[ "${architecture_tag}" == pap_* ]]; then
     architecture=pap
     topology="${architecture_tag#pap_}"
-  elif [[ "${architecture_tag}" == pd_* ]]; then
+  elif [[ "${architecture_tag}" == "dynamo_6p2d" ]]; then
     architecture=pd
-    topology="${architecture_tag#pd_}"
-  else
+    topology=6p2d
+  elif [[ "${architecture_tag}" == "dynamo_dp8" ]]; then
     architecture=dp
-    topology="${architecture_tag#dp_}dp"
+    topology=8dp
+  else
+    die "unsupported architecture tag: ${architecture_tag}"
   fi
   run_root="${MATRIX_ROOT}/runs/${architecture_tag}"
 

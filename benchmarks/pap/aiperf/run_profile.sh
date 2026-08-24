@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
 AIPERF_ROOT="${AIPERF_ROOT:-/home/fei/research/PD/refer_codes/aiperf}"
 AIPERF_BIN="${AIPERF_BIN:-${ROOT_DIR}/.venv-aiperf/bin/aiperf}"
+AIPERF_PYTHON="${AIPERF_PYTHON:-${ROOT_DIR}/.venv-aiperf/bin/python}"
+AIPERF_ENTRY="${ROOT_DIR}/benchmarks/pap/aiperf/aiperf_compat_entry.py"
 MODEL_PATH="${MODEL_PATH:-/data/ssd1/llm-models/Qwen3-8B}"
 AIPERF_INPUT_FILE="${AIPERF_INPUT_FILE:?set AIPERF_INPUT_FILE}"
 AIPERF_CUSTOM_DATASET_TYPE="${AIPERF_CUSTOM_DATASET_TYPE:-multi-turn}"
@@ -30,6 +32,10 @@ AIPERF_GOODPUT_SLO="${AIPERF_GOODPUT_SLO:-}"
 
 [[ -x "${AIPERF_BIN}" ]] || {
   echo "AIPerf is not installed at ${AIPERF_BIN}" >&2
+  exit 1
+}
+[[ -x "${AIPERF_PYTHON}" && -f "${AIPERF_ENTRY}" ]] || {
+  echo "AIPerf compatibility entry point is unavailable" >&2
   exit 1
 }
 [[ -d "${MODEL_PATH}" ]] || {
@@ -192,4 +198,4 @@ fi
 
 export NO_PROXY="${NO_PROXY:+${NO_PROXY},}127.0.0.1,localhost"
 export no_proxy="${no_proxy:+${no_proxy},}127.0.0.1,localhost"
-exec "${AIPERF_BIN}" "${args[@]}"
+exec "${AIPERF_PYTHON}" "${AIPERF_ENTRY}" "${args[@]}"

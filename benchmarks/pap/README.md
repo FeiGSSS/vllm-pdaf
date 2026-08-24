@@ -16,19 +16,23 @@ The supported PAP benchmark topology is same-host `xPA1P`, TP1, with:
 - Qwen3-8B static YaRN with a 131,072-token serving limit;
 - AIPerf as the serving workload client.
 
-The primary eight-GPU comparison is PAP 7PA1P, PD 6P2D, and fused DP8.
+The primary eight-GPU comparison is PAP 7PA1P against two baselines behind
+the same Dynamo frontend and KV-aware router: eight aggregated workers
+(`dp8`) and six Prefill plus two Decode workers (`6p2d`).
+
+The fixed protocol and first full comparison are recorded in
+`experiments/PAP-20260824-DYNAMO-ARCH-BASELINES/report.md`.
 
 ## Active entry points
 
 | Purpose | Entry point |
 | --- | --- |
 | One PAP E2E run | `scripts/run_pap_workload.sh` |
-| PAP/PD/DP capacity matrix | `aiperf/run_capacity_matrix.sh` |
+| PAP/Dynamo capacity matrix | `aiperf/run_capacity_matrix.sh` |
 | AIPerf client wrapper | `aiperf/run_profile.sh` |
 | One-run validation and summary | `aiperf/summarize_capacity_run.py` |
 | Matrix aggregation | `aiperf/summarize_capacity_matrix.py` |
-| PD baseline | `scripts/run_pd_multiturn_topology.sh` |
-| DP baseline | `scripts/run_dp_multiturn.sh` |
+| Dynamo DP8/6P2D baseline | `scripts/run_dynamo_workload.sh` |
 
 A targeted PAP run uses environment configuration:
 
@@ -60,7 +64,7 @@ configuration explicitly.
 Run the current three-architecture matrix with:
 
 ```bash
-PAP_CAPACITY_ARCHITECTURES=dp_8,pd_6p2d,pap_7pa1p \
+PAP_CAPACITY_ARCHITECTURES=dynamo_dp8,dynamo_6p2d,pap_7pa1p \
   bash benchmarks/pap/aiperf/run_capacity_matrix.sh
 ```
 
@@ -69,7 +73,7 @@ PAP_CAPACITY_ARCHITECTURES=dp_8,pd_6p2d,pap_7pa1p \
 - `scripts/configure_nvshmem.sh` validates the current NVSHMEM runtime.
 - `scripts/build_nvshmem_device_bridge.sh` builds the device-side bridge.
 - `scripts/configure_same_node_nixl.sh` validates the NIXL/UCX runtime used
-  by Prefill KV lifecycle bookkeeping and the PD baseline.
+  by Prefill KV lifecycle bookkeeping and the Dynamo 6P2D baseline.
 - `scripts/setup_same_node_nixl.sh` builds that local NIXL/UCX environment.
 
 NIXL is not a PAP Attention--Projection transport and is not used for
@@ -79,6 +83,11 @@ PA-to-PA request relocation.
 
 - `microbench/nvshmem_gpu_graph.cu`: NVSHMEM Graph protocol.
 - `microbench/attention_scaling.py`: production paged-decode Attention.
+- `tooling/attention_latency_table.py`: exports measured Attention matrices;
+  it deliberately performs no latency fitting.
+- `scripts/run_attention_scaling_parallel.sh`: shards the expanded measured
+  Attention matrix across identical 12-SM GPU partitions and merges it
+  fail-closed.
 - `microbench/projection_scaling.py`: Projection-side decode kernels.
 - `microbench/prefill_saturation.py`: Prefill saturation.
 - `scripts/run_mps_admission_latency.sh` and
@@ -86,6 +95,8 @@ PA-to-PA request relocation.
   for `PAP-20260822-MPS-ADMISSION-MICRO`.
 - `tooling/validate_deferred_trace.py`: current deferred-trace audit.
 - `tooling/component_gpu_metrics.py`: Nsight Systems component metrics.
+- `tooling/merge_attention_scaling.py`: validates and merges all measured
+  workload/config shards without interpolation.
 - `tooling/nixl_read_write_probe.py`: fail-closed NIXL transfer diagnosis.
 
 Machine-specific and work-in-progress diagnostics may remain untracked until
