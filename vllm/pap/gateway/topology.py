@@ -156,7 +156,11 @@ def _make_client(host: str, port: int, role: str) -> PAPServiceClient:
         client=httpx.AsyncClient(
             timeout=None,
             base_url=base_url,
-            limits=httpx.Limits(max_connections=None, max_keepalive_connections=None),
+            limits=httpx.Limits(
+                max_connections=None,
+                max_keepalive_connections=None,
+                keepalive_expiry=4.0,
+            ),
         ),
         host=host,
         port=port,

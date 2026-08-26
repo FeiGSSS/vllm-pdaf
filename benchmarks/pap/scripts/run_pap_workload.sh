@@ -177,6 +177,7 @@ if [[ -n "${PAP_AIPERF_INPUT_FILE:-${AIPERF_INPUT_FILE:-}}" ]]; then
 fi
 PAP_AIPERF_INPUT_FILE="${PAP_AIPERF_INPUT_FILE:-${AIPERF_INPUT_FILE:-${RUN_ROOT}/aiperf_multiturn.jsonl}}"
 PAP_AIPERF_OUTPUT_DIR="${PAP_AIPERF_OUTPUT_DIR:-${RUN_ROOT}/aiperf}"
+PAP_AIPERF_CUSTOM_DATASET_TYPE="${PAP_AIPERF_CUSTOM_DATASET_TYPE:-${AIPERF_CUSTOM_DATASET_TYPE:-}}"
 if [[ "${AIPERF_INPUT_FILE_PROVIDED}" == "1" \
   && "${PAP_AIPERF_VARIABLE_TURNS}" == "1" \
   && -z "${PAP_AIPERF_EXPECTED_REQUESTS:-}" ]]; then
@@ -195,6 +196,14 @@ fi
 PAP_AIPERF_CONCURRENCY="${PAP_AIPERF_CONCURRENCY:-12}"
 PAP_AIPERF_TIMING_MODE="${PAP_AIPERF_TIMING_MODE:-concurrency}"
 PAP_AIPERF_REQUEST_RATE="${PAP_AIPERF_REQUEST_RATE-}"
+PAP_AIPERF_ARRIVAL_PATTERN="${PAP_AIPERF_ARRIVAL_PATTERN:-${AIPERF_ARRIVAL_PATTERN:-poisson}}"
+PAP_AIPERF_WARMUP_DURATION_SECONDS="${PAP_AIPERF_WARMUP_DURATION_SECONDS:-}"
+PAP_AIPERF_BENCHMARK_DURATION_SECONDS="${PAP_AIPERF_BENCHMARK_DURATION_SECONDS:-}"
+PAP_AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS="${PAP_AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS:-}"
+PAP_AIPERF_ALLOW_PREDECODE_CANCELLATION=0
+if [[ -n "${PAP_AIPERF_BENCHMARK_DURATION_SECONDS}" ]]; then
+  PAP_AIPERF_ALLOW_PREDECODE_CANCELLATION=1
+fi
 if [[ ! "${PAP_AIPERF_CONCURRENCY}" \
   =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]]; then
   echo "ERROR: PAP_AIPERF_CONCURRENCY must be a positive integer or CSV list" >&2
@@ -904,17 +913,34 @@ wait_attention_sessions_drained() {
 }
 
 wait_gateway_requests_drained() {
-  local start response
+  local start response lifecycle_failures
   start="$(date +%s)"
   while true; do
     response="$(
       curl -fsS "http://127.0.0.1:${PAP_PROXY_PORT}/health" 2>/dev/null \
         || true
     )"
-    if [[ "${response}" == *'"inflight_requests":0'* ]]; then
+    lifecycle_failures="$(
+      jq -r '.lifecycle.failed // 0' <<< "${response}" 2>/dev/null || true
+    )"
+    if [[ "${lifecycle_failures}" =~ ^[1-9][0-9]*$ ]]; then
+      {
+        printf 'STATUS=failed\n'
+        printf 'LIFECYCLE_FAILURES=%q\n' "${lifecycle_failures}"
+        printf 'LAST_RESPONSE=%q\n' "${response}"
+      } > "${RUN_ROOT}/gateway_drain.env"
+      die "PAP Gateway reported lifecycle cleanup failures"
+    fi
+    if jq -e '
+      .inflight_requests == 0
+      and .lifecycle.active == 0
+      and .lifecycle.failed == 0
+    ' <<< "${response}" >/dev/null 2>&1; then
       {
         printf 'STATUS=passed\n'
         printf 'INFLIGHT_REQUESTS=0\n'
+        printf 'LIFECYCLE_ACTIVE=0\n'
+        printf 'LIFECYCLE_FAILURES=0\n'
         printf 'TIMEOUT_SECONDS=%q\n' "${PAP_BENCH_GATEWAY_DRAIN_TIMEOUT}"
       } > "${RUN_ROOT}/gateway_drain.env"
       echo "PAP Gateway requests drained"
@@ -1246,32 +1272,57 @@ prepare_aiperf_dataset() {
   if [[ "${AIPERF_INPUT_FILE_PROVIDED}" == "1" ]]; then
     [[ -f "${PAP_AIPERF_INPUT_FILE}" ]] \
       || die "Missing AIPerf input file: ${PAP_AIPERF_INPUT_FILE}"
-    return
+  else
+    "${PYTHON_BIN}" "${AIPERF_DATASET_GENERATOR}" \
+      --model "${MODEL_PATH}" \
+      --corpus "${DATASET_PATH}" \
+      --output "${PAP_AIPERF_INPUT_FILE}" \
+      --sessions "${PAP_AIPERF_SESSIONS}" \
+      --turns "${PAP_AIPERF_TURNS}" \
+      --document-tokens "${INPUT_LEN}" \
+      --document-tokens-median "${AIPERF_DOCUMENT_TOKENS_MEDIAN}" \
+      --document-tokens-min "${AIPERF_DOCUMENT_TOKENS_MIN}" \
+      --document-tokens-max "${AIPERF_DOCUMENT_TOKENS_MAX}" \
+      --append-tokens "${PAP_AIPERF_APPEND_TOKENS}" \
+      --append-tokens-median "${AIPERF_APPEND_TOKENS_MEDIAN}" \
+      --append-tokens-min "${AIPERF_APPEND_TOKENS_MIN}" \
+      --append-tokens-max "${AIPERF_APPEND_TOKENS_MAX}" \
+      --output-tokens "${OUTPUT_LEN}" \
+      --output-tokens-median "${AIPERF_OUTPUT_TOKENS_MEDIAN}" \
+      --output-tokens-min "${AIPERF_OUTPUT_TOKENS_MIN}" \
+      --output-tokens-max "${AIPERF_OUTPUT_TOKENS_MAX}" \
+      --random-seed "${AIPERF_RANDOM_SEED}" \
+      --max-model-len "${MAX_MODEL_LEN}" \
+      --think-time-ms "${AIPERF_THINK_TIME_MS}" \
+      --tool-time-ms "${AIPERF_TOOL_TIME_MS}" \
+      --tool-every "${AIPERF_TOOL_EVERY}" \
+      --session-prefix "${RUN_ID}-aiperf"
   fi
-  "${PYTHON_BIN}" "${AIPERF_DATASET_GENERATOR}" \
-    --model "${MODEL_PATH}" \
-    --corpus "${DATASET_PATH}" \
-    --output "${PAP_AIPERF_INPUT_FILE}" \
-    --sessions "${PAP_AIPERF_SESSIONS}" \
-    --turns "${PAP_AIPERF_TURNS}" \
-    --document-tokens "${INPUT_LEN}" \
-    --document-tokens-median "${AIPERF_DOCUMENT_TOKENS_MEDIAN}" \
-    --document-tokens-min "${AIPERF_DOCUMENT_TOKENS_MIN}" \
-    --document-tokens-max "${AIPERF_DOCUMENT_TOKENS_MAX}" \
-    --append-tokens "${PAP_AIPERF_APPEND_TOKENS}" \
-    --append-tokens-median "${AIPERF_APPEND_TOKENS_MEDIAN}" \
-    --append-tokens-min "${AIPERF_APPEND_TOKENS_MIN}" \
-    --append-tokens-max "${AIPERF_APPEND_TOKENS_MAX}" \
-    --output-tokens "${OUTPUT_LEN}" \
-    --output-tokens-median "${AIPERF_OUTPUT_TOKENS_MEDIAN}" \
-    --output-tokens-min "${AIPERF_OUTPUT_TOKENS_MIN}" \
-    --output-tokens-max "${AIPERF_OUTPUT_TOKENS_MAX}" \
-    --random-seed "${AIPERF_RANDOM_SEED}" \
-    --max-model-len "${MAX_MODEL_LEN}" \
-    --think-time-ms "${AIPERF_THINK_TIME_MS}" \
-    --tool-time-ms "${AIPERF_TOOL_TIME_MS}" \
-    --tool-every "${AIPERF_TOOL_EVERY}" \
-    --session-prefix "${RUN_ID}-aiperf"
+
+  local detected_type=""
+  if jq -e \
+    'type == "array" and length > 0 and
+      (.[0] | type == "object" and has("turns"))' \
+    "${PAP_AIPERF_INPUT_FILE}" >/dev/null 2>&1; then
+    detected_type="multi-turn"
+  else
+    detected_type="$(
+      sed -n '/[^[:space:]]/{p;q;}' "${PAP_AIPERF_INPUT_FILE}" \
+        | jq -er '
+          if type == "object" and has("turns") then "multi-turn"
+          elif type == "object" and has("session_id")
+            and has("input_length") and has("output_length")
+          then "mooncake-trace"
+          else empty
+          end
+        '
+    )" || die "Cannot identify AIPerf dataset schema: ${PAP_AIPERF_INPUT_FILE}"
+  fi
+  if [[ -n "${PAP_AIPERF_CUSTOM_DATASET_TYPE}" \
+    && "${PAP_AIPERF_CUSTOM_DATASET_TYPE}" != "${detected_type}" ]]; then
+    die "AIPerf dataset type mismatch: configured=${PAP_AIPERF_CUSTOM_DATASET_TYPE} detected=${detected_type} file=${PAP_AIPERF_INPUT_FILE}"
+  fi
+  PAP_AIPERF_CUSTOM_DATASET_TYPE="${detected_type}"
 }
 
 capture_git_state() {
@@ -1315,12 +1366,22 @@ write_effective_config() {
     printf 'AIPERF_ROOT=%q\n' "${AIPERF_ROOT}"
     printf 'AIPERF_BIN=%q\n' "${AIPERF_BIN}"
     printf 'PAP_AIPERF_INPUT_FILE=%q\n' "${PAP_AIPERF_INPUT_FILE}"
+    printf 'PAP_AIPERF_CUSTOM_DATASET_TYPE=%q\n' \
+      "${PAP_AIPERF_CUSTOM_DATASET_TYPE}"
     printf 'PAP_AIPERF_OUTPUT_DIR=%q\n' "${PAP_AIPERF_OUTPUT_DIR}"
     printf 'PAP_AIPERF_CONCURRENCY=%q\n' "${PAP_AIPERF_CONCURRENCY}"
     printf 'AIPERF_VARIATION_COUNT=%q\n' "${AIPERF_VARIATION_COUNT}"
     printf 'AIPERF_NUM_PROFILE_RUNS=%q\n' "${AIPERF_NUM_PROFILE_RUNS}"
     printf 'PAP_AIPERF_TIMING_MODE=%q\n' "${PAP_AIPERF_TIMING_MODE}"
     printf 'PAP_AIPERF_REQUEST_RATE=%q\n' "${PAP_AIPERF_REQUEST_RATE}"
+    printf 'PAP_AIPERF_ARRIVAL_PATTERN=%q\n' \
+      "${PAP_AIPERF_ARRIVAL_PATTERN}"
+    printf 'PAP_AIPERF_WARMUP_DURATION_SECONDS=%q\n' \
+      "${PAP_AIPERF_WARMUP_DURATION_SECONDS}"
+    printf 'PAP_AIPERF_BENCHMARK_DURATION_SECONDS=%q\n' \
+      "${PAP_AIPERF_BENCHMARK_DURATION_SECONDS}"
+    printf 'PAP_AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS=%q\n' \
+      "${PAP_AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS}"
     printf 'INPUT_LENS_CSV=%q\n' "${INPUT_LEN}"
     printf 'OUTPUT_LENS_CSV=%q\n' "${OUTPUT_LEN}"
     printf 'BENCH_TIMEOUT=%q\n' "${BENCH_TIMEOUT}"
@@ -1532,6 +1593,7 @@ write_run_metadata() {
   PAP_AIPERF_VARIABLE_TURNS="${PAP_AIPERF_VARIABLE_TURNS}" \
   PAP_AIPERF_APPEND_TOKENS="${PAP_AIPERF_APPEND_TOKENS}" \
   PAP_AIPERF_CONCURRENCY="${PAP_AIPERF_CONCURRENCY}" \
+  PAP_AIPERF_CUSTOM_DATASET_TYPE="${PAP_AIPERF_CUSTOM_DATASET_TYPE}" \
   AIPERF_NUM_PROFILE_RUNS="${AIPERF_NUM_PROFILE_RUNS}" \
   PAP_AIPERF_TIMING_MODE="${PAP_AIPERF_TIMING_MODE}" \
   PAP_AIPERF_REQUEST_RATE="${PAP_AIPERF_REQUEST_RATE}" \
@@ -1560,6 +1622,7 @@ metadata = {
     "pa_count": pa_count,
     "projection_count": projection_count,
     "routing_policy": os.environ["PAP_ROUTING_POLICY"],
+    "load_accounting": "gateway_request_lifecycle",
     "run_id": os.environ["RUN_ID"],
     "result_root": os.environ["RUN_ROOT"],
     "input_lens": [os.environ["INPUT_LEN"]],
@@ -1609,6 +1672,9 @@ metadata = {
     "aiperf_concurrency_points": [
         int(value)
         for value in os.environ["PAP_AIPERF_CONCURRENCY"].split(",")
+    ],
+    "aiperf_custom_dataset_type": os.environ[
+        "PAP_AIPERF_CUSTOM_DATASET_TYPE"
     ],
     "aiperf_num_profile_runs": int(
         os.environ["AIPERF_NUM_PROFILE_RUNS"]
@@ -1676,6 +1742,7 @@ audit_xy_routes() {
     PAP_AIPERF_TURNS="${PAP_AIPERF_TURNS}" \
     PAP_AIPERF_SESSIONS="${PAP_AIPERF_SESSIONS}" \
     PAP_AIPERF_VARIABLE_TURNS="${PAP_AIPERF_VARIABLE_TURNS}" \
+    ALLOW_PREDECODE_CANCELLATION="${PAP_AIPERF_ALLOW_PREDECODE_CANCELLATION}" \
     "${PYTHON_BIN}" - <<'PY'
 import json
 import os
@@ -1691,10 +1758,9 @@ projection_count = int(os.environ["PROJECTION_COUNT"])
 prefill_base = int(os.environ["PREFILL_PORT_BASE"])
 projection_base = int(os.environ["PROJECTION_PORT_BASE"])
 routing_policy = os.environ["PAP_ROUTING_POLICY"]
-load_rounds = int(os.environ["PAP_AIPERF_TURNS"])
-load_conversations = int(os.environ["PAP_AIPERF_SESSIONS"])
-variable_turns = os.environ["PAP_AIPERF_VARIABLE_TURNS"] == "1"
-load_repetitions = expected_requests // (load_rounds * load_conversations)
+allow_predecode_cancellation = (
+    os.environ["ALLOW_PREDECODE_CANCELLATION"] == "1"
+)
 route_pattern = re.compile(
     r"request_id=\S+ pa=[^:\s]+:(\d+).* projection=[^:\s]+:(\d+)"
 )
@@ -1714,17 +1780,8 @@ expected_pa_routes = Counter()
 expected_projection_routes = Counter()
 expected_pair_routes = Counter()
 errors = []
-affinity_variable = (
-    routing_policy == "conversation_affinity" and variable_turns
-)
-if routing_policy == "conversation_affinity" and not variable_turns:
-    expected_group_indices = [
-        (repetition * load_conversations + conversation) % pa_count
-        for repetition in range(load_repetitions)
-        for conversation in range(load_conversations)
-        for _ in range(load_rounds)
-    ]
-elif affinity_variable:
+conversation_affinity = routing_policy == "conversation_affinity"
+if conversation_affinity:
     # Conversation assignment depends on the first-seen order. Validate the
     # endpoint range and request count instead of reconstructing interleaving.
     expected_group_indices = [0 for _ in range(expected_requests)]
@@ -1764,7 +1821,7 @@ if len(routes) != expected_requests:
     errors.append(
         f"routed request count {len(routes)} != expected {expected_requests}"
     )
-if affinity_variable:
+if conversation_affinity:
     if any(
         port < prefill_base or port >= prefill_base + pa_count
         for port in pa_routes
@@ -1806,11 +1863,15 @@ for index in range(pa_count):
         "decode_commit_200": commits,
         "lease_release_200": releases,
     }
-    if releases != routed:
+    if allow_predecode_cancellation and releases < routed:
+        errors.append(
+            f"PA port {port} release count {releases} < routed {routed}"
+        )
+    elif not allow_predecode_cancellation and releases != routed:
         errors.append(
             f"PA port {port} release count {releases} != routed {routed}"
         )
-    if commits < routed:
+    if commits < routed and not allow_predecode_cancellation:
         errors.append(
             f"PA port {port} commit count {commits} < routed {routed}"
         )
@@ -1824,6 +1885,7 @@ audit = {
     "expected_pair_routes": dict(sorted(expected_pair_routes.items())),
     "prefill_control_counts": control_counts,
     "total_lease_release_200": total_releases,
+    "allow_predecode_cancellation": allow_predecode_cancellation,
     "errors": errors,
 }
 with open(run_root / "routing_audit.json", "w", encoding="utf-8") as output:
@@ -2188,6 +2250,7 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     PAP_MODEL_HOOKS=1 \
     PAP_CUDAGRAPH_COMPATIBLE=1 \
     PAP_CUDAGRAPH_ROLE=projection \
+    VLLM_HTTP_TIMEOUT_KEEP_ALIVE=300 \
     "${VLLM_BIN}" serve "${MODEL_PATH}" \
       "${PAP_MODEL_CONFIG_ARGS[@]}" \
       --port "${projection_port}" \
@@ -2224,6 +2287,10 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
   wait_for_http \
     "http://127.0.0.1:$((PROJECTION_PORT_BASE + idx))/health" \
     "PAP Projection ${idx}"
+  curl -fsS \
+    "http://127.0.0.1:$((PROJECTION_PORT_BASE + idx))/openapi.json" \
+    | jq -e '.paths | has("/v1/pap/projection/quiesce")' >/dev/null \
+    || die "PAP Projection ${idx} quiesce route is missing"
 done
 
 PAP_VLLM_GRAPH_LOGS=()
@@ -2267,14 +2334,21 @@ timeout "${BENCH_TIMEOUT}" env \
   AIPERF_BIN="${AIPERF_BIN}" \
   MODEL_PATH="${MODEL_PATH}" \
   AIPERF_INPUT_FILE="${PAP_AIPERF_INPUT_FILE}" \
-  AIPERF_CUSTOM_DATASET_TYPE="${AIPERF_CUSTOM_DATASET_TYPE:-multi-turn}" \
+  AIPERF_CUSTOM_DATASET_TYPE="${PAP_AIPERF_CUSTOM_DATASET_TYPE}" \
   AIPERF_TARGET_URL="http://127.0.0.1:${PAP_PROXY_PORT}" \
   AIPERF_OUTPUT_DIR="${PAP_AIPERF_OUTPUT_DIR}" \
   AIPERF_SESSIONS="${PAP_AIPERF_SESSIONS}" \
   AIPERF_CONCURRENCY="${PAP_AIPERF_CONCURRENCY}" \
   AIPERF_TIMING_MODE="${PAP_AIPERF_TIMING_MODE}" \
   AIPERF_REQUEST_RATE="${PAP_AIPERF_REQUEST_RATE}" \
+  AIPERF_ARRIVAL_PATTERN="${PAP_AIPERF_ARRIVAL_PATTERN}" \
   AIPERF_REQUEST_TIMEOUT_SECONDS="${BENCH_TIMEOUT}" \
+  AIPERF_WARMUP_DURATION_SECONDS="${PAP_AIPERF_WARMUP_DURATION_SECONDS}" \
+  AIPERF_WARMUP_CONCURRENCY="${PAP_AIPERF_CONCURRENCY}" \
+  AIPERF_WARMUP_REQUEST_RATE="${PAP_AIPERF_REQUEST_RATE}" \
+  AIPERF_WARMUP_ARRIVAL_PATTERN="${PAP_AIPERF_ARRIVAL_PATTERN}" \
+  AIPERF_BENCHMARK_DURATION_SECONDS="${PAP_AIPERF_BENCHMARK_DURATION_SECONDS}" \
+  AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS="${PAP_AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS}" \
   "${AIPERF_RUNNER}" \
   2>&1 | tee "${RUN_ROOT}/${TAG}.log"
 if [[ -z "$(find "${PAP_AIPERF_OUTPUT_DIR}" -type f \
@@ -2285,6 +2359,14 @@ fi
 wait_prefill_torch_profiles
 wait_gateway_requests_drained
 wait_attention_sessions_drained
+if [[ -n "${PAP_AIPERF_BENCHMARK_DURATION_SECONDS}" ]]; then
+  NUM_PROMPTS="$(
+    rg -o 'request_id=\S+ pa=[^:\s]+:[0-9]+.*? projection=[^:\s]+:[0-9]+' \
+      "${RUN_LOG_DIR}/proxy.log" | wc -l || true
+  )"
+  [[ "${NUM_PROMPTS}" =~ ^[1-9][0-9]*$ ]] \
+    || die "fixed-duration AIPerf produced no routed PAP requests"
+fi
 capture_proxy_topology_stats
 capture_attention_fast_path_stats
 audit_pap_whole_step_graph

@@ -32,6 +32,10 @@ class LeaseReleaseRequest(BaseModel):
     submit_only: bool = False
 
 
+class RequestQuiesceRequest(BaseModel):
+    request_ids: list[str] = Field(min_length=1)
+
+
 @dataclass(slots=True)
 class _ControlItem:
     operation: str
@@ -77,6 +81,19 @@ class PAPControlDispatcher:
         await worker
         self._worker = None
 
+    async def abort_and_quiesce(self, request_ids: list[str]) -> dict[str, Any]:
+        await self._engine_client.abort(request_ids)
+        utility_client = getattr(
+            self._engine_client,
+            "engine_core",
+            self._engine_client,
+        )
+        return await utility_client.call_utility_async(
+            "pap_control",
+            "request_quiesce",
+            {"request_ids": request_ids},
+        )
+
     async def _run(self) -> None:
         while (item := await self._queue.get()) is not None:
             try:
@@ -119,6 +136,20 @@ def _dispatcher(raw_request: Request) -> PAPControlDispatcher:
 def build_prefill_control_router() -> APIRouter:
     """Build PAP control routes without patching vLLM's API server."""
     router = APIRouter()
+
+    @router.get("/v1/pap/prefill/kv-load")
+    async def kv_load(raw_request: Request) -> dict[str, Any]:
+        return await _dispatcher(raw_request).submit("kv_load_snapshot", {}, wait=True)
+
+    @router.post("/v1/pap/prefill/quiesce")
+    async def quiesce(
+        req: RequestQuiesceRequest,
+        raw_request: Request,
+    ) -> dict[str, Any]:
+        result = await _dispatcher(raw_request).abort_and_quiesce(req.request_ids)
+        if not result.get("quiesced", False):
+            raise HTTPException(status_code=409, detail=result)
+        return result
 
     @router.post("/v1/pap/prefill/decode-commit")
     async def commit(req: DecodeCommitRequest, raw_request: Request) -> dict[str, Any]:
@@ -169,9 +200,28 @@ def build_prefill_control_router() -> APIRouter:
     return router
 
 
+def build_projection_control_router() -> APIRouter:
+    """Build the Projection abort-and-quiesce acknowledgment route."""
+    router = APIRouter()
+
+    @router.post("/v1/pap/projection/quiesce")
+    async def quiesce(
+        req: RequestQuiesceRequest,
+        raw_request: Request,
+    ) -> dict[str, Any]:
+        result = await _dispatcher(raw_request).abort_and_quiesce(req.request_ids)
+        if not result.get("quiesced", False):
+            raise HTTPException(status_code=409, detail=result)
+        return result
+
+    return router
+
+
 __all__ = [
     "DecodeCommitRequest",
     "LeaseReleaseRequest",
     "PAPControlDispatcher",
+    "RequestQuiesceRequest",
     "build_prefill_control_router",
+    "build_projection_control_router",
 ]

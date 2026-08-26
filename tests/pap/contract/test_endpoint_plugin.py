@@ -20,11 +20,38 @@ class _EngineClient:
         return {
             "applied": operation == "decode_commit",
             "released": operation == "lease_release",
+            "quiesced": operation == "request_quiesce",
         }
+
+    async def abort(self, request_ids: list[str]) -> None:
+        self.calls.append(("abort", "abort", {"request_ids": request_ids}))
 
 
 def test_dispatcher_preserves_commit_release_order() -> None:
     asyncio.run(_exercise_dispatcher())
+
+
+def test_dispatcher_acknowledges_projection_abort_barrier() -> None:
+    async def run() -> None:
+        engine = _EngineClient()
+        dispatcher = PAPControlDispatcher(engine)
+        result = await dispatcher.abort_and_quiesce(["chatcmpl-request-0"])
+
+        assert result["quiesced"] is True
+        assert engine.calls == [
+            (
+                "abort",
+                "abort",
+                {"request_ids": ["chatcmpl-request-0"]},
+            ),
+            (
+                "pap_control",
+                "request_quiesce",
+                {"request_ids": ["chatcmpl-request-0"]},
+            ),
+        ]
+
+    asyncio.run(run())
 
 
 async def _exercise_dispatcher() -> None:

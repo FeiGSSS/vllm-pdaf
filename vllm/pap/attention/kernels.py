@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections import OrderedDict
 from dataclasses import dataclass
 from threading import Lock
+from typing import Literal
 
 import torch
 
@@ -25,6 +26,19 @@ class PAPPagedDecodeKernelConfig:
     block_h: int
     num_warps: int
     num_stages: int
+    block_n: int = 32
+
+    def __post_init__(self) -> None:
+        if self.num_splits <= 0:
+            raise ValueError("PAP decode num_splits must be positive")
+        if self.block_h not in (1, 2, 4, 8, 16):
+            raise ValueError("PAP decode block_h must be a supported power of two")
+        if self.num_warps not in (1, 2, 4, 8):
+            raise ValueError("PAP decode num_warps is unsupported")
+        if self.num_stages <= 0:
+            raise ValueError("PAP decode num_stages must be positive")
+        if self.block_n not in (16, 32, 64, 128):
+            raise ValueError("PAP decode block_n must be a supported power of two")
 
 
 PAP_TRITON_DECODE_DEFAULT_CONFIG = PAPPagedDecodeKernelConfig(
@@ -185,6 +199,7 @@ class PAPAttentionStepTensorCache:
 
 def build_paged_decode_workspace(
     query: torch.Tensor,
+    kernel_config: PAPPagedDecodeKernelConfig | None = None,
 ) -> PAPPagedDecodeWorkspace:
     """Allocate the fixed PAP decode scratch once for a decode step."""
 
@@ -196,7 +211,7 @@ def build_paged_decode_workspace(
         if query.device.type == "cuda"
         else 0
     )
-    kernel_config = paged_decode_kernel_config_for_sms(visible_sms)
+    kernel_config = kernel_config or paged_decode_kernel_config_for_sms(visible_sms)
     return PAPPagedDecodeWorkspace(
         output=torch.empty_like(query),
         partial=torch.empty(
@@ -243,7 +258,7 @@ def _run_grouped_paged_decode_attention(
     value_dim = int(value_cache.shape[-1])
     block_dv = 1 << (value_dim - 1).bit_length()
     block_dmodel = 1 << (key_dim - 1).bit_length()
-    block_n = 16 if decode_ops.is_hip_ else 32
+    block_n = 16 if decode_ops.is_hip_ else config.block_n
     batch_size, num_heads = map(int, query.shape[:2])
     kv_group_count = num_heads // int(key_cache.shape[-2])
     grid = (
@@ -319,6 +334,7 @@ def run_paged_decode_attention(
     workspace: PAPPagedDecodeWorkspace,
     scale: float,
     block_size: int,
+    implementation: Literal["auto", "pap_grouped", "vllm"] = "auto",
 ) -> torch.Tensor:
     """Run the current Triton paged-decode kernel without a layer fallback."""
 
@@ -336,10 +352,16 @@ def run_paged_decode_attention(
     if int(query.shape[1]) % int(key_cache.shape[-2]) != 0:
         raise RuntimeError("PAP paged decode GQA head counts are incompatible")
 
-    use_low_resource_grouped_kernel = (
-        workspace.kernel_config == PAP_TRITON_DECODE_LOW_RESOURCE_CONFIG
-        and int(query.shape[1]) != int(key_cache.shape[-2])
+    if implementation not in ("auto", "pap_grouped", "vllm"):
+        raise ValueError(f"unknown PAP decode implementation: {implementation}")
+    has_grouped_query_attention = int(query.shape[1]) != int(key_cache.shape[-2])
+    use_low_resource_grouped_kernel = implementation == "pap_grouped" or (
+        implementation == "auto"
+        and workspace.kernel_config == PAP_TRITON_DECODE_LOW_RESOURCE_CONFIG
+        and has_grouped_query_attention
     )
+    if use_low_resource_grouped_kernel and not has_grouped_query_attention:
+        raise RuntimeError("PAP grouped decode requires grouped-query attention")
     if use_low_resource_grouped_kernel:
         _run_grouped_paged_decode_attention(
             query=query,

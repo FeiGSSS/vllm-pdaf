@@ -4,18 +4,30 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
-from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
-from vllm.pap.gateway.admission import PAPProjectionAdmission
+import httpx
+
 from vllm.pap.gateway.clients import PAPServiceClient, register_attention_handle
 from vllm.pap.gateway.clients import request_headers as _headers
+from vllm.pap.gateway.lifecycle import (
+    PAPRequestLifecycle,
+    release_attention_sessions,
+)
 from vllm.pap.gateway.observability import _pap_prefill_ipc_profile_enabled
-from vllm.pap.gateway.topology import PAPGroup, ProjectionInstance
 
 logger = logging.getLogger("pap_gateway")
+
+
+@dataclass
+class OpenProjectionStream:
+    response: httpx.Response
+    start: float
+    profile: bool
 
 
 async def _post_json(
@@ -58,39 +70,26 @@ async def register_attention_handles(
                 )
             )
             registered_attentions.append(attention)
-    except Exception:
-        await _cleanup_attention_sessions(registered_attentions, request_id)
+    except BaseException:
+        cleanup_task = asyncio.create_task(
+            release_attention_sessions(registered_attentions, request_id)
+        )
+        try:
+            await asyncio.shield(cleanup_task)
+        except asyncio.CancelledError:
+            cleanup_task.add_done_callback(_log_registration_cleanup_failure)
         raise
     return sessions
 
 
-async def _delete_attention_session(
-    attention: PAPServiceClient,
-    request_id: str,
-) -> None:
-    resp = await attention.client.delete(
-        f"/v1/pap/attention/sessions/{request_id}",
-        headers=_headers(request_id),
-    )
-    resp.raise_for_status()
+def _log_registration_cleanup_failure(task: asyncio.Task[None]) -> None:
+    try:
+        task.result()
+    except Exception:
+        logger.exception("PAP partial Attention registration cleanup failed")
 
 
-async def _cleanup_attention_sessions(
-    attention_clients: list[PAPServiceClient],
-    request_id: str,
-) -> None:
-    """Release all Attention sessions associated with one request."""
-    for attention in attention_clients:
-        try:
-            await _delete_attention_session(attention, request_id)
-        except Exception as exc:
-            logger.warning(
-                "failed to release PAP attention session request_id=%s "
-                "attention_endpoint=%s error=%s",
-                request_id,
-                attention.base_url,
-                exc,
-            )
+_cleanup_attention_sessions = release_attention_sessions
 
 
 async def _stream_projection(
@@ -101,9 +100,6 @@ async def _stream_projection(
 ):
     profile = _pap_prefill_ipc_profile_enabled()
     start = time.perf_counter() if profile else 0.0
-    first_chunk = True
-    chunk_count = 0
-    byte_count = 0
     async with client.client.stream(
         "POST",
         endpoint,
@@ -117,20 +113,69 @@ async def _stream_projection(
                 request_id,
                 (time.perf_counter() - start) * 1000.0,
             )
-        async for chunk in resp.aiter_bytes():
-            if profile:
-                chunk_count += 1
-                byte_count += len(chunk)
-                if first_chunk:
-                    first_chunk = False
-                    logger.info(
-                        "PAP proxy projection stream profile request_id=%s "
-                        "first_chunk_ms=%.3f first_chunk_bytes=%d",
-                        request_id,
-                        (time.perf_counter() - start) * 1000.0,
-                        len(chunk),
-                    )
+        async for chunk in _stream_projection_response(
+            resp,
+            request_id,
+            start=start,
+            profile=profile,
+        ):
             yield chunk
+
+
+async def open_projection_stream(
+    client: PAPServiceClient,
+    endpoint: str,
+    payload: dict[str, Any],
+    request_id: str,
+) -> OpenProjectionStream:
+    """Receive Projection headers before committing the downstream response."""
+    profile = _pap_prefill_ipc_profile_enabled()
+    start = time.perf_counter() if profile else 0.0
+    request = client.client.build_request(
+        "POST",
+        endpoint,
+        json=payload,
+        headers=_headers(request_id),
+    )
+    response = await client.client.send(request, stream=True)
+    try:
+        response.raise_for_status()
+    except Exception:
+        await response.aclose()
+        raise
+    if profile:
+        logger.info(
+            "PAP proxy projection stream profile request_id=%s open_ms=%.3f",
+            request_id,
+            (time.perf_counter() - start) * 1000.0,
+        )
+    return OpenProjectionStream(response, start, profile)
+
+
+async def _stream_projection_response(
+    response: httpx.Response,
+    request_id: str,
+    *,
+    start: float,
+    profile: bool,
+):
+    first_chunk = True
+    chunk_count = 0
+    byte_count = 0
+    async for chunk in response.aiter_bytes():
+        if profile:
+            chunk_count += 1
+            byte_count += len(chunk)
+            if first_chunk:
+                first_chunk = False
+                logger.info(
+                    "PAP proxy projection stream profile request_id=%s "
+                    "first_chunk_ms=%.3f first_chunk_bytes=%d",
+                    request_id,
+                    (time.perf_counter() - start) * 1000.0,
+                    len(chunk),
+                )
+        yield chunk
     if profile:
         logger.info(
             "PAP proxy projection stream profile request_id=%s total_ms=%.3f "
@@ -147,18 +192,29 @@ async def _stream_projection_with_cleanup(
     endpoint: str,
     payload: dict[str, Any],
     request_id: str,
-    attention_clients: list[PAPServiceClient],
-    admission: PAPProjectionAdmission,
-    group: PAPGroup,
-    projection: ProjectionInstance,
-    on_cleanup_complete: Callable[[], None] | None = None,
+    lifecycle: PAPRequestLifecycle,
+    opened_stream: OpenProjectionStream | None = None,
 ):
     """Stream Projection output and release the fixed PA lifecycle."""
     terminal_marker = b"data: [DONE]"
     pending = b""
     terminal_chunks: list[bytes] = []
     try:
-        async for chunk in _stream_projection(client, endpoint, payload, request_id):
+        if opened_stream is None:
+            projection_chunks = _stream_projection(
+                client,
+                endpoint,
+                payload,
+                request_id,
+            )
+        else:
+            projection_chunks = _stream_projection_response(
+                opened_stream.response,
+                request_id,
+                start=opened_stream.start,
+                profile=opened_stream.profile,
+            )
+        async for chunk in projection_chunks:
             if terminal_chunks:
                 terminal_chunks.append(chunk)
                 continue
@@ -176,14 +232,9 @@ async def _stream_projection_with_cleanup(
             pending = b""
         if pending:
             yield pending
+        if terminal_chunks:
+            lifecycle.mark_projection_completed()
     finally:
-        try:
-            await _cleanup_attention_sessions(attention_clients, request_id)
-        finally:
-            try:
-                await admission.release(group, projection)
-            finally:
-                if on_cleanup_complete is not None:
-                    on_cleanup_complete()
+        await lifecycle.terminate("projection_stream_closed")
     for chunk in terminal_chunks:
         yield chunk

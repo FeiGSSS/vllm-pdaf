@@ -17,6 +17,7 @@ from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorMetadat
 from vllm.pap.integration.request import PAPRequestMetadata
 from vllm.pap.lifecycle import lease as pap_lease
 from vllm.pap.model.prefill import PAPPrefillKVPublisher
+from vllm.v1.request import RequestStatus
 
 if TYPE_CHECKING:
     from vllm.config import VllmConfig
@@ -142,7 +143,11 @@ class PAPPrefillConnector(KVConnectorBase_V1):
     def get_finished(
         self, finished_req_ids: set[str]
     ) -> tuple[set[str] | None, set[str] | None]:
-        self._pending_finished.update(str(req_id) for req_id in finished_req_ids)
+        for req_id in map(str, finished_req_ids):
+            if pap_lease.pap_has_active_lease(
+                req_id
+            ) or pap_lease.pap_was_recently_released(req_id):
+                self._pending_finished.add(req_id)
         ready = {
             req_id
             for req_id in self._pending_finished
@@ -211,6 +216,11 @@ class PAPPrefillConnector(KVConnectorBase_V1):
             return False, None
         lease_id = pap_lease.pap_active_lease_id(request_id)
         if lease_id is None:
+            if request.status == RequestStatus.FINISHED_ABORTED:
+                self._pending_finished.discard(request_id)
+                for publisher in self._publishers.values():
+                    publisher.finish_requests({request_id})
+                return False, None
             raise RuntimeError(
                 f"PAP Prefill request {request_id} finished without a KV lease"
             )

@@ -28,7 +28,13 @@ AIPERF_PARAMETER_SWEEP_COOLDOWN_SECONDS="${AIPERF_PARAMETER_SWEEP_COOLDOWN_SECON
 AIPERF_PARAMETER_SWEEP_MODE="${AIPERF_PARAMETER_SWEEP_MODE:-repeated}"
 AIPERF_WARMUP_SESSIONS="${AIPERF_WARMUP_SESSIONS:-0}"
 AIPERF_WARMUP_CONCURRENCY="${AIPERF_WARMUP_CONCURRENCY:-}"
+AIPERF_WARMUP_DURATION_SECONDS="${AIPERF_WARMUP_DURATION_SECONDS:-}"
+AIPERF_WARMUP_REQUEST_RATE="${AIPERF_WARMUP_REQUEST_RATE:-}"
+AIPERF_WARMUP_ARRIVAL_PATTERN="${AIPERF_WARMUP_ARRIVAL_PATTERN:-}"
+AIPERF_BENCHMARK_DURATION_SECONDS="${AIPERF_BENCHMARK_DURATION_SECONDS:-}"
+AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS="${AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS:-}"
 AIPERF_GOODPUT_SLO="${AIPERF_GOODPUT_SLO:-}"
+AIPERF_EXTRA_INPUTS="${AIPERF_EXTRA_INPUTS:-{\"ignore_eos\":true,\"temperature\":0,\"seed\":0}}"
 
 [[ -x "${AIPERF_BIN}" ]] || {
   echo "AIPerf is not installed at ${AIPERF_BIN}" >&2
@@ -71,6 +77,28 @@ for value in "${AIPERF_PROFILE_RUN_COOLDOWN_SECONDS}" \
 done
 if [[ ! "${AIPERF_WARMUP_SESSIONS}" =~ ^[0-9]+$ ]]; then
   echo "AIPERF_WARMUP_SESSIONS must be non-negative" >&2
+  exit 2
+fi
+for value in "${AIPERF_WARMUP_DURATION_SECONDS}" \
+  "${AIPERF_WARMUP_REQUEST_RATE}" \
+  "${AIPERF_BENCHMARK_DURATION_SECONDS}" \
+  "${AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS}"; do
+  if [[ -n "${value}" && ! "${value}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    echo "AIPerf duration, rate, and grace values must be non-negative" >&2
+    exit 2
+  fi
+done
+if [[ "${AIPERF_WARMUP_DURATION_SECONDS}" =~ ^0+([.]0+)?$ ]]; then
+  AIPERF_WARMUP_DURATION_SECONDS=""
+fi
+if (( AIPERF_WARMUP_SESSIONS > 0 )) \
+  && [[ -n "${AIPERF_WARMUP_DURATION_SECONDS}" ]]; then
+  echo "configure warmup by sessions or duration, not both" >&2
+  exit 2
+fi
+if [[ -n "${AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS}" \
+  && -z "${AIPERF_BENCHMARK_DURATION_SECONDS}" ]]; then
+  echo "AIPERF benchmark grace requires a benchmark duration" >&2
   exit 2
 fi
 case "${AIPERF_PARAMETER_SWEEP_MODE}" in
@@ -146,6 +174,7 @@ args=(
   --export-level "${AIPERF_EXPORT_LEVEL}"
   --slice-duration "${AIPERF_SLICE_DURATION}"
   --connection-reuse-strategy "${AIPERF_CONNECTION_REUSE_STRATEGY}"
+  --extra-inputs "${AIPERF_EXTRA_INPUTS}"
 )
 
 if [[ "${AIPERF_CUSTOM_DATASET_TYPE}" == "mooncake-trace" ]]; then
@@ -173,6 +202,29 @@ if (( AIPERF_WARMUP_SESSIONS > 0 )); then
   args+=(--num-warmup-sessions "${AIPERF_WARMUP_SESSIONS}")
   if [[ -n "${AIPERF_WARMUP_CONCURRENCY}" ]]; then
     args+=(--warmup-concurrency "${AIPERF_WARMUP_CONCURRENCY}")
+  fi
+fi
+
+if [[ -n "${AIPERF_WARMUP_DURATION_SECONDS}" ]]; then
+  args+=(--warmup-duration "${AIPERF_WARMUP_DURATION_SECONDS}")
+  if [[ -n "${AIPERF_WARMUP_CONCURRENCY}" ]]; then
+    args+=(--warmup-concurrency "${AIPERF_WARMUP_CONCURRENCY}")
+  fi
+  if [[ -n "${AIPERF_WARMUP_REQUEST_RATE}" ]]; then
+    args+=(--warmup-request-rate "${AIPERF_WARMUP_REQUEST_RATE}")
+  fi
+  if [[ -n "${AIPERF_WARMUP_ARRIVAL_PATTERN}" ]]; then
+    args+=(--warmup-arrival-pattern "${AIPERF_WARMUP_ARRIVAL_PATTERN}")
+  fi
+fi
+
+if [[ -n "${AIPERF_BENCHMARK_DURATION_SECONDS}" ]]; then
+  args+=(--benchmark-duration "${AIPERF_BENCHMARK_DURATION_SECONDS}")
+  if [[ -n "${AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS}" ]]; then
+    args+=(
+      --benchmark-grace-period
+      "${AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS}"
+    )
   fi
 fi
 

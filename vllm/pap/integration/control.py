@@ -30,6 +30,19 @@ class PAPEngineControl:
             return self._apply_decode_commit(payload)
         if operation == "lease_release":
             return self._release_lease(payload)
+        if operation == "kv_load_snapshot":
+            return PAPEngineAdapter.kv_load_snapshot(self._scheduler)
+        if operation in {"projection_quiesce", "request_quiesce"}:
+            request_ids = tuple(str(item) for item in payload["request_ids"])
+            active = [
+                request_id
+                for request_id in request_ids
+                if request_id in getattr(self._scheduler, "requests", {})
+            ]
+            return {
+                "quiesced": not active,
+                "active_request_ids": active,
+            }
         raise ValueError(f"unknown PAP control operation: {operation!r}")
 
     def _apply_decode_commit(self, payload: dict[str, Any]) -> dict[str, Any]:

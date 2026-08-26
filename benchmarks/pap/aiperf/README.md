@@ -30,15 +30,17 @@ is supplemental provenance and does not describe the installed package.
 | File | Purpose |
 | --- | --- |
 | `run_profile.sh` | Invoke one AIPerf profile against an existing endpoint |
+| `agentic_code_baseline.sh` | Pin the canonical dataset and steady-state controls |
 | `aiperf_compat_entry.py` | Preserve local tokenizer paths in AIPerf 0.11 worker processes |
-| `run_agentic_code_profile.sh` | Replay the no-delay Agentic Coding workload at a Poisson request rate |
+| `run_agentic_code_profile.sh` | Run the canonical fixed-duration workload against an existing endpoint |
 | `run_capacity_matrix.sh` | Restart and run PAP/Dynamo capacity points |
 | `generate_multiturn_dataset.py` | Generate fixed-turn randomized workloads |
 | `build_synthetic_longctx_dataset.py` | Generate long-context workloads |
 | `summarize_capacity_run.py` | Validate and summarize one run |
 | `summarize_capacity_matrix.py` | Aggregate architecture/concurrency points |
 
-The current default matrix is `dynamo_dp8,dynamo_6p2d,pap_7pa1p`. Removed PAP
+The current default matrix is
+`dynamo_dp8,dynamo_6p2d,dynamo_4p4d,pap_7pa1p`. Removed PAP
 multi-Projection topologies and retired custom-client presets are not
 runnable lanes.
 
@@ -56,11 +58,11 @@ DYNAMO_ARCHITECTURE=6p2d \
   bash benchmarks/pap/scripts/run_dynamo_workload.sh
 ```
 
-The default workload is the fixed 128-session Agentic Coding subset documented
-below: request rate 2 turn/s, Poisson arrivals, concurrency 64, no authored
-turn delay, Qwen3-8B FP16, 131K static YaRN, and piecewise CUDA Graphs.
-The first complete fixed-protocol results are in
-`../experiments/PAP-20260824-DYNAMO-ARCH-BASELINES/report.md`.
+The canonical workload uses the project-local no-delay Agentic Coding dataset:
+all 2,092 sessions, request rate 2 turn/s, Poisson arrivals, concurrency
+1,024, 60 seconds of unmeasured warmup, and 3,600 seconds of profiling with
+zero drain grace. Qwen3-8B runs FP16, 131K static YaRN, and CUDA Graphs in every
+architecture.
 
 ## Run one PAP workload
 
@@ -153,19 +155,21 @@ commit to close on the same statically selected PA.
 Large raw artifacts may stay outside Git only when their experiment report
 records their path, commit, configuration, size, and digest.
 
-## Agentic Coding request-rate replay
+## Agentic Coding steady-state replay
 
-Replay 128 deterministic, sequentially sampled conversations with Poisson
-arrivals, a session concurrency cap of 64, and all authored inter-turn delays
-removed. The default fixed subset keeps complete sessions with 5--32 turns;
-it contains 1,630 turns and avoids the original trace's 68-turn drain tail:
+Run the canonical dataset against an already-running endpoint:
 
 ```bash
-bash benchmarks/pap/aiperf/run_agentic_code_profile.sh 2 128 64
+bash benchmarks/pap/aiperf/run_agentic_code_profile.sh
 ```
 
-The three positional parameters are `request_rate`, `num_conversations`, and
-`concurrency`. The endpoint defaults to `http://127.0.0.1:9460`; override it
-with `AIPERF_TARGET_URL`. Each run writes its no-delay input, source and input
-SHA-256 digests, and effective workload settings under
-`aiperf-artifacts/agentic-code/`.
+Optional positional parameters are `request_rate`, `num_conversations`,
+`concurrency`, and `duration_seconds`. Defaults are `2 2092 1024 3600`.
+The endpoint defaults to `http://127.0.0.1:9460`; override it with
+`AIPERF_TARGET_URL`.
+
+Run all serving architectures sequentially with:
+
+```bash
+bash benchmarks/pap/scripts/run_agentic_code_steady_matrix.sh
+```

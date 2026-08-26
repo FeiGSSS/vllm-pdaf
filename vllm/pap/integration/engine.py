@@ -139,3 +139,89 @@ class PAPEngineAdapter:
         if not did_release:
             result["reason"] = "unknown_or_released_lease"
         return result
+
+    @staticmethod
+    def kv_load_snapshot(scheduler: Any) -> dict[str, Any]:
+        """Return resident and projected Prefill-owned KV token load."""
+        block_pool = scheduler.kv_cache_manager.block_pool
+        total_blocks = max(0, int(block_pool.num_gpu_blocks) - 1)
+        free_blocks = int(block_pool.get_num_free_blocks())
+        non_evictable_blocks = max(0, total_blocks - free_blocks)
+        block_size = int(scheduler.block_size)
+        running_ids = {
+            str(request.request_id) for request in getattr(scheduler, "running", ())
+        }
+        waiting_ids = {
+            str(request.request_id)
+            for queue in (
+                getattr(scheduler, "waiting", ()),
+                getattr(scheduler, "skipped_waiting", ()),
+            )
+            for request in queue
+        }
+
+        running_prefill_tokens = 0
+        queued_prefill_tokens = 0
+        running_decode_reservation_tokens = 0
+        queued_decode_reservation_tokens = 0
+        running_prefill_requests = 0
+        queued_prefill_requests = 0
+        for request_id, request in getattr(scheduler, "requests", {}).items():
+            prompt_tokens = max(0, int(request.num_prompt_tokens))
+            computed_tokens = min(
+                prompt_tokens,
+                max(0, int(request.num_computed_tokens)),
+            )
+            remaining_tokens = prompt_tokens - computed_tokens
+            if remaining_tokens <= 0:
+                continue
+            metadata = PAPRequestMetadata.from_mapping(request.kv_transfer_params)
+            decode_reservation = int(metadata.decode_capacity_tokens or 0)
+            normalized_id = str(request_id)
+            if normalized_id in running_ids:
+                running_prefill_tokens += remaining_tokens
+                running_decode_reservation_tokens += decode_reservation
+                running_prefill_requests += 1
+            elif normalized_id in waiting_ids:
+                queued_prefill_tokens += remaining_tokens
+                queued_decode_reservation_tokens += decode_reservation
+                queued_prefill_requests += 1
+
+        non_evictable_tokens = non_evictable_blocks * block_size
+        outstanding_prefill_tokens = (
+            running_prefill_tokens + queued_prefill_tokens
+        )
+        outstanding_decode_reservation_tokens = (
+            running_decode_reservation_tokens
+            + queued_decode_reservation_tokens
+        )
+        projected_kv_tokens = (
+            non_evictable_tokens
+            + outstanding_prefill_tokens
+            + outstanding_decode_reservation_tokens
+        )
+        return {
+            "non_evictable_kv_blocks": non_evictable_blocks,
+            "non_evictable_kv_tokens": non_evictable_tokens,
+            "running_prefill_tokens": running_prefill_tokens,
+            "queued_prefill_tokens": queued_prefill_tokens,
+            "outstanding_prefill_tokens": outstanding_prefill_tokens,
+            "running_decode_reservation_tokens": (
+                running_decode_reservation_tokens
+            ),
+            "queued_decode_reservation_tokens": queued_decode_reservation_tokens,
+            "outstanding_decode_reservation_tokens": (
+                outstanding_decode_reservation_tokens
+            ),
+            "running_prefill_requests": running_prefill_requests,
+            "queued_prefill_requests": queued_prefill_requests,
+            "projected_kv_tokens": projected_kv_tokens,
+            "routing_kv_tokens": projected_kv_tokens,
+            "free_kv_blocks": free_blocks,
+            "total_kv_blocks": total_blocks,
+            "total_kv_tokens": total_blocks * block_size,
+            "kv_block_size": block_size,
+            "kv_load_fraction": (
+                non_evictable_blocks / total_blocks if total_blocks else 0.0
+            ),
+        }

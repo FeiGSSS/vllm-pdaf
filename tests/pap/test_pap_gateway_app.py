@@ -8,11 +8,22 @@ import sys
 import pytest
 
 import vllm.pap.gateway.handoff as gateway_handoff
+import vllm.pap.gateway.lifecycle as gateway_lifecycle
 from vllm.pap.gateway.admission import PAPProjectionAdmission
 from vllm.pap.gateway.app import parse_args
+from vllm.pap.gateway.lifecycle import PAPLifecycleManager
+from vllm.pap.gateway.load_tracker import PAPLoadTracker
 from vllm.pap.gateway.observability import _prefill_usage_headers
-from vllm.pap.gateway.request_pipeline import _pop_conversation_id
-from vllm.pap.gateway.routing import PAPConversationRouter, select_instances
+from vllm.pap.gateway.request_pipeline import (
+    _cancel_on_client_disconnect,
+    _pop_conversation_id,
+)
+from vllm.pap.gateway.routing import (
+    PAPConversationRouter,
+    estimate_initial_context_load,
+    estimate_initial_context_tokens,
+    select_instances,
+)
 from vllm.pap.gateway.topology import (
     PAPGroup,
     ProjectionInstance,
@@ -51,6 +62,23 @@ def test_conversation_id_falls_back_to_aiperf_session_header() -> None:
     assert _pop_conversation_id(payload, "aiperf-session") == "aiperf-session"
 
 
+def test_client_disconnect_cancels_downstream_request_task() -> None:
+    async def run() -> None:
+        class DisconnectedRequest:
+            async def receive(self) -> dict[str, str]:
+                return {"type": "http.disconnect"}
+
+        async def downstream_request() -> None:
+            await asyncio.Event().wait()
+
+        request_task = asyncio.create_task(downstream_request())
+        await _cancel_on_client_disconnect(DisconnectedRequest(), request_task)
+        with pytest.raises(asyncio.CancelledError):
+            await request_task
+
+    asyncio.run(run())
+
+
 def test_gateway_defaults_to_conversation_affinity(monkeypatch) -> None:
     monkeypatch.setattr(
         sys,
@@ -65,6 +93,42 @@ def test_gateway_defaults_to_conversation_affinity(monkeypatch) -> None:
     )
 
     assert parse_args().routing_policy == "conversation_affinity"
+
+
+def test_load_tracker_accounts_request_lifecycle_without_runtime_rpc(
+    monkeypatch,
+) -> None:
+    async def run() -> None:
+        groups = _groups(2)
+        calls: list[int] = []
+
+        async def sample(client):
+            calls.append(client)
+            return {
+                "total_kv_tokens": 100_000,
+                "kv_block_size": 16,
+            }
+
+        monkeypatch.setattr(
+            "vllm.pap.gateway.load_tracker.get_prefill_kv_load",
+            sample,
+        )
+        tracker = PAPLoadTracker({groups[0]: 1, groups[1]: 2})
+        await tracker.start()
+        tracker.begin_request(
+            "request-0",
+            groups[0],
+            prefill_tokens=1000,
+            decode_capacity_tokens=100,
+        )
+        assert tracker.snapshot()[groups[0]]["projected_kv_tokens"] == 1100
+        tracker.mark_prefill_completed("request-0", 1200)
+        assert tracker.snapshot()[groups[0]]["projected_kv_tokens"] == 1300
+        tracker.finish_request("request-0")
+        assert tracker.snapshot()[groups[0]]["projected_kv_tokens"] == 0
+        assert calls == [1, 2]
+
+    asyncio.run(run())
 
 
 def test_parse_pap_groups_from_compact_spec() -> None:
@@ -176,7 +240,7 @@ def test_projection_affinity_groups_pas_by_projection() -> None:
     ]
 
 
-def test_conversation_affinity_round_robins_new_conversations() -> None:
+def test_conversation_affinity_balances_new_conversation_context() -> None:
     groups = _groups(3)
     projections = _projections(1)
     router = PAPConversationRouter(groups)
@@ -189,6 +253,7 @@ def test_conversation_affinity_round_robins_new_conversations() -> None:
             routing_policy="conversation_affinity",
             conversation_id=f"conv-{index}",
             conversation_router=router,
+            initial_context_load=(100, 10, 10, 10, 10, 10)[index],
         )[0].prefill_port
         for index in range(6)
     ]
@@ -204,13 +269,125 @@ def test_conversation_affinity_round_robins_new_conversations() -> None:
         for index in reversed(range(6))
     ]
 
-    assert first_round == [8100, 8101, 8102, 8100, 8101, 8102]
-    assert second_round == [8102, 8101, 8100, 8102, 8101, 8100]
+    assert first_round == [8100, 8101, 8102, 8101, 8102, 8101]
+    assert second_round == [8101, 8102, 8101, 8102, 8101, 8100]
     assert router.snapshot() == {
         "conversations": 6,
-        "pa_assignments": {"0": 2, "1": 2, "2": 2},
-        "pa_requests": {"0": 4, "1": 4, "2": 4},
+        "pa_assignments": {"0": 1, "1": 3, "2": 2},
+        "pa_requests": {"0": 2, "1": 6, "2": 4},
+        "pa_initial_context_characters": {"0": 100, "1": 30, "2": 20},
+        "pa_reserved_prefill_tokens": {"0": 0, "1": 0, "2": 0},
+        "pa_reserved_kv_tokens": {"0": 0, "1": 0, "2": 0},
     }
+
+
+def _pa_load(
+    *,
+    prefill: int,
+    projected_kv: int,
+    total_kv: int = 100_000,
+) -> dict[str, int]:
+    return {
+        "outstanding_prefill_tokens": prefill,
+        "projected_kv_tokens": projected_kv,
+        "non_evictable_kv_tokens": projected_kv,
+        "total_kv_tokens": total_kv,
+        "kv_block_size": 16,
+    }
+
+
+def test_conversation_affinity_filters_capacity_then_prefill_load() -> None:
+    groups = _groups(3)
+    router = PAPConversationRouter(groups)
+
+    selected, _ = select_instances(
+        0,
+        groups,
+        _projections(1),
+        routing_policy="conversation_affinity",
+        conversation_id="conv-live-load",
+        conversation_router=router,
+        initial_context_load=100,
+        initial_context_tokens=100,
+        decode_capacity_tokens=100,
+        request_id="request-0",
+        current_pa_loads={
+            groups[0]: _pa_load(prefill=0, projected_kv=96_000),
+            groups[1]: _pa_load(prefill=500, projected_kv=20_000),
+            groups[2]: _pa_load(prefill=100, projected_kv=30_000),
+        },
+    )
+
+    assert selected == groups[2]
+    assert router.has_assignment("conv-live-load")
+
+
+def test_concurrent_first_turns_see_router_reservations() -> None:
+    groups = _groups(2)
+    router = PAPConversationRouter(groups)
+    loads = {group: _pa_load(prefill=0, projected_kv=0) for group in groups}
+
+    first = router.select_group(
+        "conv-0",
+        request_number=0,
+        initial_context_tokens=1000,
+        request_id="request-0",
+        current_pa_loads=loads,
+    )
+    second = router.select_group(
+        "conv-1",
+        request_number=1,
+        initial_context_tokens=1000,
+        request_id="request-1",
+        current_pa_loads=loads,
+    )
+
+    assert first == groups[0]
+    assert second == groups[1]
+
+
+def test_first_turn_routes_to_least_loaded_pa_when_all_are_over_capacity() -> None:
+    groups = _groups(2)
+    router = PAPConversationRouter(groups)
+    loads = {
+        group: _pa_load(
+            prefill=0,
+            projected_kv=98_000,
+            total_kv=100_000,
+        )
+        for group in groups
+    }
+
+    selected = router.select_group(
+        "conv-full",
+        request_number=0,
+        initial_context_tokens=1000,
+        decode_capacity_tokens=1000,
+        request_id="request-full",
+        current_pa_loads=loads,
+    )
+
+    assert selected == groups[0]
+    assert router.has_assignment("conv-full")
+
+
+def test_initial_context_load_counts_text_without_tokenization() -> None:
+    assert (
+        estimate_initial_context_load(
+            {
+                "messages": [
+                    {"role": "system", "content": "abcd"},
+                    {
+                        "role": "user",
+                        "content": [{"type": "text", "text": "123456"}],
+                    },
+                ]
+            }
+        )
+        == 10
+    )
+    assert estimate_initial_context_load({"prompt": [1, 2, 3]}) == 12
+    assert estimate_initial_context_tokens({"prompt": [1, 2, 3]}) == 3
 
 
 def test_build_projection_payload_for_group_keeps_kv_uninstalled() -> None:
@@ -298,21 +475,37 @@ def test_stream_cleanup_precedes_done_event(monkeypatch, split_done: bool) -> No
             events.append("release")
 
     async def run() -> None:
+        group = _groups(1)[0]
+        projection = _projections(1)[0]
+        manager = PAPLifecycleManager()
+        lifecycle = manager.create(
+            request_id="request-0",
+            attention_clients=[],
+            prefill_client=None,
+            projection_client=None,
+            admission=FakeAdmission(),
+            group=group,
+            projection=projection,
+            on_finished=lambda: events.append("finished"),
+        )
+        lifecycle.mark_attention_registered()
+        lifecycle.mark_projection_admitted()
         stream = gateway_handoff._stream_projection_with_cleanup(
             None,
             "/v1/completions",
             {},
             "request-0",
-            [],
-            FakeAdmission(),
-            _groups(1)[0],
-            _projections(1)[0],
+            lifecycle,
         )
         async for chunk in stream:
             events.append(chunk)
 
     monkeypatch.setattr(gateway_handoff, "_stream_projection", fake_stream)
-    monkeypatch.setattr(gateway_handoff, "_cleanup_attention_sessions", fake_cleanup)
+    monkeypatch.setattr(
+        gateway_lifecycle,
+        "release_attention_sessions",
+        fake_cleanup,
+    )
     asyncio.run(run())
 
     cleanup_index = events.index("cleanup")
@@ -325,3 +518,64 @@ def test_stream_cleanup_precedes_done_event(monkeypatch, split_done: bool) -> No
     )
     assert before_cleanup == b'data: {"token":1}\n\n'
     assert after_release == b"data: [DONE]\n\n"
+
+
+def test_lifecycle_cleanup_survives_caller_cancellation(monkeypatch) -> None:
+    async def run() -> None:
+        events: list[str] = []
+        cleanup_started = asyncio.Event()
+        allow_cleanup = asyncio.Event()
+
+        async def delayed_cleanup(*args, **kwargs) -> None:
+            del args, kwargs
+            events.append("cleanup-started")
+            cleanup_started.set()
+            await allow_cleanup.wait()
+            events.append("cleanup-finished")
+
+        class FakeAdmission:
+            async def release(self, group, projection) -> None:
+                del group, projection
+                events.append("admission-released")
+
+        monkeypatch.setattr(
+            gateway_lifecycle,
+            "release_attention_sessions",
+            delayed_cleanup,
+        )
+        manager = PAPLifecycleManager()
+        lifecycle = manager.create(
+            request_id="request-cancelled",
+            attention_clients=[],
+            prefill_client=None,
+            projection_client=None,
+            admission=FakeAdmission(),
+            group=_groups(1)[0],
+            projection=_projections(1)[0],
+            on_finished=lambda: events.append("finished"),
+        )
+        lifecycle.mark_attention_registered()
+        lifecycle.mark_projection_admitted()
+
+        caller = asyncio.create_task(lifecycle.terminate("client_cancelled"))
+        await cleanup_started.wait()
+        caller.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await caller
+        assert manager.stats()["active"] == 1
+
+        allow_cleanup.set()
+        while manager.stats()["active"]:
+            await asyncio.sleep(0)
+        await lifecycle.terminate("duplicate_termination")
+
+        assert events == [
+            "cleanup-started",
+            "cleanup-finished",
+            "admission-released",
+            "finished",
+        ]
+        assert manager.stats()["completed"] == 1
+        assert manager.stats()["failed"] == 0
+
+    asyncio.run(run())

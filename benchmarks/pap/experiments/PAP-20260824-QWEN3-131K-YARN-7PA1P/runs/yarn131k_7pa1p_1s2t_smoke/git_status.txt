@@ -1,0 +1,13 @@
+ M benchmarks/pap/README.md
+ M benchmarks/pap/microbench/attention_scaling.py
+ M benchmarks/pap/scripts/run_attention_scaling.sh
+ M benchmarks/pap/scripts/run_pap_workload.sh
+ M vllm/pap/attention/kernels.py
+?? benchmarks/pap/experiments/
+?? benchmarks/pap/scripts/run_attention_scaling_parallel.sh
+?? benchmarks/pap/tooling/attention_latency_table.py
+?? benchmarks/pap/tooling/merge_attention_scaling.py
+?? tests/pap/README.md
+?? tests/pap/test_decode_commit.py
+?? tests/pap/test_pap_qwen3_prefill_kv.py
+?? tests/pap/test_pap_qwen3_tp_routing.py

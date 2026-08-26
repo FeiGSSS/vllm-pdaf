@@ -149,3 +149,23 @@ async def wait_attention_prefill_ready(
             f"request_id={request_id}"
         )
     return True
+
+
+async def get_prefill_kv_load(prefill: PAPServiceClient) -> dict[str, int]:
+    """Read Prefill compute backlog and projected KV capacity pressure."""
+    response = await prefill.client.get(
+        "/v1/pap/prefill/kv-load",
+        headers=request_headers(),
+    )
+    response.raise_for_status()
+    snapshot = response.json()
+    return {
+        key: max(0, int(snapshot[key]))
+        for key in (
+            "outstanding_prefill_tokens",
+            "projected_kv_tokens",
+            "non_evictable_kv_tokens",
+            "total_kv_tokens",
+            "kv_block_size",
+        )
+    }

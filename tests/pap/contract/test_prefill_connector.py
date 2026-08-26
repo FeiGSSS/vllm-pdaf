@@ -6,11 +6,13 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 import torch
 
 from vllm.pap.integration.request import PAPRequestMetadata
 from vllm.pap.kv_connector import PAPPrefillConnector
 from vllm.pap.model.prefill import PAPPrefillKVPublisher
+from vllm.v1.request import RequestStatus
 
 
 def _connector() -> PAPPrefillConnector:
@@ -92,3 +94,72 @@ def test_connector_reports_finished_only_after_lease_release(monkeypatch) -> Non
     assert connector.get_finished({"req"}) == (None, None)
     active.clear()
     assert connector.get_finished(set()) == ({"req"}, None)
+
+
+def test_connector_does_not_report_abort_without_delayed_free(monkeypatch) -> None:
+    connector = _connector()
+    monkeypatch.setattr(
+        "vllm.pap.kv_connector.pap_lease.pap_has_active_lease",
+        lambda _request_id: False,
+    )
+    monkeypatch.setattr(
+        "vllm.pap.kv_connector.pap_lease.pap_was_recently_released",
+        lambda _request_id: False,
+    )
+
+    assert connector.get_finished({"req"}) == (None, None)
+    assert connector._pending_finished == set()
+
+
+def test_connector_reports_lease_released_before_first_poll(monkeypatch) -> None:
+    connector = _connector()
+    monkeypatch.setattr(
+        "vllm.pap.kv_connector.pap_lease.pap_has_active_lease",
+        lambda _request_id: False,
+    )
+    monkeypatch.setattr(
+        "vllm.pap.kv_connector.pap_lease.pap_was_recently_released",
+        lambda _request_id: True,
+    )
+
+    assert connector.get_finished({"req"}) == ({"req"}, None)
+
+
+def test_connector_allows_abort_before_kv_lease(monkeypatch) -> None:
+    connector = _connector()
+    connector._pending_finished.add("prefill")
+    finished: list[set[str]] = []
+    connector._publishers = {
+        "layer.0": SimpleNamespace(
+            finish_requests=lambda request_ids: finished.append(request_ids)
+        )
+    }
+    monkeypatch.setattr(
+        "vllm.pap.kv_connector.pap_lease.pap_active_lease_id",
+        lambda _request_id: None,
+    )
+    request = SimpleNamespace(
+        request_id="prefill",
+        status=RequestStatus.FINISHED_ABORTED,
+        num_computed_tokens=1024,
+    )
+
+    assert connector.request_finished(request, []) == (False, None)
+    assert "prefill" not in connector._pending_finished
+    assert finished == [{"prefill"}]
+
+
+def test_connector_rejects_non_abort_without_kv_lease(monkeypatch) -> None:
+    connector = _connector()
+    monkeypatch.setattr(
+        "vllm.pap.kv_connector.pap_lease.pap_active_lease_id",
+        lambda _request_id: None,
+    )
+    request = SimpleNamespace(
+        request_id="prefill",
+        status=RequestStatus.FINISHED_STOPPED,
+        num_computed_tokens=1024,
+    )
+
+    with pytest.raises(RuntimeError, match="finished without a KV lease"):
+        connector.request_finished(request, [])

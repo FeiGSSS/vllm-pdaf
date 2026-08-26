@@ -120,3 +120,76 @@ def test_release_checks_final_commit_sequence(
                 "final_commit_seq": 0,
             },
         )
+
+
+def test_control_reports_non_evictable_kv_capacity() -> None:
+    block_pool = SimpleNamespace(
+        num_gpu_blocks=101,
+        get_num_free_blocks=lambda: 60,
+    )
+    scheduler = SimpleNamespace(
+        kv_cache_manager=SimpleNamespace(block_pool=block_pool),
+        block_size=16,
+        requests={},
+        running=[],
+        waiting=[],
+        skipped_waiting=[],
+    )
+
+    snapshot = PAPEngineControl(scheduler).apply("kv_load_snapshot", {})
+
+    assert snapshot == {
+        "non_evictable_kv_blocks": 40,
+        "non_evictable_kv_tokens": 640,
+        "running_prefill_tokens": 0,
+        "queued_prefill_tokens": 0,
+        "outstanding_prefill_tokens": 0,
+        "running_decode_reservation_tokens": 0,
+        "queued_decode_reservation_tokens": 0,
+        "outstanding_decode_reservation_tokens": 0,
+        "running_prefill_requests": 0,
+        "queued_prefill_requests": 0,
+        "projected_kv_tokens": 640,
+        "routing_kv_tokens": 640,
+        "free_kv_blocks": 60,
+        "total_kv_blocks": 100,
+        "total_kv_tokens": 1600,
+        "kv_block_size": 16,
+        "kv_load_fraction": 0.4,
+    }
+
+
+def test_control_includes_running_and_queued_prefill_tokens() -> None:
+    block_pool = SimpleNamespace(
+        num_gpu_blocks=101,
+        get_num_free_blocks=lambda: 80,
+    )
+    running = SimpleNamespace(
+        request_id="running",
+        num_prompt_tokens=1000,
+        num_computed_tokens=400,
+        kv_transfer_params={"pap_decode_capacity_tokens": 50},
+    )
+    waiting = SimpleNamespace(
+        request_id="waiting",
+        num_prompt_tokens=2000,
+        num_computed_tokens=0,
+        kv_transfer_params={"pap_decode_capacity_tokens": 100},
+    )
+    scheduler = SimpleNamespace(
+        kv_cache_manager=SimpleNamespace(block_pool=block_pool),
+        block_size=16,
+        requests={"running": running, "waiting": waiting},
+        running=[running],
+        waiting=[waiting],
+        skipped_waiting=[],
+    )
+
+    snapshot = PAPEngineControl(scheduler).apply("kv_load_snapshot", {})
+
+    assert snapshot["non_evictable_kv_tokens"] == 320
+    assert snapshot["running_prefill_tokens"] == 600
+    assert snapshot["queued_prefill_tokens"] == 2000
+    assert snapshot["outstanding_prefill_tokens"] == 2600
+    assert snapshot["outstanding_decode_reservation_tokens"] == 150
+    assert snapshot["projected_kv_tokens"] == 3070

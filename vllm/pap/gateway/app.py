@@ -16,6 +16,8 @@ from fastapi import FastAPI, Request
 
 from vllm.pap.config import reject_removed_pap_flags
 from vllm.pap.gateway.admission import PAPProjectionAdmission
+from vllm.pap.gateway.lifecycle import PAPLifecycleManager
+from vllm.pap.gateway.load_tracker import PAPLoadTracker
 from vllm.pap.gateway.request_pipeline import _handle_openai_request
 from vllm.pap.gateway.routing import PAPConversationRouter
 from vllm.pap.gateway.topology import (
@@ -38,11 +40,14 @@ async def lifespan(app: FastAPI):
     app.state.projections = parse_projection_instances(args.projections)
     app.state.request_counter = count()
     app.state.pap_active_request_ids = set()
+    app.state.pap_pending_route_request_ids = set()
     app.state.pair_counts = Counter()
     app.state.prefill_clients = {
         group: _make_client(group.prefill_host, group.prefill_port, "prefill")
         for group in app.state.groups
     }
+    app.state.pap_load_tracker = PAPLoadTracker(app.state.prefill_clients)
+    await app.state.pap_load_tracker.start()
     app.state.attention_clients = {}
     for group in app.state.groups:
         if isinstance(group.attention_port, int):
@@ -58,16 +63,22 @@ async def lifespan(app: FastAPI):
     }
     app.state.conversation_router = PAPConversationRouter(app.state.groups)
     app.state.projection_admission = PAPProjectionAdmission(app.state.groups)
-    yield
-    attention_clients = [
-        client for clients in app.state.attention_clients.values() for client in clients
-    ]
-    for client in [
-        *app.state.prefill_clients.values(),
-        *attention_clients,
-        *app.state.projection_clients.values(),
-    ]:
-        await client.client.aclose()
+    app.state.pap_lifecycle_manager = PAPLifecycleManager()
+    try:
+        yield
+    finally:
+        await app.state.pap_lifecycle_manager.shutdown()
+        attention_clients = [
+            client
+            for clients in app.state.attention_clients.values()
+            for client in clients
+        ]
+        for client in [
+            *app.state.prefill_clients.values(),
+            *attention_clients,
+            *app.state.projection_clients.values(),
+        ]:
+            await client.client.aclose()
 
 
 app = FastAPI(title="PAP Gateway", lifespan=lifespan)
@@ -85,30 +96,40 @@ async def chat_completions(request: Request):
 
 @app.get("/health")
 async def health() -> dict[str, Any]:
+    pending_route_requests = len(app.state.pap_pending_route_request_ids)
+    active_requests = len(app.state.pap_active_request_ids)
     return {
         "status": "ok",
         "role": "multi-pap-proxy",
         "groups": len(app.state.groups),
         "projections": len(app.state.projections),
         "routing_policy": app.state.args.routing_policy,
-        "inflight_requests": len(app.state.pap_active_request_ids),
+        "inflight_requests": pending_route_requests + active_requests,
+        "pending_route_requests": pending_route_requests,
+        "active_requests": active_requests,
         "pair_counts": dict(sorted(app.state.pair_counts.items())),
         "conversation_routing": app.state.conversation_router.snapshot(),
         "projection_admission": await app.state.projection_admission.snapshot(),
+        "load_tracker": app.state.pap_load_tracker.stats(),
+        "lifecycle": app.state.pap_lifecycle_manager.stats(),
     }
 
 
 @app.get("/v1/pap/topology/stats")
 async def topology_stats() -> dict[str, Any]:
     pair_counts = dict(sorted(app.state.pair_counts.items()))
+    pending_route_requests = len(app.state.pap_pending_route_request_ids)
     return {
         "pa_count": len(app.state.groups),
         "projection_count": len(app.state.projections),
         "routing_policy": app.state.args.routing_policy,
         "total_requests": sum(pair_counts.values()),
+        "pending_route_requests": pending_route_requests,
         "pair_counts": pair_counts,
         "conversation_routing": app.state.conversation_router.snapshot(),
         "projection_admission": await app.state.projection_admission.snapshot(),
+        "load_tracker": app.state.pap_load_tracker.stats(),
+        "lifecycle": app.state.pap_lifecycle_manager.stats(),
     }
 
 
@@ -131,6 +152,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--pap-mode", default=os.environ.get("PAP_MODE", "pap"))
     parser.add_argument(
+        "--timeout-keep-alive",
+        type=int,
+        default=300,
+        help="Keep pooled benchmark connections alive between conversation turns",
+    )
+    parser.add_argument(
         "--routing-policy",
         default=os.environ.get("PAP_ROUTING_POLICY", "conversation_affinity"),
         choices=(
@@ -150,7 +177,12 @@ def main() -> None:
 
     parsed = parse_args()
     app.state.args = parsed
-    uvicorn.run(app, host=parsed.host, port=parsed.port)
+    uvicorn.run(
+        app,
+        host=parsed.host,
+        port=parsed.port,
+        timeout_keep_alive=parsed.timeout_keep_alive,
+    )
 
 
 if __name__ == "__main__":

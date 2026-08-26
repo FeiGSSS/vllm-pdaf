@@ -1,0 +1,1275 @@
+diff --git a/benchmarks/pap/README.md b/benchmarks/pap/README.md
+index 65c966b602..6c566b24f6 100644
+--- a/benchmarks/pap/README.md
++++ b/benchmarks/pap/README.md
+@@ -13,6 +13,7 @@ The supported PAP benchmark topology is same-host `xPA1P`, TP1, with:
+ - CUDA IPC for colocated Prefill--Attention KV sharing;
+ - NVSHMEM P2P inside the whole-step Projection--Attention CUDA Graph;
+ - static `conversation_affinity` placement and no PA-to-PA KV relocation;
++- Qwen3-8B static YaRN with a 131,072-token serving limit;
+ - AIPerf as the serving workload client.
+ 
+ The primary eight-GPU comparison is PAP 7PA1P, PD 6P2D, and fused DP8.
+@@ -41,10 +42,21 @@ PAP_AIPERF_SESSIONS=128 \
+ PAP_AIPERF_VARIABLE_TURNS=1 \
+ PAP_AIPERF_EXPECTED_REQUESTS=455 \
+ PAP_AIPERF_CONCURRENCY=32 \
+-MAX_MODEL_LEN=32768 \
++MAX_MODEL_LEN=131072 \
+   bash benchmarks/pap/scripts/run_pap_workload.sh
+ ```
+ 
++The direct PAP runner supplies Qwen's official static-YaRN configuration to
++both Prefill and Projection by default:
++
++```json
++{"rope_parameters":{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":32768}}
++```
++
++Set `PAP_HF_OVERRIDES=` and an explicit `MAX_MODEL_LEN` to run a native-context
++control. Frozen comparison scripts may continue to pin their historical 32K
++configuration explicitly.
++
+ Run the current three-architecture matrix with:
+ 
+ ```bash
+@@ -67,6 +79,11 @@ PA-to-PA request relocation.
+ 
+ - `microbench/nvshmem_gpu_graph.cu`: NVSHMEM Graph protocol.
+ - `microbench/attention_scaling.py`: production paged-decode Attention.
++- `tooling/attention_latency_table.py`: exports measured Attention matrices;
++  it deliberately performs no latency fitting.
++- `scripts/run_attention_scaling_parallel.sh`: shards the expanded measured
++  Attention matrix across identical 12-SM GPU partitions and merges it
++  fail-closed.
+ - `microbench/projection_scaling.py`: Projection-side decode kernels.
+ - `microbench/prefill_saturation.py`: Prefill saturation.
+ - `scripts/run_mps_admission_latency.sh` and
+@@ -74,6 +91,8 @@ PA-to-PA request relocation.
+   for `PAP-20260822-MPS-ADMISSION-MICRO`.
+ - `tooling/validate_deferred_trace.py`: current deferred-trace audit.
+ - `tooling/component_gpu_metrics.py`: Nsight Systems component metrics.
++- `tooling/merge_attention_scaling.py`: validates and merges all measured
++  workload/config shards without interpolation.
+ - `tooling/nixl_read_write_probe.py`: fail-closed NIXL transfer diagnosis.
+ 
+ Machine-specific and work-in-progress diagnostics may remain untracked until
+diff --git a/benchmarks/pap/aiperf/README.md b/benchmarks/pap/aiperf/README.md
+index a46be628f4..0b546e7064 100644
+--- a/benchmarks/pap/aiperf/README.md
++++ b/benchmarks/pap/aiperf/README.md
+@@ -144,9 +144,12 @@ Aggregate one or more matrices with:
+ | PD Decode | 256 | 2048 |
+ | Fused DP | 256 | 32768 |
+ 
+-PAP uses `max_model_len=32768`, static 80/12-SM MPS, and a Projection memory
+-budget of 120% of checkpoint weight bytes per TP rank. PAP's vLLM processes
+-run eager because PAP owns the separate whole-step CUDA Graph.
++The direct PAP runner defaults to Qwen3 static YaRN and
++`max_model_len=131072`, static 80/12-SM MPS, and a Projection memory budget of
++120% of checkpoint weight bytes plus 512 MiB runtime headroom per TP rank.
++Frozen capacity matrices may explicitly retain their historical 32K model
++limit. PAP's Projection vLLM process runs without a native outer Graph because
++PAP owns the separate whole-step CUDA Graph.
+ 
+ ## Required run artifacts
+ 
+diff --git a/benchmarks/pap/microbench/attention_scaling.py b/benchmarks/pap/microbench/attention_scaling.py
+index b92fe510ff..676d50fc3a 100755
+--- a/benchmarks/pap/microbench/attention_scaling.py
++++ b/benchmarks/pap/microbench/attention_scaling.py
+@@ -7,6 +7,7 @@
+ from __future__ import annotations
+ 
+ import argparse
++import hashlib
+ import json
+ import math
+ import os
+@@ -21,6 +22,8 @@ from torch.cuda import nvtx
+ 
+ from vllm.platforms import current_platform
+ 
++MAX_TOTAL_CONTEXT_TOKENS = 262_144
++
+ 
+ @dataclass(frozen=True)
+ class ModelShape:
+@@ -34,19 +37,57 @@ class ModelShape:
+ 
+ @dataclass(frozen=True)
+ class ProbeShape:
+-    """One equal-length paged-decode batch shape."""
++    """One paged-decode batch with an explicit context distribution."""
+ 
+-    batch_size: int
+-    context_tokens_per_request: int
++    context_lengths: tuple[int, ...]
++    distribution: str
+     groups: tuple[str, ...]
+ 
++    @property
++    def batch_size(self) -> int:
++        return len(self.context_lengths)
++
+     @property
+     def total_context_tokens(self) -> int:
+-        return self.batch_size * self.context_tokens_per_request
++        return sum(self.context_lengths)
++
++    @property
++    def context_tokens_per_request(self) -> int | None:
++        first = self.context_lengths[0]
++        return first if all(value == first for value in self.context_lengths) else None
+ 
+     @property
+     def shape_id(self) -> str:
+-        return f"b{self.batch_size}_l{self.context_tokens_per_request}"
++        digest = hashlib.sha1(
++            ",".join(map(str, self.context_lengths)).encode()
++        ).hexdigest()[:8]
++        return (
++            f"b{self.batch_size}_t{self.total_context_tokens}_"
++            f"{self.distribution}_{digest}"
++        )
++
++
++@dataclass(frozen=True)
++class KernelCandidate:
++    """One Attention implementation and launch configuration."""
++
++    implementation: str
++    num_splits: int
++    block_h: int
++    num_warps: int
++    num_stages: int
++    block_n: int
++
++    @property
++    def config_id(self) -> str:
++        if self.implementation == "auto":
++            return "production_auto"
++        if self.implementation == "vllm":
++            return f"vllm_s{self.num_splits}"
++        return (
++            f"pap_s{self.num_splits}_h{self.block_h}_w{self.num_warps}_"
++            f"g{self.num_stages}_n{self.block_n}"
++        )
+ 
+ 
+ @dataclass
+@@ -72,6 +113,13 @@ def _positive_int(value: str) -> int:
+     return parsed
+ 
+ 
++def _nonnegative_int(value: str) -> int:
++    parsed = int(value)
++    if parsed < 0:
++        raise argparse.ArgumentTypeError("value must be nonnegative")
++    return parsed
++
++
+ def _dtype(value: str) -> torch.dtype:
+     mapping = {"float16": torch.float16, "bfloat16": torch.bfloat16}
+     try:
+@@ -92,50 +140,180 @@ def load_model_shape(path: Path) -> ModelShape:
+     )
+ 
+ 
++def _weighted_lengths(
++    total_tokens: int,
++    weights: tuple[float, ...],
++    *,
++    max_context_tokens: int = 32_768,
++    min_context_tokens: int = 128,
++) -> tuple[int, ...]:
++    """Deterministically apportion an exact total under per-request bounds."""
++    batch_size = len(weights)
++    if not weights or any(weight <= 0 for weight in weights):
++        raise ValueError("context distribution weights must be positive")
++    if not (
++        batch_size * min_context_tokens
++        <= total_tokens
++        <= batch_size * max_context_tokens
++    ):
++        raise ValueError("context total is outside the per-request bounds")
++    lengths = [min_context_tokens] * batch_size
++    remaining = total_tokens - sum(lengths)
++    while remaining:
++        active = [
++            index for index, length in enumerate(lengths) if length < max_context_tokens
++        ]
++        if not active:
++            raise ValueError("context distribution exceeded its capacity")
++        weight_sum = sum(weights[index] for index in active)
++        raw = {index: remaining * weights[index] / weight_sum for index in active}
++        grants = {
++            index: min(
++                max_context_tokens - lengths[index],
++                math.floor(raw[index]),
++            )
++            for index in active
++        }
++        granted = sum(grants.values())
++        if granted == 0:
++            order = sorted(
++                active,
++                key=lambda index: (raw[index] % 1, weights[index]),
++                reverse=True,
++            )
++            for index in order[:remaining]:
++                grants[index] = 1
++            granted = sum(grants.values())
++        for index, grant in grants.items():
++            lengths[index] += grant
++        remaining -= granted
++    return tuple(lengths)
++
++
++def distribution_lengths(
++    batch_size: int,
++    total_tokens: int,
++    distribution: str,
++) -> tuple[int, ...]:
++    """Create equal, bimodal, single-heavy, or Zipf context vectors."""
++    if distribution == "equal":
++        weights = (1.0,) * batch_size
++    elif distribution == "bimodal":
++        weights = tuple(
++            0.5 if index < batch_size // 2 else 1.5 for index in range(batch_size)
++        )
++    elif distribution == "one_heavy":
++        weights = (float(batch_size),) + (1.0,) * (batch_size - 1)
++    elif distribution in ("zipf", "zipf_0_8", "zipf_1_2"):
++        exponent = {
++            "zipf": 1.2,
++            "zipf_0_8": 0.8,
++            "zipf_1_2": 1.2,
++        }[distribution]
++        weights = tuple(1.0 / ((index + 1) ** exponent) for index in range(batch_size))
++    else:
++        raise ValueError(f"unknown context distribution: {distribution}")
++    return _weighted_lengths(total_tokens, weights)
++
++
+ def build_shapes(groups: set[str]) -> list[ProbeShape]:
+-    """Build the preregistered matrix and merge duplicate shapes."""
+-    definitions: dict[str, list[tuple[int, int]]] = {
++    """Build the preregistered workload surface and merge duplicate vectors."""
++    definitions: dict[str, list[tuple[tuple[int, ...], str]]] = {
+         "context": [
+-            (batch_size, context_tokens)
+-            for batch_size in (1, 8, 32)
+-            for context_tokens in (1_024, 2_048, 4_096, 8_192, 16_384, 32_768)
++            ((context_tokens,) * batch_size, "equal")
++            for batch_size in (1, 2, 4, 8, 16, 32, 64)
++            for context_tokens in (512, 2_048, 8_192, 16_384, 32_768)
++            if batch_size * context_tokens <= MAX_TOTAL_CONTEXT_TOKENS
+         ],
+         "iso_total": [
+-            *(
+-                (batch_size, 32_768 // batch_size)
+-                for batch_size in (1, 2, 4, 8, 16, 32)
+-            ),
+-            *(
+-                (batch_size, 65_536 // batch_size)
+-                for batch_size in (2, 4, 8, 16, 32, 64)
+-            ),
+-            *(
+-                (batch_size, 131_072 // batch_size)
+-                for batch_size in (4, 8, 16, 32, 64, 128)
+-            ),
++            (
++                distribution_lengths(batch_size, total_tokens, "equal"),
++                "equal",
++            )
++            for total_tokens in (32_768, 65_536, 131_072, 262_144)
++            for batch_size in (1, 2, 4, 8, 16, 32, 64)
++            if 128 * batch_size <= total_tokens <= 32_768 * batch_size
++        ],
++        "distribution": [
++            (
++                distribution_lengths(
++                    batch_size,
++                    batch_size * mean_context,
++                    distribution,
++                ),
++                distribution,
++            )
++            for batch_size in (4, 8, 16, 32)
++            for mean_context in (2_048, 8_192, 16_384)
++            for distribution in ("equal", "bimodal", "one_heavy", "zipf")
++            if batch_size * mean_context <= MAX_TOTAL_CONTEXT_TOKENS
++        ],
++        "expanded": [
++            (
++                distribution_lengths(
++                    batch_size,
++                    batch_size * mean_context,
++                    distribution,
++                ),
++                distribution,
++            )
++            for batch_size in (1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64)
++            for mean_context in (
++                512,
++                1_024,
++                2_048,
++                4_096,
++                8_192,
++                12_288,
++                16_384,
++                24_576,
++                32_768,
++            )
++            for distribution in (
++                "equal",
++                "bimodal",
++                "one_heavy",
++                "zipf_0_8",
++                "zipf_1_2",
++            )
++            if batch_size * mean_context <= MAX_TOTAL_CONTEXT_TOKENS
++        ],
++        "calibration": [
++            ((1_024,), "equal"),
++            ((32_768,) * 4, "equal"),
++            ((8_192,) * 16, "equal"),
++            ((2_048,) * 64, "equal"),
+         ],
+-        "calibration": [(1, 1_024), (4, 32_768), (16, 8_192), (64, 2_048)],
+     }
+     unknown = groups - definitions.keys()
+     if unknown:
+         raise ValueError(f"unknown shape groups: {','.join(sorted(unknown))}")
+-    group_by_shape: dict[tuple[int, int], list[str]] = {}
+-    order: list[tuple[int, int]] = []
+-    for group in ("context", "iso_total", "calibration"):
++    group_by_shape: dict[tuple[int, ...], list[str]] = {}
++    distribution_by_shape: dict[tuple[int, ...], str] = {}
++    order: list[tuple[int, ...]] = []
++    for group in (
++        "context",
++        "iso_total",
++        "distribution",
++        "expanded",
++        "calibration",
++    ):
+         if group not in groups:
+             continue
+-        for shape in definitions[group]:
+-            if shape not in group_by_shape:
+-                group_by_shape[shape] = []
+-                order.append(shape)
+-            group_by_shape[shape].append(group)
++        for context_lengths, distribution in definitions[group]:
++            if context_lengths not in group_by_shape:
++                group_by_shape[context_lengths] = []
++                distribution_by_shape[context_lengths] = distribution
++                order.append(context_lengths)
++            if group not in group_by_shape[context_lengths]:
++                group_by_shape[context_lengths].append(group)
+     return [
+         ProbeShape(
+-            batch_size=batch_size,
+-            context_tokens_per_request=context_tokens,
+-            groups=tuple(group_by_shape[(batch_size, context_tokens)]),
++            context_lengths=context_lengths,
++            distribution=distribution_by_shape[context_lengths],
++            groups=tuple(group_by_shape[context_lengths]),
+         )
+-        for batch_size, context_tokens in order
++        for context_lengths in order
+     ]
+ 
+ 
+@@ -154,7 +332,19 @@ def parse_explicit_shape(value: str) -> ProbeShape:
+     batch_size, context_tokens = map(int, fields)
+     if batch_size <= 0 or context_tokens <= 0:
+         raise argparse.ArgumentTypeError("shape values must be positive")
+-    return ProbeShape(batch_size, context_tokens, ("explicit",))
++    return ProbeShape(
++        (context_tokens,) * batch_size,
++        "equal",
++        ("explicit",),
++    )
++
++
++def parse_context_lengths(value: str) -> ProbeShape:
++    """Parse an explicit comma-separated per-request context vector."""
++    lengths = tuple(int(field) for field in value.split(",") if field)
++    if not lengths or any(length <= 0 for length in lengths):
++        raise argparse.ArgumentTypeError("context lengths must be positive")
++    return ProbeShape(lengths, "explicit", ("explicit",))
+ 
+ 
+ def build_inputs(
+@@ -168,8 +358,10 @@ def build_inputs(
+     from vllm.pap.attention.kernels import build_paged_decode_workspace
+     from vllm.pap.kv.metadata import PAPPagedFlashMetadata
+ 
+-    blocks_per_request = math.ceil(shape.context_tokens_per_request / model.block_size)
+-    num_blocks = shape.batch_size * blocks_per_request
++    blocks_per_request = tuple(
++        math.ceil(length / model.block_size) for length in shape.context_lengths
++    )
++    num_blocks = sum(blocks_per_request)
+     kv_cache = torch.empty(
+         (
+             num_blocks,
+@@ -193,24 +385,30 @@ def build_inputs(
+         device=device,
+     ).normal_(mean=0.0, std=0.02)
+     value = torch.empty_like(key).normal_(mean=0.0, std=0.02)
+-    block_table = torch.arange(
+-        num_blocks,
+-        dtype=torch.int32,
+-        device=device,
+-    ).view(shape.batch_size, blocks_per_request)
+-    seq_lens = torch.full(
+-        (shape.batch_size,),
+-        shape.context_tokens_per_request,
++    max_blocks_per_request = max(blocks_per_request)
++    block_table_host = torch.zeros(
++        (shape.batch_size, max_blocks_per_request),
+         dtype=torch.int32,
+-        device=device,
+-    )
+-    slot_mapping = (
+-        torch.arange(shape.batch_size, dtype=torch.int64, device=device)
+-        * blocks_per_request
+-        * model.block_size
+-        + shape.context_tokens_per_request
+-        - 1
+     )
++    slot_mapping_host = torch.empty(shape.batch_size, dtype=torch.int64)
++    next_block = 0
++    for index, (length, block_count) in enumerate(
++        zip(shape.context_lengths, blocks_per_request)
++    ):
++        block_ids = torch.arange(
++            next_block,
++            next_block + block_count,
++            dtype=torch.int32,
++        )
++        block_table_host[index, :block_count] = block_ids
++        last_block = int(block_ids[-1])
++        slot_mapping_host[index] = (
++            last_block * model.block_size + (length - 1) % model.block_size
++        )
++        next_block += block_count
++    block_table = block_table_host.to(device)
++    seq_lens = torch.tensor(shape.context_lengths, dtype=torch.int32, device=device)
++    slot_mapping = slot_mapping_host.to(device)
+     metadata = PAPPagedFlashMetadata(
+         block_table=block_table,
+         seq_lens=seq_lens,
+@@ -219,7 +417,7 @@ def build_inputs(
+             dtype=torch.int32,
+             device=device,
+         ),
+-        max_seq_len=shape.context_tokens_per_request,
++        max_seq_len=max(shape.context_lengths),
+     )
+     return ProbeInputs(
+         query=query,
+@@ -249,7 +447,11 @@ def append_kv(inputs: ProbeInputs) -> None:
+     )
+ 
+ 
+-def run_attention(inputs: ProbeInputs, model: ModelShape) -> torch.Tensor:
++def run_attention(
++    inputs: ProbeInputs,
++    model: ModelShape,
++    implementation: str = "auto",
++) -> torch.Tensor:
+     """Run the production low-SM-aware Triton paged-decode path."""
+     from vllm.pap.attention.kernels import run_paged_decode_attention
+ 
+@@ -261,6 +463,7 @@ def run_attention(inputs: ProbeInputs, model: ModelShape) -> torch.Tensor:
+         workspace=inputs.workspace,
+         scale=1.0 / math.sqrt(model.head_dim),
+         block_size=model.block_size,
++        implementation=implementation,
+     )
+ 
+ 
+@@ -269,6 +472,81 @@ def combined(inputs: ProbeInputs, model: ModelShape) -> torch.Tensor:
+     return run_attention(inputs, model)
+ 
+ 
++def build_kernel_candidates(kernel_set: str) -> list[KernelCandidate]:
++    """Build production, practical sweep, or exhaustive launch candidates."""
++    production = KernelCandidate("auto", 8, 4, 4, 1, 32)
++    if kernel_set == "production":
++        return [production]
++    if kernel_set not in ("practical", "sweep", "full"):
++        raise ValueError(f"unknown kernel set: {kernel_set}")
++    candidates: dict[str, KernelCandidate] = {}
++
++    def add(candidate: KernelCandidate) -> None:
++        candidates[candidate.config_id] = candidate
++
++    add(production)
++
++    if kernel_set == "full":
++        for num_splits in (1, 2, 4, 8, 16, 32):
++            for block_h in (1, 2, 4):
++                for num_warps in (2, 4, 8):
++                    for num_stages in (1, 2):
++                        for block_n in (16, 32, 64):
++                            add(
++                                KernelCandidate(
++                                    "pap_grouped",
++                                    num_splits,
++                                    block_h,
++                                    num_warps,
++                                    num_stages,
++                                    block_n,
++                                )
++                            )
++    elif kernel_set == "sweep":
++        for num_splits in (1, 2, 4, 8, 16, 32):
++            for block_h in (1, 2, 4):
++                add(
++                    KernelCandidate(
++                        "pap_grouped",
++                        num_splits,
++                        block_h,
++                        4,
++                        1,
++                        32,
++                    )
++                )
++        for num_warps in (2, 8):
++            add(KernelCandidate("pap_grouped", 8, 4, num_warps, 1, 32))
++        for num_stages in (2, 3):
++            add(KernelCandidate("pap_grouped", 8, 4, 4, num_stages, 32))
++        for block_n in (16, 64):
++            add(KernelCandidate("pap_grouped", 8, 4, 4, 1, block_n))
++    else:
++        for num_splits in (1, 2, 4, 8, 16, 32):
++            add(KernelCandidate("pap_grouped", num_splits, 4, 4, 1, 32))
++        for num_warps in (2, 8):
++            add(KernelCandidate("pap_grouped", 8, 4, num_warps, 1, 32))
++        for num_stages in (2, 3):
++            add(KernelCandidate("pap_grouped", 8, 4, 4, num_stages, 32))
++        for block_n in (16, 64):
++            add(KernelCandidate("pap_grouped", 8, 4, 4, 1, block_n))
++    for num_splits in (1, 2, 4, 8, 16, 32):
++        add(KernelCandidate("vllm", num_splits, 16, 2, 2, 64))
++    return list(candidates.values())
++
++
++def kernel_config(candidate: KernelCandidate) -> Any:
++    from vllm.pap.attention.kernels import PAPPagedDecodeKernelConfig
++
++    return PAPPagedDecodeKernelConfig(
++        num_splits=candidate.num_splits,
++        block_h=candidate.block_h,
++        num_warps=candidate.num_warps,
++        num_stages=candidate.num_stages,
++        block_n=candidate.block_n,
++    )
++
++
+ def time_cuda(
+     function: Callable[[], Any],
+     *,
+@@ -314,6 +592,51 @@ def logical_kv_bytes(
+     )
+ 
+ 
++def _percentile(values: tuple[int, ...], fraction: float) -> float:
++    ordered = sorted(values)
++    position = fraction * (len(ordered) - 1)
++    lower = math.floor(position)
++    upper = math.ceil(position)
++    if lower == upper:
++        return float(ordered[lower])
++    weight = position - lower
++    return ordered[lower] * (1.0 - weight) + ordered[upper] * weight
++
++
++def context_features(shape: ProbeShape, block_size: int) -> dict[str, Any]:
++    """Return prediction features for request count, volume, and skew."""
++    lengths = shape.context_lengths
++    mean = statistics.fmean(lengths)
++    std = statistics.pstdev(lengths)
++    total_blocks = sum(math.ceil(length / block_size) for length in lengths)
++    allocated_tokens = total_blocks * block_size
++    absolute_differences = sum(
++        abs(left - right) for left in lengths for right in lengths
++    )
++    gini = absolute_differences / (2 * len(lengths) ** 2 * mean)
++    return {
++        "batch_size": shape.batch_size,
++        "context_lengths": list(lengths),
++        "distribution": shape.distribution,
++        "total_context_tokens": shape.total_context_tokens,
++        "allocated_context_tokens": allocated_tokens,
++        "padding_context_tokens": allocated_tokens - shape.total_context_tokens,
++        "total_blocks": total_blocks,
++        "max_blocks_per_request": max(
++            math.ceil(length / block_size) for length in lengths
++        ),
++        "min_context_tokens": min(lengths),
++        "max_context_tokens": max(lengths),
++        "mean_context_tokens": mean,
++        "std_context_tokens": std,
++        "cv_context_tokens": std / mean,
++        "p50_context_tokens": _percentile(lengths, 0.50),
++        "p90_context_tokens": _percentile(lengths, 0.90),
++        "p99_context_tokens": _percentile(lengths, 0.99),
++        "gini_context_tokens": gini,
++    }
++
++
+ def device_metadata(device: torch.device) -> dict[str, Any]:
+     device_index = int(device.index or 0)
+     capability = current_platform.get_device_capability(device_index)
+@@ -333,18 +656,19 @@ def base_result(
+     *,
+     dtype: torch.dtype,
+     mode: str,
++    candidate: KernelCandidate | None = None,
+ ) -> dict[str, Any]:
+     bytes_read = logical_kv_bytes(model, shape, dtype)
+     workspace = inputs.workspace
+     return {
+-        "schema_version": 1,
++        "schema_version": 2,
+         "kind": "pap_attention_scaling",
+         "mode": mode,
+-        "shape": asdict(shape)
+-        | {
++        "shape": {
++            "groups": list(shape.groups),
+             "shape_id": shape.shape_id,
+-            "total_context_tokens": shape.total_context_tokens,
+-        },
++        }
++        | context_features(shape, model.block_size),
+         "model_shape": asdict(model),
+         "dtype": str(dtype).removeprefix("torch."),
+         "logical_kv_bytes": bytes_read,
+@@ -354,7 +678,11 @@ def base_result(
+             "block_h": workspace.kernel_config.block_h,
+             "num_warps": workspace.kernel_config.num_warps,
+             "num_stages": workspace.kernel_config.num_stages,
++            "block_n": workspace.kernel_config.block_n,
+         },
++        "kernel": asdict(candidate) | {"config_id": candidate.config_id}
++        if candidate is not None
++        else {"implementation": "auto", "config_id": "production_auto"},
+         "block_table_shape": list(inputs.metadata.block_table.shape),
+         "device": device_metadata(inputs.query.device),
+         "cuda_mps_sm_partition": os.environ.get("CUDA_MPS_SM_PARTITION"),
+@@ -371,73 +699,200 @@ def run_timing(args: argparse.Namespace) -> None:
+         raise RuntimeError(
+             f"visible SM mismatch: expected {args.expected_sms}, got {visible_sms}"
+         )
+-    shapes = build_shapes(args.groups)
++    all_shapes = build_shapes(args.groups)
++    if args.shard_index >= args.shard_count:
++        raise ValueError("shard index must be smaller than shard count")
++    shapes = [
++        shape
++        for index, shape in enumerate(all_shapes)
++        if index % args.shard_count == args.shard_index
++    ]
++    if not shapes:
++        raise ValueError("workload shard is empty")
++    candidates = build_kernel_candidates(args.kernel_set)
+     results = []
+-    for shape in shapes:
++    best_by_shape = []
++    for shape_index, shape in enumerate(shapes, start=1):
+         inputs = build_inputs(model, shape, dtype=args.dtype, device=device)
+-        attention = time_cuda(
+-            lambda inputs=inputs: run_attention(inputs, model),
+-            warmup_calls=args.warmup_calls,
+-            samples=args.samples,
+-            calls_per_sample=args.calls_per_sample,
+-        )
+         append = time_cuda(
+             lambda inputs=inputs: append_kv(inputs),
+             warmup_calls=args.warmup_calls,
+             samples=args.samples,
+             calls_per_sample=args.calls_per_sample,
+         )
+-        total = time_cuda(
+-            lambda inputs=inputs: combined(inputs, model),
+-            warmup_calls=args.warmup_calls,
+-            samples=args.samples,
+-            calls_per_sample=args.calls_per_sample,
+-        )
+-        entry = base_result(
+-            model,
+-            shape,
+-            inputs,
+-            dtype=args.dtype,
+-            mode="timing",
++        from vllm.pap.attention.kernels import build_paged_decode_workspace
++
++        inputs.workspace = build_paged_decode_workspace(inputs.query)
++        reference = run_attention(inputs, model, "auto").detach().clone()
++        torch.accelerator.synchronize()
++        shape_entries = []
++        for candidate in candidates:
++            try:
++                inputs.workspace = build_paged_decode_workspace(
++                    inputs.query,
++                    kernel_config(candidate),
++                )
++                actual = run_attention(
++                    inputs,
++                    model,
++                    candidate.implementation,
++                )
++                torch.accelerator.synchronize()
++                difference = (actual.float() - reference.float()).abs()
++                correctness = {
++                    "allclose": bool(
++                        torch.allclose(
++                            actual,
++                            reference,
++                            rtol=args.correctness_rtol,
++                            atol=args.correctness_atol,
++                        )
++                    ),
++                    "max_abs_error": float(difference.max()),
++                    "mean_abs_error": float(difference.mean()),
++                    "rtol": args.correctness_rtol,
++                    "atol": args.correctness_atol,
++                }
++                if not correctness["allclose"]:
++                    raise RuntimeError("Attention candidate failed numerical parity")
++                attention = time_cuda(
++                    lambda inputs=inputs, implementation=candidate.implementation: (
++                        run_attention(inputs, model, implementation)
++                    ),
++                    warmup_calls=args.warmup_calls,
++                    samples=args.samples,
++                    calls_per_sample=args.calls_per_sample,
++                )
++                entry = base_result(
++                    model,
++                    shape,
++                    inputs,
++                    dtype=args.dtype,
++                    mode="timing",
++                    candidate=candidate,
++                )
++                entry.update(
++                    {
++                        "status": "completed",
++                        "warmup_calls": args.warmup_calls,
++                        "samples": args.samples,
++                        "calls_per_sample": args.calls_per_sample,
++                        "correctness": correctness,
++                        "paged_attention": attention,
++                        "kv_append": append,
++                        "logical_kv_gbps": (
++                            entry["logical_kv_bytes"]
++                            / (attention["median_ms"] / 1_000.0)
++                            / 1e9
++                        ),
++                    }
++                )
++            except Exception as exc:
++                entry = {
++                    "schema_version": 2,
++                    "kind": "pap_attention_scaling",
++                    "mode": "timing",
++                    "status": "error",
++                    "shape": {
++                        "groups": list(shape.groups),
++                        "shape_id": shape.shape_id,
++                    }
++                    | context_features(shape, model.block_size),
++                    "kernel": asdict(candidate) | {"config_id": candidate.config_id},
++                    "error": f"{type(exc).__name__}: {exc}",
++                }
++                if args.fail_on_kernel_error:
++                    raise
++            results.append(entry)
++            shape_entries.append(entry)
++        completed = [entry for entry in shape_entries if entry["status"] == "completed"]
++        if not completed:
++            raise RuntimeError(f"no valid Attention kernel for {shape.shape_id}")
++        best = min(
++            completed,
++            key=lambda entry: entry["paged_attention"]["median_ms"],
+         )
+-        entry.update(
++        best_by_shape.append(
+             {
+-                "warmup_calls": args.warmup_calls,
+-                "samples": args.samples,
+-                "calls_per_sample": args.calls_per_sample,
+-                "paged_attention": attention,
+-                "kv_append": append,
+-                "append_then_attention": total,
+-                "logical_kv_gbps": (
+-                    entry["logical_kv_bytes"] / (attention["median_ms"] / 1_000.0) / 1e9
+-                ),
++                "shape_id": shape.shape_id,
++                "config_id": best["kernel"]["config_id"],
++                "median_ms": best["paged_attention"]["median_ms"],
+             }
+         )
+-        results.append(entry)
++        print(
++            f"[{shape_index}/{len(shapes)}] {shape.shape_id} "
++            f"best={best['kernel']['config_id']} "
++            f"median_ms={best['paged_attention']['median_ms']:.6f}",
++            flush=True,
++        )
++        if args.output is not None:
++            checkpoint = {
++                "schema_version": 2,
++                "kind": "pap_attention_scaling_matrix",
++                "status": "running",
++                "groups": sorted(args.groups),
++                "kernel_set": args.kernel_set,
++                "candidate_count": len(candidates),
++                "shape_count": len(shapes),
++                "total_shape_count": len(all_shapes),
++                "shard_count": args.shard_count,
++                "shard_index": args.shard_index,
++                "completed_shape_count": shape_index,
++                "results": results,
++                "best_by_shape": best_by_shape,
++            }
++            args.output.parent.mkdir(parents=True, exist_ok=True)
++            args.output.write_text(
++                json.dumps(checkpoint, indent=2, sort_keys=True) + "\n",
++                encoding="utf-8",
++            )
+         del inputs
+         torch.accelerator.empty_cache()
+     output = {
+-        "schema_version": 1,
++        "schema_version": 2,
+         "kind": "pap_attention_scaling_matrix",
+         "status": "completed",
+         "groups": sorted(args.groups),
++        "kernel_set": args.kernel_set,
++        "candidate_count": len(candidates),
++        "shape_count": len(shapes),
++        "total_shape_count": len(all_shapes),
++        "shard_count": args.shard_count,
++        "shard_index": args.shard_index,
+         "results": results,
++        "best_by_shape": best_by_shape,
+     }
+     write_json(output, args.output)
+ 
+ 
+ def run_profile(args: argparse.Namespace) -> None:
+     model = load_model_shape(args.model_config)
+-    shape = args.shape
++    shape = args.shape or args.context_lengths
++    if shape is None:
++        raise ValueError("profile requires --shape or --context-lengths")
+     device = torch.device("cuda", 0)
+     inputs = build_inputs(model, shape, dtype=args.dtype, device=device)
++    candidate = KernelCandidate(
++        args.implementation,
++        args.num_splits,
++        args.block_h,
++        args.num_warps,
++        args.num_stages,
++        args.block_n,
++    )
++    from vllm.pap.attention.kernels import build_paged_decode_workspace
++
++    inputs.workspace = build_paged_decode_workspace(
++        inputs.query,
++        kernel_config(candidate),
++    )
+     visible_sms = current_platform.num_compute_units(int(device.index or 0))
+     if args.expected_sms is not None and visible_sms != args.expected_sms:
+         raise RuntimeError(
+             f"visible SM mismatch: expected {args.expected_sms}, got {visible_sms}"
+         )
+     for _ in range(args.warmup_calls):
+-        run_attention(inputs, model)
++        run_attention(inputs, model, candidate.implementation)
+     torch.accelerator.synchronize()
+     calls = 0
+     start = torch.Event(enable_timing=True)
+@@ -447,7 +902,7 @@ def run_profile(args: argparse.Namespace) -> None:
+         start.record()
+         while True:
+             for _ in range(args.profile_chunk_calls):
+-                run_attention(inputs, model)
++                run_attention(inputs, model, candidate.implementation)
+                 calls += 1
+             end.record()
+             end.synchronize()
+@@ -461,6 +916,7 @@ def run_profile(args: argparse.Namespace) -> None:
+         inputs,
+         dtype=args.dtype,
+         mode="profile",
++        candidate=candidate,
+     )
+     result.update(
+         {
+@@ -484,12 +940,12 @@ def write_json(value: dict[str, Any], output: Path | None) -> None:
+ 
+ 
+ def dry_run(args: argparse.Namespace) -> None:
+-    print("shape_id\tbatch\tcontext/request\ttotal_context\tgroups")
++    print("shape_id\tbatch\ttotal_context\tmin\tmax\tdistribution\tgroups")
+     for shape in build_shapes(args.groups):
+         print(
+-            f"{shape.shape_id}\t{shape.batch_size}\t"
+-            f"{shape.context_tokens_per_request}\t"
+-            f"{shape.total_context_tokens}\t{','.join(shape.groups)}"
++            f"{shape.shape_id}\t{shape.batch_size}\t{shape.total_context_tokens}\t"
++            f"{min(shape.context_lengths)}\t{max(shape.context_lengths)}\t"
++            f"{shape.distribution}\t{','.join(shape.groups)}"
+         )
+ 
+ 
+@@ -499,27 +955,53 @@ def build_parser() -> argparse.ArgumentParser:
+ 
+     dry_parser = subparsers.add_parser("dry-run")
+     dry_parser.add_argument(
+-        "--groups", type=parse_groups, default={"context", "iso_total"}
++        "--groups",
++        type=parse_groups,
++        default={"context", "iso_total", "distribution"},
+     )
+     dry_parser.set_defaults(func=dry_run)
+ 
+     timing_parser = subparsers.add_parser("timing")
+     timing_parser.add_argument("--model-config", type=Path, required=True)
+     timing_parser.add_argument(
+-        "--groups", type=parse_groups, default={"context", "iso_total"}
++        "--groups",
++        type=parse_groups,
++        default={"context", "iso_total", "distribution"},
++    )
++    timing_parser.add_argument(
++        "--kernel-set",
++        choices=("production", "practical", "sweep", "full"),
++        default="sweep",
+     )
++    timing_parser.add_argument("--shard-count", type=_positive_int, default=1)
++    timing_parser.add_argument("--shard-index", type=_nonnegative_int, default=0)
+     timing_parser.add_argument("--dtype", type=_dtype, default=torch.float16)
+     timing_parser.add_argument("--expected-sms", type=_positive_int)
+     timing_parser.add_argument("--warmup-calls", type=_positive_int, default=20)
+     timing_parser.add_argument("--samples", type=_positive_int, default=7)
+     timing_parser.add_argument("--calls-per-sample", type=_positive_int, default=50)
++    timing_parser.add_argument("--correctness-rtol", type=float, default=2e-2)
++    timing_parser.add_argument("--correctness-atol", type=float, default=2e-2)
++    timing_parser.add_argument("--fail-on-kernel-error", action="store_true")
+     timing_parser.add_argument("--output", type=Path)
+     timing_parser.set_defaults(func=run_timing)
+ 
+     profile_parser = subparsers.add_parser("profile")
+     profile_parser.add_argument("--model-config", type=Path, required=True)
+-    profile_parser.add_argument("--shape", type=parse_explicit_shape, required=True)
++    profile_shape = profile_parser.add_mutually_exclusive_group(required=True)
++    profile_shape.add_argument("--shape", type=parse_explicit_shape)
++    profile_shape.add_argument("--context-lengths", type=parse_context_lengths)
+     profile_parser.add_argument("--dtype", type=_dtype, default=torch.float16)
++    profile_parser.add_argument(
++        "--implementation",
++        choices=("auto", "pap_grouped", "vllm"),
++        default="auto",
++    )
++    profile_parser.add_argument("--num-splits", type=_positive_int, default=8)
++    profile_parser.add_argument("--block-h", type=_positive_int, default=4)
++    profile_parser.add_argument("--num-warps", type=_positive_int, default=4)
++    profile_parser.add_argument("--num-stages", type=_positive_int, default=1)
++    profile_parser.add_argument("--block-n", type=_positive_int, default=32)
+     profile_parser.add_argument("--expected-sms", type=_positive_int)
+     profile_parser.add_argument("--warmup-calls", type=_positive_int, default=20)
+     profile_parser.add_argument("--profile-seconds", type=float, default=1.0)
+diff --git a/benchmarks/pap/scripts/run_attention_scaling.sh b/benchmarks/pap/scripts/run_attention_scaling.sh
+index f4d0d3b140..dbf61d7f0a 100755
+--- a/benchmarks/pap/scripts/run_attention_scaling.sh
++++ b/benchmarks/pap/scripts/run_attention_scaling.sh
+@@ -14,6 +14,9 @@ EXPECTED_SMS="${PAP_ATTENTION_SCALING_EXPECTED_SMS:-12}"
+ RUN_TIMING="${PAP_ATTENTION_SCALING_RUN_TIMING:-1}"
+ RUN_NSYS="${PAP_ATTENTION_SCALING_RUN_NSYS:-1}"
+ SHAPE_GROUPS="${PAP_ATTENTION_SCALING_GROUPS:-context,iso_total}"
++KERNEL_SET="${PAP_ATTENTION_SCALING_KERNEL_SET:-sweep}"
++SHARD_COUNT="${PAP_ATTENTION_SCALING_SHARD_COUNT:-1}"
++SHARD_INDEX="${PAP_ATTENTION_SCALING_SHARD_INDEX:-0}"
+ OUTPUT_ROOT="${PAP_ATTENTION_SCALING_OUTPUT_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/_staging/microbench/$(date +%Y%m%d_%H%M%S)_attention_scaling}"
+ NSYS_IMPORTER="${PAP_NSYS_IMPORTER:-/usr/lib/nsight-systems/host-linux-x64/QdstrmImporter}"
+ MPS_PIPE_DIR="${PAP_ATTENTION_SCALING_MPS_PIPE_DIR:-/tmp/pap-attention-scaling-${USER:-user}-$$}"
+@@ -156,6 +159,9 @@ main() {
+     printf 'RUN_TIMING=%q\n' "${RUN_TIMING}"
+     printf 'RUN_NSYS=%q\n' "${RUN_NSYS}"
+     printf 'SHAPE_GROUPS=%q\n' "${SHAPE_GROUPS}"
++    printf 'KERNEL_SET=%q\n' "${KERNEL_SET}"
++    printf 'SHARD_COUNT=%q\n' "${SHARD_COUNT}"
++    printf 'SHARD_INDEX=%q\n' "${SHARD_INDEX}"
+     printf 'PYTORCH_CUDA=%q\n' "$(client_env "${PYTHON_BIN}" -c 'import torch; print(torch.__version__, torch.version.cuda)')"
+     if [[ "${RUN_NSYS}" == "1" ]]; then
+       printf 'NSYS_VERSION=%q\n' "$(nsys --version)"
+@@ -166,6 +172,9 @@ main() {
+     client_env "${PYTHON_BIN}" "${PROBE}" timing \
+       --model-config "${MODEL_CONFIG}" \
+       --groups "${SHAPE_GROUPS}" \
++      --kernel-set "${KERNEL_SET}" \
++      --shard-count "${SHARD_COUNT}" \
++      --shard-index "${SHARD_INDEX}" \
+       --expected-sms "${EXPECTED_SMS}" \
+       --output "${OUTPUT_ROOT}/timing/result.json"
+   fi
+diff --git a/benchmarks/pap/scripts/run_pap_workload.sh b/benchmarks/pap/scripts/run_pap_workload.sh
+index dd7b44b30b..5a5ab2e8ac 100755
+--- a/benchmarks/pap/scripts/run_pap_workload.sh
++++ b/benchmarks/pap/scripts/run_pap_workload.sh
+@@ -244,13 +244,22 @@ PAP_PREFILL_GPUS="${PAP_PREFILL_GPUS:-${DEFAULT_PREFILL_GPUS}}"
+ PAP_PROJECTION_GPUS="${PAP_PROJECTION_GPUS:-${DEFAULT_PROJECTION_GPUS}}"
+ PAP_TP_SIZE="${PAP_TP_SIZE:-1}"
+ PAP_VLLM_DTYPE="${PAP_VLLM_DTYPE:-float16}"
+-MAX_MODEL_LEN="${MAX_MODEL_LEN:-32768}"
++MAX_MODEL_LEN="${MAX_MODEL_LEN:-131072}"
++PAP_DEFAULT_HF_OVERRIDES='{"rope_parameters":{"rope_type":"yarn","factor":4.0,"original_max_position_embeddings":32768}}'
++if [[ -z "${PAP_HF_OVERRIDES+x}" ]]; then
++  PAP_HF_OVERRIDES="${PAP_DEFAULT_HF_OVERRIDES}"
++fi
++PAP_MODEL_CONFIG_ARGS=()
++if [[ -n "${PAP_HF_OVERRIDES}" ]]; then
++  PAP_MODEL_CONFIG_ARGS=(--hf-overrides "${PAP_HF_OVERRIDES}")
++fi
+ MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-16384}"
+ MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
+ PAP_PREFILL_MAX_NUM_BATCHED_TOKENS="${PAP_PREFILL_MAX_NUM_BATCHED_TOKENS:-2048}"
+ PAP_PREFILL_MAX_NUM_SEQS="${PAP_PREFILL_MAX_NUM_SEQS:-256}"
+ PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS="${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS:-256}"
+ PAP_PROJECTION_MAX_NUM_SEQS="${PAP_PROJECTION_MAX_NUM_SEQS:-256}"
++PAP_PROJECTION_RUNTIME_HEADROOM_BYTES="${PAP_PROJECTION_RUNTIME_HEADROOM_BYTES:-536870912}"
+ PAP_PREFILL_GPU_MEMORY_UTILIZATION="${PAP_PREFILL_GPU_MEMORY_UTILIZATION:-0.90}"
+ PAP_STATIC_PREFILL_CHUNKS="${PAP_STATIC_PREFILL_CHUNKS:-20}"
+ PAP_STATIC_ATTENTION_CHUNKS="${PAP_STATIC_ATTENTION_CHUNKS:-3}"
+@@ -1370,6 +1379,7 @@ write_effective_config() {
+     printf 'PAP_PREFILL_GPUS=%q\n' "${PAP_PREFILL_GPUS}"
+     printf 'PAP_PROJECTION_GPUS=%q\n' "${PAP_PROJECTION_GPUS}"
+     printf 'PAP_VLLM_DTYPE=%q\n' "${PAP_VLLM_DTYPE}"
++    printf 'PAP_HF_OVERRIDES=%q\n' "${PAP_HF_OVERRIDES}"
+     printf 'ENABLE_AUTO_TOOL_CHOICE=%q\nTOOL_CALL_PARSER=%q\n' \
+       "${ENABLE_AUTO_TOOL_CHOICE}" "${TOOL_CALL_PARSER}"
+     printf 'PAP_ROUTING_POLICY=%q\n' "${PAP_ROUTING_POLICY}"
+@@ -1423,6 +1433,8 @@ write_effective_config() {
+       "${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS}"
+     printf 'PAP_PROJECTION_MAX_NUM_SEQS=%q\n' \
+       "${PAP_PROJECTION_MAX_NUM_SEQS}"
++    printf 'PAP_PROJECTION_RUNTIME_HEADROOM_BYTES=%q\n' \
++      "${PAP_PROJECTION_RUNTIME_HEADROOM_BYTES}"
+     printf 'PAP_PROJECTION_ASYNC_SCHEDULING=%q\n' "1"
+     printf 'PAP_PREFILL_EXECUTION_MODE=piecewise_cuda_graph\n'
+     printf 'PAP_PROJECTION_EXECUTION_MODE=pap_whole_step_cuda_graph\n'
+@@ -1524,6 +1536,7 @@ write_run_metadata() {
+   PAP_AIPERF_TIMING_MODE="${PAP_AIPERF_TIMING_MODE}" \
+   PAP_AIPERF_REQUEST_RATE="${PAP_AIPERF_REQUEST_RATE}" \
+   PAP_VLLM_DTYPE="${PAP_VLLM_DTYPE}" \
++  PAP_HF_OVERRIDES="${PAP_HF_OVERRIDES}" \
+   GIT_COMMIT="${GIT_COMMIT}" \
+   GIT_COMMIT_SHORT="${GIT_COMMIT_SHORT}" \
+   GIT_TRACKED_WORKTREE_DIRTY="${GIT_TRACKED_WORKTREE_DIRTY}" \
+@@ -1553,6 +1566,11 @@ metadata = {
+     "output_lens": [os.environ["OUTPUT_LEN"]],
+     "expected_requests": int(os.environ["NUM_PROMPTS"]),
+     "model_path": os.environ["MODEL_PATH"],
++    "hf_overrides": (
++        json.loads(os.environ["PAP_HF_OVERRIDES"])
++        if os.environ["PAP_HF_OVERRIDES"]
++        else None
++    ),
+     "max_model_len": os.environ["MAX_MODEL_LEN"],
+     "max_num_seqs": os.environ["MAX_NUM_SEQS"],
+     "offload_exec_transport": "nvshmem_graph",
+@@ -1863,6 +1881,12 @@ fi
+ [[ -x "${CUDA_GRAPH_AUDITOR}" ]] \
+   || die "Missing CUDA Graph auditor: ${CUDA_GRAPH_AUDITOR}"
+ [[ -d "${MODEL_PATH}" ]] || die "Model path does not exist: ${MODEL_PATH}"
++if [[ -n "${PAP_HF_OVERRIDES}" ]]; then
++  "${PYTHON_BIN}" -c \
++    'import json,sys; value=json.loads(sys.argv[1]); assert isinstance(value,dict)' \
++    "${PAP_HF_OVERRIDES}" \
++    || die "PAP_HF_OVERRIDES must be a JSON object"
++fi
+ 
+ "${PYTHON_BIN}" - <<'PY' || die "PAP v0.26 plugin preflight failed"
+ import importlib.metadata as metadata
+@@ -1929,6 +1953,7 @@ projection_memory_args=(
+     MODEL_NUM_LAYERS * MAX_MODEL_LEN * 2
+     * MODEL_NUM_KV_HEADS * MODEL_HEAD_DIM * 2 / PAP_TP_SIZE
+   ))"
++  --runtime-headroom-bytes "${PAP_PROJECTION_RUNTIME_HEADROOM_BYTES}"
+ )
+ for gpu in "${PROJECTION_GPUS[@]}"; do
+   projection_memory_args+=(--gpu-id "${gpu}")
+@@ -2112,6 +2137,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
+     PAP_CUDAGRAPH_ROLE=prefill \
+     PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS}" \
+     "${VLLM_BIN}" serve "${MODEL_PATH}" \
++      "${PAP_MODEL_CONFIG_ARGS[@]}" \
+       --port "${prefill_port}" \
+       --host 127.0.0.1 \
+       "${PREFILL_EXECUTION_ARGS[@]}" \
+@@ -2163,6 +2189,7 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
+     PAP_CUDAGRAPH_COMPATIBLE=1 \
+     PAP_CUDAGRAPH_ROLE=projection \
+     "${VLLM_BIN}" serve "${MODEL_PATH}" \
++      "${PAP_MODEL_CONFIG_ARGS[@]}" \
+       --port "${projection_port}" \
+       --host 127.0.0.1 \
+       "${PROJECTION_EXECUTION_ARGS[@]}" \
+diff --git a/vllm/pap/attention/kernels.py b/vllm/pap/attention/kernels.py
+index 7f58c3010c..87761c8ab8 100644
+--- a/vllm/pap/attention/kernels.py
++++ b/vllm/pap/attention/kernels.py
+@@ -7,6 +7,7 @@ from __future__ import annotations
+ from collections import OrderedDict
+ from dataclasses import dataclass
+ from threading import Lock
++from typing import Literal
+ 
+ import torch
+ 
+@@ -25,6 +26,19 @@ class PAPPagedDecodeKernelConfig:
+     block_h: int
+     num_warps: int
+     num_stages: int
++    block_n: int = 32
++
++    def __post_init__(self) -> None:
++        if self.num_splits <= 0:
++            raise ValueError("PAP decode num_splits must be positive")
++        if self.block_h not in (1, 2, 4, 8, 16):
++            raise ValueError("PAP decode block_h must be a supported power of two")
++        if self.num_warps not in (1, 2, 4, 8):
++            raise ValueError("PAP decode num_warps is unsupported")
++        if self.num_stages <= 0:
++            raise ValueError("PAP decode num_stages must be positive")
++        if self.block_n not in (16, 32, 64, 128):
++            raise ValueError("PAP decode block_n must be a supported power of two")
+ 
+ 
+ PAP_TRITON_DECODE_DEFAULT_CONFIG = PAPPagedDecodeKernelConfig(
+@@ -185,6 +199,7 @@ class PAPAttentionStepTensorCache:
+ 
+ def build_paged_decode_workspace(
+     query: torch.Tensor,
++    kernel_config: PAPPagedDecodeKernelConfig | None = None,
+ ) -> PAPPagedDecodeWorkspace:
+     """Allocate the fixed PAP decode scratch once for a decode step."""
+ 
+@@ -196,7 +211,7 @@ def build_paged_decode_workspace(
+         if query.device.type == "cuda"
+         else 0
+     )
+-    kernel_config = paged_decode_kernel_config_for_sms(visible_sms)
++    kernel_config = kernel_config or paged_decode_kernel_config_for_sms(visible_sms)
+     return PAPPagedDecodeWorkspace(
+         output=torch.empty_like(query),
+         partial=torch.empty(
+@@ -243,7 +258,7 @@ def _run_grouped_paged_decode_attention(
+     value_dim = int(value_cache.shape[-1])
+     block_dv = 1 << (value_dim - 1).bit_length()
+     block_dmodel = 1 << (key_dim - 1).bit_length()
+-    block_n = 16 if decode_ops.is_hip_ else 32
++    block_n = 16 if decode_ops.is_hip_ else config.block_n
+     batch_size, num_heads = map(int, query.shape[:2])
+     kv_group_count = num_heads // int(key_cache.shape[-2])
+     grid = (
+@@ -319,6 +334,7 @@ def run_paged_decode_attention(
+     workspace: PAPPagedDecodeWorkspace,
+     scale: float,
+     block_size: int,
++    implementation: Literal["auto", "pap_grouped", "vllm"] = "auto",
+ ) -> torch.Tensor:
+     """Run the current Triton paged-decode kernel without a layer fallback."""
+ 
+@@ -336,10 +352,16 @@ def run_paged_decode_attention(
+     if int(query.shape[1]) % int(key_cache.shape[-2]) != 0:
+         raise RuntimeError("PAP paged decode GQA head counts are incompatible")
+ 
+-    use_low_resource_grouped_kernel = (
+-        workspace.kernel_config == PAP_TRITON_DECODE_LOW_RESOURCE_CONFIG
+-        and int(query.shape[1]) != int(key_cache.shape[-2])
++    if implementation not in ("auto", "pap_grouped", "vllm"):
++        raise ValueError(f"unknown PAP decode implementation: {implementation}")
++    has_grouped_query_attention = int(query.shape[1]) != int(key_cache.shape[-2])
++    use_low_resource_grouped_kernel = implementation == "pap_grouped" or (
++        implementation == "auto"
++        and workspace.kernel_config == PAP_TRITON_DECODE_LOW_RESOURCE_CONFIG
++        and has_grouped_query_attention
+     )
++    if use_low_resource_grouped_kernel and not has_grouped_query_attention:
++        raise RuntimeError("PAP grouped decode requires grouped-query attention")
+     if use_low_resource_grouped_kernel:
+         _run_grouped_paged_decode_attention(
+             query=query,
+diff --git a/vllm/pap/model/memory.py b/vllm/pap/model/memory.py
+index 2b0c3bd039..08f60a8915 100644
+--- a/vllm/pap/model/memory.py
++++ b/vllm/pap/model/memory.py
+@@ -100,6 +100,7 @@ def plan_projection_memory(
+     tensor_parallel_size: int,
+     gpu_total_bytes: int,
+     validation_kv_bytes: int = 0,
++    runtime_headroom_bytes: int = 0,
+ ) -> ProjectionMemoryBudget:
+     """Reserve model headroom plus vLLM's temporary KV capacity check."""
+     if model_weight_bytes <= 0:
+@@ -110,13 +111,17 @@ def plan_projection_memory(
+         raise ValueError("GPU total memory must be positive")
+     if validation_kv_bytes < 0:
+         raise ValueError("Projection validation KV bytes must be non-negative")
++    if runtime_headroom_bytes < 0:
++        raise ValueError("Projection runtime headroom must be non-negative")
+ 
+     per_rank_weight_bytes = _ceil_div(model_weight_bytes, tensor_parallel_size)
+     model_target_bytes = _ceil_div(
+         per_rank_weight_bytes * _HEADROOM_NUMERATOR,
+         _HEADROOM_DENOMINATOR,
+     )
+-    target_bytes = model_target_bytes + validation_kv_bytes
++    target_bytes = (
++        model_target_bytes + validation_kv_bytes + runtime_headroom_bytes
++    )
+     utilization_steps = _ceil_div(
+         target_bytes * _UTILIZATION_SCALE,
+         gpu_total_bytes,
+@@ -142,6 +147,7 @@ def parse_args() -> argparse.Namespace:
+     parser.add_argument("--tensor-parallel-size", type=int, required=True)
+     parser.add_argument("--gpu-id", action="append", required=True)
+     parser.add_argument("--validation-kv-bytes", type=int, default=0)
++    parser.add_argument("--runtime-headroom-bytes", type=int, default=0)
+     return parser.parse_args()
+ 
+ 
+@@ -154,6 +160,7 @@ def main() -> None:
+         tensor_parallel_size=args.tensor_parallel_size,
+         gpu_total_bytes=gpu_total_bytes,
+         validation_kv_bytes=args.validation_kv_bytes,
++        runtime_headroom_bytes=args.runtime_headroom_bytes,
+     )
+     print(
+         f"{budget.utilization:.4f}",
+diff --git a/vllm/pap/protocol/models.py b/vllm/pap/protocol/models.py
+index 6653cd6ae8..f1a537eac1 100644
+--- a/vllm/pap/protocol/models.py
++++ b/vllm/pap/protocol/models.py
+@@ -18,7 +18,7 @@ class PAPAttentionRegistration(BaseModel):
+     kv_transfer_params: dict[str, Any] = Field(default_factory=dict)
+     prefix_len: int | None = None
+     block_size: int = 16
+-    max_seq_len: int = 32768
++    max_seq_len: int = 131072
+     q_size: int | None = None
+     kv_size: int | None = None
+ 

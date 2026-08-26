@@ -15,23 +15,29 @@ from vllm.pap.integration.settings import PAPRuntimeSettings
 from vllm.pap.prefill_control_router import (
     PAPControlDispatcher,
     build_prefill_control_router,
+    build_projection_control_router,
 )
 
 
 class PAPEndpointPlugin:
-    """Expose Prefill control only in a PAP unified-KV process."""
+    """Expose role-specific PAP control through vLLM's endpoint plugin."""
 
     name = "pap"
     required_tasks = ("generate",)
 
     def __init__(self) -> None:
         settings = PAPRuntimeSettings.from_environ()
-        self._enabled = settings.unified_kv_decode_capacity_tokens > 0
+        self._prefill_enabled = settings.unified_kv_decode_capacity_tokens > 0
+        self._projection_enabled = settings.projection_kv_unaware
+        self._enabled = self._prefill_enabled or self._projection_enabled
 
     def attach_router(self, app: FastAPI) -> None:
         if not self._enabled:
             return
-        app.include_router(build_prefill_control_router())
+        if self._prefill_enabled:
+            app.include_router(build_prefill_control_router())
+        if self._projection_enabled:
+            app.include_router(build_projection_control_router())
         parent_lifespan = app.router.lifespan_context
 
         @asynccontextmanager

@@ -12,13 +12,15 @@ The supported PAP benchmark topology is same-host `xPA1P`, TP1, with:
 - synchronous v0.26 Prefill scheduling for immediate KV handoff;
 - CUDA IPC for colocated Prefill--Attention KV sharing;
 - NVSHMEM P2P inside the whole-step Projection--Attention CUDA Graph;
-- static `conversation_affinity` placement and no PA-to-PA KV relocation;
+- initial-context-balanced `conversation_affinity` placement, sticky subsequent
+  turns, and no PA-to-PA KV relocation;
 - Qwen3-8B static YaRN with a 131,072-token serving limit;
 - AIPerf as the serving workload client.
 
-The primary eight-GPU comparison is PAP 7PA1P against two baselines behind
+The primary eight-GPU comparison is PAP 7PA1P against three baselines behind
 the same Dynamo frontend and KV-aware router: eight aggregated workers
-(`dp8`) and six Prefill plus two Decode workers (`6p2d`).
+(`dp8`), six Prefill plus two Decode workers (`6p2d`), and four Prefill plus
+four Decode workers (`4p4d`).
 
 The fixed protocol and first full comparison are recorded in
 `experiments/PAP-20260824-DYNAMO-ARCH-BASELINES/report.md`.
@@ -28,11 +30,16 @@ The fixed protocol and first full comparison are recorded in
 | Purpose | Entry point |
 | --- | --- |
 | One PAP E2E run | `scripts/run_pap_workload.sh` |
+| Canonical fixed-duration matrix | `scripts/run_agentic_code_steady_matrix.sh` |
 | PAP/Dynamo capacity matrix | `aiperf/run_capacity_matrix.sh` |
 | AIPerf client wrapper | `aiperf/run_profile.sh` |
 | One-run validation and summary | `aiperf/summarize_capacity_run.py` |
 | Matrix aggregation | `aiperf/summarize_capacity_matrix.py` |
-| Dynamo DP8/6P2D baseline | `scripts/run_dynamo_workload.sh` |
+| Dynamo DP8/6P2D/4P4D baseline | `scripts/run_dynamo_workload.sh` |
+
+The canonical matrix uses the project-local Agentic Coding baseline with no
+turn delay: all 2,092 sessions, request rate 2 turn/s, concurrency 1,024, a
+60-second warmup, a 3,600-second measured window, and zero drain grace.
 
 A targeted PAP run uses environment configuration:
 

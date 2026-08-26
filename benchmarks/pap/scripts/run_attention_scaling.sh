@@ -14,6 +14,9 @@ EXPECTED_SMS="${PAP_ATTENTION_SCALING_EXPECTED_SMS:-12}"
 RUN_TIMING="${PAP_ATTENTION_SCALING_RUN_TIMING:-1}"
 RUN_NSYS="${PAP_ATTENTION_SCALING_RUN_NSYS:-1}"
 SHAPE_GROUPS="${PAP_ATTENTION_SCALING_GROUPS:-context,iso_total}"
+KERNEL_SET="${PAP_ATTENTION_SCALING_KERNEL_SET:-sweep}"
+SHARD_COUNT="${PAP_ATTENTION_SCALING_SHARD_COUNT:-1}"
+SHARD_INDEX="${PAP_ATTENTION_SCALING_SHARD_INDEX:-0}"
 OUTPUT_ROOT="${PAP_ATTENTION_SCALING_OUTPUT_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/_staging/microbench/$(date +%Y%m%d_%H%M%S)_attention_scaling}"
 NSYS_IMPORTER="${PAP_NSYS_IMPORTER:-/usr/lib/nsight-systems/host-linux-x64/QdstrmImporter}"
 MPS_PIPE_DIR="${PAP_ATTENTION_SCALING_MPS_PIPE_DIR:-/tmp/pap-attention-scaling-${USER:-user}-$$}"
@@ -156,6 +159,9 @@ main() {
     printf 'RUN_TIMING=%q\n' "${RUN_TIMING}"
     printf 'RUN_NSYS=%q\n' "${RUN_NSYS}"
     printf 'SHAPE_GROUPS=%q\n' "${SHAPE_GROUPS}"
+    printf 'KERNEL_SET=%q\n' "${KERNEL_SET}"
+    printf 'SHARD_COUNT=%q\n' "${SHARD_COUNT}"
+    printf 'SHARD_INDEX=%q\n' "${SHARD_INDEX}"
     printf 'PYTORCH_CUDA=%q\n' "$(client_env "${PYTHON_BIN}" -c 'import torch; print(torch.__version__, torch.version.cuda)')"
     if [[ "${RUN_NSYS}" == "1" ]]; then
       printf 'NSYS_VERSION=%q\n' "$(nsys --version)"
@@ -166,6 +172,9 @@ main() {
     client_env "${PYTHON_BIN}" "${PROBE}" timing \
       --model-config "${MODEL_CONFIG}" \
       --groups "${SHAPE_GROUPS}" \
+      --kernel-set "${KERNEL_SET}" \
+      --shard-count "${SHARD_COUNT}" \
+      --shard-index "${SHARD_INDEX}" \
       --expected-sms "${EXPECTED_SMS}" \
       --output "${OUTPUT_ROOT}/timing/result.json"
   fi

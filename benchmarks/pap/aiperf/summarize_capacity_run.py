@@ -268,14 +268,26 @@ def _check_pap_routing(
     conversation = stats.get("conversation_routing", {})
     assignments_raw = conversation.get("pa_assignments", {})
     requests_raw = conversation.get("pa_requests", {})
+    initial_loads_raw = conversation.get("pa_initial_context_characters", {})
     assignments = [int(value) for value in assignments_raw.values()]
     requests = [int(value) for value in requests_raw.values()]
+    initial_loads = [int(value) for value in initial_loads_raw.values()]
     affinity_passed = True
     if conversation.get("conversations") != sessions:
         errors.append("PAP routed conversation count does not match")
         affinity_passed = False
-    if sum(assignments) != sessions or not _balanced(assignments):
-        errors.append("PAP PA assignments are not balanced")
+    if sum(assignments) != sessions:
+        errors.append("PAP PA assignment count does not match")
+        affinity_passed = False
+    if initial_loads_raw:
+        if set(initial_loads_raw) != set(assignments_raw):
+            errors.append("PAP initial-context load keys do not match PA assignments")
+            affinity_passed = False
+        elif not initial_loads or sum(initial_loads) <= 0 or min(initial_loads) < 0:
+            errors.append("PAP initial-context loads are invalid")
+            affinity_passed = False
+    elif not _balanced(assignments):
+        errors.append("legacy PAP PA assignments are not balanced")
         affinity_passed = False
     if sum(requests) != expected_requests:
         errors.append("PAP conversation-affinity request count does not match")
@@ -301,6 +313,7 @@ def _check_pap_routing(
         "passed": passed,
         "conversations": conversation.get("conversations"),
         "owner_assignments": assignments,
+        "initial_context_characters": initial_loads,
     }
 
 
