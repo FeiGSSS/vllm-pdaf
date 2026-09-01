@@ -13,6 +13,7 @@ import torch
 
 if TYPE_CHECKING:
     from vllm.pap.attention.kernels import PAPPagedDecodeWorkspace
+    from vllm.pap.attention.planning import PAPAttentionPlan
 
 
 @dataclass
@@ -180,6 +181,8 @@ class PAPAttentionStepContext:
     graph_slot_tensor: torch.Tensor | None = None
     metadata: Any | None = None
     paged_decode_workspace: PAPPagedDecodeWorkspace | None = None
+    attention_kernel_plan: PAPAttentionPlan | None = None
+    attention_kernel_plan_prepared: bool = False
     prepare_event: Any | None = None
     prepare_event_waited: bool = False
     completed_layers: set[str] = field(default_factory=set)

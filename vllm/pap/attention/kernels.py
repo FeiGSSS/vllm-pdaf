@@ -325,7 +325,7 @@ def _run_grouped_paged_decode_attention(
     )
 
 
-def run_paged_decode_attention(
+def run_triton_paged_decode_attention(
     *,
     query: torch.Tensor,
     key_cache: torch.Tensor,
@@ -427,7 +427,7 @@ def warm_paged_decode_attention(
     )
     stream = torch.cuda.Stream(device=device)
     with stream:
-        run_paged_decode_attention(
+        run_triton_paged_decode_attention(
             query=query,
             key_cache=key_cache,
             value_cache=value_cache,
@@ -449,6 +449,6 @@ __all__ = [
     "PAP_TRITON_DECODE_LOW_RESOURCE_MAX_SMS",
     "build_paged_decode_workspace",
     "paged_decode_kernel_config_for_sms",
-    "run_paged_decode_attention",
+    "run_triton_paged_decode_attention",
     "warm_paged_decode_attention",
 ]

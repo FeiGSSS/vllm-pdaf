@@ -4,13 +4,14 @@
 
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
 import torch
 
 from vllm.logger import init_logger
-from vllm.pap.attention.kernels import run_paged_decode_attention
+from vllm.pap.attention.dispatch import run_pap_decode_attention
 from vllm.pap.kv.layout import split_paged_kv_cache
 from vllm.pap.kv.models import PAPAttentionStepContext
 from vllm.pap.protocol.offload_exec import layer_index_and_template
@@ -35,15 +36,27 @@ class _PAPAttentionGraphEntry:
     graph: torch.cuda.CUDAGraph
     stream: torch.cuda.Stream
     bound_tensors: tuple[torch.Tensor, ...]
+    attention_plan: Any | None
 
 
 class PAPAttentionStepGraphExecutor:
     """Capture and replay all remote Attention layers with one CPU launch."""
 
-    def __init__(self, registry: Any, transport: Any) -> None:
+    def __init__(
+        self,
+        registry: Any,
+        transport: Any,
+        *,
+        max_entries: int = 32,
+    ) -> None:
+        if max_entries <= 0:
+            raise ValueError("PAP Attention Graph cache must be non-empty")
         self.registry = registry
         self.transport = transport
-        self._entries: dict[tuple[Any, ...], _PAPAttentionGraphEntry] = {}
+        self.max_entries = int(max_entries)
+        self._entries: OrderedDict[tuple[Any, ...], _PAPAttentionGraphEntry] = (
+            OrderedDict()
+        )
 
     def execute(
         self,
@@ -85,6 +98,8 @@ class PAPAttentionStepGraphExecutor:
                 layer_names=layer_names,
                 qkv_batch=qkv_batch,
             )
+        else:
+            self._entries.move_to_end(key)
 
         if context.prepare_event is not None:
             entry.stream.wait_event(context.prepare_event)
@@ -114,6 +129,7 @@ class PAPAttentionStepGraphExecutor:
             int(context.layer_states[layer_name][0].kv_cache.data_ptr())
             for layer_name in layer_names
         )
+        attention_plan = context.attention_kernel_plan
         return (
             tuple(qkv_batch.shape),
             str(qkv_batch.dtype),
@@ -124,6 +140,7 @@ class PAPAttentionStepGraphExecutor:
             int(graph_slot_tensor.data_ptr()),
             int(workspace.output.data_ptr()),
             int(workspace.partial.data_ptr()),
+            attention_plan.graph_key if attention_plan is not None else None,
         )
 
     def _capture(
@@ -139,10 +156,14 @@ class PAPAttentionStepGraphExecutor:
             stream.wait_event(context.prepare_event)
         self._warm_compute(context, layer_names[0], qkv_batch, stream)
         graph = torch.cuda.CUDAGraph()
+        attention_plan = context.attention_kernel_plan
         logger.info(
-            "PAP Attention whole-step CUDA Graph capture begin rows=%d layers=%d",
+            "PAP Attention whole-step CUDA Graph capture begin "
+            "rows=%d layers=%d attention_backend=%s reused_kv_tokens=%d",
             qkv_batch.shape[0],
             len(layer_names),
+            (attention_plan.backend_name if attention_plan is not None else "triton"),
+            (attention_plan.reused_kv_tokens if attention_plan is not None else 0),
         )
         # Prefill KV publication remains active on independent HTTP threads
         # while decode-step shapes are captured.  Restrict capture safety
@@ -156,22 +177,31 @@ class PAPAttentionStepGraphExecutor:
                 capture_error_mode="thread_local",
             ),
         ):
-            self._capture_body(context, layer_names, qkv_batch, stream)
+            captured_outputs = self._capture_body(
+                context,
+                layer_names,
+                qkv_batch,
+                stream,
+            )
         entry = _PAPAttentionGraphEntry(
             graph=graph,
             stream=stream,
-            bound_tensors=self._bound_tensors(
-                context=context,
-                layer_names=layer_names,
-                qkv_batch=qkv_batch,
+            bound_tensors=(
+                *self._bound_tensors(
+                    context=context,
+                    layer_names=layer_names,
+                    qkv_batch=qkv_batch,
+                ),
+                *captured_outputs,
             ),
+            attention_plan=attention_plan,
         )
         key = self._entry_key(
             context=context,
             layer_names=layer_names,
             qkv_batch=qkv_batch,
         )
-        self._entries[key] = entry
+        self._store_entry(key, entry)
         logger.info(
             "PAP Attention whole-step CUDA Graph capture complete "
             "rows=%d active_rows=%d layers=%d graphs=%d",
@@ -181,6 +211,23 @@ class PAPAttentionStepGraphExecutor:
             len(self._entries),
         )
         return entry
+
+    def _store_entry(
+        self,
+        key: tuple[Any, ...],
+        entry: _PAPAttentionGraphEntry,
+    ) -> None:
+        self._entries[key] = entry
+        self._entries.move_to_end(key)
+        while len(self._entries) > self.max_entries:
+            _, evicted = self._entries.popitem(last=False)
+            evicted.stream.synchronize()
+
+    def shutdown(self) -> None:
+        """Synchronize and release all captured Graph specializations."""
+        for entry in self._entries.values():
+            entry.stream.synchronize()
+        self._entries.clear()
 
     @staticmethod
     def _bound_tensors(
@@ -213,6 +260,9 @@ class PAPAttentionStepGraphExecutor:
         tensors.extend(
             context.layer_states[layer_name][0].kv_cache for layer_name in layer_names
         )
+        attention_plan = context.attention_kernel_plan
+        if attention_plan is not None:
+            tensors.extend(attention_plan.bound_tensors)
         return tuple(tensors)
 
     def _warm_compute(
@@ -232,8 +282,9 @@ class PAPAttentionStepGraphExecutor:
         layer_names: tuple[str, ...],
         qkv_batch: torch.Tensor,
         stream: torch.cuda.Stream,
-    ) -> None:
+    ) -> tuple[torch.Tensor, ...]:
         layer_count = len(layer_names)
+        outputs = []
         self.transport.graph_begin_step(
             layer_count=layer_count,
             stream=stream,
@@ -245,12 +296,14 @@ class PAPAttentionStepGraphExecutor:
                 stream=stream,
             )
             output = self._compute_layer(context, layer_name, qkv_batch)
+            outputs.append(output)
             self.transport.graph_send_output(
                 output.reshape(qkv_batch.shape[0], -1),
                 layer_index=layer_index,
                 layer_count=layer_count,
                 stream=stream,
             )
+        return tuple(outputs)
 
     @staticmethod
     def _compute_layer(
@@ -290,7 +343,8 @@ class PAPAttentionStepGraphExecutor:
         metadata = context.metadata
         workspace = context.paged_decode_workspace
         assert metadata is not None and workspace is not None
-        return run_paged_decode_attention(
+        return run_pap_decode_attention(
+            attention_plan=context.attention_kernel_plan,
             query=query,
             key_cache=key_cache,
             value_cache=value_cache,

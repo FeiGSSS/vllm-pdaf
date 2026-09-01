@@ -11,6 +11,7 @@ from typing import Any
 
 import torch
 
+from vllm.logger import init_logger
 from vllm.pap.attention.compute import prepare_offload_exec_step
 from vllm.pap.attention.execution import run_offload_exec_nvshmem_graph_loop
 from vllm.pap.attention.kernels import (
@@ -18,13 +19,15 @@ from vllm.pap.attention.kernels import (
     PAPPagedDecodeWorkspaceCache,
 )
 from vllm.pap.attention.runtime import PAPAttentionRuntime
-from vllm.pap.config import PAPRuntimeConfig
+from vllm.pap.config import PAPAttentionKernelPolicy, PAPRuntimeConfig
 from vllm.pap.deferred_cuda_trace import (
     begin_deferred_cuda_span,
     end_deferred_cuda_span,
 )
 from vllm.pap.kv.metadata import PAPPagedBlockTableBuffer
 from vllm.pap.transport.factory import build_offload_exec_transport
+
+logger = init_logger(__name__)
 
 
 class PAPAttentionPeerConflict(ValueError):
@@ -54,6 +57,7 @@ class PAPAttentionPeerManager:
         self._lock = Lock()
         self._stopping = False
         self._stopped = False
+        self.attention_kernel_selector: Any | None = None
 
     def initialize(self, *, enabled: bool) -> None:
         """Create the transport used by the single Projection peer."""
@@ -69,9 +73,12 @@ class PAPAttentionPeerManager:
     def membership_stats(self) -> dict[str, Any]:
         """Return a stable peer snapshot for the Attention stats endpoint."""
         with self._lock:
-            return {
+            stats = {
                 "attention_bound_source_ids": sorted(self.source_ids.values()),
             }
+            if self.attention_kernel_selector is not None:
+                stats.update(self.attention_kernel_selector.stats())
+            return stats
 
     def health(self) -> dict[str, Any]:
         """Report runtime health together with the bound receiver state."""
@@ -142,6 +149,22 @@ class PAPAttentionPeerManager:
         workspace_cache = PAPPagedDecodeWorkspaceCache(max_entries=64)
         step_tensor_cache = PAPAttentionStepTensorCache(max_entries=256)
         block_table_buffer = PAPPagedBlockTableBuffer()
+        from vllm.pap.attention.pat import PAPPATOrTritonSelector
+
+        if self.config.attention.kernel_policy is PAPAttentionKernelPolicy.AUTO:
+            attention_kernel_selector, unavailable_reason = (
+                PAPPATOrTritonSelector.create_if_available()
+            )
+            if unavailable_reason is not None:
+                logger.warning_once(
+                    "PAP PAT is unavailable; auto policy is using Triton: %s",
+                    unavailable_reason,
+                )
+        elif self.config.attention.kernel_policy is PAPAttentionKernelPolicy.TRITON:
+            attention_kernel_selector = None
+        else:
+            raise RuntimeError("PAP Attention kernel policy must be auto or triton")
+        self.attention_kernel_selector = attention_kernel_selector
 
         def prepare_step(descriptor: Any, dtype: torch.dtype) -> Any:
             with torch.cuda.stream(stream):
@@ -157,6 +180,7 @@ class PAPAttentionPeerManager:
                         workspace_cache=workspace_cache,
                         step_tensor_cache=step_tensor_cache,
                         block_table_buffer=block_table_buffer,
+                        attention_kernel_selector=attention_kernel_selector,
                     )
                 finally:
                     end_deferred_cuda_span(trace)

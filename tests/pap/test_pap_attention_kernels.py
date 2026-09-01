@@ -4,11 +4,16 @@
 from __future__ import annotations
 
 import math
+from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 import torch
 
+import vllm.pap.attention.dispatch as dispatch
 import vllm.pap.attention.kernels as kernels
+import vllm.pap.attention.pat as pat
+from vllm.pap.attention.dispatch import run_pap_decode_attention
 from vllm.pap.attention.kernels import (
     PAP_TRITON_DECODE_DEFAULT_CONFIG,
     PAP_TRITON_DECODE_LOW_RESOURCE_CONFIG,
@@ -16,9 +21,343 @@ from vllm.pap.attention.kernels import (
     PAPPagedDecodeWorkspace,
     PAPPagedDecodeWorkspaceCache,
     paged_decode_kernel_config_for_sms,
-    run_paged_decode_attention,
+    run_triton_paged_decode_attention,
 )
+from vllm.pap.attention.pat import PAPPATOrTritonSelector, PAPPATPlan
 from vllm.pap.kv.metadata import PAPPagedFlashMetadata
+
+
+class _FakePATPlan:
+    def __init__(self) -> None:
+        self.reused_kv_tokens = 0
+        self.length_updates = []
+        self.allow_length_updates = False
+
+    def update_decode_state(self, states, seq_lens) -> bool:
+        del states
+        self.length_updates.append(tuple(seq_lens))
+        return self.allow_length_updates
+
+
+class _FakePATPlanner:
+    def __init__(self) -> None:
+        self.calls = []
+        self.result = _FakePATPlan()
+
+    def plan(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.result
+
+
+def _selector_plan(selector, *, step_signature, states, seq_lens):
+    return selector.plan(
+        step_signature=step_signature,
+        request_ids=tuple(f"request-{index}" for index in range(len(states))),
+        topology_ids=tuple(range(len(states))),
+        states=states,
+        seq_lens=seq_lens,
+        num_heads=32,
+        num_kv_heads=8,
+        head_dim=128,
+        scale=128**-0.5,
+        dtype=torch.float16,
+        device=torch.device("cpu"),
+    )
+
+
+def test_attention_selector_reuses_exact_previous_pat_metadata() -> None:
+    storage = torch.empty(1)
+    states = tuple(
+        SimpleNamespace(kv_cache=storage, block_ids=(0,), block_size=16)
+        for _ in range(2)
+    )
+    pat = _FakePATPlanner()
+    selector = PAPPATOrTritonSelector(pat)
+
+    first = _selector_plan(
+        selector,
+        step_signature=("same-step",),
+        states=states,
+        seq_lens=(16, 16),
+    )
+    second = _selector_plan(
+        selector,
+        step_signature=("same-step",),
+        states=states,
+        seq_lens=(16, 16),
+    )
+
+    assert first is pat.result
+    assert second is first
+    assert len(pat.calls) == 1
+    assert selector.stats()["attention_kernel_metadata_reuses"] == 1
+
+
+def test_auto_selector_falls_back_without_required_graph_stream(monkeypatch) -> None:
+    monkeypatch.delenv("DISABLE_STREAM", raising=False)
+
+    selector, unavailable_reason = PAPPATOrTritonSelector.create_if_available()
+
+    assert selector is None
+    assert unavailable_reason == "DISABLE_STREAM=1 is required"
+
+
+def test_attention_selector_rebuilds_when_incremental_update_is_unsupported() -> None:
+    storage = torch.empty(1)
+    states = tuple(
+        SimpleNamespace(kv_cache=storage, block_ids=(0,), block_size=16)
+        for _ in range(2)
+    )
+    pat = _FakePATPlanner()
+    selector = PAPPATOrTritonSelector(pat)
+
+    _selector_plan(
+        selector,
+        step_signature=("step-1",),
+        states=states,
+        seq_lens=(16, 16),
+    )
+    _selector_plan(
+        selector,
+        step_signature=("step-2",),
+        states=states,
+        seq_lens=(16, 16),
+    )
+
+    assert len(pat.calls) == 2
+    assert pat.calls[0]["reused_kv_tokens"] == 16
+    assert pat.calls[1]["reused_kv_tokens"] == 16
+
+
+def test_attention_selector_updates_pat_metadata_for_same_topology() -> None:
+    storage = torch.empty(1)
+    states = tuple(
+        SimpleNamespace(kv_cache=storage, block_ids=(0,), block_size=16)
+        for _ in range(2)
+    )
+    pat = _FakePATPlanner()
+    pat.result.allow_length_updates = True
+    selector = PAPPATOrTritonSelector(pat)
+
+    first = _selector_plan(
+        selector,
+        step_signature=("step-1",),
+        states=states,
+        seq_lens=(15, 15),
+    )
+    second = _selector_plan(
+        selector,
+        step_signature=("step-2",),
+        states=states,
+        seq_lens=(16, 16),
+    )
+
+    assert second is first
+    assert len(pat.calls) == 1
+    assert pat.result.length_updates == [(16, 16)]
+    assert selector.stats()["attention_kernel_incremental_metadata_reuses"] == 1
+
+
+def test_pat_plan_updates_only_dynamic_kv_lengths() -> None:
+    destination = torch.empty(2, dtype=torch.int32)
+    base = torch.tensor([100, 200], dtype=torch.int32)
+    host = torch.empty_like(base)
+    host_block_table = torch.tensor(
+        [[0, 1, 0, 0], [0, 1, 0, 0]],
+        dtype=torch.int32,
+    )
+    block_table = torch.empty_like(host_block_table)
+    plan = PAPPATPlan(
+        q_tables=(),
+        block_tables=(block_table,),
+        num_seqs_per_ctas=(),
+        cta_ranks=(),
+        kv_in_ctas=(destination,),
+        mnws=(),
+        num_split_per_seq=torch.empty(0, dtype=torch.int32),
+        max_split_per_seq=0,
+        max_seqs_in_cta=0,
+        max_blocks_in_cta=0,
+        output=torch.empty(0),
+        scale=1.0,
+        reused_kv_tokens=16,
+        base_seq_lens=(32, 32),
+        block_size=16,
+        base_kv_in_ctas=(base,),
+        host_kv_in_ctas=(host,),
+        host_block_tables=(host_block_table,),
+        kv_in_cta_deltas=(
+            (torch.tensor([1, 0], dtype=torch.int32),),
+            (torch.tensor([0, 1], dtype=torch.int32),),
+        ),
+        request_tails=(
+            pat._PATTail(0, 0, 2, 2, True),
+            pat._PATTail(0, 1, 2, 2, True),
+        ),
+        incremental_updates_supported=True,
+    )
+
+    states = (
+        SimpleNamespace(block_ids=(0, 1, 2), block_size=16),
+        SimpleNamespace(block_ids=(0, 1, 3), block_size=16),
+    )
+    assert plan.update_decode_state(states, (32, 33))
+    assert destination.tolist() == [100, 201]
+    assert plan.update_decode_state(states, (33, 33))
+    assert block_table[0, 2].item() == 2
+    assert replace(plan).graph_key != plan.graph_key
+
+
+def test_pat_reuses_tree_when_private_decode_tails_cross_pages(monkeypatch) -> None:
+    pytest.importorskip("prefix_attn")
+    monkeypatch.setenv("DISABLE_STREAM", "1")
+    storage = torch.empty(1)
+    states = tuple(
+        SimpleNamespace(
+            kv_cache=storage,
+            block_ids=(0, 1, *range(100 * index, 100 * index + 8)),
+            block_size=16,
+        )
+        for index in range(1, 7)
+    )
+    selector = PAPPATOrTritonSelector(pat.PAPPATPlanner())
+    initial_seq_lens = (50, 53, 55, 58, 61, 63)
+
+    first = _selector_plan(
+        selector,
+        step_signature=("step-0",),
+        states=states,
+        seq_lens=initial_seq_lens,
+    )
+    assert first is not None
+    for step in range(1, 33):
+        seq_lens = tuple(seq_len + step for seq_len in initial_seq_lens)
+        current = _selector_plan(
+            selector,
+            step_signature=(f"step-{step}",),
+            states=states,
+            seq_lens=seq_lens,
+        )
+        assert current is first
+        for request_index, (state, seq_len) in enumerate(
+            zip(states, seq_lens, strict=True)
+        ):
+            actual_blocks = []
+            actual_tokens = 0
+            for q_table, block_table, num_seqs, kv_in_cta in zip(
+                current.q_tables,
+                current.block_tables,
+                current.num_seqs_per_ctas,
+                current.kv_in_ctas,
+                strict=True,
+            ):
+                for row in range(int(q_table.shape[0])):
+                    active_queries = q_table[row, : int(num_seqs[row])].tolist()
+                    if request_index not in active_queries:
+                        continue
+                    kv_tokens = int(kv_in_cta[row])
+                    actual_tokens += kv_tokens
+                    block_count = math.ceil(kv_tokens / 16)
+                    actual_blocks.extend(map(int, block_table[row, :block_count]))
+            expected_blocks = state.block_ids[: math.ceil(seq_len / 16)]
+            assert actual_tokens == seq_len
+            assert sorted(actual_blocks) == sorted(expected_blocks)
+
+    assert selector.stats()["attention_kernel_pat_rebuilds"] == 1
+    assert selector.stats()["attention_kernel_incremental_metadata_reuses"] == 32
+
+
+def test_attention_selector_uses_pat_for_pairwise_prefix_reuse() -> None:
+    storage = torch.empty(1)
+    states = (
+        SimpleNamespace(kv_cache=storage, block_ids=(0, 1), block_size=16),
+        SimpleNamespace(kv_cache=storage, block_ids=(0, 2), block_size=16),
+        SimpleNamespace(kv_cache=storage, block_ids=(3, 4), block_size=16),
+    )
+    pat = _FakePATPlanner()
+    selector = PAPPATOrTritonSelector(pat)
+
+    result = _selector_plan(
+        selector,
+        step_signature=("pairwise-prefix",),
+        states=states,
+        seq_lens=(32, 32, 32),
+    )
+
+    assert result is pat.result
+    assert pat.calls[0]["reused_kv_tokens"] == 16
+    assert selector.stats()["attention_kernel_pat_rebuilds"] == 1
+
+
+def test_attention_selector_uses_triton_without_physical_reuse() -> None:
+    storage = torch.empty(1)
+    states = (
+        SimpleNamespace(kv_cache=storage, block_ids=(0,), block_size=16),
+        SimpleNamespace(kv_cache=storage, block_ids=(1,), block_size=16),
+    )
+    pat = _FakePATPlanner()
+    selector = PAPPATOrTritonSelector(pat)
+
+    result = _selector_plan(
+        selector,
+        step_signature=("unique",),
+        states=states,
+        seq_lens=(16, 16),
+    )
+
+    assert result is None
+    assert not pat.calls
+    assert selector.stats()["attention_kernel_triton_selections"] == 1
+
+
+def test_decode_dispatch_uses_attention_plan(monkeypatch) -> None:
+    expected = torch.empty(1)
+
+    class Plan:
+        def run_attention(self, query, key_cache, value_cache):
+            return expected
+
+    def fail_triton(**kwargs):
+        raise AssertionError("Triton fallback must not run")
+
+    monkeypatch.setattr(dispatch, "run_triton_paged_decode_attention", fail_triton)
+    actual = run_pap_decode_attention(
+        attention_plan=Plan(),
+        query=torch.empty(1),
+        key_cache=torch.empty(1),
+        value_cache=torch.empty(1),
+        metadata=None,
+        workspace=None,
+        scale=1.0,
+        block_size=16,
+    )
+
+    assert actual is expected
+
+
+def test_decode_dispatch_uses_triton_fallback(monkeypatch) -> None:
+    expected = torch.empty(1)
+    received = {}
+
+    def fake_triton(**kwargs):
+        received.update(kwargs)
+        return expected
+
+    monkeypatch.setattr(dispatch, "run_triton_paged_decode_attention", fake_triton)
+    actual = run_pap_decode_attention(
+        attention_plan=None,
+        query=torch.empty(1),
+        key_cache=torch.empty(1),
+        value_cache=torch.empty(1),
+        metadata="metadata",
+        workspace="workspace",
+        scale=0.125,
+        block_size=16,
+    )
+
+    assert actual is expected
+    assert received["metadata"] == "metadata"
+    assert received["workspace"] == "workspace"
 
 
 def test_paged_decode_kernel_config_is_low_sm_specific() -> None:
@@ -126,7 +465,7 @@ def test_low_sm_decode_uses_pap_launch_specialization(monkeypatch) -> None:
 
     monkeypatch.setattr(kernels, "_run_grouped_paged_decode_attention", fake_launch)
 
-    output = run_paged_decode_attention(
+    output = run_triton_paged_decode_attention(
         query=query,
         key_cache=kv_cache,
         value_cache=kv_cache,
@@ -197,7 +536,7 @@ def test_default_decode_uses_v026_public_abi(monkeypatch) -> None:
         fake_decode,
     )
 
-    run_paged_decode_attention(
+    run_triton_paged_decode_attention(
         query=query,
         key_cache=kv_cache,
         value_cache=kv_cache,
@@ -270,7 +609,7 @@ def test_qwen3_gqa_paged_decode_matches_reference() -> None:
         kernel_config=config,
     )
 
-    actual = run_paged_decode_attention(
+    actual = run_triton_paged_decode_attention(
         query=query,
         key_cache=key_cache,
         value_cache=value_cache,

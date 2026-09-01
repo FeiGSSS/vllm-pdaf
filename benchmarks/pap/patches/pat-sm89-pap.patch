@@ -1,0 +1,165 @@
+diff --git a/benchmark/benchmark_kernel.py b/benchmark/benchmark_kernel.py
+index 79b09c6..51b402f 100644
+--- a/benchmark/benchmark_kernel.py
++++ b/benchmark/benchmark_kernel.py
+@@ -7,7 +7,14 @@ import json
+ import os
+ from typing import List
+
+-from vllm.vllm_flash_attn import flash_attn_with_kvcache as vllm_flash_attn_with_kvcache
++try:
++    from vllm.vllm_flash_attn import (
++        flash_attn_with_kvcache as vllm_flash_attn_with_kvcache,
++    )
++except ImportError:
++    from vllm.vllm_flash_attn.flash_attn_interface import (
++        flash_attn_with_kvcache as vllm_flash_attn_with_kvcache,
++    )
+
+ from FlashInferAttn import get_decode_wrapper
+ from RelayAttention import schedule_single_sys, RelayAttention, RelayAttentionPlus
+diff --git a/csrc/bindings.cpp b/csrc/bindings.cpp
+index 733e27e..58299ef 100644
+--- a/csrc/bindings.cpp
++++ b/csrc/bindings.cpp
+@@ -95,7 +95,17 @@ PYBIND11_MODULE(_prefix_attn, m) {
+     );
+
+     py::class_<KernelInfo>(m, "KernelInfo")
+-        .def("to_gpu", &KernelInfo::to_gpu, py::arg("device"));
++        .def("to_gpu", &KernelInfo::to_gpu, py::arg("device"))
++        .def_readonly("q_tables", &KernelInfo::q_tables)
++        .def_readonly("block_tables", &KernelInfo::block_tables)
++        .def_readonly("num_seqs_per_CTAs", &KernelInfo::num_seqs_per_CTAs)
++        .def_readonly("CTA_ranks", &KernelInfo::CTA_ranks)
++        .def_readonly("kv_in_CTAs", &KernelInfo::kv_in_CTAs)
++        .def_readonly("MNWs", &KernelInfo::MNWs)
++        .def_readonly("num_split_per_seq", &KernelInfo::num_split_per_seq)
++        .def_readonly("max_split_per_seq", &KernelInfo::max_split_per_seq)
++        .def_readonly("max_seqs_in_CTA", &KernelInfo::max_seqs_in_CTA)
++        .def_readonly("max_blocks_in_CTA", &KernelInfo::max_blocks_in_CTA);
+
+     py::class_<PrefixTree>(m, "PrefixTreeCPP")
+         .def(py::init<int>(), py::arg("block_size"))
+diff --git a/csrc/pat_fwd_launch_template.h b/csrc/pat_fwd_launch_template.h
+index 4ef27ad..3f0fa1c 100644
+--- a/csrc/pat_fwd_launch_template.h
++++ b/csrc/pat_fwd_launch_template.h
+@@ -1,4 +1,5 @@
+ #pragma once
++#include <ATen/cuda/CUDAContext.h>
+ #include "namespace_config.h"
+ #include "c10/cuda/CUDAException.h"  // For C10_CUDA_CHECK and C10_CUDA_KERNEL_LAUNCH_CHECK
+
+@@ -51,7 +52,12 @@ void launch(pat_fwd_params &params, cudaStream_t &stream) {
+
+ template<typename elem_type, int Headdim>
+ void pat_run_mha_fwd_splitkv_dispatch(std::vector<pat_fwd_params> &params) {
+-    cudaStream_t stream = 0;
++    const char* disableStreamEnv = std::getenv("DISABLE_STREAM");
++    const bool disable_stream =
++        disableStreamEnv && std::string(disableStreamEnv) == "1";
++    cudaStream_t stream = disable_stream
++        ? at::cuda::getCurrentCUDAStream()
++        : static_cast<cudaStream_t>(0);
+     HRatio_SWITCH(params[0].h / params[0].h_k, HRatio, [&]() {
+         if (params[0].max_split_per_seq == 1) {
+             // In this case, we will not run gather_kernel
+@@ -60,9 +66,8 @@ void pat_run_mha_fwd_splitkv_dispatch(std::vector<pat_fwd_params> &params) {
+             });
+         } else {
+             const int num_kernels = params.size();
+-            const char* disableStreamEnv = std::getenv("DISABLE_STREAM");
+             std::vector<cudaStream_t> streams;
+-            if (disableStreamEnv && std::string(disableStreamEnv) == "1") {
++            if (disable_stream) {
+ //                std::cout << "Running without streams due to DISABLE_STREAM environment variable." << std::endl;
+                 for (int i = 0; i < num_kernels; i++) {
+                     MNW_SWITCH(params[i].tile_q, params[i].tile_kv, params[i].Warps, kBlockM, kBlockN, Warps, [&]() {
+@@ -86,8 +91,9 @@ void pat_run_mha_fwd_splitkv_dispatch(std::vector<pat_fwd_params> &params) {
+-            // run gather_kernel on legacy default stream
++            // Merge split outputs on the current stream for graph capture.
+             dim3 grid_gather(params[0].b, params[0].h);
+ //            std::cout << "grid_gather : " << grid_gather << std::endl;
+             constexpr int WARPS = Headdim == 64 ? 2 : 4;
+             GBLOCKM_SWITCH(params[0].max_split_per_seq, [&]() {
+-                gather_kernel<elem_type, Headdim, BLOCKM, WARPS><<<grid_gather, WARPS*32, 0>>>(params[0]);
++                gather_kernel<elem_type, Headdim, BLOCKM, WARPS>
++                    <<<grid_gather, WARPS*32, 0, stream>>>(params[0]);
+             });
+             C10_CUDA_KERNEL_LAUNCH_CHECK();
+             for (auto &stream: streams) {
+diff --git a/csrc/prefix_tree.h b/csrc/prefix_tree.h
+index 022d5ef..c0d0299 100644
+--- a/csrc/prefix_tree.h
++++ b/csrc/prefix_tree.h
+@@ -3,6 +3,7 @@
+ #include <unordered_map>
+ #include <algorithm>
+ #include <iostream>
++#include <limits>
+
+ struct KernelInfo {
+     std::vector<torch::Tensor> q_tables;
+@@ -186,7 +187,8 @@ public:
+                        bool use_compute_model = false) {
+
+         std::vector<std::vector<int>> buckets;
+-        if (!MNWs.has_value() || MNWs->empty()) {
++        const bool use_custom_buckets = MNWs.has_value() && !MNWs->empty();
++        if (!use_custom_buckets) {
+             buckets = {
+                 {64, 128, 4}, {64, 64, 4}, {64, 32, 4},
+                 {32, 128, 2}, {32, 64, 2}, {32, 32, 2}, {32, 16, 2},
+@@ -229,7 +231,9 @@ public:
+             for (auto& box : packed_boxes) {
+                 int m_val = (int)box.q_table.size() * HRatio;
+
+-                std::vector<int> target_mnw = getMNW(m_val, box.kv_in_CTA);
++                std::vector<int> target_mnw = use_custom_buckets
++                    ? getCustomMNW(m_val, buckets)
++                    : getMNW(m_val, box.kv_in_CTA);
+
+                 if (grouped.find(target_mnw) != grouped.end()) {
+                     grouped[target_mnw].push_back(std::move(box));
+@@ -344,6 +348,20 @@ private:
+         return {m, n, w};
+     }
+
++    std::vector<int> getCustomMNW(
++        int m_val,
++        const std::vector<std::vector<int>>& buckets) {
++        const std::vector<int>* best = &buckets.front();
++        int best_m = std::numeric_limits<int>::max();
++        for (const auto& bucket : buckets) {
++            if (bucket[0] >= m_val && bucket[0] < best_m) {
++                best = &bucket;
++                best_m = bucket[0];
++            }
++        }
++        return *best;
++    }
++
+     std::vector<PackedBox> _tree_heuristics(int node_id, int mm,
+                                             const std::vector<int>& inherited_block_id) {
+         std::vector<PackedBox> res;
+@@ -620,4 +638,4 @@ private:
+         return cropPack;
+     }
+
+-};
+\ No newline at end of file
++};
+diff --git a/setup.py b/setup.py
+index f107b80..5885ccb 100644
+--- a/setup.py
++++ b/setup.py
+@@ -39,7 +39,7 @@ setup(
+                 "cxx": ["-O3", "-std=c++20"],
+                 "nvcc": [
+                     "-std=c++20",
+-                    "-arch=compute_80",
++                    "-arch=sm_89",
+                     "-O3",
+                     "-U__CUDA_NO_HALF_OPERATORS__",
+                     "-U__CUDA_NO_HALF_CONVERSIONS__",

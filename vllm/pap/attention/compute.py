@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -14,7 +14,7 @@ from vllm.pap.attention.kernels import (
     PAPPagedDecodeWorkspace,
     PAPPagedDecodeWorkspaceCache,
     build_paged_decode_workspace,
-    run_paged_decode_attention,
+    run_triton_paged_decode_attention,
 )
 from vllm.pap.deferred_cuda_trace import (
     begin_deferred_cuda_span,
@@ -34,6 +34,9 @@ from vllm.pap.kv.observability import (
     log_kv_locality_profile as _log_kv_locality_profile,
 )
 from vllm.pap.kv.registry import PAPAttentionRegistry
+
+if TYPE_CHECKING:
+    from vllm.pap.attention.planning import PAPAttentionSelector
 
 
 def _compute_unified_paged_attention_batch(
@@ -101,7 +104,7 @@ def _compute_unified_paged_attention_batch(
         start_event.record(stream)
     if use_deferred_flash_trace:
         try:
-            output = run_paged_decode_attention(
+            output = run_triton_paged_decode_attention(
                 query=query_batch,
                 key_cache=key_cache,
                 value_cache=value_cache,
@@ -113,7 +116,7 @@ def _compute_unified_paged_attention_batch(
         finally:
             end_deferred_cuda_span(deferred_attention_trace)
     else:
-        output = run_paged_decode_attention(
+        output = run_triton_paged_decode_attention(
             query=query_batch,
             key_cache=key_cache,
             value_cache=value_cache,
@@ -174,6 +177,7 @@ def prepare_offload_exec_step(
     workspace_cache: PAPPagedDecodeWorkspaceCache | None = None,
     step_tensor_cache: PAPAttentionStepTensorCache | None = None,
     block_table_buffer: PAPPagedBlockTableBuffer | None = None,
+    attention_kernel_selector: PAPAttentionSelector | None = None,
 ) -> PAPAttentionStepContext:
     """Prepare QKV-independent Attention state before layer-0 QKV arrives."""
     prepare_started = time.perf_counter()
@@ -329,6 +333,25 @@ def prepare_offload_exec_step(
                     "attention_step_workspace_wall_ms",
                     (time.perf_counter() - workspace_started) * 1000.0,
                 )
+        if not context.attention_kernel_plan_prepared:
+            context.attention_kernel_plan = (
+                attention_kernel_selector.plan(
+                    step_signature=context.cache_key,
+                    request_ids=context.request_ids,
+                    topology_ids=context.topology_ids,
+                    states=states,
+                    seq_lens=context.result_seq_lens,
+                    num_heads=context.num_heads,
+                    num_kv_heads=context.num_kv_heads,
+                    head_dim=context.head_dim,
+                    scale=context.scale,
+                    dtype=dtype,
+                    device=registry.storage_device,
+                )
+                if attention_kernel_selector is not None
+                else None
+            )
+            context.attention_kernel_plan_prepared = True
         if registry.storage_device.type == "cuda":
             event_started = time.perf_counter()
             context.prepare_event = torch.cuda.Event()

@@ -453,9 +453,9 @@ def run_attention(
     implementation: str = "auto",
 ) -> torch.Tensor:
     """Run the production low-SM-aware Triton paged-decode path."""
-    from vllm.pap.attention.kernels import run_paged_decode_attention
+    from vllm.pap.attention.kernels import run_triton_paged_decode_attention
 
-    return run_paged_decode_attention(
+    return run_triton_paged_decode_attention(
         query=inputs.query,
         key_cache=inputs.key_cache,
         value_cache=inputs.value_cache,

@@ -48,6 +48,13 @@ class PAPMPSMode(str, Enum):
     STATIC = "static"
 
 
+class PAPAttentionKernelPolicy(str, Enum):
+    """Decode Attention kernel-selection policy."""
+
+    AUTO = "auto"
+    TRITON = "triton"
+
+
 _TOPOLOGY_PATTERN = re.compile(r"^(?P<pa>[1-9][0-9]*)pa(?P<p>[1-9][0-9]*)p$")
 _TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
 _FALSE_VALUES = frozenset({"", "0", "false", "no", "off"})
@@ -189,6 +196,7 @@ class PAPAttentionServiceConfig:
     storage_device: str | None
     prefill_wait_timeout_s: float
     decode_kv_initial_capacity: int
+    kernel_policy: PAPAttentionKernelPolicy = PAPAttentionKernelPolicy.AUTO
 
 
 @dataclass(frozen=True)
@@ -269,6 +277,26 @@ PAP_REMOVED_FLAGS = (
         name="PAP_ATTENTION_ACTIVE_PEER_TRACKING",
         replacement="topology-derived peer membership tracking",
         experiment_id="PAP-20260711-ACTIVE-PEER",
+    ),
+    PAPRemovedFlag(
+        name="PAP_SHARED_PREFIX_ATTENTION_BACKEND",
+        replacement="PAP_ATTENTION_KERNEL_POLICY=auto or triton",
+        experiment_id="PAP-20260827-PAT-OR-TRITON",
+    ),
+    PAPRemovedFlag(
+        name="PAP_SHARED_PREFIX_CASCADE",
+        replacement="the PAT-or-Triton Attention policy",
+        experiment_id="PAP-20260827-PAT-OR-TRITON",
+    ),
+    PAPRemovedFlag(
+        name="PAP_SHARED_PREFIX_PAT_MIN_TOKENS",
+        replacement="physical KV reuse detection without a token threshold",
+        experiment_id="PAP-20260827-PAT-OR-TRITON",
+    ),
+    PAPRemovedFlag(
+        name="PAP_SHARED_PREFIX_PAT_CACHE_ENTRIES",
+        replacement="PAP_PAT_PLAN_CACHE_ENTRIES",
+        experiment_id="PAP-20260827-PAT-OR-TRITON",
     ),
     PAPRemovedFlag(
         name="PAP_MPS_MODE",
@@ -514,6 +542,11 @@ class PAPRuntimeConfig:
                 "PAP_ATTENTION_DECODE_KV_INITIAL_CAPACITY",
                 128,
                 minimum=1,
+            ),
+            kernel_policy=_parse_enum(
+                PAPAttentionKernelPolicy,
+                _env_text(env, "PAP_ATTENTION_KERNEL_POLICY", "auto"),
+                "PAP_ATTENTION_KERNEL_POLICY",
             ),
         )
 

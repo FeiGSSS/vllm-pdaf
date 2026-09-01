@@ -20,28 +20,31 @@ def run_offload_exec_nvshmem_graph_loop(
     """Receive step plans and replay complete Attention CUDA Graphs."""
     peer_id = peer_id or str(getattr(transport, "actor_id", type(transport).__name__))
     graph_executor = PAPAttentionStepGraphExecutor(registry, transport)
-    while True:
-        try:
-            descriptor, qkv_batch, step_context = transport.recv_graph_step_plan()
-        except PAPOffloadExecTransportClosed:
-            return
-        registry.record_offload_exec_peer_batch(
-            peer_id=peer_id,
-            rows=descriptor.item_count,
-        )
-        committed = graph_executor.execute(
-            descriptor=descriptor,
-            qkv_batch=qkv_batch,
-            context=step_context,
-        )
-        if not committed:
-            return
-        for layer_name in step_context.expected_layers:
-            registry.record_offload_exec_compute(
-                layer_name=layer_name,
+    try:
+        while True:
+            try:
+                descriptor, qkv_batch, step_context = transport.recv_graph_step_plan()
+            except PAPOffloadExecTransportClosed:
+                return
+            registry.record_offload_exec_peer_batch(
+                peer_id=peer_id,
                 rows=descriptor.item_count,
-                source_batches=1,
             )
+            committed = graph_executor.execute(
+                descriptor=descriptor,
+                qkv_batch=qkv_batch,
+                context=step_context,
+            )
+            if not committed:
+                return
+            for layer_name in step_context.expected_layers:
+                registry.record_offload_exec_compute(
+                    layer_name=layer_name,
+                    rows=descriptor.item_count,
+                    source_batches=1,
+                )
+    finally:
+        graph_executor.shutdown()
 
 
 __all__ = ["run_offload_exec_nvshmem_graph_loop"]

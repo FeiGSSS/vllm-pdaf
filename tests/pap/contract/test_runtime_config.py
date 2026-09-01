@@ -6,6 +6,7 @@ import pytest
 
 from vllm.pap.config import (
     PAP_REMOVED_FLAGS,
+    PAPAttentionKernelPolicy,
     PAPConfigError,
     PAPMPSMode,
     PAPOffloadKVTransport,
@@ -24,6 +25,13 @@ def test_runtime_config_defaults_to_the_single_projection_runtime() -> None:
     assert config.offload_kv_transport is PAPOffloadKVTransport.CUDA_IPC
     assert config.mps.mode is PAPMPSMode.STATIC
     assert config.attention.actor_id == "attention"
+    assert config.attention.kernel_policy is PAPAttentionKernelPolicy.AUTO
+
+
+def test_runtime_config_accepts_triton_attention_control() -> None:
+    config = PAPRuntimeConfig.from_env({"PAP_ATTENTION_KERNEL_POLICY": "triton"})
+
+    assert config.attention.kernel_policy is PAPAttentionKernelPolicy.TRITON
 
 
 def test_runtime_config_accepts_7pa1p_nvshmem_graph_topology() -> None:
