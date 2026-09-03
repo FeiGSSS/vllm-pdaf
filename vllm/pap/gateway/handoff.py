@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,7 +19,11 @@ from vllm.pap.gateway.lifecycle import (
     PAPRequestLifecycle,
     release_attention_sessions,
 )
-from vllm.pap.gateway.observability import _pap_prefill_ipc_profile_enabled
+from vllm.pap.gateway.observability import (
+    _merge_prefill_cache_usage_sse_event,
+    _pap_prefill_ipc_profile_enabled,
+    _PrefillCacheUsage,
+)
 
 logger = logging.getLogger("pap_gateway")
 
@@ -187,6 +192,39 @@ async def _stream_projection_response(
         )
 
 
+async def _stream_with_prefill_cache_usage(
+    chunks: AsyncIterator[bytes],
+    prefill_usage: _PrefillCacheUsage | None,
+) -> AsyncIterator[bytes]:
+    if prefill_usage is None:
+        async for chunk in chunks:
+            yield chunk
+        return
+
+    pending = b""
+    async for chunk in chunks:
+        pending += chunk
+        while True:
+            boundary = pending.find(b"\n\n")
+            boundary_size = 2
+            crlf_boundary = pending.find(b"\r\n\r\n")
+            if crlf_boundary >= 0 and (boundary < 0 or crlf_boundary < boundary):
+                boundary = crlf_boundary
+                boundary_size = 4
+            if boundary < 0:
+                break
+            event = pending[:boundary]
+            pending = pending[boundary + boundary_size :]
+            delimiter = b"\r\n\r\n" if boundary_size == 4 else b"\n\n"
+            merged_event = _merge_prefill_cache_usage_sse_event(
+                event,
+                prefill_usage,
+            )
+            yield merged_event + delimiter
+    if pending:
+        yield pending
+
+
 async def _stream_projection_with_cleanup(
     client: PAPServiceClient,
     endpoint: str,
@@ -194,6 +232,7 @@ async def _stream_projection_with_cleanup(
     request_id: str,
     lifecycle: PAPRequestLifecycle,
     opened_stream: OpenProjectionStream | None = None,
+    prefill_usage: _PrefillCacheUsage | None = None,
 ):
     """Stream Projection output and release the fixed PA lifecycle."""
     terminal_marker = b"data: [DONE]"
@@ -214,6 +253,10 @@ async def _stream_projection_with_cleanup(
                 start=opened_stream.start,
                 profile=opened_stream.profile,
             )
+        projection_chunks = _stream_with_prefill_cache_usage(
+            projection_chunks,
+            prefill_usage,
+        )
         async for chunk in projection_chunks:
             if terminal_chunks:
                 terminal_chunks.append(chunk)

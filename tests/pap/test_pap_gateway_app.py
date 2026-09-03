@@ -13,7 +13,11 @@ from vllm.pap.gateway.admission import PAPProjectionAdmission
 from vllm.pap.gateway.app import parse_args
 from vllm.pap.gateway.lifecycle import PAPLifecycleManager
 from vllm.pap.gateway.load_tracker import PAPLoadTracker
-from vllm.pap.gateway.observability import _prefill_usage_headers
+from vllm.pap.gateway.observability import (
+    _extract_prefill_cache_usage,
+    _merge_prefill_cache_usage,
+    _prefill_usage_headers,
+)
 from vllm.pap.gateway.request_pipeline import (
     _cancel_on_client_disconnect,
     _pop_conversation_id,
@@ -171,6 +175,66 @@ def test_prefill_usage_headers_expose_local_cache_tokens() -> None:
         "X-PAP-Prefill-Cached-Tokens": "768",
         "X-PAP-Prefill-Computed-Tokens": "256",
     }
+
+
+def test_projection_usage_reports_prefill_cache_tokens() -> None:
+    prefill_usage = _extract_prefill_cache_usage(
+        {
+            "usage": {
+                "prompt_tokens": 1024,
+                "prompt_tokens_details": {"cached_tokens": 768},
+            }
+        }
+    )
+
+    response = _merge_prefill_cache_usage(
+        {
+            "usage": {
+                "prompt_tokens": 1024,
+                "completion_tokens": 32,
+                "total_tokens": 1056,
+            }
+        },
+        prefill_usage,
+    )
+
+    assert response["usage"] == {
+        "prompt_tokens": 1024,
+        "completion_tokens": 32,
+        "total_tokens": 1056,
+        "prompt_tokens_details": {"cached_tokens": 768},
+    }
+
+
+def test_stream_usage_reports_prefill_cache_tokens_across_chunks() -> None:
+    async def chunks():
+        yield b'data: {"choices":[{"delta":{"content":"a"}}]}\n\ndata: {"choices":[],'
+        yield b'"usage":{"prompt_tokens":1024,"completion_tokens":2,'
+        yield b'"total_tokens":1026}}\n\ndata: [DONE]\n\n'
+
+    async def run() -> bytes:
+        prefill_usage = _extract_prefill_cache_usage(
+            {
+                "usage": {
+                    "prompt_tokens": 1024,
+                    "prompt_tokens_details": {"cached_tokens": 768},
+                }
+            }
+        )
+        return b"".join(
+            [
+                chunk
+                async for chunk in gateway_handoff._stream_with_prefill_cache_usage(
+                    chunks(),
+                    prefill_usage,
+                )
+            ]
+        )
+
+    output = asyncio.run(run())
+
+    assert b'"prompt_tokens_details":{"cached_tokens":768}' in output
+    assert output.endswith(b"data: [DONE]\n\n")
 
 
 def test_parse_projection_instances_from_compact_spec() -> None:

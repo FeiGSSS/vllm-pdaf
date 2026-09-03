@@ -26,6 +26,8 @@ from vllm.pap.gateway.handoff import (
     register_attention_handles,
 )
 from vllm.pap.gateway.observability import (
+    _extract_prefill_cache_usage,
+    _merge_prefill_cache_usage,
     _pap_prefill_ipc_profile_enabled,
     _prefill_usage_headers,
 )
@@ -347,6 +349,7 @@ async def _handle_parsed_openai_request(
             "X-PAP-Pair": pair_name,
         }
         response_headers.update(_prefill_usage_headers(prefill_resp))
+        prefill_cache_usage = _extract_prefill_cache_usage(prefill_resp)
 
         await admission.acquire(group, projection)
         lifecycle.mark_projection_admitted()
@@ -370,6 +373,7 @@ async def _handle_parsed_openai_request(
                     request_id,
                     lifecycle,
                     opened_stream=opened_stream,
+                    prefill_usage=prefill_cache_usage,
                 ),
                 media_type="text/event-stream",
                 headers=response_headers,
@@ -387,6 +391,10 @@ async def _handle_parsed_openai_request(
             request_id,
         )
         lifecycle.mark_projection_completed()
+        projection_resp = _merge_prefill_cache_usage(
+            projection_resp,
+            prefill_cache_usage,
+        )
         return JSONResponse(projection_resp, headers=response_headers)
     finally:
         conversation_router.release_reservation(request_id)
