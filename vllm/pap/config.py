@@ -421,8 +421,6 @@ class PAPRuntimeConfig:
             raise PAPConfigError(
                 "PAP_PROJECTION_GPUS has fewer devices than the topology requires"
             )
-        if self.topology.projection_count != 1:
-            raise PAPConfigError("PAP NVSHMEM whole-step Graph requires one Projection")
         if self.topology.tensor_parallel_size != 1:
             raise PAPConfigError("PAP NVSHMEM whole-step Graph requires TP=1")
 

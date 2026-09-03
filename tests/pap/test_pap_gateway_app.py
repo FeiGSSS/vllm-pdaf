@@ -345,6 +345,41 @@ def test_conversation_affinity_balances_new_conversation_context() -> None:
     }
 
 
+def test_conversation_affinity_keeps_each_pa_on_one_projection() -> None:
+    groups = _groups(6)
+    projections = _projections(2)
+    router = PAPConversationRouter(groups)
+
+    selected = [
+        select_instances(
+            index,
+            groups,
+            projections,
+            routing_policy="conversation_affinity",
+            conversation_id=f"conv-{index}",
+            conversation_router=router,
+        )
+        for index in range(6)
+    ]
+
+    assert [group.prefill_port for group, _ in selected] == [
+        8100,
+        8101,
+        8102,
+        8103,
+        8104,
+        8105,
+    ]
+    assert [projection.port for _, projection in selected] == [
+        8200,
+        8200,
+        8200,
+        8201,
+        8201,
+        8201,
+    ]
+
+
 def _pa_load(
     *,
     prefill: int,

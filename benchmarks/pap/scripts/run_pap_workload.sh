@@ -314,10 +314,6 @@ PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT:-cuda_ipc}"
 PAP_NVSHMEM_WORLD_SIZE=$((PA_COUNT + PROJECTION_COUNT))
 PAP_NVSHMEM_UID_FILE="${PAP_NVSHMEM_UID_FILE:-${RUN_ROOT}/nvshmem.uid}"
 PAP_NVSHMEM_INIT_TIMEOUT="${PAP_NVSHMEM_INIT_TIMEOUT:-${SERVER_START_TIMEOUT}}"
-if (( PROJECTION_COUNT != 1 )); then
-  echo "ERROR: PAP NVSHMEM whole-step Graph requires one Projection" >&2
-  exit 2
-fi
 if (( PAP_TP_SIZE != 1 )); then
   echo "ERROR: PAP NVSHMEM whole-step Graph requires PAP_TP_SIZE=1" >&2
   exit 2
@@ -1806,40 +1802,46 @@ expected_pair_routes = Counter()
 errors = []
 conversation_affinity = routing_policy == "conversation_affinity"
 if conversation_affinity:
-    # Conversation assignment depends on the first-seen order. Validate the
-    # endpoint range and request count instead of reconstructing interleaving.
-    expected_group_indices = [0 for _ in range(expected_requests)]
-else:
-    expected_group_indices = [
-        request_number % pa_count for request_number in range(expected_requests)
-    ]
-
-for request_number, group_index in enumerate(expected_group_indices):
-    projection_index = request_number % projection_count
-    if routing_policy == "crossbar_round_robin":
-        projection_index = (
-            request_number // pa_count + group_index
-        ) % projection_count
-    elif routing_policy == "projection_affinity":
-        groups_per_projection = (
-            pa_count + projection_count - 1
-        ) // projection_count
+    groups_per_projection = (
+        pa_count + projection_count - 1
+    ) // projection_count
+    for pa_port, projection_port in routes:
+        group_index = pa_port - prefill_base
+        if group_index < 0 or group_index >= pa_count:
+            continue
         projection_index = min(
             group_index // groups_per_projection,
             projection_count - 1,
         )
-    elif routing_policy == "projection_sticky":
-        group_index = projection_index % pa_count
-    elif routing_policy not in (
-        "round_robin",
-        "conversation_affinity",
-    ):
-        errors.append(f"unsupported routing policy {routing_policy!r}")
-        group_index = 0
-        projection_index = 0
-    expected_pa_routes[prefill_base + group_index] += 1
-    expected_projection_routes[projection_base + projection_index] += 1
-    expected_pair_routes[f"pa{group_index}:p{projection_index}"] += 1
+        expected_projection_routes[projection_base + projection_index] += 1
+        expected_pair_routes[f"pa{group_index}:p{projection_index}"] += 1
+else:
+    expected_group_indices = [
+        request_number % pa_count for request_number in range(expected_requests)
+    ]
+    for request_number, group_index in enumerate(expected_group_indices):
+        projection_index = request_number % projection_count
+        if routing_policy == "crossbar_round_robin":
+            projection_index = (
+                request_number // pa_count + group_index
+            ) % projection_count
+        elif routing_policy == "projection_affinity":
+            groups_per_projection = (
+                pa_count + projection_count - 1
+            ) // projection_count
+            projection_index = min(
+                group_index // groups_per_projection,
+                projection_count - 1,
+            )
+        elif routing_policy == "projection_sticky":
+            group_index = projection_index % pa_count
+        elif routing_policy != "round_robin":
+            errors.append(f"unsupported routing policy {routing_policy!r}")
+            group_index = 0
+            projection_index = 0
+        expected_pa_routes[prefill_base + group_index] += 1
+        expected_projection_routes[projection_base + projection_index] += 1
+        expected_pair_routes[f"pa{group_index}:p{projection_index}"] += 1
 
 if len(routes) != expected_requests:
     errors.append(
@@ -1861,9 +1863,7 @@ if projection_routes != expected_projection_routes:
         f"Projection route counts {dict(projection_routes)} != expected "
         f"{dict(expected_projection_routes)}"
     )
-if routing_policy != "conversation_affinity" and (
-    pair_routes != expected_pair_routes
-):
+if pair_routes != expected_pair_routes:
     errors.append(
         f"PA/Projection pair counts {dict(pair_routes)} != expected "
         f"{dict(expected_pair_routes)}"

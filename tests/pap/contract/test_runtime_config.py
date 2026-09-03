@@ -50,16 +50,18 @@ def test_runtime_config_accepts_7pa1p_nvshmem_graph_topology() -> None:
     assert config.routing_policy is PAPRoutingPolicy.CONVERSATION_AFFINITY
 
 
-def test_runtime_config_rejects_multiple_projections() -> None:
-    with pytest.raises(PAPConfigError, match="requires one Projection"):
-        PAPRuntimeConfig.from_env(
-            {
-                "PAP_TOPOLOGY": "1pa2p",
-                "PAP_PREFILL_GPUS": "0",
-                "PAP_ATTENTION_GPUS": "0",
-                "PAP_PROJECTION_GPUS": "1,2",
-            }
-        )
+def test_runtime_config_accepts_multiple_projections() -> None:
+    config = PAPRuntimeConfig.from_env(
+        {
+            "PAP_TOPOLOGY": "6pa2p",
+            "PAP_PREFILL_GPUS": "0,1,2,3,4,5",
+            "PAP_ATTENTION_GPUS": "0,1,2,3,4,5",
+            "PAP_PROJECTION_GPUS": "6,7",
+        }
+    )
+
+    assert config.topology.pa_count == 6
+    assert config.topology.projection_count == 2
 
 
 def test_runtime_config_rejects_tensor_parallel_execution() -> None:

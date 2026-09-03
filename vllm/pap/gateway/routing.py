@@ -276,7 +276,12 @@ def select_instances(
             request_id=request_id,
             current_pa_loads=current_pa_loads,
         )
-        projection_index = request_number % len(projections)
+        group_index = groups.index(group)
+        groups_per_projection = (len(groups) + len(projections) - 1) // len(projections)
+        projection_index = min(
+            group_index // groups_per_projection,
+            len(projections) - 1,
+        )
     else:
         raise ValueError(f"unsupported PAP routing policy: {routing_policy}")
     return group, projections[projection_index]
