@@ -110,7 +110,7 @@ Attention workloads, the measured cross-GPU span is below 0.3%.
 
 ## Artifacts
 
-Output root:
+The original measurement output root was:
 `/tmp/pap-attention-latency-surface-v026-expanded-374`
 
 - `timing/result.json`: merged 7,106-row raw matrix and sample arrays;
@@ -122,3 +122,13 @@ Output root:
 - `tables/config_summary.csv`: direct per-configuration gap summary;
 - `tables/matrix_summary.json`: compact direct-measurement summary;
 - `tables/artifact_manifest.json`: merged-source and table hashes.
+
+The frozen requested configuration is now `experiment.env`. Reproduce it with:
+
+```bash
+bash benchmarks/pap/experiments/microbench/\
+PAP-20260824-ATTENTION-LATENCY-SURFACE/run.sh
+```
+
+New raw attempts are written under this experiment's ignored `runs/`
+directory, and each records the configuration path and SHA-256.

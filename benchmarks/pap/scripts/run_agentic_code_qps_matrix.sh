@@ -5,17 +5,29 @@
 set -euo pipefail
 
 ROOT_DIR="${PAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
-EXPERIMENT_DIR="${PAP_QPS_SCAN_EXPERIMENT_DIR:-${ROOT_DIR}/benchmarks/pap/experiments/e2e/PAP-20260903-AGENTIC-CODE-QPS-MATRIX}"
+EXPERIMENT_DIR="${PAP_QPS_SCAN_EXPERIMENT_DIR:?set by the experiment run.sh}"
+EXPERIMENT_CONFIG="${PAP_QPS_SCAN_EXPERIMENT_CONFIG:?set by the experiment run.sh}"
 MATRIX_ROOT="${PAP_QPS_SCAN_RUN_ROOT:-${EXPERIMENT_DIR}/results}"
 DYNAMO_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_dynamo_workload.sh"
 PAP_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_pap_workload.sh"
 PLOTTER="${ROOT_DIR}/benchmarks/pap/tooling/plot_qps_matrix.py"
 PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
 AIPERF_RUNNER="${ROOT_DIR}/benchmarks/pap/aiperf/run_profile.sh"
-DATASET="${ROOT_DIR}/benchmarks/pap/datasets/agentic-code/s60-t3-half-seed42/dataset.jsonl"
-DATASET_SHA256="258b72c85772c9d372f1b63ee0bf6d710f27cb00234027e2c750c82a5fa9563c"
+DATASET_ID="${PAP_QPS_SCAN_DATASET_ID:?missing experiment dataset ID}"
+DATASET_REL="${PAP_QPS_SCAN_DATASET_REL:?missing experiment dataset path}"
+DATASET="${ROOT_DIR}/${DATASET_REL}"
+DATASET_SHA256="${PAP_QPS_SCAN_DATASET_SHA256:?missing dataset checksum}"
+DATASET_TYPE="${PAP_QPS_SCAN_DATASET_TYPE:?missing AIPerf dataset type}"
+MODEL_PATH="${PAP_QPS_SCAN_MODEL_PATH:?missing model path}"
+MAX_MODEL_LEN="${PAP_QPS_SCAN_MAX_MODEL_LEN:?missing model length}"
+HF_OVERRIDES="${PAP_QPS_SCAN_HF_OVERRIDES:?missing model overrides}"
+GPU_MEMORY_UTILIZATION="${PAP_QPS_SCAN_GPU_MEMORY_UTILIZATION:?missing GPU memory utilization}"
+BLOCK_SIZE="${PAP_QPS_SCAN_BLOCK_SIZE:?missing KV block size}"
+DYNAMO_ROUTER_MODE="${PAP_QPS_SCAN_DYNAMO_ROUTER_MODE:?missing Dynamo router mode}"
+PAP_ROUTING_POLICY="${PAP_QPS_SCAN_PAP_ROUTING_POLICY:?missing PAP routing policy}"
+TIMING_MODE="${PAP_QPS_SCAN_TIMING_MODE:?missing AIPerf timing mode}"
 
-CANONICAL_ARCHITECTURES=(
+SUPPORTED_ARCHITECTURES=(
   dp8
   2p6d
   4p4d
@@ -25,27 +37,28 @@ CANONICAL_ARCHITECTURES=(
   pap_6pa2p_2k
   pap_6pa2p_32k
 )
-CANONICAL_QPS=(0.6 0.9 1.2 1.5 1.8)
-ARCHITECTURES_CSV="${PAP_QPS_SCAN_ONLY_ARCHITECTURES:-dp8,2p6d,4p4d,6p2d,pap_7pa1p_2k,pap_7pa1p_32k,pap_6pa2p_2k,pap_6pa2p_32k}"
-QPS_CSV="${PAP_QPS_SCAN_ONLY_QPS:-0.6,0.9,1.2,1.5,1.8}"
+CONFIGURED_ARCHITECTURES_CSV="${PAP_QPS_SCAN_ARCHITECTURES:?missing architectures}"
+CONFIGURED_QPS_CSV="${PAP_QPS_SCAN_QPS_POINTS:?missing QPS points}"
+ARCHITECTURES_CSV="${PAP_QPS_SCAN_ONLY_ARCHITECTURES:-${CONFIGURED_ARCHITECTURES_CSV}}"
+QPS_CSV="${PAP_QPS_SCAN_ONLY_QPS:-${CONFIGURED_QPS_CSV}}"
 RESUME="${PAP_QPS_SCAN_RESUME:-1}"
 VALIDATE_ONLY="${PAP_QPS_SCAN_VALIDATE_ONLY:-0}"
 CONTINUE_ON_FAILURE="${PAP_QPS_SCAN_CONTINUE_ON_FAILURE:-1}"
-RUN_TIMEOUT_SECONDS="${PAP_QPS_SCAN_RUN_TIMEOUT_SECONDS:-3600}"
+RUN_TIMEOUT_SECONDS="${PAP_QPS_SCAN_RUN_TIMEOUT_SECONDS:?missing run timeout}"
 
-SESSIONS=60
-CONCURRENCY=60
-EXPECTED_REQUESTS=180
-ARRIVAL_PATTERN=poisson
-REQUEST_TIMEOUT_SECONDS=1800
-WARMUP_SECONDS=0
-BENCHMARK_DURATION_SECONDS=0
-GRACE_SECONDS=0
-DYNAMO_MAX_NUM_BATCHED_TOKENS=32768
-PAP_2K_MAX_NUM_BATCHED_TOKENS=2048
-PAP_32K_MAX_NUM_BATCHED_TOKENS=32768
-DECODE_MAX_NUM_BATCHED_TOKENS=2048
-MAX_NUM_SEQS=256
+SESSIONS="${PAP_QPS_SCAN_SESSIONS:?missing session count}"
+CONCURRENCY="${PAP_QPS_SCAN_CONCURRENCY:?missing concurrency}"
+EXPECTED_REQUESTS="${PAP_QPS_SCAN_EXPECTED_REQUESTS:?missing request count}"
+ARRIVAL_PATTERN="${PAP_QPS_SCAN_ARRIVAL_PATTERN:?missing arrival pattern}"
+REQUEST_TIMEOUT_SECONDS="${PAP_QPS_SCAN_REQUEST_TIMEOUT_SECONDS:?missing request timeout}"
+WARMUP_SECONDS="${PAP_QPS_SCAN_WARMUP_SECONDS:?missing warmup duration}"
+BENCHMARK_DURATION_SECONDS="${PAP_QPS_SCAN_BENCHMARK_DURATION_SECONDS:?missing benchmark duration}"
+GRACE_SECONDS="${PAP_QPS_SCAN_GRACE_SECONDS:?missing grace duration}"
+DYNAMO_MAX_NUM_BATCHED_TOKENS="${PAP_QPS_SCAN_DYNAMO_MAX_NUM_BATCHED_TOKENS:?missing Dynamo token budget}"
+PAP_2K_MAX_NUM_BATCHED_TOKENS="${PAP_QPS_SCAN_PAP_2K_MAX_NUM_BATCHED_TOKENS:?missing PAP 2K token budget}"
+PAP_32K_MAX_NUM_BATCHED_TOKENS="${PAP_QPS_SCAN_PAP_32K_MAX_NUM_BATCHED_TOKENS:?missing PAP 32K token budget}"
+DECODE_MAX_NUM_BATCHED_TOKENS="${PAP_QPS_SCAN_DECODE_MAX_NUM_BATCHED_TOKENS:?missing Decode token budget}"
+MAX_NUM_SEQS="${PAP_QPS_SCAN_MAX_NUM_SEQS:?missing sequence limit}"
 
 die() {
   echo "ERROR: $*" >&2
@@ -187,14 +200,19 @@ run_dynamo() {
   timeout --foreground "${RUN_TIMEOUT_SECONDS}" env \
     PAP_ROOT="${ROOT_DIR}" \
     DYNAMO_ARCHITECTURE="${architecture}" \
-    DYNAMO_ROUTER_MODE=kv \
+    MODEL_PATH="${MODEL_PATH}" \
+    DYNAMO_MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
+    DYNAMO_HF_OVERRIDES="${HF_OVERRIDES}" \
+    DYNAMO_GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION}" \
+    DYNAMO_BLOCK_SIZE="${BLOCK_SIZE}" \
+    DYNAMO_ROUTER_MODE="${DYNAMO_ROUTER_MODE}" \
     DYNAMO_RUN_ID="qps_matrix_${architecture}_$(qps_tag "${qps}")" \
     DYNAMO_RUN_ROOT="${attempt}" \
     DYNAMO_AIPERF_INPUT_FILE="${DATASET}" \
-    DYNAMO_AIPERF_CUSTOM_DATASET_TYPE=mooncake-trace \
+    DYNAMO_AIPERF_CUSTOM_DATASET_TYPE="${DATASET_TYPE}" \
     DYNAMO_AIPERF_SESSIONS="${SESSIONS}" \
     DYNAMO_AIPERF_CONCURRENCY="${CONCURRENCY}" \
-    DYNAMO_AIPERF_TIMING_MODE=request_rate \
+    DYNAMO_AIPERF_TIMING_MODE="${TIMING_MODE}" \
     DYNAMO_AIPERF_REQUEST_RATE="${qps}" \
     DYNAMO_AIPERF_ARRIVAL_PATTERN="${ARRIVAL_PATTERN}" \
     DYNAMO_AIPERF_EXPECTED_REQUESTS="${EXPECTED_REQUESTS}" \
@@ -235,17 +253,23 @@ run_pap() {
   esac
   timeout --foreground "${RUN_TIMEOUT_SECONDS}" env \
     PAP_ROOT="${ROOT_DIR}" \
+    MODEL_PATH="${MODEL_PATH}" \
+    MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
+    PAP_HF_OVERRIDES="${HF_OVERRIDES}" \
+    PAP_PREFILL_GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION}" \
+    PROJECTION_GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION}" \
+    PAP_BLOCK_SIZE="${BLOCK_SIZE}" \
     PAP_TOPOLOGY="${topology}" \
-    PAP_ROUTING_POLICY=conversation_affinity \
+    PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY}" \
     RUN_ID="qps_matrix_${architecture}_$(qps_tag "${qps}")" \
     RUN_ROOT="${attempt}" \
     PAP_AIPERF_INPUT_FILE="${DATASET}" \
-    PAP_AIPERF_CUSTOM_DATASET_TYPE=mooncake-trace \
+    PAP_AIPERF_CUSTOM_DATASET_TYPE="${DATASET_TYPE}" \
     PAP_AIPERF_VARIABLE_TURNS=1 \
     PAP_AIPERF_EXPECTED_REQUESTS="${EXPECTED_REQUESTS}" \
     PAP_AIPERF_SESSIONS="${SESSIONS}" \
     PAP_AIPERF_CONCURRENCY="${CONCURRENCY}" \
-    PAP_AIPERF_TIMING_MODE=request_rate \
+    PAP_AIPERF_TIMING_MODE="${TIMING_MODE}" \
     PAP_AIPERF_REQUEST_RATE="${qps}" \
     PAP_AIPERF_ARRIVAL_PATTERN="${ARRIVAL_PATTERN}" \
     PAP_AIPERF_WARMUP_DURATION_SECONDS="${WARMUP_SECONDS}" \
@@ -260,19 +284,31 @@ run_pap() {
 }
 
 write_matrix_manifest() {
-  local aiperf_sha256 dataset_sha256
+  local aiperf_sha256 config_sha256 dataset_sha256
   aiperf_sha256="$(sha256sum "${AIPERF_RUNNER}" | cut -d' ' -f1)"
+  config_sha256="$(sha256sum "${EXPERIMENT_CONFIG}" | cut -d' ' -f1)"
   dataset_sha256="$(sha256sum "${DATASET}" | cut -d' ' -f1)"
   [[ "${dataset_sha256}" == "${DATASET_SHA256}" ]] \
     || die "dataset SHA-256 mismatch: ${dataset_sha256}"
   {
-    printf 'SCHEMA_VERSION=1\n'
-    printf 'DATASET=%q\nDATASET_SHA256=%q\n' \
-      "${DATASET}" "${dataset_sha256}"
+    printf 'SCHEMA_VERSION=2\n'
+    printf 'EXPERIMENT_CONFIG=%q\nEXPERIMENT_CONFIG_SHA256=%q\n' \
+      "${EXPERIMENT_CONFIG}" "${config_sha256}"
+    printf 'DATASET_ID=%q\nDATASET_REL=%q\nDATASET=%q\n' \
+      "${DATASET_ID}" "${DATASET_REL}" "${DATASET}"
+    printf 'DATASET_SHA256=%q\nDATASET_TYPE=%q\n' \
+      "${dataset_sha256}" "${DATASET_TYPE}"
+    printf 'MODEL_PATH=%q\nMAX_MODEL_LEN=%q\nHF_OVERRIDES=%q\n' \
+      "${MODEL_PATH}" "${MAX_MODEL_LEN}" "${HF_OVERRIDES}"
+    printf 'GPU_MEMORY_UTILIZATION=%q\nBLOCK_SIZE=%q\n' \
+      "${GPU_MEMORY_UTILIZATION}" "${BLOCK_SIZE}"
+    printf 'DYNAMO_ROUTER_MODE=%q\nPAP_ROUTING_POLICY=%q\n' \
+      "${DYNAMO_ROUTER_MODE}" "${PAP_ROUTING_POLICY}"
+    printf 'TIMING_MODE=%q\n' "${TIMING_MODE}"
     printf 'AIPERF_RUNNER=%q\nAIPERF_RUNNER_SHA256=%q\n' \
       "${AIPERF_RUNNER}" "${aiperf_sha256}"
     printf 'ARCHITECTURES=%q\nQPS_POINTS=%q\n' \
-      "${CANONICAL_ARCHITECTURES[*]}" "${CANONICAL_QPS[*]}"
+      "${configured_architectures[*]}" "${configured_qps[*]}"
     printf 'SESSIONS=%q\nCONCURRENCY=%q\nEXPECTED_REQUESTS=%q\n' \
       "${SESSIONS}" "${CONCURRENCY}" "${EXPECTED_REQUESTS}"
     printf 'ARRIVAL_PATTERN=%q\nREQUEST_TIMEOUT_SECONDS=%q\n' \
@@ -291,7 +327,8 @@ write_matrix_manifest() {
 }
 
 for path in "${DYNAMO_RUNNER}" "${PAP_RUNNER}" "${PLOTTER}" \
-  "${PYTHON_BIN}" "${AIPERF_RUNNER}" "${DATASET}"; do
+  "${PYTHON_BIN}" "${AIPERF_RUNNER}" "${EXPERIMENT_CONFIG}" \
+  "${DATASET}"; do
   [[ -e "${path}" ]] || die "missing required path: ${path}"
 done
 for command in jq nvidia-smi sha256sum timeout; do
@@ -303,13 +340,18 @@ done
 
 IFS=, read -r -a selected_architectures <<< "${ARCHITECTURES_CSV}"
 IFS=, read -r -a selected_qps <<< "${QPS_CSV}"
+IFS=, read -r -a configured_architectures \
+  <<< "${CONFIGURED_ARCHITECTURES_CSV}"
+IFS=, read -r -a configured_qps <<< "${CONFIGURED_QPS_CSV}"
 for architecture in "${selected_architectures[@]}"; do
-  contains "${architecture}" "${CANONICAL_ARCHITECTURES[@]}" \
+  contains "${architecture}" "${SUPPORTED_ARCHITECTURES[@]}" \
     || die "unsupported architecture: ${architecture}"
+  contains "${architecture}" "${configured_architectures[@]}" \
+    || die "architecture is not part of this experiment: ${architecture}"
 done
 for qps in "${selected_qps[@]}"; do
-  contains "${qps}" "${CANONICAL_QPS[@]}" \
-    || die "QPS must be one of: ${CANONICAL_QPS[*]}"
+  contains "${qps}" "${configured_qps[@]}" \
+    || die "QPS is not part of this experiment: ${qps}"
 done
 
 mkdir -p "${MATRIX_ROOT}"

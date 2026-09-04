@@ -8,8 +8,34 @@ PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 SINGLE_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_attention_scaling.sh"
 MERGER="${ROOT_DIR}/benchmarks/pap/tooling/merge_attention_scaling.py"
 TABLE_EXPORTER="${ROOT_DIR}/benchmarks/pap/tooling/attention_latency_table.py"
+MODEL_CONFIG="${MODEL_CONFIG:-/data/ssd1/llm-models/Qwen3-8B/config.json}"
 GPU_LIST="${PAP_ATTENTION_SCALING_GPUS:-0,1,2,3,4,5,6,7}"
+SHAPE_GROUPS="${PAP_ATTENTION_SCALING_GROUPS:-expanded}"
+KERNEL_SET="${PAP_ATTENTION_SCALING_KERNEL_SET:-practical}"
+RUN_NSYS="${PAP_ATTENTION_SCALING_RUN_NSYS:-0}"
+EXPERIMENT_CONFIG="${PAP_ATTENTION_SCALING_EXPERIMENT_CONFIG:-}"
+VALIDATE_ONLY="${PAP_ATTENTION_SCALING_VALIDATE_ONLY:-0}"
 OUTPUT_ROOT="${PAP_ATTENTION_SCALING_OUTPUT_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/microbench/_runs/$(date +%Y%m%d_%H%M%S)_attention_scaling_expanded}"
+
+if [[ -n "${EXPERIMENT_CONFIG}" && ! -f "${EXPERIMENT_CONFIG}" ]]; then
+  echo "ERROR: experiment config is missing: ${EXPERIMENT_CONFIG}" >&2
+  exit 2
+fi
+[[ "${VALIDATE_ONLY}" =~ ^[01]$ ]] || {
+  echo "ERROR: PAP_ATTENTION_SCALING_VALIDATE_ONLY must be 0 or 1" >&2
+  exit 2
+}
+for path in "${PYTHON_BIN}" "${SINGLE_RUNNER}" "${MERGER}" \
+  "${TABLE_EXPORTER}" "${MODEL_CONFIG}"; do
+  [[ -e "${path}" ]] || {
+    echo "ERROR: required path is missing: ${path}" >&2
+    exit 2
+  }
+done
+if (( VALIDATE_ONLY == 1 )); then
+  echo "Attention latency experiment configuration is valid"
+  exit 0
+fi
 
 IFS=',' read -r -a gpu_indices <<< "${GPU_LIST}"
 shard_count="${#gpu_indices[@]}"
@@ -22,11 +48,11 @@ for shard_index in "${!gpu_indices[@]}"; do
   shard_root="${OUTPUT_ROOT}/shards/shard_${shard_index}"
   env \
     PAP_ATTENTION_SCALING_GPU="${gpu_index}" \
-    PAP_ATTENTION_SCALING_GROUPS=expanded \
-    PAP_ATTENTION_SCALING_KERNEL_SET=practical \
+    PAP_ATTENTION_SCALING_GROUPS="${SHAPE_GROUPS}" \
+    PAP_ATTENTION_SCALING_KERNEL_SET="${KERNEL_SET}" \
     PAP_ATTENTION_SCALING_SHARD_COUNT="${shard_count}" \
     PAP_ATTENTION_SCALING_SHARD_INDEX="${shard_index}" \
-    PAP_ATTENTION_SCALING_RUN_NSYS=0 \
+    PAP_ATTENTION_SCALING_RUN_NSYS="${RUN_NSYS}" \
     PAP_ATTENTION_SCALING_OUTPUT_ROOT="${shard_root}" \
     bash "${SINGLE_RUNNER}" \
     > "${OUTPUT_ROOT}/logs/shard_${shard_index}.log" 2>&1 &
@@ -54,8 +80,14 @@ done
 {
   printf 'GPU_LIST=%q\n' "${GPU_LIST}"
   printf 'SHARD_COUNT=%q\n' "${shard_count}"
-  printf 'SHAPE_GROUPS=expanded\n'
-  printf 'KERNEL_SET=practical\n'
+  printf 'SHAPE_GROUPS=%q\n' "${SHAPE_GROUPS}"
+  printf 'KERNEL_SET=%q\n' "${KERNEL_SET}"
+  printf 'RUN_NSYS=%q\n' "${RUN_NSYS}"
+  if [[ -n "${EXPERIMENT_CONFIG}" ]]; then
+    printf 'EXPERIMENT_CONFIG=%q\n' "${EXPERIMENT_CONFIG}"
+    printf 'EXPERIMENT_CONFIG_SHA256=%q\n' \
+      "$(sha256sum "${EXPERIMENT_CONFIG}" | cut -d' ' -f1)"
+  fi
   printf 'MODEL_FITTED=0\n'
 } > "${OUTPUT_ROOT}/parallel_run.env"
 "${PYTHON_BIN}" "${MERGER}" \

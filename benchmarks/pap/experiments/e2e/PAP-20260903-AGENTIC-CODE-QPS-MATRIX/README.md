@@ -21,7 +21,13 @@ Run or resume the complete matrix with:
 bash benchmarks/pap/experiments/e2e/PAP-20260903-AGENTIC-CODE-QPS-MATRIX/run.sh
 ```
 
-`results/matrix.env` records the dataset and AIPerf runner SHA-256 values.
+`experiment.env` is the requested experiment configuration and is sourced only
+by this directory's `run.sh`. The shared matrix driver contains execution logic,
+not this experiment's workload settings.
+
+`results/matrix.env` records the effective configuration path and checksum,
+dataset ID and checksum, and AIPerf runner checksum. Each attempt additionally
+records the topology and process configuration observed after service startup.
 Results use the layout
 `results/<architecture>/qps_<rate>/attempt_<number>/`. A completed attempt is
 never overwritten; rerunning the command skips valid points and gives failed
