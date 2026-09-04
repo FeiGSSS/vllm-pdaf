@@ -27,11 +27,11 @@ was dirty. The complete provenance, raw matrix hash, and table hashes are in
 - Distributions: equal, bimodal, one-heavy, and Zipf-like.
 - Fixed-total slices: 32,768, 65,536, 131,072, and 262,144 tokens.
 - Candidates: 31 measured configurations:
-  - current production auto selection;
-  - 24 PAP grouped-query configurations covering splits 1/2/4/8/16/32,
+    - current production auto selection;
+    - 24 PAP grouped-query configurations covering splits 1/2/4/8/16/32,
     head blocks 1/2/4, and controlled one-factor scans of warps 2/4/8,
     stages 1/2/3, and token blocks 16/32/64;
-  - vLLM paged-decode with splits 1/2/4/8/16/32.
+    - vLLM paged-decode with splits 1/2/4/8/16/32.
 - Timing: 20 warmups followed by seven CUDA-event samples, each averaging 50
   kernel invocations.
 - Correctness: each candidate is compared with production auto using FP16

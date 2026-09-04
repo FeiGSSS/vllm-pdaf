@@ -1,0 +1,144 @@
+{
+  "config_summary": {
+    "initial_context_mean": 57000.0,
+    "initial_context_median": 47000.0,
+    "layer1_tokens": 32000,
+    "layer1_5_tokens": 10000,
+    "layer2_mean": 15000.0,
+    "layer2_median": 5000.0,
+    "num_groups": 100,
+    "zipf_alpha": 0.6,
+    "new_tokens_per_turn_mean": 6000.0,
+    "new_tokens_per_turn_median": 4000.0,
+    "generation_length_mean": 1000.0,
+    "generation_length_median": 800.0,
+    "max_prompt_tokens": 121072,
+    "block_size": 512,
+    "inter_turn_delay_agentic_fraction": 0.7,
+    "inter_turn_delay_agentic_mean_ms": 5000.0,
+    "inter_turn_delay_human_mean_ms": 30000.0,
+    "turn_mode_enabled": 0,
+    "reset_base_probability": 0.05,
+    "reset_context_scaling": 1.5
+  },
+  "observed_vs_target": {
+    "initial_context": {
+      "target_mean": 57000.0,
+      "target_median": 47000.0,
+      "observed": {
+        "count": 2092,
+        "mean": 52440.16,
+        "std": 14001.08,
+        "median": 46700.5,
+        "p05": 42415.65,
+        "p25": 43703.75,
+        "p75": 54934.0,
+        "p95": 83315.4,
+        "p99": 112321.01
+      },
+      "pct_error_mean": 8.0,
+      "pct_error_median": 0.64
+    },
+    "generation_length": {
+      "target_mean": 1000.0,
+      "target_median": 800.0,
+      "observed": {
+        "count": 16049,
+        "mean": 995.34,
+        "std": 758.59,
+        "median": 790.0,
+        "p05": 260.0,
+        "p25": 502.0,
+        "p75": 1256.0,
+        "p95": 2384.6,
+        "p99": 3836.08
+      },
+      "pct_error_mean": 0.47,
+      "pct_error_median": 1.25
+    },
+    "new_tokens_per_turn": {
+      "target_mean": 6000.0,
+      "target_median": 4000.0,
+      "observed": {
+        "count": 13957,
+        "mean": 5421.21,
+        "std": 5290.56,
+        "median": 3823.0,
+        "p05": 878.0,
+        "p25": 2084.0,
+        "p75": 6735.0,
+        "p95": 15642.2,
+        "p99": 26650.44
+      },
+      "pct_error_mean": 9.65,
+      "pct_error_median": 4.42
+    },
+    "inter_turn_delay_ms": {
+      "target_mean": null,
+      "target_median": null,
+      "observed": {
+        "count": 13957,
+        "mean": 0.0,
+        "std": 0.0,
+        "median": 0.0,
+        "p05": 0.0,
+        "p25": 0.0,
+        "p75": 0.0,
+        "p95": 0.0,
+        "p99": 0.0
+      },
+      "pct_error_mean": null,
+      "pct_error_median": null
+    },
+    "turns_per_session": {
+      "target_mean": null,
+      "target_median": null,
+      "observed": {
+        "count": 2092,
+        "mean": 7.67,
+        "std": 4.15,
+        "median": 8.0,
+        "p05": 1.0,
+        "p25": 4.0,
+        "p75": 11.0,
+        "p95": 14.45,
+        "p99": 17.0
+      },
+      "pct_error_mean": null,
+      "pct_error_median": null
+    }
+  },
+  "session_stats": {
+    "count": 2092,
+    "mean": 7.67,
+    "std": 4.15,
+    "median": 8.0,
+    "p05": 1.0,
+    "p25": 4.0,
+    "p75": 11.0,
+    "p95": 14.45,
+    "p99": 17.0
+  },
+  "session_end_stats": {
+    "total_sessions": 2092,
+    "forced_retires": 983,
+    "probabilistic_resets": 1017,
+    "target_turn_completions": 0,
+    "restart_splits": 92,
+    "retire_fraction": 0.4699,
+    "reset_fraction": 0.4861,
+    "target_turn_fraction": 0.0,
+    "restart_split_fraction": 0.044,
+    "final_context_utilization": {
+      "count": 2092,
+      "mean": 0.79,
+      "std": 0.2,
+      "median": 0.87,
+      "p05": 0.4,
+      "p25": 0.62,
+      "p75": 0.96,
+      "p95": 0.99,
+      "p99": 1.0
+    }
+  }
+}

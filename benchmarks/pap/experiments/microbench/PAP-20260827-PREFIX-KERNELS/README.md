@@ -106,7 +106,11 @@ Artifacts are `microbench/pat_trace_b{2..8}_mps12.json`.  The batch-5/6-only
 selection described by this historical matrix was removed from the current
 runtime; current `auto` selects PAT for any physical prefix reuse.
 
-## End-to-end validation
+## End-to-end validation (separate record)
+
+The service-level artifacts are stored under
+`../../e2e/PAP-20260827-PREFIX-KERNELS-E2E/`. The summary is retained here to
+connect the isolated kernel result to its serving validation.
 
 ### Isolated PAT increment: 120-second A/B
 
@@ -123,9 +127,9 @@ conversation ID, turn index, input length, and output length in both runs.
 
 Inputs:
 
-- Cascade: `results/cascade_120_profile.json`
-- Auto: `results/auto_120_profile.json`
-- Derived comparison: `short_auto_vs_cascade.json`
+- Cascade: `../../e2e/PAP-20260827-PREFIX-KERNELS-E2E/results/cascade_120_profile.json`
+- Auto: `../../e2e/PAP-20260827-PREFIX-KERNELS-E2E/results/auto_120_profile.json`
+- Derived comparison: `../../e2e/PAP-20260827-PREFIX-KERNELS-E2E/short_auto_vs_cascade.json`
 
 ### Historical hybrid 2K one-hour test (superseded)
 
@@ -164,10 +168,9 @@ There are also 206 exact-length request pairs across all turns; their TBT is
 24.21% lower.  Later-turn prompt lengths diverge after the two runs generate
 different assistant text, so the turn-0 comparison is the cleanest result.
 
-The compact candidate artifacts are `results/auto_1h_profile.json` and
-`results/auto_1h_run_metadata.json`.  The strict analyzer and captured output
-are `analyze_one_hour.py` and `one_hour_comparison.json`.  The kernel-specific
-launch environment is archived in `one_hour_candidate_overrides.env`.
+The compact candidate artifacts are in the sibling E2E record's `results/`
+directory. Its strict analyzer, captured output, and kernel-specific launch
+environment are stored beside those results.
 
 Runtime audits from the candidate run:
 
@@ -222,14 +225,13 @@ respectively.  Neither run reported token mismatches, dispatch failures,
 pending KV, OOM, or correctness failure.  Both exercised the bounded Attention
 Graph cache; five PA instances reached the 32-entry limit in the 2K run.
 
-The compact tracked records are
-`results/persistent_pat_2k_1h_summary.json` and
-`results/persistent_pat_32k_1h_summary.json`.
+The compact tracked records are in
+`../../e2e/PAP-20260827-PREFIX-KERNELS-E2E/results/`.
 
 ## Reproduction
 
 The exact upstream commits are in `official_commits.env`; the source changes
-are in `../../patches/pat-sm89-pap.patch`.  No third-party binary is vendored.
+are in `../../../patches/pat-sm89-pap.patch`. No third-party binary is vendored.
 
 Build and install the pinned SM89 PAT extension into the project environment:
 
@@ -242,7 +244,7 @@ does not support the production GQA shape and failed the performance gate.
 
 ## Sources
 
-- ChunkAttention paper: https://arxiv.org/abs/2402.15220
-- ChunkAttention code: https://github.com/microsoft/chunk-attention
-- PAT paper: https://arxiv.org/abs/2511.22333
-- PAT code: https://github.com/MachineLearningSystem/26ASPLOS-PAT
+- ChunkAttention paper: <https://arxiv.org/abs/2402.15220>
+- ChunkAttention code: <https://github.com/microsoft/chunk-attention>
+- PAT paper: <https://arxiv.org/abs/2511.22333>
+- PAT code: <https://github.com/MachineLearningSystem/26ASPLOS-PAT>

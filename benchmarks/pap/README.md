@@ -1,8 +1,9 @@
 # PAP benchmarks
 
-This directory contains the benchmark and profiling code for the current PAP
-runtime. Historical measurements live under `experiments/`; their original
-implementation is recovered from Git, not kept as runnable code here.
+This directory contains benchmark and profiling code for the current PAP
+runtime. Immutable workload inputs live under `datasets/`. Experiment records
+are separated into end-to-end and microbenchmark classes under `experiments/`.
+Historical implementations are recovered from Git, not kept as runnable code.
 
 ## Current boundary
 
@@ -23,7 +24,7 @@ the same Dynamo frontend and KV-aware router: eight aggregated workers
 four Decode workers (`4p4d`).
 
 The fixed protocol and first full comparison are recorded in
-`experiments/PAP-20260824-DYNAMO-ARCH-BASELINES/report.md`.
+`experiments/e2e/PAP-20260824-DYNAMO-ARCH-BASELINES/report.md`.
 
 ## Active entry points
 
@@ -111,10 +112,11 @@ their experiment boundary is reviewed.
 
 ## Evidence and registry
 
-- `experiments/INDEX.md`: experiment index.
-- `experiments/HISTORY.md`: historical result ledger.
-- `experiments/PAP-*/report.md`: immutable experiment conclusions.
-- `experiments/legacy/`: evidence predating the normalized record format.
+- `datasets/`: immutable, checksum-addressed workload inputs.
+- `experiments/e2e/`: service-level experiments and AIPerf results.
+- `experiments/microbench/`: isolated kernel and component experiments.
+- `experiments/*/_runs/`: ignored raw logs, traces, and incomplete attempts.
+- `experiments/legacy/`: read-only evidence predating the taxonomy.
 - `profiles/` and `schemas/`: normalized tracked-run metadata.
 - `validate_registry.py`: registry consistency checks.
 

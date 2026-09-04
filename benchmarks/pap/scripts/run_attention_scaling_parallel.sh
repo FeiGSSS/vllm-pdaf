@@ -9,7 +9,7 @@ SINGLE_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_attention_scaling.sh"
 MERGER="${ROOT_DIR}/benchmarks/pap/tooling/merge_attention_scaling.py"
 TABLE_EXPORTER="${ROOT_DIR}/benchmarks/pap/tooling/attention_latency_table.py"
 GPU_LIST="${PAP_ATTENTION_SCALING_GPUS:-0,1,2,3,4,5,6,7}"
-OUTPUT_ROOT="${PAP_ATTENTION_SCALING_OUTPUT_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/_staging/microbench/$(date +%Y%m%d_%H%M%S)_attention_scaling_expanded}"
+OUTPUT_ROOT="${PAP_ATTENTION_SCALING_OUTPUT_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/microbench/_runs/$(date +%Y%m%d_%H%M%S)_attention_scaling_expanded}"
 
 IFS=',' read -r -a gpu_indices <<< "${GPU_LIST}"
 shard_count="${#gpu_indices[@]}"

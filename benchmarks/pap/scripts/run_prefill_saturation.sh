@@ -23,7 +23,7 @@ GPU_MEMORY_UTILIZATION="${PAP_PREFILL_MICROBENCH_GPU_MEMORY_UTILIZATION:-0.90}"
 RUN_ID="$(
   date +%Y%m%d_%H%M%S
 )_prefill_saturation_gpu${GPU_INDEX}_${EXPECTED_SMS}sm"
-RUN_ROOT="${PAP_PREFILL_MICROBENCH_RUN_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/_staging/microbench/${RUN_ID}}"
+RUN_ROOT="${PAP_PREFILL_MICROBENCH_RUN_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/microbench/_runs/${RUN_ID}}"
 MICROBENCH="${ROOT_DIR}/benchmarks/pap/microbench/prefill_saturation.py"
 
 die() {

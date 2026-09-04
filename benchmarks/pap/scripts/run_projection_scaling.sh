@@ -14,7 +14,7 @@ RUN_TIMING="${PAP_PROJECTION_SCALING_RUN_TIMING:-1}"
 RUN_NSYS="${PAP_PROJECTION_SCALING_RUN_NSYS:-1}"
 BATCHES="${PAP_PROJECTION_SCALING_BATCHES:-1,2,4,8,16,32,64,128,256}"
 NSYS_BATCHES="${PAP_PROJECTION_SCALING_NSYS_BATCHES:-1,32,256}"
-OUTPUT_ROOT="${PAP_PROJECTION_SCALING_OUTPUT_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/_staging/microbench/$(date +%Y%m%d_%H%M%S)_projection_scaling}"
+OUTPUT_ROOT="${PAP_PROJECTION_SCALING_OUTPUT_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/microbench/_runs/$(date +%Y%m%d_%H%M%S)_projection_scaling}"
 NSYS_IMPORTER="${PAP_NSYS_IMPORTER:-/usr/lib/nsight-systems/host-linux-x64/QdstrmImporter}"
 
 die() {

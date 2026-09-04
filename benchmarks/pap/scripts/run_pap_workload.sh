@@ -200,10 +200,10 @@ if [[ "${PA_COUNT}" != "${TOPOLOGY_PA_COUNT}" \
   exit 2
 fi
 TOPOLOGY_TAG="$(printf '%s' "${TOPOLOGY}" | tr '[:lower:]' '[:upper:]')"
-EXPERIMENTS_ROOT="${PAP_EXPERIMENTS_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments}"
-RESULTS_ROOT="${RESULTS_ROOT:-${EXPERIMENTS_ROOT}/_staging}"
+EXPERIMENTS_ROOT="${PAP_EXPERIMENTS_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/e2e}"
+RESULTS_ROOT="${RESULTS_ROOT:-${EXPERIMENTS_ROOT}/_runs}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
-RUN_ROOT="${RUN_ROOT:-${RESULTS_ROOT}/runs/${RUN_ID}}"
+RUN_ROOT="${RUN_ROOT:-${RESULTS_ROOT}/pap/${RUN_ID}}"
 RUN_LOG_DIR="${RUN_LOG_DIR:-${RUN_ROOT}/service_logs}"
 AIPERF_INPUT_FILE_PROVIDED=0
 if [[ -n "${PAP_AIPERF_INPUT_FILE:-${AIPERF_INPUT_FILE:-}}" ]]; then

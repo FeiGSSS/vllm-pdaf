@@ -27,7 +27,7 @@ VALIDATE_ONLY="${PAP_STEADY_VALIDATE_ONLY:-0}"
 LANE_TIMEOUT_SECONDS="${PAP_STEADY_LANE_TIMEOUT_SECONDS:-5400}"
 AIPERF_TIMEOUT_SECONDS="${PAP_STEADY_AIPERF_TIMEOUT_SECONDS:-4500}"
 RUN_ID="${PAP_STEADY_RUN_ID:-$(date +%Y%m%d_%H%M%S)_agentic_steady_q${REQUEST_RATE}_c${CONCURRENCY}}"
-MATRIX_ROOT="${PAP_STEADY_RUN_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/_staging/steady/${RUN_ID}}"
+MATRIX_ROOT="${PAP_STEADY_RUN_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/e2e/_runs/steady/${RUN_ID}}"
 
 die() {
   echo "ERROR: $*" >&2

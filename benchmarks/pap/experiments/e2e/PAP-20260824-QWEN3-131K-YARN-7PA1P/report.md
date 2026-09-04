@@ -52,7 +52,7 @@ concurrent 131,072-token requests per PA.
 - passing run: `runs/yarn131k_7pa1p_7s2t_full`;
 - single-conversation functional run: `runs/yarn131k_7pa1p_1s2t_r2`;
 - initial Projection-capacity failure: `runs/yarn131k_7pa1p_1s2t_smoke`;
-- workload: `artifacts/longctx_7s2t.jsonl`;
+- workload: `../../../datasets/long-context/qwen3-8b-yarn131k/longctx_7s2t.jsonl`;
 - model-history note: `history/model-pr-history-notes.md`.
 
 ## Default short-context regression

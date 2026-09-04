@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-PAP_AGENTIC_BASELINE_DATASET_REL="benchmarks/pap/experiments/PAP-20260824-AGENTIC-CODE-DATASET/generated/original_131k_osl10k_no_delay/original_131k_osl10k_no_delay_2000s_seed42_20260825-080021/dataset.jsonl"
+PAP_AGENTIC_BASELINE_DATASET_REL="benchmarks/pap/datasets/agentic-code/full-131k-osl10k-no-delay-seed42/dataset.jsonl"
 PAP_AGENTIC_BASELINE_DATASET_SHA256="b6670fac38fef5f43c5d93cd4e8946b1de7a224c80a57399a9e1e04aa6fe425b"
 PAP_AGENTIC_BASELINE_AVAILABLE_SESSIONS=2092
 PAP_AGENTIC_BASELINE_AVAILABLE_REQUESTS=16049

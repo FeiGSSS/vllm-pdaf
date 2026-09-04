@@ -5,14 +5,14 @@
 set -euo pipefail
 
 ROOT_DIR="${PAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
-EXPERIMENT_DIR="${PAP_QPS_SCAN_EXPERIMENT_DIR:-${ROOT_DIR}/benchmarks/pap/experiments/PAP-20260903-AGENTIC-CODE-QPS-MATRIX}"
+EXPERIMENT_DIR="${PAP_QPS_SCAN_EXPERIMENT_DIR:-${ROOT_DIR}/benchmarks/pap/experiments/e2e/PAP-20260903-AGENTIC-CODE-QPS-MATRIX}"
 MATRIX_ROOT="${PAP_QPS_SCAN_RUN_ROOT:-${EXPERIMENT_DIR}/results}"
 DYNAMO_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_dynamo_workload.sh"
 PAP_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_pap_workload.sh"
 PLOTTER="${ROOT_DIR}/benchmarks/pap/tooling/plot_qps_matrix.py"
 PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
 AIPERF_RUNNER="${ROOT_DIR}/benchmarks/pap/aiperf/run_profile.sh"
-DATASET="${ROOT_DIR}/benchmarks/pap/experiments/PAP-20260824-AGENTIC-CODE-DATASET/generated/random_s60_t3_seed42_half_lengths/dataset.jsonl"
+DATASET="${ROOT_DIR}/benchmarks/pap/datasets/agentic-code/s60-t3-half-seed42/dataset.jsonl"
 DATASET_SHA256="258b72c85772c9d372f1b63ee0bf6d710f27cb00234027e2c750c82a5fa9563c"
 
 CANONICAL_ARCHITECTURES=(

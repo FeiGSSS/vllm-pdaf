@@ -1,0 +1,10 @@
+{
+  "dataset_id": "long-context/qwen3-8b-yarn131k",
+  "format": "multi-turn",
+  "files": {
+    "longctx_1s2t.jsonl": "b7e910370c966c5c7a7f4ba61d6765986517ad19ad3e42190975024af0069997",
+    "longctx_7s2t.jsonl": "4a01e7a0d1e57f2cf92efeee02913dc02e67b120b15f46f44dce9758909bf28c",
+    "shortctx_default_7s2t.jsonl": "1aa1fb183a530c1a021270282a8eb9d045b6816ec7164bf805b118380640e3e3"
+  },
+  "purpose": "Qwen3-8B native-context and static-YaRN 131K validation"
+}

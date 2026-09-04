@@ -9,7 +9,7 @@ RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_prefill_saturation.sh"
 METRICS="${ROOT_DIR}/benchmarks/pap/tooling/component_gpu_metrics.py"
 GPU_INDEX="${PAP_PREFILL_UTILIZATION_GPU:-5}"
 SHAPE_GROUPS="${PAP_PREFILL_UTILIZATION_GROUPS:-utilization}"
-OUTPUT_ROOT="${PAP_PREFILL_UTILIZATION_OUTPUT_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/_staging/microbench/$(date +%Y%m%d_%H%M%S)_prefill_utilization}"
+OUTPUT_ROOT="${PAP_PREFILL_UTILIZATION_OUTPUT_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/microbench/_runs/$(date +%Y%m%d_%H%M%S)_prefill_utilization}"
 NSYS_IMPORTER="${PAP_NSYS_IMPORTER:-/usr/lib/nsight-systems/host-linux-x64/QdstrmImporter}"
 PREFIX="${OUTPUT_ROOT}/nsys/prefill"
 

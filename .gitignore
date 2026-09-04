@@ -237,7 +237,9 @@ hip_compat.h
 # Benchmark dataset
 benchmarks/**/*.json
 !benchmarks/pap/porting/v026/token_parity_*.json
-benchmarks/pap/experiments/_staging/
+!benchmarks/pap/datasets/**/*.json
+benchmarks/pap/experiments/e2e/_runs/
+benchmarks/pap/experiments/microbench/_runs/
 benchmarks/pap/experiments/**/raw/
 benchmarks/pap/experiments/legacy/capacity/
 benchmarks/pap/experiments/legacy/runs/

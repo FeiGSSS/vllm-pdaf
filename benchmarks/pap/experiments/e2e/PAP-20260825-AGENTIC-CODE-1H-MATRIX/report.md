@@ -139,12 +139,12 @@ The repaired 2P6D runs captured milestone commit
 
 Raw profiles and service logs remain under:
 
-- `benchmarks/pap/experiments/_staging/steady/20260825_4arch_3600s_nowarm_q03_c60`;
-- `benchmarks/pap/experiments/_staging/steady/20260825_pap_pd_3600s_nowarm_q03_c60_prefill32k`;
-- `benchmarks/pap/experiments/_staging/steady/20260826_pd_3600s_nowarm_q03_c60_prefill2k`;
-- `benchmarks/pap/experiments/_staging/steady/20260826_dp8_3600s_nowarm_q03_c60_tokens2k`;
-- `benchmarks/pap/experiments/_staging/steady/20260826_2p6d_fixed_3600s_nowarm_q03_c60_prefill2k`;
-- `benchmarks/pap/experiments/_staging/steady/20260826_2p6d_fixed_3600s_nowarm_q03_c60_prefill32k`.
+- `benchmarks/pap/experiments/e2e/_runs/steady/20260825_4arch_3600s_nowarm_q03_c60`;
+- `benchmarks/pap/experiments/e2e/_runs/steady/20260825_pap_pd_3600s_nowarm_q03_c60_prefill32k`;
+- `benchmarks/pap/experiments/e2e/_runs/steady/20260826_pd_3600s_nowarm_q03_c60_prefill2k`;
+- `benchmarks/pap/experiments/e2e/_runs/steady/20260826_dp8_3600s_nowarm_q03_c60_tokens2k`;
+- `benchmarks/pap/experiments/e2e/_runs/steady/20260826_2p6d_fixed_3600s_nowarm_q03_c60_prefill2k`;
+- `benchmarks/pap/experiments/e2e/_runs/steady/20260826_2p6d_fixed_3600s_nowarm_q03_c60_prefill32k`.
 
 These raw directories are machine-local staging artifacts and are not added to
 Git. The compact tracked result table contains their profile digests.

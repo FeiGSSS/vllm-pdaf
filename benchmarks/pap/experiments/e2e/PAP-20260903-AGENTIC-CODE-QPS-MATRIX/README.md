@@ -18,7 +18,7 @@ splits use a 32,768-token budget. Both PAP topologies are measured with
 Run or resume the complete matrix with:
 
 ```bash
-bash benchmarks/pap/experiments/PAP-20260903-AGENTIC-CODE-QPS-MATRIX/run.sh
+bash benchmarks/pap/experiments/e2e/PAP-20260903-AGENTIC-CODE-QPS-MATRIX/run.sh
 ```
 
 `results/matrix.env` records the dataset and AIPerf runner SHA-256 values.
@@ -33,14 +33,14 @@ fixed protocol:
 ```bash
 PAP_QPS_SCAN_ONLY_ARCHITECTURES=dp8,4p4d,pap_7pa1p_2k \
 PAP_QPS_SCAN_ONLY_QPS=1.5,1.8 \
-bash benchmarks/pap/experiments/PAP-20260903-AGENTIC-CODE-QPS-MATRIX/run.sh
+bash benchmarks/pap/experiments/e2e/PAP-20260903-AGENTIC-CODE-QPS-MATRIX/run.sh
 ```
 
 Install the plotting dependency through the project environment:
 
 ```bash
 uv pip install --python .venv/bin/python \
-  -r benchmarks/pap/experiments/PAP-20260903-AGENTIC-CODE-QPS-MATRIX/requirements.txt
+  -r benchmarks/pap/experiments/e2e/PAP-20260903-AGENTIC-CODE-QPS-MATRIX/requirements.txt
 ```
 
 The driver refreshes `results/summary.tsv`, `results/summary.json`, and one
