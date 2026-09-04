@@ -139,37 +139,89 @@ async def _handle_parsed_openai_request(
     client_stream = bool(req_data.get("stream", False))
     request_number = next(request.app.state.request_counter)
     conversation_router = request.app.state.conversation_router
+    routing_policy = request.app.state.args.routing_policy
     new_conversation = (
-        request.app.state.args.routing_policy == "conversation_affinity"
+        routing_policy == "conversation_affinity"
         and conversation_id
         and not conversation_router.has_assignment(conversation_id)
     )
     initial_context_load = estimate_initial_context_load(req_data)
     initial_context_tokens = estimate_initial_context_tokens(req_data)
+    routing_token_ids = None
+    routing_prompt_text = None
+    prompt_hashes = ()
+    prefix_cached_tokens = {}
+    prefix_tracker = request.app.state.pap_prefix_cache_tracker
+    tokenization_start = time.perf_counter() if profile else 0.0
+    try:
+        prefix_input = await prefix_tracker.prompt_hashes(api_path, req_data)
+    except Exception:
+        logger.exception(
+            "PAP prefix routing tokenization failed request_id=%s",
+            request_id,
+        )
+        prefix_input = None
+    tokenization_ms = (
+        (time.perf_counter() - tokenization_start) * 1000.0 if profile else 0.0
+    )
+    if prefix_input is not None:
+        routing_token_ids, prompt_hashes, routing_prompt_text = prefix_input
+        initial_context_tokens = len(routing_token_ids)
+        prefix_cached_tokens = prefix_tracker.matched_tokens(prompt_hashes)
     decode_capacity_tokens = requested_decode_capacity(req_data) or 0
+    forwarded_prompt_text = (
+        routing_prompt_text if req_data.get("return_prompt_text") else None
+    )
     current_pa_loads = None
     if new_conversation:
         current_pa_loads = _current_prefill_loads(request)
-    group, projection = select_instances(
-        request_number,
-        request.app.state.groups,
-        request.app.state.projections,
-        routing_policy=request.app.state.args.routing_policy,
-        conversation_id=conversation_id,
-        conversation_router=conversation_router,
-        initial_context_load=initial_context_load,
-        initial_context_tokens=initial_context_tokens,
-        decode_capacity_tokens=decode_capacity_tokens,
-        request_id=request_id,
-        current_pa_loads=current_pa_loads,
-    )
+    dynamo_router = request.app.state.pap_dynamo_router
+    routing_start = time.perf_counter() if profile else 0.0
+    if routing_policy == "dynamo":
+        if routing_token_ids is None:
+            raise RuntimeError("Dynamo routing requires Gateway prompt token IDs")
+        group = await dynamo_router.select_group(
+            routing_token_ids,
+            request_id=request_id,
+            expected_output_tokens=decode_capacity_tokens,
+        )
+        group_index = request.app.state.groups.index(group)
+        groups_per_projection = (
+            len(request.app.state.groups) + len(request.app.state.projections) - 1
+        ) // len(request.app.state.projections)
+        projection_index = min(
+            group_index // groups_per_projection,
+            len(request.app.state.projections) - 1,
+        )
+        projection = request.app.state.projections[projection_index]
+    else:
+        group, projection = select_instances(
+            request_number,
+            request.app.state.groups,
+            request.app.state.projections,
+            routing_policy=routing_policy,
+            conversation_id=conversation_id,
+            conversation_router=conversation_router,
+            initial_context_load=initial_context_load,
+            initial_context_tokens=initial_context_tokens,
+            decode_capacity_tokens=decode_capacity_tokens,
+            request_id=request_id,
+            current_pa_loads=current_pa_loads,
+            prefix_cached_tokens=prefix_cached_tokens,
+        )
+    routing_ms = (time.perf_counter() - routing_start) * 1000.0 if profile else 0.0
     if current_pa_loads is not None:
+        selected_prefix_hit = prefix_cached_tokens.get(group, 0)
         logger.info(
             "PAP first-turn placement conversation_id=%s selected_pa=%d "
-            "prompt_tokens=%d prefill_backlog=%s projected_kv=%s",
+            "prompt_tokens=%d prefix_hits=%s selected_prefix_hit=%d "
+            "selected_new_prompt_tokens=%d prefill_backlog=%s projected_kv=%s",
             conversation_id,
             request.app.state.groups.index(group),
             initial_context_tokens,
+            [prefix_cached_tokens.get(item, 0) for item in request.app.state.groups],
+            selected_prefix_hit,
+            max(1, initial_context_tokens - selected_prefix_hit),
             [
                 current_pa_loads.get(item, {}).get("outstanding_prefill_tokens")
                 for item in request.app.state.groups
@@ -188,8 +240,13 @@ async def _handle_parsed_openai_request(
     load_tracker.begin_request(
         request_id,
         group,
-        prefill_tokens=initial_context_tokens,
+        prefill_tokens=max(
+            1,
+            initial_context_tokens - prefix_cached_tokens.get(group, 0),
+        ),
         decode_capacity_tokens=decode_capacity_tokens,
+        prompt_hashes=prompt_hashes,
+        cached_tokens=prefix_cached_tokens.get(group, 0),
     )
     request.app.state.pap_pending_route_request_ids.discard(request_id)
     conversation_router.release_reservation(request_id)
@@ -201,6 +258,7 @@ async def _handle_parsed_openai_request(
 
     def finish_request() -> None:
         conversation_router.release_reservation(request_id)
+        dynamo_router.finish_request(request_id)
         load_tracker.finish_request(request_id)
         active_request_ids.discard(request_id)
 
@@ -232,7 +290,11 @@ async def _handle_parsed_openai_request(
 
         prefill_payload_start = time.perf_counter() if profile else 0.0
         prefill_payload = attach_pap_prefill_attention_params(
-            build_prefill_payload(req_data),
+            build_prefill_payload(
+                req_data,
+                prompt_token_ids=routing_token_ids,
+                prompt_text=forwarded_prompt_text,
+            ),
             pap_attention_endpoint=group.attention_base_url,
             pap_attention_tcp_endpoint=group.attention_tcp_endpoint,
             pap_prefill_kv_handle=str(attention_session.get("prefill_kv_handle")),
@@ -254,15 +316,25 @@ async def _handle_parsed_openai_request(
         prefill_ms = int((time.time() - prefill_start) * 1000)
 
         prompt_token_ids = prefill_resp.get("prompt_token_ids")
+        if prompt_token_ids is None:
+            choices = prefill_resp.get("choices")
+            if (
+                isinstance(choices, list)
+                and len(choices) == 1
+                and isinstance(choices[0], dict)
+            ):
+                prompt_token_ids = choices[0].get("prompt_token_ids")
         if (
             not isinstance(prompt_token_ids, list)
             or not prompt_token_ids
             or any(not isinstance(token_id, int) for token_id in prompt_token_ids)
         ):
             raise RuntimeError("PAP Prefill returned no valid prompt token IDs")
+        if routing_token_ids is not None and prompt_token_ids != routing_token_ids:
+            raise RuntimeError("PAP Prefill changed the Gateway prompt token IDs")
         prompt_text = prefill_resp.get("prompt_text")
         if not isinstance(prompt_text, str):
-            prompt_text = None
+            prompt_text = forwarded_prompt_text
 
         projection_payload_start = time.perf_counter() if profile else 0.0
         kv_params = dict(prefill_resp.get("kv_transfer_params") or {})
@@ -276,7 +348,22 @@ async def _handle_parsed_openai_request(
                 "PAP Prefill prompt token length mismatch "
                 f"prompt_token_ids={len(prompt_token_ids)} prefix_len={prefix_len}"
             )
-        load_tracker.mark_prefill_completed(request_id, prefix_len)
+        prefill_cache_usage = _extract_prefill_cache_usage(prefill_resp)
+        exact_prompt_hashes = prefix_tracker.hash_token_ids(
+            prompt_token_ids,
+            cache_salt=req_data.get("cache_salt"),
+        )
+        load_tracker.mark_prefill_completed(
+            request_id,
+            prefix_len,
+            prompt_hashes=exact_prompt_hashes,
+            cached_tokens=(
+                prefill_cache_usage.cached_tokens
+                if prefill_cache_usage is not None
+                else 0
+            ),
+        )
+        attention_ready_start = time.perf_counter() if profile else 0.0
         attention_ready = all(
             [
                 await wait_attention_prefill_ready(
@@ -291,6 +378,10 @@ async def _handle_parsed_openai_request(
                 )
             ]
         )
+        attention_ready_ms = (
+            (time.perf_counter() - attention_ready_start) * 1000.0 if profile else 0.0
+        )
+        await dynamo_router.mark_prefill_completed(request_id)
         projection_payload = build_projection_payload_for_group(
             req_data,
             kv_params,
@@ -331,12 +422,16 @@ async def _handle_parsed_openai_request(
         if profile:
             logger.info(
                 "PAP proxy prefill IPC profile request_id=%s register_ms=%.3f "
-                "prefill_payload_ms=%.3f prefill_ms=%d "
+                "tokenization_ms=%.3f routing_ms=%.3f "
+                "prefill_payload_ms=%.3f prefill_ms=%d readiness_ms=%.3f "
                 "projection_payload_ms=%.3f pre_projection_ms=%.3f",
                 request_id,
                 register_ms,
+                tokenization_ms,
+                routing_ms,
                 prefill_payload_ms,
                 prefill_ms,
+                attention_ready_ms,
                 projection_payload_ms,
                 (time.perf_counter() - request_start) * 1000.0,
             )
@@ -349,10 +444,21 @@ async def _handle_parsed_openai_request(
             "X-PAP-Pair": pair_name,
         }
         response_headers.update(_prefill_usage_headers(prefill_resp))
-        prefill_cache_usage = _extract_prefill_cache_usage(prefill_resp)
 
+        admission_start = time.perf_counter() if profile else 0.0
         await admission.acquire(group, projection)
+        admission_ms = (
+            (time.perf_counter() - admission_start) * 1000.0 if profile else 0.0
+        )
         lifecycle.mark_projection_admitted()
+        if profile:
+            logger.info(
+                "PAP proxy projection admission profile request_id=%s "
+                "admission_ms=%.3f request_to_admission_ms=%.3f",
+                request_id,
+                admission_ms,
+                (time.perf_counter() - request_start) * 1000.0,
+            )
 
         if client_stream:
             lifecycle.mark_projection_started()
@@ -361,6 +467,7 @@ async def _handle_parsed_openai_request(
                 api_path,
                 projection_payload,
                 request_id,
+                profile_origin=request_start,
             )
             lifecycle.attach_projection_response(opened_stream.response)
 

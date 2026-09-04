@@ -37,6 +37,7 @@ def run_offload_exec_nvshmem_graph_loop(
             )
             if not committed:
                 return
+            transport.record_attention_step_trace_metadata(step_context)
             for layer_name in step_context.expected_layers:
                 registry.record_offload_exec_compute(
                     layer_name=layer_name,

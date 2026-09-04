@@ -24,6 +24,7 @@ from vllm.pap.integration import (
     build_projection_forward_context,
     install_pap_control_routes,
     prepare_pap_projection_chat_input,
+    prepare_pap_tokenized_chat_input,
     select_projection_request_ids,
 )
 from vllm.v1.worker.gpu.model_runner import GPUModelRunner as GPUModelRunnerV2
@@ -260,6 +261,28 @@ def test_projection_chat_admission_reuses_prefill_token_ids() -> None:
         }
     ]
     assert "pap_prompt_token_ids" not in request.kv_transfer_params
+
+
+def test_prefill_chat_admission_reuses_gateway_token_ids() -> None:
+    request = SimpleNamespace(
+        messages=[{"role": "user", "content": "large prompt"}],
+        cache_salt=None,
+        kv_transfer_params={
+            "pap_tokenized_input": True,
+            "pap_prompt_token_ids": [21, 22, 23],
+        },
+    )
+
+    conversation, engine_inputs = prepare_pap_tokenized_chat_input(request)
+
+    assert conversation == request.messages
+    assert engine_inputs == [
+        {
+            "type": "token",
+            "prompt_token_ids": [21, 22, 23],
+        }
+    ]
+    assert request.kv_transfer_params == {}
 
 
 def test_api_adapter_installs_control_routes_only_for_unified_kv() -> None:

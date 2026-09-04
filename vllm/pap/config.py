@@ -40,6 +40,7 @@ class PAPRoutingPolicy(str, Enum):
     PROJECTION_AFFINITY = "projection_affinity"
     PROJECTION_STICKY = "projection_sticky"
     CONVERSATION_AFFINITY = "conversation_affinity"
+    DYNAMO = "dynamo"
 
 
 class PAPMPSMode(str, Enum):

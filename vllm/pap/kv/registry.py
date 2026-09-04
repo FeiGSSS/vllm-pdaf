@@ -106,8 +106,10 @@ class PAPAttentionRegistry(
         self._attention_step_context_cache: OrderedDict[
             tuple[Any, ...], PAPAttentionStepContext
         ] = OrderedDict()
+        self._last_attention_step_context: PAPAttentionStepContext | None = None
         self._attention_step_context_hits = 0
         self._attention_step_context_misses = 0
+        self._attention_step_context_successor_hits = 0
         self._attention_step_slot_plan_builds = 0
         self._attention_step_metadata_builds = 0
         self._attention_step_kv_ready_publishes = 0

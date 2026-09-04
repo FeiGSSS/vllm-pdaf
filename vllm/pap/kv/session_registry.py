@@ -15,6 +15,7 @@ import torch
 
 from vllm.pap.kv.models import (
     PAPAttentionSession,
+    PAPAttentionStepContext,
     PAPPrefillKVCacheCatalogEntry,
     PAPPrefillLayerReadiness,
     PAPUnifiedPagedKVState,
@@ -64,6 +65,7 @@ class _PAPSessionRegistryMixin:
     """Own session, Prefill catalog, readiness, and lease transitions."""
 
     _prefill_kv_catalog_id: str | None
+    _last_attention_step_context: PAPAttentionStepContext | None
 
     def _release_session_locked(
         self, request_id: str
@@ -540,6 +542,12 @@ class _PAPSessionRegistryMixin:
                 self._offload_exec_session_entry_cache.pop(cache_key, None)
 
     def _drop_attention_step_contexts_locked(self, session_request_id: str) -> None:
+        last_context = self._last_attention_step_context
+        if (
+            last_context is not None
+            and session_request_id in last_context.session_request_ids
+        ):
+            self._last_attention_step_context = None
         for cache_key, context in list(self._attention_step_context_cache.items()):
             if session_request_id in context.session_request_ids:
                 self._attention_step_context_cache.pop(cache_key, None)

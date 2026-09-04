@@ -43,6 +43,8 @@ from vllm.inputs import EngineInput
 from vllm.logger import init_logger
 from vllm.logprobs import Logprob
 from vllm.outputs import RequestOutput
+from vllm.pap.integration.chat import prepare_pap_tokenized_completion_input
+from vllm.pap.model.hooks import pap_model_hooks_enabled
 from vllm.renderers.online_renderer import OnlineRenderer
 from vllm.sampling_params import BeamSearchParams, SamplingParams
 from vllm.tokenizers import TokenizerLike
@@ -107,6 +109,11 @@ class OpenAIServingCompletion(GenerateBaseServing):
         # success status before we actually start generating text :).
         if self.engine_client.errored:
             raise self.engine_client.dead_error
+
+        if pap_model_hooks_enabled():
+            pap_input = prepare_pap_tokenized_completion_input(request)
+            if pap_input is not None:
+                return pap_input
 
         return await self.online_renderer.render_completion(request)
 

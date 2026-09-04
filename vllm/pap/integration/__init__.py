@@ -3,7 +3,11 @@
 """PAP adapters for vLLM request and execution integration."""
 
 from vllm.pap.integration.api import install_pap_control_routes
-from vllm.pap.integration.chat import prepare_pap_projection_chat_input
+from vllm.pap.integration.chat import (
+    prepare_pap_projection_chat_input,
+    prepare_pap_tokenized_chat_input,
+    prepare_pap_tokenized_completion_input,
+)
 from vllm.pap.integration.decode_token import PAPAcceptedDecodeTokenPublisher
 from vllm.pap.integration.engine import PAPEngineAdapter
 from vllm.pap.integration.kv_cache import PAPKVCacheAdapter
@@ -37,5 +41,7 @@ __all__ = [
     "build_projection_forward_context",
     "install_pap_control_routes",
     "prepare_pap_projection_chat_input",
+    "prepare_pap_tokenized_chat_input",
+    "prepare_pap_tokenized_completion_input",
     "select_projection_request_ids",
 ]

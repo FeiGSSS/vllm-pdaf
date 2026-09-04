@@ -9,8 +9,10 @@ import pytest
 
 import vllm.pap.gateway.handoff as gateway_handoff
 import vllm.pap.gateway.lifecycle as gateway_lifecycle
+from vllm.distributed.kv_events import BlockRemoved, BlockStored, KVEventBatch
 from vllm.pap.gateway.admission import PAPProjectionAdmission
 from vllm.pap.gateway.app import parse_args
+from vllm.pap.gateway.dynamo_routing import PAPDynamoRouter
 from vllm.pap.gateway.lifecycle import PAPLifecycleManager
 from vllm.pap.gateway.load_tracker import PAPLoadTracker
 from vllm.pap.gateway.observability import (
@@ -18,6 +20,7 @@ from vllm.pap.gateway.observability import (
     _merge_prefill_cache_usage,
     _prefill_usage_headers,
 )
+from vllm.pap.gateway.prefix_cache import PAPPrefixCacheTracker
 from vllm.pap.gateway.request_pipeline import (
     _cancel_on_client_disconnect,
     _pop_conversation_id,
@@ -96,7 +99,58 @@ def test_gateway_defaults_to_conversation_affinity(monkeypatch) -> None:
         ],
     )
 
-    assert parse_args().routing_policy == "conversation_affinity"
+    args = parse_args()
+    assert args.routing_policy == "conversation_affinity"
+    assert args.dynamo_prefill_load_scale == 2.0
+
+
+def test_dynamo_router_reserves_prefill_and_frees_decode() -> None:
+    class FakeSelectionService:
+        def __init__(self) -> None:
+            self.completed: list[str] = []
+            self.freed: list[str] = []
+
+        async def select_and_reserve(self, request):
+            assert request["token_ids"] == [1, 2, 3]
+            assert request["expected_output_tokens"] == 64
+            return {
+                "worker_id": 1,
+                "effective_prefill_tokens": 3,
+                "overlap": {},
+            }
+
+        async def prefill_complete(self, request_id: str) -> None:
+            self.completed.append(request_id)
+
+        async def free_reservation(self, request_id: str) -> None:
+            self.freed.append(request_id)
+
+        def loads(self, *, model_name: str):
+            return [{"model_name": model_name}]
+
+        def shutdown(self) -> None:
+            return None
+
+    async def run() -> None:
+        groups = _groups(2)
+        service = FakeSelectionService()
+        router = PAPDynamoRouter(groups, service, model_name="pap")
+
+        selected = await router.select_group(
+            [1, 2, 3],
+            request_id="request-0",
+            expected_output_tokens=64,
+        )
+        await router.mark_prefill_completed("request-0")
+        router.finish_request("request-0")
+        await router.shutdown()
+
+        assert selected == groups[1]
+        assert service.completed == ["request-0"]
+        assert service.freed == ["request-0"]
+        assert router.stats()["active_reservations"] == 0
+
+    asyncio.run(run())
 
 
 def test_load_tracker_accounts_request_lifecycle_without_runtime_rpc(
@@ -131,6 +185,54 @@ def test_load_tracker_accounts_request_lifecycle_without_runtime_rpc(
         tracker.finish_request("request-0")
         assert tracker.snapshot()[groups[0]]["projected_kv_tokens"] == 0
         assert calls == [1, 2]
+
+    asyncio.run(run())
+
+
+def test_load_tracker_counts_shared_prefix_blocks_once(monkeypatch) -> None:
+    async def run() -> None:
+        group = _groups(1)[0]
+
+        async def sample(client):
+            del client
+            return {"total_kv_tokens": 100_000, "kv_block_size": 16}
+
+        monkeypatch.setattr(
+            "vllm.pap.gateway.load_tracker.get_prefill_kv_load",
+            sample,
+        )
+        tracker = PAPLoadTracker({group: 1})
+        await tracker.start()
+        tracker.begin_request(
+            "request-0",
+            group,
+            prefill_tokens=32,
+            decode_capacity_tokens=0,
+            prompt_hashes=(b"a", b"b"),
+        )
+        tracker.mark_prefill_completed(
+            "request-0",
+            32,
+            prompt_hashes=(b"a", b"b"),
+        )
+        tracker.begin_request(
+            "request-1",
+            group,
+            prefill_tokens=16,
+            decode_capacity_tokens=0,
+            prompt_hashes=(b"a", b"b", b"c"),
+            cached_tokens=32,
+        )
+        tracker.mark_prefill_completed(
+            "request-1",
+            48,
+            prompt_hashes=(b"a", b"b", b"c"),
+            cached_tokens=32,
+        )
+
+        assert tracker.snapshot()[group]["non_evictable_kv_tokens"] == 48
+        tracker.finish_request("request-0")
+        assert tracker.snapshot()[group]["non_evictable_kv_tokens"] == 48
 
     asyncio.run(run())
 
@@ -419,6 +521,72 @@ def test_conversation_affinity_filters_capacity_then_prefill_load() -> None:
 
     assert selected == groups[2]
     assert router.has_assignment("conv-live-load")
+
+
+def test_conversation_affinity_credits_resident_prefix() -> None:
+    groups = _groups(2)
+    router = PAPConversationRouter(groups)
+    loads = {
+        groups[0]: _pa_load(prefill=0, projected_kv=0),
+        groups[1]: _pa_load(prefill=5_000, projected_kv=0),
+    }
+
+    selected, _ = select_instances(
+        0,
+        groups,
+        _projections(1),
+        routing_policy="conversation_affinity",
+        conversation_id="shared-prefix",
+        conversation_router=router,
+        initial_context_tokens=10_000,
+        request_id="request-prefix",
+        current_pa_loads=loads,
+        prefix_cached_tokens={groups[0]: 0, groups[1]: 9_000},
+    )
+
+    assert selected == groups[1]
+    assert router.snapshot()["pa_reserved_prefill_tokens"] == {
+        "0": 0,
+        "1": 1_000,
+    }
+
+
+def test_prefix_cache_tracker_applies_worker_events() -> None:
+    groups = _groups(2)
+    tracker = PAPPrefixCacheTracker(
+        groups,
+        model=None,
+        event_endpoints=(),
+        block_size=16,
+    )
+    token_ids = list(range(32))
+    hashes = tracker.hash_token_ids(token_ids)
+    stored = BlockStored(
+        block_hashes=list(hashes),
+        parent_block_hash=None,
+        token_ids=token_ids,
+        block_size=16,
+        lora_id=None,
+        medium="GPU",
+        lora_name=None,
+        extra_keys=None,
+        group_idx=0,
+        kv_cache_spec_kind=None,
+        kv_cache_spec_sliding_window=None,
+        locality=None,
+    )
+    tracker._apply_batch(groups[0], 0, KVEventBatch(0.0, [stored]))
+
+    assert tracker.matched_tokens(hashes) == {groups[0]: 32, groups[1]: 0}
+
+    removed = BlockRemoved(
+        block_hashes=[hashes[-1]],
+        medium="GPU",
+        group_idx=0,
+        locality=None,
+    )
+    tracker._apply_batch(groups[0], 1, KVEventBatch(0.0, [removed]))
+    assert tracker.matched_tokens(hashes)[groups[0]] == 16
 
 
 def test_concurrent_first_turns_see_router_reservations() -> None:

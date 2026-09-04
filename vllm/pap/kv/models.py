@@ -185,6 +185,8 @@ class PAPAttentionStepContext:
     attention_kernel_plan_prepared: bool = False
     prepare_event: Any | None = None
     prepare_event_waited: bool = False
+    _pap_trace_graph_lookup_ns: int = 0
+    _pap_trace_graph_replay_submit_ns: int = 0
     completed_layers: set[str] = field(default_factory=set)
     kv_ready_published: bool = False
     lock: RLock = field(default_factory=RLock, repr=False)

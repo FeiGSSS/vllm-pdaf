@@ -151,8 +151,50 @@ class _NVSHMEMBindings:
         device = self.device_library
         device.pap_nvshmem_device_bridge_version.argtypes = []
         device.pap_nvshmem_device_bridge_version.restype = ctypes.c_int
-        if int(device.pap_nvshmem_device_bridge_version()) != 5:
+        if int(device.pap_nvshmem_device_bridge_version()) != 10:
             raise PAPNVSHMEMError("PAP NVSHMEM GPU graph bridge version mismatch")
+        device.pap_cuda_host_get_device_pointer.argtypes = [ctypes.c_void_p]
+        device.pap_cuda_host_get_device_pointer.restype = ctypes.c_void_p
+        device.pap_cuda_graph_probe_device_launch.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_int),
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+        ]
+        device.pap_cuda_graph_probe_device_launch.restype = ctypes.c_int
+        device.pap_cuda_graph_create_device_launch.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_int),
+            ctypes.POINTER(ctypes.c_int),
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+        ]
+        device.pap_cuda_graph_create_device_launch.restype = ctypes.c_int
+        device.pap_cuda_graph_create_resident_dispatcher.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        device.pap_cuda_graph_create_resident_dispatcher.restype = ctypes.c_int
+        device.pap_cuda_graph_resident_run.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_uint64,
+        ]
+        device.pap_cuda_graph_resident_run.restype = ctypes.c_int
+        device.pap_cuda_graph_destroy_resident_dispatcher.argtypes = [ctypes.c_void_p]
+        device.pap_cuda_graph_destroy_resident_dispatcher.restype = ctypes.c_int
+        device.pap_cuda_graph_launch_from_device.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        ]
+        device.pap_cuda_graph_launch_from_device.restype = ctypes.c_int
+        device.pap_cuda_graph_destroy_device_launch.argtypes = [ctypes.c_void_p]
+        device.pap_cuda_graph_destroy_device_launch.restype = ctypes.c_int
         device.pap_nvshmem_device_bridge_get_unique_id.argtypes = [
             ctypes.c_void_p,
             ctypes.c_size_t,
@@ -224,35 +266,57 @@ class _NVSHMEMBindings:
         ]
         device.pap_nvshmem_graph_put_signal.restype = ctypes.c_int
         device.pap_nvshmem_graph_dispatch_qkv.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_size_t,
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_void_p,
+            ctypes.c_void_p,  # symmetric_data
+            ctypes.c_size_t,  # data_slot_bytes
+            ctypes.c_void_p,  # source
+            ctypes.c_void_p,  # packed
+            ctypes.c_void_p,  # route_indices
+            ctypes.c_void_p,  # route_counts
+            ctypes.c_void_p,  # peer_ranks
+            ctypes.c_int,  # peer_count
+            ctypes.c_int,  # batch_rows
+            ctypes.c_int,  # row_bytes
+            ctypes.c_void_p,  # signals
+            ctypes.c_void_p,  # epochs
+            ctypes.c_int,  # world_size
+            ctypes.c_int,  # local_rank
+            ctypes.c_int,  # layer_count
+            ctypes.c_int,  # layer_index
+            ctypes.c_void_p,  # trace_start_ns
+            ctypes.c_void_p,  # trace_step_ids
+            ctypes.c_void_p,  # trace_route_counts
+            ctypes.c_void_p,  # trace_peer_epochs
+            ctypes.c_void_p,  # trace_step_counter
+            ctypes.c_void_p,  # trace_current_step
+            ctypes.c_void_p,  # trace_host_completion
+            ctypes.c_int,  # trace_steps
+            ctypes.c_int,  # trace_layers
+            ctypes.c_void_p,  # stream
         ]
         device.pap_nvshmem_graph_dispatch_qkv.restype = ctypes.c_int
         device.pap_nvshmem_graph_gather_output.argtypes = [
-            ctypes.c_void_p,
-            ctypes.c_size_t,
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-            ctypes.c_void_p,
-            ctypes.c_int,
-            ctypes.c_int,
-            ctypes.c_int,
+            ctypes.c_void_p,  # symmetric_data
+            ctypes.c_size_t,  # data_slot_bytes
+            ctypes.c_void_p,  # output
+            ctypes.c_void_p,  # route_indices
+            ctypes.c_void_p,  # route_counts
+            ctypes.c_void_p,  # peer_ranks
+            ctypes.c_int,  # peer_count
+            ctypes.c_int,  # batch_rows
+            ctypes.c_int,  # row_bytes
+            ctypes.c_void_p,  # signals
+            ctypes.c_void_p,  # epochs
+            ctypes.c_int,  # world_size
+            ctypes.c_int,  # layer_count
+            ctypes.c_int,  # layer_index
+            ctypes.c_void_p,  # trace_end_ns
+            ctypes.c_void_p,  # trace_current_step
+            ctypes.c_int,  # trace_steps
+            ctypes.c_int,  # trace_layers
+            ctypes.c_void_p,  # stream
+        ]
+        device.pap_nvshmem_graph_gather_output.restype = ctypes.c_int
+        device.pap_trace_projection_dispatch_done.argtypes = [
             ctypes.c_void_p,
             ctypes.c_void_p,
             ctypes.c_int,
@@ -260,7 +324,25 @@ class _NVSHMEMBindings:
             ctypes.c_int,
             ctypes.c_void_p,
         ]
-        device.pap_nvshmem_graph_gather_output.restype = ctypes.c_int
+        device.pap_trace_projection_dispatch_done.restype = ctypes.c_int
+        device.pap_trace_projection_gather_done.argtypes = [
+            *([ctypes.c_void_p] * 16),
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_void_p,
+        ]
+        device.pap_trace_projection_gather_done.restype = ctypes.c_int
+        device.pap_trace_attention_marker.argtypes = [
+            *([ctypes.c_void_p] * 12),
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_void_p,
+        ]
+        device.pap_trace_attention_marker.restype = ctypes.c_int
 
 
 @dataclass(frozen=True)
@@ -380,6 +462,158 @@ class PAPNVSHMEMRuntime:
         self._allocations.append(allocation)
         return allocation
 
+    def host_device_pointer(self, tensor: torch.Tensor) -> int:
+        """Return the CUDA UVA address for a pinned host tensor."""
+        if tensor.device.type != "cpu" or not tensor.is_pinned():
+            raise PAPNVSHMEMError("PAP trace host tensors must use pinned memory")
+        pointer = int(
+            self._bindings.device_library.pap_cuda_host_get_device_pointer(
+                ctypes.c_void_p(tensor.data_ptr())
+            )
+            or 0
+        )
+        if pointer == 0:
+            raise PAPNVSHMEMError("failed to map a PAP trace host tensor")
+        return pointer
+
+    def probe_device_graph_launch(
+        self,
+        *,
+        graph_handle: int,
+        stream: torch.Stream,
+    ) -> None:
+        """Validate that a captured graph supports CUDA device launch."""
+        self._require_initialized()
+        if graph_handle <= 0:
+            raise PAPNVSHMEMError("PAP CUDA Graph handle is invalid")
+        result = ctypes.c_int(-1)
+        node_type = ctypes.c_int(-1)
+        node_name = ctypes.create_string_buffer(512)
+        status = self._call_cuda_bridge(
+            self._graph_library().pap_cuda_graph_probe_device_launch,
+            ctypes.c_void_p(graph_handle),
+            ctypes.c_void_p(self._cuda_stream_handle(stream)),
+            ctypes.byref(result),
+            ctypes.byref(node_type),
+            ctypes.cast(node_name, ctypes.c_void_p),
+            ctypes.sizeof(node_name),
+        )
+        if int(status) != 0:
+            name = node_name.value.decode("utf-8", errors="replace") or "unknown"
+            raise PAPNVSHMEMError(
+                "PAP CUDA Graph device-launch probe failed: "
+                f"CUDA error {status}, instantiate result {result.value}, "
+                f"node type {node_type.value}, node name {name}"
+            )
+
+    def create_device_graph_launch(
+        self,
+        *,
+        graph_handle: int,
+        stream: torch.Stream,
+    ) -> int:
+        """Instantiate and upload a graph for launch from a GPU kernel."""
+        self._require_initialized()
+        executable = ctypes.c_void_p()
+        result = ctypes.c_int(-1)
+        node_type = ctypes.c_int(-1)
+        node_name = ctypes.create_string_buffer(512)
+        status = self._call_cuda_bridge(
+            self._graph_library().pap_cuda_graph_create_device_launch,
+            ctypes.c_void_p(graph_handle),
+            ctypes.c_void_p(self._cuda_stream_handle(stream)),
+            ctypes.byref(executable),
+            ctypes.byref(result),
+            ctypes.byref(node_type),
+            ctypes.cast(node_name, ctypes.c_void_p),
+            ctypes.sizeof(node_name),
+        )
+        if int(status) != 0 or executable.value is None:
+            name = node_name.value.decode("utf-8", errors="replace") or "unknown"
+            raise PAPNVSHMEMError(
+                "PAP CUDA Graph device-launch creation failed: "
+                f"CUDA error {status}, instantiate result {result.value}, "
+                f"node type {node_type.value}, node name {name}"
+            )
+        return int(executable.value)
+
+    def create_resident_graph_dispatcher(
+        self,
+        *,
+        stream: torch.Stream,
+        window_size: int,
+    ) -> int:
+        """Create a hardware-wait dispatcher with a prequeued launch window."""
+        self._require_initialized()
+        if window_size <= 0:
+            raise PAPNVSHMEMError("PAP resident dispatch window must be positive")
+        dispatcher = ctypes.c_void_p()
+        status = self._call_cuda_bridge(
+            self._graph_library().pap_cuda_graph_create_resident_dispatcher,
+            ctypes.c_void_p(self._cuda_stream_handle(stream)),
+            window_size,
+            ctypes.byref(dispatcher),
+        )
+        if int(status) != 0 or dispatcher.value is None:
+            raise PAPNVSHMEMError(
+                f"PAP resident graph dispatcher creation failed: CUDA error {status}"
+            )
+        return int(dispatcher.value)
+
+    def run_resident_device_graph(
+        self,
+        *,
+        dispatcher_handle: int,
+        executable_handle: int,
+        generation: int,
+    ) -> None:
+        """Publish one dynamic graph choice and await GPU completion."""
+        self._check_graph_launch(
+            "resident_dispatch",
+            self._call_cuda_bridge(
+                self._graph_library().pap_cuda_graph_resident_run,
+                ctypes.c_void_p(dispatcher_handle),
+                ctypes.c_void_p(executable_handle),
+                generation,
+            ),
+        )
+
+    def destroy_resident_graph_dispatcher(self, dispatcher_handle: int) -> None:
+        """Stop a resident dispatcher and release its mapped state."""
+        self._check_graph_launch(
+            "destroy_resident_dispatcher",
+            self._call_cuda_bridge(
+                self._graph_library().pap_cuda_graph_destroy_resident_dispatcher,
+                ctypes.c_void_p(dispatcher_handle),
+            ),
+        )
+
+    def launch_device_graph(
+        self,
+        *,
+        executable_handle: int,
+        stream: torch.Stream,
+    ) -> None:
+        """Launch one device-launch executable from a GPU kernel."""
+        self._check_graph_launch(
+            "launch_from_device",
+            self._call_cuda_bridge(
+                self._graph_library().pap_cuda_graph_launch_from_device,
+                ctypes.c_void_p(executable_handle),
+                ctypes.c_void_p(self._cuda_stream_handle(stream)),
+            ),
+        )
+
+    def destroy_device_graph_launch(self, executable_handle: int) -> None:
+        """Destroy one device-launch executable after its stream is idle."""
+        self._check_graph_launch(
+            "destroy_device_launch",
+            self._call_cuda_bridge(
+                self._graph_library().pap_cuda_graph_destroy_device_launch,
+                ctypes.c_void_p(executable_handle),
+            ),
+        )
+
     def graph_advance_epoch(
         self,
         *,
@@ -492,6 +726,15 @@ class PAPNVSHMEMRuntime:
         epochs: torch.Tensor,
         layer_count: int,
         layer_index: int,
+        trace_start_ns: torch.Tensor | None,
+        trace_step_ids: torch.Tensor | None,
+        trace_route_counts: torch.Tensor | None,
+        trace_peer_epochs: torch.Tensor | None,
+        trace_step_counter: torch.Tensor | None,
+        trace_current_step: torch.Tensor | None,
+        trace_host_completion_pointer: int,
+        trace_steps: int,
+        trace_layers: int,
         stream: torch.Stream,
     ) -> None:
         """Capture one dynamic multi-peer QKV pack and dispatch kernel."""
@@ -534,6 +777,33 @@ class PAPNVSHMEMRuntime:
                 self.rank,
                 layer_count,
                 layer_index,
+                ctypes.c_void_p(
+                    trace_start_ns.data_ptr() if trace_start_ns is not None else 0
+                ),
+                ctypes.c_void_p(
+                    trace_step_ids.data_ptr() if trace_step_ids is not None else 0
+                ),
+                ctypes.c_void_p(
+                    trace_route_counts.data_ptr()
+                    if trace_route_counts is not None
+                    else 0
+                ),
+                ctypes.c_void_p(
+                    trace_peer_epochs.data_ptr() if trace_peer_epochs is not None else 0
+                ),
+                ctypes.c_void_p(
+                    trace_step_counter.data_ptr()
+                    if trace_step_counter is not None
+                    else 0
+                ),
+                ctypes.c_void_p(
+                    trace_current_step.data_ptr()
+                    if trace_current_step is not None
+                    else 0
+                ),
+                ctypes.c_void_p(trace_host_completion_pointer),
+                trace_steps,
+                trace_layers,
                 ctypes.c_void_p(self._cuda_stream_handle(stream)),
             ),
         )
@@ -551,6 +821,10 @@ class PAPNVSHMEMRuntime:
         epochs: torch.Tensor,
         layer_count: int,
         layer_index: int,
+        trace_end_ns: torch.Tensor | None,
+        trace_current_step: torch.Tensor | None,
+        trace_steps: int,
+        trace_layers: int,
         stream: torch.Stream,
     ) -> None:
         """Capture one dynamic multi-peer output barrier and scatter kernel."""
@@ -582,6 +856,145 @@ class PAPNVSHMEMRuntime:
                 self.world_size,
                 layer_count,
                 layer_index,
+                ctypes.c_void_p(
+                    trace_end_ns.data_ptr() if trace_end_ns is not None else 0
+                ),
+                ctypes.c_void_p(
+                    trace_current_step.data_ptr()
+                    if trace_current_step is not None
+                    else 0
+                ),
+                trace_steps,
+                trace_layers,
+                ctypes.c_void_p(self._cuda_stream_handle(stream)),
+            ),
+        )
+
+    def trace_projection_dispatch_done(
+        self,
+        *,
+        current_step: torch.Tensor,
+        dispatch_done_ns: torch.Tensor,
+        trace_steps: int,
+        trace_layers: int,
+        layer_index: int,
+        stream: torch.Stream,
+    ) -> None:
+        """Record completion of one Projection QKV dispatch kernel."""
+        self._check_graph_launch(
+            "trace_projection_dispatch_done",
+            self._call_cuda_bridge(
+                self._graph_library().pap_trace_projection_dispatch_done,
+                ctypes.c_void_p(current_step.data_ptr()),
+                ctypes.c_void_p(dispatch_done_ns.data_ptr()),
+                trace_steps,
+                trace_layers,
+                layer_index,
+                ctypes.c_void_p(self._cuda_stream_handle(stream)),
+            ),
+        )
+
+    def trace_projection_gather_done(
+        self,
+        *,
+        current_step: torch.Tensor,
+        start_ns: torch.Tensor,
+        end_ns: torch.Tensor,
+        step_ids: torch.Tensor,
+        route_counts: torch.Tensor,
+        peer_epochs: torch.Tensor,
+        dispatch_done_ns: torch.Tensor,
+        gather_done_ns: torch.Tensor,
+        host_start_pointer: int,
+        host_end_pointer: int,
+        host_step_ids_pointer: int,
+        host_route_counts_pointer: int,
+        host_peer_epochs_pointer: int,
+        host_dispatch_done_pointer: int,
+        host_gather_done_pointer: int,
+        host_completion_pointer: int,
+        trace_steps: int,
+        trace_layers: int,
+        layer_index: int,
+        stream: torch.Stream,
+    ) -> None:
+        """Record gather completion and mirror a complete Projection step."""
+        pointers = (
+            current_step.data_ptr(),
+            start_ns.data_ptr(),
+            end_ns.data_ptr(),
+            step_ids.data_ptr(),
+            route_counts.data_ptr(),
+            peer_epochs.data_ptr(),
+            dispatch_done_ns.data_ptr(),
+            gather_done_ns.data_ptr(),
+            host_start_pointer,
+            host_end_pointer,
+            host_step_ids_pointer,
+            host_route_counts_pointer,
+            host_peer_epochs_pointer,
+            host_dispatch_done_pointer,
+            host_gather_done_pointer,
+            host_completion_pointer,
+        )
+        self._check_graph_launch(
+            "trace_projection_gather_done",
+            self._call_cuda_bridge(
+                self._graph_library().pap_trace_projection_gather_done,
+                *(ctypes.c_void_p(pointer) for pointer in pointers),
+                trace_steps,
+                trace_layers,
+                self.world_size,
+                layer_index,
+                ctypes.c_void_p(self._cuda_stream_handle(stream)),
+            ),
+        )
+
+    def trace_attention_marker(
+        self,
+        *,
+        epoch: torch.Tensor,
+        replay_start_ns: torch.Tensor,
+        step_start_ns: torch.Tensor,
+        start_ns: torch.Tensor,
+        end_ns: torch.Tensor,
+        step_ids: torch.Tensor,
+        host_replay_start_pointer: int,
+        host_step_start_pointer: int,
+        host_start_pointer: int,
+        host_end_pointer: int,
+        host_step_ids_pointer: int,
+        host_completion_pointer: int,
+        trace_steps: int,
+        trace_layers: int,
+        layer_index: int,
+        marker_kind: int,
+        stream: torch.Stream,
+    ) -> None:
+        """Record an Attention-kernel boundary inside the whole-step Graph."""
+        pointers = (
+            epoch.data_ptr(),
+            replay_start_ns.data_ptr(),
+            step_start_ns.data_ptr(),
+            start_ns.data_ptr(),
+            end_ns.data_ptr(),
+            step_ids.data_ptr(),
+            host_replay_start_pointer,
+            host_step_start_pointer,
+            host_start_pointer,
+            host_end_pointer,
+            host_step_ids_pointer,
+            host_completion_pointer,
+        )
+        self._check_graph_launch(
+            "trace_attention_marker",
+            self._call_cuda_bridge(
+                self._graph_library().pap_trace_attention_marker,
+                *(ctypes.c_void_p(pointer) for pointer in pointers),
+                trace_steps,
+                trace_layers,
+                layer_index,
+                marker_kind,
                 ctypes.c_void_p(self._cuda_stream_handle(stream)),
             ),
         )

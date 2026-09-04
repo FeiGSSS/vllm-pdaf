@@ -64,6 +64,12 @@ def test_runtime_config_accepts_multiple_projections() -> None:
     assert config.topology.projection_count == 2
 
 
+def test_runtime_config_accepts_dynamo_routing() -> None:
+    config = PAPRuntimeConfig.from_env({"PAP_ROUTING_POLICY": "dynamo"})
+
+    assert config.routing_policy is PAPRoutingPolicy.DYNAMO
+
+
 def test_runtime_config_rejects_tensor_parallel_execution() -> None:
     with pytest.raises(PAPConfigError, match="requires TP=1"):
         PAPRuntimeConfig.from_env(

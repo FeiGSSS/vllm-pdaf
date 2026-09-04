@@ -41,6 +41,7 @@ PATH="${CUDA_BIN}:${PATH}" "${NVCC}" \
   -I"${NVSHMEM_PREFIX}/include" \
   "${SOURCE}" \
   -L"${NVSHMEM_PREFIX}/lib" \
+  -lcuda \
   -lnvshmem_host \
   -lnvshmem_device \
   -o "${OUTPUT}"

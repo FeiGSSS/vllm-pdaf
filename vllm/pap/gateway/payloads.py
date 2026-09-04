@@ -32,6 +32,9 @@ def requested_decode_capacity(req_data: dict[str, Any]) -> int | None:
 
 def build_prefill_payload(
     req_data: dict[str, Any],
+    *,
+    prompt_token_ids: list[int] | None = None,
+    prompt_text: str | None = None,
 ) -> dict[str, Any]:
     decode_capacity = requested_decode_capacity(req_data)
     payload = req_data.copy()
@@ -42,6 +45,17 @@ def build_prefill_payload(
     # request again on the Projection API process.
     payload["return_token_ids"] = True
     kv_params: dict[str, Any] = {}
+    if prompt_token_ids is not None:
+        if not prompt_token_ids:
+            raise ValueError("PAP Prefill prompt token IDs cannot be empty")
+        if "messages" in payload:
+            payload["messages"] = [{"role": "user", "content": ""}]
+        elif "prompt" in payload:
+            payload["prompt"] = []
+        kv_params["pap_tokenized_input"] = True
+        kv_params["pap_prompt_token_ids"] = prompt_token_ids
+        if prompt_text is not None:
+            kv_params["pap_prompt_text"] = prompt_text
     payload["kv_transfer_params"] = kv_params
     if decode_capacity is not None:
         payload["kv_transfer_params"]["pap_decode_capacity_tokens"] = decode_capacity

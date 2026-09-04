@@ -91,6 +91,12 @@ done
 if [[ "${AIPERF_WARMUP_DURATION_SECONDS}" =~ ^0+([.]0+)?$ ]]; then
   AIPERF_WARMUP_DURATION_SECONDS=""
 fi
+if [[ "${AIPERF_BENCHMARK_DURATION_SECONDS}" =~ ^0+([.]0+)?$ ]]; then
+  AIPERF_BENCHMARK_DURATION_SECONDS=""
+fi
+if [[ "${AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS}" =~ ^0+([.]0+)?$ ]]; then
+  AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS=""
+fi
 if (( AIPERF_WARMUP_SESSIONS > 0 )) \
   && [[ -n "${AIPERF_WARMUP_DURATION_SECONDS}" ]]; then
   echo "configure warmup by sessions or duration, not both" >&2

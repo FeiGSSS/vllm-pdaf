@@ -38,6 +38,7 @@ class PAPRequestMetadata:
     """PAP fields carried through vLLM ``kv_transfer_params``."""
 
     projection_kv_unaware: bool = False
+    tokenized_input: bool = False
     attention_tcp_endpoint: str | None = None
     attention_endpoint: str | None = None
     remote_prefix_len: int | None = None
@@ -59,6 +60,7 @@ class PAPRequestMetadata:
             remote_prefix_len = params.get("remote_num_tokens")
         return cls(
             projection_kv_unaware=bool(params.get("pap_projection_kv_unaware")),
+            tokenized_input=bool(params.get("pap_tokenized_input")),
             attention_tcp_endpoint=_optional_text(
                 params.get("pap_attention_tcp_endpoint")
             ),

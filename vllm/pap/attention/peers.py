@@ -216,6 +216,10 @@ class PAPAttentionPeerManager:
                 "PAP Attention receiver threads did not stop: " + ", ".join(alive)
             )
 
+        for transport in transports:
+            export_trace = getattr(transport, "export_attention_kernel_trace", None)
+            if export_trace is not None:
+                export_trace()
         self.runtime.stop()
         close_error: BaseException | None = None
         for transport in transports:

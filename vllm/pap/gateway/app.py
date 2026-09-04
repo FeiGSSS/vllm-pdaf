@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 from collections import Counter
@@ -16,8 +17,13 @@ from fastapi import FastAPI, Request
 
 from vllm.pap.config import reject_removed_pap_flags
 from vllm.pap.gateway.admission import PAPProjectionAdmission
+from vllm.pap.gateway.dynamo_routing import (
+    PAPDynamoRouter,
+    PAPDynamoRouterDisabled,
+)
 from vllm.pap.gateway.lifecycle import PAPLifecycleManager
 from vllm.pap.gateway.load_tracker import PAPLoadTracker
+from vllm.pap.gateway.prefix_cache import PAPPrefixCacheTracker
 from vllm.pap.gateway.request_pipeline import _handle_openai_request
 from vllm.pap.gateway.routing import PAPConversationRouter
 from vllm.pap.gateway.topology import (
@@ -48,6 +54,41 @@ async def lifespan(app: FastAPI):
     }
     app.state.pap_load_tracker = PAPLoadTracker(app.state.prefill_clients)
     await app.state.pap_load_tracker.start()
+    event_endpoints = tuple(
+        endpoint.strip()
+        for endpoint in args.kv_event_endpoints.split(",")
+        if endpoint.strip()
+    )
+    app.state.pap_prefix_cache_tracker = PAPPrefixCacheTracker(
+        app.state.groups,
+        model=args.model,
+        event_endpoints=event_endpoints,
+        block_size=args.prefix_block_size,
+        max_model_len=args.max_model_len,
+        hf_overrides=json.loads(args.hf_overrides),
+        generation_config=args.generation_config,
+    )
+    if args.routing_policy != "dynamo":
+        app.state.pap_prefix_cache_tracker.start()
+    if args.routing_policy == "dynamo":
+        total_kv_blocks = args.dynamo_total_kv_blocks
+        if total_kv_blocks is None:
+            total_kv_blocks = [
+                int(snapshot["total_kv_blocks"])
+                for snapshot in app.state.pap_load_tracker.snapshot().values()
+            ]
+        app.state.pap_dynamo_router = await PAPDynamoRouter.create(
+            app.state.groups,
+            event_endpoints=event_endpoints,
+            site_packages=args.dynamo_site_packages,
+            model_name=args.dynamo_model_name,
+            block_size=args.prefix_block_size,
+            max_num_batched_tokens=args.dynamo_max_num_batched_tokens,
+            total_kv_blocks=total_kv_blocks,
+            prefill_load_scale=args.dynamo_prefill_load_scale,
+        )
+    else:
+        app.state.pap_dynamo_router = PAPDynamoRouterDisabled()
     app.state.attention_clients = {}
     for group in app.state.groups:
         if isinstance(group.attention_port, int):
@@ -67,6 +108,8 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await app.state.pap_dynamo_router.shutdown()
+        app.state.pap_prefix_cache_tracker.stop()
         await app.state.pap_lifecycle_manager.shutdown()
         attention_clients = [
             client
@@ -111,6 +154,8 @@ async def health() -> dict[str, Any]:
         "conversation_routing": app.state.conversation_router.snapshot(),
         "projection_admission": await app.state.projection_admission.snapshot(),
         "load_tracker": app.state.pap_load_tracker.stats(),
+        "prefix_cache": app.state.pap_prefix_cache_tracker.stats(),
+        "dynamo_router": app.state.pap_dynamo_router.stats(),
         "lifecycle": app.state.pap_lifecycle_manager.stats(),
     }
 
@@ -129,6 +174,8 @@ async def topology_stats() -> dict[str, Any]:
         "conversation_routing": app.state.conversation_router.snapshot(),
         "projection_admission": await app.state.projection_admission.snapshot(),
         "load_tracker": app.state.pap_load_tracker.stats(),
+        "prefix_cache": app.state.pap_prefix_cache_tracker.stats(),
+        "dynamo_router": app.state.pap_dynamo_router.stats(),
         "lifecycle": app.state.pap_lifecycle_manager.stats(),
     }
 
@@ -151,6 +198,45 @@ def parse_args() -> argparse.Namespace:
         help="Comma-separated projection_host:projection_port entries",
     )
     parser.add_argument("--pap-mode", default=os.environ.get("PAP_MODE", "pap"))
+    parser.add_argument("--model", default=os.environ.get("PAP_MODEL_PATH"))
+    parser.add_argument("--max-model-len", type=int)
+    parser.add_argument(
+        "--hf-overrides",
+        default=os.environ.get("PAP_HF_OVERRIDES", "{}"),
+    )
+    parser.add_argument("--generation-config", default="vllm")
+    parser.add_argument(
+        "--kv-event-endpoints",
+        default=os.environ.get("PAP_KV_EVENT_ENDPOINTS", ""),
+    )
+    parser.add_argument(
+        "--prefix-block-size",
+        type=int,
+        default=int(os.environ.get("PAP_BLOCK_SIZE", "16")),
+    )
+    parser.add_argument(
+        "--dynamo-site-packages",
+        default=os.environ.get("PAP_DYNAMO_SITE_PACKAGES", ""),
+    )
+    parser.add_argument(
+        "--dynamo-model-name",
+        default=os.environ.get("PAP_DYNAMO_MODEL_NAME", "pap"),
+    )
+    parser.add_argument(
+        "--dynamo-max-num-batched-tokens",
+        type=int,
+        default=int(os.environ.get("PAP_PREFILL_MAX_NUM_BATCHED_TOKENS", "32768")),
+    )
+    parser.add_argument(
+        "--dynamo-total-kv-blocks",
+        type=int,
+        default=None,
+    )
+    parser.add_argument(
+        "--dynamo-prefill-load-scale",
+        type=float,
+        default=float(os.environ.get("PAP_DYNAMO_PREFILL_LOAD_SCALE", "2.0")),
+    )
     parser.add_argument(
         "--timeout-keep-alive",
         type=int,
@@ -166,6 +252,7 @@ def parse_args() -> argparse.Namespace:
             "projection_affinity",
             "projection_sticky",
             "conversation_affinity",
+            "dynamo",
         ),
     )
     return parser.parse_args()

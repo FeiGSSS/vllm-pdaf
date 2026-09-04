@@ -43,6 +43,21 @@ def test_build_prefill_payload_prefers_max_completion_tokens() -> None:
     assert payload["kv_transfer_params"]["pap_decode_capacity_tokens"] == 48
 
 
+def test_build_prefill_payload_reuses_gateway_tokens() -> None:
+    payload = build_prefill_payload(
+        {"model": "qwen", "messages": [{"role": "user", "content": "hello"}]},
+        prompt_token_ids=[11, 12, 13],
+        prompt_text="rendered prompt",
+    )
+
+    assert payload["kv_transfer_params"] == {
+        "pap_tokenized_input": True,
+        "pap_prompt_token_ids": [11, 12, 13],
+        "pap_prompt_text": "rendered prompt",
+    }
+    assert payload["messages"] == [{"role": "user", "content": ""}]
+
+
 def test_prefill_payload_marks_attention_kv_import() -> None:
     from vllm.pap.gateway.payloads import attach_pap_prefill_attention_params
 

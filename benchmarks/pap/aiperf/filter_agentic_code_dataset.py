@@ -42,6 +42,23 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _scaled_row(
+    row: dict[str, Any],
+    *,
+    length_divisor: int,
+    hash_block_size: int,
+) -> dict[str, Any]:
+    scaled = dict(row)
+    scaled.pop("delay", None)
+    for field in ("input_length", "output_length"):
+        scaled[field] = max(1, int(scaled[field]) // length_divisor)
+    hash_ids = scaled.get("hash_ids")
+    if isinstance(hash_ids, list):
+        input_blocks = (scaled["input_length"] + hash_block_size - 1) // hash_block_size
+        scaled["hash_ids"] = hash_ids[:input_blocks]
+    return scaled
+
+
 def build_subset(
     input_path: Path,
     output_path: Path,
@@ -49,6 +66,9 @@ def build_subset(
     sessions: int,
     min_turns: int,
     max_turns: int,
+    take_first_turns: int | None,
+    length_divisor: int,
+    hash_block_size: int,
     seed: int,
 ) -> dict[str, Any]:
     """Filter complete sessions and write a deterministic sample."""
@@ -59,23 +79,40 @@ def build_subset(
             row = json.loads(line)
             grouped.setdefault(row["session_id"], []).append(row)
 
-    eligible = [
-        (session_id, rows)
-        for session_id, rows in grouped.items()
-        if min_turns <= len(rows) <= max_turns
-    ]
+    if take_first_turns is None:
+        eligible = [
+            (session_id, rows)
+            for session_id, rows in grouped.items()
+            if min_turns <= len(rows) <= max_turns
+        ]
+    else:
+        eligible = [
+            (session_id, rows)
+            for session_id, rows in grouped.items()
+            if len(rows) >= take_first_turns
+        ]
     if len(eligible) < sessions:
         raise ValueError(
-            f"only {len(eligible)} sessions satisfy the turn bounds; "
-            f"need {sessions}"
+            f"only {len(eligible)} sessions satisfy the turn bounds; need {sessions}"
         )
 
     chosen_ids = {
-        session_id
-        for session_id, _ in random.Random(seed).sample(eligible, sessions)
+        session_id for session_id, _ in random.Random(seed).sample(eligible, sessions)
     }
     selected = [
-        (session_id, rows)
+        (
+            session_id,
+            [
+                _scaled_row(
+                    row,
+                    length_divisor=length_divisor,
+                    hash_block_size=hash_block_size,
+                )
+                for row in (
+                    rows if take_first_turns is None else rows[:take_first_turns]
+                )
+            ],
+        )
         for session_id, rows in grouped.items()
         if session_id in chosen_ids
     ]
@@ -84,11 +121,30 @@ def build_subset(
     with output_path.open("w") as file:
         for _, rows in selected:
             for row in rows:
-                row.pop("delay", None)
                 file.write(json.dumps(row, separators=(",", ":")) + "\n")
 
     turn_counts = [len(rows) for _, rows in selected]
     initial_contexts = [rows[0]["input_length"] for _, rows in selected]
+    input_lengths = [row["input_length"] for _, rows in selected for row in rows]
+    output_lengths = [row["output_length"] for _, rows in selected for row in rows]
+    prompt_contexts = []
+    per_turn = []
+    for turn_index in range(max(turn_counts)):
+        turn_inputs = [rows[turn_index]["input_length"] for _, rows in selected]
+        turn_outputs = [rows[turn_index]["output_length"] for _, rows in selected]
+        per_turn.append(
+            {
+                "turn": turn_index + 1,
+                "input_tokens": _summary(turn_inputs),
+                "output_tokens": _summary(turn_outputs),
+            }
+        )
+    for _, rows in selected:
+        context = 0
+        for row in rows:
+            context += row["input_length"]
+            prompt_contexts.append(context)
+            context += row["output_length"]
     final_contexts = [
         sum(row["input_length"] + row["output_length"] for row in rows)
         for _, rows in selected
@@ -100,18 +156,30 @@ def build_subset(
         "output_sha256": _sha256(output_path),
         "selection": {
             "sessions": sessions,
-            "min_turns": min_turns,
-            "max_turns": max_turns,
+            "take_first_turns": take_first_turns,
+            "length_divisor": length_divisor,
+            "hash_block_size": hash_block_size,
             "seed": seed,
             "eligible_sessions": len(eligible),
             "sampling": "random_without_replacement",
+            "eligibility": (
+                {"minimum_source_turns": take_first_turns}
+                if take_first_turns is not None
+                else {"minimum_turns": min_turns, "maximum_turns": max_turns}
+            ),
         },
         "observed": {
             "sessions": len(selected),
             "turns": sum(turn_counts),
             "turns_per_session": _summary(turn_counts),
+            "total_input_tokens": sum(input_lengths),
+            "total_output_tokens": sum(output_lengths),
+            "input_tokens_per_request": _summary(input_lengths),
+            "output_tokens_per_request": _summary(output_lengths),
+            "prompt_context_tokens_per_request": _summary(prompt_contexts),
             "initial_context_tokens": _summary(initial_contexts),
             "final_context_tokens": _summary(final_contexts),
+            "per_turn": per_turn,
         },
     }
 
@@ -123,6 +191,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sessions", type=int, default=128)
     parser.add_argument("--min-turns", type=int, default=5)
     parser.add_argument("--max-turns", type=int, default=32)
+    parser.add_argument("--take-first-turns", type=int)
+    parser.add_argument("--length-divisor", type=int, default=1)
+    parser.add_argument("--hash-block-size", type=int, default=512)
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
 
@@ -133,12 +204,21 @@ def main() -> None:
         raise ValueError("turn bounds must be positive and ordered")
     if args.sessions <= 0:
         raise ValueError("sessions must be positive")
+    if args.take_first_turns is not None and args.take_first_turns <= 0:
+        raise ValueError("take-first-turns must be positive")
+    if args.length_divisor <= 0:
+        raise ValueError("length-divisor must be positive")
+    if args.hash_block_size <= 0:
+        raise ValueError("hash-block-size must be positive")
     manifest = build_subset(
         args.input,
         args.output,
         sessions=args.sessions,
         min_turns=args.min_turns,
         max_turns=args.max_turns,
+        take_first_turns=args.take_first_turns,
+        length_divisor=args.length_divisor,
+        hash_block_size=args.hash_block_size,
         seed=args.seed,
     )
     manifest_path = args.output.with_suffix(".manifest.json")

@@ -33,6 +33,7 @@ class OpenProjectionStream:
     response: httpx.Response
     start: float
     profile: bool
+    profile_origin: float = 0.0
 
 
 async def _post_json(
@@ -132,6 +133,8 @@ async def open_projection_stream(
     endpoint: str,
     payload: dict[str, Any],
     request_id: str,
+    *,
+    profile_origin: float = 0.0,
 ) -> OpenProjectionStream:
     """Receive Projection headers before committing the downstream response."""
     profile = _pap_prefill_ipc_profile_enabled()
@@ -154,7 +157,7 @@ async def open_projection_stream(
             request_id,
             (time.perf_counter() - start) * 1000.0,
         )
-    return OpenProjectionStream(response, start, profile)
+    return OpenProjectionStream(response, start, profile, profile_origin)
 
 
 async def _stream_projection_response(
@@ -163,6 +166,7 @@ async def _stream_projection_response(
     *,
     start: float,
     profile: bool,
+    profile_origin: float = 0.0,
 ):
     first_chunk = True
     chunk_count = 0
@@ -175,9 +179,15 @@ async def _stream_projection_response(
                 first_chunk = False
                 logger.info(
                     "PAP proxy projection stream profile request_id=%s "
-                    "first_chunk_ms=%.3f first_chunk_bytes=%d",
+                    "first_chunk_ms=%.3f request_to_first_chunk_ms=%.3f "
+                    "first_chunk_bytes=%d",
                     request_id,
                     (time.perf_counter() - start) * 1000.0,
+                    (
+                        (time.perf_counter() - profile_origin) * 1000.0
+                        if profile_origin
+                        else 0.0
+                    ),
                     len(chunk),
                 )
         yield chunk
@@ -252,6 +262,7 @@ async def _stream_projection_with_cleanup(
                 request_id,
                 start=opened_stream.start,
                 profile=opened_stream.profile,
+                profile_origin=opened_stream.profile_origin,
             )
         projection_chunks = _stream_with_prefill_cache_usage(
             projection_chunks,

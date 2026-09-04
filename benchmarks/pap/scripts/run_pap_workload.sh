@@ -107,7 +107,14 @@ PAP_BENCH_STRICT_CORRECTNESS_AUDIT="${PAP_BENCH_STRICT_CORRECTNESS_AUDIT:-1}"
 PAP_BENCH_CLIENT="aiperf"
 PAP_ATTENTION_KERNEL_POLICY="${PAP_ATTENTION_KERNEL_POLICY:-auto}"
 PAP_PAT_PLAN_CACHE_ENTRIES="${PAP_PAT_PLAN_CACHE_ENTRIES:-32}"
+PAP_ATTENTION_GPU_RESIDENT_DISPATCH="${PAP_ATTENTION_GPU_RESIDENT_DISPATCH:-0}"
 DISABLE_STREAM="${DISABLE_STREAM:-1}"
+
+if [[ "${PAP_ATTENTION_GPU_RESIDENT_DISPATCH}" != "0" \
+  && "${PAP_ATTENTION_GPU_RESIDENT_DISPATCH}" != "1" ]]; then
+  echo "ERROR: PAP_ATTENTION_GPU_RESIDENT_DISPATCH must be 0 or 1" >&2
+  exit 2
+fi
 
 case "${PAP_ATTENTION_KERNEL_POLICY}" in
   auto | triton) ;;
@@ -172,16 +179,24 @@ PAP_BENCH_SESSION_DRAIN_TIMEOUT="${PAP_BENCH_SESSION_DRAIN_TIMEOUT:-15}"
 PAP_BENCH_GATEWAY_DRAIN_TIMEOUT="${PAP_BENCH_GATEWAY_DRAIN_TIMEOUT:-120}"
 PAP_DEFERRED_TRACE_FLUSH_TIMEOUT="${PAP_DEFERRED_TRACE_FLUSH_TIMEOUT:-30}"
 
-TOPOLOGY="${PAP_TOPOLOGY:-3pa1p}"
+TOPOLOGY="${PAP_TOPOLOGY:-${TOPOLOGY:-3pa1p}}"
 if [[ ! "${TOPOLOGY}" =~ ^([0-9]+)pa([0-9]+)p$ ]]; then
   echo "ERROR: unsupported PAP topology: ${TOPOLOGY}" >&2
   exit 2
 fi
-PA_COUNT="${PAP_PA_COUNT:-${BASH_REMATCH[1]}}"
-PROJECTION_COUNT="${PAP_PROJECTION_COUNT:-${BASH_REMATCH[2]}}"
+TOPOLOGY_PA_COUNT="${BASH_REMATCH[1]}"
+TOPOLOGY_PROJECTION_COUNT="${BASH_REMATCH[2]}"
+PA_COUNT="${PAP_PA_COUNT:-${PA_COUNT:-${TOPOLOGY_PA_COUNT}}}"
+PROJECTION_COUNT="${PAP_PROJECTION_COUNT:-${PROJECTION_COUNT:-${TOPOLOGY_PROJECTION_COUNT}}}"
 if [[ ! "${PA_COUNT}" =~ ^[1-9][0-9]*$ \
   || ! "${PROJECTION_COUNT}" =~ ^[1-9][0-9]*$ ]]; then
   echo "ERROR: PAP topology counts must be positive: ${TOPOLOGY}" >&2
+  exit 2
+fi
+if [[ "${PA_COUNT}" != "${TOPOLOGY_PA_COUNT}" \
+  || "${PROJECTION_COUNT}" != "${TOPOLOGY_PROJECTION_COUNT}" ]]; then
+  echo "ERROR: PAP topology ${TOPOLOGY} conflicts with counts " \
+    "PA=${PA_COUNT}, Projection=${PROJECTION_COUNT}" >&2
   exit 2
 fi
 TOPOLOGY_TAG="$(printf '%s' "${TOPOLOGY}" | tr '[:lower:]' '[:upper:]')"
@@ -257,6 +272,7 @@ PAP_PROXY_PORT="${PAP_PROXY_PORT:-9460}"
 PREFILL_PORT_BASE="${PAP_PREFILL_PORT_BASE:-${PAP_PREFILL_PORT:-8100}}"
 PROJECTION_PORT_BASE="${PAP_PROJECTION_PORT_BASE:-${PAP_PROJECTION_PORT:-8200}}"
 ATTENTION_PORT_BASE="${PAP_ATTENTION_PORT_BASE:-${PAP_ATTENTION_PORT:-8300}}"
+KV_EVENT_PORT_BASE="${PAP_KV_EVENT_PORT_BASE:-8400}"
 ATTENTION_TCP_PORT_BASE="${PAP_ATTENTION_TCP_PORT_BASE:-${PAP_ATTENTION_TCP_PORT:-9300}}"
 VLLM_PREFILL_PORT_BASE="${PAP_VLLM_PREFILL_PORT_BASE:-${PAP_VLLM_PREFILL_PORT:-50000}}"
 VLLM_PROJECTION_PORT_BASE="${PAP_VLLM_PROJECTION_PORT_BASE:-${PAP_VLLM_PROJECTION_PORT:-$((VLLM_PREFILL_PORT_BASE + PA_COUNT * 20))}}"
@@ -328,6 +344,9 @@ PAP_DEFERRED_CUDA_TRACE_MAX_PENDING="${PAP_DEFERRED_CUDA_TRACE_MAX_PENDING:-1024
 PAP_UNIFIED_MD_CACHE_LIMIT="${PAP_UNIFIED_MD_CACHE_LIMIT:-256}"
 PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT:-256}"
 PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-conversation_affinity}"
+PAP_DYNAMO_PYTHON="${PAP_DYNAMO_PYTHON:-${ROOT_DIR}/.venv-dynamo/bin/python}"
+PAP_DYNAMO_MODEL_NAME="${PAP_DYNAMO_MODEL_NAME:-pap}"
+PAP_DYNAMO_PREFILL_LOAD_SCALE="${PAP_DYNAMO_PREFILL_LOAD_SCALE:-2.0}"
 PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-64}"
 PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS:-1}"
 PAP_PREFIX_CACHE_AUDIT="${PAP_PREFIX_CACHE_AUDIT:-0}"
@@ -404,6 +423,22 @@ case "${PAP_PREFILL_ASYNC_SCHEDULING}" in
   off) PREFILL_ASYNC_SCHEDULING_ARGS=(--no-async-scheduling) ;;
   *)
     echo "PAP_PREFILL_ASYNC_SCHEDULING must be auto, on, or off" >&2
+    exit 2
+    ;;
+esac
+PAP_PROJECTION_ASYNC_SCHEDULING="${PAP_PROJECTION_ASYNC_SCHEDULING:-on}"
+case "${PAP_PROJECTION_ASYNC_SCHEDULING}" in
+  auto) PROJECTION_ASYNC_SCHEDULING_ARGS=() ;;
+  1 | on)
+    PAP_PROJECTION_ASYNC_SCHEDULING=on
+    PROJECTION_ASYNC_SCHEDULING_ARGS=(--async-scheduling)
+    ;;
+  0 | off)
+    PAP_PROJECTION_ASYNC_SCHEDULING=off
+    PROJECTION_ASYNC_SCHEDULING_ARGS=(--no-async-scheduling)
+    ;;
+  *)
+    echo "PAP_PROJECTION_ASYNC_SCHEDULING must be auto, on, or off" >&2
     exit 2
     ;;
 esac
@@ -549,6 +584,15 @@ build_projections_spec() {
   local idx
   for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     items+=("127.0.0.1:$((PROJECTION_PORT_BASE + idx))")
+  done
+  join_by_comma "${items[@]}"
+}
+
+build_kv_event_endpoints() {
+  local items=()
+  local idx
+  for (( idx=0; idx<PA_COUNT; idx++ )); do
+    items+=("tcp://127.0.0.1:$((KV_EVENT_PORT_BASE + idx))")
   done
   join_by_comma "${items[@]}"
 }
@@ -871,17 +915,38 @@ wait_cluster_stable() {
 }
 
 audit_projection_scheduling() {
-  local idx log_path
+  local idx log_path actual_mode="" detected_mode
   for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     log_path="${RUN_LOG_DIR}/projection_${idx}.log"
-    if ! rg -q "Asynchronous scheduling is enabled" "${log_path}"; then
-      die "Projection ${idx} did not confirm asynchronous scheduling"
+    if rg -q "Asynchronous scheduling is enabled" "${log_path}"; then
+      detected_mode=on
+    elif rg -q "Asynchronous scheduling is disabled" "${log_path}"; then
+      detected_mode=off
+    else
+      die "Projection ${idx} did not report its scheduling mode"
     fi
+    if [[ "${PAP_PROJECTION_ASYNC_SCHEDULING}" != "auto" \
+      && "${detected_mode}" != "${PAP_PROJECTION_ASYNC_SCHEDULING}" ]]; then
+      die "Projection ${idx} scheduling mode ${detected_mode} does not match " \
+        "requested mode ${PAP_PROJECTION_ASYNC_SCHEDULING}"
+    fi
+    if [[ -n "${actual_mode}" && "${detected_mode}" != "${actual_mode}" ]]; then
+      die "Projection workers reported inconsistent scheduling modes"
+    fi
+    actual_mode="${detected_mode}"
   done
   {
     printf 'STATUS=passed\n'
-    printf 'ASYNC_SCHEDULING=1\n'
-    printf 'SCHEDULER_QUEUE_DEPTH=2\n'
+    printf 'REQUESTED_MODE=%q\n' "${PAP_PROJECTION_ASYNC_SCHEDULING}"
+    if [[ "${actual_mode}" == "on" ]]; then
+      printf 'ASYNC_SCHEDULING=1\n'
+      printf 'SCHEDULER_QUEUE_DEPTH=2\n'
+      printf 'MAX_CONCURRENT_BATCHES=2\n'
+    else
+      printf 'ASYNC_SCHEDULING=0\n'
+      printf 'SCHEDULER_QUEUE_DEPTH=1\n'
+      printf 'MAX_CONCURRENT_BATCHES=1\n'
+    fi
     printf 'PAP_RUNNER_MICROBATCH_PIPELINE=0\n'
   } > "${RUN_ROOT}/projection_scheduling_audit.env"
 }
@@ -1007,10 +1072,22 @@ PY
 
 audit_pap_whole_step_graph() {
   local capture_count=0
+  local active_attention_count=0
   local errors=()
-  local idx log
+  local inactive_attention=()
+  local idx log stats
   for (( idx=0; idx<PA_COUNT; idx++ )); do
     log="${RUN_LOG_DIR}/attention_${idx}_0.log"
+    stats="${RUN_ROOT}/attention_fast_path_stats_${idx}.json"
+    if ! jq -e '
+      (.offload_exec_peer_batches // 0) > 0
+      or (.decode_token_received // 0) > 0
+      or ((.attention_bound_source_ids // []) | length) > 0
+    ' "${stats}" >/dev/null; then
+      inactive_attention+=("${idx}")
+      continue
+    fi
+    (( active_attention_count += 1 ))
     if rg -q 'PAP Attention whole-step CUDA Graph capture complete' "${log}"; then
       (( capture_count += 1 ))
     else
@@ -1032,7 +1109,13 @@ audit_pap_whole_step_graph() {
       printf 'STATUS=failed\n'
     fi
     printf 'EXPECTED_PROCESS_COUNT=%q\n' "$((PA_COUNT + PROJECTION_COUNT))"
+    printf 'REQUIRED_PROCESS_COUNT=%q\n' \
+      "$((active_attention_count + PROJECTION_COUNT))"
     printf 'CAPTURED_PROCESS_COUNT=%q\n' "${capture_count}"
+    printf 'ACTIVE_ATTENTION_COUNT=%q\n' "${active_attention_count}"
+    printf 'INACTIVE_ATTENTION_COUNT=%q\n' "${#inactive_attention[@]}"
+    printf 'INACTIVE_ATTENTION_INDICES=%q\n' \
+      "$(join_by_comma "${inactive_attention[@]}")"
     printf 'ERROR_COUNT=%q\n' "${#errors[@]}"
   } > "${RUN_ROOT}/pap_whole_step_graph_audit.env"
   if (( ${#errors[@]} > 0 )); then
@@ -1094,6 +1177,8 @@ zero_fields = (
     "decode_token_dispatch_failures",
 )
 errors = []
+active_count = 0
+inactive_indices = []
 for index, stats in enumerate(instances):
     missing = [
         field
@@ -1106,6 +1191,14 @@ for index, stats in enumerate(instances):
     for field in zero_fields:
         if int(stats[field]) != 0:
             errors.append(f"attention[{index}] {field}={stats[field]}")
+    active = (
+        int(stats.get("offload_exec_peer_batches", 0)) > 0
+        or bool(stats.get("attention_bound_source_ids", []))
+    )
+    if not active:
+        inactive_indices.append(index)
+        continue
+    active_count += 1
     if int(stats["decode_token_received"]) <= 0:
         errors.append(f"attention[{index}] received no async decode tokens")
     if int(stats["decode_token_matched"]) <= 0:
@@ -1115,6 +1208,13 @@ with open(summary_path, "w", encoding="utf-8") as output:
     output.write(f"STATUS={'failed' if errors else 'passed'}\n")
     output.write("DECODE_TOKEN_DELIVERY=async\n")
     output.write(f"ATTENTION_INSTANCE_COUNT={len(instances)}\n")
+    output.write(f"ACTIVE_ATTENTION_COUNT={active_count}\n")
+    output.write(f"INACTIVE_ATTENTION_COUNT={len(inactive_indices)}\n")
+    output.write(
+        "INACTIVE_ATTENTION_INDICES="
+        + ",".join(str(index) for index in inactive_indices)
+        + "\n"
+    )
     output.write(f"ERROR_COUNT={len(errors)}\n")
 
 if errors:
@@ -1360,6 +1460,9 @@ write_effective_config() {
   {
     printf 'MODE=%q\n' "pap"
     printf 'PAP_BENCH_CLIENT=%q\n' "${PAP_BENCH_CLIENT}"
+    printf 'PAP_TOPOLOGY=%q\n' "${TOPOLOGY}"
+    printf 'PAP_PA_COUNT=%q\n' "${PA_COUNT}"
+    printf 'PAP_PROJECTION_COUNT=%q\n' "${PROJECTION_COUNT}"
     printf 'TOPOLOGY=%q\n' "${TOPOLOGY}"
     printf 'PA_COUNT=%q\n' "${PA_COUNT}"
     printf 'PROJECTION_COUNT=%q\n' "${PROJECTION_COUNT}"
@@ -1416,6 +1519,8 @@ write_effective_config() {
       "${PAP_ATTENTION_KERNEL_POLICY}"
     printf 'PAP_PAT_PLAN_CACHE_ENTRIES=%q\n' \
       "${PAP_PAT_PLAN_CACHE_ENTRIES}"
+    printf 'PAP_ATTENTION_GPU_RESIDENT_DISPATCH=%q\n' \
+      "${PAP_ATTENTION_GPU_RESIDENT_DISPATCH}"
     printf 'DISABLE_STREAM=%q\n' "${DISABLE_STREAM}"
     printf 'VLLM_USE_FLASHINFER_SAMPLER=%q\n' "${VLLM_USE_FLASHINFER_SAMPLER}"
     printf 'NO_PROXY=%q\n' "${NO_PROXY}"
@@ -1464,6 +1569,8 @@ write_effective_config() {
     printf 'ENABLE_AUTO_TOOL_CHOICE=%q\nTOOL_CALL_PARSER=%q\n' \
       "${ENABLE_AUTO_TOOL_CHOICE}" "${TOOL_CALL_PARSER}"
     printf 'PAP_ROUTING_POLICY=%q\n' "${PAP_ROUTING_POLICY}"
+    printf 'PAP_DYNAMO_PREFILL_LOAD_SCALE=%q\n' \
+      "${PAP_DYNAMO_PREFILL_LOAD_SCALE}"
     printf 'PREFILL_PORT_BASE=%q\n' "${PREFILL_PORT_BASE}"
     printf 'PROJECTION_PORT_BASE=%q\n' "${PROJECTION_PORT_BASE}"
     printf 'ATTENTION_PORT_BASE=%q\n' "${ATTENTION_PORT_BASE}"
@@ -1516,7 +1623,8 @@ write_effective_config() {
       "${PAP_PROJECTION_MAX_NUM_SEQS}"
     printf 'PAP_PROJECTION_RUNTIME_HEADROOM_BYTES=%q\n' \
       "${PAP_PROJECTION_RUNTIME_HEADROOM_BYTES}"
-    printf 'PAP_PROJECTION_ASYNC_SCHEDULING=%q\n' "1"
+    printf 'PAP_PROJECTION_ASYNC_SCHEDULING=%q\n' \
+      "${PAP_PROJECTION_ASYNC_SCHEDULING}"
     printf 'PAP_PREFILL_EXECUTION_MODE=piecewise_cuda_graph\n'
     printf 'PAP_PROJECTION_EXECUTION_MODE=pap_whole_step_cuda_graph\n'
     printf 'PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES=%q\n' \
@@ -1800,8 +1908,8 @@ expected_pa_routes = Counter()
 expected_projection_routes = Counter()
 expected_pair_routes = Counter()
 errors = []
-conversation_affinity = routing_policy == "conversation_affinity"
-if conversation_affinity:
+dynamic_routing = routing_policy in {"conversation_affinity", "dynamo"}
+if dynamic_routing:
     groups_per_projection = (
         pa_count + projection_count - 1
     ) // projection_count
@@ -1847,7 +1955,7 @@ if len(routes) != expected_requests:
     errors.append(
         f"routed request count {len(routes)} != expected {expected_requests}"
     )
-if conversation_affinity:
+if dynamic_routing:
     if any(
         port < prefill_base or port >= prefill_base + pa_count
         for port in pa_routes
@@ -1945,11 +2053,13 @@ cd "${ROOT_DIR}"
   && "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" == "1" ]] \
   || die "AIPerf requires prompt details and forbids cache audit"
 if (( PA_COUNT > 1 )); then
-  [[ "${PAP_ROUTING_POLICY}" == "conversation_affinity" ]] \
-    || die "multi-PA AIPerf requires conversation_affinity"
+  [[ "${PAP_ROUTING_POLICY}" == "conversation_affinity" \
+    || "${PAP_ROUTING_POLICY}" == "dynamo" ]] \
+    || die "multi-PA AIPerf requires conversation_affinity or dynamo"
 else
   [[ "${PAP_ROUTING_POLICY}" == "round_robin" \
-    || "${PAP_ROUTING_POLICY}" == "conversation_affinity" ]] \
+    || "${PAP_ROUTING_POLICY}" == "conversation_affinity" \
+    || "${PAP_ROUTING_POLICY}" == "dynamo" ]] \
     || die "single-PA AIPerf requires a supported PAP routing policy"
 fi
 (( PAP_AIPERF_TURNS >= 2 || PAP_AIPERF_VARIABLE_TURNS == 1 )) \
@@ -2056,6 +2166,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
   ports+=(
     "$((PREFILL_PORT_BASE + idx))"
     "$((ATTENTION_PORT_BASE + idx))"
+    "$((KV_EVENT_PORT_BASE + idx))"
     "$((ATTENTION_TCP_PORT_BASE + idx))"
     "$((VLLM_PREFILL_PORT_BASE + idx * 20))"
   )
@@ -2147,6 +2258,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}" \
     PAP_ATTENTION_KERNEL_POLICY="${PAP_ATTENTION_KERNEL_POLICY}" \
     PAP_PAT_PLAN_CACHE_ENTRIES="${PAP_PAT_PLAN_CACHE_ENTRIES}" \
+    PAP_ATTENTION_GPU_RESIDENT_DISPATCH="${PAP_ATTENTION_GPU_RESIDENT_DISPATCH}" \
     DISABLE_STREAM="${DISABLE_STREAM}" \
     PAP_DEFERRED_CUDA_TRACE="${PAP_DEFERRED_CUDA_TRACE}" \
     PAP_DEFERRED_TRACE_ROLE=attention \
@@ -2235,6 +2347,8 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       --enable-request-id-headers \
       "${PREFILL_OBSERVABILITY_ARGS[@]}" \
       --enable-prefix-caching \
+      --kv-events-config \
+        "{\"enable_kv_cache_events\":true,\"publisher\":\"zmq\",\"endpoint\":\"tcp://*:$((KV_EVENT_PORT_BASE + idx))\",\"topic\":\"pap-pa-${idx}\",\"hwm\":100000,\"max_queue_size\":0}" \
       --enable-chunked-prefill \
       --block-size "${PAP_BLOCK_SIZE}" \
       --max-model-len "${MAX_MODEL_LEN}" \
@@ -2291,6 +2405,7 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
       --max-num-seqs "${PAP_PROJECTION_MAX_NUM_SEQS}" \
       --max-num-batched-tokens \
         "${PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS}" \
+      "${PROJECTION_ASYNC_SCHEDULING_ARGS[@]}" \
       "${TOOL_ARGS[@]}" \
       --tensor-parallel-size "${PAP_TP_SIZE}" \
       --gpu-memory-utilization "${PROJECTION_GPU_MEMORY_UTILIZATION}" \
@@ -2332,14 +2447,33 @@ audit_runtime_cuda_contexts
 
 PAP_GROUPS_SPEC="$(build_pap_groups_spec)"
 PROJECTIONS_SPEC="$(build_projections_spec)"
+KV_EVENT_ENDPOINTS="$(build_kv_event_endpoints)"
+PAP_DYNAMO_SITE_PACKAGES=""
+if [[ "${PAP_ROUTING_POLICY}" == "dynamo" ]]; then
+  [[ -x "${PAP_DYNAMO_PYTHON}" ]] \
+    || die "Dynamo Python is not executable: ${PAP_DYNAMO_PYTHON}"
+  PAP_DYNAMO_SITE_PACKAGES="$(${PAP_DYNAMO_PYTHON} -c \
+    'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
+fi
 
 echo "Starting PAP Gateway on port ${PAP_PROXY_PORT}"
 env \
   "${PYTHON_BIN}" -m vllm.pap.gateway.app \
   --host 127.0.0.1 \
   --port "${PAP_PROXY_PORT}" \
+  --model "${MODEL_PATH}" \
+  --max-model-len "${MAX_MODEL_LEN}" \
+  --hf-overrides "${PAP_HF_OVERRIDES}" \
+  --generation-config vllm \
   --pap-groups "${PAP_GROUPS_SPEC}" \
   --projections "${PROJECTIONS_SPEC}" \
+  --kv-event-endpoints "${KV_EVENT_ENDPOINTS}" \
+  --prefix-block-size "${PAP_BLOCK_SIZE}" \
+  --dynamo-site-packages "${PAP_DYNAMO_SITE_PACKAGES}" \
+  --dynamo-model-name "${PAP_DYNAMO_MODEL_NAME}" \
+  --dynamo-max-num-batched-tokens \
+    "${PAP_PREFILL_MAX_NUM_BATCHED_TOKENS}" \
+  --dynamo-prefill-load-scale "${PAP_DYNAMO_PREFILL_LOAD_SCALE}" \
   --routing-policy "${PAP_ROUTING_POLICY}" \
   > "${RUN_LOG_DIR}/proxy.log" 2>&1 &
 PIDS+=("$!")

@@ -20,6 +20,112 @@ from vllm.pap.kv.session_registry import (
 class _PAPAttentionStepContextMixin:
     """Own reusable per-step metadata and OFFLOAD_EXEC entry planning."""
 
+    _last_attention_step_context: PAPAttentionStepContext | None
+
+    def _successor_attention_step_context(
+        self,
+        *,
+        cache_key: tuple[object, ...],
+        request_ids: tuple[str, ...],
+        decode_seq_lens: tuple[int, ...],
+        scales: tuple[float, ...],
+        default_q_size: int,
+        default_kv_size: int,
+        num_heads: int,
+        num_kv_heads: int,
+        head_dim: int,
+    ) -> PAPAttentionStepContext | None:
+        previous = self._last_attention_step_context
+        if (
+            previous is None
+            or previous.request_ids != request_ids
+            or previous.completed_layers != set(previous.expected_layers)
+            or not previous.kv_ready_published
+            or previous.q_size != int(default_q_size)
+            or previous.kv_size != int(default_kv_size)
+            or previous.num_heads != int(num_heads)
+            or previous.num_kv_heads != int(num_kv_heads)
+            or previous.head_dim != int(head_dim)
+            or not scales
+            or any(float(value) != previous.scale for value in scales)
+        ):
+            return None
+        for entry, topology_id, session_request_id in zip(
+            previous.session_entries,
+            previous.topology_ids,
+            previous.session_request_ids,
+            strict=True,
+        ):
+            if self._session_epochs.get(session_request_id) != entry.session_epoch:
+                return None
+            activation = self._unified_slot_activations.get(session_request_id)
+            if (
+                activation is None
+                or not activation.complete
+                or activation.conflict_latched
+                or activation.canonical_topology_id != topology_id
+            ):
+                return None
+        first_layer = next(iter(previous.expected_layers))
+        prior_seq_lens = tuple(
+            int(state.seq_len) for state in previous.layer_states[first_layer]
+        )
+        if prior_seq_lens != previous.result_seq_lens:
+            return None
+        if any(
+            int(decode_seq_len) > int(prior_seq_len) + 1
+            for decode_seq_len, prior_seq_len in zip(
+                decode_seq_lens,
+                prior_seq_lens,
+                strict=True,
+            )
+        ):
+            return None
+        result_seq_lens = tuple(
+            max(int(prior_seq_len), int(decode_seq_len))
+            for decode_seq_len, prior_seq_len in zip(
+                decode_seq_lens,
+                prior_seq_lens,
+                strict=True,
+            )
+        )
+        commit_new_seq_lens = tuple(
+            int(decode_seq_len) if int(decode_seq_len) > int(prior_seq_len) else None
+            for decode_seq_len, prior_seq_len in zip(
+                decode_seq_lens,
+                prior_seq_lens,
+                strict=True,
+            )
+        )
+        active_indices = tuple(
+            index
+            for index, new_seq_len in enumerate(commit_new_seq_lens)
+            if new_seq_len is not None
+        )
+        return PAPAttentionStepContext(
+            cache_key=cache_key,
+            request_ids=request_ids,
+            decode_seq_lens=decode_seq_lens,
+            session_entries=previous.session_entries,
+            session_request_ids=previous.session_request_ids,
+            prior_seq_lens=prior_seq_lens,
+            result_seq_lens=result_seq_lens,
+            commit_new_seq_lens=commit_new_seq_lens,
+            active_indices=active_indices,
+            active_prior_seq_lens=tuple(
+                prior_seq_lens[index] for index in active_indices
+            ),
+            expected_layers=previous.expected_layers,
+            layer_states=previous.layer_states,
+            topology_ids=previous.topology_ids,
+            q_size=previous.q_size,
+            kv_size=previous.kv_size,
+            num_heads=previous.num_heads,
+            num_kv_heads=previous.num_kv_heads,
+            head_dim=previous.head_dim,
+            scale=previous.scale,
+        )
+
     def get_or_create_attention_step_context(
         self,
         *,
@@ -51,6 +157,28 @@ class _PAPAttentionStepContextMixin:
                 self._attention_step_context_hits += 1
                 self._attention_step_context_cache.move_to_end(cache_key)
                 return cached
+            successor = self._successor_attention_step_context(
+                cache_key=cache_key,
+                request_ids=request_ids,
+                decode_seq_lens=decode_seq_lens,
+                scales=scales,
+                default_q_size=default_q_size,
+                default_kv_size=default_kv_size,
+                num_heads=num_heads,
+                num_kv_heads=num_kv_heads,
+                head_dim=head_dim,
+            )
+            if successor is not None:
+                self._attention_step_context_successor_hits += 1
+                self._attention_step_context_hits += 1
+                self._last_attention_step_context = successor
+                limit = self._decode_slot_plan_cache_limit()
+                if limit > 0:
+                    self._attention_step_context_cache[cache_key] = successor
+                    self._attention_step_context_cache.move_to_end(cache_key)
+                    while len(self._attention_step_context_cache) > limit:
+                        self._attention_step_context_cache.popitem(last=False)
+                return successor
 
         session_entries = tuple(
             self.offload_exec_batch_session_entries(
@@ -233,6 +361,7 @@ class _PAPAttentionStepContextMixin:
                 scale=scale,
             )
             self._attention_step_context_misses += 1
+            self._last_attention_step_context = context
             limit = self._decode_slot_plan_cache_limit()
             if limit > 0:
                 self._attention_step_context_cache[cache_key] = context
@@ -302,6 +431,9 @@ class _PAPAttentionStepContextMixin:
             return {
                 "step_context_hits": self._attention_step_context_hits,
                 "step_context_misses": self._attention_step_context_misses,
+                "step_context_successor_hits": (
+                    self._attention_step_context_successor_hits
+                ),
                 "step_context_entries": len(self._attention_step_context_cache),
                 "step_slot_plan_builds": (self._attention_step_slot_plan_builds),
                 "step_metadata_builds": self._attention_step_metadata_builds,

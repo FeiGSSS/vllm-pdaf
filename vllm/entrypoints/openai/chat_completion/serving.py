@@ -58,6 +58,8 @@ from vllm.inputs import EngineInput, MultiModalPlaceholders
 from vllm.logger import init_logger
 from vllm.logprobs import Logprob
 from vllm.outputs import RequestOutput
+from vllm.pap.integration.chat import prepare_pap_tokenized_chat_input
+from vllm.pap.model.hooks import pap_model_hooks_enabled
 from vllm.parser import ParserManager
 from vllm.parser.abstract_parser import Parser
 from vllm.renderers import ChatParams
@@ -233,6 +235,11 @@ class OpenAIServingChat(GenerateBaseServing):
         # success status before we actually start generating text :).
         if self.engine_client.errored:
             raise self.engine_client.dead_error
+
+        if pap_model_hooks_enabled():
+            pap_input = prepare_pap_tokenized_chat_input(request)
+            if pap_input is not None:
+                return pap_input
 
         return await self.online_renderer.render_chat(request)
 

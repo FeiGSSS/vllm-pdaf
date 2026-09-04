@@ -51,6 +51,7 @@ class PAPConversationRouter:
         decode_capacity_tokens: int = 0,
         request_id: str = "",
         current_pa_loads: Mapping[PAPGroup, Mapping[str, int]] | None = None,
+        prefix_cached_tokens: Mapping[PAPGroup, int] | None = None,
     ) -> PAPGroup:
         """Return the resident PA or balance a new conversation once."""
         with self._lock:
@@ -71,13 +72,23 @@ class PAPConversationRouter:
                         reserved_prefill, reserved_kv = (
                             self._active_reservations_locked()
                         )
-                        incoming_prefill = max(1, int(initial_context_tokens))
-                        candidates: list[tuple[PAPGroup, bool, int, int, int]] = []
+                        candidates: list[tuple[PAPGroup, bool, int, int, int, int]] = []
                         for candidate in self._groups:
                             snapshot = current_pa_loads.get(candidate)
                             if snapshot is None:
                                 continue
                             block_size = max(1, int(snapshot["kv_block_size"]))
+                            cached_tokens = min(
+                                max(
+                                    0,
+                                    int((prefix_cached_tokens or {}).get(candidate, 0)),
+                                ),
+                                int(initial_context_tokens),
+                            )
+                            incoming_prefill = max(
+                                1,
+                                int(initial_context_tokens) - cached_tokens,
+                            )
                             incoming_kv = (
                                 (
                                     incoming_prefill
@@ -108,10 +119,18 @@ class PAPConversationRouter:
                                     projected_kv <= capacity_limit,
                                     compute_score,
                                     projected_kv,
+                                    incoming_prefill,
                                     incoming_kv,
                                 )
                             )
-                        group, _fits, _compute, _projected, incoming_kv = min(
+                        (
+                            group,
+                            _fits,
+                            _compute,
+                            _projected,
+                            incoming_prefill,
+                            incoming_kv,
+                        ) = min(
                             candidates,
                             key=lambda item: (
                                 not item[1],
@@ -245,6 +264,7 @@ def select_instances(
     decode_capacity_tokens: int = 0,
     request_id: str = "",
     current_pa_loads: Mapping[PAPGroup, Mapping[str, int]] | None = None,
+    prefix_cached_tokens: Mapping[PAPGroup, int] | None = None,
 ) -> tuple[PAPGroup, ProjectionInstance]:
     """Select one fixed PA owner and Projection endpoint."""
     group_index = request_number % len(groups)
@@ -275,6 +295,7 @@ def select_instances(
             decode_capacity_tokens=decode_capacity_tokens,
             request_id=request_id,
             current_pa_loads=current_pa_loads,
+            prefix_cached_tokens=prefix_cached_tokens,
         )
         group_index = groups.index(group)
         groups_per_projection = (len(groups) + len(projections) - 1) // len(projections)

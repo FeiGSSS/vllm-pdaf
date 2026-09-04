@@ -267,6 +267,7 @@ def prepare_projection_step_graph(
             )
         )
     route_tuple = tuple(routes)
+    routes[0].transport.prepare_projection_pa_trace(layer_count)
     context = PAPProjectionStepGraphContext(
         layer_count=layer_count,
         routed=_update_routed_graph_buffers(
@@ -383,6 +384,14 @@ class PAPProjectionStepGraphManager:
 
 def shutdown_projection_step_graph() -> None:
     """Release process-wide layer registrations and routed scratch buffers."""
+    exported_transports: set[int] = set()
+    for buffers in _ROUTED_GRAPH_BUFFERS.values():
+        transport = buffers.controller
+        if id(transport) not in exported_transports:
+            export_trace = getattr(transport, "export_projection_pa_trace", None)
+            if export_trace is not None:
+                export_trace()
+            exported_transports.add(id(transport))
     with _ROUTE_INDEX_LOCK:
         _PROJECTION_ADAPTERS.clear()
         _ROUTED_GRAPH_BUFFERS.clear()

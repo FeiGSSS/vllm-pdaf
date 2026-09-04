@@ -11,6 +11,7 @@ from threading import Lock
 from typing import Any
 
 from vllm.pap.gateway.clients import PAPServiceClient, get_prefill_kv_load
+from vllm.pap.gateway.prefix_cache import PromptHashes
 from vllm.pap.gateway.topology import PAPGroup
 
 _BOOTSTRAP_TIMEOUT_S = 5.0
@@ -27,6 +28,8 @@ class _RequestLoad:
     group: PAPGroup
     prefill_tokens: int
     decode_capacity_tokens: int
+    prompt_hashes: PromptHashes = ()
+    cached_tokens: int = 0
     prefix_tokens: int = 0
     prefill_complete: bool = False
 
@@ -70,25 +73,39 @@ class PAPLoadTracker:
         *,
         prefill_tokens: int,
         decode_capacity_tokens: int,
+        prompt_hashes: PromptHashes = (),
+        cached_tokens: int = 0,
     ) -> None:
         """Charge a routed request before any downstream await point."""
         load = _RequestLoad(
             group=group,
             prefill_tokens=max(1, int(prefill_tokens)),
             decode_capacity_tokens=max(0, int(decode_capacity_tokens)),
+            prompt_hashes=prompt_hashes,
+            cached_tokens=max(0, int(cached_tokens)),
         )
         with self._lock:
             if request_id in self._requests:
                 raise ValueError(f"duplicate PAP request load: {request_id}")
             self._requests[request_id] = load
 
-    def mark_prefill_completed(self, request_id: str, prefix_tokens: int) -> None:
+    def mark_prefill_completed(
+        self,
+        request_id: str,
+        prefix_tokens: int,
+        *,
+        prompt_hashes: PromptHashes = (),
+        cached_tokens: int = 0,
+    ) -> None:
         """Replace estimated Prefill work with the exact Decode prefix length."""
         with self._lock:
             load = self._requests.get(request_id)
             if load is None:
                 return
             load.prefix_tokens = max(1, int(prefix_tokens))
+            if prompt_hashes:
+                load.prompt_hashes = prompt_hashes
+            load.cached_tokens = max(0, int(cached_tokens))
             load.prefill_complete = True
 
     def finish_request(self, request_id: str) -> None:
@@ -118,7 +135,30 @@ class PAPLoadTracker:
             decode_reservations = sum(
                 load.decode_capacity_tokens for load in (*prefill, *decode)
             )
-            resident_prefix = sum(load.prefix_tokens for load in decode)
+            resident_hashes: set[Any] = set()
+            unhashed_resident = 0
+            for load in requests:
+                if load.group != group:
+                    continue
+                if load.prompt_hashes:
+                    if load.prefill_complete:
+                        visible_hashes = load.prompt_hashes
+                        unhashed_resident += max(
+                            0,
+                            load.prefix_tokens
+                            - len(load.prompt_hashes) * capacity.kv_block_size,
+                        )
+                    else:
+                        cached_blocks = load.cached_tokens // capacity.kv_block_size
+                        visible_hashes = load.prompt_hashes[:cached_blocks]
+                    resident_hashes.update(visible_hashes)
+                elif load.prefill_complete:
+                    unhashed_resident += load.prefix_tokens
+                else:
+                    unhashed_resident += load.cached_tokens
+            resident_prefix = (
+                len(resident_hashes) * capacity.kv_block_size + unhashed_resident
+            )
             projected_kv = resident_prefix + outstanding_prefill + decode_reservations
             block_size = capacity.kv_block_size
             non_evictable_blocks = (resident_prefix + block_size - 1) // block_size
