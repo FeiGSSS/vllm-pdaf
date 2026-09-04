@@ -245,8 +245,6 @@ benchmarks/**/*.json
 benchmarks/pap/experiments/e2e/_runs/
 benchmarks/pap/experiments/microbench/_runs/
 benchmarks/pap/experiments/**/raw/
-benchmarks/pap/experiments/legacy/capacity/
-benchmarks/pap/experiments/legacy/runs/
 
 # Linting
 actionlint

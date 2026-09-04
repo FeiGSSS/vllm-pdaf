@@ -4,8 +4,7 @@ Experiment records are separated by unit of work:
 
 - `e2e/`: complete serving runs measured through the external client;
 - `microbench/`: isolated kernels, communication primitives, and component
-  probes;
-- `legacy/`: read-only evidence created before this taxonomy.
+  probes.
 
 New experiments must not be created directly under this directory. Each
 experiment has a dated immutable ID because it records an event. Workload

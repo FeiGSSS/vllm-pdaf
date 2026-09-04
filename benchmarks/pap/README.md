@@ -117,7 +117,6 @@ their experiment boundary is reviewed.
 - `experiments/e2e/`: service-level experiments and AIPerf results.
 - `experiments/microbench/`: isolated kernel and component experiments.
 - `experiments/*/_runs/`: ignored raw logs, traces, and incomplete attempts.
-- `experiments/legacy/`: read-only evidence predating the taxonomy.
 
 Historical reports and manifests are evidence, not current launch
 instructions. A report's source commit is the authority for reproducing its
