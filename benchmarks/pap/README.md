@@ -31,7 +31,7 @@ The fixed protocol and first full comparison are recorded in
 | Purpose | Entry point |
 | --- | --- |
 | One PAP E2E run | `scripts/run_pap_workload.sh` |
-| AIPerf client wrapper | `aiperf/run_profile.sh` |
+| AIPerf client wrapper | `scripts/run_aiperf_profile.sh` |
 | Dynamo DP8/6P2D/4P4D baseline | `scripts/run_dynamo_workload.sh` |
 
 Formal workload settings belong to each E2E experiment's `experiment.env`.
@@ -67,6 +67,10 @@ configuration explicitly.
 
 ## Runtime setup
 
+- `scripts/aiperf-requirements.txt` pins the PyPI AIPerf client installed in
+  `.venv-aiperf`.
+- `scripts/run_aiperf_profile.sh` invokes one client profile through the local
+  tokenizer and DCGM compatibility entry.
 - `scripts/configure_nvshmem.sh` validates the current NVSHMEM runtime.
 - `scripts/build_nvshmem_device_bridge.sh` builds the device-side bridge.
 - `scripts/configure_same_node_nixl.sh` validates the NIXL/UCX runtime used
