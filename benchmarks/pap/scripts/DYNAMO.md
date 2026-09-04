@@ -49,11 +49,14 @@ vLLM, and etcd all run directly on the host; the runner removes the etcd data
 when its run directory is removed.
 
 ```bash
-DYNAMO_ARCHITECTURE=dp8 \
-  bash benchmarks/pap/scripts/run_dynamo_workload.sh
-DYNAMO_ARCHITECTURE=6p2d \
-  bash benchmarks/pap/scripts/run_dynamo_workload.sh
+bash benchmarks/pap/experiments/e2e/\
+PAP-20260903-AGENTIC-CODE-QPS-MATRIX/run.sh
 ```
+
+Formal runs invoke the shared Dynamo runner through an experiment-local
+`run.sh` and `experiment.env`. The shared runner has no default dataset, QPS,
+concurrency, warmup, or duration; a non-smoke direct invocation fails closed
+unless those settings are supplied explicitly.
 
 Both architectures use Qwen3-8B FP16, TP1, audited piecewise CUDA Graphs,
 131K static YaRN, block size 16, and `gpu_memory_utilization=0.90`. DP8 uses

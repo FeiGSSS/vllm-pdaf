@@ -23,3 +23,5 @@ sha256sum --check SHA256SUMS
 
 Generation reports and configuration belong beside their source dataset as
 provenance. Runtime logs and benchmark results never belong here.
+
+Deterministic dataset construction and filtering utilities live in `tools/`.

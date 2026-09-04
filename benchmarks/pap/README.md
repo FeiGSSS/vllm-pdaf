@@ -31,16 +31,12 @@ The fixed protocol and first full comparison are recorded in
 | Purpose | Entry point |
 | --- | --- |
 | One PAP E2E run | `scripts/run_pap_workload.sh` |
-| Canonical fixed-duration matrix | `scripts/run_agentic_code_steady_matrix.sh` |
-| PAP/Dynamo capacity matrix | `aiperf/run_capacity_matrix.sh` |
 | AIPerf client wrapper | `aiperf/run_profile.sh` |
-| One-run validation and summary | `aiperf/summarize_capacity_run.py` |
-| Matrix aggregation | `aiperf/summarize_capacity_matrix.py` |
 | Dynamo DP8/6P2D/4P4D baseline | `scripts/run_dynamo_workload.sh` |
 
-The canonical matrix uses the project-local Agentic Coding baseline with no
-turn delay: all 2,092 sessions, request rate 2 turn/s, concurrency 1,024, a
-60-second warmup, a 3,600-second measured window, and zero drain grace.
+Formal workload settings belong to each E2E experiment's `experiment.env`.
+Shared runners intentionally provide no canonical request rate, concurrency,
+or duration.
 
 A targeted PAP run uses environment configuration:
 
@@ -68,13 +64,6 @@ both Prefill and Projection by default:
 Set `PAP_HF_OVERRIDES=` and an explicit `MAX_MODEL_LEN` to run a native-context
 control. Frozen comparison scripts may continue to pin their historical 32K
 configuration explicitly.
-
-Run the current three-architecture matrix with:
-
-```bash
-PAP_CAPACITY_ARCHITECTURES=dynamo_dp8,dynamo_6p2d,pap_7pa1p \
-  bash benchmarks/pap/aiperf/run_capacity_matrix.sh
-```
 
 ## Runtime setup
 
