@@ -231,7 +231,8 @@ The compact tracked records are in
 ## Reproduction
 
 The exact upstream commits are in `official_commits.env`; the source changes
-are in `../../../patches/pat-sm89-pap.patch`. No third-party binary is vendored.
+are in `../../../scripts/pat-sm89-pap.patch`. No third-party binary is
+vendored.
 
 Build and install the pinned SM89 PAT extension into the project environment:
 

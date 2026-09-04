@@ -83,6 +83,7 @@ PAP_CAPACITY_ARCHITECTURES=dynamo_dp8,dynamo_6p2d,pap_7pa1p \
 - `scripts/configure_same_node_nixl.sh` validates the NIXL/UCX runtime used
   by Prefill KV lifecycle bookkeeping and the Dynamo 6P2D baseline.
 - `scripts/setup_same_node_nixl.sh` builds that local NIXL/UCX environment.
+- `scripts/DYNAMO.md` documents the isolated Dynamo baseline environment.
 
 NIXL is not a PAP Attention--Projection transport and is not used for
 PA-to-PA request relocation.
@@ -117,8 +118,6 @@ their experiment boundary is reviewed.
 - `experiments/microbench/`: isolated kernel and component experiments.
 - `experiments/*/_runs/`: ignored raw logs, traces, and incomplete attempts.
 - `experiments/legacy/`: read-only evidence predating the taxonomy.
-- `profiles/` and `schemas/`: normalized tracked-run metadata.
-- `validate_registry.py`: registry consistency checks.
 
 Historical reports and manifests are evidence, not current launch
 instructions. A report's source commit is the authority for reproducing its

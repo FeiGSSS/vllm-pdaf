@@ -9,7 +9,7 @@ CUTLASS_ROOT="${CUTLASS_ROOT:-$(
   "${PYTHON_BIN}" -c \
     'import sysconfig; print(sysconfig.get_path("purelib") + "/flashinfer/data/cutlass")'
 )}"
-PAT_PATCH="${PROJECT_ROOT}/benchmarks/pap/patches/pat-sm89-pap.patch"
+PAT_PATCH="${SCRIPT_DIR}/pat-sm89-pap.patch"
 PAT_COMMIT=b61e589cc8775930931157ff3bb107ba28bafd77
 CUDA_ARCH="${PAP_PAT_CUDA_ARCH:-8.9}"
 MAX_JOBS="${MAX_JOBS:-32}"

@@ -238,6 +238,10 @@ hip_compat.h
 benchmarks/**/*.json
 !benchmarks/pap/porting/v026/token_parity_*.json
 !benchmarks/pap/datasets/**/*.json
+!benchmarks/pap/schemas/*.json
+!benchmarks/pap/experiments/e2e/PAP-20260827-PREFIX-KERNELS-E2E/*.json
+!benchmarks/pap/experiments/e2e/PAP-20260827-PREFIX-KERNELS-E2E/results/*.json
+!benchmarks/pap/experiments/microbench/PAP-20260827-PREFIX-KERNELS/microbench/*.json
 benchmarks/pap/experiments/e2e/_runs/
 benchmarks/pap/experiments/microbench/_runs/
 benchmarks/pap/experiments/**/raw/

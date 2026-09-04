@@ -12,7 +12,7 @@ UV_CACHE_DIR=/tmp/uv-cache-dynamo \
   uv venv --python 3.12 --seed .venv-dynamo
 UV_CACHE_DIR=/tmp/uv-cache-dynamo \
   uv pip install --python .venv-dynamo/bin/python \
-    -r benchmarks/pap/dynamo/requirements.txt
+    -r benchmarks/pap/scripts/dynamo-requirements.txt
 
 curl -L --fail -o /tmp/etcd-v3.6.1-linux-amd64.tar.gz \
   https://github.com/etcd-io/etcd/releases/download/v3.6.1/etcd-v3.6.1-linux-amd64.tar.gz

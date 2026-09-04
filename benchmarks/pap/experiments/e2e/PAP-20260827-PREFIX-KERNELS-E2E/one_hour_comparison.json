@@ -1,0 +1,70 @@
+{
+  "all_common_requests": {
+    "baseline_mean": {
+      "inter_token_latency": 101.27475035965944,
+      "output_token_throughput_per_user": 10.089752867061717,
+      "request_latency": 291713.2442673001,
+      "time_to_first_token": 195266.87083773082
+    },
+    "candidate_mean": {
+      "inter_token_latency": 78.03027529384491,
+      "output_token_throughput_per_user": 13.05574830166418,
+      "request_latency": 229990.55799008973,
+      "time_to_first_token": 155790.39935110603
+    },
+    "change_percent": {
+      "inter_token_latency": -22.951895692920367,
+      "output_token_throughput_per_user": 29.39611577886152,
+      "request_latency": -21.15868493809393,
+      "time_to_first_token": -20.216676447603977
+    },
+    "count": 613
+  },
+  "baseline_completed": 615,
+  "candidate_completed": 713,
+  "common_input_length_mismatches": 407,
+  "common_output_length_mismatches": 0,
+  "common_request_keys": 613,
+  "strict_exact_requests": {
+    "baseline_mean": {
+      "inter_token_latency": 101.23067482639436,
+      "output_token_throughput_per_user": 10.327164102903174,
+      "request_latency": 218761.19713834953,
+      "time_to_first_token": 116786.55997740291
+    },
+    "candidate_mean": {
+      "inter_token_latency": 76.72001650077553,
+      "output_token_throughput_per_user": 13.48040509962939,
+      "request_latency": 186811.95449378152,
+      "time_to_first_token": 109750.95213497087
+    },
+    "change_percent": {
+      "inter_token_latency": -24.212678980608803,
+      "output_token_throughput_per_user": 30.5334646114491,
+      "request_latency": -14.604620500573773,
+      "time_to_first_token": -6.024330063145422
+    },
+    "count": 206
+  },
+  "strict_exact_turn_zero": {
+    "baseline_mean": {
+      "inter_token_latency": 100.94584494033202,
+      "output_token_throughput_per_user": 10.508192848928298,
+      "request_latency": 203498.9734774144,
+      "time_to_first_token": 101554.89475084684
+    },
+    "candidate_mean": {
+      "inter_token_latency": 76.20813941092693,
+      "output_token_throughput_per_user": 13.642376923437059,
+      "request_latency": 175825.70870236936,
+      "time_to_first_token": 99722.66778122522
+    },
+    "change_percent": {
+      "inter_token_latency": -24.50591754819357,
+      "output_token_throughput_per_user": 29.826099687810803,
+      "request_latency": -13.598724505662629,
+      "time_to_first_token": -1.804173963369049
+    },
+    "count": 111
+  }
+}

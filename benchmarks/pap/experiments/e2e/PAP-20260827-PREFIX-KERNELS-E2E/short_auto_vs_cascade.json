@@ -1,0 +1,28 @@
+{
+  "all_common_requests": {
+    "baseline_mean": {
+      "inter_token_latency": 94.30057301966698,
+      "output_token_throughput_per_user": 10.77238323927707,
+      "request_latency": 86090.7232713,
+      "time_to_first_token": 33984.5843481
+    },
+    "candidate_mean": {
+      "inter_token_latency": 88.27351381909816,
+      "output_token_throughput_per_user": 11.586194716045448,
+      "request_latency": 82228.42859363332,
+      "time_to_first_token": 33965.743555266665
+    },
+    "change_percent": {
+      "inter_token_latency": -6.391328289502384,
+      "output_token_throughput_per_user": 7.554609399720835,
+      "request_latency": -4.486307619341668,
+      "time_to_first_token": -0.05543923280140195
+    },
+    "count": 30
+  },
+  "baseline_completed": 32,
+  "candidate_completed": 35,
+  "common_input_length_mismatches": 0,
+  "common_output_length_mismatches": 0,
+  "common_request_keys": 30
+}

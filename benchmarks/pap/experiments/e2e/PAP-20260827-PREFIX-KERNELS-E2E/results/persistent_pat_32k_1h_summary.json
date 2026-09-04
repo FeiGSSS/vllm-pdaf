@@ -1,0 +1,63 @@
+{
+  "experiment": "persistent-pat-32k-1h",
+  "status": "valid",
+  "workload": {
+    "topology": "7PA1P",
+    "model": "Qwen3-8B FP16",
+    "max_model_len": 131072,
+    "prefill_max_num_batched_tokens": 32768,
+    "request_rate": 0.3,
+    "arrival_pattern": "poisson",
+    "concurrency": 60,
+    "warmup_seconds": 0,
+    "duration_seconds": 3600,
+    "grace_seconds": 0,
+    "dataset_sha256": "b6670fac38fef5f43c5d93cd4e8946b1de7a224c80a57399a9e1e04aa6fe425b"
+  },
+  "result": {
+    "completed_requests": 651,
+    "cancelled_at_boundary": 59,
+    "request_errors": 0,
+    "benchmark_duration_seconds": 3588.817791334,
+    "request_throughput": 0.181396782408955,
+    "output_token_throughput": 176.87690958644245,
+    "mean_ttft_ms": 196703.0128032381,
+    "p50_ttft_ms": 197790.827619,
+    "p99_ttft_ms": 524343.6216109999,
+    "mean_itl_ms": 68.4870960259672,
+    "p50_itl_ms": 69.10347928868778,
+    "p99_itl_ms": 77.84329149952677,
+    "mean_request_latency_ms": 263543.89809298614
+  },
+  "attention_selector": {
+    "incremental_metadata_reuses": 319784,
+    "prefix_rechecks": 1195,
+    "pat_rebuilds": 819,
+    "triton_selections": 376,
+    "decode_token_mismatches": 0,
+    "dispatch_failures": 0,
+    "pending_kv": 0,
+    "max_graph_entries_by_pa": [32, 15, 29, 22, 25, 27, 28]
+  },
+  "audits": {
+    "strict_correctness": "passed",
+    "strict_correctness_matches": 0,
+    "gateway_drain": "passed",
+    "session_drain": "passed",
+    "whole_step_cuda_graph": "passed",
+    "decode_token_join": "passed",
+    "routing": "passed"
+  },
+  "change_vs_historical_triton_pap_32k_percent": {
+    "request_throughput": 17.79,
+    "output_token_throughput": 20.88,
+    "mean_ttft": -18.11,
+    "mean_itl": -24.85,
+    "mean_request_latency": -19.55
+  },
+  "source": {
+    "raw_run_root": "benchmarks/pap/experiments/_staging/steady/20260827_pap_pat_persistent_3600s_nowarm_q03_c60_prefill32k/pap_7pa1p",
+    "profile_sha256": "cb3ed7e9e7a9a2908ff920f8c6748da20bb3edc63ecda56d1e7b3cfeb3befbe6",
+    "attention_stats_sha256": "f95e71912173b821e46b23aada9bb7be2229dee16a1cf65d356c74e211b00d6f"
+  }
+}

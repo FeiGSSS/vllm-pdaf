@@ -1,0 +1,61 @@
+{
+  "mode": "pap",
+  "client": "aiperf",
+  "topology": "7pa1p",
+  "pa_count": 7,
+  "projection_count": 1,
+  "routing_policy": "conversation_affinity",
+  "load_accounting": "gateway_request_lifecycle",
+  "run_id": "shared_prefix_auto_1h_q03_c60",
+  "result_root": "/tmp/vllm-pap-attention-bandwidth/benchmarks/pap/experiments/PAP-20260827-PREFIX-KERNELS/run_auto_1h_q03_c60",
+  "input_lens": [
+    "8192"
+  ],
+  "output_lens": [
+    "32"
+  ],
+  "expected_requests": 16049,
+  "model_path": "/data/ssd1/llm-models/Qwen3-8B",
+  "hf_overrides": {
+    "rope_parameters": {
+      "rope_type": "yarn",
+      "factor": 4.0,
+      "original_max_position_embeddings": 32768
+    }
+  },
+  "max_model_len": "131072",
+  "max_num_seqs": "64",
+  "offload_exec_transport": "nvshmem_graph",
+  "nvshmem_buffer_bytes": 4194304,
+  "nvshmem_control_bytes": 32768,
+  "offload_kv_transport": "cuda_ipc",
+  "batched_route_copy": true,
+  "unified_md_fast_key": true,
+  "projection_async_scheduling": true,
+  "projection_scheduler_queue_depth": 2,
+  "projection_runner_microbatch_pipeline": false,
+  "prefill_kv_async": true,
+  "prefill_ipc_profile": false,
+  "kv_handoff_mode": "sealed_manifest",
+  "decode_slot_plan_cache_limit": 256,
+  "attention_dispatch_mode": "nvshmem_graph",
+  "prompt_tokens_details": true,
+  "aiperf_turns": 10,
+  "aiperf_variable_turns": true,
+  "aiperf_sessions": 2092,
+  "aiperf_append_tokens": 512,
+  "aiperf_concurrency_points": [
+    60
+  ],
+  "aiperf_custom_dataset_type": "mooncake-trace",
+  "aiperf_num_profile_runs": 1,
+  "aiperf_timing_mode": "request_rate",
+  "aiperf_request_rate": 0.3,
+  "dtype": "float16",
+  "git_commit": "c4427fa14aec6da193e303b2409a75b23cd59ca7",
+  "git_commit_short": "c4427fa14a",
+  "git_tracked_worktree_dirty": true,
+  "proxy_port": "9460",
+  "config_dir": "project-owned PAP runner",
+  "started_at": "2026-08-26T22:04:43+08:00"
+}

@@ -1,0 +1,70 @@
+{
+  "experiment": "persistent-pat-2k-1h",
+  "status": "valid",
+  "workload": {
+    "topology": "7PA1P",
+    "model": "Qwen3-8B FP16",
+    "max_model_len": 131072,
+    "prefill_max_num_batched_tokens": 2048,
+    "request_rate": 0.3,
+    "arrival_pattern": "poisson",
+    "concurrency": 60,
+    "warmup_seconds": 0,
+    "duration_seconds": 3600,
+    "grace_seconds": 0,
+    "dataset_sha256": "b6670fac38fef5f43c5d93cd4e8946b1de7a224c80a57399a9e1e04aa6fe425b"
+  },
+  "result": {
+    "completed_requests": 740,
+    "cancelled_at_boundary": 60,
+    "request_errors": 0,
+    "benchmark_duration_seconds": 3586.7456142290002,
+    "request_throughput": 0.20631516131624766,
+    "output_token_throughput": 198.63967970673914,
+    "mean_ttft_ms": 152728.92126854457,
+    "p50_ttft_ms": 154936.57303549998,
+    "p99_ttft_ms": 387820.71864961,
+    "mean_itl_ms": 77.02662445514225,
+    "p50_itl_ms": 76.75852252218374,
+    "p99_itl_ms": 92.11377967743066,
+    "mean_request_latency_ms": 227113.99873078376
+  },
+  "attention_selector": {
+    "incremental_metadata_reuses": 310573,
+    "prefix_rechecks": 1418,
+    "pat_rebuilds": 1090,
+    "triton_selections": 328,
+    "decode_token_mismatches": 0,
+    "dispatch_failures": 0,
+    "pending_kv": 0,
+    "max_graph_entries_by_pa": [32, 28, 25, 32, 32, 32, 32]
+  },
+  "audits": {
+    "strict_correctness": "passed",
+    "strict_correctness_matches": 0,
+    "gateway_drain": "passed",
+    "session_drain": "passed",
+    "whole_step_cuda_graph": "passed",
+    "decode_token_join": "passed",
+    "routing": "passed"
+  },
+  "change_vs_historical_triton_pap_2k_percent": {
+    "request_throughput": 20.55,
+    "output_token_throughput": 22.65,
+    "mean_ttft": -21.88,
+    "mean_itl": -23.92,
+    "mean_request_latency": -22.23
+  },
+  "change_vs_superseded_hybrid_pat_2k_percent": {
+    "request_throughput": 3.87,
+    "output_token_throughput": 5.05,
+    "mean_ttft": -8.59,
+    "mean_itl": -0.75,
+    "mean_request_latency": -5.90
+  },
+  "source": {
+    "raw_run_root": "benchmarks/pap/experiments/_staging/steady/20260827_pap_pat_persistent_3600s_nowarm_q03_c60_prefill2k/pap_7pa1p",
+    "profile_sha256": "1f270452808a6ab2e2b45cc6498b56b6124967f9886bde17e3befa67a56b6073",
+    "attention_stats_sha256": "89e467db681a2db0ae466efdf918e7bf7054c969199b8a796bee8547139d33ca"
+  }
+}
