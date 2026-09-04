@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-ROOT_DIR="${PAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+ROOT_DIR="${PAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)}"
 EXPERIMENT_DIR="${PAP_QPS_SCAN_EXPERIMENT_DIR:?set by the experiment run.sh}"
 EXPERIMENT_CONFIG="${PAP_QPS_SCAN_EXPERIMENT_CONFIG:?set by the experiment run.sh}"
 MATRIX_ROOT="${PAP_QPS_SCAN_RUN_ROOT:-${EXPERIMENT_DIR}/results}"

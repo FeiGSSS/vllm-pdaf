@@ -22,8 +22,8 @@ bash benchmarks/pap/experiments/e2e/PAP-20260903-AGENTIC-CODE-QPS-MATRIX/run.sh
 ```
 
 `experiment.env` is the requested experiment configuration and is sourced only
-by this directory's `run.sh`. The shared matrix driver contains execution logic,
-not this experiment's workload settings.
+by this directory's `run.sh`. The colocated `driver.sh` contains this matrix's
+orchestration logic.
 
 `results/matrix.env` records the effective configuration path and checksum,
 dataset ID and checksum, and AIPerf runner checksum. Each attempt additionally

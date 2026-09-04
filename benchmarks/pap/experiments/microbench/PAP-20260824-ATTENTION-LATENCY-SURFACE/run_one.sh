@@ -3,9 +3,10 @@ set -euo pipefail
 
 # Production 12-SM PAP Attention scaling and GPU-counter probe.
 
-ROOT_DIR="${PAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+ROOT_DIR="${PAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)}"
+EXPERIMENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
-PROBE="${ROOT_DIR}/benchmarks/pap/microbench/attention_scaling.py"
+PROBE="${EXPERIMENT_DIR}/probe.py"
 METRICS="${ROOT_DIR}/benchmarks/pap/tooling/component_gpu_metrics.py"
 MODEL_CONFIG="${MODEL_CONFIG:-/data/ssd1/llm-models/Qwen3-8B/config.json}"
 GPU_INDEX="${PAP_ATTENTION_SCALING_GPU:-6}"

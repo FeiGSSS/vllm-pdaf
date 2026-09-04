@@ -83,18 +83,13 @@ PA-to-PA request relocation.
 
 ## Active diagnostics
 
-- `microbench/nvshmem_gpu_graph.cu`: NVSHMEM Graph protocol.
-- `microbench/attention_scaling.py`: production paged-decode Attention.
+- `experiments/microbench/PAP-20260824-ATTENTION-LATENCY-SURFACE/probe.py`:
+  production paged-decode Attention probe.
 - `tooling/attention_latency_table.py`: exports measured Attention matrices;
   it deliberately performs no latency fitting.
-- `scripts/run_attention_scaling_parallel.sh`: shards the expanded measured
-  Attention matrix across identical 12-SM GPU partitions and merges it
-  fail-closed.
-- `microbench/projection_scaling.py`: Projection-side decode kernels.
-- `microbench/prefill_saturation.py`: Prefill saturation.
-- `scripts/run_mps_admission_latency.sh` and
-  `run_mps_real_prefill_admission.sh`: static-MPS admission controls retained
-  for `PAP-20260822-MPS-ADMISSION-MICRO`.
+- `experiments/microbench/PAP-20260824-ATTENTION-LATENCY-SURFACE/run.sh`:
+  shards the measured Attention matrix across identical 12-SM GPU partitions
+  and merges it fail-closed.
 - `tooling/validate_deferred_trace.py`: current deferred-trace audit.
 - `tooling/component_gpu_metrics.py`: Nsight Systems component metrics.
 - `tooling/merge_attention_scaling.py`: validates and merges all measured

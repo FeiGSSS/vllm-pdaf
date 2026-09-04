@@ -3,9 +3,10 @@ set -euo pipefail
 
 # Run a measured Attention workload/config matrix across independent L20 shards.
 
-ROOT_DIR="${PAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+ROOT_DIR="${PAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
-SINGLE_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_attention_scaling.sh"
+EXPERIMENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SINGLE_RUNNER="${EXPERIMENT_DIR}/run_one.sh"
 MERGER="${ROOT_DIR}/benchmarks/pap/tooling/merge_attention_scaling.py"
 TABLE_EXPORTER="${ROOT_DIR}/benchmarks/pap/tooling/attention_latency_table.py"
 MODEL_CONFIG="${MODEL_CONFIG:-/data/ssd1/llm-models/Qwen3-8B/config.json}"
@@ -15,7 +16,7 @@ KERNEL_SET="${PAP_ATTENTION_SCALING_KERNEL_SET:-practical}"
 RUN_NSYS="${PAP_ATTENTION_SCALING_RUN_NSYS:-0}"
 EXPERIMENT_CONFIG="${PAP_ATTENTION_SCALING_EXPERIMENT_CONFIG:-}"
 VALIDATE_ONLY="${PAP_ATTENTION_SCALING_VALIDATE_ONLY:-0}"
-OUTPUT_ROOT="${PAP_ATTENTION_SCALING_OUTPUT_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/microbench/_runs/$(date +%Y%m%d_%H%M%S)_attention_scaling_expanded}"
+OUTPUT_ROOT="${PAP_ATTENTION_SCALING_OUTPUT_ROOT:-${EXPERIMENT_DIR}/runs/$(date +%Y%m%d_%H%M%S)}"
 
 if [[ -n "${EXPERIMENT_CONFIG}" && ! -f "${EXPERIMENT_CONFIG}" ]]; then
   echo "ERROR: experiment config is missing: ${EXPERIMENT_CONFIG}" >&2
