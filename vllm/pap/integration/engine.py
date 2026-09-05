@@ -11,6 +11,8 @@ from typing import Any
 from vllm.pap.integration.request import PAPRequestMetadata
 from vllm.pap.kv import lease as pap_lease
 
+_DECODE_ALLOCATION_GRANULARITY_TOKENS = 256
+
 
 @dataclass(frozen=True, slots=True)
 class _AppliedCommit:
@@ -34,6 +36,8 @@ class PAPEngineControl:
             return self._release_lease(payload)
         if operation == "kv_load_snapshot":
             return PAPEngineAdapter.kv_load_snapshot(self._scheduler)
+        if operation == "decode_allocate":
+            return self._allocate_decode(payload)
         if operation in {"projection_quiesce", "request_quiesce"}:
             request_ids = tuple(str(item) for item in payload["request_ids"])
             active = [
@@ -46,6 +50,78 @@ class PAPEngineControl:
                 "active_request_ids": active,
             }
         raise ValueError(f"unknown PAP control operation: {operation!r}")
+
+    def _allocate_decode(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Extend allocator-owned storage, never the computed-token watermark."""
+        from vllm.pap.kv_connector import PAPPrefillConnector
+        from vllm.v1.request import RequestStatus
+
+        scheduler = self._scheduler
+        connector = scheduler.connector
+        lease_id = str(payload["lease_id"])
+        registry = pap_lease.get_global_kv_lease_registry()
+        lease = registry.active_entry(lease_id)
+        if lease is None or not isinstance(connector, PAPPrefillConnector):
+            raise ValueError("unknown or released PAP allocation lease")
+        request = scheduler.requests.get(lease.request_id)
+        metadata = connector._request_metadata.get(lease.request_id)
+        if (
+            request is None
+            or metadata is None
+            or metadata.prefill_kv_handle != str(payload["session_handle"])
+            or connector._generations[lease.request_id] != int(payload["generation"])
+        ):
+            raise ValueError("stale PAP allocation generation or session")
+        if request.status not in (
+            RequestStatus.FINISHED_STOPPED,
+            RequestStatus.FINISHED_LENGTH_CAPPED,
+        ):
+            raise ValueError("Decode allocation requires completed non-aborted Prefill")
+        required = int(payload["required_tokens"])
+        reserve_tokens = int(
+            payload.get("reserve_tokens", _DECODE_ALLOCATION_GRANULARITY_TOKENS)
+        )
+        if not 0 <= reserve_tokens <= 4096:
+            raise ValueError("Decode allocation reserve must be in [0, 4096]")
+        limit = scheduler.max_model_len
+        if metadata.decode_capacity_tokens is not None:
+            limit = min(
+                limit, request.num_prompt_tokens + metadata.decode_capacity_tokens
+            )
+        if not request.num_prompt_tokens <= required <= limit:
+            raise ValueError("Decode allocation exceeds request context limit")
+        manager = scheduler.kv_cache_manager
+        groups = manager.get_block_ids(request.request_id)
+        if len(groups) != 1:
+            raise ValueError("PAP Decode allocation requires one KV group")
+        block_size = int(scheduler.block_size)
+        capacity = len(groups[0]) * block_size
+        previous_blocks = len(groups[0])
+        target = min(limit, max(required, capacity + reserve_tokens))
+        if target > capacity:
+            blocks = manager.allocate_slots(
+                request,
+                target - request.num_computed_tokens,
+                delay_cache_blocks=True,
+            )
+            if blocks is None:
+                scheduler.pap_scheduler.record_decode_allocation(blocks=0, failed=True)
+                return {"allocated": False, "reason": "insufficient_kv_capacity"}
+            groups = manager.get_block_ids(request.request_id)
+        owned = tuple(groups[0])
+        registry.extend_blocks(request.request_id, owned)
+        scheduler.pap_scheduler.record_decode_allocation(
+            blocks=len(owned) - previous_blocks,
+            failed=False,
+        )
+        return {
+            "allocated": True,
+            "lease_id": lease_id,
+            "generation": connector._generations[lease.request_id],
+            "block_ids": list(owned),
+            "writable_end_token": min(len(owned) * block_size, limit),
+            "allocation_limit_token": limit,
+        }
 
     def _apply_decode_commit(self, payload: dict[str, Any]) -> dict[str, Any]:
         request_id = str(payload["request_id"])
@@ -307,6 +383,7 @@ class PAPEngineAdapter:
             + outstanding_prefill_tokens
             + outstanding_decode_reservation_tokens
         )
+        pap_scheduler = getattr(scheduler, "pap_scheduler", None)
         return {
             "non_evictable_kv_blocks": non_evictable_blocks,
             "non_evictable_kv_tokens": non_evictable_tokens,
@@ -328,6 +405,18 @@ class PAPEngineAdapter:
             "kv_block_size": block_size,
             "kv_load_fraction": (
                 non_evictable_blocks / total_blocks if total_blocks else 0.0
+            ),
+            "decode_allocation_requests": int(
+                getattr(pap_scheduler, "decode_allocation_requests", 0)
+            ),
+            "decode_allocation_blocks": int(
+                getattr(pap_scheduler, "decode_allocation_blocks", 0)
+            ),
+            "decode_allocation_failures": int(
+                getattr(pap_scheduler, "decode_allocation_failures", 0)
+            ),
+            "prefill_revocations": int(
+                getattr(pap_scheduler, "prefill_revocations", 0)
             ),
         }
 

@@ -1,5 +1,17 @@
 # Refactor validation checkpoints
 
+> **2026-09-05 research audit: numerical/performance interpretation suspended.**
+> Later reanalysis found within-request KV block aliasing in the retained
+> `135804_3149938/coding-half-trace` raw data. The source allocation/export
+> defect also exists at the cleanup checkpoint. Completion, output lengths,
+> Graph captures and drain still describe what those audits checked, but they
+> do not certify numerically correct inference. Do not use affected PAP timing,
+> physical-prefix reuse or the cleanup comparison below as correct-inference
+> regression/performance evidence until the ownership/lifecycle repair and
+> numerical revalidation pass. Raw numbers and artifacts are preserved rather
+> than rewritten. See
+> [the independent evidence audit](../../microbench/PAP-20260905-RESEARCH-DIAGNOSIS/evidence_audit.md).
+
 ## coding-half: passed before protocol/tracing extraction
 
 Run: `runs/20260905_111034_2965031/coding-half/`.
@@ -298,3 +310,160 @@ FP16 L20 path does not use DeepGEMM; no dependency override was introduced for
 the experiment. Raw client records, service logs, audits, effective settings
 and source/dependency snapshots remain in the run directory. Earlier CPU/GPU
 validation of this cleanup passed all 282 PAP tests with zero skips.
+
+## Attention-owned Decode growth: bounded E2E passed
+
+Run: `runs/20260905_231410_3633861/coding-half/`. This is the first bounded E2E
+after replacing padded worker-table Decode capacity with allocator-owned,
+Attention-initiated growth. Prefill initially owns only the blocks needed by
+the computed prompt. At a Decode step boundary, Attention requests another
+256-token allocation chunk from that request's Prefill engine only when the
+next token would exceed its writable range.
+
+The case completed 180/180 requests with no client errors, cancellations or
+output-length mismatches and produced 84,155 output tokens. Routing,
+topology, Prefill/Attention/Projection Graph, decode-token join and drain
+audits passed. All eight GPUs returned to 14 MiB and zero utilization after
+shutdown.
+
+The final Attention counters record exactly 404 capacity requests, 404
+installs, 5,254 newly owned blocks, and zero topology mismatches. Recomputing
+the expected page crossings solely from each client's actual input/output
+length also gives exactly 404. The final Prefill snapshot records zero
+allocation failures. This workload did not trigger Prefill preemption, so the
+revoke-before-free branch is covered by the real-scheduler pressure test rather
+than claimed as E2E-observed behavior.
+
+This run predates the final atomic exact-lease check in the publisher. That
+follow-up closes only the revoke-versus-late-publication race and does not alter
+the exercised no-preemption path; it is covered by the final full PAP suite and
+the dedicated late-manifest test rather than attributed to this E2E snapshot.
+
+| Metric | Dynamic allocator run |
+| --- | ---: |
+| Mean TTFT | 1,689.998 ms |
+| Mean request-level ITL / TBT | 54.816 ms |
+| Mean request end-to-end latency | 26,941.021 ms |
+| Output throughput | 273.478 token/s |
+| Replay duration including drain | 307.721 s |
+
+These values are a new execution checkpoint, not a valid regression comparison
+against `135804_3149938/coding-half`. That older implementation has proven
+within-request block aliasing. The realized workloads also differ: matching by
+conversation and turn, 100/180 input lengths and 79/180 prefix-cache-read
+lengths differ, although all output lengths match. Current/old input totals are
+5,233,066/5,228,520 tokens.
+
+`dynamic_kv_e2e_analysis.json` classifies external client token intervals by
+whether the corresponding token crosses a predicted allocation boundary. The
+404 crossing intervals average 56.866 ms; the other 83,487 average 54.167 ms.
+This request-local classification is not a system-wide cost estimate: one
+crossing stalls the PA/Projection barrier for every request in that decode
+batch. The earlier inference that weighting 0.482% of request intervals ruled
+out allocation as the primary cause was incorrect and is superseded by the
+step-level trace below. The JSON now records this limitation explicitly.
+
+This run plus the allocator/registry/kernel tests establishes structural block
+ownership, growth accounting and normal-path execution. It is not a direct
+logit or generated-text equivalence test against an independent implementation;
+completion and output-length equality alone are not labelled numerical proof.
+
+## Dynamic-KV step trace: synchronous growth is the TBT regression
+
+Run: `runs/20260906_002049_3682642/coding-half-trace/`. The source includes the
+final exact-lease race fix. Effective configuration is 7PA1P, 2K Prefill,
+Qwen3-8B YaRN 131K, 60 conversations / 180 turns, concurrency 60 and Poisson
+0.9 req/s. The run completed all requests and 84,155 output tokens with no
+errors, cancellations or output-length mismatches. Routing, topology,
+Prefill/whole-step Graph, decode-token join and all drain audits passed. The
+405 client-predicted Decode growth requests exactly match 405 Attention
+requests and installs; 5,256 blocks were added and topology mismatches are zero.
+
+The collector froze consecutive global steps 1156–1667. All eight raw hashes
+verify after drain, and rejoining the raw files reproduces `[512,36,7]`
+Projection-observed PA latency, `[512,36,7]` PA-local Attention kernel latency
+and `[512,36]` Projection latency. Among 288 single-request PA-step cells, zero
+has fewer unique active blocks than logical block positions; the prior alias
+witness is absent in this window.
+
+Exact step cadence is reconstructed only from adjacent Projection-GPU markers:
+dispatch-done to gather-done plus gather-done to the next dispatch-done. The
+integer nanosecond intervals telescope exactly; no nonadjacent timing buckets
+are added.
+
+| Exact step population | Count | Mean cycle | P50 | P99 | Max |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| No observed lease growth | 462 | 44.564 ms | 42.784 ms | 76.538 ms | 84.490 ms |
+| At least one lease grew | 49 | 118.335 ms | 58.848 ms | 691.910 ms | 773.894 ms |
+| All exact cycles | 511 | 51.638 ms | 43.164 ms | 249.296 ms | 773.894 ms |
+
+Growth-step and ordinary-step compute are nearly unchanged:
+gather-to-next-dispatch sums are 27.260/27.185 ms and max-PA Attention-kernel
+sums are 14.929/14.701 ms. The difference is dispatch-to-gather wait:
+91.075 ms on growth steps versus 17.379 ms otherwise. Layer-0 slowest-PA
+latency is 75.491/2.048 ms respectively. The worst cycle is step 1416:
+773.894 ms total, 728.957 ms in the layer-0 slowest PA path, while its full-step
+Attention kernel work remains normal.
+
+The 49 growth steps occupy 9.59% of this window. Relative to the ordinary-step
+mean, their observed excess contributes 7.074 ms to the all-step mean. This
+direct batch/step-level evidence explains most of the 8–11 ms raw TBT increase
+that motivated the trace. AIPerf reports 54.117 ms mean request ITL, close to
+the preceding untraced dynamic-allocation checkpoint's 54.816 ms; tracing is
+not the source of the regression.
+
+Measured root cause: synchronous capacity growth is inside the layer-0 PA
+preflight and therefore inside Projection's global barrier. Source inspection
+shows the request then traverses HTTP, the Prefill API control dispatcher and
+an EngineCore utility call. EngineCore handles utility input only between model
+steps, and the dispatcher serializes it with Decode commits. The trace does not
+separate API-queue, dispatcher-queue and in-flight Prefill-step wait, so their
+individual shares remain unverified. Do not label any one of those sub-buckets
+the root cause without boundary instrumentation or a one-variable A/B.
+
+Artifacts: `trace_capture/capture.json`, `merged.pt`,
+`dynamic_kv_trace_analysis.json`, `dynamic_kv_e2e_analysis.json`, the raw
+Projection/Attention files and the saved effective configuration/source
+snapshot.
+
+## Low-watermark asynchronous Decode growth: tracing A/B passed
+
+Run: `runs/20260906_005320_3718392/coding-half-trace/`. This changes the
+synchronous growth above to one in-flight prefetch per request. Prefill readiness
+starts the first request; later requests start when writable headroom is below
+256 tokens. Each request adds 256 tokens (16 blocks) unless capped by its output
+limit. HTTP runs in a daemon thread, but returned ownership is installed only at
+an Attention preflight boundary. Reaching the current writable end waits for the
+existing request rather than issuing a duplicate.
+
+The run completed 180/180 requests and the same 84,155 output tokens. All
+correctness, routing, topology, Prefill/whole-step Graph, decode-token join and
+drain audits passed. It made 405 allocation requests, all 405 as prefetches;
+only four later reached a capacity boundary and waited. All 405 installed,
+adding 5,256 blocks, with zero failures, pending requests or topology
+mismatches at drain. Aggregate wait time over the four Attention processes was
+1.532 seconds. All GPUs returned to 14 MiB and zero utilization.
+
+| Metric | Synchronous growth | Async low watermark | Change |
+| --- | ---: | ---: | ---: |
+| Mean TTFT | 1,745.255 ms | 1,605.288 ms | -8.02% |
+| Mean request ITL / TBT | 54.117 ms | 48.540 ms | -10.31% |
+| Mean end-to-end latency | 26,758.254 ms | 24,004.107 ms | -10.29% |
+| Output throughput | 273.250 token/s | 278.213 token/s | +1.82% |
+| Replay duration | 307.979 s | 302.484 s | -1.78% |
+
+The trace confirms removal of the original growth long tail. Growth-step mean,
+P99 and maximum cadence change from 118.335/691.910/773.894 ms to
+56.700/107.500/146.985 ms. In the new window, growth and ordinary steps average
+56.700 and 51.315 ms; the former 73.771 ms gap is 5.385 ms. The windows represent
+different load phases (steps 1156–1667 versus 2049–2560), so their overall cycle
+means are not compared as a direct speedup.
+
+The initial AIPerf `inputs.json` hashes are identical. Multi-turn realized
+prompts are not byte-identical after model generation: 93/180 input lengths and
+75/180 cache-read lengths differ. Total input is 5,233,898 versus 5,231,436
+tokens (-0.047%); total output is identical, while the async run has 34,432 more
+cache-read tokens (+0.76%). Therefore the endpoint table is strong supporting
+evidence, not a strict payload-identical randomized A/B. The within-trace
+allocation-wait counters and disappearance of growth-step stalls provide the
+direct mechanism evidence.

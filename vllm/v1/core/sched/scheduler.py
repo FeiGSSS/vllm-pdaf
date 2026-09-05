@@ -582,6 +582,9 @@ class Scheduler(SchedulerInterface):
                             self.running,
                             key=lambda r: (r.priority, r.arrival_time),
                         )
+                        self.pap_scheduler.preempt_request(
+                            self.connector, preempted_req
+                        )
                         self.running.remove(preempted_req)
                         if preempted_req in scheduled_running_reqs:
                             preempted_req_id = preempted_req.request_id
@@ -602,6 +605,10 @@ class Scheduler(SchedulerInterface):
                                 encoder_compute_budget += num_embeds_to_restore
                             req_index -= 1
                     else:
+                        preempted_req = self.running[-1]
+                        self.pap_scheduler.preempt_request(
+                            self.connector, preempted_req
+                        )
                         preempted_req = self.running.pop()
 
                     self._preempt_request(preempted_req, scheduled_timestamp)
@@ -1213,7 +1220,9 @@ class Scheduler(SchedulerInterface):
     def _build_kv_connector_meta(
         self, connector: KVConnectorBase_V1, scheduler_output: SchedulerOutput
     ) -> KVConnectorMetadata:
-        return connector.build_connector_meta(scheduler_output)
+        return self.pap_scheduler.build_connector_metadata(
+            connector, scheduler_output, self.kv_cache_manager
+        )
 
     def _get_new_block_ids_to_zero(self) -> list[int] | None:
         # Drain new attention block ids every step so the manager-side list
@@ -2383,6 +2392,7 @@ class Scheduler(SchedulerInterface):
             # Preempt in reverse order so the requests will be added back to the
             # running queue in FIFO order.
             while self.running:
+                self.pap_scheduler.preempt_request(self.connector, self.running[-1])
                 request = self.running.pop()
                 self._preempt_request(request, timestamp)
                 # For async scheduling, any output frames already in flight at

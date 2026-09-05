@@ -26,6 +26,7 @@ def _connector() -> PAPPrefillConnector:
             import_prefill_kv_to_attention=True,
         ),
     }
+    connector._generations = {"prefill": 0}
     connector._decode_query_len = 1
     connector._pending_finished = set()
     connector._publishers = {}
@@ -39,14 +40,65 @@ def test_connector_metadata_matches_mrv2_batch_order() -> None:
         finished_req_ids={"old"},
     )
 
-    metadata = connector.build_connector_meta(scheduler_output)
+    metadata = connector.build_connector_meta(
+        scheduler_output, allocated_blocks={"prefill": ([3, 4],)}
+    )
 
     assert [request.request_id for request in metadata.requests] == [
         "decode",
         "prefill",
     ]
     assert metadata.requests[1].prefill_kv_handle == "session-1"
+    assert metadata.requests[1].allocated_block_ids == (3, 4)
     assert metadata.finished_request_ids == ("old",)
+
+
+def test_prefill_preemption_revokes_before_releasing_ownership(monkeypatch) -> None:
+    connector = _connector()
+    connector._request_metadata["prefill"] = PAPRequestMetadata(
+        attention_tcp_endpoint="tcp://127.0.0.1:8300",
+        prefill_kv_handle="session-1",
+        import_prefill_kv_to_attention=True,
+    )
+    calls = []
+    monkeypatch.setattr(
+        "vllm.pap.kv_connector.pap_lease.pap_active_lease_id",
+        lambda _request_id: "lease-1",
+    )
+    monkeypatch.setattr(
+        "vllm.pap.kv.handoff.revoke_prefill_kv",
+        lambda **kwargs: calls.append(("revoke", kwargs)),
+    )
+    monkeypatch.setattr(
+        "vllm.pap.kv_connector.pap_lease.pap_release_lease",
+        lambda lease_id: calls.append(("release", lease_id)),
+    )
+
+    connector.preempt_request(SimpleNamespace(request_id="prefill"))
+
+    assert [call[0] for call in calls] == ["revoke", "release"]
+    assert connector._generations["prefill"] == 1
+
+
+def test_failed_prefill_revocation_preserves_local_generation(monkeypatch) -> None:
+    connector = _connector()
+
+    def fail_revoke(**_kwargs) -> None:
+        raise RuntimeError("unreachable")
+
+    monkeypatch.setattr(
+        "vllm.pap.kv_connector.pap_lease.pap_active_lease_id",
+        lambda _request_id: "lease-1",
+    )
+    monkeypatch.setattr(
+        "vllm.pap.kv.handoff.revoke_prefill_kv",
+        fail_revoke,
+    )
+
+    with pytest.raises(RuntimeError, match="unreachable"):
+        connector.preempt_request(SimpleNamespace(request_id="prefill"))
+
+    assert connector._generations["prefill"] == 0
 
 
 def test_publisher_uses_connector_batch_rows(monkeypatch) -> None:
@@ -70,12 +122,14 @@ def test_publisher_uses_connector_batch_rows(monkeypatch) -> None:
         request_ids=("decode", "prefill"),
         num_scheduled_tokens=(1, 4),
         prefill_kv_handle_by_request={"prefill": "session-1"},
-        decode_capacity_tokens_by_request={"prefill": 200},
         import_request_ids={"prefill"},
         tcp_endpoint_by_request={"prefill": "127.0.0.1:8200"},
         attn_metadata=metadata,
         kv_cache=torch.empty(1),
         block_size=16,
+        allocated_block_ids_by_request={"prefill": (3, 4)},
+        lease_ids_by_request={"prefill": "lease-1"},
+        generations_by_request={"prefill": 0},
     )
 
     assert captured["request_ids"] == ("decode", "prefill")

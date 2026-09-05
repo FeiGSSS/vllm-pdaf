@@ -27,6 +27,7 @@ from vllm.pap.kv.models import (
     PAPUnifiedSlotActivation,
 )
 from vllm.pap.kv.session_registry import (
+    _DecodeCapacityPending,
     _get_commit_client,
     _PAPSessionRegistryMixin,
 )
@@ -86,6 +87,7 @@ class PAPAttentionRegistry(
         self._session_manifest_ready_prefix_lens: dict[str, int] = {}
         self._session_manifest_events: dict[str, Any] = {}
         self._session_manifest_claimed: set[str] = set()
+        self._session_prefill_generations: dict[str, int] = {}
         self._prefill_readiness: dict[str, dict[str, PAPPrefillLayerReadiness]] = {}
         self._request_id_resolution_cache: dict[str, str] = {}
         self._released_session_aliases: OrderedDict[str, str] = OrderedDict()
@@ -109,6 +111,15 @@ class PAPAttentionRegistry(
         self._attention_step_slot_plan_builds = 0
         self._attention_step_metadata_builds = 0
         self._attention_step_kv_ready_publishes = 0
+        self._decode_capacity_requests = 0
+        self._decode_capacity_prefetches = 0
+        self._decode_capacity_installs = 0
+        self._decode_capacity_blocks_added = 0
+        self._decode_capacity_waits = 0
+        self._decode_capacity_wait_ns = 0
+        self._decode_capacity_failures = 0
+        self._decode_capacity_pending: dict[str, _DecodeCapacityPending] = {}
+        self._session_decode_capacity_limits: dict[str, int] = {}
         self._decode_slot_topology_mismatches = 0
         self._offload_exec_stats_lock = Lock()
         self._offload_exec_peer_batches = 0
@@ -165,6 +176,19 @@ class PAPAttentionRegistry(
 
     def decode_token_stats(self) -> dict[str, int]:
         return self._decode_token_committer.stats()
+
+    def decode_capacity_stats(self) -> dict[str, int]:
+        with self._lock:
+            return {
+                "decode_capacity_requests": self._decode_capacity_requests,
+                "decode_capacity_prefetches": self._decode_capacity_prefetches,
+                "decode_capacity_installs": self._decode_capacity_installs,
+                "decode_capacity_blocks_added": self._decode_capacity_blocks_added,
+                "decode_capacity_waits": self._decode_capacity_waits,
+                "decode_capacity_wait_ns": self._decode_capacity_wait_ns,
+                "decode_capacity_failures": self._decode_capacity_failures,
+                "decode_capacity_pending": len(self._decode_capacity_pending),
+            }
 
     def record_decode_kv_ready(
         self,

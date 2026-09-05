@@ -6,7 +6,10 @@ import json
 import pytest
 import torch
 
-from vllm.pap.protocol.descriptors import PAPCudaIPCTensorHandle
+from vllm.pap.protocol.descriptors import (
+    PAPCudaIPCTensorHandle,
+    PAPPrefillKVSessionManifest,
+)
 from vllm.pap.protocol.wire import (
     deserialize_tensor_bundle,
     serialize_tensor_bundle,
@@ -72,4 +75,28 @@ def test_cuda_ipc_descriptor_rejects_legacy_pickle_payload() -> None:
                 "shape": [2, 3],
                 "ipc_handle_pickled": "malicious-payload",
             }
+        )
+
+
+def test_prefill_manifest_round_trips_generation_and_rejects_aliases() -> None:
+    manifest = PAPPrefillKVSessionManifest(
+        request_id="req",
+        session_handle="session",
+        catalog_id="catalog",
+        prefix_len=17,
+        block_ids=(1, 2),
+        block_size=16,
+        expected_layer_count=1,
+        lease_id="lease",
+        leased_block_ids=(1, 2),
+        lease_capacity_tokens=32,
+        writable_start_token=17,
+        writable_end_token=32,
+        generation=3,
+    )
+
+    assert PAPPrefillKVSessionManifest.from_dict(manifest.to_dict()) == manifest
+    with pytest.raises(ValueError, match="must not alias"):
+        PAPPrefillKVSessionManifest.from_dict(
+            {**manifest.to_dict(), "block_ids": [1, 1]}
         )

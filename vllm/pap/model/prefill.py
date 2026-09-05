@@ -18,24 +18,10 @@ from vllm.pap.kv.handoff import (
     register_prefill_kv_catalog,
 )
 from vllm.pap.mode import is_pap_request_id
-from vllm.pap.model.context import (
-    PAPModelForwardBatch,
-    pap_endpoint_for_tp_rank,
-)
-from vllm.pap.protocol import PAPTensorTransport
+from vllm.pap.model.context import pap_endpoint_for_tp_rank
 from vllm.v1.attention.backends.utils import get_kv_cache_layout
 
 logger = init_logger(__name__)
-
-
-def _pap_unified_kv_export_decode_capacity_tokens() -> int:
-    raw = os.environ.get("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "")
-    if not raw:
-        return 0
-    try:
-        return max(0, int(raw))
-    except ValueError:
-        return 0
 
 
 def _pap_block_ids_from_block_table(
@@ -43,6 +29,7 @@ def _pap_block_ids_from_block_table(
     block_table: torch.Tensor,
     seq_len: int,
     block_size: int,
+    allocated_block_ids: tuple[int, ...] | None = None,
 ) -> list[int]:
     if block_table.ndim != 2 or int(block_table.shape[0]) != 1:
         raise ValueError("PAP KV import supports one request per block table")
@@ -51,13 +38,21 @@ def _pap_block_ids_from_block_table(
     if block_size <= 0:
         raise ValueError("block_size must be positive")
     num_blocks = (int(seq_len) + int(block_size) - 1) // int(block_size)
-    return [
+    if allocated_block_ids is None or len(allocated_block_ids) < num_blocks:
+        raise RuntimeError("PAP export exceeds scheduler-owned KV blocks")
+    expected = list(allocated_block_ids[:num_blocks])
+    if len(set(expected)) != len(expected):
+        raise RuntimeError("PAP export aliases owned KV blocks")
+    actual = [
         int(block_id)
         for block_id in block_table[0, :num_blocks]
         .detach()
         .to(device="cpu", dtype=torch.long)
         .tolist()
     ]
+    if actual != expected:
+        raise RuntimeError("PAP worker block table disagrees with allocator ownership")
+    return expected
 
 
 def _pap_prune_imported_prefill_kv(
@@ -99,12 +94,14 @@ class PAPPrefillKVPublisher:
         request_ids: tuple[str, ...],
         num_scheduled_tokens: tuple[int, ...],
         prefill_kv_handle_by_request: dict[str, str],
-        decode_capacity_tokens_by_request: dict[str, int],
         import_request_ids: set[str],
         tcp_endpoint_by_request: dict[str, str],
         attn_metadata: Any,
         kv_cache: torch.Tensor,
         block_size: int,
+        allocated_block_ids_by_request: dict[str, tuple[int, ...]] | None = None,
+        lease_ids_by_request: dict[str, str | None] | None = None,
+        generations_by_request: dict[str, int] | None = None,
     ) -> None:
         """Publish a batch supplied by the v0.26 KV connector contract."""
         seq_lens = getattr(attn_metadata, "seq_lens", None)
@@ -119,7 +116,6 @@ class PAPPrefillKVPublisher:
             num_reqs=num_reqs,
             num_scheduled_tokens=num_scheduled_tokens,
             prefill_kv_handle_by_request=prefill_kv_handle_by_request,
-            decode_capacity_tokens_by_request=decode_capacity_tokens_by_request,
             import_request_ids=import_request_ids,
             tcp_endpoint_by_request=tcp_endpoint_by_request,
             default_tcp_endpoint=None,
@@ -128,6 +124,9 @@ class PAPPrefillKVPublisher:
             kv_cache=kv_cache,
             block_size=block_size,
             layout=get_kv_cache_layout(),
+            allocated_block_ids_by_request=allocated_block_ids_by_request or {},
+            lease_ids_by_request=lease_ids_by_request or {},
+            generations_by_request=generations_by_request or {},
         )
 
     def finish_requests(self, request_ids: Iterable[str]) -> None:
@@ -141,89 +140,6 @@ class PAPPrefillKVPublisher:
             if key[0] not in finished_set
         }
 
-    def publish(self, attention: Any) -> None:
-        """Publish KV state for the current non-Projection forward, if needed."""
-        batch = PAPModelForwardBatch.current(self.layer_name)
-        if batch is None or not batch.enabled:
-            return
-        additional_kwargs = batch.additional_kwargs
-        finished_request_ids = tuple(
-            str(request_id)
-            for request_id in additional_kwargs.get("pap_finished_request_ids") or ()
-        )
-        _pap_prune_imported_prefill_kv(
-            self.imported_prefill_kv,
-            finished_request_ids,
-        )
-        if finished_request_ids and self.manifest_ready_events:
-            finished = set(finished_request_ids)
-            self.manifest_ready_events = {
-                key: event
-                for key, event in self.manifest_ready_events.items()
-                if key[0] not in finished
-            }
-
-        if batch.num_reqs <= 0 or len(batch.request_ids) < batch.num_reqs:
-            return
-        if len(batch.num_scheduled_tokens) < batch.num_reqs:
-            return
-        prefill_kv_handle_by_request = (
-            additional_kwargs.get("pap_prefill_kv_handle_by_request") or {}
-        )
-        decode_capacity_tokens_by_request = (
-            additional_kwargs.get("pap_decode_capacity_tokens_by_request") or {}
-        )
-        import_request_ids = set(
-            additional_kwargs.get("pap_import_prefill_kv_to_attention_by_request") or ()
-        )
-        tcp_endpoint_by_request = (
-            additional_kwargs.get("pap_attention_tcp_endpoint_by_request") or {}
-        )
-        default_tcp_endpoint = additional_kwargs.get("pap_attention_tcp_endpoint")
-        attn_metadata = batch.attention_metadata
-        if attn_metadata is None:
-            return
-        seq_lens = getattr(attn_metadata, "seq_lens", None)
-        if seq_lens is None or int(seq_lens.shape[0]) < batch.num_reqs:
-            return
-        block_table = getattr(attn_metadata, "block_table", None)
-        if block_table is None or int(block_table.shape[0]) < batch.num_reqs:
-            return
-        kv_cache = getattr(attention, "kv_cache", None)
-        if kv_cache is None:
-            return
-        block_size = additional_kwargs.get("pap_block_size")
-        if block_size is None:
-            block_size = getattr(getattr(attention, "impl", None), "block_size", None)
-        if block_size is None:
-            block_size = getattr(attention, "block_size", None)
-        if block_size is None:
-            return
-
-        offload_kv_transport = PAPTensorTransport(
-            os.environ.get(
-                "PAP_OFFLOAD_KV_TRANSPORT",
-                PAPTensorTransport.CUDA_IPC.value,
-            )
-        )
-        if offload_kv_transport is not PAPTensorTransport.CUDA_IPC:
-            raise RuntimeError("PAP paged Prefill KV export requires cuda_ipc")
-        self._publish_manifests(
-            request_ids=batch.request_ids,
-            num_reqs=batch.num_reqs,
-            num_scheduled_tokens=batch.num_scheduled_tokens,
-            prefill_kv_handle_by_request=prefill_kv_handle_by_request,
-            decode_capacity_tokens_by_request=decode_capacity_tokens_by_request,
-            import_request_ids=import_request_ids,
-            tcp_endpoint_by_request=tcp_endpoint_by_request,
-            default_tcp_endpoint=default_tcp_endpoint,
-            seq_lens=seq_lens,
-            block_table=block_table,
-            kv_cache=kv_cache,
-            block_size=int(block_size),
-            layout=get_kv_cache_layout(),
-        )
-
     def _publish_manifests(
         self,
         *,
@@ -231,7 +147,6 @@ class PAPPrefillKVPublisher:
         num_reqs: int,
         num_scheduled_tokens: tuple[int, ...],
         prefill_kv_handle_by_request: dict[Any, Any],
-        decode_capacity_tokens_by_request: dict[Any, Any],
         import_request_ids: set[Any],
         tcp_endpoint_by_request: dict[Any, Any],
         default_tcp_endpoint: Any,
@@ -240,6 +155,9 @@ class PAPPrefillKVPublisher:
         kv_cache: torch.Tensor,
         block_size: int,
         layout: str,
+        allocated_block_ids_by_request: dict[str, tuple[int, ...]],
+        lease_ids_by_request: dict[str, str | None],
+        generations_by_request: dict[str, int],
     ) -> None:
         eligible: list[tuple[int, str, str, str]] = []
         for req_index in range(num_reqs):
@@ -302,25 +220,31 @@ class PAPPrefillKVPublisher:
             prefix_len = int(seq_lens_cpu[req_index].item())
             if prefix_len <= 1:
                 continue
-            decode_capacity_tokens = decode_capacity_tokens_by_request.get(request_id)
-            if decode_capacity_tokens is None:
-                decode_capacity_tokens = _pap_unified_kv_export_decode_capacity_tokens()
-            decode_capacity_tokens = max(0, int(decode_capacity_tokens))
+            # Prefill publishes only computed prompt blocks. Decode grows them
+            # through the allocator, not through padding in this worker table.
+            writable_tail_tokens = (-prefix_len) % block_size
+            generation = generations_by_request.get(request_id, 0)
+            lease_id = lease_ids_by_request.get(request_id)
+            if lease_id is None:
+                raise RuntimeError("PAP publication lacks scheduler-owned lease")
             import_key = (
                 request_id,
                 "sealed_manifest",
                 prefix_len,
-                decode_capacity_tokens,
+                writable_tail_tokens,
                 prefill_kv_handle,
                 tcp_endpoint,
+                generation,
+                lease_id,
             )
             if import_key in self.imported_prefill_kv:
                 continue
-            block_seq_len = prefix_len + decode_capacity_tokens
+            block_seq_len = prefix_len + writable_tail_tokens
             block_ids = _pap_block_ids_from_block_table(
                 block_table=block_table[req_index : req_index + 1],
                 seq_len=block_seq_len,
                 block_size=block_size,
+                allocated_block_ids=allocated_block_ids_by_request.get(request_id),
             )
             publish_prefill_kv_session_manifest(
                 request_id=request_id,
@@ -332,7 +256,9 @@ class PAPPrefillKVPublisher:
                 expected_layer_count=self.expected_layer_count,
                 ready_event_handle=ready_event_handle,
                 tcp_endpoint=tcp_endpoint,
-                decode_capacity_tokens=decode_capacity_tokens,
+                writable_tail_tokens=writable_tail_tokens,
+                lease_id=lease_id,
+                generation=generation,
             )
             self.imported_prefill_kv.add(import_key)
             self.manifest_ready_events[(request_id, prefix_len)] = ready_event

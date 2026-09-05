@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import logging
 import time
-from threading import Thread
+from dataclasses import dataclass, field, replace
+from threading import Event, Thread
 from typing import Any
 
+import httpx
 import torch
 
 from vllm.pap.kv.control_client import DecodeCommitClient as _DecodeCommitClient
@@ -39,6 +41,22 @@ _lease_release_client: _LeaseReleaseClient | None = None
 _DECODE_COMMIT_PATH = "/v1/pap/prefill/decode-commit"
 _LEASE_RELEASE_PATH = "/v1/pap/prefill/lease-release"
 _RELEASED_SESSION_ALIAS_LIMIT = 4096
+_DECODE_CAPACITY_LOW_WATERMARK_TOKENS = 256
+_DECODE_CAPACITY_RESERVE_TOKENS = 256
+
+
+@dataclass(slots=True)
+class _DecodeCapacityPending:
+    request_id: str
+    session_epoch: int
+    generation: int
+    lease_id: str
+    required_tokens: int
+    endpoint: str
+    payload: dict[str, Any]
+    done: Event = field(default_factory=Event)
+    result: dict[str, Any] | None = None
+    error: Exception | None = None
 
 
 def _prefill_control_endpoint(prefill_endpoint: str, path: str) -> str:
@@ -65,9 +83,17 @@ class _PAPSessionRegistryMixin:
     _prefill_kv_catalog_id: str | None
     _last_attention_step_context: PAPAttentionStepContext | None
 
+    def _cancel_decode_capacity_locked(self, request_id: str) -> None:
+        pending = self._decode_capacity_pending.pop(request_id, None)
+        if pending is not None:
+            pending.error = RuntimeError("PAP Attention session was released")
+            pending.done.set()
+        self._session_decode_capacity_limits.pop(request_id, None)
+
     def _release_session_locked(
         self, request_id: str
     ) -> tuple[bool, str | None, str | None]:
+        self._cancel_decode_capacity_locked(request_id)
         session = self._sessions.pop(request_id, None)
         existed = session is not None
         prefill_endpoint = None if session is None else session.prefill_endpoint
@@ -89,6 +115,7 @@ class _PAPSessionRegistryMixin:
         self._session_manifest_ready_prefix_lens.pop(request_id, None)
         self._session_manifest_events.pop(request_id, None)
         self._session_manifest_claimed.discard(request_id)
+        self._session_prefill_generations.pop(request_id, None)
         self._prefill_readiness.pop(request_id, None)
         self._unified_paged_kv.pop(request_id, None)
         self._session_epochs.pop(request_id, None)
@@ -122,10 +149,12 @@ class _PAPSessionRegistryMixin:
             )
             return lease_id, prefill_endpoint
 
+        self._cancel_decode_capacity_locked(request_id)
         self._session_manifest_prefix_lens.pop(request_id, None)
         self._session_manifest_ready_prefix_lens.pop(request_id, None)
         self._session_manifest_events.pop(request_id, None)
         self._session_manifest_claimed.discard(request_id)
+        self._session_prefill_generations.pop(request_id, None)
         self._prefill_readiness.pop(request_id, None)
         self._unified_paged_kv.pop(request_id, None)
         self._session_epochs.pop(request_id, None)
@@ -303,7 +332,14 @@ class _PAPSessionRegistryMixin:
                 manifest.session_handle
             )
             if session_request_id is None:
+                if manifest.session_handle in self._released_session_aliases:
+                    return 0
                 raise KeyError(manifest.session_handle)
+            generation = self._session_prefill_generations.get(session_request_id, 0)
+            if manifest.generation < generation:
+                return 0
+            if manifest.generation != generation:
+                raise RuntimeError("PAP manifest skipped a Prefill generation")
             request_session_id = self._resolve_session_request_id_locked(
                 manifest.request_id
             )
@@ -428,6 +464,258 @@ class _PAPSessionRegistryMixin:
         )
         return manifest.prefix_len
 
+    def revoke_prefill_kv(
+        self, *, session_handle: str, generation: int
+    ) -> dict[str, Any]:
+        """Discard only a pre-Decode mapping and fence its late publications."""
+        with self._lock:
+            request_id = self._resolve_session_request_id_locked(session_handle)
+            if request_id is None:
+                if session_handle in self._released_session_aliases:
+                    return {"revoked": True, "released": True}
+                raise KeyError(session_handle)
+            current = self._session_prefill_generations.get(request_id, 0)
+            if generation < current:
+                return {"revoked": True, "generation": current}
+            if generation != current or request_id in self._session_manifest_claimed:
+                raise RuntimeError(
+                    "cannot revoke a claimed or mismatched PAP KV generation"
+                )
+            self._cancel_decode_capacity_locked(request_id)
+            self._session_prefill_generations[request_id] = current + 1
+            self._session_manifest_prefix_lens.pop(request_id, None)
+            self._session_manifest_ready_prefix_lens.pop(request_id, None)
+            self._session_manifest_events.pop(request_id, None)
+            self._session_lease_ids.pop(request_id, None)
+            self._session_leased_block_ids.pop(request_id, None)
+            self._session_lease_capacity_tokens.pop(request_id, None)
+            self._prefill_readiness.pop(request_id, None)
+            self._unified_paged_kv.pop(request_id, None)
+            self._unified_slot_activations.pop(request_id, None)
+            self._drop_offload_exec_session_entry_cache_locked(request_id)
+            self._drop_attention_step_contexts_locked(request_id)
+            session = self._sessions[request_id]
+            session.prefix_len = None
+            session.seq_len = 0
+            session.block_ids = ()
+            self._prefill_condition.notify_all()
+            return {"revoked": True, "generation": current + 1}
+
+    def ensure_decode_capacity(
+        self,
+        request_ids: tuple[str, ...],
+        required_lengths: tuple[int, ...],
+    ) -> None:
+        """Prefetch at low watermark and wait only when Decode reaches capacity."""
+        for request_id, required in zip(request_ids, required_lengths, strict=True):
+            self._ensure_request_decode_capacity(str(request_id), int(required))
+
+    def prefetch_decode_capacity(self, request_id: str, required_tokens: int) -> None:
+        """Start low-watermark growth without waiting for its HTTP round trip."""
+        self._ensure_request_decode_capacity(str(request_id), int(required_tokens))
+
+    def _ensure_request_decode_capacity(
+        self, request_id: str, required_tokens: int
+    ) -> None:
+        while True:
+            thread: Thread | None = None
+            completed: _DecodeCapacityPending | None = None
+            wait_for: _DecodeCapacityPending | None = None
+            capacity_missing = False
+            with self._lock:
+                sid = self._resolve_session_request_id_locked(request_id)
+                if sid is None:
+                    raise KeyError(request_id)
+                states = self._unified_paged_kv.get(sid, {})
+                if not states:
+                    return  # The normal readiness gate reports missing Prefill.
+                first = next(iter(states.values()))
+                writable_end = int(first.writable_end_token)
+                capacity_missing = required_tokens > writable_end
+                session = self._sessions[sid]
+                capacity_limit = self._session_decode_capacity_limits.get(
+                    sid, int(session.max_seq_len)
+                )
+                low_watermark = (
+                    writable_end - required_tokens
+                    < _DECODE_CAPACITY_LOW_WATERMARK_TOKENS
+                    and writable_end < capacity_limit
+                )
+                pending = self._decode_capacity_pending.get(sid)
+                if pending is not None and pending.done.is_set():
+                    self._decode_capacity_pending.pop(sid, None)
+                    completed = pending
+                elif capacity_missing or low_watermark:
+                    if pending is None:
+                        generation = self._session_prefill_generations.get(sid, 0)
+                        lease_id = self._session_lease_ids[sid]
+                        endpoint = _prefill_control_endpoint(
+                            session.prefill_endpoint,
+                            "/v1/pap/prefill/decode-allocate",
+                        )
+                        payload = {
+                            "session_handle": session.prefill_kv_handle,
+                            "lease_id": lease_id,
+                            "generation": generation,
+                            "required_tokens": required_tokens,
+                            "reserve_tokens": _DECODE_CAPACITY_RESERVE_TOKENS,
+                        }
+                        pending = _DecodeCapacityPending(
+                            request_id=sid,
+                            session_epoch=self._session_epochs[sid],
+                            generation=generation,
+                            lease_id=lease_id,
+                            required_tokens=required_tokens,
+                            endpoint=endpoint,
+                            payload=payload,
+                        )
+                        self._decode_capacity_pending[sid] = pending
+                        self._decode_capacity_requests += 1
+                        if not capacity_missing:
+                            self._decode_capacity_prefetches += 1
+                        thread = Thread(
+                            target=self._request_decode_capacity,
+                            args=(pending,),
+                            daemon=True,
+                            name=f"pap-decode-capacity-{sid[-12:]}",
+                        )
+                    if capacity_missing:
+                        wait_for = pending
+                else:
+                    return
+
+            if completed is not None:
+                if completed.error is not None:
+                    if capacity_missing:
+                        raise RuntimeError(
+                            "PAP Decode KV asynchronous allocation failed"
+                        ) from completed.error
+                    logger.warning(
+                        "PAP Decode KV prefetch failed request_id=%s: %s",
+                        completed.request_id,
+                        completed.error,
+                    )
+                    return
+                result = completed.result
+                if result is None:
+                    raise RuntimeError("PAP Decode KV allocation returned no result")
+                self.install_decode_capacity(
+                    session_request_id=completed.request_id,
+                    session_epoch=completed.session_epoch,
+                    generation=completed.generation,
+                    lease_id=completed.lease_id,
+                    block_ids=tuple(map(int, result["block_ids"])),
+                    writable_end_token=int(result["writable_end_token"]),
+                    required_tokens=completed.required_tokens,
+                    allocation_limit_token=int(result["allocation_limit_token"]),
+                )
+                continue
+
+            if thread is not None:
+                thread.start()
+            if wait_for is None:
+                return
+            wait_started = time.perf_counter_ns()
+            completed_in_time = wait_for.done.wait(timeout=5.0)
+            waited_ns = time.perf_counter_ns() - wait_started
+            with self._lock:
+                self._decode_capacity_waits += 1
+                self._decode_capacity_wait_ns += waited_ns
+            if not completed_in_time:
+                raise TimeoutError("PAP Decode KV asynchronous allocation timed out")
+
+    def _request_decode_capacity(self, pending: _DecodeCapacityPending) -> None:
+        result: dict[str, Any] | None = None
+        error: Exception | None = None
+        try:
+            response = httpx.post(
+                pending.endpoint,
+                json=pending.payload,
+                timeout=5.0,
+                trust_env=False,
+            )
+            response.raise_for_status()
+            result = response.json()
+            if not result.get("allocated"):
+                raise RuntimeError(f"PAP Decode KV allocation failed: {result}")
+        except Exception as exc:
+            error = exc
+        with self._lock:
+            if self._decode_capacity_pending.get(pending.request_id) is not pending:
+                return
+            pending.result = result
+            pending.error = error
+            self._decode_capacity_failures += int(error is not None)
+            pending.done.set()
+
+    def install_decode_capacity(
+        self,
+        *,
+        session_request_id: str,
+        session_epoch: int,
+        generation: int,
+        lease_id: str,
+        block_ids: tuple[int, ...],
+        writable_end_token: int,
+        required_tokens: int,
+        allocation_limit_token: int | None = None,
+    ) -> None:
+        """Atomically append owned blocks across every layer; never replace old IDs."""
+        with self._lock:
+            sid = session_request_id
+            if (
+                self._session_epochs.get(sid) != session_epoch
+                or self._session_lease_ids.get(sid) != lease_id
+                or self._session_prefill_generations.get(sid, 0) != generation
+            ):
+                raise RuntimeError(
+                    "PAP Decode allocation arrived after release or revocation"
+                )
+            states = self._unified_paged_kv[sid]
+            first = next(iter(states.values()))
+            old_ids = first.block_ids
+            capacity_limit = (
+                int(allocation_limit_token)
+                if allocation_limit_token is not None
+                else int(self._sessions[sid].max_seq_len)
+            )
+            if (
+                block_ids[: len(old_ids)] != old_ids
+                or len(set(block_ids)) != len(block_ids)
+                or not required_tokens
+                <= writable_end_token
+                <= len(block_ids) * first.block_size
+                or writable_end_token < first.writable_end_token
+                or capacity_limit < writable_end_token
+            ):
+                raise RuntimeError(
+                    "PAP Decode allocator returned an invalid block extension"
+                )
+            updated = {
+                name: replace(
+                    state, block_ids=block_ids, writable_end_token=writable_end_token
+                )
+                for name, state in states.items()
+            }
+            self._unified_slot_activations.pop(sid, None)
+            for name, state in updated.items():
+                self._record_unified_slot_topology_locked(
+                    session_request_id=sid,
+                    layer_name=name,
+                    state=state,
+                )
+            activation = self._unified_slot_activations[sid]
+            activation.expected_layers = frozenset(updated)
+            activation.complete = True
+            self._unified_paged_kv[sid] = updated
+            self._sessions[sid].block_ids = block_ids
+            self._session_leased_block_ids[sid] = block_ids
+            self._session_lease_capacity_tokens[sid] = writable_end_token
+            self._session_decode_capacity_limits[sid] = capacity_limit
+            self._decode_capacity_installs += 1
+            self._decode_capacity_blocks_added += len(block_ids) - len(old_ids)
+            self._drop_attention_step_contexts_locked(sid)
+
     def register_prefill_kv(
         self, registration: PAPAttentionRegistration
     ) -> PAPAttentionSession:
@@ -470,6 +758,7 @@ class _PAPSessionRegistryMixin:
             self._session_epochs[registration.request_id] = session_epoch
             self._next_session_epoch += 1
             self._sessions[registration.request_id] = session
+            self._session_prefill_generations[registration.request_id] = 0
             self._prefill_readiness.setdefault(registration.request_id, {})
             self._request_id_resolution_cache[registration.request_id] = (
                 registration.request_id

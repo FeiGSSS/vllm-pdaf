@@ -104,6 +104,10 @@ class PAPSchedulerAdapter:
     accepted_token_publisher: PAPAcceptedDecodeTokenPublisher = field(
         default_factory=PAPAcceptedDecodeTokenPublisher
     )
+    decode_allocation_requests: int = 0
+    decode_allocation_blocks: int = 0
+    decode_allocation_failures: int = 0
+    prefill_revocations: int = 0
 
     @classmethod
     def from_environ(
@@ -171,6 +175,32 @@ class PAPSchedulerAdapter:
         if metadata.decode_capacity_tokens is not None:
             return metadata.decode_capacity_tokens
         return self.settings.unified_kv_decode_capacity_tokens
+
+    @staticmethod
+    def build_connector_metadata(connector: Any, output: Any, kv_manager: Any) -> Any:
+        from vllm.pap.kv_connector import PAPPrefillConnector
+
+        if isinstance(connector, PAPPrefillConnector):
+            return connector.build_connector_meta(
+                output,
+                allocated_blocks={
+                    rid: kv_manager.get_block_ids(rid)
+                    for rid in output.num_scheduled_tokens
+                },
+            )
+        return connector.build_connector_meta(output)
+
+    def preempt_request(self, connector: Any, request: Any) -> None:
+        from vllm.pap.kv_connector import PAPPrefillConnector
+
+        if isinstance(connector, PAPPrefillConnector):
+            connector.preempt_request(request)
+            self.prefill_revocations += 1
+
+    def record_decode_allocation(self, *, blocks: int, failed: bool) -> None:
+        self.decode_allocation_requests += 1
+        self.decode_allocation_blocks += int(blocks)
+        self.decode_allocation_failures += int(failed)
 
     def accepted_decode_token_notification(
         self,

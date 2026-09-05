@@ -239,6 +239,8 @@ def create_app(
             if ready or snapshot["failed"] or timed_out:
                 break
             await asyncio.sleep(0.005)
+        if ready and ready_prefix_len is not None:
+            runtime.prefetch_decode_capacity(request_id, int(ready_prefix_len))
         return {
             "request_id": request_id,
             "session_handle": session_handle,

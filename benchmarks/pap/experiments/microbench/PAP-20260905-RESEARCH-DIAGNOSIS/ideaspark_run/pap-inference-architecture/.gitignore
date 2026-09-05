@@ -1,0 +1,3 @@
+# Local primary-paper reading cache; do not republish full papers with code.
+/phase0/fulltext/
+/phase0/fulltext_cache.json

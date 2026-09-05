@@ -104,6 +104,7 @@ class PAPNVSHMEMTransport:
         self._lifecycle_lock = threading.Lock()
         self._send_lock = threading.Lock()
         self._step_prepare_handler: Any = None
+        self._step_preflight_handler: Any = None
         self._qkv_send_generation = 1
         self._qkv_recv_generation = 1
         self._last_qkv_sent = 0
@@ -561,6 +562,10 @@ class PAPNVSHMEMTransport:
     def set_step_prepare_handler(self, handler: Any) -> None:
         self._step_prepare_handler = handler
 
+    def set_step_preflight_handler(self, handler: Any) -> None:
+        """Install the capacity fence run before a control slot is released."""
+        self._step_preflight_handler = handler
+
     def step_prepare_stream(self) -> torch.Stream:
         return self._qkv_stream
 
@@ -700,6 +705,8 @@ class PAPNVSHMEMTransport:
             dtype=plan.dtype,
             num_bytes=qkv_num_bytes,
         )
+        if self._step_preflight_handler is not None:
+            self._step_preflight_handler(descriptor)
         self._qkv_recv_generation += 1
         self._release(
             release_kind=_RELEASE_QKV,

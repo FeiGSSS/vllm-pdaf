@@ -12,7 +12,10 @@ from typing import Any
 import torch
 
 from vllm.logger import init_logger
-from vllm.pap.attention.compute import prepare_offload_exec_step
+from vllm.pap.attention.compute import (
+    ensure_offload_exec_capacity,
+    prepare_offload_exec_step,
+)
 from vllm.pap.attention.runtime import PAPAttentionRuntime
 from vllm.pap.attention.step_graph import run_offload_exec_nvshmem_graph_loop
 from vllm.pap.attention.triton_backend import (
@@ -165,6 +168,13 @@ class PAPAttentionPeerManager:
         else:
             raise RuntimeError("PAP Attention kernel policy must be auto or triton")
         self.attention_kernel_selector = attention_kernel_selector
+
+        transport.set_step_preflight_handler(
+            lambda descriptor: ensure_offload_exec_capacity(
+                registry=self.runtime.registry,
+                descriptor=descriptor,
+            )
+        )
 
         def prepare_step(descriptor: Any, dtype: torch.dtype) -> Any:
             with torch.cuda.stream(stream):

@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -15,6 +15,7 @@ from vllm.distributed.kv_transfer.kv_connector.v1 import (
 )
 from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorMetadata
 from vllm.pap.integration.request import PAPRequestMetadata
+from vllm.pap.integration.settings import PAPRuntimeSettings
 from vllm.pap.kv import lease as pap_lease
 from vllm.pap.model.prefill import PAPPrefillKVPublisher
 from vllm.v1.request import RequestStatus
@@ -37,6 +38,9 @@ class PAPPrefillRequest:
     decode_capacity_tokens: int | None
     import_to_attention: bool
     attention_tcp_endpoint: str | None
+    allocated_block_ids: tuple[int, ...] = ()
+    lease_id: str | None = None
+    generation: int = 0
 
 
 @dataclass(slots=True)
@@ -61,11 +65,15 @@ class PAPPrefillConnector(KVConnectorBase_V1):
     ) -> None:
         super().__init__(vllm_config, role, kv_cache_config)
         self._request_metadata: dict[str, PAPRequestMetadata] = {}
+        self._generations: dict[str, int] = {}
         self._layer_names: tuple[str, ...] = ()
         self._publishers: dict[str, PAPPrefillKVPublisher] = {}
         self._pending_finished: set[str] = set()
         self._decode_query_len = _decode_query_len(vllm_config)
         self._block_size = int(vllm_config.cache_config.block_size)
+        self._default_decode_capacity = (
+            PAPRuntimeSettings.from_environ().unified_kv_decode_capacity_tokens
+        )
         self._num_kv_heads = vllm_config.model_config.get_num_kv_heads(
             vllm_config.parallel_config
         )
@@ -117,11 +125,11 @@ class PAPPrefillConnector(KVConnectorBase_V1):
                 for request in requests
                 if request.prefill_kv_handle is not None
             },
-            decode_capacity_tokens_by_request={
-                request.request_id: request.decode_capacity_tokens
-                for request in requests
-                if request.decode_capacity_tokens is not None
+            allocated_block_ids_by_request={
+                r.request_id: r.allocated_block_ids for r in requests
             },
+            lease_ids_by_request={r.request_id: r.lease_id for r in requests},
+            generations_by_request={r.request_id: r.generation for r in requests},
             import_request_ids={
                 request.request_id
                 for request in requests
@@ -158,6 +166,9 @@ class PAPPrefillConnector(KVConnectorBase_V1):
         self._pending_finished.difference_update(ready)
         for publisher in self._publishers.values():
             publisher.finish_requests(ready)
+        for request_id in ready:
+            self._request_metadata.pop(request_id, None)
+            self._generations.pop(request_id, None)
         return ready, None
 
     def get_num_new_matched_tokens(
@@ -175,12 +186,42 @@ class PAPPrefillConnector(KVConnectorBase_V1):
         del request, blocks, num_external_tokens
 
     def on_new_request(self, request: Request) -> None:
-        self._request_metadata[request.request_id] = PAPRequestMetadata.from_mapping(
-            request.kv_transfer_params
+        metadata = PAPRequestMetadata.from_mapping(request.kv_transfer_params)
+        if (
+            metadata.import_prefill_kv_to_attention
+            and metadata.decode_capacity_tokens is None
+        ):
+            metadata = replace(
+                metadata, decode_capacity_tokens=self._default_decode_capacity
+            )
+        self._request_metadata[request.request_id] = metadata
+        self._generations[request.request_id] = 0
+
+    def preempt_request(self, request: Request) -> None:
+        """Revoke a Prefill-only mapping before the scheduler recycles its blocks."""
+        from vllm.pap.kv.handoff import revoke_prefill_kv
+
+        metadata = self._request_metadata.get(request.request_id)
+        if metadata is None or not metadata.import_prefill_kv_to_attention:
+            return
+        generation = self._generations[request.request_id]
+        lease_id = pap_lease.pap_active_lease_id(request.request_id)
+        if not metadata.attention_tcp_endpoint or not metadata.prefill_kv_handle:
+            raise RuntimeError("PAP preemption lacks Attention ownership endpoint")
+        revoke_prefill_kv(
+            endpoint=metadata.attention_tcp_endpoint,
+            session_handle=metadata.prefill_kv_handle,
+            generation=generation,
         )
+        if lease_id is not None:
+            pap_lease.pap_release_lease(lease_id)
+        self._generations[request.request_id] = generation + 1
 
     def build_connector_meta(
-        self, scheduler_output: SchedulerOutput
+        self,
+        scheduler_output: SchedulerOutput,
+        *,
+        allocated_blocks: dict[str, tuple[list[int], ...]] | None = None,
     ) -> PAPPrefillConnectorMetadata:
         num_tokens = scheduler_output.num_scheduled_tokens
         request_ids = sorted(
@@ -193,6 +234,27 @@ class PAPPrefillConnector(KVConnectorBase_V1):
         requests = []
         for request_id in request_ids:
             metadata = self._request_metadata.get(request_id, PAPRequestMetadata())
+            owned: tuple[int, ...] = ()
+            lease_id = None
+            if metadata.import_prefill_kv_to_attention:
+                groups = (allocated_blocks or {}).get(request_id)
+                if groups is None or len(groups) != 1:
+                    raise RuntimeError(
+                        "PAP publication requires authoritative KV ownership"
+                    )
+                owned = tuple(groups[0])
+                if not owned or len(set(owned)) != len(owned):
+                    raise RuntimeError("PAP scheduler produced invalid owned KV blocks")
+                lease_id = pap_lease.pap_active_lease_id(request_id)
+                registry = pap_lease.get_global_kv_lease_registry()
+                if lease_id is None:
+                    lease_id = registry.pin_blocks(
+                        request_id=request_id,
+                        block_ids=owned,
+                        ttl_seconds=0,
+                    )
+                else:
+                    registry.extend_blocks(request_id, owned)
             requests.append(
                 PAPPrefillRequest(
                     request_id=request_id,
@@ -201,6 +263,9 @@ class PAPPrefillConnector(KVConnectorBase_V1):
                     decode_capacity_tokens=metadata.decode_capacity_tokens,
                     import_to_attention=metadata.import_prefill_kv_to_attention,
                     attention_tcp_endpoint=metadata.attention_tcp_endpoint,
+                    allocated_block_ids=owned,
+                    lease_id=lease_id,
+                    generation=self._generations.get(request_id, 0),
                 )
             )
         finished = tuple(str(req_id) for req_id in scheduler_output.finished_req_ids)
@@ -211,8 +276,10 @@ class PAPPrefillConnector(KVConnectorBase_V1):
     ) -> tuple[bool, dict[str, Any] | None]:
         del block_ids
         request_id = request.request_id
-        metadata = self._request_metadata.pop(request_id, PAPRequestMetadata())
+        metadata = self._request_metadata.get(request_id, PAPRequestMetadata())
         if not metadata.import_prefill_kv_to_attention:
+            self._request_metadata.pop(request_id, None)
+            self._generations.pop(request_id, None)
             return False, None
         lease_id = pap_lease.pap_active_lease_id(request_id)
         if lease_id is None:
@@ -220,6 +287,8 @@ class PAPPrefillConnector(KVConnectorBase_V1):
                 self._pending_finished.discard(request_id)
                 for publisher in self._publishers.values():
                     publisher.finish_requests({request_id})
+                self._request_metadata.pop(request_id, None)
+                self._generations.pop(request_id, None)
                 return False, None
             raise RuntimeError(
                 f"PAP Prefill request {request_id} finished without a KV lease"

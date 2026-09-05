@@ -11,6 +11,10 @@ surviving test covers the same behavior.
   transport behavior used by the AIPerf PAP topology;
 - fail-closed validation for malformed descriptors, stale generations, and
   invalid lifecycle transitions;
+- allocator-owned Prefill block publication, Attention-initiated Decode growth,
+  low-watermark asynchronous prefetch with boundary-only waiting, atomic
+  topology invalidation, and pre-Decode generation revocation before Prefill
+  blocks are recycled;
 - mandatory NVSHMEM whole-step Graph ownership and graph boundaries,
   capture-shape selection, and eager fallback;
 - xPA1P same-host configuration and fail-closed removed-selector contracts.

@@ -36,6 +36,14 @@ class RequestQuiesceRequest(BaseModel):
     request_ids: list[str] = Field(min_length=1)
 
 
+class DecodeAllocationRequest(BaseModel):
+    session_handle: str
+    lease_id: str
+    generation: int = Field(ge=0)
+    required_tokens: int = Field(gt=0)
+    reserve_tokens: int = Field(default=256, ge=0, le=4096)
+
+
 @dataclass(slots=True)
 class _ControlItem:
     operation: str
@@ -176,6 +184,14 @@ def build_prefill_control_router() -> APIRouter:
             raise HTTPException(status_code=409, detail=result)
         return result
 
+    @router.post("/v1/pap/prefill/decode-allocate")
+    async def allocate(
+        req: DecodeAllocationRequest, raw_request: Request
+    ) -> dict[str, Any]:
+        return await _dispatcher(raw_request).submit(
+            "decode_allocate", req.model_dump(), wait=True
+        )
+
     @router.post("/v1/pap/prefill/lease-release")
     async def release_lease(
         req: LeaseReleaseRequest, raw_request: Request
@@ -218,6 +234,7 @@ def build_projection_control_router() -> APIRouter:
 
 
 __all__ = [
+    "DecodeAllocationRequest",
     "DecodeCommitRequest",
     "LeaseReleaseRequest",
     "PAPControlDispatcher",

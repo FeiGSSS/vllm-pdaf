@@ -25,7 +25,8 @@ does not initialize the Attention registry when a Prefill worker imports leases.
 - Request: `gateway/app.py` → `gateway/request_pipeline.py` → Prefill →
   request-specific KV readiness → Projection → completion/cancellation cleanup.
 - Prefill KV: `kv_connector.py` → `model/prefill.py` → `kv/handoff.py`
-  → Attention's session registry. CUDA IPC maps the storage;
+  → Attention's session registry. Prefill publishes only allocator-owned prompt
+  blocks. CUDA IPC maps the storage;
   HTTP/TCP carries control information, not the full KV tensors.
 - Decode: `integration/runner.py` → `model/step_graph.py` →
   `model/projection.py` → NVSHMEM → `attention/step_graph.py`
@@ -35,6 +36,36 @@ does not initialize the Attention registry when a Prefill worker imports leases.
   `kv/decode_token_client.py`; Attention joins token and KV readiness in
   `kv/decode_commit.py`, then uses `kv/control_client.py` to submit commits or
   release leases to Prefill. `kv/lease.py` protects blocks still in use.
+
+Decode KV capacity uses per-request low-watermark prefetch. Prefill readiness
+starts the first asynchronous allocation, and subsequent steps start another
+256-token allocation when writable headroom drops below 256 tokens. Each request
+has at most one allocation in flight, normally keeping future headroom between
+256 and 512 tokens. Attention waits only if Decode reaches the current writable
+end before that request completes. Background threads perform only the HTTP
+round trip; authoritative block IDs are installed at an Attention preflight
+boundary, where all layer views are updated atomically and step/PAT metadata is
+invalidated before the new blocks are used.
+
+The owning Prefill EngineCore serves allocations through
+`/v1/pap/prefill/decode-allocate`; the vLLM KV manager remains the only allocator.
+Allocation changes capacity, not the committed-token watermark.
+`PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS` is the fallback per-request Decode limit
+when the client supplies no output limit; it is not eagerly allocated capacity.
+
+Chunked-Prefill preemption uses generation fencing. The scheduler requests an
+Attention revocation and waits for acknowledgement before it mutates the running
+queue or returns blocks to vLLM. Revocation is accepted only before Decode claims
+the layout. Resumed Prefill publishes the next generation, and late manifests
+from older generations are ignored. Decode-owned layouts are never reclaimed
+through this Prefill-preemption path.
+
+The allocator grows by 256 tokens per request. Near a request's declared output
+limit, the final growth may be smaller. If no evictable or free block can satisfy
+a request before Decode reaches its writable end, the step is rejected before
+QKV is accepted; active Decode KV is not silently preempted or aliased. A future
+admission/backpressure policy can improve availability under complete
+non-evictable KV saturation without weakening this ownership rule.
 
 `gateway/lifecycle.py` remains separate: it owns the entire distributed
 request, including engine cancellation and router reservations, not only KV.

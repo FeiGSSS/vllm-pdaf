@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import pytest
+
 from vllm.pap.kv.control_client import DecodeCommitClient, LeaseReleaseClient
 
 
@@ -14,6 +16,80 @@ def test_pap_lease_remembers_recently_released_request():
     assert pap_lease.pap_release_lease(lease_id) == (1, 2)
     assert pap_lease.pap_was_recently_released("request")
 
+    pap_lease.reset_global_kv_lease_registry()
+
+
+def test_pap_lease_extends_without_aliasing_or_expiry():
+    from vllm.pap.kv import lease as pap_lease
+
+    pap_lease.reset_global_kv_lease_registry()
+    registry = pap_lease.get_global_kv_lease_registry()
+    lease_id = registry.pin_blocks(
+        request_id="request", block_ids=(1, 2), ttl_seconds=0
+    )
+
+    registry.extend_blocks("request", (1, 2, 3))
+    registry.extend_blocks("request", (1, 2))  # stale chunk cannot shrink it
+
+    assert registry.active_entry(lease_id).block_ids == (1, 2, 3)
+    with pytest.raises(ValueError, match="aliases"):
+        registry.extend_blocks("request", (1, 2, 2))
+    with pytest.raises(RuntimeError, match="changed existing"):
+        registry.extend_blocks("request", (1, 9, 3))
+    pap_lease.reset_global_kv_lease_registry()
+
+
+def test_exact_lease_extension_cannot_resurrect_revoked_generation():
+    from vllm.pap.kv import lease as pap_lease
+
+    registry = pap_lease.PAPKVLeaseRegistry()
+    old_lease = registry.pin_blocks(request_id="request", block_ids=(1, 2))
+    assert registry.release_lease(old_lease) == (1, 2)
+    new_lease = registry.pin_blocks(request_id="request", block_ids=(7, 8))
+
+    assert (
+        registry.extend_blocks_if_active(
+            request_id="request",
+            lease_id=old_lease,
+            block_ids=(1, 2, 3),
+        )
+        is None
+    )
+    assert registry.active_lease_id("request") == new_lease
+    assert registry.leased_block_ids("request") == (7, 8)
+
+
+def test_late_manifest_does_not_repin_revoked_lease(monkeypatch):
+    from vllm.pap.kv import lease as pap_lease
+    from vllm.pap.kv.handoff import publish_prefill_kv_session_manifest
+
+    pap_lease.reset_global_kv_lease_registry()
+    registry = pap_lease.get_global_kv_lease_registry()
+    old_lease = registry.pin_blocks(request_id="request", block_ids=(1, 2))
+    registry.release_lease(old_lease)
+    new_lease = registry.pin_blocks(request_id="request", block_ids=(7, 8))
+    monkeypatch.setattr(
+        "vllm.pap.kv.handoff._post_bytes_tcp",
+        lambda **_kwargs: pytest.fail("stale manifest must not reach Attention"),
+    )
+
+    published = publish_prefill_kv_session_manifest(
+        request_id="request",
+        session_handle="session",
+        catalog_id="catalog",
+        block_ids=(1, 2, 3),
+        prefix_len=32,
+        block_size=16,
+        expected_layer_count=1,
+        ready_event_handle=None,
+        tcp_endpoint="tcp://127.0.0.1:1",
+        lease_id=old_lease,
+        generation=0,
+    )
+
+    assert published == 0
+    assert registry.active_lease_id("request") == new_lease
+    assert registry.leased_block_ids("request") == (7, 8)
     pap_lease.reset_global_kv_lease_registry()
 
 

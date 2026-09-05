@@ -289,6 +289,7 @@ class PAPPrefillKVSessionManifest:
     writable_start_token: int
     writable_end_token: int
     ready_event_handle: bytes | None = None
+    generation: int = 0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "request_id", str(self.request_id))
@@ -311,6 +312,7 @@ class PAPPrefillKVSessionManifest:
         )
         object.__setattr__(self, "writable_start_token", int(self.writable_start_token))
         object.__setattr__(self, "writable_end_token", int(self.writable_end_token))
+        object.__setattr__(self, "generation", int(self.generation))
         if self.ready_event_handle is not None:
             object.__setattr__(
                 self,
@@ -344,6 +346,12 @@ class PAPPrefillKVSessionManifest:
         ) // self.block_size
         if len(self.block_ids) < required_blocks:
             raise ValueError("block_ids must cover writable_end_token")
+        if self.generation < 0:
+            raise ValueError("KV generation must be nonnegative")
+        if len(set(self.block_ids)) != len(self.block_ids):
+            raise ValueError("KV blocks must not alias within one request")
+        if not set(self.block_ids).issubset(self.leased_block_ids):
+            raise ValueError("KV block table must be covered by its lease")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -359,6 +367,7 @@ class PAPPrefillKVSessionManifest:
             "lease_capacity_tokens": self.lease_capacity_tokens,
             "writable_start_token": self.writable_start_token,
             "writable_end_token": self.writable_end_token,
+            "generation": self.generation,
             "ready_event_handle": (
                 None
                 if self.ready_event_handle is None
@@ -384,6 +393,7 @@ class PAPPrefillKVSessionManifest:
             lease_capacity_tokens=int(data["lease_capacity_tokens"]),
             writable_start_token=int(data["writable_start_token"]),
             writable_end_token=int(data["writable_end_token"]),
+            generation=int(data.get("generation", 0)),
             ready_event_handle=(
                 None
                 if event_handle is None

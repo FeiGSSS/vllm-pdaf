@@ -63,6 +63,7 @@ class PAPAttentionRuntime:
             **self.registry.slot_topology_stats(),
             **self.registry.attention_step_context_stats(),
             **self.registry.decode_token_stats(),
+            **self.registry.decode_capacity_stats(),
             **self.registry.offload_exec_dispatch_stats(),
         }
         stats.update(
@@ -127,6 +128,9 @@ class PAPAttentionRuntime:
             request_id,
             include_layers=include_layers,
         )
+
+    def prefetch_decode_capacity(self, request_id: str, required_tokens: int) -> None:
+        self.registry.prefetch_decode_capacity(request_id, required_tokens)
 
     def release_session(self, request_id: str) -> bool:
         return self.registry.release_session(request_id)

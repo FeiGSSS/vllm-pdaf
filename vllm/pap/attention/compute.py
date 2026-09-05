@@ -215,3 +215,11 @@ def prepare_offload_exec_step(
             (time.perf_counter() - prepare_started) * 1000.0,
         )
     return context
+
+
+def ensure_offload_exec_capacity(
+    *, registry: PAPAttentionRegistry, descriptor: Any
+) -> None:
+    """Allocate any missing Decode pages before accepting a remote step."""
+    request_ids, steps, _scales = _offload_exec_batch_rows(descriptor)
+    registry.ensure_decode_capacity(request_ids, steps)

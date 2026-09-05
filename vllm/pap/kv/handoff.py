@@ -83,16 +83,6 @@ logger = logging.getLogger(__name__)
 _TCP_CONNECTIONS = local()
 
 
-def _pap_unified_kv_decode_capacity_tokens() -> int:
-    raw = os.environ.get("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "")
-    if not raw:
-        return 0
-    try:
-        return max(0, int(raw))
-    except ValueError:
-        return 0
-
-
 def _parse_tcp_endpoint(endpoint: str) -> tuple[str, int]:
     parsed = urlsplit(endpoint if "://" in endpoint else f"tcp://{endpoint}")
     if parsed.scheme != "tcp" or parsed.hostname is None or parsed.port is None:
@@ -219,7 +209,38 @@ def accept_prefill_kv_handoff(
             },
             {},
         )
+    if command == "revoke_prefill_kv":
+        result = registry.revoke_prefill_kv(
+            session_handle=str(metadata["session_handle"]),
+            generation=int(metadata["generation"]),
+        )
+        return serialize_tensor_bundle(result, {})
     raise ValueError(f"unsupported PAP wire command {command!r}; use sealed KV handoff")
+
+
+def revoke_prefill_kv(*, endpoint: str, session_handle: str, generation: int) -> None:
+    """Fence old Prefill publications before allocator ownership is recycled."""
+    from vllm.pap.protocol.wire import (
+        deserialize_tensor_bundle,
+        serialize_tensor_bundle,
+    )
+
+    result, _ = deserialize_tensor_bundle(
+        _post_bytes_tcp(
+            endpoint=endpoint,
+            payload=serialize_tensor_bundle(
+                {
+                    "command": "revoke_prefill_kv",
+                    "session_handle": session_handle,
+                    "generation": generation,
+                },
+                {},
+            ),
+            timeout=float(os.environ.get("PAP_REMOTE_ATTENTION_TIMEOUT", "5.0")),
+        )
+    )
+    if not result.get("revoked"):
+        raise RuntimeError(f"PAP Prefill revocation not acknowledged: {result}")
 
 
 def register_prefill_kv_catalog(
@@ -290,16 +311,13 @@ def publish_prefill_kv_session_manifest(
     ready_event_handle: bytes | None,
     tcp_endpoint: str | None = None,
     timeout: float | None = None,
-    decode_capacity_tokens: int | None = None,
+    writable_tail_tokens: int = 0,
+    lease_id: str,
+    generation: int = 0,
 ) -> int:
     """Atomically publish one request's sealed Prefill KV layout."""
 
-    from vllm.pap.kv.lease import (
-        pap_active_lease_id,
-        pap_has_active_lease,
-        pap_leased_block_ids,
-        pap_pin_blocks,
-    )
+    from vllm.pap.kv.lease import get_global_kv_lease_registry
     from vllm.pap.protocol import PAPPrefillKVSessionManifest
     from vllm.pap.protocol.wire import (
         deserialize_tensor_bundle,
@@ -314,36 +332,35 @@ def publish_prefill_kv_session_manifest(
         else float(os.environ.get("PAP_REMOTE_ATTENTION_TIMEOUT", "5.0"))
     )
     normalized_block_ids = tuple(int(block_id) for block_id in block_ids)
+    if len(set(normalized_block_ids)) != len(normalized_block_ids):
+        raise ValueError("PAP manifest aliases physical blocks within one request")
     try:
-        if pap_has_active_lease(request_id):
-            lease_id = pap_active_lease_id(request_id)
-            leased_block_ids = pap_leased_block_ids(request_id)
-        else:
-            lease_id = pap_pin_blocks(
-                request_id=request_id,
-                block_ids=normalized_block_ids,
-            )
-            leased_block_ids = normalized_block_ids
+        leased_block_ids = get_global_kv_lease_registry().extend_blocks_if_active(
+            request_id=request_id,
+            lease_id=lease_id,
+            block_ids=normalized_block_ids,
+        )
     except Exception as exc:
         logger.exception(
-            "PAP sealed KV lease pin failed request_id=%s blocks=%d",
+            "PAP sealed KV lease validation failed request_id=%s blocks=%d",
             request_id,
             len(normalized_block_ids),
         )
         raise RuntimeError(
-            f"PAP sealed KV lease pin failed for request_id={request_id}"
+            f"PAP sealed KV lease validation failed for request_id={request_id}"
         ) from exc
-    if lease_id is None:
-        raise RuntimeError(f"PAP sealed KV lease missing for request_id={request_id}")
+    if leased_block_ids is None:
+        # Revocation won the race. Never recreate ownership for an old generation.
+        return 0
 
     block_capacity = len(normalized_block_ids) * int(block_size)
-    if decode_capacity_tokens is None:
-        decode_capacity_tokens = _pap_unified_kv_decode_capacity_tokens()
-    decode_capacity_tokens = max(0, int(decode_capacity_tokens))
+    writable_tail_tokens = max(0, int(writable_tail_tokens))
     planned_capacity = min(
-        int(prefix_len) + decode_capacity_tokens,
+        int(prefix_len) + writable_tail_tokens,
         block_capacity,
     )
+    if int(prefix_len) + writable_tail_tokens > block_capacity:
+        raise ValueError("PAP manifest exceeds allocated KV capacity")
     manifest = PAPPrefillKVSessionManifest(
         request_id=request_id,
         session_handle=session_handle,
@@ -358,6 +375,7 @@ def publish_prefill_kv_session_manifest(
         writable_start_token=prefix_len,
         writable_end_token=planned_capacity,
         ready_event_handle=ready_event_handle,
+        generation=generation,
     )
     request_body = serialize_tensor_bundle(
         {

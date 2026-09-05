@@ -188,6 +188,13 @@ class PAPKVLeaseRegistry:
                 return None
             return lease_id
 
+    def active_entry(self, lease_id: str) -> PAPKVLeaseEntry | None:
+        with self._lock:
+            entry = self._by_lease.get(lease_id)
+            if entry is None or self.active_lease_id(entry.request_id) != lease_id:
+                return None
+            return entry
+
     def refresh_lease(self, request_id: str) -> bool:
         """Extend the active lease after an acknowledged decode commit."""
         with self._lock:
@@ -197,13 +204,60 @@ class PAPKVLeaseRegistry:
             entry = self._by_lease.get(lease_id)
             if entry is None or entry.released_at is not None:
                 return False
-            if self._ttl_seconds <= 0:
+            if entry.expires_at is None or self._ttl_seconds <= 0:
                 return True
             self._by_lease[lease_id] = replace(
                 entry,
                 expires_at=time.time() + self._ttl_seconds,
             )
             return True
+
+    def extend_blocks(self, request_id: str, block_ids: Sequence[int]) -> None:
+        """Grow an owned layout; older in-flight chunk snapshots cannot shrink it."""
+        blocks = tuple(map(int, block_ids))
+        if len(set(blocks)) != len(blocks):
+            raise ValueError("PAP owned block table aliases within one request")
+        with self._lock:
+            lease_id = self._active_by_request.get(str(request_id))
+            if lease_id is None:
+                raise RuntimeError("cannot extend an inactive PAP lease")
+            entry = self._by_lease.get(lease_id)
+            if entry is None:
+                raise RuntimeError("cannot extend an inactive PAP lease")
+            common = min(len(blocks), len(entry.block_ids))
+            if blocks[:common] != entry.block_ids[:common]:
+                raise RuntimeError("PAP lease extension changed existing block IDs")
+            if len(blocks) > len(entry.block_ids):
+                self._by_lease[lease_id] = replace(entry, block_ids=blocks)
+
+    def extend_blocks_if_active(
+        self,
+        *,
+        request_id: str,
+        lease_id: str,
+        block_ids: Sequence[int],
+    ) -> tuple[int, ...] | None:
+        """Atomically extend one exact lease, returning its current ownership."""
+        blocks = tuple(map(int, block_ids))
+        if len(set(blocks)) != len(blocks):
+            raise ValueError("PAP owned block table aliases within one request")
+        with self._lock:
+            entry = self._by_lease.get(str(lease_id))
+            if (
+                self._active_by_request.get(str(request_id)) != str(lease_id)
+                or entry is None
+                or entry.request_id != str(request_id)
+                or entry.released_at is not None
+                or (entry.expires_at is not None and time.time() > entry.expires_at)
+            ):
+                return None
+            common = min(len(blocks), len(entry.block_ids))
+            if blocks[:common] != entry.block_ids[:common]:
+                raise RuntimeError("PAP lease extension changed existing block IDs")
+            if len(blocks) > len(entry.block_ids):
+                entry = replace(entry, block_ids=blocks)
+                self._by_lease[str(lease_id)] = entry
+            return entry.block_ids
 
     def update_seq_len(self, request_id: str, seq_len: int) -> bool:
         """Advance the leased prefix length after a decode commit."""

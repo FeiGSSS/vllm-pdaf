@@ -1,0 +1,12 @@
+# Local retrieval caches and intermediate failed-search output.
+literature/allinone.md
+literature/*-stderr.txt
+literature/*-stdout.txt
+literature/*-error.txt
+literature/targeted_api_report.md
+
+# Superseded isolated-worktree repair snapshots.
+reservation_fix_*
+
+# Local idea-workflow state, not the curated report.
+ideaspark_run/**/phase0/.*
