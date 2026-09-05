@@ -11,7 +11,7 @@ from typing import Any
 
 import torch
 
-from vllm.pap.config import PAPRuntimeConfig
+from vllm.pap.config import PAPRuntimeConfig, read_env_float, read_env_int
 from vllm.pap.kv.decode_state import _PAPDecodeStateMixin
 from vllm.pap.kv.models import (
     PAPAttentionSession,
@@ -51,14 +51,14 @@ class PAPAttentionRegistry(
         self._decode_append_lock = Lock()
         self._prefill_condition = Condition(self._lock)
         if runtime_config is None:
-            self._decode_slot_plan_cache_limit_value = int(
-                os.environ.get("PAP_DECODE_SLOT_PLAN_CACHE_LIMIT", "256")
+            self._decode_slot_plan_cache_limit_value = read_env_int(
+                os.environ, "PAP_DECODE_SLOT_PLAN_CACHE_LIMIT", 256, minimum=0
             )
-            self._decode_token_flush_timeout_s = float(
-                os.environ.get("PAP_DECODE_TOKEN_FLUSH_TIMEOUT", "5.0")
+            self._decode_token_flush_timeout_s = read_env_float(
+                os.environ, "PAP_DECODE_TOKEN_FLUSH_TIMEOUT", 5.0, minimum=0.0
             )
-            self._prefill_wait_timeout_s = float(
-                os.environ.get("PAP_ATTENTION_PREFILL_WAIT_TIMEOUT", "5.0")
+            self._prefill_wait_timeout_s = read_env_float(
+                os.environ, "PAP_ATTENTION_PREFILL_WAIT_TIMEOUT", 5.0, minimum=0.0
             )
         else:
             self._decode_slot_plan_cache_limit_value = (

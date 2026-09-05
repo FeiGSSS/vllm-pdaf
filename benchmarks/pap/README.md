@@ -7,7 +7,7 @@ Historical implementations are recovered from Git, not kept as runnable code.
 
 ## Current boundary
 
-The supported PAP benchmark topology is same-host `xPA1P`, TP1, with:
+The supported PAP benchmark topology is same-host `xPAyP`, TP1, with:
 
 - static 80/12-SM Prefill/Attention MPS partitions;
 - synchronous v0.26 Prefill scheduling for immediate KV handoff;
@@ -47,7 +47,6 @@ PAP_PROJECTION_GPUS=7 \
 PAP_ROUTING_POLICY=conversation_affinity \
 PAP_AIPERF_INPUT_FILE=/path/to/workload.jsonl \
 PAP_AIPERF_SESSIONS=128 \
-PAP_AIPERF_VARIABLE_TURNS=1 \
 PAP_AIPERF_EXPECTED_REQUESTS=455 \
 PAP_AIPERF_CONCURRENCY=32 \
 MAX_MODEL_LEN=131072 \
@@ -74,12 +73,17 @@ configuration explicitly.
 - `scripts/configure_nvshmem.sh` validates the current NVSHMEM runtime.
 - `scripts/build_nvshmem_device_bridge.sh` builds the device-side bridge.
 - `scripts/configure_same_node_nixl.sh` validates the NIXL/UCX runtime used
-  by Prefill KV lifecycle bookkeeping and the Dynamo 6P2D baseline.
+  by the Dynamo PD baselines.
 - `scripts/setup_same_node_nixl.sh` builds that local NIXL/UCX environment.
 - `scripts/DYNAMO.md` documents the isolated Dynamo baseline environment.
 
 NIXL is not a PAP Attention--Projection transport and is not used for
 PA-to-PA request relocation.
+
+See [runtime requirements and reproduction limitations](scripts/RUNTIMES.md)
+for dependency installation versus per-process configuration. PAP replay requires
+an existing dataset and explicit session/request counts; startup never generates
+a replacement workload.
 
 ## Active diagnostics
 

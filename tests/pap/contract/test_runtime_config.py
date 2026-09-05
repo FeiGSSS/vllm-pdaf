@@ -112,3 +112,31 @@ def test_runtime_config_values_are_immutable() -> None:
 def test_removed_flag_registry_has_unique_names() -> None:
     names = [spec.name for spec in PAP_REMOVED_FLAGS]
     assert len(names) == len(set(names))
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"TOPOLOGY": "6pa2p"},
+        {"PA_COUNT": "6"},
+        {"PROJECTION_COUNT": "2"},
+        {"PAP_PA_COUNT": "6"},
+        {"PAP_PROJECTION_COUNT": "2"},
+    ],
+)
+def test_replay_rejects_conflicting_topology_aliases(extra) -> None:
+    with pytest.raises(PAPConfigError, match="disagrees"):
+        PAPRuntimeConfig.from_env({"PAP_TOPOLOGY": "7pa1p", **extra})
+
+
+def test_replay_accepts_consistent_legacy_topology() -> None:
+    config = PAPRuntimeConfig.from_env(
+        {"TOPOLOGY": "7PA1P", "PA_COUNT": "7", "PROJECTION_COUNT": "1"}
+    )
+    assert config.topology.name == "7pa1p"
+
+
+@pytest.mark.parametrize("timeout", ["nan", "inf", "-inf"])
+def test_nonfinite_timeout_cannot_disable_deadlines(timeout) -> None:
+    with pytest.raises(PAPConfigError, match="must be finite"):
+        PAPRuntimeConfig.from_env({"PAP_DECODE_COMMIT_TIMEOUT": timeout})

@@ -14,6 +14,7 @@ from typing import Any
 import torch
 
 from vllm.logger import init_logger
+from vllm.pap.config import read_env_bool
 from vllm.pap.model.projection_routing import _pap_offload_exec_step_groups
 from vllm.pap.protocol import PAPOffloadExecBatchDescriptor
 from vllm.pap.protocol.offload_exec import layer_index_and_template
@@ -24,7 +25,6 @@ from vllm.pap.transport.projection import (
 
 logger = init_logger(__name__)
 
-_TRUE_VALUES = {"1", "true", "yes", "on"}
 _PROJECTION_ADAPTERS: dict[str, Any] = {}
 _ROUTED_GRAPH_BUFFERS: dict[tuple[Any, ...], _RoutedGraphBuffers] = {}
 _ROUTE_INDEX_LOCK = threading.Lock()
@@ -33,7 +33,7 @@ _TLS = threading.local()
 
 def pap_projection_step_graph_enabled() -> bool:
     """Return whether this process owns the PAP Projection model graph."""
-    return os.environ.get("PAP_PROJECTION_KV_UNAWARE", "").lower() in _TRUE_VALUES
+    return read_env_bool(os.environ, "PAP_PROJECTION_KV_UNAWARE")
 
 
 def register_projection_step_graph_adapter(
@@ -267,7 +267,7 @@ def prepare_projection_step_graph(
             )
         )
     route_tuple = tuple(routes)
-    routes[0].transport.prepare_projection_pa_trace(layer_count)
+    routes[0].transport.tracing.prepare_projection_pa_trace(layer_count)
     context = PAPProjectionStepGraphContext(
         layer_count=layer_count,
         routed=_update_routed_graph_buffers(
@@ -388,9 +388,7 @@ def shutdown_projection_step_graph() -> None:
     for buffers in _ROUTED_GRAPH_BUFFERS.values():
         transport = buffers.controller
         if id(transport) not in exported_transports:
-            export_trace = getattr(transport, "export_projection_pa_trace", None)
-            if export_trace is not None:
-                export_trace()
+            transport.tracing.export_projection_pa_trace()
             exported_transports.add(id(transport))
     with _ROUTE_INDEX_LOCK:
         _PROJECTION_ADAPTERS.clear()

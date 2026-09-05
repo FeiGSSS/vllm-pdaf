@@ -24,13 +24,23 @@ from vllm.pap.attention.kernels import (
     run_triton_paged_decode_attention,
 )
 from vllm.pap.attention.pat import PAPPATOrTritonSelector, PAPPATPlan
+from vllm.pap.config import PAPConfigError
 from vllm.pap.kv.metadata import PAPPagedFlashMetadata
+
+
+def test_pat_rejects_negative_plan_cache_budget_before_building(monkeypatch):
+    monkeypatch.setattr(
+        pat.PAPPATPlanner, "unavailable_reason", staticmethod(lambda: None)
+    )
+    monkeypatch.setenv("PAP_PAT_PLAN_CACHE_ENTRIES", "-1")
+    with pytest.raises(PAPConfigError, match="PAP_PAT_PLAN_CACHE_ENTRIES"):
+        pat.PAPPATPlanner()
 
 
 class _FakePATPlan:
     def __init__(self) -> None:
         self.reused_kv_tokens = 0
-        self.length_updates = []
+        self.length_updates: list[tuple[int, ...]] = []
         self.allow_length_updates = False
 
     def update_decode_state(self, states, seq_lens) -> bool:
@@ -41,7 +51,7 @@ class _FakePATPlan:
 
 class _FakePATPlanner:
     def __init__(self) -> None:
-        self.calls = []
+        self.calls: list[dict[str, object]] = []
         self.result = _FakePATPlan()
 
     def plan(self, **kwargs):
@@ -242,7 +252,7 @@ def test_pat_reuses_tree_when_private_decode_tails_cross_pages(monkeypatch) -> N
         for request_index, (state, seq_len) in enumerate(
             zip(states, seq_lens, strict=True)
         ):
-            actual_blocks = []
+            actual_blocks: list[int] = []
             actual_tokens = 0
             for q_table, block_table, num_seqs, kv_in_cta in zip(
                 current.q_tables,

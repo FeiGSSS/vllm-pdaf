@@ -3,7 +3,21 @@ set -euo pipefail
 
 # PAP service/workload runner used by project-owned benchmark entrypoints.
 
+for generation_flag in PAP_AIPERF_TURNS PAP_AIPERF_VARIABLE_TURNS \
+  PAP_AIPERF_APPEND_TOKENS INPUT_LEN OUTPUT_LEN DATASET_PATH \
+  AIPERF_DOCUMENT_TOKENS_MEDIAN AIPERF_DOCUMENT_TOKENS_MIN AIPERF_DOCUMENT_TOKENS_MAX \
+  AIPERF_APPEND_TOKENS_MEDIAN AIPERF_APPEND_TOKENS_MIN AIPERF_APPEND_TOKENS_MAX \
+  AIPERF_OUTPUT_TOKENS_MEDIAN AIPERF_OUTPUT_TOKENS_MIN AIPERF_OUTPUT_TOKENS_MAX \
+  AIPERF_THINK_TIME_MS AIPERF_TOOL_TIME_MS AIPERF_TOOL_EVERY; do
+  if [[ -v "${generation_flag}" ]]; then
+    echo "ERROR: ${generation_flag} is no longer a replay setting; generate a dataset separately under benchmarks/pap/datasets/" >&2
+    exit 2
+  fi
+done
+
 for removed_flag in \
+  PAP_CUDAGRAPH_COMPATIBLE \
+  PAP_CUDAGRAPH_ROLE \
   PAP_ASYNC_DECODE_TOKEN \
   PAP_PREFILL_KV_ASYNC \
   PAP_KV_HANDOFF_MODE \
@@ -38,6 +52,10 @@ for removed_flag in \
   PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS; do
   if [[ -v "${removed_flag}" ]]; then
     case "${removed_flag}" in
+      PAP_CUDAGRAPH_*)
+        replacement="the native Prefill hook and PAP whole-step Projection graph"
+        experiment_id="PAP-20260905-REFACTOR-VALIDATION"
+        ;;
       PAP_ASYNC_DECODE_TOKEN)
         replacement="unconditional asynchronous sampled-token delivery"
         experiment_id="PAP-20260713-ASYNC-DECODE-TOKEN-D2H"
@@ -92,15 +110,13 @@ for removed_flag in \
   fi
 done
 
-ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
+ROOT_DIR="${PAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
 VLLM_BIN="${VLLM_BIN:-${ROOT_DIR}/.venv/bin/vllm}"
 CUDA_GRAPH_AUDITOR="${ROOT_DIR}/benchmarks/pap/scripts/audit_cuda_graph_logs.sh"
 DEFERRED_TRACE_VALIDATOR="${ROOT_DIR}/benchmarks/pap/tooling/validate_deferred_trace.py"
 PROJECTION_MEMORY_PLANNER="${ROOT_DIR}/vllm/pap/model/memory.py"
 AIPERF_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_aiperf_profile.sh"
-AIPERF_DATASET_GENERATOR="${ROOT_DIR}/benchmarks/pap/datasets/tools/generate_multiturn_dataset.py"
-AIPERF_ROOT="${AIPERF_ROOT:-/home/fei/research/PD/refer_codes/aiperf}"
 AIPERF_BIN="${AIPERF_BIN:-${ROOT_DIR}/.venv-aiperf/bin/aiperf}"
 PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE="${PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE:-0}"
 PAP_BENCH_STRICT_CORRECTNESS_AUDIT="${PAP_BENCH_STRICT_CORRECTNESS_AUDIT:-1}"
@@ -129,49 +145,17 @@ GIT_COMMIT_SHORT=""
 GIT_TRACKED_WORKTREE_DIRTY=0
 
 MODEL_PATH="${MODEL_PATH:-/data/ssd1/llm-models/Qwen3-8B}"
-BENCH_DIR="${BENCH_DIR:-/home/fei/research/PD/refer_codes/vllm/benchmarks}"
-DATASET_PATH="${DATASET_PATH:-${BENCH_DIR}/sonnet_4x.txt}"
 ENABLE_AUTO_TOOL_CHOICE="${PAP_BENCH_ENABLE_AUTO_TOOL_CHOICE:-0}"
 TOOL_CALL_PARSER="${PAP_BENCH_TOOL_CALL_PARSER:-}"
 
-INPUT_LEN="${INPUT_LEN:-8192}"
-OUTPUT_LEN="${OUTPUT_LEN:-32}"
-PAP_AIPERF_TURNS="${PAP_AIPERF_TURNS:-10}"
-PAP_AIPERF_SESSIONS="${PAP_AIPERF_SESSIONS:-32}"
-PAP_AIPERF_VARIABLE_TURNS="${PAP_AIPERF_VARIABLE_TURNS:-0}"
-PAP_AIPERF_APPEND_TOKENS="${PAP_AIPERF_APPEND_TOKENS:-512}"
-AIPERF_DOCUMENT_TOKENS_MEDIAN="${AIPERF_DOCUMENT_TOKENS_MEDIAN:-8000}"
-AIPERF_DOCUMENT_TOKENS_MIN="${AIPERF_DOCUMENT_TOKENS_MIN:-4096}"
-AIPERF_DOCUMENT_TOKENS_MAX="${AIPERF_DOCUMENT_TOKENS_MAX:-11264}"
-AIPERF_APPEND_TOKENS_MEDIAN="${AIPERF_APPEND_TOKENS_MEDIAN:-500}"
-AIPERF_APPEND_TOKENS_MIN="${AIPERF_APPEND_TOKENS_MIN:-256}"
-AIPERF_APPEND_TOKENS_MAX="${AIPERF_APPEND_TOKENS_MAX:-768}"
-AIPERF_OUTPUT_TOKENS_MEDIAN="${AIPERF_OUTPUT_TOKENS_MEDIAN:-30}"
-AIPERF_OUTPUT_TOKENS_MIN="${AIPERF_OUTPUT_TOKENS_MIN:-16}"
-AIPERF_OUTPUT_TOKENS_MAX="${AIPERF_OUTPUT_TOKENS_MAX:-64}"
-AIPERF_RANDOM_SEED="${AIPERF_RANDOM_SEED:-42}"
-AIPERF_THINK_TIME_MS="${AIPERF_THINK_TIME_MS:-3000}"
-AIPERF_TOOL_TIME_MS="${AIPERF_TOOL_TIME_MS:-1000}"
-AIPERF_TOOL_EVERY="${AIPERF_TOOL_EVERY:-3}"
-if ! [[ "${PAP_AIPERF_TURNS}" =~ ^[1-9][0-9]*$ \
-  && "${PAP_AIPERF_SESSIONS}" =~ ^[1-9][0-9]*$ ]]; then
-  echo "ERROR: AIPerf turns/sessions must be positive" >&2
-  exit 2
-fi
-REQUESTS_PER_AIPERF_VARIATION=$((
-  PAP_AIPERF_TURNS * PAP_AIPERF_SESSIONS
-))
-if [[ -n "${PAP_AIPERF_EXPECTED_REQUESTS:-}" ]]; then
-  [[ "${PAP_AIPERF_EXPECTED_REQUESTS}" =~ ^[1-9][0-9]*$ ]] || {
-    echo "ERROR: PAP_AIPERF_EXPECTED_REQUESTS must be positive" >&2
+PAP_AIPERF_SESSIONS="${PAP_AIPERF_SESSIONS:?set PAP_AIPERF_SESSIONS in the experiment}"
+REQUESTS_PER_AIPERF_VARIATION="${PAP_AIPERF_EXPECTED_REQUESTS:?set PAP_AIPERF_EXPECTED_REQUESTS in the experiment}"
+for count in "${PAP_AIPERF_SESSIONS}" "${REQUESTS_PER_AIPERF_VARIATION}"; do
+  [[ "${count}" =~ ^[1-9][0-9]*$ ]] || {
+    echo "ERROR: AIPerf session and request counts must be positive integers" >&2
     exit 2
   }
-  REQUESTS_PER_AIPERF_VARIATION="${PAP_AIPERF_EXPECTED_REQUESTS}"
-fi
-[[ "${PAP_AIPERF_VARIABLE_TURNS}" =~ ^[01]$ ]] || {
-  echo "ERROR: PAP_AIPERF_VARIABLE_TURNS must be 0 or 1" >&2
-  exit 2
-}
+done
 BENCH_TIMEOUT="${BENCH_TIMEOUT:-900}"
 SERVER_START_TIMEOUT="${SERVER_START_TIMEOUT:-900}"
 CLUSTER_READY_WAIT_SECONDS="${CLUSTER_READY_WAIT_SECONDS:-30}"
@@ -179,7 +163,16 @@ PAP_BENCH_SESSION_DRAIN_TIMEOUT="${PAP_BENCH_SESSION_DRAIN_TIMEOUT:-15}"
 PAP_BENCH_GATEWAY_DRAIN_TIMEOUT="${PAP_BENCH_GATEWAY_DRAIN_TIMEOUT:-120}"
 PAP_DEFERRED_TRACE_FLUSH_TIMEOUT="${PAP_DEFERRED_TRACE_FLUSH_TIMEOUT:-30}"
 
+for setting in TOPOLOGY PA_COUNT PROJECTION_COUNT; do
+  canonical="PAP_${setting}"
+  if [[ -n "${!setting:-}" && -n "${!canonical:-}" \
+    && "${!setting,,}" != "${!canonical,,}" ]]; then
+    echo "ERROR: ${setting} disagrees with ${canonical}" >&2
+    exit 2
+  fi
+done
 TOPOLOGY="${PAP_TOPOLOGY:-${TOPOLOGY:-3pa1p}}"
+TOPOLOGY="${TOPOLOGY,,}"
 if [[ ! "${TOPOLOGY}" =~ ^([0-9]+)pa([0-9]+)p$ ]]; then
   echo "ERROR: unsupported PAP topology: ${TOPOLOGY}" >&2
   exit 2
@@ -205,28 +198,13 @@ RESULTS_ROOT="${RESULTS_ROOT:-${EXPERIMENTS_ROOT}/_runs}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
 RUN_ROOT="${RUN_ROOT:-${RESULTS_ROOT}/pap/${RUN_ID}}"
 RUN_LOG_DIR="${RUN_LOG_DIR:-${RUN_ROOT}/service_logs}"
-AIPERF_INPUT_FILE_PROVIDED=0
-if [[ -n "${PAP_AIPERF_INPUT_FILE:-${AIPERF_INPUT_FILE:-}}" ]]; then
-  AIPERF_INPUT_FILE_PROVIDED=1
-fi
-PAP_AIPERF_INPUT_FILE="${PAP_AIPERF_INPUT_FILE:-${AIPERF_INPUT_FILE:-${RUN_ROOT}/aiperf_multiturn.jsonl}}"
+PAP_AIPERF_INPUT_FILE="${PAP_AIPERF_INPUT_FILE:-${AIPERF_INPUT_FILE:-}}"
+[[ -f "${PAP_AIPERF_INPUT_FILE}" ]] || {
+  echo "ERROR: set PAP_AIPERF_INPUT_FILE to an existing immutable dataset" >&2
+  exit 2
+}
 PAP_AIPERF_OUTPUT_DIR="${PAP_AIPERF_OUTPUT_DIR:-${RUN_ROOT}/aiperf}"
 PAP_AIPERF_CUSTOM_DATASET_TYPE="${PAP_AIPERF_CUSTOM_DATASET_TYPE:-${AIPERF_CUSTOM_DATASET_TYPE:-}}"
-if [[ "${AIPERF_INPUT_FILE_PROVIDED}" == "1" \
-  && "${PAP_AIPERF_VARIABLE_TURNS}" == "1" \
-  && -z "${PAP_AIPERF_EXPECTED_REQUESTS:-}" ]]; then
-  [[ -f "${PAP_AIPERF_INPUT_FILE}" ]] || {
-    echo "ERROR: AIPerf input file is missing: ${PAP_AIPERF_INPUT_FILE}" >&2
-    exit 2
-  }
-  REQUESTS_PER_AIPERF_VARIATION="$(
-    jq -er '[.[].turns | length] | add | select(. > 0)' \
-      "${PAP_AIPERF_INPUT_FILE}"
-  )" || {
-    echo "ERROR: cannot count turns in ${PAP_AIPERF_INPUT_FILE}" >&2
-    exit 2
-  }
-fi
 PAP_AIPERF_CONCURRENCY="${PAP_AIPERF_CONCURRENCY:-12}"
 PAP_AIPERF_TIMING_MODE="${PAP_AIPERF_TIMING_MODE:-concurrency}"
 PAP_AIPERF_REQUEST_RATE="${PAP_AIPERF_REQUEST_RATE-}"
@@ -234,6 +212,17 @@ PAP_AIPERF_ARRIVAL_PATTERN="${PAP_AIPERF_ARRIVAL_PATTERN:-${AIPERF_ARRIVAL_PATTE
 PAP_AIPERF_WARMUP_DURATION_SECONDS="${PAP_AIPERF_WARMUP_DURATION_SECONDS:-}"
 PAP_AIPERF_BENCHMARK_DURATION_SECONDS="${PAP_AIPERF_BENCHMARK_DURATION_SECONDS:-}"
 PAP_AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS="${PAP_AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS:-}"
+for duration_name in PAP_AIPERF_WARMUP_DURATION_SECONDS \
+  PAP_AIPERF_BENCHMARK_DURATION_SECONDS PAP_AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS; do
+  duration="${!duration_name}"
+  if [[ -n "${duration}" && ! "${duration}" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    echo "ERROR: ${duration_name} must be a non-negative number" >&2
+    exit 2
+  fi
+  if [[ "${duration}" =~ ^0+([.]0+)?$ ]]; then
+    printf -v "${duration_name}" '%s' ''
+  fi
+done
 PAP_AIPERF_ALLOW_PREDECODE_CANCELLATION=0
 if [[ -n "${PAP_AIPERF_BENCHMARK_DURATION_SECONDS}" ]]; then
   PAP_AIPERF_ALLOW_PREDECODE_CANCELLATION=1
@@ -442,12 +431,10 @@ case "${PAP_PROJECTION_ASYNC_SCHEDULING}" in
     exit 2
     ;;
 esac
-for capture_sizes in "${PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES}"; do
-  if ! [[ "${capture_sizes}" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]]; then
-    echo "ERROR: CUDA Graph capture sizes must be positive integer CSV" >&2
-    exit 2
-  fi
-done
+if ! [[ "${PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES}" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$ ]]; then
+  echo "ERROR: CUDA Graph capture sizes must be positive integer CSV" >&2
+  exit 2
+fi
 for incompatible_flag in \
   PAP_OFFLOAD_EXEC_TRACE \
   PAP_DEFERRED_CUDA_TRACE \
@@ -506,8 +493,7 @@ export VLLM_WORKER_MULTIPROC_METHOD="${VLLM_WORKER_MULTIPROC_METHOD:-spawn}"
 export PYTHONHASHSEED="${PYTHONHASHSEED:-123}"
 
 append_no_proxy() {
-  local var_name="$1"
-  local current="${!var_name:-}"
+  local current="$1"
   local host
   for host in 127.0.0.1 localhost; do
     case ",${current}," in
@@ -515,12 +501,12 @@ append_no_proxy() {
       *) current="${current:+${current},}${host}" ;;
     esac
   done
-  printf -v "${var_name}" '%s' "${current}"
-  export "${var_name}"
+  printf '%s' "${current}"
 }
 
-append_no_proxy NO_PROXY
-append_no_proxy no_proxy
+NO_PROXY="$(append_no_proxy "${NO_PROXY:-}")"
+no_proxy="$(append_no_proxy "${no_proxy:-}")"
+export NO_PROXY no_proxy
 
 PREFILL_OBSERVABILITY_ARGS=()
 case "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" in
@@ -552,6 +538,8 @@ MPS_LOG_BASE_DIR="${PAP_MPS_LOG_BASE_DIR:-${RUN_LOG_DIR}/mps-log}"
 split_csv() {
   local csv="$1"
   local -n output="$2"
+  # Assignment updates the caller's array through the nameref.
+  # shellcheck disable=SC2034
   IFS=',' read -r -a output <<< "${csv}"
 }
 
@@ -949,6 +937,7 @@ audit_projection_scheduling() {
     fi
     printf 'PAP_RUNNER_MICROBATCH_PIPELINE=0\n'
   } > "${RUN_ROOT}/projection_scheduling_audit.env"
+  PAP_OBSERVED_PROJECTION_ASYNC="${actual_mode}"
 }
 
 wait_attention_sessions_drained() {
@@ -1365,54 +1354,13 @@ if busy:
 PY
 }
 
-ensure_dataset() {
-  if [[ -f "${DATASET_PATH}" ]]; then
-    return
-  fi
-  [[ -f "${BENCH_DIR}/sonnet.txt" ]] || die "Missing ${BENCH_DIR}/sonnet.txt"
-  mkdir -p "$(dirname "${DATASET_PATH}")"
-  : > "${DATASET_PATH}"
-  for _ in 1 2 3 4; do
-    cat "${BENCH_DIR}/sonnet.txt" >> "${DATASET_PATH}"
-  done
-}
-
 prepare_aiperf_dataset() {
   [[ -x "${AIPERF_BIN}" ]] \
     || die "AIPerf is not installed at ${AIPERF_BIN}"
   [[ -x "${AIPERF_RUNNER}" ]] \
     || die "Missing AIPerf runner: ${AIPERF_RUNNER}"
-  [[ -f "${AIPERF_DATASET_GENERATOR}" ]] \
-    || die "Missing AIPerf dataset generator: ${AIPERF_DATASET_GENERATOR}"
-  if [[ "${AIPERF_INPUT_FILE_PROVIDED}" == "1" ]]; then
-    [[ -f "${PAP_AIPERF_INPUT_FILE}" ]] \
-      || die "Missing AIPerf input file: ${PAP_AIPERF_INPUT_FILE}"
-  else
-    "${PYTHON_BIN}" "${AIPERF_DATASET_GENERATOR}" \
-      --model "${MODEL_PATH}" \
-      --corpus "${DATASET_PATH}" \
-      --output "${PAP_AIPERF_INPUT_FILE}" \
-      --sessions "${PAP_AIPERF_SESSIONS}" \
-      --turns "${PAP_AIPERF_TURNS}" \
-      --document-tokens "${INPUT_LEN}" \
-      --document-tokens-median "${AIPERF_DOCUMENT_TOKENS_MEDIAN}" \
-      --document-tokens-min "${AIPERF_DOCUMENT_TOKENS_MIN}" \
-      --document-tokens-max "${AIPERF_DOCUMENT_TOKENS_MAX}" \
-      --append-tokens "${PAP_AIPERF_APPEND_TOKENS}" \
-      --append-tokens-median "${AIPERF_APPEND_TOKENS_MEDIAN}" \
-      --append-tokens-min "${AIPERF_APPEND_TOKENS_MIN}" \
-      --append-tokens-max "${AIPERF_APPEND_TOKENS_MAX}" \
-      --output-tokens "${OUTPUT_LEN}" \
-      --output-tokens-median "${AIPERF_OUTPUT_TOKENS_MEDIAN}" \
-      --output-tokens-min "${AIPERF_OUTPUT_TOKENS_MIN}" \
-      --output-tokens-max "${AIPERF_OUTPUT_TOKENS_MAX}" \
-      --random-seed "${AIPERF_RANDOM_SEED}" \
-      --max-model-len "${MAX_MODEL_LEN}" \
-      --think-time-ms "${AIPERF_THINK_TIME_MS}" \
-      --tool-time-ms "${AIPERF_TOOL_TIME_MS}" \
-      --tool-every "${AIPERF_TOOL_EVERY}" \
-      --session-prefix "${RUN_ID}-aiperf"
-  fi
+  [[ -f "${PAP_AIPERF_INPUT_FILE}" ]] \
+    || die "Missing AIPerf input file: ${PAP_AIPERF_INPUT_FILE}"
 
   local detected_type=""
   if jq -e \
@@ -1438,6 +1386,13 @@ prepare_aiperf_dataset() {
     die "AIPerf dataset type mismatch: configured=${PAP_AIPERF_CUSTOM_DATASET_TYPE} detected=${detected_type} file=${PAP_AIPERF_INPUT_FILE}"
   fi
   PAP_AIPERF_CUSTOM_DATASET_TYPE="${detected_type}"
+  "${PYTHON_BIN}" "${ROOT_DIR}/benchmarks/pap/tooling/validate_replay_dataset.py" \
+    "${PAP_AIPERF_INPUT_FILE}" --dataset-type "${PAP_AIPERF_CUSTOM_DATASET_TYPE}" \
+    --sessions "${PAP_AIPERF_SESSIONS}" \
+    --expected-requests "${REQUESTS_PER_AIPERF_VARIATION}" \
+    --routing-policy "${PAP_ROUTING_POLICY}" \
+    > "${RUN_ROOT}/dataset_selection.json" \
+    || die "dataset replay contract is invalid"
 }
 
 capture_git_state() {
@@ -1467,21 +1422,13 @@ write_effective_config() {
     printf 'PA_COUNT=%q\n' "${PA_COUNT}"
     printf 'PROJECTION_COUNT=%q\n' "${PROJECTION_COUNT}"
     printf 'MODEL_PATH=%q\n' "${MODEL_PATH}"
-    printf 'DATASET_PATH=%q\n' "${DATASET_PATH}"
-    printf 'BENCH_DIR=%q\n' "${BENCH_DIR}"
     printf 'NUM_PROMPTS=%q\n' "${NUM_PROMPTS}"
     printf 'PAP_ENABLE_PROMPT_TOKENS_DETAILS=%q\n' "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}"
     printf 'PAP_PREFIX_CACHE_AUDIT=%q\n' "${PAP_PREFIX_CACHE_AUDIT}"
     printf 'PAP_BLOCK_SIZE=%q\n' "${PAP_BLOCK_SIZE}"
-    printf 'PAP_AIPERF_TURNS=%q\n' "${PAP_AIPERF_TURNS}"
     printf 'PAP_AIPERF_SESSIONS=%q\n' "${PAP_AIPERF_SESSIONS}"
-    printf 'PAP_AIPERF_VARIABLE_TURNS=%q\n' \
-      "${PAP_AIPERF_VARIABLE_TURNS}"
     printf 'PAP_AIPERF_EXPECTED_REQUESTS=%q\n' \
       "${REQUESTS_PER_AIPERF_VARIATION}"
-    printf 'PAP_AIPERF_APPEND_TOKENS=%q\n' \
-      "${PAP_AIPERF_APPEND_TOKENS}"
-    printf 'AIPERF_ROOT=%q\n' "${AIPERF_ROOT}"
     printf 'AIPERF_BIN=%q\n' "${AIPERF_BIN}"
     printf 'PAP_AIPERF_INPUT_FILE=%q\n' "${PAP_AIPERF_INPUT_FILE}"
     printf 'PAP_AIPERF_CUSTOM_DATASET_TYPE=%q\n' \
@@ -1500,8 +1447,6 @@ write_effective_config() {
       "${PAP_AIPERF_BENCHMARK_DURATION_SECONDS}"
     printf 'PAP_AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS=%q\n' \
       "${PAP_AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS}"
-    printf 'INPUT_LENS_CSV=%q\n' "${INPUT_LEN}"
-    printf 'OUTPUT_LENS_CSV=%q\n' "${OUTPUT_LEN}"
     printf 'BENCH_TIMEOUT=%q\n' "${BENCH_TIMEOUT}"
     printf 'SERVER_START_TIMEOUT=%q\n' "${SERVER_START_TIMEOUT}"
     printf 'RESULTS_ROOT=%q\n' "${RESULTS_ROOT}"
@@ -1704,8 +1649,6 @@ PY
 write_run_metadata() {
   RUN_ROOT="${RUN_ROOT}" \
   PAP_BENCH_CLIENT="${PAP_BENCH_CLIENT}" \
-  INPUT_LEN="${INPUT_LEN}" \
-  OUTPUT_LEN="${OUTPUT_LEN}" \
   NUM_PROMPTS="${NUM_PROMPTS}" \
   MODEL_PATH="${MODEL_PATH}" \
   MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
@@ -1716,10 +1659,7 @@ write_run_metadata() {
   PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
   PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}" \
   PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" \
-  PAP_AIPERF_TURNS="${PAP_AIPERF_TURNS}" \
   PAP_AIPERF_SESSIONS="${PAP_AIPERF_SESSIONS}" \
-  PAP_AIPERF_VARIABLE_TURNS="${PAP_AIPERF_VARIABLE_TURNS}" \
-  PAP_AIPERF_APPEND_TOKENS="${PAP_AIPERF_APPEND_TOKENS}" \
   PAP_AIPERF_CONCURRENCY="${PAP_AIPERF_CONCURRENCY}" \
   PAP_AIPERF_CUSTOM_DATASET_TYPE="${PAP_AIPERF_CUSTOM_DATASET_TYPE}" \
   AIPERF_NUM_PROFILE_RUNS="${AIPERF_NUM_PROFILE_RUNS}" \
@@ -1727,6 +1667,7 @@ write_run_metadata() {
   PAP_AIPERF_REQUEST_RATE="${PAP_AIPERF_REQUEST_RATE}" \
   PAP_VLLM_DTYPE="${PAP_VLLM_DTYPE}" \
   PAP_HF_OVERRIDES="${PAP_HF_OVERRIDES}" \
+  PAP_OBSERVED_PROJECTION_ASYNC="${PAP_OBSERVED_PROJECTION_ASYNC:?scheduling audit must run before metadata capture}" \
   GIT_COMMIT="${GIT_COMMIT}" \
   GIT_COMMIT_SHORT="${GIT_COMMIT_SHORT}" \
   GIT_TRACKED_WORKTREE_DIRTY="${GIT_TRACKED_WORKTREE_DIRTY}" \
@@ -1753,8 +1694,6 @@ metadata = {
     "load_accounting": "gateway_request_lifecycle",
     "run_id": os.environ["RUN_ID"],
     "result_root": os.environ["RUN_ROOT"],
-    "input_lens": [os.environ["INPUT_LEN"]],
-    "output_lens": [os.environ["OUTPUT_LEN"]],
     "expected_requests": int(os.environ["NUM_PROMPTS"]),
     "model_path": os.environ["MODEL_PATH"],
     "hf_overrides": (
@@ -1778,8 +1717,8 @@ metadata = {
     "offload_kv_transport": os.environ["PAP_OFFLOAD_KV_TRANSPORT"],
     "batched_route_copy": True,
     "unified_md_fast_key": True,
-    "projection_async_scheduling": True,
-    "projection_scheduler_queue_depth": 2,
+    "projection_async_scheduling": os.environ["PAP_OBSERVED_PROJECTION_ASYNC"] == "on",
+    "projection_scheduling_audit": "projection_scheduling_audit.env",
     "projection_runner_microbatch_pipeline": False,
     "prefill_kv_async": True,
     "prefill_ipc_profile": os.environ["PAP_PREFILL_IPC_PROFILE"] == "1",
@@ -1791,12 +1730,7 @@ metadata = {
     "prompt_tokens_details": (
         os.environ["PAP_ENABLE_PROMPT_TOKENS_DETAILS"] == "1"
     ),
-    "aiperf_turns": int(os.environ["PAP_AIPERF_TURNS"]),
-    "aiperf_variable_turns": (
-        os.environ["PAP_AIPERF_VARIABLE_TURNS"] == "1"
-    ),
     "aiperf_sessions": int(os.environ["PAP_AIPERF_SESSIONS"]),
-    "aiperf_append_tokens": int(os.environ["PAP_AIPERF_APPEND_TOKENS"]),
     "aiperf_concurrency_points": [
         int(value)
         for value in os.environ["PAP_AIPERF_CONCURRENCY"].split(",")
@@ -1835,6 +1769,7 @@ audit_correctness_logs() {
   local summary_path="${RUN_ROOT}/correctness_audit.env"
   local pattern
   pattern='CUDA out of memory|EngineDeadError|^Traceback| ERROR .*Traceback|Exception in thread|PAP decode commit failed|non-contiguous PAP decode commit|conflicting duplicate PAP decode commit|PAP lease release raced|PAP Prefill request .* without a KV lease|PAP control is not initialized|deferred PAP EngineCore control failed|new_token_ids length must match new_seq_len delta|PAP decode-token delivery failed|PAP decode-token queue is full|PAP decode-token join flush timed out|PAP lease release failed|PAP unified KV append out of range|PAP unified KV state missing|PAP unified KV state changed during decode append|PAP unified KV seq_len changed during decode append|prefill KV must reach the registered prefix before unified decode attention|PAP unified paged FlashAttention failed'
+  pattern+='|block_hash mismatch|ParentBlockNotFound|Failed to apply event|Expiring stale request'
 
   if rg -n --no-heading "${pattern}" "${RUN_LOG_DIR}" > "${matches_path}"; then
     {
@@ -1867,9 +1802,7 @@ audit_xy_routes() {
     PREFILL_PORT_BASE="${PREFILL_PORT_BASE}" \
     PROJECTION_PORT_BASE="${PROJECTION_PORT_BASE}" \
     PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY}" \
-    PAP_AIPERF_TURNS="${PAP_AIPERF_TURNS}" \
     PAP_AIPERF_SESSIONS="${PAP_AIPERF_SESSIONS}" \
-    PAP_AIPERF_VARIABLE_TURNS="${PAP_AIPERF_VARIABLE_TURNS}" \
     ALLOW_PREDECODE_CANCELLATION="${PAP_AIPERF_ALLOW_PREDECODE_CANCELLATION}" \
     "${PYTHON_BIN}" - <<'PY'
 import json
@@ -2062,12 +1995,6 @@ else
     || "${PAP_ROUTING_POLICY}" == "dynamo" ]] \
     || die "single-PA AIPerf requires a supported PAP routing policy"
 fi
-(( PAP_AIPERF_TURNS >= 2 || PAP_AIPERF_VARIABLE_TURNS == 1 )) \
-  || die "PAP multi-turn benchmarks require at least two turns"
-(( INPUT_LEN > 0 && PAP_AIPERF_APPEND_TOKENS > 0 && OUTPUT_LEN > 1 )) \
-  || die "multi-turn token counts must be positive"
-(( PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS >= OUTPUT_LEN )) \
-  || die "PAP unified KV decode capacity is too small for load output"
 [[ -x "${PYTHON_BIN}" ]] || die "PYTHON_BIN is not executable: ${PYTHON_BIN}"
 [[ -x "${VLLM_BIN}" ]] || die "VLLM_BIN is not executable: ${VLLM_BIN}"
 [[ -f "${DEFERRED_TRACE_VALIDATOR}" ]] \
@@ -2115,7 +2042,6 @@ if flashinfer != cubin:
     )
 PY
 
-ensure_dataset
 mkdir -p "${RUN_ROOT}" "${RUN_LOG_DIR}"
 capture_git_state
 prepare_aiperf_dataset
@@ -2334,8 +2260,6 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_RUNTIME_CUDA_CONTEXT_ROLE=prefill \
     VLLM_PLUGINS=pap \
     PAP_MODEL_HOOKS=1 \
-    PAP_CUDAGRAPH_COMPATIBLE=1 \
-    PAP_CUDAGRAPH_ROLE=prefill \
     PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS}" \
     "${VLLM_BIN}" serve "${MODEL_PATH}" \
       "${PAP_MODEL_CONFIG_ARGS[@]}" \
@@ -2389,8 +2313,6 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     PAP_PROJECTION_KV_UNAWARE=1 \
     VLLM_PLUGINS=pap \
     PAP_MODEL_HOOKS=1 \
-    PAP_CUDAGRAPH_COMPATIBLE=1 \
-    PAP_CUDAGRAPH_ROLE=projection \
     VLLM_HTTP_TIMEOUT_KEEP_ALIVE=300 \
     "${VLLM_BIN}" serve "${MODEL_PATH}" \
       "${PAP_MODEL_CONFIG_ARGS[@]}" \
@@ -2491,7 +2413,6 @@ TAG="${TOPOLOGY_TAG}_aiperf"
 echo "=== Running ${TAG} on port ${PAP_PROXY_PORT} ==="
 timeout "${BENCH_TIMEOUT}" env \
   PAP_ROOT="${ROOT_DIR}" \
-  AIPERF_ROOT="${AIPERF_ROOT}" \
   AIPERF_BIN="${AIPERF_BIN}" \
   MODEL_PATH="${MODEL_PATH}" \
   AIPERF_INPUT_FILE="${PAP_AIPERF_INPUT_FILE}" \

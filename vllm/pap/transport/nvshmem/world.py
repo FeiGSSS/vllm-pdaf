@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import threading
 import time
@@ -12,6 +13,7 @@ from pathlib import Path
 
 import torch
 
+from vllm.pap.config import PAPConfigError, read_env_float, read_env_int
 from vllm.pap.transport.nvshmem.runtime import (
     PAPNVSHMEMAllocation,
     PAPNVSHMEMError,
@@ -34,6 +36,13 @@ class PAPNVSHMEMWorldConfig:
     control_bytes: int
     uid_path: Path
     root_rank: int = 0
+    init_timeout_s: float = 30.0
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.init_timeout_s) or self.init_timeout_s <= 0:
+            raise PAPNVSHMEMError(
+                "NVSHMEM initialization timeout must be finite and positive"
+            )
 
     @classmethod
     def from_env(
@@ -44,25 +53,32 @@ class PAPNVSHMEMWorldConfig:
     ) -> PAPNVSHMEMWorldConfig:
         """Build and validate a same-host world from launcher metadata."""
         try:
-            rank = int(os.environ["PAP_NVSHMEM_RANK"])
-            world_size = int(os.environ["PAP_NVSHMEM_WORLD_SIZE"])
+            for name in ("PAP_NVSHMEM_RANK", "PAP_NVSHMEM_WORLD_SIZE"):
+                if name not in os.environ:
+                    raise KeyError(name)
+            rank = read_env_int(os.environ, "PAP_NVSHMEM_RANK", minimum=0)
+            world_size = read_env_int(os.environ, "PAP_NVSHMEM_WORLD_SIZE", minimum=2)
             uid_path = Path(os.environ["PAP_NVSHMEM_UID_FILE"])
-        except (KeyError, ValueError) as exc:
+            root_rank = read_env_int(os.environ, "PAP_NVSHMEM_ROOT_RANK", minimum=0)
+            control_bytes = read_env_int(
+                os.environ,
+                "PAP_NVSHMEM_CONTROL_BYTES",
+                _DEFAULT_CONTROL_BYTES,
+                minimum=9,
+            )
+            init_timeout_s = read_env_float(
+                os.environ, "PAP_NVSHMEM_INIT_TIMEOUT", 30.0
+            )
+        except (KeyError, PAPConfigError) as exc:
             raise PAPNVSHMEMError(
-                "PAP NVSHMEM requires rank, world size, and UID file metadata"
+                f"Invalid NVSHMEM rank/world size/UID file or runtime setting: {exc}"
             ) from exc
-        root_rank = int(os.environ.get("PAP_NVSHMEM_ROOT_RANK", "0"))
         if world_size <= 1 or rank < 0 or rank >= world_size:
             raise PAPNVSHMEMError("PAP NVSHMEM PE coordinates are invalid")
         if root_rank < 0 or root_rank >= world_size:
             raise PAPNVSHMEMError("PAP NVSHMEM root rank is invalid")
         if buffer_bytes <= 0:
             raise PAPNVSHMEMError("PAP NVSHMEM buffer size must be positive")
-        control_bytes = int(
-            os.environ.get("PAP_NVSHMEM_CONTROL_BYTES", str(_DEFAULT_CONTROL_BYTES))
-        )
-        if control_bytes <= 8:
-            raise PAPNVSHMEMError("PAP NVSHMEM control record is too small")
         if not uid_path.is_absolute():
             raise PAPNVSHMEMError("PAP NVSHMEM UID path must be absolute")
         return cls(
@@ -73,6 +89,7 @@ class PAPNVSHMEMWorldConfig:
             control_bytes=control_bytes,
             uid_path=uid_path,
             root_rank=root_rank,
+            init_timeout_s=init_timeout_s,
         )
 
 
@@ -112,10 +129,12 @@ class PAPNVSHMEMWorld:
     def wait_ready(self, timeout: float | None = None) -> None:
         """Wait until every local PE has initialized the shared layout."""
         wait_timeout = (
-            float(timeout)
-            if timeout is not None
-            else float(os.environ.get("PAP_NVSHMEM_INIT_TIMEOUT", "30"))
+            float(timeout) if timeout is not None else self.config.init_timeout_s
         )
+        if not math.isfinite(wait_timeout) or wait_timeout < 0:
+            raise PAPNVSHMEMError(
+                "NVSHMEM wait timeout must be finite and non-negative"
+            )
         if not self._ready.wait(wait_timeout):
             raise PAPNVSHMEMError(
                 f"timed out initializing NVSHMEM PE {self.config.rank}"
@@ -204,9 +223,7 @@ class PAPNVSHMEMWorld:
                 raise PAPNVSHMEMError("failed to publish the complete NVSHMEM UID")
             return unique_id
 
-        deadline = time.monotonic() + float(
-            os.environ.get("PAP_NVSHMEM_INIT_TIMEOUT", "30")
-        )
+        deadline = time.monotonic() + self.config.init_timeout_s
         while True:
             try:
                 unique_id = uid_path.read_bytes()
@@ -246,10 +263,3 @@ def get_pap_nvshmem_world(
         elif _WORLD.config != config:
             raise PAPNVSHMEMError("PAP NVSHMEM world configuration changed")
         return _WORLD
-
-
-def reset_pap_nvshmem_world_for_tests() -> None:
-    """Clear the singleton when no real NVSHMEM runtime was initialized."""
-    global _WORLD
-    with _WORLD_LOCK:
-        _WORLD = None

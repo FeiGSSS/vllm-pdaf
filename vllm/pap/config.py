@@ -10,6 +10,7 @@ phase, but new configuration reads belong here.
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -21,6 +22,35 @@ import regex as re
 
 class PAPConfigError(ValueError):
     """Raised when PAP runtime configuration is invalid."""
+
+
+@dataclass(frozen=True)
+class PAPStepTraceConfig:
+    """Shared PA/Projection trace settings, fixed before buffer allocation."""
+
+    output: str | None = None
+    ring_steps: int = 2048
+    sample_steps: int = 512
+    export_interval_seconds: float = 5.0
+
+    @classmethod
+    def from_env(cls, environ: Mapping[str, str] | None = None) -> PAPStepTraceConfig:
+        env = os.environ if environ is None else environ
+        output = _env_optional_text(env, "PAP_PROJECTION_PA_TRACE_OUTPUT")
+        if output is None:
+            return cls()
+        ring_steps = read_env_int(
+            env, "PAP_PROJECTION_PA_TRACE_RING_STEPS", 2048, minimum=1
+        )
+        sample_steps = read_env_int(
+            env, "PAP_PROJECTION_PA_TRACE_SAMPLES", 512, minimum=1
+        )
+        if sample_steps > ring_steps:
+            raise PAPConfigError("PAP trace samples must not exceed ring steps")
+        interval = read_env_float(env, "PAP_PROJECTION_PA_TRACE_FLUSH_SECONDS", 5.0)
+        if interval <= 0:
+            raise PAPConfigError("PAP trace flush interval must be positive")
+        return cls(output, ring_steps, sample_steps, interval)
 
 
 class PAPOffloadKVTransport(str, Enum):
@@ -219,6 +249,16 @@ class PAPRemovedFlag:
 
 
 PAP_REMOVED_FLAGS = (
+    PAPRemovedFlag(
+        name="PAP_CUDAGRAPH_COMPATIBLE",
+        replacement="the native Prefill hook and PAP whole-step Projection graph",
+        experiment_id="PAP-20260905-REFACTOR-VALIDATION",
+    ),
+    PAPRemovedFlag(
+        name="PAP_CUDAGRAPH_ROLE",
+        replacement="the service role, not the retired custom-op graph adapter",
+        experiment_id="PAP-20260905-REFACTOR-VALIDATION",
+    ),
     PAPRemovedFlag(
         name="PAP_ASYNC_DECODE_TOKEN",
         replacement="unconditional asynchronous sampled-token delivery",
@@ -443,16 +483,22 @@ class PAPRuntimeConfig:
         """
         env = os.environ if environ is None else environ
         reject_removed_pap_flags(env)
-        tp_size = _env_int(env, "PAP_TP_SIZE", 1, minimum=1)
+        tp_size = read_env_int(env, "PAP_TP_SIZE", 1, minimum=1)
         topology_name = _env_text(
-            env,
-            "PAP_TOPOLOGY",
-            _env_text(env, "TOPOLOGY", "1pa1p"),
+            env, "PAP_TOPOLOGY", _env_text(env, "TOPOLOGY", "1pa1p")
         )
         topology = PAPTopology.parse(
             topology_name,
             tensor_parallel_size=tp_size,
         )
+        if (
+            "TOPOLOGY" in env
+            and PAPTopology.parse(env["TOPOLOGY"], tensor_parallel_size=tp_size)
+            != topology
+        ):
+            raise PAPConfigError("TOPOLOGY disagrees with PAP_TOPOLOGY")
+        _validate_topology_count(env, "PA_COUNT", topology.pa_count)
+        _validate_topology_count(env, "PROJECTION_COUNT", topology.projection_count)
         _validate_topology_count(env, "PAP_PA_COUNT", topology.pa_count)
         _validate_topology_count(
             env,
@@ -503,18 +549,18 @@ class PAPRuntimeConfig:
         )
 
         features = PAPRuntimeFeatures(
-            decode_slot_plan_cache_limit=_env_int(
+            decode_slot_plan_cache_limit=read_env_int(
                 env,
                 "PAP_DECODE_SLOT_PLAN_CACHE_LIMIT",
                 256,
                 minimum=0,
             ),
-            prefill_ipc_profile=_env_bool(
+            prefill_ipc_profile=read_env_bool(
                 env,
                 "PAP_PREFILL_IPC_PROFILE",
                 False,
             ),
-            prefill_torch_profile=_env_bool(
+            prefill_torch_profile=read_env_bool(
                 env,
                 "PAP_PREFILL_TORCH_PROFILE",
                 False,
@@ -523,20 +569,20 @@ class PAPRuntimeConfig:
 
         attention = PAPAttentionServiceConfig(
             actor_id="attention",
-            local_rank=_env_int(
+            local_rank=read_env_int(
                 env,
                 "PAP_OFFLOAD_EXEC_LOCAL_RANK",
                 0,
                 minimum=0,
             ),
             storage_device=_env_optional_text(env, "PAP_ATTENTION_STORAGE_DEVICE"),
-            prefill_wait_timeout_s=_env_float(
+            prefill_wait_timeout_s=read_env_float(
                 env,
                 "PAP_ATTENTION_PREFILL_WAIT_TIMEOUT",
                 5.0,
                 minimum=0.0,
             ),
-            decode_kv_initial_capacity=_env_int(
+            decode_kv_initial_capacity=read_env_int(
                 env,
                 "PAP_ATTENTION_DECODE_KV_INITIAL_CAPACITY",
                 128,
@@ -551,42 +597,42 @@ class PAPRuntimeConfig:
 
         decode_commit = PAPDecodeCommitConfig(
             endpoint=_env_text(env, "PAP_DECODE_COMMIT_ENDPOINT", ""),
-            fail_closed=_env_bool(
+            fail_closed=read_env_bool(
                 env,
                 "PAP_DECODE_COMMIT_FAIL_CLOSED",
                 False,
             ),
-            timeout_s=_env_float(
+            timeout_s=read_env_float(
                 env,
                 "PAP_DECODE_COMMIT_TIMEOUT",
                 5.0,
                 minimum=0.0,
             ),
-            queue_size=_env_int(
+            queue_size=read_env_int(
                 env,
                 "PAP_DECODE_COMMIT_QUEUE_SIZE",
                 1024,
                 minimum=1,
             ),
-            max_attempts=_env_int(
+            max_attempts=read_env_int(
                 env,
                 "PAP_DECODE_COMMIT_MAX_ATTEMPTS",
                 8,
                 minimum=1,
             ),
-            retry_initial_s=_env_float(
+            retry_initial_s=read_env_float(
                 env,
                 "PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS",
                 0.05,
                 minimum=0.0,
             ),
-            retry_max_s=_env_float(
+            retry_max_s=read_env_float(
                 env,
                 "PAP_DECODE_COMMIT_RETRY_MAX_SECONDS",
                 0.5,
                 minimum=0.0,
             ),
-            flush_timeout_s=_env_float(
+            flush_timeout_s=read_env_float(
                 env,
                 "PAP_DECODE_COMMIT_FLUSH_TIMEOUT",
                 15.0,
@@ -600,37 +646,37 @@ class PAPRuntimeConfig:
         )
 
         decode_token = PAPDecodeTokenConfig(
-            timeout_s=_env_float(
+            timeout_s=read_env_float(
                 env,
                 "PAP_DECODE_TOKEN_TIMEOUT",
                 0.2,
                 minimum=0.0,
             ),
-            queue_size=_env_int(
+            queue_size=read_env_int(
                 env,
                 "PAP_DECODE_TOKEN_QUEUE_SIZE",
                 1024,
                 minimum=1,
             ),
-            max_attempts=_env_int(
+            max_attempts=read_env_int(
                 env,
                 "PAP_DECODE_TOKEN_MAX_ATTEMPTS",
                 8,
                 minimum=1,
             ),
-            retry_initial_s=_env_float(
+            retry_initial_s=read_env_float(
                 env,
                 "PAP_DECODE_TOKEN_RETRY_INITIAL_SECONDS",
                 0.05,
                 minimum=0.0,
             ),
-            retry_max_s=_env_float(
+            retry_max_s=read_env_float(
                 env,
                 "PAP_DECODE_TOKEN_RETRY_MAX_SECONDS",
                 0.5,
                 minimum=0.0,
             ),
-            flush_timeout_s=_env_float(
+            flush_timeout_s=read_env_float(
                 env,
                 "PAP_DECODE_TOKEN_FLUSH_TIMEOUT",
                 5.0,
@@ -645,31 +691,31 @@ class PAPRuntimeConfig:
 
         lease_release = PAPLeaseReleaseConfig(
             endpoint=_env_text(env, "PAP_LEASE_RELEASE_ENDPOINT", ""),
-            timeout_s=_env_float(
+            timeout_s=read_env_float(
                 env,
                 "PAP_LEASE_RELEASE_TIMEOUT",
                 5.0,
                 minimum=0.0,
             ),
-            max_attempts=_env_int(
+            max_attempts=read_env_int(
                 env,
                 "PAP_LEASE_RELEASE_MAX_ATTEMPTS",
                 5,
                 minimum=1,
             ),
-            retry_initial_s=_env_float(
+            retry_initial_s=read_env_float(
                 env,
                 "PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS",
                 0.05,
                 minimum=0.0,
             ),
-            retry_max_s=_env_float(
+            retry_max_s=read_env_float(
                 env,
                 "PAP_LEASE_RELEASE_RETRY_MAX_SECONDS",
                 0.5,
                 minimum=0.0,
             ),
-            lease_ttl_s=_env_float(
+            lease_ttl_s=read_env_float(
                 env,
                 "PAP_KV_LEASE_TTL_SECONDS",
                 300.0,
@@ -740,11 +786,8 @@ def _env_optional_text(
     return str(value).strip()
 
 
-def _env_bool(
-    environ: Mapping[str, str],
-    name: str,
-    default: bool,
-) -> bool:
+def read_env_bool(environ: Mapping[str, str], name: str, default: bool = False) -> bool:
+    """Parse a boolean, rejecting invalid values instead of disabling a feature."""
     value = environ.get(name)
     if value is None:
         return default
@@ -756,13 +799,14 @@ def _env_bool(
     raise PAPConfigError(f"{name} must be a boolean, got {value!r}")
 
 
-def _env_int(
+def read_env_int(
     environ: Mapping[str, str],
     name: str,
-    default: int,
+    default: int = 0,
     *,
     minimum: int | None = None,
 ) -> int:
+    """Parse a bounded integer without silently replacing malformed values."""
     raw = environ.get(name)
     try:
         value = int(default if raw is None else raw)
@@ -773,18 +817,21 @@ def _env_int(
     return value
 
 
-def _env_float(
+def read_env_float(
     environ: Mapping[str, str],
     name: str,
     default: float,
     *,
     minimum: float | None = None,
 ) -> float:
+    """Parse a finite bounded number for runtime timeouts and intervals."""
     raw = environ.get(name)
     try:
         value = float(default if raw is None else raw)
     except (TypeError, ValueError) as exc:
         raise PAPConfigError(f"{name} must be a number, got {raw!r}") from exc
+    if not math.isfinite(value):
+        raise PAPConfigError(f"{name} must be finite, got {raw!r}")
     if minimum is not None and value < minimum:
         raise PAPConfigError(f"{name} must be at least {minimum}, got {value}")
     return value
@@ -838,7 +885,7 @@ def _validate_topology_count(
 ) -> None:
     if name not in environ:
         return
-    actual = _env_int(environ, name, expected, minimum=1)
+    actual = read_env_int(environ, name, expected, minimum=1)
     if actual != expected:
         raise PAPConfigError(
             f"{name}={actual} disagrees with PAP_TOPOLOGY count {expected}"

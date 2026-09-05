@@ -84,6 +84,22 @@ async def _handle_openai_request(api_path: str, request: Request):
     profile = _pap_prefill_ipc_profile_enabled()
     request_start = time.perf_counter() if profile else 0.0
     req_data = await request.json()
+    if (
+        request.app.state.args.routing_policy == "dynamo"
+        and req_data.get("cache_salt") is not None
+    ):
+        return JSONResponse(
+            {
+                "error": {
+                    "type": "invalid_request_error",
+                    "message": (
+                        "PAP Dynamo routing does not support cache_salt isolation; "
+                        "the current selector cannot index salted KV events safely."
+                    ),
+                }
+            },
+            status_code=400,
+        )
     request_id = request.headers.get("X-Request-Id", uuid.uuid4().hex)
     pending_route_request_ids: set[str] = (
         request.app.state.pap_pending_route_request_ids

@@ -10,7 +10,8 @@ from dataclasses import dataclass
 
 import regex as re
 
-_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+from vllm.pap.config import read_env_bool, read_env_int
+
 _LAYER_INDEX_RE = re.compile(r"(?:^|\.layers\.)(\d+)(?:\.|$)")
 
 
@@ -20,7 +21,7 @@ def pap_env_enabled(
 ) -> bool:
     """Return whether one PAP boolean environment setting is enabled."""
     values = os.environ if environ is None else environ
-    return values.get(name, "").lower() in _TRUE_VALUES
+    return read_env_bool(values, name)
 
 
 def pap_offload_exec_trace_enabled(
@@ -65,13 +66,6 @@ def pap_projection_critical_trace_enabled(
     ) and pap_env_enabled("PAP_PROJECTION_CRITICAL_TRACE", values)
 
 
-def _integer(environ: Mapping[str, str], name: str, default: int = 0) -> int:
-    try:
-        return int(environ.get(name, str(default)))
-    except ValueError:
-        return default
-
-
 @dataclass(frozen=True, slots=True)
 class PAPRuntimeSettings:
     """PAP environment values consumed from vLLM-owned execution paths."""
@@ -100,9 +94,8 @@ class PAPRuntimeSettings:
                 and pap_env_enabled("PAP_PROJECTION_CRITICAL_TRACE", values)
             ),
             debug_decision=pap_env_enabled("PAP_DEBUG_DECISION", values),
-            unified_kv_decode_capacity_tokens=max(
-                0,
-                _integer(values, "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS"),
+            unified_kv_decode_capacity_tokens=read_env_int(
+                values, "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", minimum=0
             ),
             cuda_context_role=(
                 values.get("PAP_RUNTIME_CUDA_CONTEXT_ROLE") or "vllm_worker"

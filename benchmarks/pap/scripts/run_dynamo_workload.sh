@@ -9,7 +9,6 @@ set -euo pipefail
 ROOT_DIR="${PAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 DYNAMO_PYTHON="${DYNAMO_PYTHON:-${ROOT_DIR}/.venv-dynamo/bin/python}"
 PAP_PYTHON="${PAP_PYTHON:-${ROOT_DIR}/.venv/bin/python}"
-AIPERF_ROOT="${AIPERF_ROOT:-/home/fei/research/PD/refer_codes/aiperf}"
 AIPERF_BIN="${AIPERF_BIN:-${ROOT_DIR}/.venv-aiperf/bin/aiperf}"
 AIPERF_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_aiperf_profile.sh"
 CUDA_GRAPH_AUDITOR="${ROOT_DIR}/benchmarks/pap/scripts/audit_cuda_graph_logs.sh"
@@ -542,7 +541,6 @@ if (( SMOKE_ONLY == 1 )); then
 else
   env \
     PAP_ROOT="${ROOT_DIR}" \
-    AIPERF_ROOT="${AIPERF_ROOT}" \
     AIPERF_BIN="${AIPERF_BIN}" \
     MODEL_PATH="${MODEL_PATH}" \
     AIPERF_INPUT_FILE="${AIPERF_INPUT_FILE}" \

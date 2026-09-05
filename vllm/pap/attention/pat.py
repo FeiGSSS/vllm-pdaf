@@ -14,6 +14,8 @@ from typing import Any
 
 import torch
 
+from vllm.pap.config import read_env_int
+
 _PAT_GRAPH_TOKENS = itertools_count(1)
 
 
@@ -237,7 +239,9 @@ class PAPPATPlanner:
         if unavailable_reason is not None:
             raise RuntimeError(f"PAP PAT is unavailable: {unavailable_reason}")
 
-        self.max_entries = int(os.environ.get("PAP_PAT_PLAN_CACHE_ENTRIES", "32"))
+        self.max_entries = read_env_int(
+            os.environ, "PAP_PAT_PLAN_CACHE_ENTRIES", 32, minimum=0
+        )
         self._plans: OrderedDict[tuple[Any, ...], PAPPATPlan] = OrderedDict()
 
     @staticmethod
@@ -439,7 +443,7 @@ class PAPPATPlanner:
             num_seqs_per_ctas=self._gpu_buffers(info.num_seqs_per_CTAs, device),
             cta_ranks=self._gpu_buffers(info.CTA_ranks, device),
             kv_in_ctas=self._gpu_buffers(info.kv_in_CTAs, device),
-            mnws=tuple(tuple(int(value) for value in mnw) for mnw in info.MNWs),
+            mnws=tuple((int(m), int(n), int(w)) for m, n, w in info.MNWs),
             num_split_per_seq=torch.empty(
                 tuple(info.num_split_per_seq.shape),
                 dtype=info.num_split_per_seq.dtype,

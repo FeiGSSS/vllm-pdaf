@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="${PAP_ROOT:-/home/fei/research/PD/vllm-pap}"
-AIPERF_ROOT="${AIPERF_ROOT:-/home/fei/research/PD/refer_codes/aiperf}"
+ROOT_DIR="${PAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 AIPERF_BIN="${AIPERF_BIN:-${ROOT_DIR}/.venv-aiperf/bin/aiperf}"
 AIPERF_PYTHON="${AIPERF_PYTHON:-${ROOT_DIR}/.venv-aiperf/bin/python}"
 AIPERF_ENTRY="${ROOT_DIR}/benchmarks/pap/scripts/aiperf_compat_entry.py"
@@ -140,7 +139,13 @@ case "${AIPERF_TIMING_MODE}" in
     ;;
 esac
 
+DATASET_SELECTION="$(
+  "${AIPERF_PYTHON}" "${ROOT_DIR}/benchmarks/pap/tooling/validate_replay_dataset.py" \
+    "${AIPERF_INPUT_FILE}" --dataset-type "${AIPERF_CUSTOM_DATASET_TYPE}" \
+    --sessions "${AIPERF_SESSIONS}"
+)"
 mkdir -p "${AIPERF_OUTPUT_DIR}"
+printf '%s\n' "${DATASET_SELECTION}" > "${AIPERF_OUTPUT_DIR}/dataset_selection.json"
 AIPERF_VERSION="$("${AIPERF_BIN}" --version)"
 EXPECTED_AIPERF_VERSION="${PAP_EXPECTED_AIPERF_VERSION:-0.11.0}"
 if [[ "${AIPERF_VERSION}" != "${EXPECTED_AIPERF_VERSION}" ]]; then
@@ -154,10 +159,6 @@ printf '%s\n' "${AIPERF_VERSION}" \
   printf 'VERSION=%q\nAIPERF_BIN=%q\n' \
     "${AIPERF_VERSION}" "${AIPERF_BIN}"
 } > "${AIPERF_OUTPUT_DIR}/aiperf_install.env"
-if git -C "${AIPERF_ROOT}" rev-parse HEAD \
-  > "${AIPERF_OUTPUT_DIR}/aiperf_source_checkout_commit.txt" 2>/dev/null; then
-  :
-fi
 
 args=(
   profile

@@ -71,8 +71,14 @@ def test_peer_manager_stops_receiver_before_runtime_and_transport() -> None:
     events: list[str] = []
     receive_stopped = Event()
 
+    class FakeTraceRecorder:
+        def export_attention_kernel_trace(self) -> None:
+            assert not receiver.is_alive()
+            events.append("export_trace")
+
     class FakeTransport:
         local_agent_metadata = b"local"
+        tracing = FakeTraceRecorder()
 
         def stop_receiving(self) -> None:
             events.append("stop_receiving")
@@ -102,7 +108,7 @@ def test_peer_manager_stops_receiver_before_runtime_and_transport() -> None:
 
     manager.stop()
 
-    assert events == ["stop_receiving", "runtime_stop", "close"]
+    assert events == ["stop_receiving", "export_trace", "runtime_stop", "close"]
     with pytest.raises(PAPAttentionPeerConflict, match="stopping"):
         manager.bind(peer_metadata=b"peer", source_id=None)
 

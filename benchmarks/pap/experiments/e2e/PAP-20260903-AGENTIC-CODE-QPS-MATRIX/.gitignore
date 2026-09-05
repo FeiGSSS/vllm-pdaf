@@ -1,3 +1,4 @@
+/runs/
 /results/*
 !/results/matrix.env
 !/results/summary.json

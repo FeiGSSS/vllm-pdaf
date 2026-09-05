@@ -145,6 +145,25 @@ def test_projection_allows_vllm_async_scheduling(monkeypatch) -> None:
     assert adapter.supports_async_sampled_tokens
 
 
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"PAP_PROJECTION_KV_UNAWARE": "invalid"},
+        {"PAP_DEBUG_DECISION": "enabled"},
+        {"PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS": "64k"},
+        {"PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS": "-1"},
+    ],
+)
+def test_integration_rejects_malformed_settings(values) -> None:
+    with pytest.raises(ValueError, match="PAP_"):
+        PAPRuntimeSettings.from_environ(values)
+
+
+def test_integration_and_runtime_accept_whitespace_in_boolean() -> None:
+    settings = PAPRuntimeSettings.from_environ({"PAP_PROJECTION_KV_UNAWARE": " TRUE "})
+    assert settings.projection_kv_unaware
+
+
 def test_projection_skips_only_local_attention_kernel_warmup() -> None:
     worker = PAPWorkerAdapter.from_environ(
         {

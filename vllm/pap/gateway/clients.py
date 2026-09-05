@@ -5,11 +5,14 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import os
 from dataclasses import dataclass
 from typing import Any
 
 import httpx
+
+from vllm.pap.config import read_env_float
 
 
 @dataclass
@@ -113,8 +116,12 @@ async def wait_attention_prefill_ready(
     timeout = (
         float(timeout_s)
         if timeout_s is not None
-        else float(os.environ.get("PAP_ATTENTION_PREFILL_READY_TIMEOUT", "5.0"))
+        else read_env_float(
+            os.environ, "PAP_ATTENTION_PREFILL_READY_TIMEOUT", 5.0, minimum=0.0
+        )
     )
+    if not math.isfinite(timeout) or timeout < 0:
+        raise ValueError("Prefill readiness timeout must be finite and non-negative")
     path = f"/v1/pap/attention/sessions/{request_id}/prefill-readiness"
     response = await attention.client.get(
         path,

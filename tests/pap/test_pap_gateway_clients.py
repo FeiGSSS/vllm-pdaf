@@ -4,8 +4,10 @@
 """PAP gateway client and handoff tests."""
 
 import asyncio
+from types import SimpleNamespace
 
 import httpx
+import pytest
 
 from vllm.pap.gateway.clients import (
     PAPServiceClient,
@@ -107,6 +109,18 @@ def test_prefill_kv_handle_prefers_remote_request_id() -> None:
 
 def test_prefill_kv_handle_falls_back_to_attention_session() -> None:
     assert prefill_kv_handle_from_kv_params({}, fallback="external") == "external"
+
+
+@pytest.mark.parametrize("timeout", [None, float("nan"), float("inf"), -1.0])
+def test_readiness_rejects_invalid_timeout_before_http(monkeypatch, timeout):
+    monkeypatch.setenv("PAP_ATTENTION_PREFILL_READY_TIMEOUT", "nan")
+
+    def unexpected_http(*args, **kwargs):
+        raise AssertionError("invalid timeout must not reach HTTP")
+
+    attention = SimpleNamespace(client=SimpleNamespace(get=unexpected_http))
+    with pytest.raises(ValueError, match="finite|non-negative"):
+        asyncio.run(wait_attention_prefill_ready(attention, "req", timeout_s=timeout))
 
 
 def test_wait_attention_prefill_ready_uses_one_long_poll() -> None:

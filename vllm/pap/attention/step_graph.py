@@ -14,6 +14,7 @@ import torch
 
 from vllm.logger import init_logger
 from vllm.pap.attention.dispatch import run_pap_decode_attention
+from vllm.pap.config import read_env_bool, read_env_int
 from vllm.pap.kv.layout import split_paged_kv_cache
 from vllm.pap.kv.models import PAPAttentionStepContext
 from vllm.pap.protocol.offload_exec import layer_index_and_template
@@ -22,18 +23,15 @@ logger = init_logger(__name__)
 
 
 def _device_launch_probe_enabled() -> bool:
-    value = os.environ.get("PAP_ATTENTION_DEVICE_GRAPH_PROBE", "0")
-    return value.lower() in {"1", "true", "yes", "on"}
+    return read_env_bool(os.environ, "PAP_ATTENTION_DEVICE_GRAPH_PROBE")
 
 
 def _device_graph_launch_enabled() -> bool:
-    value = os.environ.get("PAP_ATTENTION_DEVICE_GRAPH_LAUNCH", "0")
-    return value.lower() in {"1", "true", "yes", "on"}
+    return read_env_bool(os.environ, "PAP_ATTENTION_DEVICE_GRAPH_LAUNCH")
 
 
 def _resident_dispatch_enabled() -> bool:
-    value = os.environ.get("PAP_ATTENTION_GPU_RESIDENT_DISPATCH", "0")
-    return value.lower() in {"1", "true", "yes", "on"}
+    return read_env_bool(os.environ, "PAP_ATTENTION_GPU_RESIDENT_DISPATCH")
 
 
 def _ordered_layers(context: PAPAttentionStepContext) -> tuple[str, ...]:
@@ -170,7 +168,9 @@ class PAPAttentionStepGraphExecutor:
         )
 
     def _create_resident_dispatcher(self, device: torch.device) -> None:
-        window_size = int(os.environ.get("PAP_ATTENTION_DISPATCH_WINDOW_STEPS", "1"))
+        window_size = read_env_int(
+            os.environ, "PAP_ATTENTION_DISPATCH_WINDOW_STEPS", 1, minimum=1
+        )
         if window_size != 1:
             raise RuntimeError(
                 "PAP Attention dynamic dispatch currently requires a one-step window"
@@ -229,7 +229,7 @@ class PAPAttentionStepGraphExecutor:
         qkv_batch: torch.Tensor,
     ) -> _PAPAttentionGraphEntry:
         device = qkv_batch.device
-        self.transport.prepare_attention_kernel_trace(len(layer_names))
+        self.transport.tracing.prepare_attention_kernel_trace(len(layer_names))
         stream = torch.cuda.Stream(device=device)
         if context.prepare_event is not None:
             stream.wait_event(context.prepare_event)

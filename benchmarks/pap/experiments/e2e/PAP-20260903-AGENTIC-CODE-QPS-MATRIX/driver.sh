@@ -7,12 +7,13 @@ set -euo pipefail
 ROOT_DIR="${PAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../../.." && pwd)}"
 EXPERIMENT_DIR="${PAP_QPS_SCAN_EXPERIMENT_DIR:?set by the experiment run.sh}"
 EXPERIMENT_CONFIG="${PAP_QPS_SCAN_EXPERIMENT_CONFIG:?set by the experiment run.sh}"
-MATRIX_ROOT="${PAP_QPS_SCAN_RUN_ROOT:-${EXPERIMENT_DIR}/results}"
+MATRIX_ROOT="${PAP_QPS_SCAN_RUN_ROOT:-${EXPERIMENT_DIR}/runs/$(date +%Y%m%d_%H%M%S)}"
 DYNAMO_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_dynamo_workload.sh"
 PAP_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_pap_workload.sh"
 PLOTTER="${ROOT_DIR}/benchmarks/pap/tooling/plot_qps_matrix.py"
 PYTHON_BIN="${ROOT_DIR}/.venv/bin/python"
 AIPERF_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_aiperf_profile.sh"
+ENVIRONMENT_CAPTURE="${ROOT_DIR}/benchmarks/pap/tooling/capture_run_environment.py"
 DATASET_ID="${PAP_QPS_SCAN_DATASET_ID:?missing experiment dataset ID}"
 DATASET_REL="${PAP_QPS_SCAN_DATASET_REL:?missing experiment dataset path}"
 DATASET="${ROOT_DIR}/${DATASET_REL}"
@@ -184,8 +185,8 @@ wait_for_idle_gpus() {
   while true; do
     processes="$(
       nvidia-smi --query-compute-apps=pid --format=csv,noheader,nounits \
-        2>/dev/null | sed '/^[[:space:]]*$/d' || true
-    )"
+        | sed '/^[[:space:]]*$/d'
+    )" || die "cannot inspect GPU processes; refusing to treat an unknown state as idle"
     [[ -z "${processes}" ]] && return
     (( SECONDS < deadline )) \
       || die "GPUs stayed occupied by PIDs: ${processes//$'\n'/,}"
@@ -265,7 +266,6 @@ run_pap() {
     RUN_ROOT="${attempt}" \
     PAP_AIPERF_INPUT_FILE="${DATASET}" \
     PAP_AIPERF_CUSTOM_DATASET_TYPE="${DATASET_TYPE}" \
-    PAP_AIPERF_VARIABLE_TURNS=1 \
     PAP_AIPERF_EXPECTED_REQUESTS="${EXPECTED_REQUESTS}" \
     PAP_AIPERF_SESSIONS="${SESSIONS}" \
     PAP_AIPERF_CONCURRENCY="${CONCURRENCY}" \
@@ -283,7 +283,7 @@ run_pap() {
     bash "${PAP_RUNNER}"
 }
 
-write_matrix_manifest() {
+render_matrix_manifest() {
   local aiperf_sha256 config_sha256 dataset_sha256
   aiperf_sha256="$(sha256sum "${AIPERF_RUNNER}" | cut -d' ' -f1)"
   config_sha256="$(sha256sum "${EXPERIMENT_CONFIG}" | cut -d' ' -f1)"
@@ -291,7 +291,19 @@ write_matrix_manifest() {
   [[ "${dataset_sha256}" == "${DATASET_SHA256}" ]] \
     || die "dataset SHA-256 mismatch: ${dataset_sha256}"
   {
-    printf 'SCHEMA_VERSION=2\n'
+    printf 'SCHEMA_VERSION=3\n'
+    printf 'GIT_COMMIT=%q\n' "$(git -C "${ROOT_DIR}" rev-parse HEAD)"
+    printf 'GIT_DIFF_SHA256=%q\n' \
+      "$(git -C "${ROOT_DIR}" diff --binary HEAD | sha256sum | cut -d' ' -f1)"
+    printf 'GIT_UNTRACKED_SHA256=%q\n' "$(
+      cd "${ROOT_DIR}"
+      git ls-files --others --exclude-standard -z \
+        | LC_ALL=C sort -z | xargs -0 -r sha256sum | sha256sum | cut -d' ' -f1
+    )"
+    printf 'DRIVER_SHA256=%q\n' "$(sha256sum "${BASH_SOURCE[0]}" | cut -d' ' -f1)"
+    printf 'PAP_RUNNER_SHA256=%q\nDYNAMO_RUNNER_SHA256=%q\n' \
+      "$(sha256sum "${PAP_RUNNER}" | cut -d' ' -f1)" \
+      "$(sha256sum "${DYNAMO_RUNNER}" | cut -d' ' -f1)"
     printf 'EXPERIMENT_CONFIG=%q\nEXPERIMENT_CONFIG_SHA256=%q\n' \
       "${EXPERIMENT_CONFIG}" "${config_sha256}"
     printf 'DATASET_ID=%q\nDATASET_REL=%q\nDATASET=%q\n' \
@@ -323,12 +335,12 @@ write_matrix_manifest() {
       "${PAP_32K_MAX_NUM_BATCHED_TOKENS}"
     printf 'DECODE_MAX_NUM_BATCHED_TOKENS=%q\nMAX_NUM_SEQS=%q\n' \
       "${DECODE_MAX_NUM_BATCHED_TOKENS}" "${MAX_NUM_SEQS}"
-  } > "${MATRIX_ROOT}/matrix.env"
+  }
 }
 
 for path in "${DYNAMO_RUNNER}" "${PAP_RUNNER}" "${PLOTTER}" \
   "${PYTHON_BIN}" "${AIPERF_RUNNER}" "${EXPERIMENT_CONFIG}" \
-  "${DATASET}"; do
+  "${DATASET}" "${ENVIRONMENT_CAPTURE}"; do
   [[ -e "${path}" ]] || die "missing required path: ${path}"
 done
 for command in jq nvidia-smi sha256sum timeout; do
@@ -354,11 +366,34 @@ for qps in "${selected_qps[@]}"; do
     || die "QPS is not part of this experiment: ${qps}"
 done
 
-mkdir -p "${MATRIX_ROOT}"
-write_matrix_manifest
+requested_manifest="$(render_matrix_manifest)"
 if (( VALIDATE_ONLY == 1 )); then
-  echo "QPS matrix configuration is valid: ${MATRIX_ROOT}/matrix.env"
+  echo "QPS matrix configuration is valid; no files written"
   exit 0
+fi
+
+hardware_identity="$(
+  nvidia-smi --query-gpu=index,uuid,name,memory.total,driver_version,pci.bus_id \
+    --format=csv,noheader
+)"
+mkdir -p "${MATRIX_ROOT}"
+if [[ -e "${MATRIX_ROOT}/matrix.env" ]]; then
+  [[ "$(< "${MATRIX_ROOT}/matrix.env")" == "${requested_manifest}" ]] \
+    || die "run configuration or source changed: ${MATRIX_ROOT}/matrix.env; create a new run"
+  [[ -f "${MATRIX_ROOT}/provenance/COMPLETE" ]] \
+    || die "run has no complete environment snapshot; create a new run"
+  [[ -f "${MATRIX_ROOT}/hardware_identity.csv" \
+    && "$(< "${MATRIX_ROOT}/hardware_identity.csv")" == "${hardware_identity}" ]] \
+    || die "GPU hardware or driver changed; create a new run"
+else
+  (set -o noclobber; printf '%s\n' "${requested_manifest}" > "${MATRIX_ROOT}/matrix.env")
+  cp "${EXPERIMENT_CONFIG}" "${MATRIX_ROOT}/experiment.env"
+  cp "${BASH_SOURCE[0]}" "${MATRIX_ROOT}/driver.snapshot.sh"
+  git -C "${ROOT_DIR}" diff --binary HEAD > "${MATRIX_ROOT}/source.patch"
+  printf '%s\n' "${hardware_identity}" > "${MATRIX_ROOT}/hardware_identity.csv"
+  wait_for_idle_gpus
+  "${PYTHON_BIN}" "${ENVIRONMENT_CAPTURE}" "${MATRIX_ROOT}/provenance" \
+    --model "${MODEL_PATH}" --environments .venv .venv-aiperf .venv-dynamo
 fi
 
 failures=0
@@ -374,7 +409,10 @@ for architecture in "${selected_architectures[@]}"; do
       continue
     fi
     attempt="$(next_attempt "${point_root}")"
-    mkdir -p "${attempt}"
+    mkdir -p "${point_root}"
+    mkdir "${attempt}"
+    cp "${MATRIX_ROOT}/matrix.env" "${attempt}/matrix.env"
+    cp "${MATRIX_ROOT}/experiment.env" "${attempt}/experiment.env"
     wait_for_idle_gpus
     echo "=== ${architecture} QPS=${qps}: ${attempt} ==="
     set +e
@@ -410,7 +448,7 @@ for architecture in "${selected_architectures[@]}"; do
       printf 'STATUS=failed\nLAUNCHER_EXIT_CODE=%q\n' "${launcher_code}" \
         > "${attempt}/matrix_status.env"
       failures=$((failures + 1))
-      (( CONTINUE_ON_FAILURE == 1 )) || exit "${launcher_code}"
+      (( CONTINUE_ON_FAILURE == 1 )) || exit 1
     fi
     MPLCONFIGDIR="${MATRIX_ROOT}/.matplotlib" \
       "${PYTHON_BIN}" "${PLOTTER}" --matrix-root "${MATRIX_ROOT}"

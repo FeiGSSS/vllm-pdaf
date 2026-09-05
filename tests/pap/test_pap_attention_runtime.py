@@ -5,9 +5,27 @@ from types import SimpleNamespace
 
 import pytest
 
+from vllm.pap.config import PAPConfigError
 from vllm.pap.kv.models import PAPAttentionStepContext
+from vllm.pap.kv.registry import PAPAttentionRegistry
 from vllm.pap.kv.step_context_registry import _PAPAttentionStepContextMixin
 from vllm.pap.service import create_app, maybe_start_offload_exec_transport
+
+
+@pytest.mark.parametrize(
+    "name,value",
+    [
+        ("PAP_DECODE_SLOT_PLAN_CACHE_LIMIT", "-1"),
+        ("PAP_DECODE_TOKEN_FLUSH_TIMEOUT", "nan"),
+        ("PAP_ATTENTION_PREFILL_WAIT_TIMEOUT", "inf"),
+    ],
+)
+def test_registry_direct_constructor_uses_strict_config_validation(
+    monkeypatch, name, value
+):
+    monkeypatch.setenv(name, value)
+    with pytest.raises(PAPConfigError, match=name):
+        PAPAttentionRegistry()
 
 
 def _successor_owner(*, seq_len: int = 16):

@@ -15,7 +15,7 @@ splits use a 32,768-token budget. Both PAP topologies are measured with
 2,048-token and 32,768-token Prefill budgets. All architectures use
 `max_num_seqs=256`.
 
-Run or resume the complete matrix with:
+Start a new complete matrix with:
 
 ```bash
 bash benchmarks/pap/experiments/e2e/PAP-20260903-AGENTIC-CODE-QPS-MATRIX/run.sh
@@ -25,13 +25,37 @@ bash benchmarks/pap/experiments/e2e/PAP-20260903-AGENTIC-CODE-QPS-MATRIX/run.sh
 by this directory's `run.sh`. The colocated `driver.sh` contains this matrix's
 orchestration logic.
 
-`results/matrix.env` records the effective configuration path and checksum,
-dataset ID and checksum, and AIPerf runner checksum. Each attempt additionally
-records the topology and process configuration observed after service startup.
-Results use the layout
-`results/<architecture>/qps_<rate>/attempt_<number>/`. A completed attempt is
-never overwritten; rerunning the command skips valid points and gives failed
-or incomplete points a new attempt number.
+New runs use `runs/<timestamp>/<architecture>/qps_<rate>/attempt_<number>/`.
+The existing `results/` directory is a historical record, not the output of a
+new invocation. Each run stores `matrix.env`, a copy of `experiment.env`,
+`driver.snapshot.sh`, and `source.patch`. The manifest records the Git commit
+and tracked diff checksum, dataset checksum, and launcher checksums. Each
+attempt additionally records the topology and process configuration observed
+after service startup. `provenance/` adds a source archive (including nonignored
+new files), environment package inventories, hardware details and model-file
+checksums. The manifest fingerprints untracked files as well as the tracked diff.
+
+To resume, explicitly select the existing run directory:
+
+```bash
+PAP_QPS_SCAN_RUN_ROOT=/absolute/path/to/existing/run \
+bash benchmarks/pap/experiments/e2e/PAP-20260903-AGENTIC-CODE-QPS-MATRIX/run.sh
+```
+
+Resume rejects changed source, experiment configuration, GPU identity or driver,
+and refuses to reuse an incomplete environment snapshot. It skips valid
+points and gives failed or incomplete points a new attempt number. Set
+`PAP_QPS_SCAN_VALIDATE_ONLY=1` to check configuration without writing any files
+or launching services. A configuration check does not prove GPU availability,
+runtime dependency compatibility, or model correctness.
+
+The complete run directory, including `provenance/`, is the reproduction unit;
+an individual attempt folder is not a standalone bundle. Reproduction still
+requires model weights, compatible GPUs and reconstructed dependencies. Restore
+the recorded checkout, apply `source.patch` including deletions, then unpack the
+source archive to restore new files. See the shared
+[runtime requirements](../../../scripts/RUNTIMES.md). Historical results that
+lack these snapshots must not be described as fully reproducible.
 
 For an operational subset, select only canonical points without changing the
 fixed protocol:
@@ -49,7 +73,7 @@ uv pip install --python .venv/bin/python \
   -r benchmarks/pap/experiments/e2e/PAP-20260903-AGENTIC-CODE-QPS-MATRIX/requirements.txt
 ```
 
-The driver refreshes `results/summary.tsv`, `results/summary.json`, and one
+The driver refreshes the run's `summary.tsv`, `summary.json`, and one
 SciencePlots figure after every point. The three panels show P99 end-to-end
 request latency, mean TBT, and mean TTFT against configured QPS. Missing or
 incorrect points remain visible as gaps rather than being silently discarded.

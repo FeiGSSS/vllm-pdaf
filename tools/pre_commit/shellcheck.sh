@@ -18,7 +18,22 @@ if ! [ -x "$(command -v shellcheck)" ]; then
     export PATH="$PATH:$(pwd)/shellcheck-${scversion}"
 fi
 
-# TODO - fix warnings in .buildkite/scripts/hardware_ci/run-amd-test.sh
-find . -path ./.git -prune -o -name "*.sh" \
-  -not -path "./.buildkite/scripts/hardware_ci/run-amd-test.sh" -print0 | \
-  xargs -0 sh -c "for f in \"\$@\"; do git check-ignore -q \"\$f\" || shellcheck -s bash \"\$f\"; done" --
+shell_files=("$@")
+if (( ${#shell_files[@]} == 0 )); then
+    mapfile -d '' -t shell_files < <(
+        find . -path ./.git -prune -o -name "*.sh" -print0
+    )
+fi
+
+lint_status=0
+for shell_file in "${shell_files[@]}"; do
+    # TODO - fix warnings in .buildkite/scripts/hardware_ci/run-amd-test.sh
+    if [[ "${shell_file#./}" == ".buildkite/scripts/hardware_ci/run-amd-test.sh" ]] \
+        || git check-ignore -q -- "${shell_file}"; then
+        continue
+    fi
+    if ! shellcheck -s bash -- "${shell_file}"; then
+        lint_status=1
+    fi
+done
+exit "${lint_status}"

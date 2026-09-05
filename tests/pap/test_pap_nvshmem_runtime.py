@@ -12,16 +12,13 @@ import torch
 
 from vllm.pap.cuda_stream_memops import cuda_stream_handle
 from vllm.pap.protocol import PAPOffloadExecBatchDescriptor
+from vllm.pap.transport.nvshmem.protocol import decode_step_plan, encode_step_plan
 from vllm.pap.transport.nvshmem.runtime import (
     PAPNVSHMEMAllocation,
     PAPNVSHMEMError,
     PAPNVSHMEMRuntime,
 )
-from vllm.pap.transport.nvshmem.transport import (
-    _decode_step_plan,
-    _encode_step_plan,
-)
-from vllm.pap.transport.nvshmem.world import PAPNVSHMEMWorldConfig
+from vllm.pap.transport.nvshmem.world import PAPNVSHMEMWorld, PAPNVSHMEMWorldConfig
 
 
 def test_nvshmem_allocation_checks_pointer_offsets() -> None:
@@ -72,6 +69,36 @@ def test_nvshmem_world_config_requires_uid_file(monkeypatch) -> None:
         PAPNVSHMEMWorldConfig.from_env(device_index=0, buffer_bytes=4096)
 
 
+@pytest.mark.parametrize("timeout", ["nan", "inf", "-1", "0"])
+def test_nvshmem_world_rejects_invalid_init_timeout_before_start(monkeypatch, timeout):
+    monkeypatch.setenv("PAP_NVSHMEM_RANK", "0")
+    monkeypatch.setenv("PAP_NVSHMEM_WORLD_SIZE", "2")
+    monkeypatch.setenv("PAP_NVSHMEM_UID_FILE", "/tmp/pap-test.uid")
+    monkeypatch.setenv("PAP_NVSHMEM_INIT_TIMEOUT", timeout)
+    with pytest.raises(PAPNVSHMEMError, match="timeout|PAP_NVSHMEM_INIT_TIMEOUT"):
+        PAPNVSHMEMWorldConfig.from_env(device_index=0, buffer_bytes=4096)
+
+
+def test_nvshmem_wait_uses_configured_timeout_snapshot(monkeypatch):
+    waits: list[float] = []
+
+    def ready(timeout: float) -> bool:
+        waits.append(timeout)
+        return True
+
+    world = object.__new__(PAPNVSHMEMWorld)
+    world.config = SimpleNamespace(init_timeout_s=7.0, rank=0)
+    world._ready = SimpleNamespace(wait=ready)
+    world._error = None
+    world.data = world.control = world.signals = world.graph_signals = object()
+    monkeypatch.setenv("PAP_NVSHMEM_INIT_TIMEOUT", "nan")
+    world.wait_ready()
+    assert waits == [7.0]
+    with pytest.raises(PAPNVSHMEMError, match="finite"):
+        world.wait_ready(float("nan"))
+    assert waits == [7.0]
+
+
 def test_nvshmem_binary_step_plan_round_trip() -> None:
     descriptor = PAPOffloadExecBatchDescriptor(
         layer_name="model.layers.0.self_attn.attn",
@@ -84,7 +111,7 @@ def test_nvshmem_binary_step_plan_round_trip() -> None:
         },
     )
 
-    encoded = _encode_step_plan(
+    encoded = encode_step_plan(
         descriptor,
         dtype=torch.float16,
         qkv_width=6144,
@@ -94,7 +121,7 @@ def test_nvshmem_binary_step_plan_round_trip() -> None:
     control[: len(encoded)].copy_(
         torch.frombuffer(bytearray(encoded), dtype=torch.uint8)
     )
-    decoded, dtype, qkv_width, layer_count = _decode_step_plan(
+    decoded, dtype, qkv_width, layer_count = decode_step_plan(
         control,
         capacity=control.numel(),
     )

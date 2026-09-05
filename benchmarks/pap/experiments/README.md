@@ -22,8 +22,17 @@ PAP-YYYYMMDD-NAME/
 ├── README.md          # question, protocol, validity, and conclusion
 ├── experiment.env     # frozen requested settings and dataset identity
 ├── run.sh             # only supported entry point for this experiment
-└── results/           # attempts plus promoted summaries and figures
+├── results/           # retained historical summaries and evidence
+└── runs/<timestamp>/  # independent new executions, attempts and snapshots
 ```
+
+New invocations must not rewrite historical result manifests. Resume explicitly
+selects a run and verifies its source/configuration identity before reusing any
+completed point. The QPS matrix driver implements this convention; older records
+may contain only reports or partial evidence and must state those limitations.
+
+Shared dependency setup and process configuration are documented in
+[`../scripts/RUNTIMES.md`](../scripts/RUNTIMES.md).
 
 Class-level `_runs/` directories contain only historical or ad hoc scratch
 runs that were never promoted into a self-contained experiment. New formal

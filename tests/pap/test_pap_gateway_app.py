@@ -4,6 +4,8 @@
 
 import asyncio
 import sys
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -23,6 +25,7 @@ from vllm.pap.gateway.observability import (
 from vllm.pap.gateway.prefix_cache import PAPPrefixCacheTracker
 from vllm.pap.gateway.request_pipeline import (
     _cancel_on_client_disconnect,
+    _handle_openai_request,
     _pop_conversation_id,
 )
 from vllm.pap.gateway.routing import (
@@ -102,6 +105,18 @@ def test_gateway_defaults_to_conversation_affinity(monkeypatch) -> None:
     args = parse_args()
     assert args.routing_policy == "conversation_affinity"
     assert args.dynamo_prefill_load_scale == 2.0
+
+
+def test_dynamo_rejects_cache_salt_before_prefill_can_publish_incompatible_events():
+    request = SimpleNamespace(
+        json=AsyncMock(return_value={"cache_salt": "tenant-a"}),
+        app=SimpleNamespace(
+            state=SimpleNamespace(args=SimpleNamespace(routing_policy="dynamo"))
+        ),
+    )
+    response = asyncio.run(_handle_openai_request("/v1/chat/completions", request))
+    assert response.status_code == 400
+    assert b"cache_salt" in response.body
 
 
 def test_dynamo_router_reserves_prefill_and_frees_decode() -> None:

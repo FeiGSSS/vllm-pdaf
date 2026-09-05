@@ -10,6 +10,11 @@ from pathlib import Path
 
 import torch
 
+
+class IncompleteTraceWindow(ValueError):
+    """The rolling trace files do not yet share a long enough complete window."""
+
+
 _HOST_PHASE_NAMES = (
     "control_wait_ns",
     "control_decode_ns",
@@ -94,7 +99,7 @@ def merge(projection_path: Path) -> dict[str, object]:
     requested_steps = int(projection["metadata"].get("requested_samples", 512))
     candidates = common_steps.nonzero(as_tuple=False).flatten()
     if candidates.numel() < requested_steps:
-        raise ValueError(
+        raise IncompleteTraceWindow(
             f"only {candidates.numel()} globally aligned steps are available; "
             f"need {requested_steps}"
         )
@@ -112,7 +117,7 @@ def merge(projection_path: Path) -> dict[str, object]:
             selected = candidates[run_end - requested_steps : run_end]
     if selected is None:
         longest = int((run_ends - run_starts).max())
-        raise ValueError(
+        raise IncompleteTraceWindow(
             f"longest contiguous aligned window has {longest} steps; "
             f"need {requested_steps}"
         )

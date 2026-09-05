@@ -9,6 +9,8 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from vllm.pap.config import read_env_bool
+
 
 @dataclass(frozen=True, slots=True)
 class _PrefillCacheUsage:
@@ -17,12 +19,7 @@ class _PrefillCacheUsage:
 
 
 def _pap_prefill_ipc_profile_enabled() -> bool:
-    return os.environ.get("PAP_PREFILL_IPC_PROFILE", "").lower() in {
-        "1",
-        "true",
-        "yes",
-        "on",
-    }
+    return read_env_bool(os.environ, "PAP_PREFILL_IPC_PROFILE")
 
 
 def _extract_prefill_cache_usage(
