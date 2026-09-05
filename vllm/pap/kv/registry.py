@@ -12,6 +12,10 @@ from typing import Any
 import torch
 
 from vllm.pap.config import PAPRuntimeConfig, read_env_float, read_env_int
+from vllm.pap.kv.decode_commit import (
+    DeferredDecodeCommit,
+    DeferredDecodeTokenCommitter,
+)
 from vllm.pap.kv.decode_state import _PAPDecodeStateMixin
 from vllm.pap.kv.models import (
     PAPAttentionSession,
@@ -27,10 +31,6 @@ from vllm.pap.kv.session_registry import (
     _PAPSessionRegistryMixin,
 )
 from vllm.pap.kv.step_context_registry import _PAPAttentionStepContextMixin
-from vllm.pap.lifecycle.decode_token import (
-    DeferredDecodeCommit,
-    DeferredDecodeTokenCommitter,
-)
 
 
 class PAPAttentionRegistry(
@@ -48,7 +48,6 @@ class PAPAttentionRegistry(
     ) -> None:
         self.runtime_config = runtime_config
         self._lock = Lock()
-        self._decode_append_lock = Lock()
         self._prefill_condition = Condition(self._lock)
         if runtime_config is None:
             self._decode_slot_plan_cache_limit_value = read_env_int(
@@ -97,9 +96,6 @@ class PAPAttentionRegistry(
         self._session_epochs: dict[str, int] = {}
         self._next_session_epoch = 1
         self._unified_slot_activations: dict[str, PAPUnifiedSlotActivation] = {}
-        self._decode_slot_plan_cache: OrderedDict[tuple[Any, ...], torch.Tensor] = (
-            OrderedDict()
-        )
         self._offload_exec_session_entry_cache: dict[
             tuple[str, int, int, int, int, int, int], PAPOffloadExecSessionEntry
         ] = {}
@@ -113,11 +109,6 @@ class PAPAttentionRegistry(
         self._attention_step_slot_plan_builds = 0
         self._attention_step_metadata_builds = 0
         self._attention_step_kv_ready_publishes = 0
-        self._reshape_cache_scales: dict[str, tuple[torch.Tensor, torch.Tensor]] = {}
-        self._decode_append_fast_path_hits = 0
-        self._decode_append_fallbacks = 0
-        self._decode_slot_plan_cache_hits = 0
-        self._decode_slot_plan_cache_misses = 0
         self._decode_slot_topology_mismatches = 0
         self._offload_exec_stats_lock = Lock()
         self._offload_exec_peer_batches = 0

@@ -41,13 +41,13 @@ def test_runtime_config_accepts_7pa1p_nvshmem_graph_topology() -> None:
             "PAP_PREFILL_GPUS": "0,1,2,3,4,5,6",
             "PAP_ATTENTION_GPUS": "0,1,2,3,4,5,6",
             "PAP_PROJECTION_GPUS": "7",
-            "PAP_ROUTING_POLICY": "conversation_affinity",
+            "PAP_ROUTING_POLICY": "dynamo",
         }
     )
 
     assert config.topology.pa_count == 7
     assert config.topology.projection_count == 1
-    assert config.routing_policy is PAPRoutingPolicy.CONVERSATION_AFFINITY
+    assert config.routing_policy is PAPRoutingPolicy.DYNAMO
 
 
 def test_runtime_config_accepts_multiple_projections() -> None:
@@ -70,6 +70,21 @@ def test_runtime_config_accepts_dynamo_routing() -> None:
     assert config.routing_policy is PAPRoutingPolicy.DYNAMO
 
 
+@pytest.mark.parametrize(
+    "policy",
+    [
+        "round_robin",
+        "crossbar_round_robin",
+        "projection_affinity",
+        "projection_sticky",
+        "conversation_affinity",
+    ],
+)
+def test_runtime_config_rejects_retired_routing(policy) -> None:
+    with pytest.raises(PAPConfigError, match="PAP_ROUTING_POLICY"):
+        PAPRuntimeConfig.from_env({"PAP_ROUTING_POLICY": policy})
+
+
 def test_runtime_config_rejects_tensor_parallel_execution() -> None:
     with pytest.raises(PAPConfigError, match="requires TP=1"):
         PAPRuntimeConfig.from_env(
@@ -86,6 +101,11 @@ def test_runtime_config_rejects_tensor_parallel_execution() -> None:
     "name",
     [
         "PAP_OFFLOAD_EXEC_TRANSPORT",
+        "PAP_OFFLOAD_EXEC_TRACE",
+        "PAP_OFFLOAD_EXEC_TRACE_LAYER",
+        "PAP_PREFIX_CACHE_AUDIT",
+        "PAP_KV_LOCALITY_PROFILE",
+        "PAP_KV_LOCALITY_PROFILE_MIN_BATCH",
         "PAP_NVSHMEM_GPU_GRAPH",
         "PAP_NVSHMEM_MODE",
         "PAP_NVSHMEM_SIGNAL_WAIT",

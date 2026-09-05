@@ -7,7 +7,7 @@ from vllm.pap.protocol import (
     PAPOffloadExecTransportClosed,
     PAPTensorTransport,
 )
-from vllm.pap.transport.factory import build_offload_exec_transport
+from vllm.pap.transport.binding import build_offload_exec_transport
 
 __all__ = [
     "PAPOffloadExecTransport",

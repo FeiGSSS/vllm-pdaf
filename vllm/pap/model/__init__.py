@@ -2,12 +2,12 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """Model-facing PAP adapters."""
 
-from vllm.pap.model.attention_execution import (
+from vllm.pap.model.prefill import PAPPrefillKVPublisher
+from vllm.pap.model.projection import (
+    PAPProjectionAttentionAdapter,
     PAPProjectionAttentionExecution,
     bind_projection_attention_execution,
 )
-from vllm.pap.model.prefill import PAPPrefillKVPublisher
-from vllm.pap.model.projection import PAPProjectionAttentionAdapter
 
 __all__ = [
     "PAPPrefillKVPublisher",

@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any
 import torch
 
 if TYPE_CHECKING:
-    from vllm.pap.attention.kernels import PAPPagedDecodeWorkspace
-    from vllm.pap.attention.planning import PAPAttentionPlan
+    from vllm.pap.attention.backend import PAPAttentionPlan
+    from vllm.pap.attention.triton_backend import PAPPagedDecodeWorkspace
 
 
 @dataclass
@@ -110,7 +110,6 @@ class PAPUnifiedPagedKVState:
     block_ids: tuple[int, ...]
     prefix_len: int
     seq_len: int
-    capacity_tokens: int
     writable_start_token: int
     writable_end_token: int
     lease_id: str
@@ -130,7 +129,6 @@ class PAPUnifiedSlotActivation:
 
     prefix_len: int
     generation: int
-    canonical_topology: PAPUnifiedSlotTopology
     canonical_topology_id: int
     topology_ids: dict[PAPUnifiedSlotTopology, int]
     layer_observations: dict[str, int]
@@ -166,7 +164,6 @@ class PAPAttentionStepContext:
     result_seq_lens: tuple[int, ...]
     commit_new_seq_lens: tuple[int | None, ...]
     active_indices: tuple[int, ...]
-    active_prior_seq_lens: tuple[int, ...]
     expected_layers: frozenset[str]
     layer_states: dict[str, tuple[PAPUnifiedPagedKVState, ...]]
     topology_ids: tuple[int, ...]
@@ -176,15 +173,12 @@ class PAPAttentionStepContext:
     num_kv_heads: int
     head_dim: int
     scale: float
-    active_index_tensor: torch.Tensor | None = None
-    slot_tensor: torch.Tensor | None = None
     graph_slot_tensor: torch.Tensor | None = None
     metadata: Any | None = None
     paged_decode_workspace: PAPPagedDecodeWorkspace | None = None
     attention_kernel_plan: PAPAttentionPlan | None = None
     attention_kernel_plan_prepared: bool = False
     prepare_event: Any | None = None
-    prepare_event_waited: bool = False
     _pap_trace_graph_lookup_ns: int = 0
     _pap_trace_graph_replay_submit_ns: int = 0
     completed_layers: set[str] = field(default_factory=set)

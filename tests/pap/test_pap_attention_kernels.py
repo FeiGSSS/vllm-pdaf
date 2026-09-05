@@ -10,11 +10,12 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-import vllm.pap.attention.dispatch as dispatch
-import vllm.pap.attention.kernels as kernels
-import vllm.pap.attention.pat as pat
-from vllm.pap.attention.dispatch import run_pap_decode_attention
-from vllm.pap.attention.kernels import (
+import vllm.pap.attention.backend as dispatch
+import vllm.pap.attention.pat_backend as pat
+import vllm.pap.attention.triton_backend as kernels
+from vllm.pap.attention.backend import PAPPATOrTritonSelector, run_pap_decode_attention
+from vllm.pap.attention.pat_backend import PAPPATPlan
+from vllm.pap.attention.triton_backend import (
     PAP_TRITON_DECODE_DEFAULT_CONFIG,
     PAP_TRITON_DECODE_LOW_RESOURCE_CONFIG,
     PAPAttentionStepTensorCache,
@@ -23,7 +24,6 @@ from vllm.pap.attention.kernels import (
     paged_decode_kernel_config_for_sms,
     run_triton_paged_decode_attention,
 )
-from vllm.pap.attention.pat import PAPPATOrTritonSelector, PAPPATPlan
 from vllm.pap.config import PAPConfigError
 from vllm.pap.kv.metadata import PAPPagedFlashMetadata
 

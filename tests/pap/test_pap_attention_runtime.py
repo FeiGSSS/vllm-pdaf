@@ -12,6 +12,53 @@ from vllm.pap.kv.step_context_registry import _PAPAttentionStepContextMixin
 from vllm.pap.service import create_app, maybe_start_offload_exec_transport
 
 
+def test_step_preparation_builds_only_row_stable_graph_slots():
+    from threading import RLock
+
+    import torch
+
+    from vllm.pap.attention.compute import prepare_offload_exec_step
+
+    state = SimpleNamespace(block_ids=(5, 7, 9), block_size=16)
+    context = SimpleNamespace(
+        lock=RLock(),
+        prepare_event=None,
+        graph_slot_tensor=None,
+        request_ids=("a", "b", "c"),
+        active_indices=(0, 2),
+        prior_seq_lens=(17, 0, 32),
+        layer_states={"layer0": (state, state, state)},
+        metadata=object(),
+        paged_decode_workspace=object(),
+        attention_kernel_plan_prepared=True,
+    )
+    copied = []
+
+    class TensorCache:
+        def copy(self, *, kind, values, dtype, device):
+            copied.append(kind)
+            return torch.tensor(values, dtype=dtype, device=device)
+
+    registry = SimpleNamespace(
+        offload_exec_shape_defaults=(1, 1, 1, 1, 1),
+        storage_device=torch.device("cpu"),
+        get_or_create_attention_step_context=lambda **kwargs: context,
+        record_attention_step_slot_plan_build=lambda: None,
+    )
+    descriptor = SimpleNamespace(
+        layer_name="layer0",
+        metadata_template={"r": ("a", "b", "c"), "s": (18, 1, 33), "a": (1, 1, 1)},
+    )
+    prepared = prepare_offload_exec_step(
+        registry=registry,
+        descriptor=descriptor,
+        dtype=torch.float16,
+        step_tensor_cache=TensorCache(),
+    )
+    assert prepared.graph_slot_tensor.tolist() == [113, -1, 144]
+    assert copied == ["graph_slots"]
+
+
 @pytest.mark.parametrize(
     "name,value",
     [
@@ -44,7 +91,6 @@ def _successor_owner(*, seq_len: int = 16):
         result_seq_lens=(seq_len,),
         commit_new_seq_lens=(seq_len,),
         active_indices=(0,),
-        active_prior_seq_lens=(seq_len - 1,),
         expected_layers=frozenset(states),
         layer_states=states,
         topology_ids=(11,),

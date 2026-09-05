@@ -15,7 +15,7 @@ from vllm.distributed.kv_transfer.kv_connector.v1 import (
 )
 from vllm.distributed.kv_transfer.kv_connector.v1.base import KVConnectorMetadata
 from vllm.pap.integration.request import PAPRequestMetadata
-from vllm.pap.lifecycle import lease as pap_lease
+from vllm.pap.kv import lease as pap_lease
 from vllm.pap.model.prefill import PAPPrefillKVPublisher
 from vllm.v1.request import RequestStatus
 

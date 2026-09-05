@@ -355,7 +355,7 @@ def build_inputs(
     device: torch.device,
 ) -> ProbeInputs:
     """Allocate the exact tensors accepted by the production PAP kernel."""
-    from vllm.pap.attention.kernels import build_paged_decode_workspace
+    from vllm.pap.attention.triton_backend import build_paged_decode_workspace
     from vllm.pap.kv.metadata import PAPPagedFlashMetadata
 
     blocks_per_request = tuple(
@@ -453,7 +453,7 @@ def run_attention(
     implementation: str = "auto",
 ) -> torch.Tensor:
     """Run the production low-SM-aware Triton paged-decode path."""
-    from vllm.pap.attention.kernels import run_triton_paged_decode_attention
+    from vllm.pap.attention.triton_backend import run_triton_paged_decode_attention
 
     return run_triton_paged_decode_attention(
         query=inputs.query,
@@ -536,7 +536,7 @@ def build_kernel_candidates(kernel_set: str) -> list[KernelCandidate]:
 
 
 def kernel_config(candidate: KernelCandidate) -> Any:
-    from vllm.pap.attention.kernels import PAPPagedDecodeKernelConfig
+    from vllm.pap.attention.triton_backend import PAPPagedDecodeKernelConfig
 
     return PAPPagedDecodeKernelConfig(
         num_splits=candidate.num_splits,
@@ -720,7 +720,7 @@ def run_timing(args: argparse.Namespace) -> None:
             samples=args.samples,
             calls_per_sample=args.calls_per_sample,
         )
-        from vllm.pap.attention.kernels import build_paged_decode_workspace
+        from vllm.pap.attention.triton_backend import build_paged_decode_workspace
 
         inputs.workspace = build_paged_decode_workspace(inputs.query)
         reference = run_attention(inputs, model, "auto").detach().clone()
@@ -880,7 +880,7 @@ def run_profile(args: argparse.Namespace) -> None:
         args.num_stages,
         args.block_n,
     )
-    from vllm.pap.attention.kernels import build_paged_decode_workspace
+    from vllm.pap.attention.triton_backend import build_paged_decode_workspace
 
     inputs.workspace = build_paged_decode_workspace(
         inputs.query,

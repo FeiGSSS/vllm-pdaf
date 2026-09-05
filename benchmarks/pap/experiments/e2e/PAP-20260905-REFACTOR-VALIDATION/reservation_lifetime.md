@@ -36,7 +36,7 @@ expiry in `lib/kv-router/src/sequences/single.rs`: expiry compares `started_at`
 with the current time, and `mark_prefill_completed` only removes Prefill load.
 This source is a diagnostic clue consistent with the installed runtime's
 observed behavior; it is not asserted to be the exact source of the PyPI binary.
-The public `SelectionService` interface does not expose a request-lifetime
+That reference checkout's public `SelectionService` interface does not expose a request-lifetime
 renewal operation. The separate block-cache `router_ttl_secs` must not be
 confused with this request expiry.
 
@@ -52,5 +52,34 @@ The benchmark audit now rejects `Expiring stale request`. The queued
 `coding-full` case was stopped through its owned launcher's cleanup path (exit
 130); no completed measurement is claimed. GPU process cleanup was verified.
 The preceding `coding-half-trace` case and its frozen raw-window checks remain
-valid. Full validation awaits the Dynamo dependency correction; the independent
-`cache_salt` compatibility limitation also remains unresolved.
+valid. The historical invalidated runs remain invalidated after the correction.
+
+## Correction (user-approved 2026-09-05)
+
+The official v1.4.1 source at `2112d6ba74da72e2715ae69f4b76458b7691380d`
+already provides `ActiveSequencesMultiWorker::new_without_expiry`, but its
+selection service did not use that ownership mode. PAP now builds an isolated
+binding to that source, with a small patch selecting explicit-owner lifetime for
+the local, non-replicated selector. Default upstream behavior is unchanged.
+The older reference checkout above is not used as the build source.
+
+See `vllm/pap/gateway/dynamo_native/`, `scripts/build_pap_dynamo_router.sh`, and
+`experiments/microbench/PAP-20260905-DYNAMO-OWNER-LIFETIME/` (relative to the
+repository/PAP benchmark roots). The CPU real-clock reproduction retains one
+Prefill request and one Decode request for 370 seconds: the official runtime
+loses both reservations; the patched selector retains both until explicit free.
+No TTL increase or repeated rebooking is involved.
+
+The gateway owns booking outcomes across client cancellation, releases on
+completion/failure, blocks new routing after a failed release, and cancels queued
+selection before draining/freeing on shutdown. The short 7PA1P E2E validation
+completed with zero native or wrapper reservations left. The subsequent full
+queue passed the unhalved coding replay (four requests over 300 seconds,
+longest 519.783 seconds from selection to client completion) and the 600-second
+large-dataset cancellation case (195 completed, 60 cancelled). Both drained
+native and wrapper ownership without release failures. See `results.md` for
+exact source snapshots and scope; no comparative performance claim is made.
+
+The user separately chose default cross-session prefix sharing. New unsalted
+fixtures are registered under a new ID; old salted data is not rewritten and
+explicit isolation requests are still rejected by PAP's Dynamo preflight.

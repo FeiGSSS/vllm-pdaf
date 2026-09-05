@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from vllm.pap.kv.ipc import _resolve_ipc_gpu_uuid
+from vllm.pap.kv.handoff import _resolve_ipc_gpu_uuid
 
 
 def test_cuda_ipc_uuid_accepts_nvml_prefix_difference() -> None:

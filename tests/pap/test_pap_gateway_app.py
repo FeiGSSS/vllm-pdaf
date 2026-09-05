@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""PAP gateway topology and static routing tests."""
+"""PAP gateway topology and Dynamo routing tests."""
 
 import asyncio
 import sys
@@ -11,7 +11,6 @@ import pytest
 
 import vllm.pap.gateway.handoff as gateway_handoff
 import vllm.pap.gateway.lifecycle as gateway_lifecycle
-from vllm.distributed.kv_events import BlockRemoved, BlockStored, KVEventBatch
 from vllm.pap.gateway.admission import PAPProjectionAdmission
 from vllm.pap.gateway.app import parse_args
 from vllm.pap.gateway.dynamo_routing import PAPDynamoRouter
@@ -22,17 +21,10 @@ from vllm.pap.gateway.observability import (
     _merge_prefill_cache_usage,
     _prefill_usage_headers,
 )
-from vllm.pap.gateway.prefix_cache import PAPPrefixCacheTracker
 from vllm.pap.gateway.request_pipeline import (
     _cancel_on_client_disconnect,
     _handle_openai_request,
     _pop_conversation_id,
-)
-from vllm.pap.gateway.routing import (
-    PAPConversationRouter,
-    estimate_initial_context_load,
-    estimate_initial_context_tokens,
-    select_instances,
 )
 from vllm.pap.gateway.topology import (
     PAPGroup,
@@ -40,6 +32,7 @@ from vllm.pap.gateway.topology import (
     build_projection_payload_for_group,
     parse_pap_groups,
     parse_projection_instances,
+    select_projection_for_group,
 )
 
 
@@ -89,7 +82,8 @@ def test_client_disconnect_cancels_downstream_request_task() -> None:
     asyncio.run(run())
 
 
-def test_gateway_defaults_to_conversation_affinity(monkeypatch) -> None:
+def test_gateway_defaults_to_dynamo(monkeypatch) -> None:
+    monkeypatch.delenv("PAP_ROUTING_POLICY", raising=False)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -103,8 +97,52 @@ def test_gateway_defaults_to_conversation_affinity(monkeypatch) -> None:
     )
 
     args = parse_args()
-    assert args.routing_policy == "conversation_affinity"
+    assert args.routing_policy == "dynamo"
     assert args.dynamo_prefill_load_scale == 2.0
+
+
+@pytest.mark.parametrize("source", ["env", "cli"])
+@pytest.mark.parametrize(
+    "policy",
+    [
+        "round_robin",
+        "crossbar_round_robin",
+        "projection_affinity",
+        "projection_sticky",
+        "conversation_affinity",
+    ],
+)
+def test_gateway_rejects_retired_routing_without_fallback(monkeypatch, source, policy):
+    monkeypatch.delenv("PAP_ROUTING_POLICY", raising=False)
+    argv = [
+        "pap-gateway",
+        "--pap-groups",
+        "127.0.0.1:8100:127.0.0.1:8300",
+        "--projections",
+        "127.0.0.1:8200",
+    ]
+    if source == "env":
+        monkeypatch.setenv("PAP_ROUTING_POLICY", policy)
+    else:
+        argv.extend(["--routing-policy", policy])
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit) as error:
+        parse_args()
+    assert error.value.code == 2
+
+
+@pytest.mark.parametrize(
+    "pa_count,projection_count,owners",
+    [(7, 1, [0] * 7), (6, 2, [0, 0, 0, 1, 1, 1]), (7, 2, [0, 0, 0, 0, 1, 1, 1])],
+)
+def test_dynamo_selected_pa_has_fixed_projection_owner(
+    pa_count, projection_count, owners
+):
+    groups, projections = _groups(pa_count), _projections(projection_count)
+    assert [
+        projections.index(select_projection_for_group(group, groups, projections))
+        for group in groups
+    ] == owners
 
 
 def test_dynamo_rejects_cache_salt_before_prefill_can_publish_incompatible_events():
@@ -146,6 +184,9 @@ def test_dynamo_router_reserves_prefill_and_frees_decode() -> None:
         def shutdown(self) -> None:
             return None
 
+        def stop_scheduling(self) -> None:
+            return None
+
     async def run() -> None:
         groups = _groups(2)
         service = FakeSelectionService()
@@ -164,6 +205,70 @@ def test_dynamo_router_reserves_prefill_and_frees_decode() -> None:
         assert service.completed == ["request-0"]
         assert service.freed == ["request-0"]
         assert router.stats()["active_reservations"] == 0
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("cancel_before_booking", [False, True])
+def test_dynamo_cancelled_selection_releases_committed_booking(cancel_before_booking):
+    """Cancellation may race a native booking; cleanup must wait for its outcome."""
+
+    async def run():
+        entered, allow_booking = asyncio.Event(), asyncio.Event()
+        freed = []
+
+        async def select(request):
+            entered.set()
+            await allow_booking.wait()
+            return {"worker_id": 0}
+
+        async def free(request_id):
+            freed.append(request_id)
+
+        service = SimpleNamespace(
+            select_and_reserve=select,
+            free_reservation=free,
+            stop_scheduling=lambda: None,
+            shutdown=lambda: None,
+        )
+        router = PAPDynamoRouter(_groups(1), service, model_name="pap")
+        task = asyncio.create_task(
+            router.select_group([1], request_id="r", expected_output_tokens=1)
+        )
+        await entered.wait()
+        if not cancel_before_booking:
+            allow_booking.set()
+            # Complete the native task before its shielded caller resumes.
+            await asyncio.sleep(0)
+        task.cancel()
+        allow_booking.set()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await router.shutdown()
+        assert freed == ["r"]
+        assert router.stats()["active_reservations"] == 0
+
+    asyncio.run(run())
+
+
+def test_dynamo_release_failure_retains_ownership_and_blocks_new_routing():
+    async def run():
+        service = SimpleNamespace(
+            select_and_reserve=AsyncMock(return_value={"worker_id": 0}),
+            free_reservation=AsyncMock(side_effect=RuntimeError("release failed")),
+            loads=lambda **kwargs: [],
+            stop_scheduling=lambda: None,
+            shutdown=lambda: None,
+        )
+        router = PAPDynamoRouter(_groups(1), service, model_name="pap")
+        await router.select_group([1], request_id="r", expected_output_tokens=1)
+        router.finish_request("r")
+        await asyncio.sleep(0)
+        assert router.stats()["active_reservations"] == 1
+        assert not router.stats()["healthy"]
+        with pytest.raises(RuntimeError, match="failed load accounting"):
+            await router.select_group([1], request_id="s", expected_output_tokens=1)
+        await router.shutdown()
 
     asyncio.run(run())
 
@@ -360,143 +465,6 @@ def test_parse_projection_instances_from_compact_spec() -> None:
     )
 
 
-@pytest.mark.parametrize(
-    ("policy", "expected_groups", "expected_projections"),
-    [
-        (
-            "round_robin",
-            [8100, 8101, 8100, 8101],
-            [8200, 8201, 8200, 8201],
-        ),
-        (
-            "crossbar_round_robin",
-            [8100, 8101, 8100, 8101],
-            [8200, 8201, 8201, 8200],
-        ),
-        (
-            "projection_sticky",
-            [8100, 8101, 8100, 8101],
-            [8200, 8201, 8200, 8201],
-        ),
-    ],
-)
-def test_static_routing_policies(
-    policy: str,
-    expected_groups: list[int],
-    expected_projections: list[int],
-) -> None:
-    selected = [
-        select_instances(
-            index,
-            _groups(2),
-            _projections(2),
-            routing_policy=policy,
-        )
-        for index in range(4)
-    ]
-
-    assert [group.prefill_port for group, _ in selected] == expected_groups
-    assert [projection.port for _, projection in selected] == expected_projections
-
-
-def test_projection_affinity_groups_pas_by_projection() -> None:
-    groups = _groups(5)
-    projections = _projections(2)
-    selected = [
-        select_instances(
-            index,
-            groups,
-            projections,
-            routing_policy="projection_affinity",
-        )
-        for index in range(5)
-    ]
-
-    assert [projection.port for _, projection in selected] == [
-        8200,
-        8200,
-        8200,
-        8201,
-        8201,
-    ]
-
-
-def test_conversation_affinity_balances_new_conversation_context() -> None:
-    groups = _groups(3)
-    projections = _projections(1)
-    router = PAPConversationRouter(groups)
-
-    first_round = [
-        select_instances(
-            index,
-            groups,
-            projections,
-            routing_policy="conversation_affinity",
-            conversation_id=f"conv-{index}",
-            conversation_router=router,
-            initial_context_load=(100, 10, 10, 10, 10, 10)[index],
-        )[0].prefill_port
-        for index in range(6)
-    ]
-    second_round = [
-        select_instances(
-            6 + index,
-            groups,
-            projections,
-            routing_policy="conversation_affinity",
-            conversation_id=f"conv-{index}",
-            conversation_router=router,
-        )[0].prefill_port
-        for index in reversed(range(6))
-    ]
-
-    assert first_round == [8100, 8101, 8102, 8101, 8102, 8101]
-    assert second_round == [8101, 8102, 8101, 8102, 8101, 8100]
-    assert router.snapshot() == {
-        "conversations": 6,
-        "pa_assignments": {"0": 1, "1": 3, "2": 2},
-        "pa_requests": {"0": 2, "1": 6, "2": 4},
-        "pa_initial_context_characters": {"0": 100, "1": 30, "2": 20},
-        "pa_reserved_prefill_tokens": {"0": 0, "1": 0, "2": 0},
-        "pa_reserved_kv_tokens": {"0": 0, "1": 0, "2": 0},
-    }
-
-
-def test_conversation_affinity_keeps_each_pa_on_one_projection() -> None:
-    groups = _groups(6)
-    projections = _projections(2)
-    router = PAPConversationRouter(groups)
-
-    selected = [
-        select_instances(
-            index,
-            groups,
-            projections,
-            routing_policy="conversation_affinity",
-            conversation_id=f"conv-{index}",
-            conversation_router=router,
-        )
-        for index in range(6)
-    ]
-
-    assert [group.prefill_port for group, _ in selected] == [
-        8100,
-        8101,
-        8102,
-        8103,
-        8104,
-        8105,
-    ]
-    assert [projection.port for _, projection in selected] == [
-        8200,
-        8200,
-        8200,
-        8201,
-        8201,
-        8201,
-    ]
-
-
 def _pa_load(
     *,
     prefill: int,
@@ -510,166 +478,6 @@ def _pa_load(
         "total_kv_tokens": total_kv,
         "kv_block_size": 16,
     }
-
-
-def test_conversation_affinity_filters_capacity_then_prefill_load() -> None:
-    groups = _groups(3)
-    router = PAPConversationRouter(groups)
-
-    selected, _ = select_instances(
-        0,
-        groups,
-        _projections(1),
-        routing_policy="conversation_affinity",
-        conversation_id="conv-live-load",
-        conversation_router=router,
-        initial_context_load=100,
-        initial_context_tokens=100,
-        decode_capacity_tokens=100,
-        request_id="request-0",
-        current_pa_loads={
-            groups[0]: _pa_load(prefill=0, projected_kv=96_000),
-            groups[1]: _pa_load(prefill=500, projected_kv=20_000),
-            groups[2]: _pa_load(prefill=100, projected_kv=30_000),
-        },
-    )
-
-    assert selected == groups[2]
-    assert router.has_assignment("conv-live-load")
-
-
-def test_conversation_affinity_credits_resident_prefix() -> None:
-    groups = _groups(2)
-    router = PAPConversationRouter(groups)
-    loads = {
-        groups[0]: _pa_load(prefill=0, projected_kv=0),
-        groups[1]: _pa_load(prefill=5_000, projected_kv=0),
-    }
-
-    selected, _ = select_instances(
-        0,
-        groups,
-        _projections(1),
-        routing_policy="conversation_affinity",
-        conversation_id="shared-prefix",
-        conversation_router=router,
-        initial_context_tokens=10_000,
-        request_id="request-prefix",
-        current_pa_loads=loads,
-        prefix_cached_tokens={groups[0]: 0, groups[1]: 9_000},
-    )
-
-    assert selected == groups[1]
-    assert router.snapshot()["pa_reserved_prefill_tokens"] == {
-        "0": 0,
-        "1": 1_000,
-    }
-
-
-def test_prefix_cache_tracker_applies_worker_events() -> None:
-    groups = _groups(2)
-    tracker = PAPPrefixCacheTracker(
-        groups,
-        model=None,
-        event_endpoints=(),
-        block_size=16,
-    )
-    token_ids = list(range(32))
-    hashes = tracker.hash_token_ids(token_ids)
-    stored = BlockStored(
-        block_hashes=list(hashes),
-        parent_block_hash=None,
-        token_ids=token_ids,
-        block_size=16,
-        lora_id=None,
-        medium="GPU",
-        lora_name=None,
-        extra_keys=None,
-        group_idx=0,
-        kv_cache_spec_kind=None,
-        kv_cache_spec_sliding_window=None,
-        locality=None,
-    )
-    tracker._apply_batch(groups[0], 0, KVEventBatch(0.0, [stored]))
-
-    assert tracker.matched_tokens(hashes) == {groups[0]: 32, groups[1]: 0}
-
-    removed = BlockRemoved(
-        block_hashes=[hashes[-1]],
-        medium="GPU",
-        group_idx=0,
-        locality=None,
-    )
-    tracker._apply_batch(groups[0], 1, KVEventBatch(0.0, [removed]))
-    assert tracker.matched_tokens(hashes)[groups[0]] == 16
-
-
-def test_concurrent_first_turns_see_router_reservations() -> None:
-    groups = _groups(2)
-    router = PAPConversationRouter(groups)
-    loads = {group: _pa_load(prefill=0, projected_kv=0) for group in groups}
-
-    first = router.select_group(
-        "conv-0",
-        request_number=0,
-        initial_context_tokens=1000,
-        request_id="request-0",
-        current_pa_loads=loads,
-    )
-    second = router.select_group(
-        "conv-1",
-        request_number=1,
-        initial_context_tokens=1000,
-        request_id="request-1",
-        current_pa_loads=loads,
-    )
-
-    assert first == groups[0]
-    assert second == groups[1]
-
-
-def test_first_turn_routes_to_least_loaded_pa_when_all_are_over_capacity() -> None:
-    groups = _groups(2)
-    router = PAPConversationRouter(groups)
-    loads = {
-        group: _pa_load(
-            prefill=0,
-            projected_kv=98_000,
-            total_kv=100_000,
-        )
-        for group in groups
-    }
-
-    selected = router.select_group(
-        "conv-full",
-        request_number=0,
-        initial_context_tokens=1000,
-        decode_capacity_tokens=1000,
-        request_id="request-full",
-        current_pa_loads=loads,
-    )
-
-    assert selected == groups[0]
-    assert router.has_assignment("conv-full")
-
-
-def test_initial_context_load_counts_text_without_tokenization() -> None:
-    assert (
-        estimate_initial_context_load(
-            {
-                "messages": [
-                    {"role": "system", "content": "abcd"},
-                    {
-                        "role": "user",
-                        "content": [{"type": "text", "text": "123456"}],
-                    },
-                ]
-            }
-        )
-        == 10
-    )
-    assert estimate_initial_context_load({"prompt": [1, 2, 3]}) == 12
-    assert estimate_initial_context_tokens({"prompt": [1, 2, 3]}) == 3
 
 
 def test_build_projection_payload_for_group_keeps_kv_uninstalled() -> None:

@@ -1,6 +1,6 @@
-short-context long-context/qwen3-8b-yarn131k/shortctx_default_7s2t.jsonl multi-turn 7 14 7 0
-long-context-1 long-context/qwen3-8b-yarn131k/longctx_1s2t.jsonl multi-turn 1 2 1 0
-long-context-7 long-context/qwen3-8b-yarn131k/longctx_7s2t.jsonl multi-turn 7 14 7 0
+short-context long-context/qwen3-8b-yarn131k-shared-prefix/shortctx_default_7s2t.jsonl multi-turn 7 14 7 0
+long-context-1 long-context/qwen3-8b-yarn131k-shared-prefix/longctx_1s2t.jsonl multi-turn 1 2 1 0
+long-context-7 long-context/qwen3-8b-yarn131k-shared-prefix/longctx_7s2t.jsonl multi-turn 7 14 7 0
 coding-half agentic-code/s60-t3-half-seed42/dataset.jsonl mooncake-trace 60 180 60 0
 coding agentic-code/s60-t3-seed42/dataset.jsonl mooncake-trace 60 180 60 0
 coding-full agentic-code/full-131k-osl10k-no-delay-seed42/dataset.jsonl mooncake-trace 2092 16049 60 600

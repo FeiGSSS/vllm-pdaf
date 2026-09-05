@@ -19,7 +19,17 @@ sha256sum --check SHA256SUMS
 | `agentic-code/full-131k-osl10k-no-delay-seed42` | `mooncake-trace` | Fixed-duration, long-running serving experiments |
 | `agentic-code/s60-t3-seed42` | `mooncake-trace` | Three-turn, 60-session control workload |
 | `agentic-code/s60-t3-half-seed42` | `mooncake-trace` | Short QPS scans: 60 sessions, three turns, halved lengths |
-| `long-context/qwen3-8b-yarn131k` | `multi-turn` | Focused Qwen3 YaRN 131K validation fixtures |
+| `long-context/qwen3-8b-yarn131k-shared-prefix` | `multi-turn` | Qwen3 YaRN 131K validation; cross-session prefix sharing |
+
+New workloads allow identical prefixes to be reused across conversations by
+default: the generator does not inject a per-session `cache_salt`. Conversation
+IDs still define turn ordering, not KV isolation. Explicit caller-requested salt
+is never silently removed; PAP's Dynamo integration rejects that unsupported mode.
+
+The historical `long-context/qwen3-8b-yarn131k` fixtures remain immutable,
+session-isolated controls, not the default Dynamo validation workload. The new
+`-shared-prefix` version removes only `turn.extra.cache_salt`; its manifest records
+source hashes. All text, turn order, delays and output lengths are unchanged.
 
 Generation reports and configuration belong beside their source dataset as
 provenance. Runtime logs and benchmark results never belong here.

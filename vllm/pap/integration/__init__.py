@@ -2,13 +2,11 @@
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 """PAP adapters for vLLM request and execution integration."""
 
-from vllm.pap.integration.api import install_pap_control_routes
 from vllm.pap.integration.chat import (
     prepare_pap_projection_chat_input,
     prepare_pap_tokenized_chat_input,
     prepare_pap_tokenized_completion_input,
 )
-from vllm.pap.integration.decode_token import PAPAcceptedDecodeTokenPublisher
 from vllm.pap.integration.engine import PAPEngineAdapter
 from vllm.pap.integration.kv_cache import PAPKVCacheAdapter
 from vllm.pap.integration.projection import (
@@ -21,11 +19,11 @@ from vllm.pap.integration.request import (
 )
 from vllm.pap.integration.runner import PAPModelRunnerAdapter
 from vllm.pap.integration.scheduler import (
+    PAPAcceptedDecodeTokenPublisher,
     PAPProjectionScheduleState,
     PAPSchedulerAdapter,
 )
 from vllm.pap.integration.settings import PAPRuntimeSettings
-from vllm.pap.integration.worker import PAPWorkerAdapter
 
 __all__ = [
     "PAPAcceptedDecodeTokenPublisher",
@@ -37,9 +35,7 @@ __all__ = [
     "PAPRequestMetadata",
     "PAPRuntimeSettings",
     "PAPSchedulerAdapter",
-    "PAPWorkerAdapter",
     "build_projection_forward_context",
-    "install_pap_control_routes",
     "prepare_pap_projection_chat_input",
     "prepare_pap_tokenized_chat_input",
     "prepare_pap_tokenized_completion_input",

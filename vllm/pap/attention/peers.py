@@ -13,19 +13,19 @@ import torch
 
 from vllm.logger import init_logger
 from vllm.pap.attention.compute import prepare_offload_exec_step
-from vllm.pap.attention.execution import run_offload_exec_nvshmem_graph_loop
-from vllm.pap.attention.kernels import (
+from vllm.pap.attention.runtime import PAPAttentionRuntime
+from vllm.pap.attention.step_graph import run_offload_exec_nvshmem_graph_loop
+from vllm.pap.attention.triton_backend import (
     PAPAttentionStepTensorCache,
     PAPPagedDecodeWorkspaceCache,
 )
-from vllm.pap.attention.runtime import PAPAttentionRuntime
 from vllm.pap.config import PAPAttentionKernelPolicy, PAPRuntimeConfig
 from vllm.pap.deferred_cuda_trace import (
     begin_deferred_cuda_span,
     end_deferred_cuda_span,
 )
 from vllm.pap.kv.metadata import PAPPagedBlockTableBuffer
-from vllm.pap.transport.factory import build_offload_exec_transport
+from vllm.pap.transport.binding import build_offload_exec_transport
 
 logger = init_logger(__name__)
 
@@ -149,7 +149,7 @@ class PAPAttentionPeerManager:
         workspace_cache = PAPPagedDecodeWorkspaceCache(max_entries=64)
         step_tensor_cache = PAPAttentionStepTensorCache(max_entries=256)
         block_table_buffer = PAPPagedBlockTableBuffer()
-        from vllm.pap.attention.pat import PAPPATOrTritonSelector
+        from vllm.pap.attention.backend import PAPPATOrTritonSelector
 
         if self.config.attention.kernel_policy is PAPAttentionKernelPolicy.AUTO:
             attention_kernel_selector, unavailable_reason = (

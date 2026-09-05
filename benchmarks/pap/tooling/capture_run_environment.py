@@ -61,6 +61,15 @@ def capture(destination: Path, model: Path, environments: list[str]) -> None:
         (destination / f"packages{environment}.json").write_bytes(output)
 
     model_files = {}
+    router_runtime = ROOT / ".local/pap-dynamo-router"
+    if router_runtime.is_dir():
+        runtime_metadata = destination / "pap_dynamo_router"
+        runtime_metadata.mkdir()
+        for name in ("build.txt", "pap_dynamo_router.abi3.so"):
+            source = router_runtime / name
+            # This small CPU-only dependency is not represented by pip freeze.
+            shutil.copy2(source, runtime_metadata / name)
+
     model_metadata = destination / "model_metadata"
     model_metadata.mkdir()
     for path in sorted(model.iterdir()):

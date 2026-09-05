@@ -4,8 +4,6 @@
 
 from vllm.pap.protocol.descriptors import (
     PAPCudaIPCTensorHandle,
-    PAPDataPlaneChannel,
-    PAPDataPlaneRole,
     PAPOffloadExecBatchDescriptor,
     PAPOffloadExecDescriptor,
     PAPOffloadExecTransport,
@@ -32,8 +30,6 @@ __all__ = [
     "PAPDecodeTokenRequest",
     "PAPOffloadExecNVSHMEMBindRequest",
     "PAPCudaIPCTensorHandle",
-    "PAPDataPlaneChannel",
-    "PAPDataPlaneRole",
     "PAPOffloadExecBatchDescriptor",
     "PAPOffloadExecDescriptor",
     "PAPOffloadExecTransport",

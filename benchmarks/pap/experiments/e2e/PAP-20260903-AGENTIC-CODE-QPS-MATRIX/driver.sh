@@ -26,6 +26,10 @@ GPU_MEMORY_UTILIZATION="${PAP_QPS_SCAN_GPU_MEMORY_UTILIZATION:?missing GPU memor
 BLOCK_SIZE="${PAP_QPS_SCAN_BLOCK_SIZE:?missing KV block size}"
 DYNAMO_ROUTER_MODE="${PAP_QPS_SCAN_DYNAMO_ROUTER_MODE:?missing Dynamo router mode}"
 PAP_ROUTING_POLICY="${PAP_QPS_SCAN_PAP_ROUTING_POLICY:?missing PAP routing policy}"
+if [[ "${PAP_ROUTING_POLICY}" != "dynamo" ]]; then
+  echo "ERROR: current PAP supports only Dynamo routing; replay this frozen experiment with its recorded source revision" >&2
+  exit 2
+fi
 TIMING_MODE="${PAP_QPS_SCAN_TIMING_MODE:?missing AIPerf timing mode}"
 
 SUPPORTED_ARCHITECTURES=(

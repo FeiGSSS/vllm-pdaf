@@ -32,8 +32,12 @@ class PAPDynamoRouter:
         self._model_name = model_name
         self._reservations: set[str] = set()
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
+        self._releasing: set[str] = set()
         self._selections = 0
         self._failures = 0
+        self._pending_selections: dict[str, asyncio.Task[PAPGroup]] = {}
+        self._closed = False
+        self._healthy = True
 
     @classmethod
     async def create(
@@ -71,13 +75,17 @@ class PAPDynamoRouter:
             sys.path.append(site_packages_text)
 
         try:
-            from dynamo.llm import SelectionService
+            from pap_dynamo_router import SelectionService
         except ImportError as exc:
             raise RuntimeError(
-                "Dynamo routing requires ai-dynamo with SelectionService"
+                "PAP requires its explicit-owner Dynamo dependency; run "
+                "bash benchmarks/pap/scripts/build_pap_dynamo_router.sh"
             ) from exc
 
         service = SelectionService(indexer_threads=4)
+        if service.reservation_lifetime != "explicit-owner-v1":
+            service.shutdown()
+            raise RuntimeError("PAP requires explicit-owner Dynamo reservations")
         router = cls(groups, service, model_name=model_name)
         try:
             worker_capacities: list[int | None]
@@ -124,13 +132,44 @@ class PAPDynamoRouter:
         expected_output_tokens: int,
     ) -> PAPGroup:
         """Select a PA and reserve its Prefill and active Decode load."""
+        if self._closed or not self._healthy:
+            raise RuntimeError("Dynamo router is closed or has failed load accounting")
+        if request_id in self._reservations or request_id in self._pending_selections:
+            raise ValueError(f"Duplicate Dynamo request ID: {request_id}")
+        task = asyncio.create_task(
+            self._select_group(token_ids, request_id, expected_output_tokens),
+            name=f"pap-dynamo-select-{request_id}",
+        )
+        self._pending_selections[request_id] = task
+        task.add_done_callback(lambda _: self._pending_selections.pop(request_id, None))
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cleanup = asyncio.create_task(
+                self._finish_cancelled_selection(task, request_id)
+            )
+            self._cleanup_tasks.add(cleanup)
+            cleanup.add_done_callback(self._cleanup_tasks.discard)
+            raise
+
+    async def _finish_cancelled_selection(
+        self, task: asyncio.Task[PAPGroup], request_id: str
+    ) -> None:
+        try:
+            await task
+        except BaseException:
+            return  # Failed bookings are cleaned up by _select_group.
+        self.finish_request(request_id)
+
+    async def _select_group(
+        self, token_ids: list[int], request_id: str, expected_output_tokens: int
+    ) -> PAPGroup:
         try:
             selected = await self._service.select_and_reserve(
                 {
                     "model_name": self._model_name,
                     "token_ids": token_ids,
                     "selection_id": request_id,
-                    "reservation_id": request_id,
                     "expected_output_tokens": expected_output_tokens,
                 }
             )
@@ -139,6 +178,14 @@ class PAPDynamoRouter:
                 raise RuntimeError(f"Dynamo selected unknown PAP worker {worker_id}")
         except BaseException:
             self._failures += 1
+            # A failed response must not orphan a booking that already committed.
+            try:
+                await self._service.free_reservation(request_id)
+            except KeyError:
+                pass  # Selection failed before creating the reservation.
+            except Exception:
+                self._healthy = False
+                logger.exception("Failed to unwind Dynamo selection %s", request_id)
             raise
         self._reservations.add(request_id)
         self._selections += 1
@@ -162,7 +209,9 @@ class PAPDynamoRouter:
         """Release a reservation outside the response critical path."""
         if request_id not in self._reservations:
             return
-        self._reservations.remove(request_id)
+        if request_id in self._releasing:
+            return
+        self._releasing.add(request_id)
         task = asyncio.create_task(
             self._free_reservation(request_id),
             name=f"pap-dynamo-free-{request_id}",
@@ -173,12 +222,16 @@ class PAPDynamoRouter:
     async def _free_reservation(self, request_id: str) -> None:
         try:
             await self._service.free_reservation(request_id)
+            self._reservations.discard(request_id)
         except Exception:
             self._failures += 1
+            self._healthy = False
             logger.exception(
                 "PAP Dynamo reservation release failed request_id=%s",
                 request_id,
             )
+        finally:
+            self._releasing.discard(request_id)
 
     def stats(self) -> dict[str, Any]:
         """Return selector counters and the latest Dynamo load snapshot."""
@@ -188,29 +241,24 @@ class PAPDynamoRouter:
             "failures": self._failures,
             "active_reservations": len(self._reservations),
             "pending_cleanup": len(self._cleanup_tasks),
-            "loads": self._service.loads(model_name=self._model_name),
+            "pending_selections": len(self._pending_selections),
+            "healthy": self._healthy,
+            "reservation_lifetime": "explicit-owner-v1",
+            "loads": []
+            if self._closed
+            else self._service.loads(model_name=self._model_name),
         }
 
     async def shutdown(self) -> None:
         """Release outstanding reservations and stop the selector."""
+        self._closed = True
+        self._service.stop_scheduling()
+        if self._pending_selections:
+            await asyncio.gather(
+                *tuple(self._pending_selections.values()), return_exceptions=True
+            )
         for request_id in tuple(self._reservations):
             self.finish_request(request_id)
-        if self._cleanup_tasks:
+        while self._cleanup_tasks:
             await asyncio.gather(*tuple(self._cleanup_tasks), return_exceptions=True)
         self._service.shutdown()
-
-
-class PAPDynamoRouterDisabled:
-    """No-op health surface when Dynamo routing is disabled."""
-
-    def stats(self) -> dict[str, Any]:
-        return {"enabled": False}
-
-    async def mark_prefill_completed(self, request_id: str) -> None:
-        return None
-
-    def finish_request(self, request_id: str) -> None:
-        return None
-
-    async def shutdown(self) -> None:
-        return None

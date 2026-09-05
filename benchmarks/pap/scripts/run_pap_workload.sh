@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-dynamo}"
+if [[ "${PAP_ROUTING_POLICY}" != "dynamo" ]]; then
+  echo "ERROR: PAP supports only Dynamo routing; remove the retired PAP_ROUTING_POLICY value" >&2
+  exit 2
+fi
+
 # PAP service/workload runner used by project-owned benchmark entrypoints.
 
 for generation_flag in PAP_AIPERF_TURNS PAP_AIPERF_VARIABLE_TURNS \
@@ -16,6 +22,11 @@ for generation_flag in PAP_AIPERF_TURNS PAP_AIPERF_VARIABLE_TURNS \
 done
 
 for removed_flag in \
+  PAP_KV_LOCALITY_PROFILE \
+  PAP_KV_LOCALITY_PROFILE_MIN_BATCH \
+  PAP_OFFLOAD_EXEC_TRACE \
+  PAP_OFFLOAD_EXEC_TRACE_LAYER \
+  PAP_PREFIX_CACHE_AUDIT \
   PAP_CUDAGRAPH_COMPATIBLE \
   PAP_CUDAGRAPH_ROLE \
   PAP_ASYNC_DECODE_TOKEN \
@@ -326,19 +337,27 @@ fi
 source "${ROOT_DIR}/benchmarks/pap/scripts/configure_nvshmem.sh"
 pap_configure_nvshmem "${ROOT_DIR}"
 export PAP_NVSHMEM_INIT_TIMEOUT
-PAP_OFFLOAD_EXEC_TRACE="${PAP_OFFLOAD_EXEC_TRACE:-0}"
-PAP_OFFLOAD_EXEC_TRACE_LAYER="${PAP_OFFLOAD_EXEC_TRACE_LAYER:-}"
 PAP_DEFERRED_CUDA_TRACE="${PAP_DEFERRED_CUDA_TRACE:-0}"
 PAP_DEFERRED_CUDA_TRACE_MAX_PENDING="${PAP_DEFERRED_CUDA_TRACE_MAX_PENDING:-1024}"
 PAP_UNIFIED_MD_CACHE_LIMIT="${PAP_UNIFIED_MD_CACHE_LIMIT:-256}"
 PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT:-256}"
-PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-conversation_affinity}"
-PAP_DYNAMO_PYTHON="${PAP_DYNAMO_PYTHON:-${ROOT_DIR}/.venv-dynamo/bin/python}"
+[[ ! -v PAP_DYNAMO_PYTHON ]] || die "PAP_DYNAMO_PYTHON is retired; build the PAP-only Dynamo router dependency"
+PAP_DYNAMO_SITE_PACKAGES="${PAP_DYNAMO_SITE_PACKAGES:-${ROOT_DIR}/.local/pap-dynamo-router}"
+"${PYTHON_BIN}" - "${PAP_DYNAMO_SITE_PACKAGES}" <<'PY'
+import sys
+sys.path.insert(0, sys.argv[1])
+try:
+    from pap_dynamo_router import SelectionService
+except ImportError as exc:
+    raise SystemExit("Run bash benchmarks/pap/scripts/build_pap_dynamo_router.sh") from exc
+service = SelectionService(indexer_threads=1)
+assert service.reservation_lifetime == "explicit-owner-v1"
+service.shutdown()
+PY
 PAP_DYNAMO_MODEL_NAME="${PAP_DYNAMO_MODEL_NAME:-pap}"
 PAP_DYNAMO_PREFILL_LOAD_SCALE="${PAP_DYNAMO_PREFILL_LOAD_SCALE:-2.0}"
 PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-64}"
 PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS:-1}"
-PAP_PREFIX_CACHE_AUDIT="${PAP_PREFIX_CACHE_AUDIT:-0}"
 PAP_BLOCK_SIZE="${PAP_BLOCK_SIZE:-16}"
 PAP_DECODE_COMMIT_ENDPOINT="${PAP_DECODE_COMMIT_ENDPOINT:-}"
 PAP_LEASE_RELEASE_ENDPOINT="${PAP_LEASE_RELEASE_ENDPOINT:-}"
@@ -366,24 +385,8 @@ PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS="${PAP_LEASE_RELEASE_RETRY_INITIAL_SECON
 PAP_LEASE_RELEASE_RETRY_MAX_SECONDS="${PAP_LEASE_RELEASE_RETRY_MAX_SECONDS:-0.5}"
 PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS:-300}"
 
-case "${PAP_DEFERRED_CUDA_TRACE,,}" in
-  1|true|yes|on)
-    case "${PAP_OFFLOAD_EXEC_TRACE,,}" in
-      0|false|no|off) ;;
-      *)
-        echo "PAP_DEFERRED_CUDA_TRACE requires PAP_OFFLOAD_EXEC_TRACE=0" >&2
-        exit 2
-        ;;
-    esac
-    ;;
-esac
 if ! [[ "${PAP_DEFERRED_CUDA_TRACE_MAX_PENDING}" =~ ^[1-9][0-9]*$ ]]; then
   echo "PAP_DEFERRED_CUDA_TRACE_MAX_PENDING must be a positive integer" >&2
-  exit 2
-fi
-if [[ -n "${PAP_OFFLOAD_EXEC_TRACE_LAYER}" ]] \
-  && ! [[ "${PAP_OFFLOAD_EXEC_TRACE_LAYER}" =~ ^[0-9]+$ ]]; then
-  echo "PAP_OFFLOAD_EXEC_TRACE_LAYER must be a non-negative integer" >&2
   exit 2
 fi
 if ! [[ "${PAP_PREFILL_TORCH_PROFILE}" =~ ^[01]$ ]]; then
@@ -436,7 +439,6 @@ if ! [[ "${PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES}" =~ ^[1-9][0-9]*(,[1-9][0-9]*)*$
   exit 2
 fi
 for incompatible_flag in \
-  PAP_OFFLOAD_EXEC_TRACE \
   PAP_DEFERRED_CUDA_TRACE \
   PAP_PREFILL_TORCH_PROFILE; do
   case "${!incompatible_flag:-0}" in
@@ -455,8 +457,6 @@ PROJECTION_EXECUTION_ARGS=(
   --compilation-config "${PAP_PROJECTION_COMPILATION_CONFIG}"
 )
 
-export PAP_OFFLOAD_EXEC_TRACE
-export PAP_OFFLOAD_EXEC_TRACE_LAYER
 export PAP_DEFERRED_CUDA_TRACE
 export PAP_DEFERRED_CUDA_TRACE_MAX_PENDING
 export PAP_UNIFIED_MD_CACHE_LIMIT
@@ -1004,6 +1004,21 @@ wait_gateway_requests_drained() {
       .inflight_requests == 0
       and .lifecycle.active == 0
       and .lifecycle.failed == 0
+      and (
+        .dynamo_router.enabled == false
+        or (
+          .dynamo_router.healthy == true
+          and .dynamo_router.reservation_lifetime == "explicit-owner-v1"
+          and .dynamo_router.failures == 0
+          and .dynamo_router.active_reservations == 0
+          and .dynamo_router.pending_cleanup == 0
+          and .dynamo_router.pending_selections == 0
+          and ([.dynamo_router.loads[].pending_count] | all(. == 0))
+          and ([.dynamo_router.loads[].loads[] |
+            .active_requests, .potential_prefill_tokens, .potential_decode_blocks]
+            | all(. == 0))
+        )
+      )
     ' <<< "${response}" >/dev/null 2>&1; then
       {
         printf 'STATUS=passed\n'
@@ -1424,7 +1439,6 @@ write_effective_config() {
     printf 'MODEL_PATH=%q\n' "${MODEL_PATH}"
     printf 'NUM_PROMPTS=%q\n' "${NUM_PROMPTS}"
     printf 'PAP_ENABLE_PROMPT_TOKENS_DETAILS=%q\n' "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}"
-    printf 'PAP_PREFIX_CACHE_AUDIT=%q\n' "${PAP_PREFIX_CACHE_AUDIT}"
     printf 'PAP_BLOCK_SIZE=%q\n' "${PAP_BLOCK_SIZE}"
     printf 'PAP_AIPERF_SESSIONS=%q\n' "${PAP_AIPERF_SESSIONS}"
     printf 'PAP_AIPERF_EXPECTED_REQUESTS=%q\n' \
@@ -1499,9 +1513,6 @@ write_effective_config() {
     printf 'PAP_NVSHMEM_INIT_TIMEOUT=%q\n' "${PAP_NVSHMEM_INIT_TIMEOUT}"
     printf 'PAP_NVSHMEM_BUFFER_BYTES=%q\n' "${PAP_NVSHMEM_BUFFER_BYTES}"
     printf 'PAP_NVSHMEM_CONTROL_BYTES=%q\n' "${PAP_NVSHMEM_CONTROL_BYTES}"
-    printf 'PAP_OFFLOAD_EXEC_TRACE=%q\n' "${PAP_OFFLOAD_EXEC_TRACE}"
-    printf 'PAP_OFFLOAD_EXEC_TRACE_LAYER=%q\n' \
-      "${PAP_OFFLOAD_EXEC_TRACE_LAYER}"
     printf 'PAP_DEFERRED_CUDA_TRACE=%q\n' "${PAP_DEFERRED_CUDA_TRACE}"
     printf 'PAP_DEFERRED_CUDA_TRACE_MAX_PENDING=%q\n' \
       "${PAP_DEFERRED_CUDA_TRACE_MAX_PENDING}"
@@ -1514,6 +1525,7 @@ write_effective_config() {
     printf 'ENABLE_AUTO_TOOL_CHOICE=%q\nTOOL_CALL_PARSER=%q\n' \
       "${ENABLE_AUTO_TOOL_CHOICE}" "${TOOL_CALL_PARSER}"
     printf 'PAP_ROUTING_POLICY=%q\n' "${PAP_ROUTING_POLICY}"
+    printf 'PAP_DYNAMO_SITE_PACKAGES=%q\n' "${PAP_DYNAMO_SITE_PACKAGES}"
     printf 'PAP_DYNAMO_PREFILL_LOAD_SCALE=%q\n' \
       "${PAP_DYNAMO_PREFILL_LOAD_SCALE}"
     printf 'PREFILL_PORT_BASE=%q\n' "${PREFILL_PORT_BASE}"
@@ -1837,68 +1849,32 @@ pair_routes = Counter(
     f"pa{pa_port - prefill_base}:p{projection_port - projection_base}"
     for pa_port, projection_port in routes
 )
-expected_pa_routes = Counter()
 expected_projection_routes = Counter()
 expected_pair_routes = Counter()
 errors = []
-dynamic_routing = routing_policy in {"conversation_affinity", "dynamo"}
-if dynamic_routing:
-    groups_per_projection = (
-        pa_count + projection_count - 1
-    ) // projection_count
-    for pa_port, projection_port in routes:
-        group_index = pa_port - prefill_base
-        if group_index < 0 or group_index >= pa_count:
-            continue
-        projection_index = min(
-            group_index // groups_per_projection,
-            projection_count - 1,
-        )
-        expected_projection_routes[projection_base + projection_index] += 1
-        expected_pair_routes[f"pa{group_index}:p{projection_index}"] += 1
-else:
-    expected_group_indices = [
-        request_number % pa_count for request_number in range(expected_requests)
-    ]
-    for request_number, group_index in enumerate(expected_group_indices):
-        projection_index = request_number % projection_count
-        if routing_policy == "crossbar_round_robin":
-            projection_index = (
-                request_number // pa_count + group_index
-            ) % projection_count
-        elif routing_policy == "projection_affinity":
-            groups_per_projection = (
-                pa_count + projection_count - 1
-            ) // projection_count
-            projection_index = min(
-                group_index // groups_per_projection,
-                projection_count - 1,
-            )
-        elif routing_policy == "projection_sticky":
-            group_index = projection_index % pa_count
-        elif routing_policy != "round_robin":
-            errors.append(f"unsupported routing policy {routing_policy!r}")
-            group_index = 0
-            projection_index = 0
-        expected_pa_routes[prefill_base + group_index] += 1
-        expected_projection_routes[projection_base + projection_index] += 1
-        expected_pair_routes[f"pa{group_index}:p{projection_index}"] += 1
+if routing_policy != "dynamo":
+    raise SystemExit(f"unsupported PAP routing policy {routing_policy!r}")
+groups_per_projection = (pa_count + projection_count - 1) // projection_count
+for pa_port, projection_port in routes:
+    group_index = pa_port - prefill_base
+    if group_index < 0 or group_index >= pa_count:
+        continue
+    projection_index = min(
+        group_index // groups_per_projection,
+        projection_count - 1,
+    )
+    expected_projection_routes[projection_base + projection_index] += 1
+    expected_pair_routes[f"pa{group_index}:p{projection_index}"] += 1
 
 if len(routes) != expected_requests:
     errors.append(
         f"routed request count {len(routes)} != expected {expected_requests}"
     )
-if dynamic_routing:
-    if any(
-        port < prefill_base or port >= prefill_base + pa_count
-        for port in pa_routes
-    ):
-        errors.append(f"PA routes contain an unknown endpoint: {dict(pa_routes)}")
-elif pa_routes != expected_pa_routes:
-    errors.append(
-        f"PA route counts {dict(pa_routes)} != expected "
-        f"{dict(expected_pa_routes)}"
-    )
+if any(
+    port < prefill_base or port >= prefill_base + pa_count
+    for port in pa_routes
+):
+    errors.append(f"PA routes contain an unknown endpoint: {dict(pa_routes)}")
 if projection_routes != expected_projection_routes:
     errors.append(
         f"Projection route counts {dict(projection_routes)} != expected "
@@ -1982,19 +1958,8 @@ cd "${ROOT_DIR}"
   || die "the PAP benchmark runner requires static MPS"
 [[ "${PAP_VLLM_DTYPE}" == "float16" ]] \
   || die "AIPerf requires PAP_VLLM_DTYPE=float16"
-[[ "${PAP_PREFIX_CACHE_AUDIT}" == "0" \
-  && "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" == "1" ]] \
-  || die "AIPerf requires prompt details and forbids cache audit"
-if (( PA_COUNT > 1 )); then
-  [[ "${PAP_ROUTING_POLICY}" == "conversation_affinity" \
-    || "${PAP_ROUTING_POLICY}" == "dynamo" ]] \
-    || die "multi-PA AIPerf requires conversation_affinity or dynamo"
-else
-  [[ "${PAP_ROUTING_POLICY}" == "round_robin" \
-    || "${PAP_ROUTING_POLICY}" == "conversation_affinity" \
-    || "${PAP_ROUTING_POLICY}" == "dynamo" ]] \
-    || die "single-PA AIPerf requires a supported PAP routing policy"
-fi
+[[ "${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" == "1" ]] \
+  || die "AIPerf requires prompt token details"
 [[ -x "${PYTHON_BIN}" ]] || die "PYTHON_BIN is not executable: ${PYTHON_BIN}"
 [[ -x "${VLLM_BIN}" ]] || die "VLLM_BIN is not executable: ${VLLM_BIN}"
 [[ -f "${DEFERRED_TRACE_VALIDATOR}" ]] \
@@ -2043,6 +2008,10 @@ if flashinfer != cubin:
 PY
 
 mkdir -p "${RUN_ROOT}" "${RUN_LOG_DIR}"
+mkdir -p "${RUN_ROOT}/pap_dynamo_router"
+cp "${PAP_DYNAMO_SITE_PACKAGES}/build.txt" \
+  "${PAP_DYNAMO_SITE_PACKAGES}/pap_dynamo_router.abi3.so" \
+  "${RUN_ROOT}/pap_dynamo_router/"
 capture_git_state
 prepare_aiperf_dataset
 split_csv "${PAP_PREFILL_GPUS}" PREFILL_GPUS
@@ -2251,7 +2220,6 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
     PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
     PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}" \
-    PAP_PREFIX_CACHE_AUDIT="${PAP_PREFIX_CACHE_AUDIT}" \
     PAP_RUNTIME_CUDA_CONTEXT_AUDIT_PATH="$(
       if [[ "${PAP_RUNTIME_CUDA_CONTEXT_AUDIT}" == "1" ]]; then
         printf '%s' "${RUN_ROOT}/runtime_cuda_context_prefill_${idx}.json"
@@ -2370,13 +2338,6 @@ audit_runtime_cuda_contexts
 PAP_GROUPS_SPEC="$(build_pap_groups_spec)"
 PROJECTIONS_SPEC="$(build_projections_spec)"
 KV_EVENT_ENDPOINTS="$(build_kv_event_endpoints)"
-PAP_DYNAMO_SITE_PACKAGES=""
-if [[ "${PAP_ROUTING_POLICY}" == "dynamo" ]]; then
-  [[ -x "${PAP_DYNAMO_PYTHON}" ]] \
-    || die "Dynamo Python is not executable: ${PAP_DYNAMO_PYTHON}"
-  PAP_DYNAMO_SITE_PACKAGES="$(${PAP_DYNAMO_PYTHON} -c \
-    'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
-fi
 
 echo "Starting PAP Gateway on port ${PAP_PROXY_PORT}"
 env \

@@ -4,14 +4,80 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
-from vllm.pap.integration.decode_token import PAPAcceptedDecodeTokenPublisher
 from vllm.pap.integration.request import PAPRequestMetadata
 from vllm.pap.integration.settings import PAPRuntimeSettings
-from vllm.pap.lifecycle import lease as pap_lease
+from vllm.pap.kv import lease as pap_lease
+from vllm.pap.kv.decode_token_client import DecodeTokenClient
+
+
+class _DecodeTokenClient(Protocol):
+    def publish_batch(self, tokens: Sequence[Mapping[str, object]]) -> None: ...
+
+    def shutdown(self) -> None: ...
+
+
+class _AcceptedTokenRequest(Protocol):
+    request_id: str
+    kv_transfer_params: dict[str, Any] | None
+
+
+@dataclass(slots=True)
+class PAPAcceptedDecodeTokenPublisher:
+    """Deliver only tokens accepted by the Projection scheduler."""
+
+    client: _DecodeTokenClient | None = None
+
+    def build_notification(
+        self,
+        request: _AcceptedTokenRequest,
+        token_ids: Sequence[int],
+        new_seq_len: int | None,
+    ) -> dict[str, object] | None:
+        """Build one notification after scheduler acceptance."""
+        metadata = PAPRequestMetadata.from_mapping(request.kv_transfer_params)
+        if not metadata.projection_kv_unaware or not token_ids:
+            return None
+        if metadata.prefill_kv_handle is None or metadata.attention_endpoint is None:
+            raise RuntimeError(
+                "PAP accepted decode-token delivery is missing routing metadata "
+                f"for request {request.request_id}"
+            )
+        if len(token_ids) != 1:
+            raise RuntimeError(
+                "PAP accepted decode-token delivery requires one token per "
+                f"request, got {len(token_ids)} for {request.request_id}"
+            )
+        if new_seq_len is None:
+            raise RuntimeError(
+                "PAP accepted decode-token delivery is missing the GPU-frame "
+                f"sequence key for request {request.request_id}"
+            )
+        return {
+            "request_id": metadata.prefill_kv_handle,
+            "new_seq_len": int(new_seq_len),
+            "token_id": int(token_ids[0]),
+            "endpoint": metadata.attention_endpoint,
+        }
+
+    def publish_batch(
+        self,
+        notifications: Sequence[Mapping[str, object]],
+    ) -> None:
+        """Queue one scheduler step without blocking on network progress."""
+        if not notifications:
+            return
+        if self.client is None:
+            self.client = DecodeTokenClient()
+        self.client.publish_batch(notifications)
+
+    def shutdown(self) -> None:
+        """Stop the delivery worker if it was created."""
+        if self.client is not None:
+            self.client.shutdown()
 
 
 class _SchedulerRequest(Protocol):
@@ -26,7 +92,6 @@ class PAPProjectionScheduleState:
 
     remote_prefix_len: int
     remote_computed_tokens: int
-    local_computed_token_offset: int
     allocate_external_computed_blocks: bool = False
     allocate_local_slots: bool = False
 
@@ -83,7 +148,6 @@ class PAPSchedulerAdapter:
         return PAPProjectionScheduleState(
             remote_prefix_len=remote_prefix_len,
             remote_computed_tokens=remote_computed_tokens,
-            local_computed_token_offset=remote_computed_tokens,
         )
 
     @classmethod
@@ -136,37 +200,3 @@ class PAPSchedulerAdapter:
     def sweep_expired_leases() -> None:
         """Release expired process-local PAP KV leases."""
         pap_lease.pap_sweep_expired_leases()
-
-    @staticmethod
-    def record_kv_seq_len(
-        *,
-        request_id: str,
-        seq_len: int,
-    ) -> bool:
-        """Record sequence length beside its active PAP block lease."""
-        return pap_lease.pap_record_kv_seq_len(request_id, seq_len)
-
-    @staticmethod
-    def defer_leased_blocks(
-        *,
-        request_id: str,
-        pop_blocks: Callable[[], list[Any]],
-        free_blocks: Callable[[Any], None],
-    ) -> bool:
-        """Transfer block-free ownership to an active PAP lease."""
-        if not pap_lease.pap_has_active_lease(request_id):
-            return False
-
-        lease_id = pap_lease.pap_active_lease_id(request_id)
-        blocks = pop_blocks()
-        if lease_id is None:
-            free_blocks(reversed(blocks))
-            return True
-
-        blocks.reverse()
-        pap_lease.pap_stash_deferred_blocks(
-            lease_id=lease_id,
-            blocks=blocks,
-            free_callback=free_blocks,
-        )
-        return True

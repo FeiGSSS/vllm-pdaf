@@ -453,30 +453,6 @@ class PAPNVSHMEMTransport:
             stream=stream,
         )
 
-    def graph_qkv_view(
-        self,
-        *,
-        shape: tuple[int, int],
-        dtype: torch.dtype,
-    ) -> torch.Tensor:
-        """Return the stable QKV view written by the bound Projection PE."""
-        return self._graph_payload_view(
-            shape=shape,
-            dtype=dtype,
-        )
-
-    def graph_output_view(
-        self,
-        *,
-        shape: tuple[int, int],
-        dtype: torch.dtype,
-    ) -> torch.Tensor:
-        """Return the stable output view written by the bound Attention PE."""
-        return self._graph_payload_view(
-            shape=shape,
-            dtype=dtype,
-        )
-
     def graph_dispatch_routed_qkv(
         self,
         tensor: torch.Tensor,
@@ -776,21 +752,6 @@ class PAPNVSHMEMTransport:
         tensor = data.narrow(0, offset, num_bytes).view(dtype).reshape(shape)
         self._payload_views[cache_key] = tensor
         return tensor
-
-    def _graph_payload_view(
-        self,
-        *,
-        shape: tuple[int, int],
-        dtype: torch.dtype,
-    ) -> torch.Tensor:
-        self._ensure_world_ready()
-        num_bytes = shape[0] * shape[1] * _element_size(dtype)
-        return self._payload_view(
-            source_rank=self._require_peer_rank(),
-            shape=shape,
-            dtype=dtype,
-            num_bytes=num_bytes,
-        )
 
     def _graph_wait(
         self,

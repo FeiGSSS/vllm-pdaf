@@ -152,53 +152,6 @@ def test_deferred_cuda_trace_blocks_only_when_explicitly_flushed() -> None:
     assert snapshot["durations"] == {"qkv_ready_wait_gpu_ms": [0.125]}
 
 
-def test_deferred_cuda_trace_records_cross_stream_fanin_without_waiting() -> None:
-    factory = _FakeEventFactory()
-    collector = DeferredCudaTraceCollector(
-        max_pending=1,
-        event_factory=factory,
-    )
-
-    fanin = collector.begin_fanin(
-        "projection_output",
-        object(),
-        peers=2,
-        layer=7,
-        calls=11,
-    )
-    assert fanin is not None
-    fanin.ready_events[0].duration_ms = 0.25
-    fanin.ready_events[1].duration_ms = 0.40
-    collector.record_fanin_ready(fanin, index=0, stream=object())
-    collector.record_fanin_ready(fanin, index=1, stream=object())
-    collector.end_fanin(fanin)
-
-    pending = collector.raw_snapshot(blocking=False)
-    assert pending["pending_records"] == 1
-    assert pending["fanins"] == {}
-    assert all(event.synchronize_calls == 0 for event in fanin.ready_events)
-
-    for event in fanin.ready_events:
-        event.ready = True
-    ready = collector.raw_snapshot(blocking=False)
-    assert ready["pending_records"] == 0
-    sample = ready["fanins"]["projection_output"][0]
-    assert sample[:5] == (7, 2, 11, 0.25, 0.40)
-    assert abs(sample[5] - 0.15) < 1e-12
-    assert sample[6] == (0.25, 0.40)
-    assert all(event.synchronize_calls == 0 for event in fanin.ready_events)
-
-    reused = collector.begin_fanin(
-        "projection_output",
-        object(),
-        peers=2,
-        layer=8,
-        calls=12,
-    )
-    assert reused is not None
-    assert len(factory.events) == 3
-
-
 def test_deferred_cuda_trace_drops_when_event_pool_is_saturated() -> None:
     factory = _FakeEventFactory()
     collector = DeferredCudaTraceCollector(

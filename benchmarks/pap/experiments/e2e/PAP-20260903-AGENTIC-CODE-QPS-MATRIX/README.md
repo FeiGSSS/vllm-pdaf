@@ -1,5 +1,11 @@
 # Agentic Coding architecture QPS matrix
 
+The frozen configuration selects the retired PAP conversation-affinity router.
+Current PAP supports only Dynamo routing, so this experiment requires its
+recorded source revision. Its driver fails before launching any architecture
+when given the retired policy. Do not change the frozen configuration to Dynamo
+and treat the new run as the same experiment; use a new experiment identity.
+
 This experiment compares six eight-GPU serving architectures with one fixed
 AIPerf workload and launch protocol:
 

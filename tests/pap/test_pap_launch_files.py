@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -11,6 +12,7 @@ PAP_SHELL_ENTRYPOINTS = (
     "benchmarks/pap/scripts/run_aiperf_profile.sh",
     "benchmarks/pap/scripts/run_pap_workload.sh",
     "benchmarks/pap/scripts/run_dynamo_workload.sh",
+    "benchmarks/pap/scripts/build_pap_dynamo_router.sh",
 )
 
 
@@ -44,3 +46,77 @@ def test_pap_replay_requires_existing_dataset_before_creating_run(tmp_path):
     assert result.returncode == 2
     assert "existing immutable dataset" in result.stderr
     assert not run_dir.exists()
+
+
+@pytest.mark.parametrize(
+    "entrypoint",
+    [
+        "benchmarks/pap/scripts/run_pap_workload.sh",
+        "benchmarks/pap/experiments/e2e/PAP-20260903-AGENTIC-CODE-QPS-MATRIX/run.sh",
+    ],
+)
+def test_pap_runner_rejects_retired_routing_before_startup(tmp_path, entrypoint):
+    run_dir = tmp_path / "run"
+    result = subprocess.run(
+        ["bash", str(ROOT / entrypoint)],
+        env={
+            "PATH": os.environ["PATH"],
+            "PAP_ROUTING_POLICY": "round_robin",
+            "RUN_ROOT": str(run_dir),
+            "PAP_QPS_SCAN_RUN_ROOT": str(run_dir),
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert "only Dynamo" in result.stderr
+    assert not run_dir.exists()
+
+
+def test_multiturn_generation_shares_prefixes_without_merging_conversations():
+    from benchmarks.pap.datasets.tools.generate_multiturn_dataset import build_records
+
+    class Tokenizer:
+        def encode(self, text, **kwargs):
+            return list(text.encode())
+
+        def decode(self, tokens, **kwargs):
+            return bytes(tokens).decode()
+
+    records, summary = build_records(
+        Tokenizer(),
+        "a" * 128,
+        sessions=2,
+        turns=2,
+        document_tokens=32,
+        append_tokens=16,
+        output_tokens=4,
+        session_prefix="test",
+    )
+    assert records[0]["session_id"] != records[1]["session_id"]
+    assert records[0]["turns"] == records[1]["turns"]
+    assert all(
+        "cache_salt" not in turn["extra"] for row in records for turn in row["turns"]
+    )
+    assert summary["prefix_cache_policy"] == "shared_across_sessions"
+
+
+def test_shared_prefix_fixture_derivation_preserves_all_non_salt_fields(tmp_path):
+    from benchmarks.pap.datasets.tools.derive_shared_prefix_dataset import derive
+
+    source = ROOT / "benchmarks/pap/datasets/long-context/qwen3-8b-yarn131k"
+    destination = tmp_path / "shared"
+    manifest = derive(source, destination)
+    for name in manifest["files"]:
+        original = [
+            json.loads(line) for line in (source / name).read_text().splitlines()
+        ]
+        shared = [
+            json.loads(line) for line in (destination / name).read_text().splitlines()
+        ]
+        for row in original:
+            for turn in row["turns"]:
+                del turn["extra"]["cache_salt"]
+        assert shared == original
+    with pytest.raises(FileExistsError):
+        derive(source, destination)

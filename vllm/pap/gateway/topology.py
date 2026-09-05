@@ -150,6 +150,20 @@ def build_projection_payload_for_group(
     )
 
 
+def select_projection_for_group(
+    group: PAPGroup,
+    groups: list[PAPGroup],
+    projections: list[ProjectionInstance],
+) -> ProjectionInstance:
+    """Map the Dynamo-selected PA to its fixed Projection owner."""
+    if not projections:
+        raise ValueError("PAP requires at least one Projection")
+    group_index = groups.index(group)
+    groups_per_projection = (len(groups) + len(projections) - 1) // len(projections)
+    projection_index = min(group_index // groups_per_projection, len(projections) - 1)
+    return projections[projection_index]
+
+
 def _make_client(host: str, port: int, role: str) -> PAPServiceClient:
     base_url = f"http://{host}:{port}"
     return PAPServiceClient(

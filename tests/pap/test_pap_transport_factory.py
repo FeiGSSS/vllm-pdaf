@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-from vllm.pap.transport import factory as factory_module
+from vllm.pap.transport import binding as binding_module
 
 
 def test_transport_factory_always_builds_nvshmem_graph(monkeypatch) -> None:
@@ -12,11 +12,11 @@ def test_transport_factory_always_builds_nvshmem_graph(monkeypatch) -> None:
         return expected
 
     monkeypatch.setattr(
-        factory_module,
+        binding_module,
         "build_nvshmem_offload_exec_transport",
         fake_build,
     )
-    result = factory_module.build_offload_exec_transport(
+    result = binding_module.build_offload_exec_transport(
         actor_id="attention",
         local_rank=1,
         buffer_bytes=8192,
@@ -28,5 +28,5 @@ def test_transport_factory_always_builds_nvshmem_graph(monkeypatch) -> None:
 
 def test_transport_factory_has_no_transport_selector() -> None:
     assert "transport" not in (
-        factory_module.build_offload_exec_transport.__annotations__
+        binding_module.build_offload_exec_transport.__annotations__
     )

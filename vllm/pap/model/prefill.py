@@ -89,7 +89,7 @@ class PAPPrefillKVPublisher:
     )
     imported_prefill_kv: set[tuple[Any, ...]] = field(default_factory=set)
     registered_catalog_endpoints: set[str] = field(default_factory=set)
-    manifest_ready_events: dict[tuple[str, int], torch.Event] = field(
+    manifest_ready_events: dict[tuple[str, int], torch.cuda.Event] = field(
         default_factory=dict
     )
 

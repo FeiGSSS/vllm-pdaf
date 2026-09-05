@@ -347,22 +347,6 @@ class PAPModelRunnerAdapter:
             block_size=self.block_size,
         )
 
-    def log_prepared_batch(
-        self,
-        request_ids: Sequence[str],
-        num_scheduled_tokens: Mapping[str, int],
-    ) -> None:
-        """Emit optional request-selection diagnostics."""
-        if not self.debug_decision:
-            return
-        first_ids = tuple(request_ids[:4])
-        logger.info(
-            "PAP prepare_inputs req_ids=%s endpoint_keys=%s num_tokens=%s",
-            first_ids,
-            tuple(list(self.store.attention_tcp_endpoint_by_request)[:4]),
-            {request_id: num_scheduled_tokens[request_id] for request_id in first_ids},
-        )
-
     def shutdown(self) -> None:
         """Release runner-owned PAP state."""
         if self._step_graph_manager is not None:

@@ -5,7 +5,7 @@ from vllm.pap.model.projection_routing import (
     _pap_offload_exec_session_request_id,
     _pap_offload_exec_step_groups,
 )
-from vllm.pap.transport.projection import (
+from vllm.pap.transport.binding import (
     _pap_bind_offload_exec_nvshmem_peer,
     _pap_cached_offload_exec_transport,
 )
@@ -30,7 +30,7 @@ def test_projection_transport_identity_includes_tp_rank(monkeypatch) -> None:
 
     monkeypatch.setenv("PAP_OFFLOAD_EXEC_LOCAL_RANK", "1")
     monkeypatch.setattr(
-        "vllm.pap.transport.factory.build_offload_exec_transport",
+        "vllm.pap.transport.binding.build_offload_exec_transport",
         fake_build,
     )
     _pap_cached_offload_exec_transport.cache_clear()

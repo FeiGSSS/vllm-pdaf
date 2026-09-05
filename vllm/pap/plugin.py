@@ -9,10 +9,10 @@ from typing import Any
 from vllm.model_executor.layers.attention.execution import (
     register_attention_execution_factory,
 )
-from vllm.pap.model.attention_execution import (
+from vllm.pap.config import pap_model_hooks_enabled
+from vllm.pap.model.projection import (
     create_projection_attention_execution,
 )
-from vllm.pap.model.hooks import pap_model_hooks_enabled
 from vllm.pap.model.step_graph import pap_projection_step_graph_enabled
 
 
@@ -25,7 +25,7 @@ def _install_engine_control() -> None:
     def pap_control(
         engine_core: Any, operation: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
-        from vllm.pap.integration.control import PAPEngineControl
+        from vllm.pap.integration.engine import PAPEngineControl
 
         control = getattr(engine_core, "_pap_engine_control", None)
         if control is None:

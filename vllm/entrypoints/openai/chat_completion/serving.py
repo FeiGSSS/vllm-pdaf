@@ -58,8 +58,8 @@ from vllm.inputs import EngineInput, MultiModalPlaceholders
 from vllm.logger import init_logger
 from vllm.logprobs import Logprob
 from vllm.outputs import RequestOutput
+from vllm.pap.config import pap_model_hooks_enabled
 from vllm.pap.integration.chat import prepare_pap_tokenized_chat_input
-from vllm.pap.model.hooks import pap_model_hooks_enabled
 from vllm.parser import ParserManager
 from vllm.parser.abstract_parser import Parser
 from vllm.renderers import ChatParams

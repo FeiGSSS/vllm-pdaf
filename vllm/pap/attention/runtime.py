@@ -10,7 +10,7 @@ from typing import Any
 
 import torch
 
-from vllm.pap.attention.kernels import paged_decode_kernel_config_for_sms
+from vllm.pap.attention.triton_backend import paged_decode_kernel_config_for_sms
 from vllm.pap.config import PAPRuntimeConfig
 from vllm.pap.deferred_cuda_trace import (
     deferred_cuda_trace_enabled,
@@ -60,7 +60,7 @@ class PAPAttentionRuntime:
                 paged_decode_kernel_config_for_sms(visible_sms)
             ),
             **dict(membership or {}),
-            **self.registry.decode_append_fast_path_stats(),
+            **self.registry.slot_topology_stats(),
             **self.registry.attention_step_context_stats(),
             **self.registry.decode_token_stats(),
             **self.registry.offload_exec_dispatch_stats(),

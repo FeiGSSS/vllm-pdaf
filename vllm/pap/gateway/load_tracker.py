@@ -11,7 +11,7 @@ from threading import Lock
 from typing import Any
 
 from vllm.pap.gateway.clients import PAPServiceClient, get_prefill_kv_load
-from vllm.pap.gateway.prefix_cache import PromptHashes
+from vllm.pap.gateway.tokenizer import PromptHashes
 from vllm.pap.gateway.topology import PAPGroup
 
 _BOOTSTRAP_TIMEOUT_S = 5.0

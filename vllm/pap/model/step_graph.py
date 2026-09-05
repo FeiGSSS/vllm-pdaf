@@ -18,7 +18,7 @@ from vllm.pap.config import read_env_bool
 from vllm.pap.model.projection_routing import _pap_offload_exec_step_groups
 from vllm.pap.protocol import PAPOffloadExecBatchDescriptor
 from vllm.pap.protocol.offload_exec import layer_index_and_template
-from vllm.pap.transport.projection import (
+from vllm.pap.transport.binding import (
     _pap_bind_offload_exec_nvshmem_peer,
     _pap_offload_exec_transport_for_attention_endpoint,
 )
@@ -56,7 +56,7 @@ class PAPProjectionStepGraphRoute:
 class _RoutedGraphBuffers:
     host_indices: torch.Tensor
     host_counts: torch.Tensor
-    copy_done_events: list[torch.Event | None]
+    copy_done_events: list[torch.cuda.Event | None]
     next_host_slot: int
     indices: torch.Tensor
     counts: torch.Tensor
@@ -291,7 +291,7 @@ def prepare_projection_step_graph(
 @dataclass
 class _PAPProjectionGraphEntry:
     graph: torch.cuda.CUDAGraph
-    stream: torch.Stream
+    stream: torch.cuda.Stream
     output: Any
 
 

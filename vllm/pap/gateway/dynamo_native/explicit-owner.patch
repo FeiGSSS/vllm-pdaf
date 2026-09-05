@@ -1,0 +1,81 @@
+--- a/lib/kv-router/src/services/selection/core/mod.rs
++++ b/lib/kv-router/src/services/selection/core/mod.rs
+@@ -120,9 +120,25 @@
+     /// `create_reservation` can replay them without re-sending the prompt.
+     selection_cache: SelectionCache,
+     tracking_hash: Arc<TrackingHashContext>,
++    explicit_lifecycle: bool,
+ }
+ 
+ impl SelectionCore {
++    /// Use explicit reservation ownership for an in-process, non-replicated selector.
++    /// The owner must free on completion/cancellation and drop the core on shutdown.
++    pub fn with_explicit_lifecycle(mut self) -> Self {
++        assert!(
++            self.replica_config.is_none(),
++            "explicit ownership requires a local selector"
++        );
++        assert!(
++            self.entries.read().is_empty(),
++            "set lifetime before registering workers"
++        );
++        self.explicit_lifecycle = true;
++        self
++    }
++
+     /// Create an intentionally local selector without replica synchronization
+     /// or startup recovery.
+     ///
+@@ -212,6 +228,7 @@
+             replica_config,
+             selection_cache: SelectionCache::new(&cache_config),
+             tracking_hash,
++            explicit_lifecycle: false,
+         }
+     }
+ 
+@@ -469,20 +486,34 @@
+         let (workers_tx, workers_rx) = watch::channel(HashMap::new());
+         let scoped_replica_sync =
+             setup_scoped_replica_sync(self.replica_config.as_ref(), &key, block_size);
+-        let slots = Arc::new(ActiveSequencesMultiWorker::new_with_replica_worker_policy(
+-            scoped_replica_sync.publisher,
+-            block_size as usize,
+-            HashMap::new(),
+-            scoped_replica_sync.enabled,
+-            scoped_replica_sync.process_id,
+-            WORKER_TYPE,
+-            ReplicaWorkerPolicy::RequireRegistered,
+-        ));
++        let slots = if self.explicit_lifecycle {
++            ActiveSequencesMultiWorker::new_without_expiry(
++                scoped_replica_sync.publisher,
++                block_size as usize,
++                HashMap::new(),
++                false,
++                scoped_replica_sync.process_id,
++                WORKER_TYPE,
++            )
++        } else {
++            ActiveSequencesMultiWorker::new_with_replica_worker_policy(
++                scoped_replica_sync.publisher,
++                block_size as usize,
++                HashMap::new(),
++                scoped_replica_sync.enabled,
++                scoped_replica_sync.process_id,
++                WORKER_TYPE,
++                ReplicaWorkerPolicy::RequireRegistered,
++            )
++        };
++        let slots = Arc::new(slots);
+         let replica_tx = scoped_replica_sync.channel.map(|(replica_tx, subscriber)| {
+             slots.start_replica_sync(subscriber, self.cancel_token.child_token());
+             replica_tx
+         });
+-        slots.start_periodic_force_expiry_across_all_workers(self.cancel_token.child_token());
++        if !self.explicit_lifecycle {
++            slots.start_periodic_force_expiry_across_all_workers(self.cancel_token.child_token());
++        }
+ 
+         let indexer = self
+             .indexer_registry

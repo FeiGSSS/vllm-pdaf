@@ -716,7 +716,7 @@ class PAPNVSHMEMTraceRecorder:
                 request_leased_block_counts[index, :request_count] = torch.tensor(
                     row.request_leased_block_counts, dtype=torch.int32
                 )
-            payload = {
+            payload: dict[str, Any] = {
                 "replay_start_ns": sampled_replay_start,
                 "graph_start_ns": sampled_step_start,
                 "start_ns": sampled_start,

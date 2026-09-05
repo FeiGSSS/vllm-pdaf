@@ -6,11 +6,11 @@ from types import SimpleNamespace
 import pytest
 
 import vllm.pap.attention.step_graph as attention_step_graph
-from vllm.pap.attention.execution import run_offload_exec_nvshmem_graph_loop
 from vllm.pap.attention.peers import (
     PAPAttentionPeerConflict,
     PAPAttentionPeerManager,
 )
+from vllm.pap.attention.step_graph import run_offload_exec_nvshmem_graph_loop
 from vllm.pap.protocol import PAPOffloadExecTransportClosed
 from vllm.pap.transport.nvshmem.transport import PAPNVSHMEMTransport
 

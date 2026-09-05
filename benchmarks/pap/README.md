@@ -13,8 +13,8 @@ The supported PAP benchmark topology is same-host `xPAyP`, TP1, with:
 - synchronous v0.26 Prefill scheduling for immediate KV handoff;
 - CUDA IPC for colocated Prefill--Attention KV sharing;
 - NVSHMEM P2P inside the whole-step Projection--Attention CUDA Graph;
-- initial-context-balanced `conversation_affinity` placement, sticky subsequent
-  turns, and no PA-to-PA KV relocation;
+- Dynamo KV-aware PA placement on every turn, with fixed PA-to-Projection
+  ownership and no PA-to-PA KV relocation;
 - Qwen3-8B static YaRN with a 131,072-token serving limit;
 - AIPerf as the serving workload client.
 
@@ -38,13 +38,18 @@ Formal workload settings belong to each E2E experiment's `experiment.env`.
 Shared runners intentionally provide no canonical request rate, concurrency,
 or duration.
 
+PAP supports only Dynamo routing. `PAP_ROUTING_POLICY` and `--routing-policy`
+accept only `dynamo`; they remain explicit in saved configurations for replay
+auditing. Retired policy values fail before startup rather than falling back.
+Historical non-Dynamo experiments require their recorded source revision.
+
 A targeted PAP run uses environment configuration:
 
 ```bash
 PAP_TOPOLOGY=7pa1p \
 PAP_PREFILL_GPUS=0,1,2,3,4,5,6 \
 PAP_PROJECTION_GPUS=7 \
-PAP_ROUTING_POLICY=conversation_affinity \
+  PAP_ROUTING_POLICY=dynamo \
 PAP_AIPERF_INPUT_FILE=/path/to/workload.jsonl \
 PAP_AIPERF_SESSIONS=128 \
 PAP_AIPERF_EXPECTED_REQUESTS=455 \
@@ -76,6 +81,8 @@ configuration explicitly.
   by the Dynamo PD baselines.
 - `scripts/setup_same_node_nixl.sh` builds that local NIXL/UCX environment.
 - `scripts/DYNAMO.md` documents the isolated Dynamo baseline environment.
+- `scripts/build_pap_dynamo_router.sh` builds PAP's separate in-process Dynamo
+  selector with explicit request ownership; official DP/PD packages are unchanged.
 
 NIXL is not a PAP Attention--Projection transport and is not used for
 PA-to-PA request relocation.

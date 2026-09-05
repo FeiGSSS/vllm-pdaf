@@ -3,7 +3,15 @@
 
 from types import SimpleNamespace
 
+import pytest
+import torch
+
+from vllm.pap.config import PAPConfigError, pap_model_hooks_enabled
 from vllm.pap.model import context
+from vllm.pap.model.projection import (
+    PAPProjectionAttentionAdapter,
+    PAPProjectionAttentionExecution,
+)
 
 
 class _CountedString:
@@ -14,6 +22,37 @@ class _CountedString:
     def __str__(self) -> str:
         self.calls += 1
         return self.value
+
+
+@pytest.mark.parametrize("name", ["PAP_MODEL_HOOKS", "PAP_PROJECTION_KV_UNAWARE"])
+def test_invalid_model_activation_is_not_silently_disabled(name):
+    with pytest.raises(PAPConfigError, match=name):
+        pap_model_hooks_enabled({name: "typo"})
+
+
+def test_model_activation_uses_shared_boolean_values():
+    assert pap_model_hooks_enabled({"PAP_MODEL_HOOKS": " yes "})
+    assert not pap_model_hooks_enabled(
+        {"PAP_MODEL_HOOKS": "false", "PAP_TOPOLOGY": "7pa1p"}
+    )
+
+
+def test_projection_debug_flag_rejects_invalid_value(monkeypatch):
+    monkeypatch.setenv("PAP_DEBUG_DECISION", "typo")
+    with pytest.raises(PAPConfigError, match="PAP_DEBUG_DECISION"):
+        PAPProjectionAttentionAdapter("layers.0.attn", 32, 8, 128, 1.0)
+
+
+def test_projection_execution_consumes_tensor_without_message_lifetime():
+    query = torch.arange(6).reshape(1, 6)
+    output = torch.empty((2, 3), dtype=query.dtype)
+    adapter = SimpleNamespace(
+        should_execute=lambda: True,
+        execute=lambda q, k, v: q,
+    )
+    execution = PAPProjectionAttentionExecution(adapter)
+    execution(None, query, query, query, output, None, None)
+    assert torch.equal(output, query.reshape_as(output))
 
 
 def test_forward_batch_base_is_normalized_once_per_model_forward(

@@ -17,7 +17,7 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field, replace
 
 logger = logging.getLogger(__name__)
@@ -63,8 +63,6 @@ class PAPKVLeaseRegistry:
       time (e.g., re-export) but only one active lease at a time.
     - Active leases guard block IDs from being returned to the block pool by
       vLLM scheduler free path.
-    - Deferred block objects (with optional release callback) can be stashed
-      on the registry so scheduler finish can fully bypass block_pool free.
     - Expired leases are freed when the scheduler calls sweep_expired_leases.
     """
 
@@ -72,10 +70,6 @@ class PAPKVLeaseRegistry:
     _by_lease: dict[str, PAPKVLeaseEntry] = field(default_factory=dict)
     _active_by_request: dict[str, str] = field(default_factory=dict)
     _ttl_seconds: float = field(default_factory=_kv_lease_default_ttl_seconds)
-    _deferred_blocks: dict[str, tuple[object, Callable[[object], None] | None]] = field(
-        default_factory=dict
-    )
-    _pending_seq_lens: dict[str, int] = field(default_factory=dict)
     _recently_released_requests: OrderedDict[str, float] = field(
         default_factory=OrderedDict
     )
@@ -110,8 +104,6 @@ class PAPKVLeaseRegistry:
         normalized_request_id = str(request_id)
         with self._lock:
             self._recently_released_requests.pop(normalized_request_id, None)
-            pending_seq_len = self._pending_seq_lens.pop(normalized_request_id, 0)
-            entry = replace(entry, seq_len=pending_seq_len)
             self._by_lease[lease_id] = entry
             self._active_by_request[normalized_request_id] = lease_id
         if _kv_lease_profile_enabled():
@@ -125,11 +117,7 @@ class PAPKVLeaseRegistry:
         return lease_id
 
     def release_lease(self, lease_id: str) -> tuple[int, ...]:
-        """Release a lease and return the block IDs that it guarded.
-
-        If deferred block objects were stashed for this lease, their release
-        callback is invoked inside the lock to serialize against pin/release.
-        """
+        """Release a lease and return the block IDs that it guarded."""
         with self._lock:
             entry = self._by_lease.pop(lease_id, None)
             if entry is None:
@@ -143,45 +131,14 @@ class PAPKVLeaseRegistry:
             self._recently_released_requests.move_to_end(entry.request_id)
             while len(self._recently_released_requests) > 4096:
                 self._recently_released_requests.popitem(last=False)
-            deferred = self._deferred_blocks.pop(lease_id, None)
-        if deferred is not None:
-            blocks, cb = deferred
-            if cb is not None:
-                try:
-                    cb(blocks)
-                except Exception:  # noqa: BLE001
-                    logger.exception(
-                        "PAP KV lease deferred free callback failed lease_id=%s",
-                        lease_id,
-                    )
         if _kv_lease_profile_enabled():
             logger.info(
-                "PAP KV lease release lease_id=%s request_id=%s blocks=%d deferred=%s",
+                "PAP KV lease release lease_id=%s request_id=%s blocks=%d",
                 lease_id,
                 entry.request_id,
                 len(entry.block_ids),
-                deferred is not None,
             )
         return entry.block_ids
-
-    def stash_deferred_blocks(
-        self,
-        *,
-        lease_id: str,
-        blocks: object,
-        free_callback: Callable[[object], None] | None,
-    ) -> None:
-        """Stash block objects (and optional free callback) for a lease.
-
-        Used by scheduler finish hook so PAP-leased requests can fully bypass
-        block_pool.free_blocks until release_lease() invokes free_callback.
-        """
-        with self._lock:
-            if lease_id not in self._by_lease:
-                raise KeyError(f"unknown lease_id: {lease_id}")
-            self._deferred_blocks[lease_id] = (blocks, free_callback)
-        if _kv_lease_profile_enabled():
-            logger.info("PAP KV lease stash deferred lease_id=%s", lease_id)
 
     def has_active_lease(self, request_id: str) -> bool:
         with self._lock:
@@ -248,26 +205,6 @@ class PAPKVLeaseRegistry:
             )
             return True
 
-    def record_seq_len(self, *, request_id: str, seq_len: int) -> bool:
-        """Record Prefill length now or when the block lease is pinned."""
-        normalized_id = str(request_id)
-        now = time.time()
-        with self._lock:
-            lease_id = self._active_by_request.get(normalized_id)
-            if lease_id is None:
-                self._pending_seq_lens[normalized_id] = max(0, int(seq_len))
-                return True
-            lease = self._by_lease.get(lease_id)
-            if lease is None or lease.released_at is not None:
-                return False
-            if lease.expires_at is not None and now > lease.expires_at:
-                return False
-            self._by_lease[lease_id] = replace(
-                lease,
-                seq_len=max(lease.seq_len, int(seq_len)),
-            )
-            return True
-
     def update_seq_len(self, request_id: str, seq_len: int) -> bool:
         """Advance the leased prefix length after a decode commit."""
         normalized_id = str(request_id)
@@ -298,12 +235,7 @@ class PAPKVLeaseRegistry:
             return lease.seq_len
 
     def sweep_expired_leases(self) -> list[str]:
-        """Drop expired leases from active map and free their deferred blocks.
-
-        Returns released lease IDs. Expiry triggers a full release_lease(),
-        which invokes the per-lease free_callback (returning blocks to the
-        block pool) if one was registered via stash_deferred_blocks.
-        """
+        """Drop expired leases from the active map and return their IDs."""
         swept: list[str] = []
         now = time.time()
         with self._lock:
@@ -378,28 +310,12 @@ def pap_refresh_lease(request_id: str) -> bool:
     return get_global_kv_lease_registry().refresh_lease(request_id)
 
 
-def pap_record_kv_seq_len(request_id: str, seq_len: int) -> bool:
-    return get_global_kv_lease_registry().record_seq_len(
-        request_id=request_id, seq_len=seq_len
-    )
-
-
 def pap_update_kv_seq_len(request_id: str, seq_len: int) -> bool:
     return get_global_kv_lease_registry().update_seq_len(request_id, seq_len)
 
 
 def pap_kv_seq_len(request_id: str) -> int | None:
     return get_global_kv_lease_registry().seq_len(request_id)
-
-
-def pap_stash_deferred_blocks(
-    lease_id: str,
-    blocks: object,
-    free_callback: Callable[[object], None] | None,
-) -> None:
-    get_global_kv_lease_registry().stash_deferred_blocks(
-        lease_id=lease_id, blocks=blocks, free_callback=free_callback
-    )
 
 
 def pap_sweep_expired_leases() -> list[str]:

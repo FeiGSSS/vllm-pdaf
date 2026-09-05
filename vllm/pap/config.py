@@ -20,6 +20,17 @@ from typing import TypeVar
 import regex as re
 
 
+def pap_model_hooks_enabled(values: Mapping[str, str] | None = None) -> bool:
+    """Return whether this process owns a PAP model-side role."""
+    source = os.environ if values is None else values
+    explicit = source.get("PAP_MODEL_HOOKS")
+    if explicit is not None:
+        return read_env_bool(source, "PAP_MODEL_HOOKS")
+    return read_env_bool(source, "PAP_PROJECTION_KV_UNAWARE") or bool(
+        source.get("PAP_TOPOLOGY")
+    )
+
+
 class PAPConfigError(ValueError):
     """Raised when PAP runtime configuration is invalid."""
 
@@ -63,13 +74,8 @@ PAP_DEFAULT_OFFLOAD_KV_TRANSPORT = PAPOffloadKVTransport.CUDA_IPC
 
 
 class PAPRoutingPolicy(str, Enum):
-    """Supported PA and Projection routing policies."""
+    """The supported PAP PA selection policy."""
 
-    ROUND_ROBIN = "round_robin"
-    CROSSBAR_ROUND_ROBIN = "crossbar_round_robin"
-    PROJECTION_AFFINITY = "projection_affinity"
-    PROJECTION_STICKY = "projection_sticky"
-    CONVERSATION_AFFINITY = "conversation_affinity"
     DYNAMO = "dynamo"
 
 
@@ -174,11 +180,6 @@ class PAPMPSConfig:
         if self.prefill_visible_sms < 1 or self.attention_visible_sms < 1:
             raise PAPConfigError("PAP expected visible SM counts must be positive")
 
-    @property
-    def total_visible_sms(self) -> int:
-        """Return the total visible SMs in the static partition."""
-        return self.prefill_visible_sms + self.attention_visible_sms
-
 
 @dataclass(frozen=True)
 class PAPDecodeCommitConfig:
@@ -249,6 +250,31 @@ class PAPRemovedFlag:
 
 
 PAP_REMOVED_FLAGS = (
+    PAPRemovedFlag(
+        name="PAP_KV_LOCALITY_PROFILE",
+        replacement="the whole-step trace recorder's KV metadata",
+        experiment_id="PAP-20260905-REFACTOR-VALIDATION",
+    ),
+    PAPRemovedFlag(
+        name="PAP_KV_LOCALITY_PROFILE_MIN_BATCH",
+        replacement="the whole-step trace recorder's KV metadata",
+        experiment_id="PAP-20260905-REFACTOR-VALIDATION",
+    ),
+    PAPRemovedFlag(
+        name="PAP_OFFLOAD_EXEC_TRACE",
+        replacement="PAP_PROJECTION_PA_TRACE_OUTPUT or PAP_DEFERRED_CUDA_TRACE",
+        experiment_id="PAP-20260905-REFACTOR-VALIDATION",
+    ),
+    PAPRemovedFlag(
+        name="PAP_OFFLOAD_EXEC_TRACE_LAYER",
+        replacement="the whole-step NVSHMEM trace recorder",
+        experiment_id="PAP-20260905-REFACTOR-VALIDATION",
+    ),
+    PAPRemovedFlag(
+        name="PAP_PREFIX_CACHE_AUDIT",
+        replacement="the active Gateway cached-token reporting and KV statistics",
+        experiment_id="PAP-20260905-REFACTOR-VALIDATION",
+    ),
     PAPRemovedFlag(
         name="PAP_CUDAGRAPH_COMPATIBLE",
         replacement="the native Prefill hook and PAP whole-step Projection graph",
@@ -733,7 +759,7 @@ class PAPRuntimeConfig:
             placement=placement,
             routing_policy=_parse_enum(
                 PAPRoutingPolicy,
-                _env_text(env, "PAP_ROUTING_POLICY", "round_robin"),
+                _env_text(env, "PAP_ROUTING_POLICY", "dynamo"),
                 "PAP_ROUTING_POLICY",
             ),
             offload_kv_transport=kv_transport,

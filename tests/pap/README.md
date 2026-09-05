@@ -60,7 +60,7 @@ explicitly marked so CPU-only environments skip them clearly.
 ## Ownership and redundancy audit
 
 Test filenames follow the current owner modules (`attention`, `gateway`,
-`integration`, `kv`, `protocol`, `topology`, `transport`, and `lifecycle`), not
+`integration`, `kv`, `protocol`, `routing`, and `transport`), not
 retired top-level façade or example-script names. vLLM integration parsing and
 adapter behavior belongs in `contract/test_vllm_integration.py`; generic vLLM
 tests retain only the scheduling or execution behavior that crosses the seam.
@@ -72,5 +72,6 @@ The post-façade audit removed the two exact duplicate cases it found. Current
 contracts cover xPA1P, CUDA IPC handoff, and the NVSHMEM whole-step Graph path;
 removed transports and PA-to-PA relocation have no live unit lane.
 
-The current support and evidence boundary is summarized in the
-[PAP development status](../../docs/design/pap/status.md).
+The current source boundaries are documented in the
+[PAP source layout](../../vllm/pap/README.md). KV lifecycle tests cover `kv/`;
+request-wide cleanup remains in `gateway/lifecycle.py`.

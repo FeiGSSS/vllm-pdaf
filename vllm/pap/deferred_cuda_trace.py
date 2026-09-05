@@ -44,19 +44,6 @@ class DeferredCudaSpan:
     finished: bool = False
 
 
-@dataclass
-class DeferredCudaFanIn:
-    """Cross-stream CUDA events for one non-blocking fan-in sample."""
-
-    name: str
-    origin_event: Any
-    ready_events: tuple[Any, ...]
-    layer: int
-    calls: int
-    ready_count: int = 0
-    finished: bool = False
-
-
 class DeferredCudaTraceCollector:
     """Collect CUDA event durations without synchronizing the hot path."""
 
@@ -73,26 +60,6 @@ class DeferredCudaTraceCollector:
         self._pending: deque[DeferredCudaSpan] = deque()
         self._free_pairs: list[tuple[Any, Any]] = []
         self._allocated_pairs = 0
-        self._pending_fanins: deque[DeferredCudaFanIn] = deque()
-        self._free_fanin_events: dict[
-            int,
-            list[tuple[Any, tuple[Any, ...]]],
-        ] = defaultdict(list)
-        self._allocated_fanin_groups = 0
-        self._fanin_samples: dict[
-            str,
-            list[
-                tuple[
-                    int,
-                    int,
-                    int,
-                    float,
-                    float,
-                    float,
-                    tuple[float, ...],
-                ]
-            ],
-        ] = defaultdict(list)
         self._durations: dict[str, list[float]] = defaultdict(list)
         self._lock = threading.Lock()
         self.dropped_records = 0
@@ -112,19 +79,6 @@ class DeferredCudaTraceCollector:
                 break
             self._pending.popleft()
             self._finish_record_locked(span)
-        while self._pending_fanins:
-            fanin = self._pending_fanins[0]
-            try:
-                ready = all(event.query() for event in fanin.ready_events)
-            except Exception:
-                self.error_records += 1
-                self._pending_fanins.popleft()
-                self._release_fanin_events_locked(fanin)
-                continue
-            if not ready:
-                break
-            self._pending_fanins.popleft()
-            self._finish_fanin_locked(fanin)
 
     def _finish_record_locked(self, span: DeferredCudaSpan) -> None:
         try:
@@ -134,35 +88,6 @@ class DeferredCudaTraceCollector:
         else:
             self._durations[span.name].append(duration_ms)
         self._free_pairs.append((span.start_event, span.end_event))
-
-    def _release_fanin_events_locked(self, fanin: DeferredCudaFanIn) -> None:
-        self._free_fanin_events[len(fanin.ready_events)].append(
-            (fanin.origin_event, fanin.ready_events)
-        )
-
-    def _finish_fanin_locked(self, fanin: DeferredCudaFanIn) -> None:
-        try:
-            ready_times_ms = [
-                float(fanin.origin_event.elapsed_time(event))
-                for event in fanin.ready_events
-            ]
-        except Exception:
-            self.error_records += 1
-        else:
-            first_ready_ms = min(ready_times_ms)
-            last_ready_ms = max(ready_times_ms)
-            self._fanin_samples[fanin.name].append(
-                (
-                    int(fanin.layer),
-                    len(fanin.ready_events),
-                    int(fanin.calls),
-                    first_ready_ms,
-                    last_ready_ms,
-                    last_ready_ms - first_ready_ms,
-                    tuple(ready_times_ms),
-                )
-            )
-        self._release_fanin_events_locked(fanin)
 
     def begin(self, name: str, stream: Any) -> DeferredCudaSpan | None:
         """Record a start event or drop the diagnostic record if saturated."""
@@ -217,88 +142,6 @@ class DeferredCudaTraceCollector:
                 return
             self._pending.append(span)
 
-    def begin_fanin(
-        self,
-        name: str,
-        origin_stream: Any,
-        *,
-        peers: int,
-        layer: int,
-        calls: int,
-    ) -> DeferredCudaFanIn | None:
-        """Begin one cross-stream fan-in sample without waiting for CUDA."""
-        peer_count = int(peers)
-        if peer_count <= 1 or calls <= 0:
-            return None
-        with self._lock:
-            self._collect_ready_locked()
-            free_groups = self._free_fanin_events[peer_count]
-            if free_groups:
-                origin_event, ready_events = free_groups.pop()
-            elif self._allocated_fanin_groups < self.max_pending:
-                try:
-                    origin_event = self._event_factory()
-                    ready_events = tuple(
-                        self._event_factory() for _ in range(peer_count)
-                    )
-                except Exception:
-                    self.error_records += 1
-                    return None
-                self._allocated_fanin_groups += 1
-            else:
-                self.dropped_records += 1
-                return None
-            try:
-                origin_event.record(origin_stream)
-            except Exception:
-                self.error_records += 1
-                self._free_fanin_events[peer_count].append((origin_event, ready_events))
-                return None
-            return DeferredCudaFanIn(
-                name=str(name),
-                origin_event=origin_event,
-                ready_events=ready_events,
-                layer=int(layer),
-                calls=int(calls),
-            )
-
-    def record_fanin_ready(
-        self,
-        fanin: DeferredCudaFanIn | None,
-        *,
-        index: int,
-        stream: Any,
-    ) -> None:
-        """Record one peer-ready event for a pending fan-in sample."""
-        if fanin is None:
-            return
-        with self._lock:
-            if fanin.finished:
-                return
-            if index != fanin.ready_count or index >= len(fanin.ready_events):
-                self.error_records += 1
-                return
-            try:
-                fanin.ready_events[index].record(stream)
-            except Exception:
-                self.error_records += 1
-                return
-            fanin.ready_count += 1
-
-    def end_fanin(self, fanin: DeferredCudaFanIn | None) -> None:
-        """Publish a fully recorded fan-in sample for deferred collection."""
-        if fanin is None:
-            return
-        with self._lock:
-            if fanin.finished:
-                return
-            fanin.finished = True
-            if fanin.ready_count != len(fanin.ready_events):
-                self.error_records += 1
-                self._release_fanin_events_locked(fanin)
-                return
-            self._pending_fanins.append(fanin)
-
     def record_duration(self, name: str, duration_ms: float) -> None:
         """Record an already measured host duration."""
 
@@ -330,17 +173,6 @@ class DeferredCudaTraceCollector:
                 self._free_pairs.append((span.start_event, span.end_event))
                 continue
             self._finish_record_locked(span)
-        pending_fanins = self._pending_fanins
-        self._pending_fanins = deque()
-        for fanin in pending_fanins:
-            try:
-                for event in fanin.ready_events:
-                    event.synchronize()
-            except Exception:
-                self.error_records += 1
-                self._release_fanin_events_locked(fanin)
-                continue
-            self._finish_fanin_locked(fanin)
 
     def raw_snapshot(self, *, blocking: bool) -> dict[str, Any]:
         """Return raw duration lists for process-level aggregation."""
@@ -348,15 +180,13 @@ class DeferredCudaTraceCollector:
         with self._lock:
             self._flush_locked(blocking=blocking)
             return {
-                "pending_records": len(self._pending) + len(self._pending_fanins),
+                "pending_records": len(self._pending),
                 "dropped_records": self.dropped_records,
                 "error_records": self.error_records,
                 "durations": {
                     name: list(values) for name, values in self._durations.items()
                 },
-                "fanins": {
-                    name: list(samples) for name, samples in self._fanin_samples.items()
-                },
+                "fanins": {},
             }
 
 
@@ -447,12 +277,6 @@ def deferred_cuda_trace_enabled() -> bool:
     return _TRACE_ENABLED
 
 
-def deferred_trace_role() -> str:
-    """Return the process role selected for deferred diagnostics."""
-
-    return _TRACE_ROLE
-
-
 def ensure_deferred_trace_file_exporter() -> None:
     """Lazily start the diagnostic exporter for supported process roles."""
 
@@ -512,53 +336,6 @@ def end_deferred_cuda_span(
     collector.end(span)
 
 
-def begin_deferred_cuda_fanin(
-    name: str,
-    origin_stream: Any,
-    *,
-    peers: int,
-    layer: int,
-    calls: int,
-) -> tuple[DeferredCudaTraceCollector, DeferredCudaFanIn] | None:
-    """Begin one cross-stream fan-in sample on the calling thread."""
-    if not _TRACE_ENABLED:
-        return None
-    collector = _thread_collector()
-    fanin = collector.begin_fanin(
-        name,
-        origin_stream,
-        peers=peers,
-        layer=layer,
-        calls=calls,
-    )
-    if fanin is None:
-        return None
-    return collector, fanin
-
-
-def record_deferred_cuda_fanin_ready(
-    handle: tuple[DeferredCudaTraceCollector, DeferredCudaFanIn] | None,
-    *,
-    index: int,
-    stream: Any,
-) -> None:
-    """Record one peer-ready event without synchronizing its CUDA stream."""
-    if handle is None:
-        return
-    collector, fanin = handle
-    collector.record_fanin_ready(fanin, index=index, stream=stream)
-
-
-def end_deferred_cuda_fanin(
-    handle: tuple[DeferredCudaTraceCollector, DeferredCudaFanIn] | None,
-) -> None:
-    """Queue one complete fan-in sample for deferred collection."""
-    if handle is None:
-        return
-    collector, fanin = handle
-    collector.end_fanin(fanin)
-
-
 def record_deferred_host_duration(name: str, duration_ms: float) -> None:
     """Record a host-side duration only when deferred tracing is enabled."""
 
@@ -615,20 +392,6 @@ def deferred_cuda_trace_snapshot(*, blocking: bool) -> dict[str, Any]:
     with _registry_lock:
         collectors = list(_collectors)
     durations: dict[str, list[float]] = defaultdict(list)
-    fanins: dict[
-        str,
-        list[
-            tuple[
-                int,
-                int,
-                int,
-                float,
-                float,
-                float,
-                tuple[float, ...],
-            ]
-        ],
-    ] = defaultdict(list)
     pending_records = 0
     dropped_records = 0
     error_records = 0
@@ -639,8 +402,6 @@ def deferred_cuda_trace_snapshot(*, blocking: bool) -> dict[str, Any]:
         error_records += int(snapshot["error_records"])
         for name, values in snapshot["durations"].items():
             durations[str(name)].extend(float(value) for value in values)
-        for name, samples in snapshot["fanins"].items():
-            fanins[str(name)].extend(tuple(sample) for sample in samples)
     return {
         "enabled": _TRACE_ENABLED,
         "collector_count": len(collectors),
@@ -650,27 +411,5 @@ def deferred_cuda_trace_snapshot(*, blocking: bool) -> dict[str, Any]:
         "spans": {
             name: _duration_stats(values) for name, values in sorted(durations.items())
         },
-        "fanins": {
-            name: {
-                "count": len(samples),
-                "sample_fields": (
-                    "layer",
-                    "peers",
-                    "calls",
-                    "first_ready_ms",
-                    "last_ready_ms",
-                    "spread_ms",
-                    "ready_times_ms",
-                ),
-                "first_ready_ms": _duration_stats(
-                    [float(sample[3]) for sample in samples]
-                ),
-                "last_ready_ms": _duration_stats(
-                    [float(sample[4]) for sample in samples]
-                ),
-                "spread_ms": _duration_stats([float(sample[5]) for sample in samples]),
-                "samples": samples,
-            }
-            for name, samples in sorted(fanins.items())
-        },
+        "fanins": {},
     }

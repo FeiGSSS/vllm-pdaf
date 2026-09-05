@@ -19,6 +19,8 @@ def inspect_replay(
     not every schema supported by AIPerf. Counts describe the available replay;
     a timed run can stop before these requests have all been sent.
     """
+    if routing_policy not in (None, "dynamo"):
+        raise ValueError("PAP supports only Dynamo routing")
     raw = path.read_bytes()
     text = raw.decode("utf-8").strip()
     records = (
@@ -93,7 +95,7 @@ def main() -> None:
     parser.add_argument("--dataset-type", required=True)
     parser.add_argument("--sessions", required=True, type=int)
     parser.add_argument("--expected-requests", type=int)
-    parser.add_argument("--routing-policy")
+    parser.add_argument("--routing-policy", choices=("dynamo",))
     args = parser.parse_args()
     try:
         result = inspect_replay(

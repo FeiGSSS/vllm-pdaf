@@ -11,13 +11,81 @@ from typing import Any
 import torch
 
 from vllm.logger import init_logger
+from vllm.model_executor.layers.attention import Attention
+from vllm.pap.config import read_env_bool
 from vllm.pap.mode import pap_request_ids_are_routable
 from vllm.pap.model.context import PAPModelForwardBatch
-from vllm.pap.model.step_graph import current_projection_step_graph_context
+from vllm.pap.model.step_graph import (
+    PAPProjectionStepGraphContext,
+    current_projection_step_graph_context,
+    register_projection_step_graph_adapter,
+)
+
+
+@dataclass(slots=True)
+class PAPProjectionAttentionExecution:
+    """Execute one normalized Q/K/V Attention call through PAP Projection."""
+
+    adapter: PAPProjectionAttentionAdapter
+
+    def __call__(
+        self,
+        _attention: Attention,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        output: torch.Tensor,
+        _kv_cache: torch.Tensor,
+        _attn_metadata: Any,
+        **_kwargs: Any,
+    ) -> None:
+        if not self.adapter.should_execute():
+            output.zero_()
+            return
+        remote_output = self.adapter.execute(query, key, value)
+        output.copy_(remote_output.reshape_as(output))
+
+
+def bind_projection_attention_execution(
+    static_forward_context: dict[str, Any],
+) -> int:
+    """Bind PAP Projection to generic vLLM Attention layers."""
+    attention_layers = tuple(
+        layer
+        for layer in static_forward_context.values()
+        if isinstance(layer, Attention)
+    )
+    layer_count = len(attention_layers)
+    for attention in attention_layers:
+        attention.set_execution_override(
+            create_projection_attention_execution(attention, layer_count)
+        )
+    return layer_count
+
+
+def create_projection_attention_execution(
+    attention: Attention,
+    layer_count: int,
+) -> PAPProjectionAttentionExecution:
+    """Create and register one Projection execution implementation."""
+    scale = getattr(attention.impl, "scale", None)
+    if scale is None:
+        raise RuntimeError(
+            f"PAP Attention backend has no scale: {attention.layer_name}"
+        )
+    adapter = PAPProjectionAttentionAdapter(
+        layer_name=attention.layer_name,
+        num_heads=attention.num_heads,
+        num_kv_heads=attention.num_kv_heads,
+        head_dim=attention.head_size,
+        scaling=float(scale),
+        num_hidden_layers=layer_count,
+    )
+    register_projection_step_graph_adapter(attention.layer_name, adapter)
+    return PAPProjectionAttentionExecution(adapter)
+
 
 logger = init_logger(__name__)
-
-_TRUE_ENV_VALUES = {"1", "true", "yes", "on"}
 
 
 @dataclass(slots=True)
@@ -38,33 +106,13 @@ class PAPProjectionAttentionAdapter:
         init=False,
         repr=False,
     )
-    last_projection_timeline: dict[str, Any] | None = field(
-        default=None,
-        init=False,
-    )
 
     def __post_init__(self) -> None:
-        self._debug_decision = (
-            os.environ.get("PAP_DEBUG_DECISION", "").lower() in _TRUE_ENV_VALUES
-        )
+        self._debug_decision = read_env_bool(os.environ, "PAP_DEBUG_DECISION")
         self._qkv_width = (
             self.num_heads * self.head_dim + 2 * self.num_kv_heads * self.head_dim
         )
         self._output_width = self.num_heads * self.head_dim
-
-    def begin_step(self) -> None:
-        """Reset per-forward Projection state."""
-        self.last_projection_timeline = None
-        self._prepared_batch = None
-
-    @staticmethod
-    def direct_qkv_send_enabled() -> bool:
-        """The sole NVSHMEM Graph ABI always uses one packed QKV buffer."""
-        return True
-
-    def record_projection_timeline(self, timeline: dict[str, Any]) -> None:
-        """Retain one layer timeline for outer model diagnostics."""
-        self.last_projection_timeline = dict(timeline)
 
     def should_execute(self) -> bool:
         """Return whether the current forward is a valid PAP decode batch."""
@@ -115,10 +163,7 @@ class PAPProjectionAttentionAdapter:
         q: torch.Tensor,
         k: torch.Tensor,
         v: torch.Tensor,
-        *,
-        direct_qkv_send_buffer: torch.Tensor | None = None,
-        **_unused: Any,
-    ) -> tuple[torch.Tensor, list[Any]]:
+    ) -> torch.Tensor:
         """Append graph-safe NVSHMEM dispatch/gather operations for one layer."""
         batch = self._prepared_batch or PAPModelForwardBatch.current(self.layer_name)
         if batch is None:
@@ -131,15 +176,11 @@ class PAPProjectionAttentionAdapter:
         query = q.view(-1, self.num_heads, self.head_dim)
         key = k.view(-1, self.num_kv_heads, self.head_dim)
         value = v.view(-1, self.num_kv_heads, self.head_dim)
-        return (
-            self._execute_step_graph(
-                query=query,
-                key=key,
-                value=value,
-                direct_qkv_send_buffer=direct_qkv_send_buffer,
-                context=context,
-            ),
-            [],
+        return self._execute_step_graph(
+            query=query,
+            key=key,
+            value=value,
+            context=context,
         )
 
     def _execute_step_graph(
@@ -148,8 +189,7 @@ class PAPProjectionAttentionAdapter:
         query: torch.Tensor,
         key: torch.Tensor,
         value: torch.Tensor,
-        direct_qkv_send_buffer: torch.Tensor | None,
-        context: Any,
+        context: PAPProjectionStepGraphContext,
     ) -> torch.Tensor:
         output = torch.empty(
             (query.shape[0], self._output_width),
@@ -158,17 +198,13 @@ class PAPProjectionAttentionAdapter:
         )
         stream = torch.cuda.current_stream(query.device)
         layer_index = context.layer_index(self.layer_name)
-        qkv_batch = (
-            direct_qkv_send_buffer
-            if direct_qkv_send_buffer is not None
-            else torch.cat(
-                (
-                    query.reshape(query.shape[0], -1),
-                    key.reshape(key.shape[0], -1),
-                    value.reshape(value.shape[0], -1),
-                ),
-                dim=-1,
-            )
+        qkv_batch = torch.cat(
+            (
+                query.reshape(query.shape[0], -1),
+                key.reshape(key.shape[0], -1),
+                value.reshape(value.shape[0], -1),
+            ),
+            dim=-1,
         )
         routed = context.routed
         routed.controller.graph_dispatch_routed_qkv(
@@ -191,3 +227,11 @@ class PAPProjectionAttentionAdapter:
             stream=stream,
         )
         return output
+
+
+__all__ = [
+    "PAPProjectionAttentionAdapter",
+    "PAPProjectionAttentionExecution",
+    "bind_projection_attention_execution",
+    "create_projection_attention_execution",
+]

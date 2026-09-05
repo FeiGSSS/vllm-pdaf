@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""PAP-owned paged decode-attention kernel integration."""
+"""Triton paged decode Attention backend, workspaces, and launch settings."""
 
 from __future__ import annotations
 
@@ -146,7 +146,7 @@ class PAPAttentionStepTensorCache:
         self.max_entries = int(max_entries)
         self._entries: OrderedDict[
             tuple[str, int, torch.dtype, torch.device],
-            tuple[torch.Tensor, torch.Tensor, torch.Event | None],
+            tuple[torch.Tensor, torch.Tensor, torch.cuda.Event | None],
         ] = OrderedDict()
         self._lock = Lock()
 

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from vllm.pap.integration.control import PAPEngineControl
+from vllm.pap.integration.engine import PAPEngineControl
 
 
 class _Request:

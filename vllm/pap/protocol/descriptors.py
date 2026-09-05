@@ -74,17 +74,6 @@ def _decode_ipc_value(value: Any) -> Any:
     raise ValueError(f"unsupported CUDA IPC metadata tag: {value_type!r}")
 
 
-class PAPDataPlaneRole(str, Enum):
-    PREFILL = "prefill"
-    ATTENTION = "attention"
-    PROJECTION = "projection"
-
-
-class PAPDataPlaneChannel(str, Enum):
-    OFFLOAD_KV = "offload_kv"
-    OFFLOAD_EXEC = "offload_exec"
-
-
 def pap_offload_exec_trace_id(value: str) -> str:
     """Short stable id for correlating Projection and Attention trace lines."""
 
@@ -180,14 +169,6 @@ class PAPOffloadExecBatchDescriptor:
             return f"{self.layer_name}#{self.batch_id_suffix}"
         entries = ",".join(f"{item.request_id}@{item.step}" for item in self.items)
         return f"{self.layer_name}#{entries}"
-
-    @property
-    def qkv_tensor_id(self) -> str:
-        return f"{self.batch_id}#qkv_batch"
-
-    @property
-    def output_tensor_id(self) -> str:
-        return f"{self.batch_id}#attn_out_batch"
 
 
 @dataclass(frozen=True)

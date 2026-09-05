@@ -1,0 +1,10 @@
+upstream_revision=2112d6ba74da72e2715ae69f4b76458b7691380d
+upstream_archive_sha256=e28fb6508a878969c69fbec2fd075db332f166fe4680d52c25a847c66eca8293
+reservation_lifetime=explicit-owner-v1
+rustc 1.94.1 (e408947bf 2026-03-25)
+cargo 1.94.1 (29ea6fb6a 2026-03-24)
+ec0e1f3adb8aed5b297c067806610a01ad4d16129754b0ae1b21608863cfc89f  /home/fei/research/PD/vllm-pap/vllm/pap/gateway/dynamo_native/Cargo.toml
+1bbacbea0581b3a5fd84420cea0d98e842844fbf117a4e8a6e01d5d7bd878e82  /home/fei/research/PD/vllm-pap/vllm/pap/gateway/dynamo_native/Cargo.lock
+467ac8f8db0ff4700974af3df8da0410d6786b745436c1ed60474a0baf355a20  /home/fei/research/PD/vllm-pap/vllm/pap/gateway/dynamo_native/lib.rs
+771dd9102cb9f58457a44a34bbfa1677737b3437586febd1a628d055eaafafbb  /home/fei/research/PD/vllm-pap/vllm/pap/gateway/dynamo_native/explicit-owner.patch
+63ce191ff8b52f525fad1577daf30d17e34df0742e6d88fc5f3145cc7ca1a639  /home/fei/research/PD/vllm-pap/.local/pap-dynamo-router/pap_dynamo_router.abi3.so

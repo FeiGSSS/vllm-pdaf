@@ -13,19 +13,17 @@ from typing import Any
 
 import torch
 
+from vllm.pap.kv.control_client import DecodeCommitClient as _DecodeCommitClient
+from vllm.pap.kv.control_client import (
+    LeaseReleaseClient as _LeaseReleaseClient,
+)
+from vllm.pap.kv.lease import _kv_lease_profile_enabled
 from vllm.pap.kv.models import (
     PAPAttentionSession,
     PAPAttentionStepContext,
     PAPPrefillKVCacheCatalogEntry,
     PAPPrefillLayerReadiness,
     PAPUnifiedPagedKVState,
-)
-from vllm.pap.kv.observability import (
-    pap_kv_lease_profile_enabled as _pap_kv_lease_profile_enabled,
-)
-from vllm.pap.lifecycle.commit import DecodeCommitClient as _DecodeCommitClient
-from vllm.pap.lifecycle.lease_release import (
-    LeaseReleaseClient as _LeaseReleaseClient,
 )
 from vllm.pap.protocol import (
     PAPAttentionRegistration,
@@ -100,7 +98,7 @@ class _PAPSessionRegistryMixin:
         lease_id = self._session_lease_ids.pop(request_id, None)
         leased_blocks = self._session_leased_block_ids.pop(request_id, None)
         self._session_lease_capacity_tokens.pop(request_id, None)
-        if lease_id is not None and _pap_kv_lease_profile_enabled():
+        if lease_id is not None and _kv_lease_profile_enabled():
             logger.info(
                 "PAP Attention release session lease request_id=%s "
                 "lease_id=%s leased_blocks=%d",
@@ -268,7 +266,7 @@ class _PAPSessionRegistryMixin:
 
         def _warm() -> None:
             try:
-                from vllm.pap.attention.kernels import (
+                from vllm.pap.attention.triton_backend import (
                     warm_paged_decode_attention,
                 )
 
@@ -373,7 +371,6 @@ class _PAPSessionRegistryMixin:
                     block_ids=manifest.block_ids,
                     prefix_len=manifest.prefix_len,
                     seq_len=manifest.prefix_len,
-                    capacity_tokens=manifest.lease_capacity_tokens,
                     writable_start_token=manifest.writable_start_token,
                     writable_end_token=manifest.writable_end_token,
                     lease_id=manifest.lease_id,

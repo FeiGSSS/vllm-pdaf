@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+from vllm.pap.integration.projection import build_offload_exec_route_groups
 from vllm.pap.protocol import (
     PAPOffloadExecBatchDescriptor,
     PAPOffloadExecDescriptor,
 )
-from vllm.pap.topology.routing import build_offload_exec_route_groups
 
 
 def test_build_offload_exec_route_groups_groups_by_attention_endpoint() -> None:
@@ -57,8 +57,6 @@ def test_batch_descriptor_uses_precomputed_route_template() -> None:
     )
 
     assert descriptor.batch_id == "layer0#cmpl-a@17,cmpl-c@19"
-    assert descriptor.qkv_tensor_id == "layer0#cmpl-a@17,cmpl-c@19#qkv_batch"
-    assert descriptor.output_tensor_id == ("layer0#cmpl-a@17,cmpl-c@19#attn_out_batch")
 
 
 def test_batch_descriptor_allows_template_without_item_descriptors() -> None:

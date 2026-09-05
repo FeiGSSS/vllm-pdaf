@@ -1,31 +1,20 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""Asynchronous Prefill KV index for PAP prefix-aware routing."""
+"""Prompt rendering and token hashing for PAP Dynamo routing."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from collections.abc import Mapping, Sequence
 from typing import Any, TypeAlias
 
-import msgspec
-import zmq
-
 from vllm.config import DeviceConfig, ModelConfig, VllmConfig
-from vllm.distributed.kv_events import (
-    AllBlocksCleared,
-    BlockRemoved,
-    BlockStored,
-    KVEventBatch,
-)
 from vllm.entrypoints.openai.chat_completion.protocol import (
     ChatCompletionRequest,
 )
 from vllm.entrypoints.openai.completion.protocol import CompletionRequest
 from vllm.inputs import SingletonPrompt
-from vllm.pap.gateway.topology import PAPGroup
 from vllm.renderers import BaseRenderer, merge_kwargs, renderer_from_config
 from vllm.renderers.inputs.preprocess import parse_model_prompt, prompt_to_seq
 from vllm.utils.hashing import get_hash_fn_by_name
@@ -44,15 +33,13 @@ PromptHashes: TypeAlias = tuple[ExternalBlockHash, ...]
 PromptRoutingInput: TypeAlias = tuple[list[int], PromptHashes, str | None]
 
 
-class PAPPrefixCacheTracker:
-    """Maintain per-PA prefix residency from worker-published KV events."""
+class PAPPromptTokenizer:
+    """Render routing tokens once and forward the same tokens to Prefill."""
 
     def __init__(
         self,
-        groups: Sequence[PAPGroup],
         *,
-        model: str | None,
-        event_endpoints: Sequence[str],
+        model: str,
         block_size: int,
         max_model_len: int | None = None,
         hf_overrides: Mapping[str, Any] | None = None,
@@ -60,23 +47,12 @@ class PAPPrefixCacheTracker:
     ) -> None:
         if block_size <= 0:
             raise ValueError("prefix block size must be positive")
-        if event_endpoints and len(event_endpoints) != len(groups):
-            raise ValueError("KV event endpoint count must match PA count")
-        self._groups = tuple(groups)
+        if not model:
+            raise ValueError("PAP Dynamo routing requires a model for tokenization")
         self._block_size = block_size
-        self._resident = {group: set[ExternalBlockHash]() for group in groups}
-        self._last_sequence: dict[PAPGroup, int | None] = {
-            group: None for group in groups
-        }
-        self._event_batches = 0
-        self._sequence_gaps = 0
-        self._lock = threading.Lock()
-        self._stop = threading.Event()
-        self._threads: list[threading.Thread] = []
-        self._event_endpoints = tuple(event_endpoints)
         self._model_config: ModelConfig | None = None
         self._renderer: BaseRenderer | None = None
-        if model and event_endpoints:
+        if model:
             model_config_kwargs: dict[str, Any] = {
                 "model": model,
                 "hf_overrides": dict(hf_overrides or {}),
@@ -94,25 +70,9 @@ class PAPPrefixCacheTracker:
         self._hash_function = get_hash_fn_by_name("sha256")
         init_none_hash(self._hash_function)
 
-    def start(self) -> None:
-        for group, endpoint in zip(self._groups, self._event_endpoints):
-            thread = threading.Thread(
-                target=self._subscribe,
-                args=(group, endpoint),
-                daemon=True,
-                name=f"pap-kv-events-{self._groups.index(group)}",
-            )
-            thread.start()
-            self._threads.append(thread)
-
-    def stop(self) -> None:
-        self._stop.set()
-        for thread in self._threads:
-            thread.join(timeout=1.0)
-
     @property
     def enabled(self) -> bool:
-        return self._renderer is not None and bool(self._event_endpoints)
+        return self._renderer is not None
 
     async def prompt_hashes(
         self,
@@ -206,35 +166,6 @@ class PAPPrefixCacheTracker:
         }
         return extras or None
 
-    def matched_tokens(self, hashes: PromptHashes) -> dict[PAPGroup, int]:
-        with self._lock:
-            resident = {
-                group: set(block_hashes)
-                for group, block_hashes in self._resident.items()
-            }
-        matches = {}
-        for group, block_hashes in resident.items():
-            count = 0
-            for block_hash in hashes:
-                if block_hash not in block_hashes:
-                    break
-                count += 1
-            matches[group] = count * self._block_size
-        return matches
-
-    def stats(self) -> dict[str, Any]:
-        with self._lock:
-            return {
-                "enabled": self.enabled,
-                "block_size": self._block_size,
-                "resident_blocks": {
-                    str(index): len(self._resident[group])
-                    for index, group in enumerate(self._groups)
-                },
-                "event_batches": self._event_batches,
-                "sequence_gaps": self._sequence_gaps,
-            }
-
     def hash_token_ids(
         self,
         token_ids: Sequence[int],
@@ -254,50 +185,5 @@ class PAPPrefixCacheTracker:
             hashes.append(maybe_convert_block_hash(parent))
         return tuple(hashes)
 
-    def _subscribe(self, group: PAPGroup, endpoint: str) -> None:
-        socket = zmq.Context.instance().socket(zmq.SUB)
-        socket.setsockopt(zmq.SUBSCRIBE, b"")
-        socket.setsockopt(zmq.RCVTIMEO, 100)
-        socket.connect(endpoint)
-        decoder = msgspec.msgpack.Decoder(KVEventBatch)
-        try:
-            while not self._stop.is_set():
-                try:
-                    frames = socket.recv_multipart()
-                except zmq.Again:
-                    continue
-                if len(frames) != 3:
-                    continue
-                sequence = int.from_bytes(frames[1], "big")
-                try:
-                    batch = decoder.decode(frames[2])
-                except msgspec.DecodeError:
-                    logger.exception("PAP KV event decode failed endpoint=%s", endpoint)
-                    continue
-                self._apply_batch(group, sequence, batch)
-        finally:
-            socket.close(linger=0)
 
-    def _apply_batch(
-        self,
-        group: PAPGroup,
-        sequence: int,
-        batch: KVEventBatch,
-    ) -> None:
-        with self._lock:
-            previous = self._last_sequence[group]
-            if previous is not None and sequence != previous + 1:
-                self._resident[group].clear()
-                self._sequence_gaps += 1
-            self._last_sequence[group] = sequence
-            for event in batch.events:
-                if isinstance(event, AllBlocksCleared):
-                    self._resident[group].clear()
-                elif isinstance(event, BlockStored) and event.group_idx in (None, 0):
-                    self._resident[group].update(event.block_hashes)
-                elif isinstance(event, BlockRemoved) and event.group_idx in (None, 0):
-                    self._resident[group].difference_update(event.block_hashes)
-            self._event_batches += 1
-
-
-__all__ = ["PAPPrefixCacheTracker", "PromptHashes", "PromptRoutingInput"]
+__all__ = ["PAPPromptTokenizer", "PromptHashes", "PromptRoutingInput"]

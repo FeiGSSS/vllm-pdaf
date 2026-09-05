@@ -112,9 +112,6 @@ class _PAPAttentionStepContextMixin:
             result_seq_lens=result_seq_lens,
             commit_new_seq_lens=commit_new_seq_lens,
             active_indices=active_indices,
-            active_prior_seq_lens=tuple(
-                prior_seq_lens[index] for index in active_indices
-            ),
             expected_layers=previous.expected_layers,
             layer_states=previous.layer_states,
             topology_ids=previous.topology_ids,
@@ -347,9 +344,6 @@ class _PAPAttentionStepContextMixin:
                 result_seq_lens=tuple(result_seq_lens),
                 commit_new_seq_lens=tuple(commit_new_seq_lens),
                 active_indices=active_indices,
-                active_prior_seq_lens=tuple(
-                    prior_seq_lens[index] for index in active_indices
-                ),
                 expected_layers=expected_layers,
                 layer_states=layer_states,
                 topology_ids=tuple(topology_ids),

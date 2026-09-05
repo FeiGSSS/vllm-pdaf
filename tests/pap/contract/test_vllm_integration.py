@@ -15,14 +15,11 @@ from vllm.model_executor.layers.attention.execution import (
 )
 from vllm.pap.integration import (
     PAPAcceptedDecodeTokenPublisher,
-    PAPEngineAdapter,
     PAPModelRunnerAdapter,
     PAPProjectionRequestStore,
     PAPRuntimeSettings,
     PAPSchedulerAdapter,
-    PAPWorkerAdapter,
     build_projection_forward_context,
-    install_pap_control_routes,
     prepare_pap_projection_chat_input,
     prepare_pap_tokenized_chat_input,
     select_projection_request_ids,
@@ -83,7 +80,6 @@ def test_scheduler_adapter_owns_projection_metadata_validation() -> None:
     assert state is not None
     assert state.remote_prefix_len == 10
     assert state.remote_computed_tokens == 9
-    assert state.local_computed_token_offset == 9
     assert not state.allocate_external_computed_blocks
     assert not state.allocate_local_slots
 
@@ -112,13 +108,11 @@ def test_runtime_settings_are_parsed_once_per_owner() -> None:
             "PAP_RUNTIME_CUDA_CONTEXT_ROLE": "projection",
         }
     )
-    worker = PAPWorkerAdapter(settings)
 
+    assert settings.projection_kv_unaware
     assert settings.critical_trace
     assert settings.debug_decision
     assert settings.unified_kv_decode_capacity_tokens == 64
-    assert worker.projection_kv_unaware
-    assert worker.skip_local_attention_kernel_warmup
 
 
 def test_projection_allows_vllm_async_scheduling(monkeypatch) -> None:
@@ -162,16 +156,6 @@ def test_integration_rejects_malformed_settings(values) -> None:
 def test_integration_and_runtime_accept_whitespace_in_boolean() -> None:
     settings = PAPRuntimeSettings.from_environ({"PAP_PROJECTION_KV_UNAWARE": " TRUE "})
     assert settings.projection_kv_unaware
-
-
-def test_projection_skips_only_local_attention_kernel_warmup() -> None:
-    worker = PAPWorkerAdapter.from_environ(
-        {
-            "PAP_PROJECTION_KV_UNAWARE": "1",
-        }
-    )
-
-    assert worker.skip_local_attention_kernel_warmup
 
 
 def test_generic_attention_execution_override(
@@ -251,13 +235,6 @@ def test_request_decode_capacity_overrides_environment_fallback() -> None:
     assert scheduler.decode_capacity_tokens(request) == 64
 
 
-def test_engine_adapter_recognizes_metadata_only_request() -> None:
-    assert PAPEngineAdapter.is_metadata_only_request(
-        {"pap_projection_kv_unaware": True}
-    )
-    assert not PAPEngineAdapter.is_metadata_only_request(None)
-
-
 def test_projection_chat_admission_reuses_prefill_token_ids() -> None:
     request = SimpleNamespace(
         messages=[{"role": "user", "content": "large prompt"}],
@@ -302,18 +279,6 @@ def test_prefill_chat_admission_reuses_gateway_token_ids() -> None:
         }
     ]
     assert request.kv_transfer_params == {}
-
-
-def test_api_adapter_installs_control_routes_only_for_unified_kv() -> None:
-    installed: list[object] = []
-    app = SimpleNamespace(include_router=lambda router: installed.append(router))
-
-    assert not install_pap_control_routes(app, {})
-    assert install_pap_control_routes(
-        app,
-        {"PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS": "64"},
-    )
-    assert len(installed) == 1
 
 
 @pytest.mark.parametrize("runner_type", [GPUModelRunnerV1, GPUModelRunnerV2])

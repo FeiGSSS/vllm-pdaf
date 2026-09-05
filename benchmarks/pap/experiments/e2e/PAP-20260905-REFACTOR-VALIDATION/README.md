@@ -2,7 +2,7 @@
 
 Purpose: exercise the refactored PAP launcher, gateway, KV lifecycle, PAT/Triton
 selection, NVSHMEM communication and whole-step CUDA Graph with every currently
-registered dataset file. This is a correctness/regression lane, not a new fair
+active dataset file. This is a correctness/regression lane, not a new fair
 architecture performance comparison.
 
 ## Protocol
@@ -12,6 +12,12 @@ Qwen3-8B FP16 and YaRN 131K. `workloads.tsv` columns are case name, dataset
 relative to the registry, AIPerf format, sessions, available requests, concurrency
 and measured duration (zero means complete the replay).
 An optional final column enables tracing (`1`); absent means disabled.
+
+After the explicit-owner router fix, new runs use the PAP-only Dynamo build and
+the `qwen3-8b-yarn131k-shared-prefix` fixtures. The original salted fixtures stay
+registered as historical isolation controls, not active Dynamo cases. This is an
+intentional protocol revision: use each run's saved `workloads.tsv` and source
+snapshot, and do not treat differently salted runs as a performance A/B.
 
 All three long-context fixtures and both 60-session coding workloads run to
 completion. The full 2,092-session/16,049-request dataset runs for 600 seconds
@@ -57,17 +63,21 @@ Recreate the recorded environments, obtain model weights matching
 `model_files.json`, and use the archived experiment entry point. Set the model
 location in a new copy of `experiment.env` if needed and preserve that change as
 a new run. See `benchmarks/pap/scripts/RUNTIMES.md` for NIXL/NVSHMEM requirements.
-The archive does not contain Python environments, model weights, drivers or
-communication build products. These remain explicit external dependencies;
+The source archive does not contain Python environments, model weights, drivers
+or communication build products. The PAP-only Dynamo CPU library and its build
+record are preserved separately under `provenance/pap_dynamo_router/` and each
+new case's `pap_dynamo_router/`. Other runtimes remain explicit external dependencies;
 package inventories alone are not guaranteed binary-compatible lockfiles.
 
-Status: the initial `short-context` case completed 14 requests and drained, but
-was invalidated by a manual KV-event audit. See
-`runs/20260905_105242_2939264/INVALIDATED.md` and the CPU reproduction under
-`experiments/microbench/PAP-20260905-DYNAMO-CACHE-SALT/`. The three long-context
-fixtures use per-session `cache_salt`, which the current Dynamo selector does
-not support. Preflight now rejects that combination; do not remove the salt or
-override routing merely to make this protocol pass. Resolving this compatibility
-boundary is required before claiming completion of the all-dataset suite.
+The initial salted `short-context` run and the unhalved coding run with premature
+reservation expiry remain invalidated; see their notes and the CPU reproductions.
+The user subsequently approved explicit-owner reservations and default
+cross-session sharing. New runs use the corrected dependency and newly registered
+sharing-enabled fixtures; the old inputs/results are not rewritten. Explicit
+salt isolation remains unsupported and rejected. The corrected full queue passed
+7/7 cases. After limited model-interface cleanup, 276 tests and three context
+E2E cases passed. The user stopped the duplicate full queue and confirmed this
+combined verification basis. Do not automatically restart that queue or schedule
+another full replay during goal continuation; further tests need user approval.
 
 Completed checkpoints and their exact validation scope are in [results.md](results.md).

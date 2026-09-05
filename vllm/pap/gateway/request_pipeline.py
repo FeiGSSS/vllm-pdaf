@@ -36,12 +36,10 @@ from vllm.pap.gateway.payloads import (
     build_prefill_payload,
     requested_decode_capacity,
 )
-from vllm.pap.gateway.routing import (
-    estimate_initial_context_load,
-    estimate_initial_context_tokens,
-    select_instances,
+from vllm.pap.gateway.topology import (
+    build_projection_payload_for_group,
+    select_projection_for_group,
 )
-from vllm.pap.gateway.topology import build_projection_payload_for_group
 
 logger = logging.getLogger("pap_gateway")
 
@@ -58,13 +56,6 @@ async def _cancel_on_client_disconnect(
                 disconnected.set()
             request_task.cancel("PAP client disconnected")
             return
-
-
-def _current_prefill_loads(
-    request: Request,
-) -> dict[Any, dict[str, int]]:
-    """Read the latest PA load snapshot without request-path I/O."""
-    return request.app.state.pap_load_tracker.snapshot()
 
 
 def _pop_conversation_id(
@@ -84,10 +75,7 @@ async def _handle_openai_request(api_path: str, request: Request):
     profile = _pap_prefill_ipc_profile_enabled()
     request_start = time.perf_counter() if profile else 0.0
     req_data = await request.json()
-    if (
-        request.app.state.args.routing_policy == "dynamo"
-        and req_data.get("cache_salt") is not None
-    ):
+    if req_data.get("cache_salt") is not None:
         return JSONResponse(
             {
                 "error": {
@@ -104,6 +92,11 @@ async def _handle_openai_request(api_path: str, request: Request):
     pending_route_request_ids: set[str] = (
         request.app.state.pap_pending_route_request_ids
     )
+    if (
+        request_id in pending_route_request_ids
+        or request_id in request.app.state.pap_active_request_ids
+    ):
+        return JSONResponse({"error": "duplicate active X-Request-Id"}, status_code=409)
     pending_route_request_ids.add(request_id)
     request_task = asyncio.current_task()
     if request_task is None:
@@ -135,8 +128,12 @@ async def _handle_openai_request(api_path: str, request: Request):
         raise
     finally:
         disconnect_watcher.cancel()
+        if request_id in pending_route_request_ids:
+            # No lifecycle coordinator took ownership (routing/setup failed).
+            request.app.state.pap_dynamo_router.finish_request(request_id)
+            request.app.state.pap_load_tracker.finish_request(request_id)
+            request.app.state.pap_active_request_ids.discard(request_id)
         pending_route_request_ids.discard(request_id)
-        request.app.state.conversation_router.release_reservation(request_id)
 
 
 async def _handle_parsed_openai_request(
@@ -153,100 +150,31 @@ async def _handle_parsed_openai_request(
         request.headers.get("X-Correlation-ID"),
     )
     client_stream = bool(req_data.get("stream", False))
-    request_number = next(request.app.state.request_counter)
-    conversation_router = request.app.state.conversation_router
-    routing_policy = request.app.state.args.routing_policy
-    new_conversation = (
-        routing_policy == "conversation_affinity"
-        and conversation_id
-        and not conversation_router.has_assignment(conversation_id)
-    )
-    initial_context_load = estimate_initial_context_load(req_data)
-    initial_context_tokens = estimate_initial_context_tokens(req_data)
-    routing_token_ids = None
-    routing_prompt_text = None
-    prompt_hashes = ()
-    prefix_cached_tokens = {}
-    prefix_tracker = request.app.state.pap_prefix_cache_tracker
+    tokenizer = request.app.state.pap_prompt_tokenizer
     tokenization_start = time.perf_counter() if profile else 0.0
-    try:
-        prefix_input = await prefix_tracker.prompt_hashes(api_path, req_data)
-    except Exception:
-        logger.exception(
-            "PAP prefix routing tokenization failed request_id=%s",
-            request_id,
-        )
-        prefix_input = None
+    prefix_input = await tokenizer.prompt_hashes(api_path, req_data)
+    if prefix_input is None:
+        raise RuntimeError("Dynamo routing requires Gateway prompt token IDs")
+    routing_token_ids, prompt_hashes, routing_prompt_text = prefix_input
+    initial_context_tokens = len(routing_token_ids)
     tokenization_ms = (
         (time.perf_counter() - tokenization_start) * 1000.0 if profile else 0.0
     )
-    if prefix_input is not None:
-        routing_token_ids, prompt_hashes, routing_prompt_text = prefix_input
-        initial_context_tokens = len(routing_token_ids)
-        prefix_cached_tokens = prefix_tracker.matched_tokens(prompt_hashes)
     decode_capacity_tokens = requested_decode_capacity(req_data) or 0
     forwarded_prompt_text = (
         routing_prompt_text if req_data.get("return_prompt_text") else None
     )
-    current_pa_loads = None
-    if new_conversation:
-        current_pa_loads = _current_prefill_loads(request)
     dynamo_router = request.app.state.pap_dynamo_router
     routing_start = time.perf_counter() if profile else 0.0
-    if routing_policy == "dynamo":
-        if routing_token_ids is None:
-            raise RuntimeError("Dynamo routing requires Gateway prompt token IDs")
-        group = await dynamo_router.select_group(
-            routing_token_ids,
-            request_id=request_id,
-            expected_output_tokens=decode_capacity_tokens,
-        )
-        group_index = request.app.state.groups.index(group)
-        groups_per_projection = (
-            len(request.app.state.groups) + len(request.app.state.projections) - 1
-        ) // len(request.app.state.projections)
-        projection_index = min(
-            group_index // groups_per_projection,
-            len(request.app.state.projections) - 1,
-        )
-        projection = request.app.state.projections[projection_index]
-    else:
-        group, projection = select_instances(
-            request_number,
-            request.app.state.groups,
-            request.app.state.projections,
-            routing_policy=routing_policy,
-            conversation_id=conversation_id,
-            conversation_router=conversation_router,
-            initial_context_load=initial_context_load,
-            initial_context_tokens=initial_context_tokens,
-            decode_capacity_tokens=decode_capacity_tokens,
-            request_id=request_id,
-            current_pa_loads=current_pa_loads,
-            prefix_cached_tokens=prefix_cached_tokens,
-        )
+    group = await dynamo_router.select_group(
+        routing_token_ids,
+        request_id=request_id,
+        expected_output_tokens=decode_capacity_tokens,
+    )
+    projection = select_projection_for_group(
+        group, request.app.state.groups, request.app.state.projections
+    )
     routing_ms = (time.perf_counter() - routing_start) * 1000.0 if profile else 0.0
-    if current_pa_loads is not None:
-        selected_prefix_hit = prefix_cached_tokens.get(group, 0)
-        logger.info(
-            "PAP first-turn placement conversation_id=%s selected_pa=%d "
-            "prompt_tokens=%d prefix_hits=%s selected_prefix_hit=%d "
-            "selected_new_prompt_tokens=%d prefill_backlog=%s projected_kv=%s",
-            conversation_id,
-            request.app.state.groups.index(group),
-            initial_context_tokens,
-            [prefix_cached_tokens.get(item, 0) for item in request.app.state.groups],
-            selected_prefix_hit,
-            max(1, initial_context_tokens - selected_prefix_hit),
-            [
-                current_pa_loads.get(item, {}).get("outstanding_prefill_tokens")
-                for item in request.app.state.groups
-            ],
-            [
-                current_pa_loads.get(item, {}).get("projected_kv_tokens")
-                for item in request.app.state.groups
-            ],
-        )
     projection_client = request.app.state.projection_clients[projection]
     projection_index = request.app.state.projections.index(projection)
     group_index = request.app.state.groups.index(group)
@@ -256,16 +184,10 @@ async def _handle_parsed_openai_request(
     load_tracker.begin_request(
         request_id,
         group,
-        prefill_tokens=max(
-            1,
-            initial_context_tokens - prefix_cached_tokens.get(group, 0),
-        ),
+        prefill_tokens=max(1, initial_context_tokens),
         decode_capacity_tokens=decode_capacity_tokens,
         prompt_hashes=prompt_hashes,
-        cached_tokens=prefix_cached_tokens.get(group, 0),
     )
-    request.app.state.pap_pending_route_request_ids.discard(request_id)
-    conversation_router.release_reservation(request_id)
 
     handed_off_stream_cleanup = False
     active_request_ids: set[str] = request.app.state.pap_active_request_ids
@@ -273,7 +195,6 @@ async def _handle_parsed_openai_request(
     admission = request.app.state.projection_admission
 
     def finish_request() -> None:
-        conversation_router.release_reservation(request_id)
         dynamo_router.finish_request(request_id)
         load_tracker.finish_request(request_id)
         active_request_ids.discard(request_id)
@@ -288,6 +209,7 @@ async def _handle_parsed_openai_request(
         projection=projection,
         on_finished=finish_request,
     )
+    request.app.state.pap_pending_route_request_ids.discard(request_id)
     try:
         register_start = time.perf_counter() if profile else 0.0
         attention_sessions = await register_attention_handles(
@@ -328,7 +250,6 @@ async def _handle_parsed_openai_request(
             request_id,
         )
         lifecycle.mark_prefill_completed()
-        conversation_router.release_reservation(request_id)
         prefill_ms = int((time.time() - prefill_start) * 1000)
 
         prompt_token_ids = prefill_resp.get("prompt_token_ids")
@@ -365,7 +286,7 @@ async def _handle_parsed_openai_request(
                 f"prompt_token_ids={len(prompt_token_ids)} prefix_len={prefix_len}"
             )
         prefill_cache_usage = _extract_prefill_cache_usage(prefill_resp)
-        exact_prompt_hashes = prefix_tracker.hash_token_ids(
+        exact_prompt_hashes = tokenizer.hash_token_ids(
             prompt_token_ids,
             cache_salt=req_data.get("cache_salt"),
         )
@@ -520,6 +441,5 @@ async def _handle_parsed_openai_request(
         )
         return JSONResponse(projection_resp, headers=response_headers)
     finally:
-        conversation_router.release_reservation(request_id)
         if not handed_off_stream_cleanup:
             await lifecycle.terminate("request_pipeline_exit")

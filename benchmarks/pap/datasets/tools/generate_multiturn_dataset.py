@@ -389,7 +389,6 @@ def build_records(
                     "output_length": sampled_output_tokens,
                     "delay": delay_schedule[turn_index],
                     "extra": {
-                        "cache_salt": session_id,
                         "ignore_eos": True,
                         "min_tokens": sampled_output_tokens,
                         "seed": 0,
@@ -411,6 +410,7 @@ def build_records(
             f"{maximum_budget} > {max_model_len}"
         )
     generation_summary = {
+        "prefix_cache_policy": "shared_across_sessions",
         "distribution_semantics": "aiperf_lognormal_mean_median",
         "random_seed": random_seed,
         "sampled_mean_tolerance": sampled_mean_tolerance,

@@ -1,58 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
-from vllm.pap.lifecycle.commit import DecodeCommitClient
-from vllm.pap.lifecycle.lease_release import LeaseReleaseClient
-
-
-def test_prefix_cache_audit_state_reports_safe_block_counts():
-    from types import SimpleNamespace
-
-    from vllm.pap.prefix_cache_audit import build_prefix_cache_audit_state
-
-    request = SimpleNamespace(
-        request_id="req-1",
-        num_tokens=33,
-        num_computed_tokens=32,
-        block_hashes=[bytes.fromhex("11" * 32), bytes.fromhex("22" * 32)],
-    )
-    blocks = [
-        SimpleNamespace(block_hash=bytes.fromhex("aa" * 32) + b"\x00" * 4),
-        SimpleNamespace(block_hash=bytes.fromhex("bb" * 32) + b"\x00" * 4),
-        SimpleNamespace(block_hash=None),
-    ]
-    group = SimpleNamespace(
-        kv_cache_group_id=0,
-        req_to_blocks={"req-1": blocks},
-        num_cached_block={"req-1": 2},
-    )
-    manager = SimpleNamespace(coordinator=SimpleNamespace(single_type_managers=[group]))
-
-    state = build_prefix_cache_audit_state(manager, request)
-
-    assert state == {
-        "request_id": "req-1",
-        "num_tokens": 33,
-        "num_computed_tokens": 32,
-        "request_hash_count": 2,
-        "request_hash_tail": ["1111111111111111", "2222222222222222"],
-        "groups": [
-            {
-                "group_id": 0,
-                "allocated_blocks": 3,
-                "cached_blocks": 2,
-                "hashed_blocks": 2,
-                "allocated_hash_tail": [
-                    "aaaaaaaaaaaaaaaa",
-                    "bbbbbbbbbbbbbbbb",
-                ],
-            }
-        ],
-    }
+from vllm.pap.kv.control_client import DecodeCommitClient, LeaseReleaseClient
 
 
 def test_pap_lease_remembers_recently_released_request():
-    from vllm.pap.lifecycle import lease as pap_lease
+    from vllm.pap.kv import lease as pap_lease
 
     pap_lease.reset_global_kv_lease_registry()
     lease_id = pap_lease.pap_pin_blocks("request", [1, 2])
@@ -93,7 +46,7 @@ def test_commit_client_posts_to_endpoint(monkeypatch):
         posted_event.set()
         return _CommitAckResponse(json["commit_seq"])
 
-    monkeypatch.setattr("vllm.pap.lifecycle.commit.httpx.post", fake_post)
+    monkeypatch.setattr("vllm.pap.kv.control_client.httpx.post", fake_post)
     client = DecodeCommitClient(
         endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit"
     )
@@ -122,7 +75,7 @@ def test_commit_client_can_route_each_request_to_its_prefill(monkeypatch):
         posted_event.set()
         return _CommitAckResponse(json["commit_seq"])
 
-    monkeypatch.setattr("vllm.pap.lifecycle.commit.httpx.post", fake_post)
+    monkeypatch.setattr("vllm.pap.kv.control_client.httpx.post", fake_post)
     client = DecodeCommitClient(endpoint=None)
     endpoint = "http://127.0.0.1:8103/v1/pap/prefill/decode-commit"
 
@@ -167,7 +120,7 @@ def test_commit_client_commit_does_not_block_on_slow_post(monkeypatch):
         release_post.wait(timeout=1.0)
         return _CommitAckResponse(json["commit_seq"])
 
-    monkeypatch.setattr("vllm.pap.lifecycle.commit.httpx.post", fake_post)
+    monkeypatch.setattr("vllm.pap.kv.control_client.httpx.post", fake_post)
     client = DecodeCommitClient(
         endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit"
     )
@@ -195,7 +148,7 @@ def test_commit_client_deduplicates_pending_payloads(monkeypatch):
         posted_event.set()
         return _CommitAckResponse(json["commit_seq"])
 
-    monkeypatch.setattr("vllm.pap.lifecycle.commit.httpx.post", fake_post)
+    monkeypatch.setattr("vllm.pap.kv.control_client.httpx.post", fake_post)
     client = DecodeCommitClient(
         endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit"
     )
@@ -223,7 +176,7 @@ def test_commit_client_coalesces_queued_request_to_latest_state(monkeypatch):
         release_first_post.wait(timeout=1.0)
         return _CommitAckResponse(json["commit_seq"])
 
-    monkeypatch.setattr("vllm.pap.lifecycle.commit.httpx.post", fake_post)
+    monkeypatch.setattr("vllm.pap.kv.control_client.httpx.post", fake_post)
     client = DecodeCommitClient(
         endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit"
     )
@@ -257,7 +210,7 @@ def test_commit_client_flush_request_waits_for_pending(monkeypatch):
         release_post.wait(timeout=1.0)
         return _CommitAckResponse(json["commit_seq"])
 
-    monkeypatch.setattr("vllm.pap.lifecycle.commit.httpx.post", fake_post)
+    monkeypatch.setattr("vllm.pap.kv.control_client.httpx.post", fake_post)
     client = DecodeCommitClient(
         endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit"
     )
@@ -291,7 +244,7 @@ def test_commit_client_flushes_wrapped_targets_by_session(monkeypatch):
         release_post.wait(timeout=1.0)
         return _CommitAckResponse(json["commit_seq"])
 
-    monkeypatch.setattr("vllm.pap.lifecycle.commit.httpx.post", fake_post)
+    monkeypatch.setattr("vllm.pap.kv.control_client.httpx.post", fake_post)
     client = DecodeCommitClient(
         endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit"
     )
@@ -328,7 +281,7 @@ def test_commit_client_retries_until_ack(monkeypatch):
             raise RuntimeError("temporary failure")
         return _CommitAckResponse(json["commit_seq"])
 
-    monkeypatch.setattr("vllm.pap.lifecycle.commit.httpx.post", fake_post)
+    monkeypatch.setattr("vllm.pap.kv.control_client.httpx.post", fake_post)
     client = DecodeCommitClient(
         endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit",
         max_attempts=3,
@@ -348,7 +301,7 @@ def test_commit_client_flush_fails_without_ack(monkeypatch):
         attempts.append(json["commit_seq"])
         raise RuntimeError("persistent failure")
 
-    monkeypatch.setattr("vllm.pap.lifecycle.commit.httpx.post", fake_post)
+    monkeypatch.setattr("vllm.pap.kv.control_client.httpx.post", fake_post)
     client = DecodeCommitClient(
         endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit",
         max_attempts=2,
@@ -372,7 +325,7 @@ def test_commit_client_flush_reports_failure_on_queue_full(monkeypatch):
         release_post.wait(timeout=5.0)
         return _CommitAckResponse(json["commit_seq"])
 
-    monkeypatch.setattr("vllm.pap.lifecycle.commit.httpx.post", fake_post)
+    monkeypatch.setattr("vllm.pap.kv.control_client.httpx.post", fake_post)
     client = DecodeCommitClient(
         endpoint="http://127.0.0.1:9999/v1/pap/prefill/decode-commit",
         queue_size=1,
@@ -420,7 +373,7 @@ def test_lease_release_client_retries_until_ack(monkeypatch):
         return _LeaseReleaseResponse({"released": True})
 
     monkeypatch.setattr(
-        "vllm.pap.lifecycle.lease_release.httpx.post",
+        "vllm.pap.kv.control_client.httpx.post",
         fake_post,
     )
     client = LeaseReleaseClient(
@@ -443,7 +396,7 @@ def test_lease_release_client_can_route_to_session_prefill(monkeypatch):
         return _LeaseReleaseResponse({"released": True})
 
     monkeypatch.setattr(
-        "vllm.pap.lifecycle.lease_release.httpx.post",
+        "vllm.pap.kv.control_client.httpx.post",
         fake_post,
     )
     client = LeaseReleaseClient(endpoint=None, max_attempts=1)
@@ -471,7 +424,7 @@ def test_lease_release_client_accepts_idempotent_release(monkeypatch):
         )
 
     monkeypatch.setattr(
-        "vllm.pap.lifecycle.lease_release.httpx.post",
+        "vllm.pap.kv.control_client.httpx.post",
         fake_post,
     )
     client = LeaseReleaseClient(
@@ -490,7 +443,7 @@ def test_lease_release_client_reports_terminal_failure(monkeypatch):
         raise RuntimeError("persistent failure")
 
     monkeypatch.setattr(
-        "vllm.pap.lifecycle.lease_release.httpx.post",
+        "vllm.pap.kv.control_client.httpx.post",
         fake_post,
     )
     client = LeaseReleaseClient(
@@ -504,7 +457,7 @@ def test_lease_release_client_reports_terminal_failure(monkeypatch):
 
 
 def test_kv_lease_default_ttl_is_finite(monkeypatch):
-    from vllm.pap.lifecycle.lease import PAPKVLeaseRegistry
+    from vllm.pap.kv.lease import PAPKVLeaseRegistry
 
     monkeypatch.delenv("PAP_KV_LEASE_TTL_SECONDS", raising=False)
 
@@ -512,10 +465,10 @@ def test_kv_lease_default_ttl_is_finite(monkeypatch):
 
 
 def test_kv_lease_refresh_extends_expiry(monkeypatch):
-    from vllm.pap.lifecycle.lease import PAPKVLeaseRegistry
+    from vllm.pap.kv.lease import PAPKVLeaseRegistry
 
     now = [100.0]
-    monkeypatch.setattr("vllm.pap.lifecycle.lease.time.time", lambda: now[0])
+    monkeypatch.setattr("vllm.pap.kv.lease.time.time", lambda: now[0])
     registry = PAPKVLeaseRegistry(_ttl_seconds=10.0)
     lease_id = registry.pin_blocks(request_id="r", block_ids=(1, 2))
     assert registry._by_lease[lease_id].expires_at == 110.0
@@ -527,12 +480,12 @@ def test_kv_lease_refresh_extends_expiry(monkeypatch):
 
 
 def test_kv_lease_tracks_decode_sequence_length() -> None:
-    from vllm.pap.lifecycle.lease import PAPKVLeaseRegistry
+    from vllm.pap.kv.lease import PAPKVLeaseRegistry
 
     registry = PAPKVLeaseRegistry(_ttl_seconds=10.0)
     lease_id = registry.pin_blocks(request_id="r", block_ids=(1, 2, 3))
 
-    assert registry.record_seq_len(request_id="r", seq_len=32)
+    assert registry.update_seq_len("r", 32)
     assert registry.update_seq_len("r", 40)
     assert registry.seq_len("r") == 40
 
@@ -540,43 +493,25 @@ def test_kv_lease_tracks_decode_sequence_length() -> None:
     assert registry.seq_len("r") is None
 
 
-def test_kv_lease_binds_sequence_length_recorded_before_manifest_pin() -> None:
-    from vllm.pap.lifecycle.lease import PAPKVLeaseRegistry
-
-    registry = PAPKVLeaseRegistry(_ttl_seconds=10.0)
-
-    assert registry.record_seq_len(request_id="r", seq_len=32)
-    assert registry.seq_len("r") is None
-
-    registry.pin_blocks(request_id="r", block_ids=(1, 2))
-    assert registry.seq_len("r") == 32
-
-
 def test_kv_lease_sweeps_replaced_expired_lease(monkeypatch):
-    from vllm.pap.lifecycle.lease import PAPKVLeaseRegistry
+    from vllm.pap.kv.lease import PAPKVLeaseRegistry
 
     now = [100.0]
-    monkeypatch.setattr("vllm.pap.lifecycle.lease.time.time", lambda: now[0])
+    monkeypatch.setattr("vllm.pap.kv.lease.time.time", lambda: now[0])
     registry = PAPKVLeaseRegistry(_ttl_seconds=10.0)
     old_lease = registry.pin_blocks(request_id="r", block_ids=(1, 2))
-    freed: list[tuple[int, ...]] = []
-    registry.stash_deferred_blocks(
-        lease_id=old_lease,
-        blocks=(1, 2),
-        free_callback=freed.append,
-    )
 
     now[0] = 105.0
     new_lease = registry.pin_blocks(request_id="r", block_ids=(3, 4))
     now[0] = 111.0
 
     assert registry.sweep_expired_leases() == [old_lease]
-    assert freed == [(1, 2)]
+    assert old_lease not in registry._by_lease
     assert registry.active_lease_id("r") == new_lease
 
 
 def test_kv_lease_release_does_not_retain_tombstone_entries() -> None:
-    from vllm.pap.lifecycle.lease import PAPKVLeaseRegistry
+    from vllm.pap.kv.lease import PAPKVLeaseRegistry
 
     registry = PAPKVLeaseRegistry(_ttl_seconds=10.0)
     for i in range(100):

@@ -19,6 +19,43 @@ salted datasets with Dynamo routing. The source data must not be silently
 rewritten to remove isolation. See the controlled
 `experiments/microbench/PAP-20260905-DYNAMO-CACHE-SALT/` reproduction.
 
+New multi-turn workloads omit salt by default, allowing identical prefixes to
+be shared across conversations. The `qwen3-8b-yarn131k-shared-prefix` dataset
+is a separately registered derivative; old salted fixtures remain unchanged.
+
+## PAP-only Dynamo selector
+
+This selector is mandatory for PAP. Both the launcher and Gateway reject
+retired routing policies, including conversation affinity and round robin.
+The official Dynamo DP/PD baseline environment is unchanged.
+
+```bash
+rustup toolchain install 1.94.1 --profile minimal
+bash benchmarks/pap/scripts/build_pap_dynamo_router.sh
+```
+
+PAP imports `pap_dynamo_router` from `.local/pap-dynamo-router`, not the official
+DP/PD `.venv-dynamo` runtime. The thin Python binding builds upstream
+`dynamo-kv-router` at the official v1.4.1 source commit
+`2112d6ba74da72e2715ae69f4b76458b7691380d`, with the colocated
+`vllm/pap/gateway/dynamo_native/explicit-owner.patch` and colocated Cargo lockfile.
+No routing/scoring algorithm is reimplemented. This is a source-built PAP
+dependency, not asserted to be byte-identical to the PyPI wheel.
+
+The local selector uses explicit-owner reservations: Prefill completion removes
+only Prefill load; completion/cancellation frees the reservation. No arbitrary
+age expires live requests. Cancellation racing a booking waits for the booking
+outcome before freeing it. Shutdown stops queued selection, drains ownership
+cleanup, and drops the native selector. A failed release blocks further routing
+instead of silently losing load accounting. This mode is local and non-replicated;
+it is not a lease design for remote selector services.
+
+The gateway validates the lifetime contract; there is no fallback to the old
+300-second runtime. `PAP_DYNAMO_PYTHON` is retired. Installation records archive,
+patch, binding, lockfile and library identities in `build.txt`; experiment
+provenance preserves the build record and CPU library alongside source/config.
+Official DP/PD packages and their launchers remain unchanged.
+
 ## Same-node NIXL (Dynamo PD baselines)
 
 Install once, from the repository root:
@@ -92,3 +129,20 @@ and mapping, driver/CUDA versions, communication-library paths and versions,
 startup logs, topology/graph/transfer audits, client output and exit status.
 Do not copy the entire environment: it may contain credentials. Missing evidence
 must be listed as a limitation, rather than inferred from a current installation.
+
+## Manual termination caveat
+
+The 600-second request-cancellation protocol passed its Gateway, Attention and
+native-router drain audits. External termination of the shell process is a
+different operation: Bash can defer its trap while waiting for the foreground
+benchmark pipeline, and AIPerf workers can outlive a terminated controller and
+hold its log pipe open. This occurred when stopping the duplicate validation
+queue; its verified client process group and remaining workers required manual
+cleanup. Final GPU/process absence was checked afterward.
+
+Do not assume that sending TERM only to the launcher stopped the whole run.
+Resolve the exact run's launcher, timeout/client process group and descendants,
+then verify their termination and GPU cleanup. Never use broad name-based kills
+against unrelated jobs. This operational limitation is recorded, not claimed
+fixed by the Dynamo request-reservation change. Changes or tests of process
+supervision require separate user approval during this closeout.

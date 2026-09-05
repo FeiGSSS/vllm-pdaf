@@ -13,11 +13,51 @@ from typing import Any
 import torch
 
 from vllm.logger import init_logger
-from vllm.pap.attention.dispatch import run_pap_decode_attention
+from vllm.pap.attention.backend import run_pap_decode_attention
 from vllm.pap.config import read_env_bool, read_env_int
 from vllm.pap.kv.layout import split_paged_kv_cache
 from vllm.pap.kv.models import PAPAttentionStepContext
+from vllm.pap.kv.registry import PAPAttentionRegistry
+from vllm.pap.protocol import PAPOffloadExecTransportClosed
 from vllm.pap.protocol.offload_exec import layer_index_and_template
+
+
+def run_offload_exec_nvshmem_graph_loop(
+    *,
+    registry: PAPAttentionRegistry,
+    transport: Any,
+    peer_id: str | None = None,
+) -> None:
+    """Receive step plans and replay complete Attention CUDA Graphs."""
+    peer_id = peer_id or str(getattr(transport, "actor_id", type(transport).__name__))
+    graph_executor = PAPAttentionStepGraphExecutor(registry, transport)
+    try:
+        while True:
+            try:
+                descriptor, qkv_batch, step_context = transport.recv_graph_step_plan()
+            except PAPOffloadExecTransportClosed:
+                return
+            registry.record_offload_exec_peer_batch(
+                peer_id=peer_id,
+                rows=descriptor.item_count,
+            )
+            committed = graph_executor.execute(
+                descriptor=descriptor,
+                qkv_batch=qkv_batch,
+                context=step_context,
+            )
+            if not committed:
+                return
+            transport.record_attention_step_trace_metadata(step_context)
+            for layer_name in step_context.expected_layers:
+                registry.record_offload_exec_compute(
+                    layer_name=layer_name,
+                    rows=descriptor.item_count,
+                    source_batches=1,
+                )
+    finally:
+        graph_executor.shutdown()
+
 
 logger = init_logger(__name__)
 
@@ -532,4 +572,4 @@ class PAPAttentionStepGraphExecutor:
             )
 
 
-__all__ = ["PAPAttentionStepGraphExecutor"]
+__all__ = ["PAPAttentionStepGraphExecutor", "run_offload_exec_nvshmem_graph_loop"]

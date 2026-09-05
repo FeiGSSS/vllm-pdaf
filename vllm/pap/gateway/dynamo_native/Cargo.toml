@@ -1,0 +1,21 @@
+[package]
+name = "pap-dynamo-router"
+version = "1.4.1"
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace]
+
+[lib]
+name = "pap_dynamo_router"
+crate-type = ["cdylib"]
+path = "lib.rs"
+
+[dependencies]
+dynamo-kv-router = { path = "../source/lib/kv-router", features = ["standalone-selection"] }
+pyo3 = { version = "0.23.4", features = ["extension-module", "abi3-py310"] }
+pyo3-async-runtimes = { version = "0.23.0", features = ["tokio-runtime"] }
+pythonize = "0.23"
+serde = "1"
+tokio-util = { version = "0.7", features = ["rt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
