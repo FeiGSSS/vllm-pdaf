@@ -225,11 +225,12 @@ def test_deferred_decode_token_forget_drops_only_unmatched_final_token() -> None
     }
 
 
-def test_attention_kv_ready_ignores_released_session(monkeypatch) -> None:
+@pytest.mark.parametrize("failure", [None, "join", "submission"])
+def test_attention_kv_ready_ignores_released_session(monkeypatch, failure) -> None:
     class CommitClient:
         @staticmethod
         def flush_submitted_request(_request_id: str) -> bool:
-            return True
+            return failure != "submission"
 
         flush_request = flush_submitted_request
 
@@ -258,6 +259,16 @@ def test_attention_kv_ready_ignores_released_session(monkeypatch) -> None:
         num_kv_heads=8,
         head_dim=128,
     )[0]
+
+    if failure == "join":
+        monkeypatch.setattr(
+            registry._decode_token_committer, "flush_request", lambda *a, **kw: False
+        )
+    if failure is not None:
+        with pytest.raises(RuntimeError, match="before release"):
+            registry.release_session("req-a")
+        assert registry.get_session("req-a") is not None
+        return
 
     assert registry.release_session("req-a")
     assert (

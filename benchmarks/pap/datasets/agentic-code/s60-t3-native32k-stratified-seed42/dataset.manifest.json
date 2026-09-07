@@ -1,0 +1,169 @@
+{
+  "dataset_id": "agentic-code/s60-t3-native32k-stratified-seed42",
+  "format": "mooncake-trace",
+  "source_generation": {
+    "generator": "aiperf synthesize agentic-code",
+    "aiperf_version": "0.11.0",
+    "config": "benchmarks/pap/datasets/agentic-code/generator-configs/native32k-s3.json",
+    "num_sessions": 2000,
+    "seed": 42
+  },
+  "source": "/tmp/pap-native32k-osl100-candidates/native32k-s3_2000s_seed42_20260906-081446/dataset.jsonl",
+  "source_sha256": "79e8a7d27ec927595384d4bc97c8cdf84b24de2472946ebc3703e0b3c2082082",
+  "output": "benchmarks/pap/datasets/agentic-code/s60-t3-native32k-stratified-seed42/dataset.jsonl",
+  "output_sha256": "5d4357a9a037e9e1a3c25acf402ba06afd1c9e7643678da225b9f5cc63cb257c",
+  "selection": {
+    "sessions": 60,
+    "take_first_turns": 3,
+    "length_divisor": 1,
+    "hash_block_size": 512,
+    "seed": 42,
+    "eligible_sessions": 2000,
+    "sampling": "equal_count_final_context_strata",
+    "final_context_min": 16384,
+    "final_context_max": 32768,
+    "final_context_strata": 4,
+    "stratum_counts": [
+      {
+        "minimum": 16384,
+        "maximum": 20480,
+        "eligible": 806,
+        "selected": 15
+      },
+      {
+        "minimum": 20480,
+        "maximum": 24576,
+        "eligible": 561,
+        "selected": 15
+      },
+      {
+        "minimum": 24576,
+        "maximum": 28672,
+        "eligible": 182,
+        "selected": 15
+      },
+      {
+        "minimum": 28672,
+        "maximum": 32768,
+        "eligible": 29,
+        "selected": 15
+      }
+    ],
+    "eligibility": {
+      "minimum_source_turns": 3
+    }
+  },
+  "observed": {
+    "sessions": 60,
+    "turns": 180,
+    "turns_per_session": {
+      "mean": 3.0,
+      "median": 3.0,
+      "p95": 3.0,
+      "p99": 3.0,
+      "min": 3,
+      "max": 3
+    },
+    "total_input_tokens": 1431807,
+    "total_output_tokens": 14696,
+    "input_tokens_per_request": {
+      "mean": 7954.483,
+      "median": 6875.0,
+      "p95": 16984.0,
+      "p99": 17526.44,
+      "min": 1151,
+      "max": 18002
+    },
+    "output_tokens_per_request": {
+      "mean": 81.644,
+      "median": 67.5,
+      "p95": 180.65,
+      "p99": 230.05,
+      "min": 30,
+      "max": 239
+    },
+    "prompt_context_tokens_per_request": {
+      "mean": 18721.35,
+      "median": 18167.5,
+      "p95": 29060.1,
+      "p99": 30521.25,
+      "min": 8423,
+      "max": 32333
+    },
+    "initial_context_tokens": {
+      "mean": 13248.2,
+      "median": 12860.0,
+      "p95": 17364.7,
+      "p99": 17797.86,
+      "min": 8423,
+      "max": 18002
+    },
+    "final_context_tokens": {
+      "mean": 24108.383,
+      "median": 24238.5,
+      "p95": 29903.2,
+      "p99": 31383.1,
+      "min": 17447,
+      "max": 32392
+    },
+    "per_turn": [
+      {
+        "turn": 1,
+        "input_tokens": {
+          "mean": 13248.2,
+          "median": 12860.0,
+          "p95": 17364.7,
+          "p99": 17797.86,
+          "min": 8423,
+          "max": 18002
+        },
+        "output_tokens": {
+          "mean": 79.917,
+          "median": 69.0,
+          "p95": 150.65,
+          "p99": 219.84,
+          "min": 30,
+          "max": 234
+        }
+      },
+      {
+        "turn": 2,
+        "input_tokens": {
+          "mean": 5562.967,
+          "median": 5478.0,
+          "p95": 8651.15,
+          "p99": 8785.64,
+          "min": 1633,
+          "max": 8788
+        },
+        "output_tokens": {
+          "mean": 81.4,
+          "median": 67.0,
+          "p95": 180.65,
+          "p99": 225.43,
+          "min": 32,
+          "max": 239
+        }
+      },
+      {
+        "turn": 3,
+        "input_tokens": {
+          "mean": 5052.283,
+          "median": 5145.5,
+          "p95": 8386.8,
+          "p99": 8931.93,
+          "min": 1151,
+          "max": 8975
+        },
+        "output_tokens": {
+          "mean": 83.617,
+          "median": 71.0,
+          "p95": 200.55,
+          "p99": 221.33,
+          "min": 30,
+          "max": 229
+        }
+      }
+    ]
+  }
+}

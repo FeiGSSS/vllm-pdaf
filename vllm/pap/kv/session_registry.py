@@ -183,14 +183,8 @@ class _PAPSessionRegistryMixin:
             timeout_s=self._decode_token_flush_timeout_s,
         )
         if not deferred_flushed:
-            logger.warning(
-                "PAP decode-token join flush timed out before session release "
-                "request_id=%s",
-                request_id,
-            )
-        with self._lock:
-            existed, lease_id, prefill_endpoint = self._release_session_locked(
-                request_id
+            raise RuntimeError(
+                f"PAP decode-token join did not finish before release: {request_id}"
             )
         commit_client = _get_commit_client()
         flush_submitted = getattr(
@@ -199,13 +193,18 @@ class _PAPSessionRegistryMixin:
             commit_client.flush_request,
         )
         if not flush_submitted(request_id):
-            logger.warning(
-                "PAP decode commit submission timed out before lease release "
-                "request_id=%s",
-                request_id,
+            raise RuntimeError(
+                f"PAP final commit was not submitted before release: {request_id}"
             )
-            self._decode_token_committer.forget_request(request_id)
-            return existed
+        with self._lock:
+            final_commit_seq = (
+                commit_client.final_commit_sequence(request_id)
+                if request_id in self._session_lease_ids
+                else None
+            )
+            existed, lease_id, prefill_endpoint = self._release_session_locked(
+                request_id
+            )
         if lease_id is not None:
             release_endpoint = (
                 None
@@ -220,6 +219,7 @@ class _PAPSessionRegistryMixin:
                 request_id=request_id,
                 lease_id=lease_id,
                 endpoint=release_endpoint,
+                final_commit_seq=final_commit_seq,
             )
         commit_client.forget_request(request_id)
         self._decode_token_committer.forget_request(request_id)
@@ -394,6 +394,10 @@ class _PAPSessionRegistryMixin:
             self._session_lease_capacity_tokens[session_request_id] = (
                 manifest.lease_capacity_tokens
             )
+            if manifest.allocation_limit_token is not None:
+                self._session_decode_capacity_limits[session_request_id] = (
+                    manifest.allocation_limit_token
+                )
 
             layer_states: dict[str, PAPUnifiedPagedKVState] = {}
             for layer_name, entry in sorted(self._prefill_kv_catalog.items()):
@@ -616,13 +620,11 @@ class _PAPSessionRegistryMixin:
             if wait_for is None:
                 return
             wait_started = time.perf_counter_ns()
-            completed_in_time = wait_for.done.wait(timeout=5.0)
+            wait_for.done.wait()
             waited_ns = time.perf_counter_ns() - wait_started
             with self._lock:
                 self._decode_capacity_waits += 1
                 self._decode_capacity_wait_ns += waited_ns
-            if not completed_in_time:
-                raise TimeoutError("PAP Decode KV asynchronous allocation timed out")
 
     def _request_decode_capacity(self, pending: _DecodeCapacityPending) -> None:
         result: dict[str, Any] | None = None
@@ -631,7 +633,12 @@ class _PAPSessionRegistryMixin:
             response = httpx.post(
                 pending.endpoint,
                 json=pending.payload,
-                timeout=5.0,
+                timeout=httpx.Timeout(
+                    connect=5.0,
+                    read=None,
+                    write=5.0,
+                    pool=5.0,
+                ),
                 trust_env=False,
             )
             response.raise_for_status()
@@ -640,6 +647,11 @@ class _PAPSessionRegistryMixin:
                 raise RuntimeError(f"PAP Decode KV allocation failed: {result}")
         except Exception as exc:
             error = exc
+            logger.exception(
+                "PAP Decode KV allocation request failed request_id=%s endpoint=%s",
+                pending.request_id,
+                pending.endpoint,
+            )
         with self._lock:
             if self._decode_capacity_pending.get(pending.request_id) is not pending:
                 return
@@ -781,6 +793,9 @@ class _PAPSessionRegistryMixin:
                     registration.request_id,
                 )
             if commits_submitted:
+                final_commit_seq = commit_client.final_commit_sequence(
+                    registration.request_id
+                )
                 commit_client.forget_request(registration.request_id)
             if commits_submitted:
                 release_endpoint = (
@@ -795,6 +810,7 @@ class _PAPSessionRegistryMixin:
                     request_id=registration.request_id,
                     lease_id=replaced_lease_id,
                     endpoint=release_endpoint,
+                    final_commit_seq=final_commit_seq,
                 )
             self._decode_token_committer.forget_request(registration.request_id)
         logger.info(

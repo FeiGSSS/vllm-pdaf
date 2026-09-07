@@ -1,0 +1,23 @@
+{
+  "status": "passed",
+  "regression_tests_passed": 157,
+  "affected_engine_retest_passed": 13,
+  "accelerator_sync": {
+    "status": "passed",
+    "device": "NVIDIA L20",
+    "streams": 2,
+    "all_events_complete_after_accelerator_synchronize": true,
+    "output_values_correct": true,
+    "torch_version": "2.11.0+cu130"
+  },
+  "recorded_core_source_changes_after_measurement": {
+    "vllm/pap/integration/engine.py": {
+      "measured_sha256": "9fb22b408700ee2a4b72764ce51c7f0ca14ba9af3ee5ef96f5062ffc0dfe67e1",
+      "commit_sha256": "fef47bd961f4e72d3fcbf214ac5081a8a241a2d4c95490a3440a46f01a9a8398"
+    }
+  },
+  "only_code_change_after_measurement": "torch.cuda.synchronize() -> torch.accelerator.synchronize() at Prefill retirement boundary",
+  "full_benchmarks_rerun_after_api_change": false,
+  "precommit": "passed",
+  "credential_pattern_scan_matches": 0
+}

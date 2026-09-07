@@ -19,6 +19,7 @@ sha256sum --check SHA256SUMS
 | `agentic-code/full-131k-osl10k-no-delay-seed42` | `mooncake-trace` | Fixed-duration, long-running serving experiments |
 | `agentic-code/s60-t3-seed42` | `mooncake-trace` | Three-turn, 60-session control workload |
 | `agentic-code/s60-t3-half-seed42` | `mooncake-trace` | Short QPS scans: 60 sessions, three turns, halved lengths |
+| `agentic-code/s60-t3-native32k-stratified-seed42` | `mooncake-trace` | Native-32K QPS scans: 60 sessions, three turns, mean output below 100 tokens, and 15 final contexts in each 4K stratum from 16K through 32K |
 | `long-context/qwen3-8b-yarn131k-shared-prefix` | `multi-turn` | Qwen3 YaRN 131K validation; cross-session prefix sharing |
 
 New workloads allow identical prefixes to be reused across conversations by

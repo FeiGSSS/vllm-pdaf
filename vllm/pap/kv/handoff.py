@@ -314,6 +314,7 @@ def publish_prefill_kv_session_manifest(
     writable_tail_tokens: int = 0,
     lease_id: str,
     generation: int = 0,
+    allocation_limit_token: int | None = None,
 ) -> int:
     """Atomically publish one request's sealed Prefill KV layout."""
 
@@ -374,6 +375,7 @@ def publish_prefill_kv_session_manifest(
         lease_capacity_tokens=planned_capacity,
         writable_start_token=prefix_len,
         writable_end_token=planned_capacity,
+        allocation_limit_token=allocation_limit_token,
         ready_event_handle=ready_event_handle,
         generation=generation,
     )

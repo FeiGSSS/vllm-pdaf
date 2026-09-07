@@ -29,6 +29,7 @@ def _connector() -> PAPPrefillConnector:
     connector._generations = {"prefill": 0}
     connector._decode_query_len = 1
     connector._pending_finished = set()
+    connector._control_finished = set()
     connector._publishers = {}
     return connector
 
@@ -128,6 +129,7 @@ def test_publisher_uses_connector_batch_rows(monkeypatch) -> None:
         kv_cache=torch.empty(1),
         block_size=16,
         allocated_block_ids_by_request={"prefill": (3, 4)},
+        decode_capacity_tokens_by_request={"prefill": 200},
         lease_ids_by_request={"prefill": "lease-1"},
         generations_by_request={"prefill": 0},
     )
@@ -135,6 +137,7 @@ def test_publisher_uses_connector_batch_rows(monkeypatch) -> None:
     assert captured["request_ids"] == ("decode", "prefill")
     assert captured["num_reqs"] == 2
     assert captured["block_table"] is metadata.block_table
+    assert captured["decode_capacity_tokens_by_request"] == {"prefill": 200}
 
 
 def test_connector_reports_finished_only_after_lease_release(monkeypatch) -> None:
@@ -217,3 +220,36 @@ def test_connector_rejects_non_abort_without_kv_lease(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="finished without a KV lease"):
         connector.request_finished(request, [])
+
+
+def test_control_reclamation_does_not_duplicate_worker_completion(monkeypatch):
+    connector = _connector()
+    monkeypatch.setattr(
+        "vllm.pap.kv_connector.pap_lease.pap_has_active_lease", lambda _: False
+    )
+    monkeypatch.setattr(
+        "vllm.pap.kv_connector.pap_lease.pap_was_recently_released", lambda _: True
+    )
+    assert connector.get_finished_for_control({"req"}, {"req"}) == {"req"}
+    assert connector.get_finished_for_control({"req"}, {"req"}) == set()
+    assert connector.get_finished({"req"}) == (None, None)
+
+
+def test_control_reclamation_leaves_unselected_requests_pending(monkeypatch):
+    connector = _connector()
+    connector._pending_finished.update({"selected", "other"})
+    monkeypatch.setattr(
+        "vllm.pap.kv_connector.pap_lease.pap_has_active_lease", lambda _: False
+    )
+    assert connector.get_finished_for_control(set(), {"selected"}) == {"selected"}
+    assert connector.get_finished(set()) == ({"other"}, None)
+
+
+def test_finished_worker_notification_removes_scheduler_ownership():
+    from vllm.v1.outputs import KVConnectorOutput
+
+    connector = _connector()
+    connector.update_connector_output(KVConnectorOutput(finished_sending={"prefill"}))
+    assert "prefill" not in connector._request_metadata
+    assert "prefill" not in connector._generations
+    assert "decode" in connector._request_metadata

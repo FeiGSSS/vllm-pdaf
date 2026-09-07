@@ -292,6 +292,8 @@ def test_commit_client_flush_request_waits_for_pending(monkeypatch):
     )
     client.commit(request_id="r", new_seq_len=10, new_token_ids=(1,))
     assert post_started.wait(timeout=1.0)
+    with pytest.raises(RuntimeError, match="final commit has not been submitted"):
+        client.final_commit_sequence("r")
 
     thread = Thread(
         target=lambda: flush_result.append(client.flush_request("r", timeout_s=1.0))
@@ -303,6 +305,7 @@ def test_commit_client_flush_request_waits_for_pending(monkeypatch):
     release_post.set()
     thread.join(timeout=1.0)
     assert flush_result == [True]
+    assert client.final_commit_sequence("r") == 1
 
 
 def test_commit_client_flushes_wrapped_targets_by_session(monkeypatch):
@@ -346,6 +349,7 @@ def test_commit_client_flushes_wrapped_targets_by_session(monkeypatch):
     assert flush_result == [True]
     assert posted[0]["request_id"] == "chatcmpl-session-a-turn-1"
     assert posted[0]["session_request_id"] == "session-a"
+    assert client.final_commit_sequence("session-a") == 1
 
 
 def test_commit_client_retries_until_ack(monkeypatch):
@@ -482,6 +486,7 @@ def test_lease_release_client_can_route_to_session_prefill(monkeypatch):
         request_id="pa3-request",
         lease_id="lease-pa3",
         endpoint=endpoint,
+        final_commit_seq=7,
     )
     assert posted == {
         "url": endpoint,
@@ -489,6 +494,7 @@ def test_lease_release_client_can_route_to_session_prefill(monkeypatch):
             "request_id": "pa3-request",
             "lease_id": "lease-pa3",
             "submit_only": True,
+            "final_commit_seq": 7,
         },
     }
 

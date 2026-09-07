@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "snapshots": [
+    {
+      "monotonic": 3878763.187075441,
+      "processes": "825074, [No data]\n"
+    },
+    {
+      "monotonic": 3878764.254340266,
+      "processes": ""
+    }
+  ]
+}

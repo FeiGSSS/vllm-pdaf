@@ -34,6 +34,18 @@ logging.basicConfig(
 )
 
 
+def _parse_hf_overrides(value: str) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        overrides = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise argparse.ArgumentTypeError("hf-overrides must be valid JSON") from exc
+    if not isinstance(overrides, dict):
+        raise argparse.ArgumentTypeError("hf-overrides must be a JSON object")
+    return overrides
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     args = app.state.args
@@ -60,7 +72,7 @@ async def lifespan(app: FastAPI):
         model=args.model,
         block_size=args.prefix_block_size,
         max_model_len=args.max_model_len,
-        hf_overrides=json.loads(args.hf_overrides),
+        hf_overrides=args.hf_overrides,
         generation_config=args.generation_config,
     )
     total_kv_blocks = args.dynamo_total_kv_blocks
@@ -188,7 +200,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-model-len", type=int)
     parser.add_argument(
         "--hf-overrides",
-        default=os.environ.get("PAP_HF_OVERRIDES", "{}"),
+        type=_parse_hf_overrides,
+        default=_parse_hf_overrides(os.environ.get("PAP_HF_OVERRIDES", "")),
     )
     parser.add_argument("--generation-config", default="vllm")
     parser.add_argument(

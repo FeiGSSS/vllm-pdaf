@@ -1,0 +1,368 @@
+{
+  "workload": {
+    "concurrency": 60,
+    "sessions": 60,
+    "turns": 3,
+    "requests_per_run": 180,
+    "input_sha256": "ece4ff1e413301990a84a1a4f43b7a65ae45b150c023a2f43e725c99ef7032c5",
+    "model": "Qwen3-8B FP16",
+    "max_model_len": 32768,
+    "GPUs": "8 x L20"
+  },
+  "architectures": {
+    "dp8": {
+      "runs": [
+        {
+          "run": "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/dp8_r1",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 3872.2266861944445,
+          "inter_token_latency_mean_ms": 145.3449240565882,
+          "client_span_s": 58.173678792,
+          "input_tokens": 3373085
+        },
+        {
+          "run": "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/dp8_r2",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 3772.544706122222,
+          "inter_token_latency_mean_ms": 143.39981893363,
+          "client_span_s": 55.444865955,
+          "input_tokens": 3373085
+        }
+      ],
+      "requests": 360,
+      "effective_config_differences_between_repetitions": {
+        "DYNAMO_FILE_KV": [
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/dp8_r1/discovery",
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/dp8_r2/discovery"
+        ],
+        "DYNAMO_NAMESPACE": [
+          "pap-aligned-dp8-r1-pap-aligned-baselines-an6e3tbl",
+          "pap-aligned-dp8-r2-pap-aligned-baselines-an6e3tbl"
+        ],
+        "NAMESPACE": [
+          "pap-aligned-dp8-r1-pap-aligned-baselines-an6e3tbl",
+          "pap-aligned-dp8-r2-pap-aligned-baselines-an6e3tbl"
+        ],
+        "DYNAMO_RUN_ID": [
+          "aligned_dp8_r1_pap-aligned-baselines.an6e3tbl",
+          "aligned_dp8_r2_pap-aligned-baselines.an6e3tbl"
+        ],
+        "DYNAMO_AIPERF_OUTPUT_DIR": [
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/dp8_r1/aiperf",
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/dp8_r2/aiperf"
+        ],
+        "DYNAMO_RUN_ROOT": [
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/dp8_r1",
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/dp8_r2"
+        ]
+      },
+      "time_to_first_token": {
+        "mean_ms": 3822.3856961583333,
+        "p50_ms": 2505.7985280000003,
+        "p95_ms": 12597.414321999999,
+        "per_run_mean_range_ms": [
+          3772.544706122222,
+          3872.2266861944445
+        ]
+      },
+      "inter_token_latency": {
+        "mean_ms": 144.37237149510912,
+        "p50_ms": 140.52633724218748,
+        "p95_ms": 264.8330876190476,
+        "per_run_mean_range_ms": [
+          143.39981893363,
+          145.3449240565882
+        ]
+      },
+      "ttft_by_turn_ms": {
+        "0": 7188.840885658333,
+        "1": 2090.453052275,
+        "2": 2187.8631505416665
+      },
+      "pap_relative_change_percent": {
+        "time_to_first_token": 280.32459324100836,
+        "inter_token_latency": -69.85282140350776
+      }
+    },
+    "6p2d": {
+      "runs": [
+        {
+          "run": "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/6p2d_r1",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 14575.994785588888,
+          "inter_token_latency_mean_ms": 47.53806087557177,
+          "client_span_s": 74.162272578,
+          "input_tokens": 3373085
+        },
+        {
+          "run": "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/6p2d_r2",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 15592.893811883332,
+          "inter_token_latency_mean_ms": 44.26930401395195,
+          "client_span_s": 82.264219601,
+          "input_tokens": 3373085
+        }
+      ],
+      "requests": 360,
+      "effective_config_differences_between_repetitions": {
+        "DYNAMO_FILE_KV": [
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/6p2d_r1/discovery",
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/6p2d_r2/discovery"
+        ],
+        "DYNAMO_NAMESPACE": [
+          "pap-aligned-6p2d-r1-pap-aligned-baselines-an6e3tbl",
+          "pap-aligned-6p2d-r2-pap-aligned-baselines-an6e3tbl"
+        ],
+        "NAMESPACE": [
+          "pap-aligned-6p2d-r1-pap-aligned-baselines-an6e3tbl",
+          "pap-aligned-6p2d-r2-pap-aligned-baselines-an6e3tbl"
+        ],
+        "DYNAMO_RUN_ID": [
+          "aligned_6p2d_r1_pap-aligned-baselines.an6e3tbl",
+          "aligned_6p2d_r2_pap-aligned-baselines.an6e3tbl"
+        ],
+        "DYNAMO_AIPERF_OUTPUT_DIR": [
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/6p2d_r1/aiperf",
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/6p2d_r2/aiperf"
+        ],
+        "DYNAMO_RUN_ROOT": [
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/6p2d_r1",
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/6p2d_r2"
+        ]
+      },
+      "time_to_first_token": {
+        "mean_ms": 15084.44429873611,
+        "p50_ms": 16075.689159999998,
+        "p95_ms": 23533.547968,
+        "per_run_mean_range_ms": [
+          14575.994785588888,
+          15592.893811883332
+        ]
+      },
+      "inter_token_latency": {
+        "mean_ms": 45.90368244476186,
+        "p50_ms": 44.76172238463444,
+        "p95_ms": 68.89582771794872,
+        "per_run_mean_range_ms": [
+          44.26930401395195,
+          47.53806087557177
+        ]
+      },
+      "ttft_by_turn_ms": {
+        "0": 9522.093812258332,
+        "1": 16666.1789332,
+        "2": 19065.06015075
+      },
+      "pap_relative_change_percent": {
+        "time_to_first_token": -3.6260629618637963,
+        "inter_token_latency": -5.183648978496247
+      }
+    },
+    "4p4d": {
+      "runs": [
+        {
+          "run": "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/4p4d_r1",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 30414.76206838889,
+          "inter_token_latency_mean_ms": 26.378740689161756,
+          "client_span_s": 138.163810593,
+          "input_tokens": 3373085
+        },
+        {
+          "run": "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/4p4d_r2",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 29852.405406894442,
+          "inter_token_latency_mean_ms": 26.35643511905223,
+          "client_span_s": 138.06247005,
+          "input_tokens": 3373085
+        }
+      ],
+      "requests": 360,
+      "effective_config_differences_between_repetitions": {
+        "DYNAMO_FILE_KV": [
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/4p4d_r1/discovery",
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/4p4d_r2/discovery"
+        ],
+        "DYNAMO_NAMESPACE": [
+          "pap-aligned-4p4d-r1-pap-aligned-baselines-an6e3tbl",
+          "pap-aligned-4p4d-r2-pap-aligned-baselines-an6e3tbl"
+        ],
+        "NAMESPACE": [
+          "pap-aligned-4p4d-r1-pap-aligned-baselines-an6e3tbl",
+          "pap-aligned-4p4d-r2-pap-aligned-baselines-an6e3tbl"
+        ],
+        "DYNAMO_RUN_ID": [
+          "aligned_4p4d_r1_pap-aligned-baselines.an6e3tbl",
+          "aligned_4p4d_r2_pap-aligned-baselines.an6e3tbl"
+        ],
+        "DYNAMO_AIPERF_OUTPUT_DIR": [
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/4p4d_r1/aiperf",
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/4p4d_r2/aiperf"
+        ],
+        "DYNAMO_RUN_ROOT": [
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/4p4d_r1",
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/4p4d_r2"
+        ]
+      },
+      "time_to_first_token": {
+        "mean_ms": 30133.583737641664,
+        "p50_ms": 26722.707019,
+        "p95_ms": 61934.875724,
+        "per_run_mean_range_ms": [
+          29852.405406894442,
+          30414.76206838889
+        ]
+      },
+      "inter_token_latency": {
+        "mean_ms": 26.367587904106994,
+        "p50_ms": 26.204037072005676,
+        "p95_ms": 29.758574954545452,
+        "per_run_mean_range_ms": [
+          26.35643511905223,
+          26.378740689161756
+        ]
+      },
+      "ttft_by_turn_ms": {
+        "0": 12679.697807733333,
+        "1": 27636.689325866664,
+        "2": 50084.364079324994
+      },
+      "pap_relative_change_percent": {
+        "time_to_first_token": -51.75657506393095,
+        "inter_token_latency": 65.06703926392339
+      }
+    },
+    "2p6d": {
+      "runs": [
+        {
+          "run": "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/2p6d_r1",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 65397.67171437777,
+          "inter_token_latency_mean_ms": 25.111351221564263,
+          "client_span_s": 277.469169217,
+          "input_tokens": 3373085
+        },
+        {
+          "run": "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/2p6d_r2",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 65488.82438212222,
+          "inter_token_latency_mean_ms": 25.114217629849662,
+          "client_span_s": 273.405196628,
+          "input_tokens": 3373085
+        }
+      ],
+      "requests": 360,
+      "effective_config_differences_between_repetitions": {
+        "DYNAMO_FILE_KV": [
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/2p6d_r1/discovery",
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/2p6d_r2/discovery"
+        ],
+        "DYNAMO_NAMESPACE": [
+          "pap-aligned-2p6d-r1-pap-aligned-baselines-an6e3tbl",
+          "pap-aligned-2p6d-r2-pap-aligned-baselines-an6e3tbl"
+        ],
+        "NAMESPACE": [
+          "pap-aligned-2p6d-r1-pap-aligned-baselines-an6e3tbl",
+          "pap-aligned-2p6d-r2-pap-aligned-baselines-an6e3tbl"
+        ],
+        "DYNAMO_RUN_ID": [
+          "aligned_2p6d_r1_pap-aligned-baselines.an6e3tbl",
+          "aligned_2p6d_r2_pap-aligned-baselines.an6e3tbl"
+        ],
+        "DYNAMO_AIPERF_OUTPUT_DIR": [
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/2p6d_r1/aiperf",
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/2p6d_r2/aiperf"
+        ],
+        "DYNAMO_RUN_ROOT": [
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/2p6d_r1",
+          "/tmp/pap-aligned-baselines.an6e3tbl/runs_aligned/2p6d_r2"
+        ]
+      },
+      "time_to_first_token": {
+        "mean_ms": 65443.248048249996,
+        "p50_ms": 64954.669173999995,
+        "p95_ms": 123998.824488,
+        "per_run_mean_range_ms": [
+          65397.67171437777,
+          65488.82438212222
+        ]
+      },
+      "inter_token_latency": {
+        "mean_ms": 25.112784425706963,
+        "p50_ms": 24.96936462568306,
+        "p95_ms": 27.22041925,
+        "per_run_mean_range_ms": [
+          25.111351221564263,
+          25.114217629849662
+        ]
+      },
+      "ttft_by_turn_ms": {
+        "0": 22332.315166775,
+        "1": 65548.199344325,
+        "2": 108449.22963365
+      },
+      "pap_relative_change_percent": {
+        "time_to_first_token": -77.7861379369519,
+        "inter_token_latency": 73.31489786559793
+      }
+    },
+    "pap7pa1p": {
+      "runs": [
+        {
+          "run": "/tmp/pap-aligned-baselines.an6e3tbl/pap_clean/run_pap1",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 13650.742542288888,
+          "inter_token_latency_mean_ms": 44.367650667461554,
+          "client_span_s": 68.539426936,
+          "input_tokens": 3372042
+        },
+        {
+          "run": "/tmp/pap-aligned-baselines.an6e3tbl/pap_clean/run_pap2",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 15424.203159744444,
+          "inter_token_latency_mean_ms": 42.680742689782065,
+          "client_span_s": 69.028464103,
+          "input_tokens": 3372200
+        }
+      ],
+      "requests": 360,
+      "effective_config_differences_between_repetitions": {
+        "RUN_ROOT": [
+          "/tmp/pap-aligned-baselines.an6e3tbl/pap_clean/run_pap1",
+          "/tmp/pap-aligned-baselines.an6e3tbl/pap_clean/run_pap2"
+        ],
+        "RUN_LOG_DIR": [
+          "/tmp/pap-aligned-baselines.an6e3tbl/pap_clean/run_pap1/service_logs",
+          "/tmp/pap-aligned-baselines.an6e3tbl/pap_clean/run_pap2/service_logs"
+        ],
+        "PAP_AIPERF_OUTPUT_DIR": [
+          "/tmp/pap-aligned-baselines.an6e3tbl/pap_clean/run_pap1/aiperf",
+          "/tmp/pap-aligned-baselines.an6e3tbl/pap_clean/run_pap2/aiperf"
+        ]
+      },
+      "time_to_first_token": {
+        "mean_ms": 14537.472851016666,
+        "p50_ms": 14757.8232335,
+        "p95_ms": 19941.943036,
+        "per_run_mean_range_ms": [
+          13650.742542288888,
+          15424.203159744444
+        ]
+      },
+      "inter_token_latency": {
+        "mean_ms": 43.524196678621806,
+        "p50_ms": 41.507178135931085,
+        "p95_ms": 56.03275686885246,
+        "per_run_mean_range_ms": [
+          42.680742689782065,
+          44.367650667461554
+        ]
+      },
+      "ttft_by_turn_ms": {
+        "0": 13356.302006925,
+        "1": 14496.373683866666,
+        "2": 15759.742862258332
+      }
+    }
+  }
+}

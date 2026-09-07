@@ -231,6 +231,9 @@ def test_request_decode_capacity_overrides_environment_fallback() -> None:
 
     assert scheduler.decode_capacity_tokens(request) == 24
 
+    request.kv_transfer_params["pap_decode_capacity_tokens"] = 96
+    assert scheduler.decode_capacity_tokens(request) == 64
+
     request.kv_transfer_params.pop("pap_decode_capacity_tokens")
     assert scheduler.decode_capacity_tokens(request) == 64
 

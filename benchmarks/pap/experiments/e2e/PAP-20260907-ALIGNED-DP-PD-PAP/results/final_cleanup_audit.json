@@ -1,0 +1,6 @@
+{
+  "status": "passed",
+  "remaining_gpu_processes": "",
+  "remaining_task_service_processes": [],
+  "gpu_snapshot": "0, GPU-5954ae35-b1fa-1499-e9f2-634b5517efa6, 14\n1, GPU-d294c5ad-3496-1070-41cb-9335ba425fd1, 14\n2, GPU-e871a501-689a-7d7a-170c-f668c4e45d2f, 14\n3, GPU-e9dd15ab-ba98-f70a-f2a7-0cbdeae2f2d2, 14\n4, GPU-4fe93088-5e0f-cc87-943b-a90c911e9e08, 14\n5, GPU-e4c3f6ad-8480-29f5-43e8-3005b438e7ca, 14\n6, GPU-74f526f4-279f-8f17-b0e4-a970f3c45053, 14\n7, GPU-b32cb611-8b14-2647-aacc-1e15f28e49dd, 14\n"
+}

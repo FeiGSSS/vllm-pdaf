@@ -25,13 +25,23 @@ def _install_engine_control() -> None:
     def pap_control(
         engine_core: Any, operation: str, payload: dict[str, Any]
     ) -> dict[str, Any]:
-        from vllm.pap.integration.engine import PAPEngineControl
+        from vllm.pap.integration.engine import PAPEngineAdapter, PAPEngineControl
 
         control = getattr(engine_core, "_pap_engine_control", None)
         if control is None:
             control = PAPEngineControl(engine_core.scheduler)
             engine_core._pap_engine_control = control
-        return control.apply(operation, payload)
+        result = control.apply(operation, payload)
+        if (
+            operation == "lease_release"
+            and payload.get("final_commit_seq") is not None
+            and result.get("released")
+        ):
+            reclaimed = PAPEngineAdapter.reclaim_released_requests(
+                engine_core, {result["request_id"]}
+            )
+            result["allocator_reclaimed"] = result["request_id"] in reclaimed
+        return result
 
     type.__setattr__(EngineCore, "pap_control", pap_control)
 

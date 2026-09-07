@@ -16,6 +16,7 @@ MODEL_PATH="${MODEL_PATH:-/data/ssd1/llm-models/Qwen3-8B}"
 
 ARCHITECTURE="${DYNAMO_ARCHITECTURE:-dp8}"
 ROUTER_MODE="${DYNAMO_ROUTER_MODE:-kv}"
+ROUTER_PREFILL_LOAD_SCALE="${DYNAMO_ROUTER_PREFILL_LOAD_SCALE:-1.0}"
 DISCOVERY_BACKEND="${DYNAMO_DISCOVERY_BACKEND:-etcd}"
 START_ETCD="${DYNAMO_START_ETCD:-1}"
 SMOKE_ONLY="${DYNAMO_SMOKE_ONLY:-0}"
@@ -29,6 +30,11 @@ fi
 AGG_MAX_NUM_BATCHED_TOKENS="${DYNAMO_AGG_MAX_NUM_BATCHED_TOKENS:-32768}"
 PREFILL_MAX_NUM_BATCHED_TOKENS="${DYNAMO_PREFILL_MAX_NUM_BATCHED_TOKENS:-2048}"
 DECODE_MAX_NUM_BATCHED_TOKENS="${DYNAMO_DECODE_MAX_NUM_BATCHED_TOKENS:-2048}"
+AGG_ASYNC_SCHEDULING="${DYNAMO_AGG_ASYNC_SCHEDULING:-auto}"
+PREFILL_ASYNC_SCHEDULING="${DYNAMO_PREFILL_ASYNC_SCHEDULING:-auto}"
+DECODE_ASYNC_SCHEDULING="${DYNAMO_DECODE_ASYNC_SCHEDULING:-auto}"
+CLUSTER_READY_WAIT_SECONDS="${DYNAMO_CLUSTER_READY_WAIT_SECONDS:-30}"
+USE_V2_MODEL_RUNNER="${DYNAMO_USE_V2_MODEL_RUNNER:-auto}"
 MAX_NUM_SEQS="${DYNAMO_MAX_NUM_SEQS:-256}"
 GPU_MEMORY_UTILIZATION="${DYNAMO_GPU_MEMORY_UTILIZATION:-0.90}"
 BLOCK_SIZE="${DYNAMO_BLOCK_SIZE:-16}"
@@ -69,6 +75,24 @@ die() {
   echo "ERROR: $*" >&2
   exit 2
 }
+
+for scheduling in "${AGG_ASYNC_SCHEDULING}" "${PREFILL_ASYNC_SCHEDULING}" \
+  "${DECODE_ASYNC_SCHEDULING}"; do
+  case "${scheduling}" in
+    auto | on | off) ;;
+    *) die "Dynamo async scheduling must be auto, on, or off" ;;
+  esac
+done
+[[ "${CLUSTER_READY_WAIT_SECONDS}" =~ ^[0-9]+$ ]] \
+  || die "DYNAMO_CLUSTER_READY_WAIT_SECONDS must be a nonnegative integer"
+case "${USE_V2_MODEL_RUNNER}" in
+  auto | 0 | 1) ;;
+  *) die "DYNAMO_USE_V2_MODEL_RUNNER must be auto, 0, or 1" ;;
+esac
+[[ "${NAMESPACE}" =~ ^[a-zA-Z0-9_-]+$ ]] \
+  || die "DYNAMO_NAMESPACE must contain only letters, digits, underscores, or hyphens"
+[[ "${ROUTER_PREFILL_LOAD_SCALE}" =~ ^[0-9]+([.][0-9]+)?$ ]] \
+  || die "DYNAMO_ROUTER_PREFILL_LOAD_SCALE must be a nonnegative number"
 
 case "${ARCHITECTURE}" in
   dp8)
@@ -157,6 +181,10 @@ AIPERF_INPUT_SHA256=not_applicable
 if [[ -f "${AIPERF_INPUT_FILE}" ]]; then
   AIPERF_INPUT_SHA256="$(sha256sum "${AIPERF_INPUT_FILE}" | awk '{print $1}')"
 fi
+if [[ -n "${DYNAMO_AIPERF_INPUT_SHA256:-}" ]]; then
+  [[ "${AIPERF_INPUT_SHA256}" == "${DYNAMO_AIPERF_INPUT_SHA256}" ]] \
+    || die "Dynamo replay dataset checksum mismatch"
+fi
 
 HOST_IP="${DYNAMO_HOST_IP:-$(hostname -I | awk '{print $1}')}"
 [[ -n "${HOST_IP}" ]] || die "failed to resolve the local host IP"
@@ -201,8 +229,8 @@ ensure_gpus_idle() {
   for (( gpu=0; gpu<GPU_COUNT; gpu++ )); do
     processes="$(
       nvidia-smi -i "${gpu}" --query-compute-apps=pid \
-        --format=csv,noheader,nounits 2>/dev/null || true
-    )"
+        --format=csv,noheader,nounits
+    )" || die "failed to inspect GPU ${gpu}"
     [[ -z "${processes//[[:space:]]/}" ]] \
       || die "GPU ${gpu} is occupied by ${processes//$'\n'/,}"
   done
@@ -286,7 +314,7 @@ unset PROMETHEUS_MULTIPROC_DIR
 git status --short > "${RUN_ROOT}/git_status.txt"
 git diff --binary > "${RUN_ROOT}/tracked_worktree.patch"
 git diff --cached --binary > "${RUN_ROOT}/tracked_index.patch"
-"${DYNAMO_PYTHON}" -P -m pip freeze > "${RUN_ROOT}/python_packages.txt"
+uv pip freeze --python "${DYNAMO_PYTHON}" > "${RUN_ROOT}/python_packages.txt"
 {
   printf 'MODE=dynamo\nARCHITECTURE=%q\n' "${ARCHITECTURE}"
   printf 'AGG_COUNT=%q\nPREFILL_COUNT=%q\nDECODE_COUNT=%q\n' \
@@ -345,6 +373,29 @@ git diff --cached --binary > "${RUN_ROOT}/tracked_index.patch"
     "${AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS}"
   printf 'AIPERF_INPUT_SHA256=%q\n' "${AIPERF_INPUT_SHA256}"
   printf 'GIT_COMMIT=%q\n' "$(git rev-parse HEAD)"
+  # These are the names consumed by the launcher when replaying this file.
+  for setting in \
+    ARCHITECTURE ROUTER_MODE ROUTER_PREFILL_LOAD_SCALE \
+    DISCOVERY_BACKEND START_ETCD SMOKE_ONLY \
+    MAX_MODEL_LEN HF_OVERRIDES AGG_MAX_NUM_BATCHED_TOKENS \
+    PREFILL_MAX_NUM_BATCHED_TOKENS DECODE_MAX_NUM_BATCHED_TOKENS \
+    AGG_ASYNC_SCHEDULING PREFILL_ASYNC_SCHEDULING DECODE_ASYNC_SCHEDULING \
+    CLUSTER_READY_WAIT_SECONDS USE_V2_MODEL_RUNNER \
+    MAX_NUM_SEQS GPU_MEMORY_UTILIZATION BLOCK_SIZE \
+    MIN_KV_TRANSFER_MB_S AGG_CUDAGRAPH_CAPTURE_SIZES \
+    PREFILL_CUDAGRAPH_CAPTURE_SIZES DECODE_CUDAGRAPH_CAPTURE_SIZES \
+    RUN_ID RUN_ROOT FRONTEND_PORT SYSTEM_PORT_BASE NIXL_PORT_BASE \
+    KV_EVENT_PORT_BASE VLLM_PORT_BASE ETCD_PORT ETCD_BIN FILE_KV NAMESPACE \
+    HOST_IP AIPERF_INPUT_FILE AIPERF_OUTPUT_DIR AIPERF_SESSIONS \
+    AIPERF_CONCURRENCY AIPERF_TIMING_MODE AIPERF_REQUEST_RATE \
+    AIPERF_ARRIVAL_PATTERN AIPERF_CUSTOM_DATASET_TYPE AIPERF_EXPECTED_REQUESTS \
+    AIPERF_REQUEST_TIMEOUT_SECONDS AIPERF_WARMUP_DURATION_SECONDS \
+    AIPERF_BENCHMARK_DURATION_SECONDS AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS \
+    AIPERF_INPUT_SHA256; do
+    printf 'DYNAMO_%s=%q\n' "${setting}" "${!setting}"
+  done
+  printf 'DYNAMO_PYTHON=%q\nPAP_PYTHON=%q\n' \
+    "${DYNAMO_PYTHON}" "${PAP_PYTHON}"
 } > "${RUN_ROOT}/effective_config.env"
 
 COMMON_ENV=(
@@ -362,6 +413,9 @@ COMMON_ENV=(
   HF_HUB_OFFLINE=1
   TRANSFORMERS_OFFLINE=1
 )
+if [[ "${USE_V2_MODEL_RUNNER}" != auto ]]; then
+  COMMON_ENV+=(VLLM_USE_V2_MODEL_RUNNER="${USE_V2_MODEL_RUNNER}")
+fi
 if (( PREFILL_COUNT > 0 )); then
   COMMON_ENV+=(
     NIXL_PLUGIN_DIR="${NIXL_PLUGIN_DIR}"
@@ -386,6 +440,18 @@ PREFILL_EXECUTION_ARGS=(
 DECODE_EXECUTION_ARGS=(
   --compilation-config "${DECODE_COMPILATION_CONFIG}"
 )
+case "${AGG_ASYNC_SCHEDULING}" in
+  on) AGG_EXECUTION_ARGS+=(--async-scheduling) ;;
+  off) AGG_EXECUTION_ARGS+=(--no-async-scheduling) ;;
+esac
+case "${PREFILL_ASYNC_SCHEDULING}" in
+  on) PREFILL_EXECUTION_ARGS+=(--async-scheduling) ;;
+  off) PREFILL_EXECUTION_ARGS+=(--no-async-scheduling) ;;
+esac
+case "${DECODE_ASYNC_SCHEDULING}" in
+  on) DECODE_EXECUTION_ARGS+=(--async-scheduling) ;;
+  off) DECODE_EXECUTION_ARGS+=(--no-async-scheduling) ;;
+esac
 if [[ -n "${HF_OVERRIDES}" ]]; then
   AGG_EXECUTION_ARGS+=(--hf-overrides "${HF_OVERRIDES}")
   PREFILL_EXECUTION_ARGS+=(--hf-overrides "${HF_OVERRIDES}")
@@ -397,6 +463,7 @@ FRONTEND_ARGS=(
   --request-plane tcp
   --event-plane zmq
   --router-mode "${ROUTER_MODE}"
+  --router-prefill-load-scale "${ROUTER_PREFILL_LOAD_SCALE}"
   --router-min-initial-workers "${ROUTABLE_COUNT}"
   --kv-cache-block-size "${BLOCK_SIZE}"
   --http-port "${FRONTEND_PORT}"
@@ -527,6 +594,7 @@ for (( index=0; index<PREFILL_COUNT; index++ )); do
 done
 "${CUDA_GRAPH_AUDITOR}" "${RUN_ROOT}/vllm_cuda_graph_audit.env" \
   PIECEWISE "${DYNAMO_VLLM_GRAPH_LOGS[@]}"
+sleep "${CLUSTER_READY_WAIT_SECONDS}"
 
 if (( SMOKE_ONLY == 1 )); then
   jq -n --arg model "${MODEL_PATH}" \
@@ -575,11 +643,18 @@ else
   fi
 fi
 
-if rg -n -i \
+if rg --no-ignore -n -i \
   'CUDA out of memory|EngineDeadError|Traceback|NIXL_ERR|NixlConnector.*failed' \
   "${LOG_ROOT}" > "${RUN_ROOT}/correctness_audit_matches.log"; then
   printf 'STATUS=failed\n' > "${RUN_ROOT}/correctness_audit.env"
   die "Dynamo correctness audit failed"
+else
+  scan_status=$?
+  if (( scan_status != 1 )); then
+    printf 'STATUS=failed\nREASON=log_scan_failed\n' \
+      > "${RUN_ROOT}/correctness_audit.env"
+    die "Dynamo correctness log scan failed"
+  fi
 fi
 : > "${RUN_ROOT}/correctness_audit_matches.log"
 printf 'STATUS=passed\nMATCH_COUNT=0\n' \
@@ -590,14 +665,28 @@ if (( SMOKE_ONLY == 0 && PREFILL_COUNT > 0 )); then
     "${RUN_ROOT}" --block-size "${BLOCK_SIZE}" \
     --output "${RUN_ROOT}/dynamo_ttft_analysis.json"
   if ! jq -e --argjson minimum "${MIN_KV_TRANSFER_MB_S}" \
-    '.kv_transfer.aggregate_throughput_mb_s >= $minimum' \
+    '.kv_transfer.throughput_mb_s.p90 >= $minimum' \
     "${RUN_ROOT}/dynamo_ttft_analysis.json" >/dev/null; then
-    printf 'STATUS=failed\nMINIMUM_MB_S=%q\n' \
-      "${MIN_KV_TRANSFER_MB_S}" > "${RUN_ROOT}/kv_transfer_audit.env"
+    observed="$(jq -r \
+      '.kv_transfer.throughput_mb_s.p90 // "missing"' \
+      "${RUN_ROOT}/dynamo_ttft_analysis.json")"
+    printf 'STATUS=failed\nMETRIC=%q\nMINIMUM_MB_S=%q\nOBSERVED_MB_S=%q\n' \
+      least_contended_window_p90 "${MIN_KV_TRANSFER_MB_S}" "${observed}" \
+      > "${RUN_ROOT}/kv_transfer_audit.env"
     die "Dynamo KV transfer throughput failed the same-node floor"
   fi
-  printf 'STATUS=passed\nMINIMUM_MB_S=%q\n' \
-    "${MIN_KV_TRANSFER_MB_S}" > "${RUN_ROOT}/kv_transfer_audit.env"
+  observed="$(jq -r \
+    '.kv_transfer.throughput_mb_s.p90' \
+    "${RUN_ROOT}/dynamo_ttft_analysis.json")"
+  aggregate="$(jq -r '.kv_transfer.aggregate_throughput_mb_s' \
+    "${RUN_ROOT}/dynamo_ttft_analysis.json")"
+  printf '%s\n' \
+    'STATUS=passed' \
+    'METRIC=least_contended_window_p90' \
+    "MINIMUM_MB_S=${MIN_KV_TRANSFER_MB_S}" \
+    "OBSERVED_MB_S=${observed}" \
+    "CONTENTION_WEIGHTED_MB_S=${aggregate}" \
+    > "${RUN_ROOT}/kv_transfer_audit.env"
 elif [[ "${ARCHITECTURE}" == "dp8" ]]; then
   printf 'STATUS=not_applicable\nREASON=aggregated_workers_have_no_kv_transfer\n' \
     > "${RUN_ROOT}/kv_transfer_audit.env"

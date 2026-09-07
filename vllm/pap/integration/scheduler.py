@@ -168,13 +168,14 @@ class PAPSchedulerAdapter:
         return state
 
     def decode_capacity_tokens(self, request: _SchedulerRequest) -> int:
-        """Return the local decode reservation for unified Prefill KV."""
+        """Return the bounded initial Decode runway allocated by Prefill."""
         metadata = PAPRequestMetadata.from_mapping(request.kv_transfer_params)
         if not metadata.import_prefill_kv_to_attention:
             return 0
-        if metadata.decode_capacity_tokens is not None:
-            return metadata.decode_capacity_tokens
-        return self.settings.unified_kv_decode_capacity_tokens
+        requested = metadata.decode_capacity_tokens
+        if requested is None:
+            requested = self.settings.unified_kv_decode_capacity_tokens
+        return min(requested, self.settings.unified_kv_decode_capacity_tokens)
 
     @staticmethod
     def build_connector_metadata(connector: Any, output: Any, kv_manager: Any) -> Any:

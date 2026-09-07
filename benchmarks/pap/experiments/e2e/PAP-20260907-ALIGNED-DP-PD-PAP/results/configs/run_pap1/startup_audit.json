@@ -1,0 +1,147 @@
+{
+  "status": "passed",
+  "gpu_contexts": [
+    {
+      "cuda_mps_pipe_directory": "/tmp/pap-mps-fei-7pa1p-963954/pa-0",
+      "cuda_mps_sm_partition": "GPU-5954ae35-b1fa-1499-e9f2-634b5517efa6/AAAAQZIgAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "device_index": 0,
+      "device_name": "NVIDIA L20",
+      "device_uuid": "GPU-5954ae35-b1fa-1499-e9f2-634b5517efa6",
+      "multiprocessor_count": 12,
+      "pid": 965862,
+      "role": "attention"
+    },
+    {
+      "cuda_mps_pipe_directory": "/tmp/pap-mps-fei-7pa1p-963954/pa-1",
+      "cuda_mps_sm_partition": "GPU-d294c5ad-3496-1070-41cb-9335ba425fd1/AAAAQZIgAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "device_index": 0,
+      "device_name": "NVIDIA L20",
+      "device_uuid": "GPU-d294c5ad-3496-1070-41cb-9335ba425fd1",
+      "multiprocessor_count": 12,
+      "pid": 965863,
+      "role": "attention"
+    },
+    {
+      "cuda_mps_pipe_directory": "/tmp/pap-mps-fei-7pa1p-963954/pa-2",
+      "cuda_mps_sm_partition": "GPU-e871a501-689a-7d7a-170c-f668c4e45d2f/AAAAQZIgAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "device_index": 0,
+      "device_name": "NVIDIA L20",
+      "device_uuid": "GPU-e871a501-689a-7d7a-170c-f668c4e45d2f",
+      "multiprocessor_count": 12,
+      "pid": 965864,
+      "role": "attention"
+    },
+    {
+      "cuda_mps_pipe_directory": "/tmp/pap-mps-fei-7pa1p-963954/pa-3",
+      "cuda_mps_sm_partition": "GPU-e9dd15ab-ba98-f70a-f2a7-0cbdeae2f2d2/AAAAQZIgAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "device_index": 0,
+      "device_name": "NVIDIA L20",
+      "device_uuid": "GPU-e9dd15ab-ba98-f70a-f2a7-0cbdeae2f2d2",
+      "multiprocessor_count": 12,
+      "pid": 965866,
+      "role": "attention"
+    },
+    {
+      "cuda_mps_pipe_directory": "/tmp/pap-mps-fei-7pa1p-963954/pa-4",
+      "cuda_mps_sm_partition": "GPU-4fe93088-5e0f-cc87-943b-a90c911e9e08/AAAAQZIgAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "device_index": 0,
+      "device_name": "NVIDIA L20",
+      "device_uuid": "GPU-4fe93088-5e0f-cc87-943b-a90c911e9e08",
+      "multiprocessor_count": 12,
+      "pid": 965869,
+      "role": "attention"
+    },
+    {
+      "cuda_mps_pipe_directory": "/tmp/pap-mps-fei-7pa1p-963954/pa-5",
+      "cuda_mps_sm_partition": "GPU-e4c3f6ad-8480-29f5-43e8-3005b438e7ca/AAAAQZIgAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "device_index": 0,
+      "device_name": "NVIDIA L20",
+      "device_uuid": "GPU-e4c3f6ad-8480-29f5-43e8-3005b438e7ca",
+      "multiprocessor_count": 12,
+      "pid": 965871,
+      "role": "attention"
+    },
+    {
+      "cuda_mps_pipe_directory": "/tmp/pap-mps-fei-7pa1p-963954/pa-6",
+      "cuda_mps_sm_partition": "GPU-74f526f4-279f-8f17-b0e4-a970f3c45053/AAAAQZIgAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "device_index": 0,
+      "device_name": "NVIDIA L20",
+      "device_uuid": "GPU-74f526f4-279f-8f17-b0e4-a970f3c45053",
+      "multiprocessor_count": 12,
+      "pid": 965872,
+      "role": "attention"
+    },
+    {
+      "cuda_mps_pipe_directory": "/tmp/pap-mps-fei-7pa1p-963954/pa-0",
+      "cuda_mps_sm_partition": "GPU-5954ae35-b1fa-1499-e9f2-634b5517efa6/////vm0fAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "device_index": 0,
+      "device_name": "NVIDIA L20",
+      "device_uuid": "GPU-5954ae35-b1fa-1499-e9f2-634b5517efa6",
+      "multiprocessor_count": 80,
+      "pid": 968146,
+      "role": "prefill"
+    },
+    {
+      "cuda_mps_pipe_directory": "/tmp/pap-mps-fei-7pa1p-963954/pa-1",
+      "cuda_mps_sm_partition": "GPU-d294c5ad-3496-1070-41cb-9335ba425fd1/////vm0fAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "device_index": 0,
+      "device_name": "NVIDIA L20",
+      "device_uuid": "GPU-d294c5ad-3496-1070-41cb-9335ba425fd1",
+      "multiprocessor_count": 80,
+      "pid": 968132,
+      "role": "prefill"
+    },
+    {
+      "cuda_mps_pipe_directory": "/tmp/pap-mps-fei-7pa1p-963954/pa-2",
+      "cuda_mps_sm_partition": "GPU-e871a501-689a-7d7a-170c-f668c4e45d2f/////vm0fAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "device_index": 0,
+      "device_name": "NVIDIA L20",
+      "device_uuid": "GPU-e871a501-689a-7d7a-170c-f668c4e45d2f",
+      "multiprocessor_count": 80,
+      "pid": 968139,
+      "role": "prefill"
+    },
+    {
+      "cuda_mps_pipe_directory": "/tmp/pap-mps-fei-7pa1p-963954/pa-3",
+      "cuda_mps_sm_partition": "GPU-e9dd15ab-ba98-f70a-f2a7-0cbdeae2f2d2/////vm0fAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "device_index": 0,
+      "device_name": "NVIDIA L20",
+      "device_uuid": "GPU-e9dd15ab-ba98-f70a-f2a7-0cbdeae2f2d2",
+      "multiprocessor_count": 80,
+      "pid": 968104,
+      "role": "prefill"
+    },
+    {
+      "cuda_mps_pipe_directory": "/tmp/pap-mps-fei-7pa1p-963954/pa-4",
+      "cuda_mps_sm_partition": "GPU-4fe93088-5e0f-cc87-943b-a90c911e9e08/////vm0fAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "device_index": 0,
+      "device_name": "NVIDIA L20",
+      "device_uuid": "GPU-4fe93088-5e0f-cc87-943b-a90c911e9e08",
+      "multiprocessor_count": 80,
+      "pid": 968124,
+      "role": "prefill"
+    },
+    {
+      "cuda_mps_pipe_directory": "/tmp/pap-mps-fei-7pa1p-963954/pa-5",
+      "cuda_mps_sm_partition": "GPU-e4c3f6ad-8480-29f5-43e8-3005b438e7ca/////vm0fAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "device_index": 0,
+      "device_name": "NVIDIA L20",
+      "device_uuid": "GPU-e4c3f6ad-8480-29f5-43e8-3005b438e7ca",
+      "multiprocessor_count": 80,
+      "pid": 968125,
+      "role": "prefill"
+    },
+    {
+      "cuda_mps_pipe_directory": "/tmp/pap-mps-fei-7pa1p-963954/pa-6",
+      "cuda_mps_sm_partition": "GPU-74f526f4-279f-8f17-b0e4-a970f3c45053/////vm0fAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "device_index": 0,
+      "device_name": "NVIDIA L20",
+      "device_uuid": "GPU-74f526f4-279f-8f17-b0e4-a970f3c45053",
+      "multiprocessor_count": 80,
+      "pid": 968097,
+      "role": "prefill"
+    }
+  ],
+  "engine_count": 8,
+  "attention_count": 7
+}

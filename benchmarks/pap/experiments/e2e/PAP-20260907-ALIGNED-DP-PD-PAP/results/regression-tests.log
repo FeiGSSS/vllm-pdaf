@@ -1,0 +1,35 @@
+........................................................................ [ 45%]
+........................................................................ [ 91%]
+.............                                                            [100%]
+=============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:1061: 4 warnings
+tests/pap/contract/test_engine_control.py: 13 warnings
+tests/pap/contract/test_prefill_connector.py: 12 warnings
+tests/pap/contract/test_projection_scheduler.py: 6 warnings
+tests/pap/contract/test_vllm_integration.py: 24 warnings
+tests/pap/test_async_decode_token.py: 14 warnings
+tests/pap/test_decode_commit.py: 26 warnings
+tests/pap/test_pap_gateway_app.py: 39 warnings
+tests/pap/test_pap_launch_files.py: 15 warnings
+tests/pap/test_pap_protocol_wire.py: 6 warnings
+tests/pap/test_runtime_cuda_context_audit.py: 2 warnings
+  /home/fei/research/PD/vllm-pap/.venv/lib/python3.12/site-packages/torch/cuda/__init__.py:1061: UserWarning: Can't initialize NVML
+    raw_cnt = _raw_device_count_nvml()
+
+.venv/lib/python3.12/site-packages/torch/jit/_script.py:365: 14 warnings
+  /home/fei/research/PD/vllm-pap/.venv/lib/python3.12/site-packages/torch/jit/_script.py:365: DeprecationWarning: `torch.jit.script_method` is deprecated. Please switch to `torch.compile` or `torch.export`.
+    warnings.warn(
+
+tests/pap/contract/test_projection_scheduler.py::test_prefill_allocates_bounded_initial_decode_runway
+  /home/fei/research/PD/vllm-pap/.venv/lib/python3.12/site-packages/transformers/models/gpt2/tokenization_gpt2.py:110: DeprecationWarning: Deprecated in 0.9.0: BPE.__init__ will not create from files anymore, try `BPE.from_file` instead
+    BPE(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+157 passed, 178 warnings in 42.00s
+sys:1: DeprecationWarning: builtin type swigvarlink has no __module__ attribute

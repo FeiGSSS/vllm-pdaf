@@ -8,10 +8,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from vllm.logger import init_logger
 from vllm.pap.integration.request import PAPRequestMetadata
 from vllm.pap.kv import lease as pap_lease
 
 _DECODE_ALLOCATION_GRANULARITY_TOKENS = 256
+logger = init_logger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,7 +126,19 @@ class PAPEngineControl:
         }
 
     def _apply_decode_commit(self, payload: dict[str, Any]) -> dict[str, Any]:
-        request_id = str(payload["request_id"])
+        target_id = str(payload["request_id"])
+        request_id = target_id
+        connector = getattr(self._scheduler, "connector", None)
+        metadata_by_request = getattr(connector, "_request_metadata", {})
+        owners = [
+            owner
+            for owner, metadata in metadata_by_request.items()
+            if metadata.prefill_kv_handle == target_id
+        ]
+        if len(owners) > 1:
+            raise ValueError("PAP session handle has multiple Prefill owners")
+        if owners:
+            request_id = owners[0]
         commit = _AppliedCommit(
             commit_seq=int(payload["commit_seq"]),
             new_seq_len=int(payload["new_seq_len"]),
@@ -172,6 +186,15 @@ class PAPEngineControl:
             return {**result, "commit_seq": commit.commit_seq}
 
         self._commits[request_id] = commit
+        logger.info(
+            "PAP decode commit applied target_id=%s request_id=%s "
+            "commit_seq=%d new_seq_len=%d tokens=%d",
+            target_id,
+            request_id,
+            commit.commit_seq,
+            commit.new_seq_len,
+            len(commit.new_token_ids),
+        )
         return {
             **result,
             "commit_seq": commit.commit_seq,
@@ -181,6 +204,18 @@ class PAPEngineControl:
 
     def _release_lease(self, payload: dict[str, Any]) -> dict[str, Any]:
         request_id = str(payload["request_id"])
+        lease = pap_lease.get_global_kv_lease_registry().active_entry(
+            str(payload["lease_id"])
+        )
+        if lease is None:
+            return {
+                "request_id": request_id,
+                "lease_id": str(payload["lease_id"]),
+                "released": False,
+                "block_count": 0,
+                "reason": "unknown_or_released_lease",
+            }
+        request_id = lease.request_id
         final_commit_seq = payload.get("final_commit_seq")
         previous = self._commits.get(request_id)
         if final_commit_seq is not None:
@@ -204,8 +239,50 @@ class PAPEngineControl:
         return result
 
 
+def _collect_released_prefill_kv(
+    worker: Any, finished_req_ids: set[str], request_ids: set[str]
+) -> set[str]:
+    import torch
+
+    from vllm.distributed.kv_transfer.kv_transfer_state import get_kv_transfer_group
+    from vllm.pap.kv_connector import PAPPrefillConnector
+
+    del worker
+    connector = get_kv_transfer_group()
+    if not isinstance(connector, PAPPrefillConnector):
+        raise RuntimeError("PAP retirement requires the Prefill worker connector")
+    torch.accelerator.synchronize()
+    return connector.get_finished_for_control(finished_req_ids, request_ids)
+
+
 class PAPEngineAdapter:
     """Translate PAP control operations into vLLM scheduler mutations."""
+
+    @staticmethod
+    def reclaim_released_requests(engine_core: Any, request_ids: set[str]) -> set[str]:
+        """Collect worker completion at a synchronous EngineCore boundary."""
+        if engine_core.batch_queue is not None:
+            return set()
+        scheduler = engine_core.scheduler
+        for request_id in request_ids:
+            request = scheduler.requests.get(request_id)
+            if request is None or not request.is_finished():
+                raise RuntimeError("PAP retirement requires a finished Prefill request")
+        results = engine_core.model_executor.collective_rpc(
+            _collect_released_prefill_kv,
+            args=(set(scheduler.finished_req_ids), request_ids),
+        )
+        if len(results) != 1 or set(results[0]) != request_ids:
+            raise RuntimeError("PAP worker did not acknowledge all released requests")
+        from vllm.v1.outputs import KVConnectorOutput
+
+        scheduler._update_from_kv_xfer_finished(
+            KVConnectorOutput(finished_sending=request_ids)
+        )
+        logger.info(
+            "PAP allocator reclaimed released requests: %s", sorted(request_ids)
+        )
+        return request_ids
 
     @staticmethod
     def apply_decode_commit(
@@ -295,11 +372,27 @@ class PAPEngineAdapter:
             ]
         )
         if existing_delta != delta[:existing_count]:
-            raise ValueError(
-                "decode commit does not match existing uncomputed token IDs: "
-                f"request_id={request.request_id} old_seq_len={old_seq_len} "
-                f"new_seq_len={new_seq_len}"
+            metadata = PAPRequestMetadata.from_mapping(
+                getattr(request, "kv_transfer_params", None)
             )
+            if not (
+                metadata.import_prefill_kv_to_attention
+                and request.is_finished()
+                and old_seq_len == request.num_prompt_tokens
+                and request.num_output_tokens == 1
+            ):
+                raise ValueError(
+                    "decode commit does not match existing uncomputed token IDs: "
+                    f"request_id={request.request_id} old_seq_len={old_seq_len} "
+                    f"new_seq_len={new_seq_len}"
+                )
+            # Prefill's private sample has no KV; Projection owns accepted tokens.
+            # It may have completed a hash block, so rebuild the hash suffix too.
+            request._output_token_ids.clear()
+            del request._all_token_ids[old_seq_len:]
+            request.block_hashes.clear()
+            request.update_block_hashes()
+            existing_count = 0
 
         missing_delta = delta[existing_count:]
         if missing_delta:

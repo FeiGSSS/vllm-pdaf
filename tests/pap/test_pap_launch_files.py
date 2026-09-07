@@ -3,6 +3,7 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -45,6 +46,60 @@ def test_pap_replay_requires_existing_dataset_before_creating_run(tmp_path):
     )
     assert result.returncode == 2
     assert "existing immutable dataset" in result.stderr
+    assert not run_dir.exists()
+
+
+@pytest.mark.parametrize(
+    "setting,value,error",
+    [
+        (f"DYNAMO_{role}_ASYNC_SCHEDULING", "unknown", "async scheduling must be")
+        for role in ("AGG", "PREFILL", "DECODE")
+    ]
+    + [
+        ("DYNAMO_NAMESPACE", "invalid.namespace", "DYNAMO_NAMESPACE must contain"),
+        ("DYNAMO_ROUTER_PREFILL_LOAD_SCALE", "nan", "must be a nonnegative number"),
+    ],
+)
+def test_dynamo_rejects_invalid_configuration_before_startup(
+    tmp_path, setting, value, error
+):
+    run_dir = tmp_path / "run"
+    result = subprocess.run(
+        ["bash", str(ROOT / "benchmarks/pap/scripts/run_dynamo_workload.sh")],
+        env={
+            "PATH": os.environ["PATH"],
+            "DYNAMO_RUN_ROOT": str(run_dir),
+            setting: value,
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert error in result.stderr
+    assert not run_dir.exists()
+
+
+def test_dynamo_replay_rejects_changed_dataset_before_startup(tmp_path):
+    dataset = tmp_path / "dataset.jsonl"
+    dataset.write_text("[]\n")
+    run_dir = tmp_path / "run"
+    result = subprocess.run(
+        ["bash", str(ROOT / "benchmarks/pap/scripts/run_dynamo_workload.sh")],
+        env={
+            "PATH": os.environ["PATH"],
+            "DYNAMO_RUN_ROOT": str(run_dir),
+            "DYNAMO_PYTHON": sys.executable,
+            "PAP_PYTHON": sys.executable,
+            "AIPERF_BIN": sys.executable,
+            "MODEL_PATH": str(tmp_path),
+            "DYNAMO_AIPERF_INPUT_FILE": str(dataset),
+            "DYNAMO_AIPERF_INPUT_SHA256": "0" * 64,
+        },
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 2
+    assert "replay dataset checksum mismatch" in result.stderr
     assert not run_dir.exists()
 
 

@@ -185,12 +185,31 @@ __global__ void dispatch_qkv_kernel(
   char* peer_packed =
       packed + static_cast<std::size_t>(peer_slot) * batch_rows * row_bytes;
   const int payload_bytes = count * row_bytes;
-  for (int offset = threadIdx.x; offset < payload_bytes; offset += blockDim.x) {
-    const int route_row = offset / row_bytes;
-    const int byte_in_row = offset - route_row * row_bytes;
-    const std::int64_t source_row =
-        route_indices[peer_slot * batch_rows + route_row];
-    peer_packed[offset] = source[source_row * row_bytes + byte_in_row];
+  if (row_bytes % sizeof(uint4) == 0 &&
+      ((reinterpret_cast<std::uintptr_t>(source) |
+        reinterpret_cast<std::uintptr_t>(peer_packed)) %
+       alignof(uint4)) == 0) {
+    const int row_vectors = row_bytes / sizeof(uint4);
+    const auto* source_vectors = reinterpret_cast<const uint4*>(source);
+    auto* packed_vectors = reinterpret_cast<uint4*>(peer_packed);
+    for (int offset = threadIdx.x; offset < count * row_vectors;
+         offset += blockDim.x) {
+      const int route_row = offset / row_vectors;
+      const int vector_in_row = offset - route_row * row_vectors;
+      const std::int64_t source_row =
+          route_indices[peer_slot * batch_rows + route_row];
+      packed_vectors[offset] =
+          source_vectors[source_row * row_vectors + vector_in_row];
+    }
+  } else {
+    for (int offset = threadIdx.x; offset < payload_bytes;
+         offset += blockDim.x) {
+      const int route_row = offset / row_bytes;
+      const int byte_in_row = offset - route_row * row_bytes;
+      const std::int64_t source_row =
+          route_indices[peer_slot * batch_rows + route_row];
+      peer_packed[offset] = source[source_row * row_bytes + byte_in_row];
+    }
   }
   __syncthreads();
   nvshmemx_putmem_signal_block(
@@ -236,12 +255,31 @@ __global__ void gather_output_kernel(
   const char* peer_output =
       symmetric_data + static_cast<std::size_t>(peer) * data_slot_bytes;
   const int payload_bytes = count * row_bytes;
-  for (int offset = threadIdx.x; offset < payload_bytes; offset += blockDim.x) {
-    const int route_row = offset / row_bytes;
-    const int byte_in_row = offset - route_row * row_bytes;
-    const std::int64_t output_row =
-        route_indices[peer_slot * batch_rows + route_row];
-    output[output_row * row_bytes + byte_in_row] = peer_output[offset];
+  if (row_bytes % sizeof(uint4) == 0 &&
+      ((reinterpret_cast<std::uintptr_t>(peer_output) |
+        reinterpret_cast<std::uintptr_t>(output)) %
+       alignof(uint4)) == 0) {
+    const int row_vectors = row_bytes / sizeof(uint4);
+    const auto* input_vectors = reinterpret_cast<const uint4*>(peer_output);
+    auto* output_vectors = reinterpret_cast<uint4*>(output);
+    for (int offset = threadIdx.x; offset < count * row_vectors;
+         offset += blockDim.x) {
+      const int route_row = offset / row_vectors;
+      const int vector_in_row = offset - route_row * row_vectors;
+      const std::int64_t output_row =
+          route_indices[peer_slot * batch_rows + route_row];
+      output_vectors[output_row * row_vectors + vector_in_row] =
+          input_vectors[offset];
+    }
+  } else {
+    for (int offset = threadIdx.x; offset < payload_bytes;
+         offset += blockDim.x) {
+      const int route_row = offset / row_bytes;
+      const int byte_in_row = offset - route_row * row_bytes;
+      const std::int64_t output_row =
+          route_indices[peer_slot * batch_rows + route_row];
+      output[output_row * row_bytes + byte_in_row] = peer_output[offset];
+    }
   }
 }
 

@@ -11,7 +11,8 @@ from vllm.pap.integration.engine import PAPEngineControl
 from vllm.pap.integration.request import PAPRequestMetadata
 from vllm.pap.kv import lease as pap_lease
 from vllm.pap.kv_connector import PAPPrefillConnector
-from vllm.v1.request import RequestStatus
+from vllm.sampling_params import SamplingParams
+from vllm.v1.request import Request, RequestStatus
 
 
 class _Request:
@@ -102,10 +103,125 @@ def test_control_rejects_gap_and_conflicting_duplicate(
         )
 
 
+def test_commit_resolves_session_handle_and_release_clears_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Attention handles and Gateway IDs must resolve to the leased owner."""
+    control, request = _control(monkeypatch)
+    handle = "conversation@pap-session-5"
+    control._scheduler.connector = SimpleNamespace(
+        _request_metadata={
+            request.request_id: PAPRequestMetadata(prefill_kv_handle=handle)
+        }
+    )
+    registry = pap_lease.PAPKVLeaseRegistry()
+    monkeypatch.setattr(pap_lease, "get_global_kv_lease_registry", lambda: registry)
+    lease_id = registry.pin_blocks(
+        request_id=request.request_id, block_ids=[1], ttl_seconds=0
+    )
+    payload = {
+        "request_id": handle,
+        "commit_seq": 1,
+        "new_seq_len": 4,
+        "new_token_ids": [12, 13],
+    }
+    result = control.apply("decode_commit", payload)
+    assert result["applied"]
+    assert result["request_id"] == request.request_id
+    assert request.all_token_ids == [10, 11, 12, 13]
+    assert control._scheduler.kv_cache_manager.coordinator.cached == [("req-1", 4)]
+    assert control.apply("decode_commit", payload)["idempotent"]
+    release = {
+        "request_id": "conversation",
+        "lease_id": lease_id,
+        "final_commit_seq": 1,
+    }
+    result = control.apply("lease_release", release)
+    assert result["released"]
+    assert registry.active_entry(lease_id) is None
+    assert not control._commits
+    retry = control.apply("lease_release", release)
+    assert not retry["released"]
+    assert retry["reason"] == "unknown_or_released_lease"
+
+
+def test_stale_session_handle_cannot_commit_to_new_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    control, request = _control(monkeypatch)
+    control._scheduler.connector = SimpleNamespace(
+        _request_metadata={
+            request.request_id: PAPRequestMetadata(
+                prefill_kv_handle="conversation@pap-session-6"
+            )
+        }
+    )
+    result = control.apply(
+        "decode_commit",
+        {
+            "request_id": "conversation@pap-session-5",
+            "commit_seq": 1,
+            "new_seq_len": 4,
+            "new_token_ids": [12, 13],
+        },
+    )
+    assert result["applied"] is False
+    assert request.num_computed_tokens == 2
+    assert not control._scheduler.kv_cache_manager.coordinator.cached
+
+
+def test_projection_commit_replaces_only_private_prefill_sample(monkeypatch):
+    """A discarded Prefill sample must not poison accepted tokens or hashes."""
+    control, _ = _control(monkeypatch)
+
+    def hash_blocks(request):
+        tokens = list(request.all_token_ids)
+        return [
+            tuple(tokens[i : i + 2])
+            for i in range(2 * len(request.block_hashes), len(tokens) - 1, 2)
+        ]
+
+    request = Request(
+        request_id="prefill-owner",
+        prompt_token_ids=[10, 11, 12],
+        sampling_params=SamplingParams(max_tokens=1),
+        pooling_params=None,
+        block_hasher=hash_blocks,
+    )
+    request.kv_transfer_params = {"pap_import_prefill_kv_to_attention": True}
+    request.num_computed_tokens = 3
+    request.status = RequestStatus.FINISHED_LENGTH_CAPPED
+    request.append_output_token_ids(99)
+    assert request.block_hashes == [(10, 11), (12, 99)]
+    control._scheduler.requests = {request.request_id: request}
+    result = control.apply(
+        "decode_commit",
+        {
+            "request_id": request.request_id,
+            "commit_seq": 1,
+            "new_seq_len": 5,
+            "new_token_ids": [13, 14],
+        },
+    )
+    assert result["applied"]
+    assert list(request.all_token_ids) == [10, 11, 12, 13, 14]
+    assert list(request.output_token_ids) == [13, 14]
+    assert request.block_hashes == [(10, 11), (12, 13)]
+    assert request.num_computed_tokens == 5
+    assert control._scheduler.kv_cache_manager.coordinator.cached == [
+        ("prefill-owner", 5)
+    ]
+
+
 def test_release_checks_final_commit_sequence(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     control, request = _control(monkeypatch)
+    registry = pap_lease.PAPKVLeaseRegistry()
+    monkeypatch.setattr(pap_lease, "get_global_kv_lease_registry", lambda: registry)
+    lease_id = registry.pin_blocks(
+        request_id=request.request_id, block_ids=[1], ttl_seconds=0
+    )
     control.apply(
         "decode_commit",
         {
@@ -120,7 +236,7 @@ def test_release_checks_final_commit_sequence(
             "lease_release",
             {
                 "request_id": request.request_id,
-                "lease_id": "lease-1",
+                "lease_id": lease_id,
                 "final_commit_seq": 0,
             },
         )
@@ -276,3 +392,52 @@ def test_control_includes_running_and_queued_prefill_tokens() -> None:
     assert snapshot["outstanding_prefill_tokens"] == 2600
     assert snapshot["outstanding_decode_reservation_tokens"] == 150
     assert snapshot["projected_kv_tokens"] == 3070
+
+
+@pytest.mark.parametrize("batch_queue", [None, []])
+@pytest.mark.parametrize("acknowledged", [True, False])
+def test_released_references_are_reclaimed_only_at_a_synchronous_boundary(
+    batch_queue, acknowledged
+):
+    from vllm.pap.integration.engine import PAPEngineAdapter
+    from vllm.v1.core.sched.scheduler import Scheduler
+
+    freed = []
+    calls = []
+    request = SimpleNamespace(request_id="owner", is_finished=lambda: True)
+    scheduler = object.__new__(Scheduler)
+    scheduler.requests = {"owner": request}
+    scheduler.finished_req_ids = {"owner"}
+    scheduler.connector = None
+    scheduler.defer_block_free = False
+    scheduler.kv_cache_manager = SimpleNamespace(
+        free=lambda req: freed.append(req.request_id)
+    )
+
+    def collective_rpc(method, args):
+        calls.append(args)
+        return [{"owner"} if acknowledged else set()]
+
+    core = SimpleNamespace(
+        batch_queue=batch_queue,
+        scheduler=scheduler,
+        model_executor=SimpleNamespace(collective_rpc=collective_rpc),
+    )
+    if batch_queue is None and not acknowledged:
+        with pytest.raises(RuntimeError, match="did not acknowledge"):
+            PAPEngineAdapter.reclaim_released_requests(core, {"owner"})
+        assert "owner" in scheduler.requests
+        assert not freed
+        return
+
+    result = PAPEngineAdapter.reclaim_released_requests(core, {"owner"})
+    if batch_queue is None:
+        assert result == {"owner"}
+        assert not scheduler.requests
+        assert freed == ["owner"]
+        assert calls == [({"owner"}, {"owner"})]
+        assert scheduler.finished_req_ids == {"owner"}
+    else:
+        assert result == set()
+        assert "owner" in scheduler.requests
+        assert not calls and not freed

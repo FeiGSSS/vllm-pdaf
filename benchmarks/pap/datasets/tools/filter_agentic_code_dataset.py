@@ -70,6 +70,9 @@ def build_subset(
     length_divisor: int,
     hash_block_size: int,
     seed: int,
+    final_context_min: int | None = None,
+    final_context_max: int | None = None,
+    final_context_strata: int | None = None,
 ) -> dict[str, Any]:
     """Filter complete sessions and write a deterministic sample."""
 
@@ -96,9 +99,59 @@ def build_subset(
             f"only {len(eligible)} sessions satisfy the turn bounds; need {sessions}"
         )
 
-    chosen_ids = {
-        session_id for session_id, _ in random.Random(seed).sample(eligible, sessions)
-    }
+    rng = random.Random(seed)
+    stratum_counts: list[dict[str, int]] | None = None
+    if final_context_strata is None:
+        chosen = rng.sample(eligible, sessions)
+        sampling = "random_without_replacement"
+    else:
+        if final_context_min is None or final_context_max is None:
+            raise ValueError("stratified sampling requires final context bounds")
+        if final_context_max <= final_context_min:
+            raise ValueError("final context bounds must be ordered")
+        if final_context_strata <= 0:
+            raise ValueError("final-context-strata must be positive")
+        if sessions % final_context_strata:
+            raise ValueError("sessions must be divisible by final-context-strata")
+
+        per_stratum = sessions // final_context_strata
+        width = (final_context_max - final_context_min) / final_context_strata
+        chosen = []
+        stratum_counts = []
+        for index in range(final_context_strata):
+            lower = round(final_context_min + index * width)
+            upper = round(final_context_min + (index + 1) * width)
+            candidates = [
+                item
+                for item in eligible
+                if lower
+                <= sum(
+                    row["input_length"] + row["output_length"]
+                    for row in (
+                        item[1]
+                        if take_first_turns is None
+                        else item[1][:take_first_turns]
+                    )
+                )
+                < upper + (index == final_context_strata - 1)
+            ]
+            if len(candidates) < per_stratum:
+                raise ValueError(
+                    f"final-context stratum [{lower}, {upper}) has "
+                    f"{len(candidates)} candidates; need {per_stratum}"
+                )
+            chosen.extend(rng.sample(candidates, per_stratum))
+            stratum_counts.append(
+                {
+                    "minimum": lower,
+                    "maximum": upper,
+                    "eligible": len(candidates),
+                    "selected": per_stratum,
+                }
+            )
+        sampling = "equal_count_final_context_strata"
+
+    chosen_ids = {session_id for session_id, _ in chosen}
     selected = [
         (
             session_id,
@@ -161,7 +214,11 @@ def build_subset(
             "hash_block_size": hash_block_size,
             "seed": seed,
             "eligible_sessions": len(eligible),
-            "sampling": "random_without_replacement",
+            "sampling": sampling,
+            "final_context_min": final_context_min,
+            "final_context_max": final_context_max,
+            "final_context_strata": final_context_strata,
+            "stratum_counts": stratum_counts,
             "eligibility": (
                 {"minimum_source_turns": take_first_turns}
                 if take_first_turns is not None
@@ -195,6 +252,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--length-divisor", type=int, default=1)
     parser.add_argument("--hash-block-size", type=int, default=512)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--final-context-min", type=int)
+    parser.add_argument("--final-context-max", type=int)
+    parser.add_argument("--final-context-strata", type=int)
     return parser.parse_args()
 
 
@@ -220,6 +280,9 @@ def main() -> None:
         length_divisor=args.length_divisor,
         hash_block_size=args.hash_block_size,
         seed=args.seed,
+        final_context_min=args.final_context_min,
+        final_context_max=args.final_context_max,
+        final_context_strata=args.final_context_strata,
     )
     manifest_path = args.output.with_suffix(".manifest.json")
     manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")

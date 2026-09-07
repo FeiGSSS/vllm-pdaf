@@ -294,8 +294,10 @@ if [[ -z "${PAP_HF_OVERRIDES+x}" ]]; then
   PAP_HF_OVERRIDES="${PAP_DEFAULT_HF_OVERRIDES}"
 fi
 PAP_MODEL_CONFIG_ARGS=()
+PAP_GATEWAY_MODEL_CONFIG_ARGS=()
 if [[ -n "${PAP_HF_OVERRIDES}" ]]; then
   PAP_MODEL_CONFIG_ARGS=(--hf-overrides "${PAP_HF_OVERRIDES}")
+  PAP_GATEWAY_MODEL_CONFIG_ARGS=(--hf-overrides "${PAP_HF_OVERRIDES}")
 fi
 MAX_NUM_BATCHED_TOKENS="${MAX_NUM_BATCHED_TOKENS:-16384}"
 MAX_NUM_SEQS="${MAX_NUM_SEQS:-64}"
@@ -356,7 +358,7 @@ service.shutdown()
 PY
 PAP_DYNAMO_MODEL_NAME="${PAP_DYNAMO_MODEL_NAME:-pap}"
 PAP_DYNAMO_PREFILL_LOAD_SCALE="${PAP_DYNAMO_PREFILL_LOAD_SCALE:-2.0}"
-PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-64}"
+PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-256}"
 PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS:-1}"
 PAP_BLOCK_SIZE="${PAP_BLOCK_SIZE:-16}"
 PAP_DECODE_COMMIT_ENDPOINT="${PAP_DECODE_COMMIT_ENDPOINT:-}"
@@ -1782,8 +1784,9 @@ audit_correctness_logs() {
   local pattern
   pattern='CUDA out of memory|EngineDeadError|^Traceback| ERROR .*Traceback|Exception in thread|PAP decode commit failed|non-contiguous PAP decode commit|conflicting duplicate PAP decode commit|PAP lease release raced|PAP Prefill request .* without a KV lease|PAP control is not initialized|deferred PAP EngineCore control failed|new_token_ids length must match new_seq_len delta|PAP decode-token delivery failed|PAP decode-token queue is full|PAP decode-token join flush timed out|PAP lease release failed|PAP unified KV append out of range|PAP unified KV state missing|PAP unified KV state changed during decode append|PAP unified KV seq_len changed during decode append|prefill KV must reach the registered prefix before unified decode attention|PAP unified paged FlashAttention failed'
   pattern+='|block_hash mismatch|ParentBlockNotFound|Failed to apply event|Expiring stale request'
+  pattern+='|deferred PAP EngineCore control was not applied'
 
-  if rg -n --no-heading "${pattern}" "${RUN_LOG_DIR}" > "${matches_path}"; then
+  if rg --no-ignore -n --no-heading "${pattern}" "${RUN_LOG_DIR}" > "${matches_path}"; then
     {
       printf 'STATUS=failed\n'
       printf 'MATCH_COUNT=%s\n' "$(wc -l < "${matches_path}")"
@@ -1794,6 +1797,13 @@ audit_correctness_logs() {
       die "PAP correctness audit failed; see ${matches_path}"
     fi
     return
+  else
+    local scan_status=$?
+    if (( scan_status != 1 )); then
+      printf 'STATUS=failed\nSCAN_EXIT_CODE=%s\n' "${scan_status}" \
+        > "${summary_path}"
+      die "PAP correctness log scan failed; refusing to validate this run"
+    fi
   fi
 
   : > "${matches_path}"
@@ -2346,7 +2356,7 @@ env \
   --port "${PAP_PROXY_PORT}" \
   --model "${MODEL_PATH}" \
   --max-model-len "${MAX_MODEL_LEN}" \
-  --hf-overrides "${PAP_HF_OVERRIDES}" \
+  "${PAP_GATEWAY_MODEL_CONFIG_ARGS[@]}" \
   --generation-config vllm \
   --pap-groups "${PAP_GROUPS_SPEC}" \
   --projections "${PROJECTIONS_SPEC}" \

@@ -11,8 +11,6 @@ from typing import Any
 
 import torch
 
-from vllm.platforms import current_platform
-
 
 def write_runtime_cuda_context_audit(*, role: str) -> dict[str, Any] | None:
     """Write the live CUDA context's visible resources when configured."""
@@ -21,13 +19,15 @@ def write_runtime_cuda_context_audit(*, role: str) -> dict[str, Any] | None:
     if not output:
         return None
     device_index = int(torch.accelerator.current_device_index())
+    properties = torch.cuda.get_device_properties(device_index)
+    device_uuid = "GPU-" + str(properties.uuid).removeprefix("GPU-")
     payload: dict[str, Any] = {
         "pid": os.getpid(),
         "role": str(role),
         "device_index": device_index,
-        "device_name": str(current_platform.get_device_name(device_index)),
-        "device_uuid": str(current_platform.get_device_uuid(device_index)),
-        "multiprocessor_count": int(current_platform.num_compute_units(device_index)),
+        "device_name": properties.name,
+        "device_uuid": device_uuid,
+        "multiprocessor_count": properties.multi_processor_count,
         "cuda_mps_sm_partition": os.environ.get("CUDA_MPS_SM_PARTITION"),
         "cuda_mps_pipe_directory": os.environ.get("CUDA_MPS_PIPE_DIRECTORY"),
     }

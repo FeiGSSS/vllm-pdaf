@@ -46,6 +46,7 @@ def _summary(values: list[float]) -> dict[str, float | int | None]:
         "count": len(values),
         "mean": mean(values) if values else None,
         "p50": median(values) if values else None,
+        "p90": _percentile(values, 0.90),
         "p99": _percentile(values, 0.99),
         "max": max(values) if values else None,
     }

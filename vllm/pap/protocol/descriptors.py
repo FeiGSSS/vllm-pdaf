@@ -288,6 +288,7 @@ class PAPPrefillKVSessionManifest:
     lease_capacity_tokens: int
     writable_start_token: int
     writable_end_token: int
+    allocation_limit_token: int | None = None
     ready_event_handle: bytes | None = None
     generation: int = 0
 
@@ -312,6 +313,12 @@ class PAPPrefillKVSessionManifest:
         )
         object.__setattr__(self, "writable_start_token", int(self.writable_start_token))
         object.__setattr__(self, "writable_end_token", int(self.writable_end_token))
+        if self.allocation_limit_token is not None:
+            object.__setattr__(
+                self,
+                "allocation_limit_token",
+                int(self.allocation_limit_token),
+            )
         object.__setattr__(self, "generation", int(self.generation))
         if self.ready_event_handle is not None:
             object.__setattr__(
@@ -341,6 +348,11 @@ class PAPPrefillKVSessionManifest:
             raise ValueError("writable_end_token must cover prefix_len")
         if self.lease_capacity_tokens < self.writable_end_token:
             raise ValueError("lease capacity must cover writable_end_token")
+        if (
+            self.allocation_limit_token is not None
+            and self.allocation_limit_token < self.writable_end_token
+        ):
+            raise ValueError("allocation limit must cover writable_end_token")
         required_blocks = (
             self.writable_end_token + self.block_size - 1
         ) // self.block_size
@@ -367,6 +379,7 @@ class PAPPrefillKVSessionManifest:
             "lease_capacity_tokens": self.lease_capacity_tokens,
             "writable_start_token": self.writable_start_token,
             "writable_end_token": self.writable_end_token,
+            "allocation_limit_token": self.allocation_limit_token,
             "generation": self.generation,
             "ready_event_handle": (
                 None
@@ -393,6 +406,11 @@ class PAPPrefillKVSessionManifest:
             lease_capacity_tokens=int(data["lease_capacity_tokens"]),
             writable_start_token=int(data["writable_start_token"]),
             writable_end_token=int(data["writable_end_token"]),
+            allocation_limit_token=(
+                None
+                if data.get("allocation_limit_token") is None
+                else int(data["allocation_limit_token"])
+            ),
             generation=int(data.get("generation", 0)),
             ready_event_handle=(
                 None

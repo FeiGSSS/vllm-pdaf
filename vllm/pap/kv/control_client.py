@@ -226,6 +226,23 @@ class DecodeCommitClient:
                 self._pending_done.wait(timeout=remaining)
         return True
 
+    def final_commit_sequence(self, request_id: str) -> int:
+        """Return the final accepted sequence for a single Prefill target."""
+        request_id = str(request_id)
+        with self._pending_done:
+            targets = self._targets_by_session.get(request_id)
+            if targets is None and request_id in self._latest_commit_seq_by_request:
+                targets = {request_id}
+            if not targets:
+                return 0
+            if len(targets) != 1:
+                raise RuntimeError("PAP lease retirement requires one commit target")
+            target = next(iter(targets))
+            sequence = self._latest_commit_seq_by_request.get(target, 0)
+            if self._acked_commit_seq_by_request.get(target, 0) < sequence:
+                raise RuntimeError("PAP final commit has not been submitted")
+            return sequence
+
     def flush_request(self, request_id: str, timeout_s: float | None = None) -> bool:
         """Compatibility alias for :meth:`flush_submitted_request`."""
         return self.flush_submitted_request(request_id, timeout_s)
@@ -422,6 +439,7 @@ class LeaseReleaseClient:
         request_id: str,
         lease_id: str,
         endpoint: str | None = None,
+        final_commit_seq: int | None = None,
     ) -> bool:
         target_endpoint = str(endpoint or self.endpoint or "")
         if not target_endpoint:
@@ -430,11 +448,13 @@ class LeaseReleaseClient:
         last_error: Exception | None = None
         for attempt in range(1, self.max_attempts + 1):
             try:
-                payload: dict[str, str | bool] = {
+                payload: dict[str, str | bool | int] = {
                     "request_id": request_id,
                     "lease_id": lease_id,
                     "submit_only": True,
                 }
+                if final_commit_seq is not None:
+                    payload["final_commit_seq"] = int(final_commit_seq)
                 response = httpx.post(
                     target_endpoint,
                     json=payload,

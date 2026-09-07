@@ -563,11 +563,17 @@ class Scheduler(SchedulerInterface):
             # Schedule newly needed KV blocks for the request.
             with record_function_or_nullcontext("schedule: allocate_slots"):
                 pap_projection_state = self.pap_scheduler.projection_state(request)
+                pap_decode_lookahead = self.pap_scheduler.decode_capacity_tokens(
+                    request
+                )
                 while True:
                     new_blocks = self.kv_cache_manager.allocate_slots(
                         request,
                         num_new_tokens,
-                        num_lookahead_tokens=self.num_lookahead_tokens,
+                        num_lookahead_tokens=max(
+                            self.num_lookahead_tokens,
+                            pap_decode_lookahead,
+                        ),
                         allocate_local_slots=pap_projection_state is None,
                     )
 
@@ -934,6 +940,10 @@ class Scheduler(SchedulerInterface):
                 limit_lookahead_tokens = load_kv_async and self.num_lookahead_tokens > 0
                 effective_lookahead_tokens = (
                     0 if limit_lookahead_tokens else self.num_lookahead_tokens
+                )
+                effective_lookahead_tokens = max(
+                    effective_lookahead_tokens,
+                    self.pap_scheduler.decode_capacity_tokens(request),
                 )
 
                 # Determine if we need to allocate cross-attention blocks.

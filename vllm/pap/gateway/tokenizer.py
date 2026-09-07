@@ -17,6 +17,7 @@ from vllm.entrypoints.openai.completion.protocol import CompletionRequest
 from vllm.inputs import SingletonPrompt
 from vllm.renderers import BaseRenderer, merge_kwargs, renderer_from_config
 from vllm.renderers.inputs.preprocess import parse_model_prompt, prompt_to_seq
+from vllm.renderers.params import ChatParams
 from vllm.utils.hashing import get_hash_fn_by_name
 from vllm.utils.mistral import is_mistral_tokenizer
 from vllm.v1.core.kv_cache_utils import (
@@ -67,6 +68,7 @@ class PAPPromptTokenizer:
             )
             self._model_config = model_config
             self._renderer = renderer_from_config(vllm_config)
+            self._renderer.warmup(ChatParams())
         self._hash_function = get_hash_fn_by_name("sha256")
         init_none_hash(self._hash_function)
 

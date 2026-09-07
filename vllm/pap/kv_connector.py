@@ -18,6 +18,7 @@ from vllm.pap.integration.request import PAPRequestMetadata
 from vllm.pap.integration.settings import PAPRuntimeSettings
 from vllm.pap.kv import lease as pap_lease
 from vllm.pap.model.prefill import PAPPrefillKVPublisher
+from vllm.pap.runtime_cuda_context_audit import write_runtime_cuda_context_audit
 from vllm.v1.request import RequestStatus
 
 if TYPE_CHECKING:
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
     from vllm.v1.core.kv_cache_manager import KVCacheBlocks
     from vllm.v1.core.sched.output import SchedulerOutput
     from vllm.v1.kv_cache_interface import KVCacheConfig
+    from vllm.v1.outputs import KVConnectorOutput
     from vllm.v1.request import Request
 
 
@@ -69,6 +71,7 @@ class PAPPrefillConnector(KVConnectorBase_V1):
         self._layer_names: tuple[str, ...] = ()
         self._publishers: dict[str, PAPPrefillKVPublisher] = {}
         self._pending_finished: set[str] = set()
+        self._control_finished: set[str] = set()
         self._decode_query_len = _decode_query_len(vllm_config)
         self._block_size = int(vllm_config.cache_config.block_size)
         self._default_decode_capacity = (
@@ -80,6 +83,7 @@ class PAPPrefillConnector(KVConnectorBase_V1):
 
     def register_kv_caches(self, kv_caches: dict[str, torch.Tensor]) -> None:
         self._layer_names = tuple(kv_caches)
+        write_runtime_cuda_context_audit(role="prefill")
 
     def start_load_kv(self, forward_context: ForwardContext, **kwargs: Any) -> None:
         del forward_context, kwargs
@@ -128,6 +132,11 @@ class PAPPrefillConnector(KVConnectorBase_V1):
             allocated_block_ids_by_request={
                 r.request_id: r.allocated_block_ids for r in requests
             },
+            decode_capacity_tokens_by_request={
+                request.request_id: request.decode_capacity_tokens
+                for request in requests
+                if request.decode_capacity_tokens is not None
+            },
             lease_ids_by_request={r.request_id: r.lease_id for r in requests},
             generations_by_request={r.request_id: r.generation for r in requests},
             import_request_ids={
@@ -151,6 +160,23 @@ class PAPPrefillConnector(KVConnectorBase_V1):
     def get_finished(
         self, finished_req_ids: set[str]
     ) -> tuple[set[str] | None, set[str] | None]:
+        newly_finished = finished_req_ids - self._control_finished
+        self._control_finished.difference_update(finished_req_ids)
+        return self._collect_finished(newly_finished)
+
+    def get_finished_for_control(
+        self, finished_req_ids: set[str], request_ids: set[str]
+    ) -> set[str]:
+        """Acknowledge selected releases before the next model iteration."""
+        newly_finished = (finished_req_ids & request_ids) - self._control_finished
+        ready, _ = self._collect_finished(newly_finished, request_ids)
+        ready = ready or set()
+        self._control_finished.update(ready & finished_req_ids)
+        return ready
+
+    def _collect_finished(
+        self, finished_req_ids: set[str], request_ids: set[str] | None = None
+    ) -> tuple[set[str] | None, set[str] | None]:
         for req_id in map(str, finished_req_ids):
             if pap_lease.pap_has_active_lease(
                 req_id
@@ -159,7 +185,8 @@ class PAPPrefillConnector(KVConnectorBase_V1):
         ready = {
             req_id
             for req_id in self._pending_finished
-            if not pap_lease.pap_has_active_lease(req_id)
+            if (request_ids is None or req_id in request_ids)
+            and not pap_lease.pap_has_active_lease(req_id)
         }
         if not ready:
             return None, None
@@ -170,6 +197,11 @@ class PAPPrefillConnector(KVConnectorBase_V1):
             self._request_metadata.pop(request_id, None)
             self._generations.pop(request_id, None)
         return ready, None
+
+    def update_connector_output(self, connector_output: KVConnectorOutput) -> None:
+        for request_id in connector_output.finished_sending or ():
+            self._request_metadata.pop(request_id, None)
+            self._generations.pop(request_id, None)
 
     def get_num_new_matched_tokens(
         self, request: Request, num_computed_tokens: int

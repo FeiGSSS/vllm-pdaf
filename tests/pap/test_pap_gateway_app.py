@@ -102,6 +102,25 @@ def test_gateway_defaults_to_dynamo(monkeypatch) -> None:
 
 
 @pytest.mark.parametrize("source", ["env", "cli"])
+def test_gateway_empty_hf_overrides_disable_model_overrides(monkeypatch, source):
+    monkeypatch.delenv("PAP_HF_OVERRIDES", raising=False)
+    argv = [
+        "pap-gateway",
+        "--pap-groups",
+        "127.0.0.1:8100:127.0.0.1:8300",
+        "--projections",
+        "127.0.0.1:8200",
+    ]
+    if source == "env":
+        monkeypatch.setenv("PAP_HF_OVERRIDES", "")
+    else:
+        argv.extend(["--hf-overrides", ""])
+    monkeypatch.setattr(sys, "argv", argv)
+
+    assert parse_args().hf_overrides == {}
+
+
+@pytest.mark.parametrize("source", ["env", "cli"])
 @pytest.mark.parametrize(
     "policy",
     [

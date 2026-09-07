@@ -37,8 +37,9 @@ def _projection_request(num_tokens: int = 10):
     return request
 
 
-def test_prefill_allocates_only_prompt_but_exports_owned_blocks(monkeypatch) -> None:
-    """Decode's requested limit must not become speculative Prefill allocation."""
+def test_prefill_allocates_bounded_initial_decode_runway(monkeypatch) -> None:
+    """Prefill owns a bounded runway, not the request's full Decode limit."""
+    monkeypatch.setenv("PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS", "64")
     monkeypatch.setitem(
         KVConnectorFactory._registry,
         "PAPPrefillConnector",
@@ -65,7 +66,7 @@ def test_prefill_allocates_only_prompt_but_exports_owned_blocks(monkeypatch) -> 
         owned = scheduler.kv_cache_manager.get_block_ids(request.request_id)[0]
         published = output.kv_connector_metadata.requests[0]
 
-        assert len(owned) == 4
+        assert len(owned) == 8
         assert published.decode_capacity_tokens == 64
         assert published.allocated_block_ids == tuple(owned)
         assert pap_lease.pap_leased_block_ids(request.request_id) == tuple(owned)

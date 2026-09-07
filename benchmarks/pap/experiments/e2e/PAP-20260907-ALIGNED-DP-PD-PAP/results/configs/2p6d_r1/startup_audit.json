@@ -1,0 +1,83 @@
+{
+  "status": "passed",
+  "counts": {
+    "aggregated": 0,
+    "prefill": 2,
+    "decode": 6
+  },
+  "engine_count": 8,
+  "mapping": [
+    {
+      "role": "decode",
+      "worker_pid": 871637,
+      "engine_pid": 877079,
+      "gpu": 2,
+      "uuid": "GPU-e871a501-689a-7d7a-170c-f668c4e45d2f",
+      "token_budget": 256,
+      "async_scheduling": "on"
+    },
+    {
+      "role": "decode",
+      "worker_pid": 871638,
+      "engine_pid": 877150,
+      "gpu": 3,
+      "uuid": "GPU-e9dd15ab-ba98-f70a-f2a7-0cbdeae2f2d2",
+      "token_budget": 256,
+      "async_scheduling": "on"
+    },
+    {
+      "role": "decode",
+      "worker_pid": 871639,
+      "engine_pid": 876780,
+      "gpu": 4,
+      "uuid": "GPU-4fe93088-5e0f-cc87-943b-a90c911e9e08",
+      "token_budget": 256,
+      "async_scheduling": "on"
+    },
+    {
+      "role": "decode",
+      "worker_pid": 871640,
+      "engine_pid": 876938,
+      "gpu": 5,
+      "uuid": "GPU-e4c3f6ad-8480-29f5-43e8-3005b438e7ca",
+      "token_budget": 256,
+      "async_scheduling": "on"
+    },
+    {
+      "role": "decode",
+      "worker_pid": 871641,
+      "engine_pid": 876922,
+      "gpu": 6,
+      "uuid": "GPU-74f526f4-279f-8f17-b0e4-a970f3c45053",
+      "token_budget": 256,
+      "async_scheduling": "on"
+    },
+    {
+      "role": "decode",
+      "worker_pid": 871642,
+      "engine_pid": 877009,
+      "gpu": 7,
+      "uuid": "GPU-b32cb611-8b14-2647-aacc-1e15f28e49dd",
+      "token_budget": 256,
+      "async_scheduling": "on"
+    },
+    {
+      "role": "prefill",
+      "worker_pid": 871643,
+      "engine_pid": 876930,
+      "gpu": 0,
+      "uuid": "GPU-5954ae35-b1fa-1499-e9f2-634b5517efa6",
+      "token_budget": 2048,
+      "async_scheduling": "off"
+    },
+    {
+      "role": "prefill",
+      "worker_pid": 871644,
+      "engine_pid": 876851,
+      "gpu": 1,
+      "uuid": "GPU-d294c5ad-3496-1070-41cb-9335ba425fd1",
+      "token_budget": 2048,
+      "async_scheduling": "off"
+    }
+  ]
+}

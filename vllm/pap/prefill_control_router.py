@@ -130,8 +130,10 @@ class PAPControlDispatcher:
         except Exception:
             logger.exception("deferred PAP EngineCore control failed")
             return
-        if not (value.get("applied") or value.get("released")):
-            logger.warning("deferred PAP EngineCore control was not applied: %s", value)
+        if not (
+            value.get("applied") or value.get("released") or value.get("idempotent")
+        ):
+            logger.error("deferred PAP EngineCore control was not applied: %s", value)
 
 
 def _dispatcher(raw_request: Request) -> PAPControlDispatcher:

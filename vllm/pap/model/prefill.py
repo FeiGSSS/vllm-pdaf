@@ -100,6 +100,7 @@ class PAPPrefillKVPublisher:
         kv_cache: torch.Tensor,
         block_size: int,
         allocated_block_ids_by_request: dict[str, tuple[int, ...]] | None = None,
+        decode_capacity_tokens_by_request: dict[str, int] | None = None,
         lease_ids_by_request: dict[str, str | None] | None = None,
         generations_by_request: dict[str, int] | None = None,
     ) -> None:
@@ -125,6 +126,7 @@ class PAPPrefillKVPublisher:
             block_size=block_size,
             layout=get_kv_cache_layout(),
             allocated_block_ids_by_request=allocated_block_ids_by_request or {},
+            decode_capacity_tokens_by_request=(decode_capacity_tokens_by_request or {}),
             lease_ids_by_request=lease_ids_by_request or {},
             generations_by_request=generations_by_request or {},
         )
@@ -156,6 +158,7 @@ class PAPPrefillKVPublisher:
         block_size: int,
         layout: str,
         allocated_block_ids_by_request: dict[str, tuple[int, ...]],
+        decode_capacity_tokens_by_request: dict[str, int],
         lease_ids_by_request: dict[str, str | None],
         generations_by_request: dict[str, int],
     ) -> None:
@@ -220,9 +223,18 @@ class PAPPrefillKVPublisher:
             prefix_len = int(seq_lens_cpu[req_index].item())
             if prefix_len <= 1:
                 continue
-            # Prefill publishes only computed prompt blocks. Decode grows them
-            # through the allocator, not through padding in this worker table.
-            writable_tail_tokens = (-prefix_len) % block_size
+            owned_block_ids = allocated_block_ids_by_request.get(request_id)
+            if not owned_block_ids:
+                raise RuntimeError("PAP publication lacks scheduler-owned KV blocks")
+            requested_decode_tokens = decode_capacity_tokens_by_request.get(
+                request_id, 0
+            )
+            allocation_limit_token = prefix_len + requested_decode_tokens
+            block_capacity = len(owned_block_ids) * block_size
+            writable_tail_tokens = min(
+                requested_decode_tokens,
+                max(0, block_capacity - prefix_len),
+            )
             generation = generations_by_request.get(request_id, 0)
             lease_id = lease_ids_by_request.get(request_id)
             if lease_id is None:
@@ -236,6 +248,7 @@ class PAPPrefillKVPublisher:
                 tcp_endpoint,
                 generation,
                 lease_id,
+                allocation_limit_token,
             )
             if import_key in self.imported_prefill_kv:
                 continue
@@ -259,6 +272,7 @@ class PAPPrefillKVPublisher:
                 writable_tail_tokens=writable_tail_tokens,
                 lease_id=lease_id,
                 generation=generation,
+                allocation_limit_token=allocation_limit_token,
             )
             self.imported_prefill_kv.add(import_key)
             self.manifest_ready_events[(request_id, prefix_len)] = ready_event

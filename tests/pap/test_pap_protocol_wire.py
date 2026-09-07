@@ -92,6 +92,7 @@ def test_prefill_manifest_round_trips_generation_and_rejects_aliases() -> None:
         lease_capacity_tokens=32,
         writable_start_token=17,
         writable_end_token=32,
+        allocation_limit_token=49,
         generation=3,
     )
 
