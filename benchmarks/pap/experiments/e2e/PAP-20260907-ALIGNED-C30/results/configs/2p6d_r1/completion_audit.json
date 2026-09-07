@@ -1,0 +1,6 @@
+{
+  "status": "passed",
+  "requests": 180,
+  "configuration_matches_requested": true,
+  "effective_config_replay": false
+}

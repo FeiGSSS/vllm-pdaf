@@ -42,6 +42,7 @@ current implementation with old parameters.
 
 | Record | Current entry point / status |
 | --- | --- |
+| E2E `PAP-20260907-ALIGNED-C30` | Historical DP8 / PD / PAP comparison at concurrency 30; complete raw records and offline verifier |
 | E2E `PAP-20260905-REFACTOR-VALIDATION` | `run.sh` + `experiment.env`; source/dependency snapshots per invocation |
 | E2E `PAP-20260903-AGENTIC-CODE-QPS-MATRIX` | Frozen non-Dynamo PAP configuration; requires its recorded source revision, not the current Dynamo-only runner |
 | Micro `PAP-20260824-ATTENTION-LATENCY-SURFACE` | `run.sh` + `experiment.env`; kernel workload matrix |

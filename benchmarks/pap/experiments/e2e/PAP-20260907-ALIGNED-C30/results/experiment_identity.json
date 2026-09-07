@@ -1,0 +1,18 @@
+{
+  "source_commit": "bdb0954c7593bb289733108397a83de94179b0cf",
+  "reference_experiment": "PAP-20260907-ALIGNED-DP-PD-PAP",
+  "concurrency": 30,
+  "sessions": 60,
+  "turns": 3,
+  "requests_per_run": 180,
+  "repetitions": 2,
+  "architectures": [
+    "dp8",
+    "6p2d",
+    "4p4d",
+    "2p6d",
+    "pap7pa1p"
+  ],
+  "source_difference_from_c60": "Committed torch.accelerator.synchronize API substitution at Prefill retirement boundary; documented and CUDA-verified during prior commit. No other runtime edits.",
+  "slo": null
+}

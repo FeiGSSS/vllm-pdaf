@@ -1,0 +1,368 @@
+{
+  "workload": {
+    "concurrency": 30,
+    "sessions": 60,
+    "turns": 3,
+    "requests_per_run": 180,
+    "input_sha256": "ece4ff1e413301990a84a1a4f43b7a65ae45b150c023a2f43e725c99ef7032c5",
+    "model": "Qwen3-8B FP16",
+    "max_model_len": 32768,
+    "GPUs": "8 x L20"
+  },
+  "architectures": {
+    "dp8": {
+      "runs": [
+        {
+          "run": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/dp8_r1",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 2219.348966811111,
+          "inter_token_latency_mean_ms": 79.40270723455593,
+          "client_span_s": 61.863860698,
+          "input_tokens": 3373085
+        },
+        {
+          "run": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/dp8_r2",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 2195.943308344444,
+          "inter_token_latency_mean_ms": 75.3633349687,
+          "client_span_s": 60.282902173,
+          "input_tokens": 3373085
+        }
+      ],
+      "requests": 360,
+      "effective_config_differences_between_repetitions": {
+        "DYNAMO_NAMESPACE": [
+          "pap-aligned-dp8-r1-20260907T020755Z",
+          "pap-aligned-dp8-r2-20260907T020755Z"
+        ],
+        "DYNAMO_AIPERF_OUTPUT_DIR": [
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/dp8_r1/aiperf",
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/dp8_r2/aiperf"
+        ],
+        "DYNAMO_RUN_ID": [
+          "aligned_dp8_r1_20260907T020755Z",
+          "aligned_dp8_r2_20260907T020755Z"
+        ],
+        "DYNAMO_FILE_KV": [
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/dp8_r1/discovery",
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/dp8_r2/discovery"
+        ],
+        "DYNAMO_RUN_ROOT": [
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/dp8_r1",
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/dp8_r2"
+        ],
+        "NAMESPACE": [
+          "pap-aligned-dp8-r1-20260907T020755Z",
+          "pap-aligned-dp8-r2-20260907T020755Z"
+        ]
+      },
+      "time_to_first_token": {
+        "mean_ms": 2207.6461375777776,
+        "p50_ms": 1832.2673825,
+        "p95_ms": 5805.300217,
+        "per_run_mean_range_ms": [
+          2195.943308344444,
+          2219.348966811111
+        ]
+      },
+      "inter_token_latency": {
+        "mean_ms": 77.38302110162796,
+        "p50_ms": 75.01664897873361,
+        "p95_ms": 133.55358414492753,
+        "per_run_mean_range_ms": [
+          75.3633349687,
+          79.40270723455593
+        ]
+      },
+      "ttft_by_turn_ms": {
+        "0": 3159.304226425,
+        "1": 1736.4515190833333,
+        "2": 1727.182667225
+      },
+      "pap_relative_change_percent": {
+        "time_to_first_token": 142.99096691622282,
+        "inter_token_latency": -42.04134744345096
+      }
+    },
+    "6p2d": {
+      "runs": [
+        {
+          "run": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/6p2d_r1",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 5636.511225688889,
+          "inter_token_latency_mean_ms": 49.7701932613495,
+          "client_span_s": 66.992317525,
+          "input_tokens": 3373085
+        },
+        {
+          "run": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/6p2d_r2",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 5760.057794872222,
+          "inter_token_latency_mean_ms": 48.211793861720984,
+          "client_span_s": 67.360728072,
+          "input_tokens": 3373085
+        }
+      ],
+      "requests": 360,
+      "effective_config_differences_between_repetitions": {
+        "DYNAMO_NAMESPACE": [
+          "pap-aligned-6p2d-r1-20260907T020755Z",
+          "pap-aligned-6p2d-r2-20260907T020755Z"
+        ],
+        "DYNAMO_AIPERF_OUTPUT_DIR": [
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/6p2d_r1/aiperf",
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/6p2d_r2/aiperf"
+        ],
+        "DYNAMO_RUN_ID": [
+          "aligned_6p2d_r1_20260907T020755Z",
+          "aligned_6p2d_r2_20260907T020755Z"
+        ],
+        "DYNAMO_FILE_KV": [
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/6p2d_r1/discovery",
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/6p2d_r2/discovery"
+        ],
+        "DYNAMO_RUN_ROOT": [
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/6p2d_r1",
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/6p2d_r2"
+        ],
+        "NAMESPACE": [
+          "pap-aligned-6p2d-r1-20260907T020755Z",
+          "pap-aligned-6p2d-r2-20260907T020755Z"
+        ]
+      },
+      "time_to_first_token": {
+        "mean_ms": 5698.284510280555,
+        "p50_ms": 5402.603504,
+        "p95_ms": 9875.10792,
+        "per_run_mean_range_ms": [
+          5636.511225688889,
+          5760.057794872222
+        ]
+      },
+      "inter_token_latency": {
+        "mean_ms": 48.99099356153524,
+        "p50_ms": 50.69147132888094,
+        "p95_ms": 66.05222257894737,
+        "per_run_mean_range_ms": [
+          48.211793861720984,
+          49.7701932613495
+        ]
+      },
+      "ttft_by_turn_ms": {
+        "0": 4662.9229411,
+        "1": 6158.99328695,
+        "2": 6272.937302791666
+      },
+      "pap_relative_change_percent": {
+        "time_to_first_token": -5.8597252188663855,
+        "inter_token_latency": -8.452241774359104
+      }
+    },
+    "4p4d": {
+      "runs": [
+        {
+          "run": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/4p4d_r1",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 10950.190860333332,
+          "inter_token_latency_mean_ms": 28.343109314456576,
+          "client_span_s": 88.880115237,
+          "input_tokens": 3373085
+        },
+        {
+          "run": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/4p4d_r2",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 11009.572174505554,
+          "inter_token_latency_mean_ms": 28.406244790688316,
+          "client_span_s": 88.095156155,
+          "input_tokens": 3373085
+        }
+      ],
+      "requests": 360,
+      "effective_config_differences_between_repetitions": {
+        "DYNAMO_NAMESPACE": [
+          "pap-aligned-4p4d-r1-20260907T020755Z",
+          "pap-aligned-4p4d-r2-20260907T020755Z"
+        ],
+        "DYNAMO_AIPERF_OUTPUT_DIR": [
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/4p4d_r1/aiperf",
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/4p4d_r2/aiperf"
+        ],
+        "DYNAMO_RUN_ID": [
+          "aligned_4p4d_r1_20260907T020755Z",
+          "aligned_4p4d_r2_20260907T020755Z"
+        ],
+        "DYNAMO_FILE_KV": [
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/4p4d_r1/discovery",
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/4p4d_r2/discovery"
+        ],
+        "DYNAMO_RUN_ROOT": [
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/4p4d_r1",
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/4p4d_r2"
+        ],
+        "NAMESPACE": [
+          "pap-aligned-4p4d-r1-20260907T020755Z",
+          "pap-aligned-4p4d-r2-20260907T020755Z"
+        ]
+      },
+      "time_to_first_token": {
+        "mean_ms": 10979.881517419444,
+        "p50_ms": 11549.5330675,
+        "p95_ms": 14516.707514,
+        "per_run_mean_range_ms": [
+          10950.190860333332,
+          11009.572174505554
+        ]
+      },
+      "inter_token_latency": {
+        "mean_ms": 28.374677052572448,
+        "p50_ms": 27.853991783480645,
+        "p95_ms": 33.5610284047619,
+        "per_run_mean_range_ms": [
+          28.343109314456576,
+          28.406244790688316
+        ]
+      },
+      "ttft_by_turn_ms": {
+        "0": 8877.923284391667,
+        "1": 11718.918094666666,
+        "2": 12342.8031732
+      },
+      "pap_relative_change_percent": {
+        "time_to_first_token": -51.143546610422284,
+        "inter_token_latency": 58.06402397093527
+      }
+    },
+    "2p6d": {
+      "runs": [
+        {
+          "run": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/2p6d_r1",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 35381.40068363889,
+          "inter_token_latency_mean_ms": 25.113964382827277,
+          "client_span_s": 260.439806291,
+          "input_tokens": 3373085
+        },
+        {
+          "run": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/2p6d_r2",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 34086.81461368889,
+          "inter_token_latency_mean_ms": 25.114212934171523,
+          "client_span_s": 254.944062899,
+          "input_tokens": 3373085
+        }
+      ],
+      "requests": 360,
+      "effective_config_differences_between_repetitions": {
+        "DYNAMO_NAMESPACE": [
+          "pap-aligned-2p6d-r1-20260907T020755Z",
+          "pap-aligned-2p6d-r2-20260907T020755Z"
+        ],
+        "DYNAMO_AIPERF_OUTPUT_DIR": [
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/2p6d_r1/aiperf",
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/2p6d_r2/aiperf"
+        ],
+        "DYNAMO_RUN_ID": [
+          "aligned_2p6d_r1_20260907T020755Z",
+          "aligned_2p6d_r2_20260907T020755Z"
+        ],
+        "DYNAMO_FILE_KV": [
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/2p6d_r1/discovery",
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/2p6d_r2/discovery"
+        ],
+        "DYNAMO_RUN_ROOT": [
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/2p6d_r1",
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/runs_aligned/2p6d_r2"
+        ],
+        "NAMESPACE": [
+          "pap-aligned-2p6d-r1-20260907T020755Z",
+          "pap-aligned-2p6d-r2-20260907T020755Z"
+        ]
+      },
+      "time_to_first_token": {
+        "mean_ms": 34734.107648663885,
+        "p50_ms": 30931.9000705,
+        "p95_ms": 60998.519763,
+        "per_run_mean_range_ms": [
+          34086.81461368889,
+          35381.40068363889
+        ]
+      },
+      "inter_token_latency": {
+        "mean_ms": 25.1140886584994,
+        "p50_ms": 24.979814617734725,
+        "p95_ms": 27.224650614583332,
+        "per_run_mean_range_ms": [
+          25.113964382827277,
+          25.114212934171523
+        ]
+      },
+      "ttft_by_turn_ms": {
+        "0": 27902.87637408333,
+        "1": 25271.762627891665,
+        "2": 51027.683944016666
+      },
+      "pap_relative_change_percent": {
+        "time_to_first_token": -84.55587012613167,
+        "inter_token_latency": 78.58564150156757
+      }
+    },
+    "pap7pa1p": {
+      "runs": [
+        {
+          "run": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/pap_clean/run_pap1",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 5137.2628629,
+          "inter_token_latency_mean_ms": 45.08533090118049,
+          "client_span_s": 59.867492062,
+          "input_tokens": 3371499
+        },
+        {
+          "run": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/pap_clean/run_pap2",
+          "requests": 180,
+          "time_to_first_token_mean_ms": 5591.498528677777,
+          "inter_token_latency_mean_ms": 44.61498177492666,
+          "client_span_s": 64.857345946,
+          "input_tokens": 3372178
+        }
+      ],
+      "requests": 360,
+      "effective_config_differences_between_repetitions": {
+        "RUN_ROOT": [
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/pap_clean/run_pap1",
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/pap_clean/run_pap2"
+        ],
+        "PAP_AIPERF_OUTPUT_DIR": [
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/pap_clean/run_pap1/aiperf",
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/pap_clean/run_pap2/aiperf"
+        ],
+        "RUN_LOG_DIR": [
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/pap_clean/run_pap1/service_logs",
+          "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/runs/20260907T020755Z/pap_clean/run_pap2/service_logs"
+        ]
+      },
+      "time_to_first_token": {
+        "mean_ms": 5364.380695788888,
+        "p50_ms": 5035.480684,
+        "p95_ms": 9629.694636999999,
+        "per_run_mean_range_ms": [
+          5137.2628629,
+          5591.498528677777
+        ]
+      },
+      "inter_token_latency": {
+        "mean_ms": 44.85015633805358,
+        "p50_ms": 45.25852887004662,
+        "p95_ms": 53.76784342307692,
+        "per_run_mean_range_ms": [
+          44.61498177492666,
+          45.08533090118049
+        ]
+      },
+      "ttft_by_turn_ms": {
+        "0": 5950.566586783333,
+        "1": 5180.489963675,
+        "2": 4962.085536908333
+      }
+    }
+  }
+}

@@ -1,0 +1,2 @@
+# Preserve raw terminal output.
+results/**/*.log -whitespace

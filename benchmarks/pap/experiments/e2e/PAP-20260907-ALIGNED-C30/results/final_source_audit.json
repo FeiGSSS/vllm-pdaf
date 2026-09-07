@@ -1,0 +1,20 @@
+{
+  "status": "passed",
+  "source_commit": "bdb0954c7593bb289733108397a83de94179b0cf",
+  "source_sha256": {
+    "benchmarks/pap/scripts/run_dynamo_workload.sh": "ff1ae45c6fba6011c2b5359b8bacc54e658b88480fe088885a373d92163f3cd1",
+    "benchmarks/pap/scripts/run_aiperf_profile.sh": "9838ec4a2f6966dd584d89bde84857a7920dc234ab7ed634ab5bc92242535aa0",
+    "benchmarks/pap/scripts/configure_same_node_nixl.sh": "15e5915cf2b4294a78288d0a1b495f23131034a41680d42e6a5dd7313e849734",
+    "vllm/pap/kv_connector.py": "09a6b0cde795460f3464d1e626c88b8c961615e4bb686548a2182fe3dbe7f01e",
+    "vllm/pap/plugin.py": "99744568230fab696086768bbdee4f52f078727a59f14dad32182addfc200f40",
+    "vllm/pap/kv/session_registry.py": "ea339f5f661da5f9af3101d4304ac8ea11760aaea3d53a6c8e83a9eab267f8e5",
+    "vllm/pap/kv/control_client.py": "34391a4d2c8e20adfd810db0fa0758bdb47aa1e42d48ea8fa98c7ec60cac6ae4",
+    "vllm/pap/integration/engine.py": "fef47bd961f4e72d3fcbf214ac5081a8a241a2d4c95490a3440a46f01a9a8398",
+    "tests/pap/test_decode_commit.py": "92db830375e7958a72c1002c8fa2281ea09076aa15b4ea0b97959af501b583aa",
+    "tests/pap/test_async_decode_token.py": "2ed3ccae7c1ba9cac0326e80f0e319652d2798527faf6fa0bb7fbec03480767f",
+    "tests/pap/contract/test_prefill_connector.py": "44b319ecc44d30b345064cc4d09a0d5e13b31a5631626e6665e9341cff6a8b8b",
+    "tests/pap/contract/test_engine_control.py": "13d45a1a240f38c47d237e7d55d4fd67561c8fd0cec2c370de733a449d6e3f65",
+    "vllm/pap/gateway/tokenizer.py": "4352c172ea29b4c5df137dd6c605fc255b3f3ed92e9bd0aea4ea729d34ec3f7d",
+    "vllm/pap/transport/nvshmem/device_bridge.cu": "35356439254ea6d58ecb500201ab13e73b95484180df69a8dc59417a4fdc3dfd"
+  }
+}

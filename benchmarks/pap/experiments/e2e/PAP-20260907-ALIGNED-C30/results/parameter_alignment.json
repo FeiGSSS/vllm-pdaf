@@ -1,0 +1,101 @@
+{
+  "matched": [
+    {
+      "parameter": "model",
+      "pap_key": "MODEL_PATH",
+      "dynamo_key": "MODEL_PATH",
+      "value": "/data/ssd1/llm-models/Qwen3-8B"
+    },
+    {
+      "parameter": "context",
+      "pap_key": "MAX_MODEL_LEN",
+      "dynamo_key": "DYNAMO_MAX_MODEL_LEN",
+      "value": "32768"
+    },
+    {
+      "parameter": "HF overrides",
+      "pap_key": "PAP_HF_OVERRIDES",
+      "dynamo_key": "DYNAMO_HF_OVERRIDES",
+      "value": ""
+    },
+    {
+      "parameter": "Prefill budget",
+      "pap_key": "PAP_PREFILL_MAX_NUM_BATCHED_TOKENS",
+      "dynamo_key": "DYNAMO_PREFILL_MAX_NUM_BATCHED_TOKENS",
+      "value": "2048"
+    },
+    {
+      "parameter": "Decode / Projection budget",
+      "pap_key": "PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS",
+      "dynamo_key": "DYNAMO_DECODE_MAX_NUM_BATCHED_TOKENS",
+      "value": "256"
+    },
+    {
+      "parameter": "max sequences",
+      "pap_key": "PAP_PREFILL_MAX_NUM_SEQS",
+      "dynamo_key": "DYNAMO_MAX_NUM_SEQS",
+      "value": "256"
+    },
+    {
+      "parameter": "block size",
+      "pap_key": "PAP_BLOCK_SIZE",
+      "dynamo_key": "DYNAMO_BLOCK_SIZE",
+      "value": "16"
+    },
+    {
+      "parameter": "Prefill async",
+      "pap_key": "PAP_PREFILL_ASYNC_SCHEDULING",
+      "dynamo_key": "DYNAMO_PREFILL_ASYNC_SCHEDULING",
+      "value": "off"
+    },
+    {
+      "parameter": "Decode / Projection async",
+      "pap_key": "PAP_PROJECTION_ASYNC_SCHEDULING",
+      "dynamo_key": "DYNAMO_DECODE_ASYNC_SCHEDULING",
+      "value": "on"
+    },
+    {
+      "parameter": "Prefill memory fraction",
+      "pap_key": "PAP_PREFILL_GPU_MEMORY_UTILIZATION",
+      "dynamo_key": "DYNAMO_GPU_MEMORY_UTILIZATION",
+      "value": "0.90"
+    },
+    {
+      "parameter": "router Prefill load scale",
+      "pap_key": "PAP_DYNAMO_PREFILL_LOAD_SCALE",
+      "dynamo_key": "DYNAMO_ROUTER_PREFILL_LOAD_SCALE",
+      "value": "2.0"
+    },
+    {
+      "parameter": "concurrency",
+      "pap_key": "PAP_AIPERF_CONCURRENCY",
+      "dynamo_key": "DYNAMO_AIPERF_CONCURRENCY",
+      "value": "30"
+    },
+    {
+      "parameter": "sessions",
+      "pap_key": "PAP_AIPERF_SESSIONS",
+      "dynamo_key": "DYNAMO_AIPERF_SESSIONS",
+      "value": "60"
+    },
+    {
+      "parameter": "timing mode",
+      "pap_key": "PAP_AIPERF_TIMING_MODE",
+      "dynamo_key": "DYNAMO_AIPERF_TIMING_MODE",
+      "value": "concurrency"
+    },
+    {
+      "parameter": "dataset",
+      "pap_key": "PAP_AIPERF_INPUT_FILE",
+      "dynamo_key": "DYNAMO_AIPERF_INPUT_FILE",
+      "value": "/home/fei/research/PD/vllm-pap/benchmarks/pap/datasets/agentic-code/s60-t3-native32k-stratified-seed42/dataset.jsonl"
+    }
+  ],
+  "architecture_specific": {
+    "DP8": "Combined Prefill/Decode scheduling uses a total budget of 2048 and async on.",
+    "GPU memory": "Full-model DP/PD workers use 0.90; PAP Projection uses its derived policy (0.5181 in reference).",
+    "graphs": "DP/PD use native piecewise graphs; PAP Attention/Projection use whole-step graphs.",
+    "vllm_version": "Dynamo baseline remains the official 0.26.0 wheel; PAP remains the existing development checkout.",
+    "router_lifetime": "PAP explicit-owner reservations follow its shared-KV lease lifecycle."
+  }
+}

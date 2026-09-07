@@ -1,0 +1,83 @@
+{
+  "status": "passed",
+  "counts": {
+    "aggregated": 8,
+    "prefill": 0,
+    "decode": 0
+  },
+  "engine_count": 8,
+  "mapping": [
+    {
+      "role": "aggregated",
+      "worker_pid": 1145811,
+      "engine_pid": 1151248,
+      "gpu": 0,
+      "uuid": "GPU-5954ae35-b1fa-1499-e9f2-634b5517efa6",
+      "token_budget": 2048,
+      "async_scheduling": "on"
+    },
+    {
+      "role": "aggregated",
+      "worker_pid": 1145812,
+      "engine_pid": 1151170,
+      "gpu": 1,
+      "uuid": "GPU-d294c5ad-3496-1070-41cb-9335ba425fd1",
+      "token_budget": 2048,
+      "async_scheduling": "on"
+    },
+    {
+      "role": "aggregated",
+      "worker_pid": 1145813,
+      "engine_pid": 1151016,
+      "gpu": 2,
+      "uuid": "GPU-e871a501-689a-7d7a-170c-f668c4e45d2f",
+      "token_budget": 2048,
+      "async_scheduling": "on"
+    },
+    {
+      "role": "aggregated",
+      "worker_pid": 1145814,
+      "engine_pid": 1151023,
+      "gpu": 3,
+      "uuid": "GPU-e9dd15ab-ba98-f70a-f2a7-0cbdeae2f2d2",
+      "token_budget": 2048,
+      "async_scheduling": "on"
+    },
+    {
+      "role": "aggregated",
+      "worker_pid": 1145815,
+      "engine_pid": 1151178,
+      "gpu": 4,
+      "uuid": "GPU-4fe93088-5e0f-cc87-943b-a90c911e9e08",
+      "token_budget": 2048,
+      "async_scheduling": "on"
+    },
+    {
+      "role": "aggregated",
+      "worker_pid": 1145816,
+      "engine_pid": 1151030,
+      "gpu": 5,
+      "uuid": "GPU-e4c3f6ad-8480-29f5-43e8-3005b438e7ca",
+      "token_budget": 2048,
+      "async_scheduling": "on"
+    },
+    {
+      "role": "aggregated",
+      "worker_pid": 1145817,
+      "engine_pid": 1151100,
+      "gpu": 6,
+      "uuid": "GPU-74f526f4-279f-8f17-b0e4-a970f3c45053",
+      "token_budget": 2048,
+      "async_scheduling": "on"
+    },
+    {
+      "role": "aggregated",
+      "worker_pid": 1145818,
+      "engine_pid": 1150945,
+      "gpu": 7,
+      "uuid": "GPU-b32cb611-8b14-2647-aacc-1e15f28e49dd",
+      "token_budget": 2048,
+      "async_scheduling": "on"
+    }
+  ]
+}
