@@ -1,0 +1,83 @@
+{
+  "workload": {
+    "model": "Qwen3-8B FP16",
+    "max_model_len": 32768,
+    "gpus": "8 x NVIDIA L20",
+    "architecture": "7p1d",
+    "concurrency": 30,
+    "sessions": 60,
+    "turns": 3,
+    "requests_per_run": 180,
+    "repetitions": 2,
+    "total_requests": 360,
+    "materialized_input_sha256": "ece4ff1e413301990a84a1a4f43b7a65ae45b150c023a2f43e725c99ef7032c5",
+    "goodput_slo": null
+  },
+  "source": {
+    "base_commit": "e22ac549f8a5d98f359fb340a08fb7b83a8d7b60",
+    "runner_sha256": "38530cefeef884997717a930de2174e81b1a91632eff77e928ff7a94b113cdb5",
+    "working_change": "Add 7p1d topology to the shared Dynamo runner",
+    "model_implementation_changed": false
+  },
+  "runs": [
+    {
+      "id": "run_1",
+      "time_to_first_token_mean_ms": 8932.31037823889,
+      "inter_token_latency_mean_ms": 67.57417806518143,
+      "request_latency_mean_ms": 14366.629571038888,
+      "request_throughput": 1.82568560789718,
+      "output_token_throughput": 149.0570871869831
+    },
+    {
+      "id": "run_2",
+      "time_to_first_token_mean_ms": 8843.854445727777,
+      "inter_token_latency_mean_ms": 66.3604861142402,
+      "request_latency_mean_ms": 14192.755643072222,
+      "request_throughput": 1.822131122256375,
+      "output_token_throughput": 148.76688318155382
+    }
+  ],
+  "combined": {
+    "time_to_first_token": {
+      "mean_ms": 8888.082411983332,
+      "p50_ms": 9062.718959,
+      "p95_ms": 13653.7601837,
+      "p99_ms": 14603.418430160007
+    },
+    "inter_token_latency": {
+      "mean_ms": 66.96733208971082,
+      "p50_ms": 68.65182204507042,
+      "p95_ms": 74.4979507151488,
+      "p99_ms": 79.06269899034487
+    },
+    "request_latency": {
+      "mean_ms": 14279.692607055555,
+      "p50_ms": 14327.825297,
+      "p95_ms": 22544.82242425,
+      "p99_ms": 25876.20162602
+    },
+    "request_throughput_mean": 1.8239083650767776,
+    "output_token_throughput_mean": 148.91198518426847
+  },
+  "gpu_telemetry_request_window": {
+    "samples": 3872,
+    "gpu_indices": [0, 1, 2, 3, 4, 5, 6, 7],
+    "gpu_utilization_mean_percent": 54.043130165289256,
+    "memory_utilization_mean_percent": 17.93620867768595,
+    "power_mean_watts_per_gpu": 222.15708703512396,
+    "temperature_mean_celsius_per_gpu": 56.08780991735537,
+    "dram_active_mean_percent": 10.24206895661157,
+    "gr_engine_active_mean_percent": 16.521614204545454,
+    "tensor_active_mean_percent": 8.411545996900827
+  },
+  "relative_to_concurrency_30": {
+    "6p2d": {
+      "ttft_change_percent": 55.97821407386567,
+      "itl_change_percent": 36.69314953899918
+    },
+    "pap7pa1p": {
+      "ttft_change_percent": 65.68701805523605,
+      "itl_change_percent": 49.31348641229083
+    }
+  }
+}

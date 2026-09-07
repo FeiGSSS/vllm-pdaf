@@ -1,0 +1,8 @@
+{
+  "status": "passed",
+  "requests": 180,
+  "errors": 0,
+  "configuration_matches_requested": true,
+  "live_topology_audit": true,
+  "gpu_cleanup": true
+}

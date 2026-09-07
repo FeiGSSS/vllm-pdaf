@@ -58,6 +58,11 @@ def test_pap_replay_requires_existing_dataset_before_creating_run(tmp_path):
     + [
         ("DYNAMO_NAMESPACE", "invalid.namespace", "DYNAMO_NAMESPACE must contain"),
         ("DYNAMO_ROUTER_PREFILL_LOAD_SCALE", "nan", "must be a nonnegative number"),
+        (
+            "DYNAMO_ARCHITECTURE",
+            "7d1p",
+            "must be dp8, 7p1d, 6p2d, 4p4d, or 2p6d",
+        ),
     ],
 )
 def test_dynamo_rejects_invalid_configuration_before_startup(

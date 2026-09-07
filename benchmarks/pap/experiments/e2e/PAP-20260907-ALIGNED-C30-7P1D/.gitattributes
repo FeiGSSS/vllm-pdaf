@@ -1,0 +1,3 @@
+# Preserve raw terminal output, including its original whitespace.
+results/**/*.log -whitespace
+results/**/*.patch -whitespace

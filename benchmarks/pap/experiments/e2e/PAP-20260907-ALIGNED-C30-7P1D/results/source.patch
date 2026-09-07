@@ -1,0 +1,56 @@
+diff --git a/benchmarks/pap/scripts/DYNAMO.md b/benchmarks/pap/scripts/DYNAMO.md
+index f33390c006..75546fabbd 100644
+--- a/benchmarks/pap/scripts/DYNAMO.md
++++ b/benchmarks/pap/scripts/DYNAMO.md
+@@ -42,6 +42,8 @@ DYNAMO_ARCHITECTURE=6p2d DYNAMO_SMOKE_ONLY=1 \
+   bash benchmarks/pap/scripts/run_dynamo_workload.sh
+ ```
+ 
++Supported eight-GPU layouts are `dp8`, `7p1d`, `6p2d`, `4p4d`, and `2p6d`.
++
+ ## AIPerf run
+ 
+ KV-aware routing uses an ephemeral local etcd process for discovery. Dynamo,
+diff --git a/benchmarks/pap/scripts/run_dynamo_workload.sh b/benchmarks/pap/scripts/run_dynamo_workload.sh
+index e0567d68e6..254696403f 100755
+--- a/benchmarks/pap/scripts/run_dynamo_workload.sh
++++ b/benchmarks/pap/scripts/run_dynamo_workload.sh
+@@ -100,6 +100,13 @@ case "${ARCHITECTURE}" in
+     PREFILL_COUNT=0
+     DECODE_COUNT=0
+     ;;
++  7p1d)
++    AGG_COUNT=0
++    PREFILL_COUNT=7
++    DECODE_COUNT=1
++    source "${ROOT_DIR}/benchmarks/pap/scripts/configure_same_node_nixl.sh"
++    pap_configure_same_node_nixl "${ROOT_DIR}"
++    ;;
+   6p2d)
+     AGG_COUNT=0
+     PREFILL_COUNT=6
+@@ -121,7 +128,7 @@ case "${ARCHITECTURE}" in
+     source "${ROOT_DIR}/benchmarks/pap/scripts/configure_same_node_nixl.sh"
+     pap_configure_same_node_nixl "${ROOT_DIR}"
+     ;;
+-  *) die "DYNAMO_ARCHITECTURE must be dp8, 6p2d, 4p4d, or 2p6d" ;;
++  *) die "DYNAMO_ARCHITECTURE must be dp8, 7p1d, 6p2d, 4p4d, or 2p6d" ;;
+ esac
+ GPU_COUNT=$((AGG_COUNT + PREFILL_COUNT + DECODE_COUNT))
+ if (( AGG_COUNT > 0 )); then
+diff --git a/tests/pap/test_pap_launch_files.py b/tests/pap/test_pap_launch_files.py
+index 1d08c1b488..52a0b92726 100644
+--- a/tests/pap/test_pap_launch_files.py
++++ b/tests/pap/test_pap_launch_files.py
+@@ -58,6 +58,11 @@ def test_pap_replay_requires_existing_dataset_before_creating_run(tmp_path):
+     + [
+         ("DYNAMO_NAMESPACE", "invalid.namespace", "DYNAMO_NAMESPACE must contain"),
+         ("DYNAMO_ROUTER_PREFILL_LOAD_SCALE", "nan", "must be a nonnegative number"),
++        (
++            "DYNAMO_ARCHITECTURE",
++            "7d1p",
++            "must be dp8, 7p1d, 6p2d, 4p4d, or 2p6d",
++        ),
+     ],
+ )
+ def test_dynamo_rejects_invalid_configuration_before_startup(

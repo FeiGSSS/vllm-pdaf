@@ -42,6 +42,8 @@ DYNAMO_ARCHITECTURE=6p2d DYNAMO_SMOKE_ONLY=1 \
   bash benchmarks/pap/scripts/run_dynamo_workload.sh
 ```
 
+Supported eight-GPU layouts are `dp8`, `7p1d`, `6p2d`, `4p4d`, and `2p6d`.
+
 ## AIPerf run
 
 KV-aware routing uses an ephemeral local etcd process for discovery. Dynamo,

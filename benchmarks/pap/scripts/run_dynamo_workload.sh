@@ -100,6 +100,13 @@ case "${ARCHITECTURE}" in
     PREFILL_COUNT=0
     DECODE_COUNT=0
     ;;
+  7p1d)
+    AGG_COUNT=0
+    PREFILL_COUNT=7
+    DECODE_COUNT=1
+    source "${ROOT_DIR}/benchmarks/pap/scripts/configure_same_node_nixl.sh"
+    pap_configure_same_node_nixl "${ROOT_DIR}"
+    ;;
   6p2d)
     AGG_COUNT=0
     PREFILL_COUNT=6
@@ -121,7 +128,7 @@ case "${ARCHITECTURE}" in
     source "${ROOT_DIR}/benchmarks/pap/scripts/configure_same_node_nixl.sh"
     pap_configure_same_node_nixl "${ROOT_DIR}"
     ;;
-  *) die "DYNAMO_ARCHITECTURE must be dp8, 6p2d, 4p4d, or 2p6d" ;;
+  *) die "DYNAMO_ARCHITECTURE must be dp8, 7p1d, 6p2d, 4p4d, or 2p6d" ;;
 esac
 GPU_COUNT=$((AGG_COUNT + PREFILL_COUNT + DECODE_COUNT))
 if (( AGG_COUNT > 0 )); then
