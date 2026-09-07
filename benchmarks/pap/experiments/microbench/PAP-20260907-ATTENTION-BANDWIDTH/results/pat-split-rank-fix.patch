@@ -1,0 +1,113 @@
+diff --git a/tests/pap/test_pap_attention_kernels.py b/tests/pap/test_pap_attention_kernels.py
+index c312e3b67f..b604bd7443 100644
+--- a/tests/pap/test_pap_attention_kernels.py
++++ b/tests/pap/test_pap_attention_kernels.py
+@@ -28,6 +28,41 @@ from vllm.pap.config import PAPConfigError
+ from vllm.pap.kv.metadata import PAPPagedFlashMetadata
+ 
+ 
++@pytest.mark.parametrize(
++    "batch,blocks,shared",
++    [(2, 1024, 512), (2, 2048, 1024), (4, 1024, 512), (3, 513, 200)],
++)
++def test_pat_balancing_writes_each_query_split_exactly_once(batch, blocks, shared):
++    """Shared CTA splits must not collide with a query's private split ranks."""
++    extension = pytest.importorskip("prefix_attn")
++    generator = torch.Generator().manual_seed(42)
++    table = torch.randperm(batch * blocks, generator=generator).reshape(batch, blocks)
++    table = table.to(torch.int32)
++    table[1:, :shared] = table[0, :shared]
++    tree = extension.PrefixTreeCPP(16)
++    tree.build_radix_tree([blocks * 16] * batch, table)
++    tree.pack_schedule([[16, 32, 1], [32, 32, 2]], 4, 8)
++    info = tree.kernel_info
++    ranks: list[list[int]] = [[] for _ in range(batch)]
++    tokens = [0] * batch
++    for queries, counts, split_ranks, sizes in zip(
++        info.q_tables,
++        info.num_seqs_per_CTAs,
++        info.CTA_ranks,
++        info.kv_in_CTAs,
++        strict=True,
++    ):
++        for query_row, count, rank, size in zip(
++            queries, counts, split_ranks, sizes, strict=True
++        ):
++            for query in query_row[: int(count)].tolist():
++                ranks[query].append(int(rank))
++                tokens[query] += int(size)
++    for query, expected in enumerate(info.num_split_per_seq.tolist()):
++        assert sorted(ranks[query]) == list(range(expected))
++        assert tokens[query] == blocks * 16
++
++
+ def test_pat_rejects_negative_plan_cache_budget_before_building(monkeypatch):
+     monkeypatch.setattr(
+         pat.PAPPATPlanner, "unavailable_reason", staticmethod(lambda: None)
+diff --git a/third_party/pat/csrc/prefix_tree.h b/third_party/pat/csrc/prefix_tree.h
+index c0d0299913..d2a59faa52 100644
+--- a/third_party/pat/csrc/prefix_tree.h
++++ b/third_party/pat/csrc/prefix_tree.h
+@@ -4,6 +4,7 @@
+ #include <algorithm>
+ #include <iostream>
+ #include <limits>
++#include <stdexcept>
+ 
+ struct KernelInfo {
+     std::vector<torch::Tensor> q_tables;
+@@ -220,6 +221,23 @@ public:
+         // Balance Pack
+         packed_boxes = balancePack(packed_boxes, kvHead, HRatio);
+ 
++        std::vector<std::vector<bool>> assigned;
++        for (int count : split_per_seq) assigned.emplace_back(count, false);
++        for (const auto& box : packed_boxes) {
++            for (int qid : box.q_table) {
++                if (box.CTA_rank < 0 || box.CTA_rank >= split_per_seq[qid] ||
++                    assigned[qid][box.CTA_rank]) {
++                    throw std::runtime_error("PAT split ranks overlap or exceed capacity");
++                }
++                assigned[qid][box.CTA_rank] = true;
++            }
++        }
++        for (const auto& ranks : assigned) {
++            if (std::find(ranks.begin(), ranks.end(), false) != ranks.end()) {
++                throw std::runtime_error("PAT split ranks leave unwritten gather inputs");
++            }
++        }
++
+         std::map<std::vector<int>, std::vector<PackedBox>> grouped;
+         for (const auto& b : buckets) {
+             grouped[b] = {};
+@@ -499,6 +517,12 @@ private:
+     std::vector<PackedBox> balancePack(std::vector<PackedBox>& boxes, int kvHead, int HRatio = 1) {
+         if (boxes.empty()) return {};
+ 
++        const auto can_split = [&](const PackedBox& box) {
++            const int next_rank = split_per_seq[box.q_table.front()];
++            return std::all_of(box.q_table.begin(), box.q_table.end(),
++                               [&](int qid) { return split_per_seq[qid] == next_rank; });
++        };
++
+         std::vector<PackedBox> cropPack;
+         cropPack.reserve(boxes.size() * 2);
+ 
+@@ -518,7 +542,7 @@ private:
+             for (auto& pack : boxes) {
+                 size_t current_size = pack.block_table_ptr->size();
+ 
+-                if (current_size > threshold) {
++                if (current_size > threshold && can_split(pack)) {
+                     int num_splits = ceil_div((int)current_size, (int)avg_blocks);
+                     int split_size = ceil_div((int)current_size, num_splits);
+ 
+@@ -583,7 +607,7 @@ private:
+             int longest_idx = -1;
+             size_t max_len = 0;
+             for (size_t i = 0; i < cropPack.size(); ++i) {
+-                if (cropPack[i].block_table_ptr->size() > max_len) {
++                if (cropPack[i].block_table_ptr->size() > max_len && can_split(cropPack[i])) {
+                     max_len = cropPack[i].block_table_ptr->size();
+                     longest_idx = (int)i;
+                 }

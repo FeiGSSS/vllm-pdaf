@@ -1,0 +1,50 @@
+{
+  "80/12": {
+    "runs": [
+      {
+        "run": "baseline_r1",
+        "duration_s": 62.504634496,
+        "generation_request_seconds": 646.819140093,
+        "pa_step_count": 8274,
+        "pa_row_count": 14696,
+        "client_generation_population_proxy": 10.348338892124765,
+        "mean_rows_per_active_pa_step": 1.776166304085086
+      },
+      {
+        "run": "baseline_r2",
+        "duration_s": 65.35493744200001,
+        "generation_request_seconds": 634.381098083,
+        "pa_step_count": 8209,
+        "pa_row_count": 14696,
+        "client_generation_population_proxy": 9.706705000612827,
+        "mean_rows_per_active_pa_step": 1.7902302351078085
+      }
+    ],
+    "pooled_population_proxy": 10.020370151069038,
+    "pooled_rows_per_active_pa_step": 1.7831705393435662
+  },
+  "72/20": {
+    "runs": [
+      {
+        "run": "attention20_r1",
+        "duration_s": 68.71744455700001,
+        "generation_request_seconds": 575.33004484,
+        "pa_step_count": 9330,
+        "pa_row_count": 14696,
+        "client_generation_population_proxy": 8.372401630313437,
+        "mean_rows_per_active_pa_step": 1.57513397642015
+      },
+      {
+        "run": "attention20_r2",
+        "duration_s": 69.283500825,
+        "generation_request_seconds": 583.310894986,
+        "pa_step_count": 9083,
+        "pa_row_count": 14696,
+        "client_generation_population_proxy": 8.419189100437608,
+        "mean_rows_per_active_pa_step": 1.6179676318397005
+      }
+    ],
+    "pooled_population_proxy": 8.39589132247442,
+    "pooled_rows_per_active_pa_step": 1.596263509477
+  }
+}

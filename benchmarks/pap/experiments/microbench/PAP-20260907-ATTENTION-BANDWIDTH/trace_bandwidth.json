@@ -1,0 +1,147 @@
+{
+  "bytes_per_token_per_layer": 4096,
+  "layers": 36,
+  "units": "decimal GB/s; bytes/ns. Ratio of summed bytes to summed time.",
+  "scope": "PA-local kernel intervals, excludes KV append and transport; PA times pooled as service samples, not global critical path.",
+  "not_hardware_bandwidth": true,
+  "source_manifest": [
+    {
+      "path": "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/diagnostic_80_12_v2/attention_pa_0_kernel_trace.pt",
+      "sha256": "de042582d924b036755ff9f10de2d6723f6cadaa34995fba0103b258d138b02b"
+    },
+    {
+      "path": "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/diagnostic_80_12_v2/attention_pa_1_kernel_trace.pt",
+      "sha256": "67e3e163b7dc3390923b8ba4993534e289cf9032dbb0d6d96a13d6f8c3ffb261"
+    },
+    {
+      "path": "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/diagnostic_80_12_v2/attention_pa_2_kernel_trace.pt",
+      "sha256": "fa6c284d4e379329b1d6f231005d4e37f8a8a0709267f9b55ac529b23388a30d"
+    },
+    {
+      "path": "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/diagnostic_80_12_v2/attention_pa_3_kernel_trace.pt",
+      "sha256": "17f684c7ef3db07efc4e57feb57ccc97ca54121b4a299ab0c7dbb3aaa326089c"
+    },
+    {
+      "path": "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/diagnostic_80_12_v2/attention_pa_4_kernel_trace.pt",
+      "sha256": "e48f8a3def7cb229ae339fbd5d4c686831d8bd0536c842f01a28b83180b8d109"
+    },
+    {
+      "path": "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/diagnostic_80_12_v2/attention_pa_5_kernel_trace.pt",
+      "sha256": "568abc3b5e4100957a7236775753059430ff343a3750b31f1dd05284d0529d2e"
+    },
+    {
+      "path": "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/diagnostic_80_12_v2/attention_pa_6_kernel_trace.pt",
+      "sha256": "59672f7b1c8266f863c6abb6508651ff0b28d51397cd74410379af1fb6c83670"
+    }
+  ],
+  "groups": {
+    "triton": {
+      "pa_steps": 3265,
+      "layer_invocations": 117540,
+      "mean_layer_us": 199.5368023141058,
+      "p95_layer_mean_us": 287.9139465332031,
+      "mean_logical_tokens": 19213.64318529862,
+      "logical_effective_GBs": 394.40885878835036,
+      "unique_payload_GBs": 394.40885878835036
+    },
+    "triton/B1": {
+      "pa_steps": 3265,
+      "layer_invocations": 117540,
+      "mean_layer_us": 199.5368023141058,
+      "p95_layer_mean_us": 287.9139465332031,
+      "mean_logical_tokens": 19213.64318529862,
+      "logical_effective_GBs": 394.40885878835036,
+      "unique_payload_GBs": 394.40885878835036
+    },
+    "triton/total_tokens_le_16384": {
+      "pa_steps": 937,
+      "layer_invocations": 33732,
+      "mean_layer_us": 138.79270959326456,
+      "p95_layer_mean_us": 177.2447967529297,
+      "mean_logical_tokens": 12541.372465314835,
+      "logical_effective_GBs": 370.11642591652713,
+      "unique_payload_GBs": 370.11642591652713
+    },
+    "pat": {
+      "pa_steps": 4791,
+      "layer_invocations": 172476,
+      "mean_layer_us": 362.42882033442334,
+      "p95_layer_mean_us": 607.4920043945312,
+      "mean_logical_tokens": 44310.90398664162,
+      "logical_effective_GBs": 500.7809880070002,
+      "unique_payload_GBs": 432.3685721919082
+    },
+    "pat/B2": {
+      "pa_steps": 3325,
+      "layer_invocations": 119700,
+      "mean_layer_us": 305.2952129657477,
+      "p95_layer_mean_us": 439.6734252929685,
+      "mean_logical_tokens": 35818.26736842105,
+      "logical_effective_GBs": 480.55657904309425,
+      "unique_payload_GBs": 423.09858163237726
+    },
+    "pat/total_tokens_le_32768": {
+      "pa_steps": 1277,
+      "layer_invocations": 45972,
+      "mean_layer_us": 225.57862977464544,
+      "p95_layer_mean_us": 290.0142272949219,
+      "mean_logical_tokens": 26590.812059514486,
+      "logical_effective_GBs": 482.8292746727787,
+      "unique_payload_GBs": 403.70847152038937
+    },
+    "triton/total_tokens_le_32768": {
+      "pa_steps": 2328,
+      "layer_invocations": 83808,
+      "mean_layer_us": 223.98577777777777,
+      "p95_layer_mean_us": 295.367692565918,
+      "mean_logical_tokens": 21899.174828178693,
+      "logical_effective_GBs": 400.46748050768076,
+      "unique_payload_GBs": 400.46748050768076
+    },
+    "pat/B3": {
+      "pa_steps": 1137,
+      "layer_invocations": 40932,
+      "mean_layer_us": 463.6129604221636,
+      "p95_layer_mean_us": 608.7846923828125,
+      "mean_logical_tokens": 59230.8144239226,
+      "logical_effective_GBs": 523.3016256911112,
+      "unique_payload_GBs": 445.92873514485865
+    },
+    "pat/total_tokens_le_65536": {
+      "pa_steps": 2874,
+      "layer_invocations": 103464,
+      "mean_layer_us": 374.72262831516275,
+      "p95_layer_mean_us": 486.0785278320312,
+      "mean_logical_tokens": 45116.124217118995,
+      "logical_effective_GBs": 493.1531507029672,
+      "unique_payload_GBs": 431.84430643688285
+    },
+    "pat/total_tokens_le_131072": {
+      "pa_steps": 640,
+      "layer_invocations": 23040,
+      "mean_layer_us": 580.2808347222223,
+      "p95_layer_mean_us": 658.7731964111329,
+      "mean_logical_tokens": 76052.0828125,
+      "logical_effective_GBs": 536.825124250602,
+      "unique_payload_GBs": 456.1193300941945
+    },
+    "pat/B4": {
+      "pa_steps": 275,
+      "layer_invocations": 9900,
+      "mean_layer_us": 581.6869527272727,
+      "p95_layer_mean_us": 661.8364318847656,
+      "mean_logical_tokens": 78028.75272727273,
+      "logical_effective_GBs": 549.446346823526,
+      "unique_payload_GBs": 454.47636954515093
+    },
+    "pat/B5": {
+      "pa_steps": 54,
+      "layer_invocations": 1944,
+      "mean_layer_us": 633.2971687242798,
+      "p95_layer_mean_us": 659.2793823242187,
+      "mean_logical_tokens": 81378.87037037036,
+      "logical_effective_GBs": 526.3371912880899,
+      "unique_payload_GBs": 395.10439704640186
+    }
+  }
+}

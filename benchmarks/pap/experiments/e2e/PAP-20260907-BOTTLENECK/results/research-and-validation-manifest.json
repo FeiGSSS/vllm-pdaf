@@ -1,0 +1,36 @@
+{
+  "archive": "research-and-validation.tar.gz",
+  "sha256": "246f72289df39b954373637120c59535b339975d1a7fc87606bd320aa4e6d0e0",
+  "files": [
+    {
+      "path": "analysis-validation.log",
+      "bytes": 3608,
+      "sha256": "80e54814d016fc69bfb368cc756b31844da1bacce515197e8aa569ad6d644e30"
+    },
+    {
+      "path": "confound-validation.log",
+      "bytes": 1590,
+      "sha256": "a7c32e71a7a43dfdd079f5defe23d84dc9d1e891c04e61947c039e2e6ddb6b7b"
+    },
+    {
+      "path": "pre-commit-confound.log",
+      "bytes": 3388,
+      "sha256": "321cd6a349b094745381d1dcd3f54dc9524a983250e5a69429d4bd9e40c6b1eb"
+    },
+    {
+      "path": "pre-commit-report.log",
+      "bytes": 3388,
+      "sha256": "28a9a6a22ddb0165e5688b31c31f0eb07ebf6d661f7ec7aeff529ead86738bd6"
+    },
+    {
+      "path": "pre-commit.log",
+      "bytes": 3388,
+      "sha256": "321cd6a349b094745381d1dcd3f54dc9524a983250e5a69429d4bd9e40c6b1eb"
+    },
+    {
+      "path": "ruff-check.log",
+      "bytes": 1726,
+      "sha256": "2ee138ea5ab5327ceb0681823d2bd8f327eba96825630a4379bde4e6747ef06d"
+    }
+  ]
+}

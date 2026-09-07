@@ -1,0 +1,81 @@
+{
+  "archive": "research-and-validation.tar.gz",
+  "sha256": "7ec36b97f1a705cb68765d1a49aa7ef343a1a1e595f5bb9a3b02b071603a6fe9",
+  "files": [
+    {
+      "path": "fixed-trace-analysis.log",
+      "bytes": 598,
+      "sha256": "cf3ca3deb72b70f46846bec19d1757d2edd45a69cfb2862d910f359691bf67d4"
+    },
+    {
+      "path": "pat-build.log",
+      "bytes": 393,
+      "sha256": "4d692fb5b1ee1349ffa73aafb40f2b7a7b068d1e8e861ee0c359af56ffafb582"
+    },
+    {
+      "path": "pat-regression-after.log",
+      "bytes": 1577,
+      "sha256": "75bb9e6138ac158bb0768107629c3f56502597a6619cbd2659ad073d2d7cddc2"
+    },
+    {
+      "path": "pat-regression-before.log",
+      "bytes": 7718,
+      "sha256": "ea0ac732b7ad6b3b16bf79af06dc574fcee5a32ec16a3c4c8b0f348442d61511"
+    },
+    {
+      "path": "pat-suite.log",
+      "bytes": 951,
+      "sha256": "fe9b0ab5ef31f4e2219f382974039245cb9fdd52b75633bbe0cb7068faebe1b5"
+    },
+    {
+      "path": "pre-commit-report.log",
+      "bytes": 3388,
+      "sha256": "28a9a6a22ddb0165e5688b31c31f0eb07ebf6d661f7ec7aeff529ead86738bd6"
+    },
+    {
+      "path": "pre-commit.log",
+      "bytes": 3388,
+      "sha256": "321cd6a349b094745381d1dcd3f54dc9524a983250e5a69429d4bd9e40c6b1eb"
+    },
+    {
+      "path": "ruff.log",
+      "bytes": 19,
+      "sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18"
+    },
+    {
+      "path": "trace-analysis.log",
+      "bytes": 595,
+      "sha256": "badeff43fd8e04f2e9f098541039289b1be9fcbbcf64132f78a583a34690004c"
+    },
+    {
+      "path": "research/decode-search.json",
+      "bytes": 13723,
+      "sha256": "98d45636fa72f663bbed8e1dccbd6bb6eb64a8511748d61943aaf69bb25f15cf"
+    },
+    {
+      "path": "research/decode-search.log",
+      "bytes": 117,
+      "sha256": "e2f1acd88fce1ce7ff1fc38a8abff1391cc76f2d3decb019e31f1a319cdd8420"
+    },
+    {
+      "path": "research/paper-search-errors.txt",
+      "bytes": 1093,
+      "sha256": "a7721e303bdacd85fae2d6d14a63ecccd42df2a5e6ccfff98bbb672ac658dc47"
+    },
+    {
+      "path": "research/paper-search.txt",
+      "bytes": 15221,
+      "sha256": "ff5cf981dd6463956809fc413843a59d496a7e2e4d58689a917ce5e50a212e19"
+    },
+    {
+      "path": "research/prefix-search.json",
+      "bytes": 15250,
+      "sha256": "166ed9b09e8cf9003229d167616fc17c2d67fe4675e6850cf3412e863454eb39"
+    },
+    {
+      "path": "research/prefix-search.log",
+      "bytes": 117,
+      "sha256": "0f4eed4e3c30f139b910062c8a295b065eed9d11a2d4159911fac44f0db20af0"
+    }
+  ]
+}

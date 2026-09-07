@@ -1,0 +1,124 @@
+{
+  "baseline_r2": {
+    "PAP_AIPERF_OUTPUT_DIR": [
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r1/aiperf",
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r2/aiperf"
+    ],
+    "RUN_LOG_DIR": [
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r1/service_logs",
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r2/service_logs"
+    ],
+    "RUN_ROOT": [
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r1",
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r2"
+    ]
+  },
+  "attention20_r1": {
+    "PAP_AIPERF_OUTPUT_DIR": [
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r1/aiperf",
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/attention20_r1/aiperf"
+    ],
+    "PAP_STATIC_ATTENTION_CHUNKS": [
+      "3",
+      "5"
+    ],
+    "PAP_STATIC_ATTENTION_EXPECTED_SMS": [
+      "12",
+      "20"
+    ],
+    "PAP_STATIC_PREFILL_CHUNKS": [
+      "20",
+      "18"
+    ],
+    "PAP_STATIC_PREFILL_EXPECTED_SMS": [
+      "80",
+      "72"
+    ],
+    "RUN_LOG_DIR": [
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r1/service_logs",
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/attention20_r1/service_logs"
+    ],
+    "RUN_ROOT": [
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r1",
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/attention20_r1"
+    ]
+  },
+  "attention20_r2": {
+    "PAP_AIPERF_OUTPUT_DIR": [
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r1/aiperf",
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/attention20_r2/aiperf"
+    ],
+    "PAP_STATIC_ATTENTION_CHUNKS": [
+      "3",
+      "5"
+    ],
+    "PAP_STATIC_ATTENTION_EXPECTED_SMS": [
+      "12",
+      "20"
+    ],
+    "PAP_STATIC_PREFILL_CHUNKS": [
+      "20",
+      "18"
+    ],
+    "PAP_STATIC_PREFILL_EXPECTED_SMS": [
+      "80",
+      "72"
+    ],
+    "RUN_LOG_DIR": [
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r1/service_logs",
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/attention20_r2/service_logs"
+    ],
+    "RUN_ROOT": [
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r1",
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/attention20_r2"
+    ]
+  },
+  "attention16_r1": {
+    "PAP_AIPERF_OUTPUT_DIR": [
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r1/aiperf",
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/attention16_r1/aiperf"
+    ],
+    "PAP_STATIC_ATTENTION_CHUNKS": [
+      "3",
+      "4"
+    ],
+    "PAP_STATIC_ATTENTION_EXPECTED_SMS": [
+      "12",
+      "16"
+    ],
+    "PAP_STATIC_PREFILL_CHUNKS": [
+      "20",
+      "19"
+    ],
+    "PAP_STATIC_PREFILL_EXPECTED_SMS": [
+      "80",
+      "76"
+    ],
+    "RUN_LOG_DIR": [
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r1/service_logs",
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/attention16_r1/service_logs"
+    ],
+    "RUN_ROOT": [
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r1",
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/attention16_r1"
+    ]
+  },
+  "budget4096_r1": {
+    "PAP_AIPERF_OUTPUT_DIR": [
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r1/aiperf",
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/budget4096_r1/aiperf"
+    ],
+    "PAP_PREFILL_MAX_NUM_BATCHED_TOKENS": [
+      "2048",
+      "4096"
+    ],
+    "RUN_LOG_DIR": [
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r1/service_logs",
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/budget4096_r1/service_logs"
+    ],
+    "RUN_ROOT": [
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/baseline_r1",
+      "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/budget4096_r1"
+    ]
+  }
+}

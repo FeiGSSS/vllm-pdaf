@@ -1,0 +1,6 @@
+/runs/
+!/*.json
+!/results/**/*.json
+/research/*.json
+/research/*.txt
+/research/*.log

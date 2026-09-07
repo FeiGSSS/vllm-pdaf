@@ -1,0 +1,147 @@
+{
+  "bytes_per_token_per_layer": 4096,
+  "layers": 36,
+  "units": "decimal GB/s; bytes/ns. Ratio of summed bytes to summed time.",
+  "scope": "PA-local kernel intervals, excludes KV append and transport; PA times pooled as service samples, not global critical path.",
+  "not_hardware_bandwidth": true,
+  "source_manifest": [
+    {
+      "path": "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/bandwidth_fixed12_trace/attention_pa_0_kernel_trace.pt",
+      "sha256": "08485b224ac7609fc42805ae53e315fecdbb502fa5ee32afe27ec009f435bdae"
+    },
+    {
+      "path": "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/bandwidth_fixed12_trace/attention_pa_1_kernel_trace.pt",
+      "sha256": "14925132c9a04270331a83395b3f560c318194e2fa0ba0309273088967ac7dd2"
+    },
+    {
+      "path": "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/bandwidth_fixed12_trace/attention_pa_2_kernel_trace.pt",
+      "sha256": "40f098a4ec7fa33f7ce398528cfcec316f973770601b2acd4f4d1c37b59e6670"
+    },
+    {
+      "path": "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/bandwidth_fixed12_trace/attention_pa_3_kernel_trace.pt",
+      "sha256": "e27adfd323f9223980864bdc6571b958f54c9721a909ac0591c8cc942b02d602"
+    },
+    {
+      "path": "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/bandwidth_fixed12_trace/attention_pa_4_kernel_trace.pt",
+      "sha256": "8b5c70454cc9b139b0d462c763099c277c5f8b474b8edd820f871ee76ec1477a"
+    },
+    {
+      "path": "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/bandwidth_fixed12_trace/attention_pa_5_kernel_trace.pt",
+      "sha256": "b2a81d137a958cbb730c40c51036c04e9c947c4b1cd33566992609145fed6310"
+    },
+    {
+      "path": "/tmp/vllm-pap-bottleneck-20260907/benchmarks/pap/experiments/e2e/PAP-20260907-BOTTLENECK/runs/bandwidth_fixed12_trace/attention_pa_6_kernel_trace.pt",
+      "sha256": "730e7e68eb1be9946e6ba2c2f33c04a123f4c18d2f5869b9015b3131b9ca86b0"
+    }
+  ],
+  "groups": {
+    "triton": {
+      "pa_steps": 3993,
+      "layer_invocations": 143748,
+      "mean_layer_us": 199.42106018866352,
+      "p95_layer_mean_us": 302.53102416992186,
+      "mean_logical_tokens": 18961.614825945406,
+      "logical_effective_GBs": 389.4612447331052,
+      "unique_payload_GBs": 389.4612447331052
+    },
+    "triton/B1": {
+      "pa_steps": 3993,
+      "layer_invocations": 143748,
+      "mean_layer_us": 199.42106018866352,
+      "p95_layer_mean_us": 302.53102416992186,
+      "mean_logical_tokens": 18961.614825945406,
+      "logical_effective_GBs": 389.4612447331052,
+      "unique_payload_GBs": 389.4612447331052
+    },
+    "triton/total_tokens_le_16384": {
+      "pa_steps": 1170,
+      "layer_invocations": 42120,
+      "mean_layer_us": 138.58041101614435,
+      "p95_layer_mean_us": 173.70519714355467,
+      "mean_logical_tokens": 12459.175213675213,
+      "logical_effective_GBs": 368.25393503320214,
+      "unique_payload_GBs": 368.25393503320214
+    },
+    "pat": {
+      "pa_steps": 4441,
+      "layer_invocations": 159876,
+      "mean_layer_us": 390.27521268983463,
+      "p95_layer_mean_us": 603.1653442382812,
+      "mean_logical_tokens": 44805.432560234185,
+      "logical_effective_GBs": 470.2400916057444,
+      "unique_payload_GBs": 405.57392422969133
+    },
+    "pat/B2": {
+      "pa_steps": 2968,
+      "layer_invocations": 106848,
+      "mean_layer_us": 344.3107891584306,
+      "p95_layer_mean_us": 470.19572753906255,
+      "mean_logical_tokens": 37829.83119946092,
+      "logical_effective_GBs": 450.0323355295526,
+      "unique_payload_GBs": 398.5390432932316
+    },
+    "pat/total_tokens_le_32768": {
+      "pa_steps": 1140,
+      "layer_invocations": 41040,
+      "mean_layer_us": 264.65739415204683,
+      "p95_layer_mean_us": 342.36479034423826,
+      "mean_logical_tokens": 27871.952631578948,
+      "logical_effective_GBs": 431.36341738995566,
+      "unique_payload_GBs": 358.37896990796514
+    },
+    "pat/B3": {
+      "pa_steps": 1173,
+      "layer_invocations": 42228,
+      "mean_layer_us": 459.0590493511414,
+      "p95_layer_mean_us": 607.0961669921875,
+      "mean_logical_tokens": 55752.83546462063,
+      "logical_effective_GBs": 497.46021647077305,
+      "unique_payload_GBs": 419.22540442257116
+    },
+    "pat/total_tokens_le_65536": {
+      "pa_steps": 2758,
+      "layer_invocations": 99288,
+      "mean_layer_us": 402.00402191604223,
+      "p95_layer_mean_us": 516.6772491455079,
+      "mean_logical_tokens": 46039.126540971716,
+      "logical_effective_GBs": 469.09048673946836,
+      "unique_payload_GBs": 410.02287388659533
+    },
+    "pat/B4": {
+      "pa_steps": 271,
+      "layer_invocations": 9756,
+      "mean_layer_us": 560.8561836818368,
+      "p95_layer_mean_us": 707.5573425292969,
+      "mean_logical_tokens": 69587.46494464944,
+      "logical_effective_GBs": 508.2056054765306,
+      "unique_payload_GBs": 407.9785570504988
+    },
+    "triton/total_tokens_le_32768": {
+      "pa_steps": 2823,
+      "layer_invocations": 101628,
+      "mean_layer_us": 224.63663210926123,
+      "p95_layer_mean_us": 307.5387451171875,
+      "mean_logical_tokens": 21656.568544102018,
+      "logical_effective_GBs": 394.88352333156604,
+      "unique_payload_GBs": 394.88352333156604
+    },
+    "pat/total_tokens_le_131072": {
+      "pa_steps": 543,
+      "layer_invocations": 19548,
+      "mean_layer_us": 594.4303826478413,
+      "p95_layer_mean_us": 706.1837097167968,
+      "mean_logical_tokens": 74090.21915285451,
+      "logical_effective_GBs": 510.52830829119836,
+      "unique_payload_GBs": 434.4066144921939
+    },
+    "pat/B5": {
+      "pa_steps": 29,
+      "layer_invocations": 1044,
+      "mean_layer_us": 718.2588505747127,
+      "p95_layer_mean_us": 775.689599609375,
+      "mean_logical_tokens": 84334.75862068965,
+      "logical_effective_GBs": 480.9340964388339,
+      "unique_payload_GBs": 380.2523072077879
+    }
+  }
+}
