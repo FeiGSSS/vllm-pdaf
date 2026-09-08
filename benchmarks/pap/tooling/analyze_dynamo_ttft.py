@@ -105,12 +105,22 @@ def _parse_worker_logs(
 
 def _parse_frontend(
     path: Path,
-) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+) -> tuple[
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+    dict[str, str],
+]:
     selected: dict[str, dict[str, Any]] = {}
     completions: dict[str, dict[str, Any]] = {}
+    client_request_ids: dict[str, str] = {}
     for line in _read_lines(path):
         timestamp = _timestamp(line)
-        if "Selected worker" in line and "worker_type=prefill" in line:
+        if "request received" in line and "x_request_id=" in line:
+            request_ids = UUID_RE.findall(line)
+            client_id = re.search(r'x_request_id="([0-9a-f-]+)"', line)
+            if request_ids and client_id is not None:
+                client_request_ids.setdefault(request_ids[0], client_id.group(1))
+        elif "Selected worker" in line and "worker_type=prefill" in line:
             request_ids = re.findall(r'request_id="([0-9a-f-]+)"', line)
             worker = re.search(r"worker_id=(\d+)", line)
             cached = re.search(r"effective_cached_blocks=([0-9.]+)", line)
@@ -135,7 +145,104 @@ def _parse_frontend(
                     "input_tokens": int(input_tokens.group(1)),
                     "ttft_ms": float(ttft.group(1)),
                 }
-    return selected, completions
+    return selected, completions, client_request_ids
+
+
+def _load_request_metadata(run_root: Path) -> dict[str, dict[str, Any]]:
+    path = run_root / "aiperf" / "profile.jsonl"
+    if not path.exists():
+        return {}
+    output = {}
+    for line in path.read_text().splitlines():
+        row = json.loads(line)
+        metadata = row.get("metadata", {})
+        client_id = metadata.get("x_request_id")
+        if client_id is not None:
+            output[client_id] = {
+                "conversation_id": metadata.get("conversation_id"),
+                "turn_index": metadata.get("turn_index"),
+            }
+    return output
+
+
+def _session_routing(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    conversations: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for row in rows:
+        conversation_id = row.get("conversation_id")
+        turn_index = row.get("turn_index")
+        if conversation_id is not None and turn_index is not None:
+            conversations[conversation_id].append(row)
+
+    transitions = []
+    complete_conversations = 0
+    for conversation_rows in conversations.values():
+        ordered = sorted(conversation_rows, key=lambda row: row["turn_index"])
+        if [row["turn_index"] for row in ordered] != list(range(len(ordered))):
+            continue
+        complete_conversations += 1
+        for previous, current in zip(ordered, ordered[1:]):
+            transition = dict(current)
+            transition["migrated"] = previous["worker_id"] != current["worker_id"]
+            transitions.append(transition)
+
+    def summarize(items: list[dict[str, Any]]) -> dict[str, Any]:
+        input_tokens = sum(row["input_tokens"] for row in items)
+        cached_tokens = sum(row["cached_tokens"] or 0 for row in items)
+        return {
+            "count": len(items),
+            "input_tokens": input_tokens,
+            "estimated_cached_tokens": cached_tokens,
+            "estimated_computed_tokens": input_tokens - cached_tokens,
+            "estimated_cache_read_pct": (
+                cached_tokens / input_tokens * 100 if input_tokens else None
+            ),
+            "ttft_ms": _summary([row["ttft_ms"] for row in items]),
+            "prefill_service_ms": _summary(
+                [
+                    row["prefill_service_ms"]
+                    for row in items
+                    if row["prefill_service_ms"] is not None
+                ]
+            ),
+            "router_to_decode_ms": _summary(
+                [
+                    row["router_to_decode_ms"]
+                    for row in items
+                    if row["router_to_decode_ms"] is not None
+                ]
+            ),
+        }
+
+    migrated = [row for row in transitions if row["migrated"]]
+    stable = [row for row in transitions if not row["migrated"]]
+    by_turn = []
+    for turn_index in sorted(
+        {row["turn_index"] for row in rows if row.get("turn_index") is not None}
+    ):
+        turn_rows = [row for row in rows if row.get("turn_index") == turn_index]
+        turn_transitions = [
+            row for row in transitions if row.get("turn_index") == turn_index
+        ]
+        output = {"turn_index": turn_index, **summarize(turn_rows)}
+        output.update(
+            {
+                "transitions": len(turn_transitions),
+                "migrations": sum(row["migrated"] for row in turn_transitions),
+            }
+        )
+        by_turn.append(output)
+    return {
+        "conversations": len(conversations),
+        "complete_conversations": complete_conversations,
+        "transitions": len(transitions),
+        "migrations": len(migrated),
+        "migration_rate_pct": (
+            len(migrated) / len(transitions) * 100 if transitions else None
+        ),
+        "migrated": summarize(migrated),
+        "stable": summarize(stable),
+        "by_turn": by_turn,
+    }
 
 
 def _parse_transfer_metrics(paths: list[Path]) -> dict[str, float | int | None]:
@@ -183,8 +290,9 @@ def analyze(run_root: Path, block_size: int) -> dict[str, Any]:
     prefill_workers, prefill_received, prefill_completed = _parse_worker_logs(
         sorted(logs.glob("prefill_*.log"))
     )
-    _, decode_received, _ = _parse_worker_logs(decode_logs)
-    selected, completions = _parse_frontend(frontend_log)
+    decode_workers, decode_received, _ = _parse_worker_logs(decode_logs)
+    selected, completions, client_request_ids = _parse_frontend(frontend_log)
+    request_metadata = _load_request_metadata(run_root)
 
     rows: list[dict[str, Any]] = []
     for request_id, completion in completions.items():
@@ -199,9 +307,14 @@ def analyze(run_root: Path, block_size: int) -> dict[str, Any]:
             if cached_blocks is not None
             else None
         )
+        client_request_id = client_request_ids.get(request_id)
+        metadata = request_metadata.get(client_request_id or "", {})
         rows.append(
             {
                 "request_id": request_id,
+                "client_request_id": client_request_id,
+                "conversation_id": metadata.get("conversation_id"),
+                "turn_index": metadata.get("turn_index"),
                 "worker_id": completion["worker_id"],
                 "input_tokens": completion["input_tokens"],
                 "cached_tokens": cached_tokens,
@@ -288,6 +401,12 @@ def analyze(run_root: Path, block_size: int) -> dict[str, Any]:
         "selected_requests": len(selected),
         "completed_requests": len(completions),
         "joined_requests": len(rows),
+        "request_metadata_matches": sum(
+            row["conversation_id"] is not None for row in rows
+        ),
+        "session_routing": _session_routing(rows),
+        "requests": rows,
+        "decode_workers": list(decode_workers.values()),
         "kv_transfer": transfer_metrics,
         "overall": {
             "ttft_ms": _summary([row["ttft_ms"] for row in rows]),

@@ -1,0 +1,11 @@
+61e2c9be97e754c2f819861fefec62c63b9fd997ae6d63a0ac1798dd269bc4d0  benchmarks/pap/experiments/README.md
+d821eae240812882ab8cee18ec5dfbec498b62c4fb66558ab86ad7e124162ed5  benchmarks/pap/tooling/analyze_dynamo_ttft.py
+e87893c4310f5af9a8cbcf1a2bf093ca54b6c5f03b7ddea707ae93bd6925e52d  benchmarks/pap/scripts/configure_cross_host_nixl.sh
+c9e06424b68ae1f11ffd3003d0725ba0da370ecfa71eb4fd8693633566d8910d  benchmarks/pap/scripts/run_cross_host_dynamo_7p1d_aiperf.sh
+53489514915937099d64cb1d96fb3c124283cd0670c429025caa8da036ce4453  benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/.gitattributes
+127672b43b817aa8f10c44cdb48d4eeef8c0201da894e8a2430cce505ab49933  benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/.gitignore
+13f0950dae90091243124a3e9a1d441b2c4d39e37c61cd87a43897205e06ebfd  benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/analyze.py
+9f0eb6f3e2afaed000f4cd737bd20cb3c75c24020845732018e78d60ff30b4f9  benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/experiment.env
+e945454dd4073575488410bd034e2a7d6a3030a278d0883b88d77946ed54ecc3  benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/report.md
+5adf83f19fb69dd8fc05f6bd7b7ccbe9826c1a5e16dad67281ce25ca7c08514e  benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/run.sh
+d95d974356a34ec908f7f7756a540ab40e87014b64c657931910a02eaeba00ce  benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/verify.py

@@ -43,6 +43,7 @@ current implementation with old parameters.
 | Record | Current entry point / status |
 | --- | --- |
 | E2E `PAP-20260907-ALIGNED-C30-7P1D` | Two audited 7P1D runs at concurrency 30; complete raw records and offline verifier |
+| E2E `PAP-20260909-DYNAMO-CROSS-HOST-PD` | Cross-host Dynamo 7P1D routing, KV handoff, TTFT, and lease diagnosis |
 | E2E `PAP-20260907-ALIGNED-C30` | DP8 / PD / PAP comparison at concurrency 30; consolidated architecture and goodput reports, raw records, and verifier |
 | E2E `PAP-20260905-REFACTOR-VALIDATION` | `run.sh` + `experiment.env`; source/dependency snapshots per invocation |
 | E2E `PAP-20260903-AGENTIC-CODE-QPS-MATRIX` | Frozen non-Dynamo PAP configuration; requires its recorded source revision, not the current Dynamo-only runner |

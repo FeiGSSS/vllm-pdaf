@@ -1,0 +1,1417 @@
+diff --git a/benchmarks/pap/experiments/README.md b/benchmarks/pap/experiments/README.md
+index 3de9b41fee..e9cd442829 100644
+--- a/benchmarks/pap/experiments/README.md
++++ b/benchmarks/pap/experiments/README.md
+@@ -43,6 +43,7 @@ current implementation with old parameters.
+ | Record | Current entry point / status |
+ | --- | --- |
+ | E2E `PAP-20260907-ALIGNED-C30-7P1D` | Two audited 7P1D runs at concurrency 30; complete raw records and offline verifier |
++| E2E `PAP-20260909-DYNAMO-CROSS-HOST-PD` | Cross-host Dynamo 7P1D routing, KV handoff, TTFT, and lease diagnosis |
+ | E2E `PAP-20260907-ALIGNED-C30` | DP8 / PD / PAP comparison at concurrency 30; consolidated architecture and goodput reports, raw records, and verifier |
+ | E2E `PAP-20260905-REFACTOR-VALIDATION` | `run.sh` + `experiment.env`; source/dependency snapshots per invocation |
+ | E2E `PAP-20260903-AGENTIC-CODE-QPS-MATRIX` | Frozen non-Dynamo PAP configuration; requires its recorded source revision, not the current Dynamo-only runner |
+diff --git a/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/.gitattributes b/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/.gitattributes
+new file mode 100644
+index 0000000000..10aedea617
+--- /dev/null
++++ b/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/.gitattributes
+@@ -0,0 +1,2 @@
++results/**/*.log -whitespace
++results/**/*.patch -whitespace
+diff --git a/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/.gitignore b/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/.gitignore
+new file mode 100644
+index 0000000000..483fb84a5d
+--- /dev/null
++++ b/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/.gitignore
+@@ -0,0 +1 @@
++/runs/
+diff --git a/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/analyze.py b/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/analyze.py
+new file mode 100755
+index 0000000000..7b19f85668
+--- /dev/null
++++ b/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/analyze.py
+@@ -0,0 +1,252 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++"""Compare same-host and cross-host Dynamo 7P1D request evidence."""
++
++from __future__ import annotations
++
++import argparse
++import csv
++import importlib.util
++import json
++import math
++import statistics
++from collections import defaultdict
++from pathlib import Path
++from typing import Any
++
++HERE = Path(__file__).resolve().parent
++ROOT = HERE.parents[4]
++ANALYZER = ROOT / "benchmarks/pap/tooling/analyze_dynamo_ttft.py"
++
++
++def load_analyzer():
++    spec = importlib.util.spec_from_file_location("analyze_dynamo_ttft", ANALYZER)
++    if spec is None or spec.loader is None:
++        raise RuntimeError(f"cannot load {ANALYZER}")
++    module = importlib.util.module_from_spec(spec)
++    spec.loader.exec_module(module)
++    return module
++
++
++def percentile(values: list[float], fraction: float) -> float:
++    ordered = sorted(values)
++    position = (len(ordered) - 1) * fraction
++    lower = math.floor(position)
++    upper = math.ceil(position)
++    return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
++
++
++def distribution(values: list[float]) -> dict[str, float | int]:
++    return {
++        "count": len(values),
++        "mean": statistics.mean(values),
++        "p50": statistics.median(values),
++        "p95": percentile(values, 0.95),
++        "p99": percentile(values, 0.99),
++        "max": max(values),
++    }
++
++
++def load_run(path: Path, placement: str, label: str, analyzer) -> dict[str, Any]:
++    analysis = analyzer.analyze(path, 16)
++    profile_rows = [
++        json.loads(line)
++        for line in (path / "aiperf/profile.jsonl").read_text().splitlines()
++    ]
++    profile_by_id = {row["metadata"]["x_request_id"]: row for row in profile_rows}
++    if analysis["joined_requests"] != len(profile_rows):
++        raise ValueError(f"request join incomplete for {path}")
++    records = []
++    conversations: dict[str, list[dict[str, Any]]] = defaultdict(list)
++    for request in analysis["requests"]:
++        client_id = request["client_request_id"]
++        profile = profile_by_id[client_id]
++        metadata = profile["metadata"]
++        metrics = profile["metrics"]
++        record = {
++            "placement": placement,
++            "run": label,
++            "client_request_id": client_id,
++            "conversation_id": metadata["conversation_id"],
++            "turn_index": metadata["turn_index"],
++            "worker_id": request["worker_id"],
++            "input_tokens": request["input_tokens"],
++            "cached_tokens": request["cached_tokens"] or 0,
++            "ttft_ms": metrics["time_to_first_token"]["value"],
++            "itl_ms": metrics["inter_token_latency"]["value"],
++            "e2e_ms": metrics["request_latency"]["value"],
++            "output_tokens": metrics["output_sequence_length"]["value"],
++            "router_to_prefill_ms": request["router_to_prefill_ms"],
++            "prefill_service_ms": request["prefill_service_ms"],
++            "router_to_decode_ms": request["router_to_decode_ms"],
++            "decode_to_first_token_ms": request["decode_to_first_token_ms"],
++            "migrated": None,
++        }
++        records.append(record)
++        conversations[record["conversation_id"]].append(record)
++    for items in conversations.values():
++        ordered = sorted(items, key=lambda item: item["turn_index"])
++        if [item["turn_index"] for item in ordered] != [0, 1, 2]:
++            raise ValueError(f"incomplete conversation in {path}")
++        for previous, current in zip(ordered, ordered[1:]):
++            current["migrated"] = previous["worker_id"] != current["worker_id"]
++
++    start = min(row["metadata"]["request_start_ns"] for row in profile_rows)
++    end = max(row["metadata"]["request_end_ns"] for row in profile_rows)
++    duration_s = (end - start) / 1e9
++    transfer = analysis["kv_transfer"]
++    return {
++        "placement": placement,
++        "label": label,
++        "path": str(path),
++        "duration_s": duration_s,
++        "records": records,
++        "transfer": transfer,
++    }
++
++
++def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
++    input_tokens = sum(row["input_tokens"] for row in records)
++    cached_tokens = sum(row["cached_tokens"] for row in records)
++    transitions = [row for row in records if row["migrated"] is not None]
++    migrations = [row for row in transitions if row["migrated"]]
++    return {
++        "requests": len(records),
++        "input_tokens": input_tokens,
++        "estimated_cached_tokens": cached_tokens,
++        "estimated_computed_tokens": input_tokens - cached_tokens,
++        "estimated_computed_tokens_per_request": (input_tokens - cached_tokens)
++        / len(records),
++        "estimated_cache_read_pct": cached_tokens / input_tokens * 100,
++        "transitions": len(transitions),
++        "migrations": len(migrations),
++        "migration_rate_pct": (
++            len(migrations) / len(transitions) * 100 if transitions else None
++        ),
++        "ttft_ms": distribution([row["ttft_ms"] for row in records]),
++        "itl_ms": distribution([row["itl_ms"] for row in records]),
++        "e2e_ms": distribution([row["e2e_ms"] for row in records]),
++        "prefill_service_ms": distribution(
++            [row["prefill_service_ms"] for row in records]
++        ),
++        "decode_to_first_token_ms": distribution(
++            [row["decode_to_first_token_ms"] for row in records]
++        ),
++    }
++
++
++def placement_summary(runs: list[dict[str, Any]]) -> dict[str, Any]:
++    records = [record for run in runs for record in run["records"]]
++    durations = sum(run["duration_s"] for run in runs)
++    output = summarize(records)
++    output.update(
++        {
++            "runs": len(runs),
++            "request_throughput_rps": len(records) / durations,
++            "output_throughput_tps": sum(row["output_tokens"] for row in records)
++            / durations,
++            "by_turn": {
++                str(turn): summarize(
++                    [row for row in records if row["turn_index"] == turn]
++                )
++                for turn in (0, 1, 2)
++            },
++        }
++    )
++    transfers = sum(run["transfer"]["transfers"] for run in runs)
++    total_mb = sum(
++        run["transfer"]["transfers"] * run["transfer"]["weighted_mb_per_transfer"]
++        for run in runs
++    )
++    total_ms = sum(
++        run["transfer"]["transfers"] * run["transfer"]["weighted_transfer_ms"]
++        for run in runs
++    )
++    output["kv_transfer"] = {
++        "transfers": transfers,
++        "total_mb": total_mb,
++        "mb_per_request": total_mb / len(records),
++        "wall_clock_volume_rate_mb_s": total_mb / durations,
++        "weighted_transfer_ms": total_ms / transfers,
++        "request_residence_throughput_mb_s": total_mb / total_ms * 1000,
++    }
++    return output
++
++
++def main() -> None:
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--same-host-run", action="append", type=Path, required=True)
++    parser.add_argument("--cross-host-run", action="append", type=Path, required=True)
++    parser.add_argument("--output-dir", type=Path, required=True)
++    args = parser.parse_args()
++    analyzer = load_analyzer()
++    runs = []
++    for index, path in enumerate(args.same_host_run, 1):
++        runs.append(load_run(path, "same_host", f"same_host_{index}", analyzer))
++    for index, path in enumerate(args.cross_host_run, 1):
++        runs.append(load_run(path, "cross_host", f"cross_host_{index}", analyzer))
++
++    expected_outputs = None
++    for run in runs:
++        outputs = {
++            (row["conversation_id"], row["turn_index"]): row["output_tokens"]
++            for row in run["records"]
++        }
++        if expected_outputs is None:
++            expected_outputs = outputs
++        elif outputs != expected_outputs:
++            raise ValueError(f"workload output lengths differ in {run['path']}")
++
++    placements = {
++        name: placement_summary([run for run in runs if run["placement"] == name])
++        for name in ("same_host", "cross_host")
++    }
++    same = placements["same_host"]
++    cross = placements["cross_host"]
++    delta = {}
++    for name, same_value, cross_value in (
++        ("migration_rate", same["migration_rate_pct"], cross["migration_rate_pct"]),
++        (
++            "computed_tokens_per_request",
++            same["estimated_computed_tokens_per_request"],
++            cross["estimated_computed_tokens_per_request"],
++        ),
++        ("ttft_mean", same["ttft_ms"]["mean"], cross["ttft_ms"]["mean"]),
++        ("itl_mean", same["itl_ms"]["mean"], cross["itl_ms"]["mean"]),
++        ("e2e_mean", same["e2e_ms"]["mean"], cross["e2e_ms"]["mean"]),
++        (
++            "prefill_service_mean",
++            same["prefill_service_ms"]["mean"],
++            cross["prefill_service_ms"]["mean"],
++        ),
++        (
++            "kv_transfer_residence_mean",
++            same["kv_transfer"]["weighted_transfer_ms"],
++            cross["kv_transfer"]["weighted_transfer_ms"],
++        ),
++        (
++            "request_throughput",
++            same["request_throughput_rps"],
++            cross["request_throughput_rps"],
++        ),
++    ):
++        delta[f"{name}_pct"] = (cross_value / same_value - 1) * 100
++
++    args.output_dir.mkdir(parents=True, exist_ok=True)
++    serializable_runs = [
++        {key: value for key, value in run.items() if key != "records"} for run in runs
++    ]
++    summary = {"runs": serializable_runs, "placements": placements, "delta": delta}
++    (args.output_dir / "summary.json").write_text(json.dumps(summary, indent=2) + "\n")
++    fields = list(runs[0]["records"][0])
++    with (args.output_dir / "requests.csv").open("w", newline="") as stream:
++        writer = csv.DictWriter(stream, fieldnames=fields)
++        writer.writeheader()
++        for run in runs:
++            writer.writerows(run["records"])
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/experiment.env b/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/experiment.env
+new file mode 100644
+index 0000000000..9225994978
+--- /dev/null
++++ b/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/experiment.env
+@@ -0,0 +1,26 @@
++MODEL_PATH=/data/ssd1/llm-models/Qwen3-8B
++DYNAMO_MAX_MODEL_LEN=32768
++DYNAMO_PREFILL_MAX_NUM_BATCHED_TOKENS=2048
++DYNAMO_DECODE_MAX_NUM_BATCHED_TOKENS=256
++DYNAMO_MAX_NUM_SEQS=256
++DYNAMO_BLOCK_SIZE=16
++DYNAMO_GPU_MEMORY_UTILIZATION=0.90
++DYNAMO_PREFILL_CUDAGRAPH_CAPTURE_SIZES=1,2,4,8,16,32,64,128
++DYNAMO_DECODE_CUDAGRAPH_CAPTURE_SIZES=1,2,4,8,16,32,64,128
++DYNAMO_ROUTER_PREFILL_LOAD_SCALE=2.0
++DYNAMO_CLUSTER_READY_WAIT_SECONDS=30
++DYNAMO_LOCAL_IP=10.128.7.24
++DYNAMO_REMOTE_IP=10.128.7.25
++DYNAMO_LOCAL_UCX_DEVICE=enx9c69d3247e5c
++DYNAMO_REMOTE_UCX_DEVICE=enx9c69d341f8cb
++DYNAMO_LOCAL_DECODE_GPU=7
++DYNAMO_ETCD_LEASE_TTL=3600
++DYNAMO_KV_LEASE_DURATION=3600
++DYNAMO_EXPECTED_LINK_SPEED_MBIT_S=1000
++DYNAMO_MIN_KV_TRANSFER_MB_S=10
++DYNAMO_AIPERF_INPUT_FILE=/home/fei/research/PD/vllm-pap/benchmarks/pap/datasets/agentic-code/s60-t3-native32k-stratified-seed42/dataset.jsonl
++DYNAMO_AIPERF_INPUT_SHA256=5d4357a9a037e9e1a3c25acf402ba06afd1c9e7643678da225b9f5cc63cb257c
++DYNAMO_AIPERF_SESSIONS=60
++DYNAMO_AIPERF_CONCURRENCY=30
++DYNAMO_AIPERF_EXPECTED_REQUESTS=180
++DYNAMO_AIPERF_REQUEST_TIMEOUT_SECONDS=21600
+diff --git a/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/report.md b/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/report.md
+new file mode 100644
+index 0000000000..172dc29d88
+--- /dev/null
++++ b/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/report.md
+@@ -0,0 +1,128 @@
++# Cross-host Dynamo 7P1D diagnosis
++
++## Question and measurement contract
++
++This experiment asks whether moving the seven Dynamo Prefill workers from the
++Decode host to a second host changes later-turn Prefill placement, and whether
++that explains TTFT. It uses Qwen3-8B FP16, the native-32K agentic-code trace,
++60 three-turn sessions, and closed-loop client concurrency 30.
++
++A **request** is one conversation turn. A **transition** is turn 0 to turn 1 or
++turn 1 to turn 2 in one conversation. A **Prefill migration** occurs when the
++selected Prefill worker ID changes across a transition. This is separate from
++the normal PD **KV handoff**, which transfers the current request's Prefill KV
++to Decode on every request.
++
++The joined timeline uses one Dynamo request ID at adjacent boundaries:
++
++1. Dynamo selects a Prefill worker.
++2. That Prefill worker receives and completes the request.
++3. Decode receives the request.
++4. Dynamo reports the first token to the frontend.
++
++The NIXL metrics separately measure transfer residence time and bytes. The
++subtraction between aggregate timing buckets localizes time but does not prove
++one mechanism by itself.
++
++## Audited topology
++
++- L20B (`10.128.7.24`): frontend, etcd, and Decode on physical GPU 7.
++- L20T (`10.128.7.25`): Prefill workers on physical GPUs 0 through 6.
++- Both hosts: NVIDIA L20, `ai-dynamo==1.4.1`, `vllm==0.26.0`.
++- Dynamo request plane: TCP; event plane: ZMQ; router mode: KV.
++- NIXL data plane: UCX 1.22, `tcp,cuda_copy`, one 1 Gb/s Ethernet link.
++- AIPerf: 60 sessions, three turns each, concurrency 30, 180 requests.
++
++The accepted `full4` run registered all eight workers and observed exactly one
++model process on every requested GPU. It completed 180/180 requests with no
++errors, cancellations, output-length mismatches, NIXL errors, lease expiry, or
++residual processes. All 180 frontend selections, worker timelines, AIPerf
++records, and NIXL transfers joined successfully.
++
++## Result
++
++| Metric | Same host, two runs | Cross host, one run | Change |
++| --- | ---: | ---: | ---: |
++| Prefill migrations | 63 / 240 | 1 / 120 | 26.25% → 0.83% |
++| Estimated cache read | 55.56% | 62.40% | +6.84 pp |
++| Computed Prefill tokens / request | 8,328.7 | 7,046.3 | -15.40% |
++| Prefill service mean | 2.733 s | 2.226 s | -18.56% |
++| TTFT mean | 8.888 s | 492.864 s | 55.45× |
++| TTFT P95 | 13.654 s | 691.028 s | 50.61× |
++| ITL mean | 66.967 ms | 27.398 ms | -59.09% |
++| E2E mean | 14.280 s | 495.140 s | 34.67× |
++| Request throughput | 1.824 req/s | 0.0546 req/s | -97.00% |
++
++Cross-host Dynamo did **not** cause more Prefill migrations in this PD run.
++Only one turn-1 request changed Prefill; all 60 turn-2 requests remained on the
++same worker. Later-turn cache read was 69.85% for turn 1 and 78.58% for turn 2.
++The one migrated request is insufficient for a causal latency comparison, but
++the aggregate result rules out frequent Prefill migration as the source of the
++cross-host TTFT increase.
++
++The placement difference is consistent with the measured closed-loop timeline.
++On the same host, requests return quickly enough that later turns arrive while
++Prefill load is changing; Dynamo's cache and load terms produced a 40.0%
++turn-1 migration rate and a 12.5% turn-2 migration rate. Across hosts, the
++1 Gb/s handoff serializes progress after Prefill. Prefill workers are mostly
++idle when later turns arrive, so the cached worker wins the same Dynamo score.
++This is an inference supported by the selection, cache, Prefill service, and
++arrival timelines; a fixed open-loop arrival trace would be needed to isolate
++the routing feedback from the slower service time.
++
++## Why TTFT grows
++
++Cross-host mean router-to-Prefill time was 41 ms and mean Prefill service time
++was 2.226 s. Mean time from Decode receipt to first token was 490.489 s, versus
++6.153 s on the same host. Decode reached 30 waiting requests and 100% KV cache
++usage during the cross-host run.
++
++NIXL moved 368,001 MB over 180 transfers, or 2,044 MB per request. The run's
++wall-clock KV volume rate was 111.71 MB/s, close to the 125 MB/s theoretical
++maximum of the audited 1 Gb/s link. Individual transfers overlapped: their
++mean residence time was 194.701 s and the residence-weighted rate was
++10.50 MB/s. The remaining Decode-side interval includes transfer contention,
++waiting/deferred queue time, KV allocation, and first-token execution; the
++aggregate subtraction cannot separate those mechanisms further.
++
++This explains the apparent TTFT contradiction. PAP does not require a
++Prefill-KV transfer before first token, so its cross-host TTFT regression came
++from changed PA placement and cache recomputation. Disaggregated PD always
++hands Prefill KV to Decode. On this 1 Gb/s link that mandatory transfer and the
++resulting Decode queue dominate TTFT even though Prefill placement and cache
++reuse improve. ITL falls because the slow handoff staggers requests reaching
++Decode, reducing simultaneous token generation; it is not an end-to-end gain.
++
++## Failure found and fixed during bring-up
++
++The first long run exposed a deployment defect. Remote workers used Dynamo's
++default 10-second etcd lease while synchronous cross-host NIXL operations held
++their event loops for much longer. All seven Prefill leases expired, the
++workers unregistered, and the remaining 120 turns returned HTTP 503. The
++failure archive contains the first lease-expiry events, 60 successful requests,
++120 HTTP 503 records, and clean shutdown evidence.
++
++The launcher now sets `ETCD_LEASE_TTL=3600` and NIXL
++`kv_lease_duration=3600`, records both values in the effective configuration,
++and fails on any lease expiry or premature KV-block release. The accepted run
++then completed all 180 requests. These values protect this slow bare-metal TCP
++experiment; production deployments should put etcd control traffic on a path
++whose scheduling is independent of bulk KV traffic.
++
++The cleanup path now stops workers before etcd and allows Dynamo's five-second
++grace period before sending KILL. A final smoke completed with no shutdown
++traceback, no endpoint-unregistration error, and zero residual GPU processes or
++etcd listeners.
++
++## Evidence
++
++- `results/archives/cross_host_full4.tar.gz`: accepted raw run.
++- `results/archives/cross_host_full2_failure.tar.gz`: lease-expiry failure.
++- `results/summary.json`: recomputed placement and performance comparison.
++- `results/requests.csv`: per-request worker, turn, cache, and timing join.
++- `verify.py`: archive, topology, correctness, workload, and summary replay.
++
++The same-host controls are the two immutable archives in
++`PAP-20260907-ALIGNED-C30-7P1D`. The verifier checks their existing manifests
++and reruns the same analysis code over both controls and the accepted
++cross-host archive.
+diff --git a/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/run.sh b/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/run.sh
+new file mode 100755
+index 0000000000..a1be2188c3
+--- /dev/null
++++ b/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/run.sh
+@@ -0,0 +1,16 @@
++#!/usr/bin/env bash
++
++set -euo pipefail
++
++HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++ROOT="$(cd "${HERE}/../../../../.." && pwd)"
++RUN_ID="${DYNAMO_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)_cross_host_pd_7p1d}"
++
++set -a
++source "${HERE}/experiment.env"
++set +a
++
++export DYNAMO_RUN_ID="${RUN_ID}"
++export DYNAMO_RUN_ROOT="${HERE}/runs/${RUN_ID}"
++export DYNAMO_REMOTE_RUN_ROOT="${ROOT}/benchmarks/pap/experiments/_staging/${RUN_ID}_remote"
++exec bash "${ROOT}/benchmarks/pap/scripts/run_cross_host_dynamo_7p1d_aiperf.sh"
+diff --git a/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/verify.py b/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/verify.py
+new file mode 100755
+index 0000000000..08b4875a09
+--- /dev/null
++++ b/benchmarks/pap/experiments/e2e/PAP-20260909-DYNAMO-CROSS-HOST-PD/verify.py
+@@ -0,0 +1,198 @@
++#!/usr/bin/env python3
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++"""Verify and reproduce the cross-host Dynamo 7P1D experiment."""
++
++from __future__ import annotations
++
++import hashlib
++import json
++import subprocess
++import sys
++import tarfile
++import tempfile
++from pathlib import Path
++
++HERE = Path(__file__).resolve().parent
++ROOT = HERE.parents[4]
++RESULTS = HERE / "results"
++SAME_HOST_RESULTS = (
++    ROOT / "benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30-7P1D/results"
++)
++
++
++def digest(path: Path) -> str:
++    hasher = hashlib.sha256()
++    with path.open("rb") as stream:
++        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
++            hasher.update(chunk)
++    return hasher.hexdigest()
++
++
++def check_manifest(root: Path, manifest: Path) -> None:
++    for line in manifest.read_text().splitlines():
++        expected, relative = line.split(maxsplit=1)
++        path = root / relative
++        if digest(path) != expected:
++            raise SystemExit(f"checksum mismatch: {path}")
++
++
++def extract_verified(archive: Path, manifest: Path, destination: Path) -> Path:
++    expected = {}
++    for line in manifest.read_text().splitlines():
++        checksum, name = line.split(maxsplit=1)
++        expected[name] = checksum
++    seen = set()
++    with tarfile.open(archive) as tar:
++        for member in tar:
++            path = Path(member.name)
++            if path.is_absolute() or ".." in path.parts:
++                raise SystemExit(f"unsafe archive member: {member.name}")
++            if member.isdir():
++                continue
++            if not member.isfile() or member.name not in expected:
++                raise SystemExit(f"unexpected archive member: {member.name}")
++            if member.name in seen:
++                raise SystemExit(f"duplicate archive member: {member.name}")
++            seen.add(member.name)
++            with tar.extractfile(member) as stream:
++                payload = stream.read()
++            if hashlib.sha256(payload).hexdigest() != expected[member.name]:
++                raise SystemExit(f"archive checksum mismatch: {member.name}")
++        if seen != expected.keys():
++            raise SystemExit(f"archive inventory mismatch: {archive}")
++        tar.extractall(destination, filter="data")
++    return destination / Path(next(iter(expected))).parts[0]
++
++
++def require(condition: bool, message: str) -> None:
++    if not condition:
++        raise SystemExit(message)
++
++
++def check_accepted(root: Path) -> None:
++    profile = json.loads((root / "aiperf/profile.json").read_text())
++    startup = json.loads((root / "startup_audit.json").read_text())
++    cleanup = json.loads((root / "cleanup_audit.json").read_text())
++    analysis = json.loads((root / "dynamo_ttft_analysis.json").read_text())
++    config = (root / "effective_config.env").read_text()
++    require(profile["request_count"]["avg"] == 180, "accepted request count")
++    require(not profile["error_summary"], "accepted run has errors")
++    require(not profile["was_cancelled"], "accepted run was cancelled")
++    require(profile["osl_mismatch_count"]["avg"] == 0, "output mismatch")
++    require(startup["status"] == "passed", "startup audit failed")
++    require(startup["registered_workers"] == 8, "worker count mismatch")
++    require(startup["local_decode"]["gpu_processes"] == 1, "Decode mapping")
++    require(
++        startup["remote_prefills"]["gpu_processes_per_gpu"] == [1] * 7,
++        "Prefill mapping",
++    )
++    require(cleanup["status"] == "passed", "cleanup audit failed")
++    require(analysis["joined_requests"] == 180, "timeline join mismatch")
++    require(analysis["request_metadata_matches"] == 180, "metadata join mismatch")
++    require(analysis["session_routing"]["migrations"] == 1, "migration count")
++    require(analysis["kv_transfer"]["transfers"] == 180, "transfer count")
++    require("ETCD_LEASE_TTL=3600\n" in config, "etcd lease config")
++    require("KV_LEASE_DURATION=3600\n" in config, "NIXL lease config")
++    forbidden = (
++        "Keep-alive lease expired",
++        "Unable to maintain lease",
++        "Releasing expired KV blocks",
++        "NIXL_ERR",
++        "EngineDeadError",
++        "Traceback",
++        "CUDA out of memory",
++    )
++    timed_logs = []
++    for path in (root / "service_logs").glob("*.log"):
++        payload = path.read_text(errors="replace")
++        boundaries = [
++            payload.find(marker)
++            for marker in (
++                "Received shutdown signal",
++                "trigger received signal=SIGTERM",
++            )
++            if marker in payload
++        ]
++        timed_logs.append(payload[: min(boundaries)] if boundaries else payload)
++    logs = "".join(timed_logs)
++    require(not any(item in logs for item in forbidden), "accepted timed log failure")
++
++
++def check_failure(root: Path) -> None:
++    profile = json.loads((root / "aiperf/profile.json").read_text())
++    require(profile["request_count"]["avg"] == 60, "failure success count")
++    require(
++        len(profile["error_summary"]) == 1
++        and profile["error_summary"][0]["count"] == 120
++        and profile["error_summary"][0]["error_details"]["code"] == 503,
++        "failure HTTP evidence",
++    )
++    lease_failures = sum(
++        "Keep-alive lease expired" in path.read_text(errors="replace")
++        for path in (root / "service_logs").glob("prefill_*.log")
++    )
++    require(lease_failures == 7, "expected all seven Prefill leases to expire")
++    cleanup = json.loads((root / "cleanup_audit.json").read_text())
++    require(cleanup["status"] == "passed", "failure cleanup audit")
++
++
++def normalize(summary: dict) -> dict:
++    output = json.loads(json.dumps(summary))
++    for run in output["runs"]:
++        run.pop("path", None)
++    return output
++
++
++def main() -> None:
++    check_manifest(RESULTS, RESULTS / "SHA256SUMS")
++    check_manifest(SAME_HOST_RESULTS, SAME_HOST_RESULTS / "SHA256SUMS")
++    with tempfile.TemporaryDirectory(prefix="pap-cross-host-pd-verify-") as tmp:
++        restored = Path(tmp)
++        same_runs = []
++        for run_name in ("run_1", "run_2"):
++            root = extract_verified(
++                SAME_HOST_RESULTS / "archives" / f"{run_name}.tar.gz",
++                SAME_HOST_RESULTS / f"{run_name}_SHA256SUMS",
++                restored,
++            )
++            same_runs.append(root)
++        accepted = extract_verified(
++            RESULTS / "archives/cross_host_full4.tar.gz",
++            RESULTS / "cross_host_full4_SHA256SUMS",
++            restored,
++        )
++        failure = extract_verified(
++            RESULTS / "archives/cross_host_full2_failure.tar.gz",
++            RESULTS / "cross_host_full2_failure_SHA256SUMS",
++            restored,
++        )
++        check_accepted(accepted)
++        check_failure(failure)
++        reproduced = restored / "analysis"
++        command = [sys.executable, str(HERE / "analyze.py")]
++        for path in same_runs:
++            command.extend(["--same-host-run", str(path)])
++        command.extend(
++            [
++                "--cross-host-run",
++                str(accepted),
++                "--output-dir",
++                str(reproduced),
++            ]
++        )
++        subprocess.run(command, check=True)
++        expected = json.loads((RESULTS / "summary.json").read_text())
++        actual = json.loads((reproduced / "summary.json").read_text())
++        require(normalize(actual) == normalize(expected), "summary mismatch")
++        require(
++            (reproduced / "requests.csv").read_bytes()
++            == (RESULTS / "requests.csv").read_bytes(),
++            "request table mismatch",
++        )
++    print("Cross-host Dynamo 7P1D evidence verified")
++
++
++if __name__ == "__main__":
++    main()
+diff --git a/benchmarks/pap/scripts/configure_cross_host_nixl.sh b/benchmarks/pap/scripts/configure_cross_host_nixl.sh
+new file mode 100755
+index 0000000000..6b792d4743
+--- /dev/null
++++ b/benchmarks/pap/scripts/configure_cross_host_nixl.sh
+@@ -0,0 +1,67 @@
++#!/usr/bin/env bash
++
++pap_configure_cross_host_nixl() {
++  local root_dir="${1:?repository root is required}"
++  local host_ip="${2:?routable host IP is required}"
++  local net_device="${3:?UCX network device is required}"
++  local ucx_prefix="${PAP_UCX_PREFIX:-${root_dir}/.local/ucx-1.22}"
++  local plugin_dir="${PAP_NIXL_PLUGIN_DIR:-${root_dir}/.local/nixl-ucx122/src/plugins/ucx}"
++  local ucx_info="${ucx_prefix}/bin/ucx_info"
++  local plugin="${plugin_dir}/libplugin_UCX.so"
++  local devices ldd_output library version
++
++  [[ -x "${ucx_info}" ]] || {
++    echo "UCX runtime is missing: ${ucx_info}" >&2
++    return 1
++  }
++  [[ -f "${plugin}" ]] || {
++    echo "NIXL UCX plugin is missing: ${plugin}" >&2
++    return 1
++  }
++  version="$("${ucx_info}" -v | sed -n 's/^# Library version: //p' | head -n 1)"
++  [[ "${version}" == "1.22.0" ]] || {
++    echo "Expected UCX 1.22.0, found ${version:-unknown}" >&2
++    return 1
++  }
++  "${ucx_info}" -v 2>&1 | grep -F -- "--enable-mt" >/dev/null || {
++    echo "UCX 1.22.0 must be built with --enable-mt" >&2
++    return 1
++  }
++  devices="$("${ucx_info}" -d)"
++  [[ "${devices}" == *"Transport: tcp"* ]] || {
++    echo "UCX TCP transport is unavailable" >&2
++    return 1
++  }
++  [[ "${devices}" == *"Transport: cuda_copy"* ]] || {
++    echo "UCX CUDA copy transport is unavailable" >&2
++    return 1
++  }
++  [[ "$(cat "/sys/class/net/${net_device}/operstate" 2>/dev/null)" == up ]] || {
++    echo "UCX network device is not up: ${net_device}" >&2
++    return 1
++  }
++
++  ldd_output="$(
++    LD_LIBRARY_PATH="${ucx_prefix}/lib:${LD_LIBRARY_PATH:-}" ldd "${plugin}"
++  )"
++  for library in libucp.so.0 libuct.so.0 libucs.so.0; do
++    [[ "${ldd_output}" == *"${library} => ${ucx_prefix}/lib/"* ]] || {
++      echo "${library} does not resolve to ${ucx_prefix}" >&2
++      return 1
++    }
++  done
++
++  export PAP_NIXL_RUNTIME_MODE=cross_host_ucx122_tcp
++  export PAP_NIXL_UCX_VERSION="${version}"
++  export PAP_UCX_PREFIX="${ucx_prefix}"
++  export PAP_NIXL_PLUGIN_DIR="${plugin_dir}"
++  export NIXL_PLUGIN_DIR="${plugin_dir}"
++  export UCX_MODULE_DIR="${ucx_prefix}/lib/ucx"
++  export LD_LIBRARY_PATH="${ucx_prefix}/lib:${LD_LIBRARY_PATH:-}"
++  export UCX_PROTO_EMULATION_ENABLE=n
++  export UCX_CUDA_IPC_ENABLE_GET_ZCOPY=n
++  export UCX_TLS=tcp,cuda_copy
++  export UCX_NET_DEVICES="${net_device}"
++  export UCX_RCACHE_MAX_UNRELEASED="${UCX_RCACHE_MAX_UNRELEASED:-1024}"
++  export VLLM_NIXL_SIDE_CHANNEL_HOST="${host_ip}"
++}
+diff --git a/benchmarks/pap/scripts/run_cross_host_dynamo_7p1d_aiperf.sh b/benchmarks/pap/scripts/run_cross_host_dynamo_7p1d_aiperf.sh
+new file mode 100755
+index 0000000000..a7d14e3328
+--- /dev/null
++++ b/benchmarks/pap/scripts/run_cross_host_dynamo_7p1d_aiperf.sh
+@@ -0,0 +1,486 @@
++#!/usr/bin/env bash
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++# shellcheck disable=SC2029
++
++set -euo pipefail
++
++ROOT_DIR="${PAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
++ROLE="${DYNAMO_CROSS_HOST_ROLE:-controller}"
++DYNAMO_PYTHON="${DYNAMO_PYTHON:-${ROOT_DIR}/.venv-dynamo/bin/python}"
++PAP_PYTHON="${PAP_PYTHON:-${ROOT_DIR}/.venv/bin/python}"
++AIPERF_BIN="${AIPERF_BIN:-${ROOT_DIR}/.venv-aiperf/bin/aiperf}"
++AIPERF_RUNNER="${ROOT_DIR}/benchmarks/pap/scripts/run_aiperf_profile.sh"
++MODEL_PATH="${MODEL_PATH:-/data/ssd1/llm-models/Qwen3-8B}"
++REMOTE_HOST="${DYNAMO_REMOTE_HOST:-L20T}"
++REMOTE_ROOT="${DYNAMO_REMOTE_ROOT:-${ROOT_DIR}}"
++LOCAL_IP="${DYNAMO_LOCAL_IP:-10.128.7.24}"
++REMOTE_IP="${DYNAMO_REMOTE_IP:-10.128.7.25}"
++LOCAL_UCX_DEVICE="${DYNAMO_LOCAL_UCX_DEVICE:-enx9c69d3247e5c}"
++REMOTE_UCX_DEVICE="${DYNAMO_REMOTE_UCX_DEVICE:-enx9c69d341f8cb}"
++LOCAL_DECODE_GPU="${DYNAMO_LOCAL_DECODE_GPU:-7}"
++PREFILL_COUNT=7
++
++RUN_ID="${DYNAMO_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)_cross_host_dynamo_7p1d}"
++RUN_ROOT="${DYNAMO_RUN_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/e2e/_runs/dynamo/${RUN_ID}}"
++REMOTE_RUN_ROOT="${DYNAMO_REMOTE_RUN_ROOT:-${REMOTE_ROOT}/benchmarks/pap/experiments/_staging/${RUN_ID}}"
++LOG_ROOT="${RUN_ROOT}/service_logs"
++REMOTE_LOG_ROOT="${REMOTE_RUN_ROOT}/service_logs"
++NAMESPACE="${DYNAMO_NAMESPACE:-pap-cross-host-${RUN_ID}}"
++FRONTEND_PORT="${DYNAMO_FRONTEND_PORT:-19400}"
++ETCD_PORT="${DYNAMO_ETCD_PORT:-23379}"
++SYSTEM_PORT_BASE="${DYNAMO_SYSTEM_PORT_BASE:-19500}"
++NIXL_PORT_BASE="${DYNAMO_NIXL_PORT_BASE:-19600}"
++KV_EVENT_PORT_BASE="${DYNAMO_KV_EVENT_PORT_BASE:-19700}"
++VLLM_PORT_BASE="${DYNAMO_VLLM_PORT_BASE:-19800}"
++ETCD_ENDPOINTS="http://${LOCAL_IP}:${ETCD_PORT}"
++ETCD_BIN="${DYNAMO_ETCD_BIN:-${ROOT_DIR}/.local/dynamo-etcd-3.6.1/etcd}"
++ETCD_LEASE_TTL="${DYNAMO_ETCD_LEASE_TTL:-3600}"
++
++MAX_MODEL_LEN="${DYNAMO_MAX_MODEL_LEN:-32768}"
++PREFILL_MAX_NUM_BATCHED_TOKENS="${DYNAMO_PREFILL_MAX_NUM_BATCHED_TOKENS:-2048}"
++DECODE_MAX_NUM_BATCHED_TOKENS="${DYNAMO_DECODE_MAX_NUM_BATCHED_TOKENS:-256}"
++MAX_NUM_SEQS="${DYNAMO_MAX_NUM_SEQS:-256}"
++GPU_MEMORY_UTILIZATION="${DYNAMO_GPU_MEMORY_UTILIZATION:-0.90}"
++BLOCK_SIZE="${DYNAMO_BLOCK_SIZE:-16}"
++PREFILL_CUDAGRAPH_CAPTURE_SIZES="${DYNAMO_PREFILL_CUDAGRAPH_CAPTURE_SIZES:-1,2,4,8,16,32,64,128}"
++DECODE_CUDAGRAPH_CAPTURE_SIZES="${DYNAMO_DECODE_CUDAGRAPH_CAPTURE_SIZES:-1,2,4,8,16,32,64,128}"
++ROUTER_PREFILL_LOAD_SCALE="${DYNAMO_ROUTER_PREFILL_LOAD_SCALE:-2.0}"
++CLUSTER_READY_WAIT_SECONDS="${DYNAMO_CLUSTER_READY_WAIT_SECONDS:-30}"
++MIN_KV_TRANSFER_MB_S="${DYNAMO_MIN_KV_TRANSFER_MB_S:-10}"
++EXPECTED_LINK_SPEED_MBIT_S="${DYNAMO_EXPECTED_LINK_SPEED_MBIT_S:-1000}"
++KV_LEASE_DURATION="${DYNAMO_KV_LEASE_DURATION:-3600}"
++SMOKE_ONLY="${DYNAMO_SMOKE_ONLY:-0}"
++
++AIPERF_INPUT_FILE="${DYNAMO_AIPERF_INPUT_FILE:-}"
++AIPERF_INPUT_SHA256="${DYNAMO_AIPERF_INPUT_SHA256:-}"
++AIPERF_OUTPUT_DIR="${DYNAMO_AIPERF_OUTPUT_DIR:-${RUN_ROOT}/aiperf}"
++AIPERF_SESSIONS="${DYNAMO_AIPERF_SESSIONS:-60}"
++AIPERF_CONCURRENCY="${DYNAMO_AIPERF_CONCURRENCY:-30}"
++AIPERF_EXPECTED_REQUESTS="${DYNAMO_AIPERF_EXPECTED_REQUESTS:-180}"
++AIPERF_REQUEST_TIMEOUT_SECONDS="${DYNAMO_AIPERF_REQUEST_TIMEOUT_SECONDS:-21600}"
++
++die() {
++  echo "ERROR: $*" >&2
++  exit 2
++}
++
++configure_worker_env() {
++  local host_ip="$1"
++  local net_device="$2"
++  source "${ROOT_DIR}/benchmarks/pap/scripts/configure_cross_host_nixl.sh"
++  pap_configure_cross_host_nixl "${ROOT_DIR}" "${host_ip}" "${net_device}"
++  export PYTHONSAFEPATH=1 PYTHONPATH=
++  export NO_PROXY="localhost,127.0.0.1,${LOCAL_IP},${REMOTE_IP}"
++  export no_proxy="${NO_PROXY}"
++  export DYN_NAMESPACE="${NAMESPACE}"
++  export DYN_DISCOVERY_BACKEND=etcd
++  export DYN_REQUEST_PLANE=tcp DYN_EVENT_PLANE=zmq
++  export ETCD_ENDPOINTS ETCD_LEASE_TTL
++  export VLLM_USE_FLASHINFER_SAMPLER=0 VLLM_USE_V2_MODEL_RUNNER=1
++  export HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
++}
++
++run_worker() {
++  local index="${DYNAMO_CROSS_HOST_INDEX:-0}"
++  local host_ip net_device gpu ordinal event_config log_role execution_config
++  local -a mode_args scheduling_args event_args
++  case "${ROLE}" in
++    decode)
++      host_ip="${LOCAL_IP}"
++      net_device="${LOCAL_UCX_DEVICE}"
++      gpu="${LOCAL_DECODE_GPU}"
++      ordinal=0
++      log_role=decode
++      mode_args=(--disaggregation-mode decode)
++      scheduling_args=(--async-scheduling)
++      event_args=()
++      execution_config="{\"mode\":\"VLLM_COMPILE\",\"cudagraph_mode\":\"PIECEWISE\",\"cudagraph_capture_sizes\":[${DECODE_CUDAGRAPH_CAPTURE_SIZES}]}"
++      ;;
++    prefill)
++      (( index >= 0 && index < PREFILL_COUNT )) || die "invalid Prefill index"
++      host_ip="${REMOTE_IP}"
++      net_device="${REMOTE_UCX_DEVICE}"
++      gpu="${index}"
++      ordinal=$((index + 1))
++      log_role=prefill
++      mode_args=(--disaggregation-mode prefill)
++      scheduling_args=(--no-async-scheduling)
++      event_config="{\"publisher\":\"zmq\",\"topic\":\"kv-events\",\"endpoint\":\"tcp://*:$((KV_EVENT_PORT_BASE + index))\",\"enable_kv_cache_events\":true}"
++      event_args=(--kv-events-config "${event_config}")
++      execution_config="{\"mode\":\"VLLM_COMPILE\",\"cudagraph_mode\":\"PIECEWISE\",\"cudagraph_capture_sizes\":[${PREFILL_CUDAGRAPH_CAPTURE_SIZES}]}"
++      ;;
++    *) die "unsupported worker role: ${ROLE}" ;;
++  esac
++  configure_worker_env "${host_ip}" "${net_device}"
++  export CUDA_VISIBLE_DEVICES="${gpu}"
++  export CUDA_CACHE_PATH="${RUN_ROOT}/cuda_cache/${log_role}_${index}"
++  export DYN_SYSTEM_PORT="$((SYSTEM_PORT_BASE + ordinal))"
++  export VLLM_NIXL_SIDE_CHANNEL_PORT="$((NIXL_PORT_BASE + ordinal))"
++  export VLLM_PORT="$((VLLM_PORT_BASE + ordinal * 20))"
++  mkdir -p "${CUDA_CACHE_PATH}"
++  local kv_config
++  kv_config="{\"kv_connector\":\"NixlConnector\",\"kv_role\":\"kv_both\",\"kv_connector_extra_config\":{\"enable_cross_layers_blocks\":\"True\",\"kv_lease_duration\":${KV_LEASE_DURATION}}}"
++  exec "${DYNAMO_PYTHON}" -P -m dynamo.vllm \
++    --discovery-backend etcd --request-plane tcp --event-plane zmq \
++    --model "${MODEL_PATH}" --served-model-name "${MODEL_PATH}" \
++    --generation-config vllm --dtype float16 --tensor-parallel-size 1 \
++    "${mode_args[@]}" --kv-transfer-config "${kv_config}" \
++    "${event_args[@]}" --compilation-config "${execution_config}" \
++    --max-model-len "${MAX_MODEL_LEN}" \
++    --max-num-batched-tokens "$([[ "${ROLE}" == prefill ]] && printf %s "${PREFILL_MAX_NUM_BATCHED_TOKENS}" || printf %s "${DECODE_MAX_NUM_BATCHED_TOKENS}")" \
++    --max-num-seqs "${MAX_NUM_SEQS}" --enable-chunked-prefill \
++    --enable-prefix-caching --block-size "${BLOCK_SIZE}" \
++    --gpu-memory-utilization "${GPU_MEMORY_UTILIZATION}" \
++    "${scheduling_args[@]}" --disable-log-stats
++}
++
++if [[ "${ROLE}" != controller ]]; then
++  run_worker
++fi
++
++[[ "${SMOKE_ONLY}" =~ ^[01]$ ]] || die "DYNAMO_SMOKE_ONLY must be 0 or 1"
++[[ "${LOCAL_IP}" != "${REMOTE_IP}" ]] || die "local and remote IP must differ"
++[[ "${NAMESPACE}" =~ ^[a-zA-Z0-9_-]+$ ]] || die "invalid Dynamo namespace"
++for path in "${DYNAMO_PYTHON}" "${PAP_PYTHON}" "${ETCD_BIN}" "${MODEL_PATH}"; do
++  [[ -e "${path}" ]] || die "missing local path: ${path}"
++done
++if (( SMOKE_ONLY == 0 )); then
++  [[ -f "${AIPERF_INPUT_FILE}" ]] || die "missing AIPerf input dataset"
++  actual_sha="$(sha256sum "${AIPERF_INPUT_FILE}" | awk '{print $1}')"
++  [[ -z "${AIPERF_INPUT_SHA256}" || "${actual_sha}" == "${AIPERF_INPUT_SHA256}" ]] \
++    || die "AIPerf input checksum mismatch"
++fi
++
++CROSS_HOST_NO_PROXY="localhost,127.0.0.1,${LOCAL_IP},${REMOTE_IP}"
++if [[ -n "${NO_PROXY:-}" ]]; then
++  CROSS_HOST_NO_PROXY="${NO_PROXY},${CROSS_HOST_NO_PROXY}"
++fi
++export NO_PROXY="${CROSS_HOST_NO_PROXY}"
++export no_proxy="${CROSS_HOST_NO_PROXY}"
++
++mkdir -p "${LOG_ROOT}" "${RUN_ROOT}/launch" "${RUN_ROOT}/cuda_cache"
++LOCAL_PIDS=()
++LOCAL_PGIDS=()
++REMOTE_PIDS=()
++ETCD_PID=""
++
++pull_remote_logs() {
++  rsync -a "${REMOTE_HOST}:${REMOTE_LOG_ROOT}/" "${LOG_ROOT}/" >/dev/null 2>&1 || true
++  rsync -a "${REMOTE_HOST}:${REMOTE_RUN_ROOT}/remote_gpu_telemetry.csv" \
++    "${RUN_ROOT}/" >/dev/null 2>&1 || true
++}
++
++cleanup() {
++  local code=$?
++  set +e
++  local pgid pid
++  if ((${#REMOTE_PIDS[@]})); then
++    for pid in "${REMOTE_PIDS[@]}"; do
++      ssh "${REMOTE_HOST}" \
++        "kill -TERM -- -${pid} >/dev/null 2>&1 || true" || true
++    done
++  fi
++  for pgid in "${LOCAL_PGIDS[@]:-}"; do
++    kill -TERM -- "-${pgid}" >/dev/null 2>&1 || true
++  done
++  sleep 7
++  for pgid in "${LOCAL_PGIDS[@]:-}"; do
++    kill -KILL -- "-${pgid}" >/dev/null 2>&1 || true
++  done
++  if ((${#REMOTE_PIDS[@]})); then
++    for pid in "${REMOTE_PIDS[@]}"; do
++      ssh "${REMOTE_HOST}" \
++        "kill -KILL -- -${pid} >/dev/null 2>&1 || true" || true
++    done
++  fi
++  if [[ -n "${ETCD_PID}" ]]; then
++    kill -TERM -- "-${ETCD_PID}" >/dev/null 2>&1 || true
++    sleep 1
++    kill -KILL -- "-${ETCD_PID}" >/dev/null 2>&1 || true
++  fi
++  for pid in "${LOCAL_PIDS[@]:-}"; do
++    wait "${pid}" >/dev/null 2>&1 || true
++  done
++  pull_remote_logs
++  local deadline=$((SECONDS + 30))
++  local local_gpu_left remote_gpu_left etcd_left
++  while true; do
++    local_gpu_left="$(nvidia-smi -i "${LOCAL_DECODE_GPU}" \
++      --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null \
++      | sed '/^$/d' | wc -l)"
++    remote_gpu_left="$(ssh "${REMOTE_HOST}" \
++      'nvidia-smi -i 0,1,2,3,4,5,6 --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | sed "/^$/d" | wc -l' \
++      2>/dev/null || echo unknown)"
++    etcd_left="$(ss -ltn 2>/dev/null | grep -c ":${ETCD_PORT} " || true)"
++    [[ "${local_gpu_left}" == 0 && "${remote_gpu_left}" == 0 \
++      && "${etcd_left}" == 0 ]] && break
++    (( SECONDS < deadline )) || break
++    sleep 1
++  done
++  local cleanup_status=passed
++  if [[ "${local_gpu_left}" != 0 || "${remote_gpu_left}" != 0 \
++    || "${etcd_left}" != 0 ]]; then
++    cleanup_status=failed
++    (( code != 0 )) || code=2
++  fi
++  jq -n --arg status "${cleanup_status}" \
++    --argjson local_gpu_processes "${local_gpu_left:-null}" \
++    --arg remote_gpu_processes "${remote_gpu_left:-unknown}" \
++    --argjson etcd_listeners "${etcd_left:-null}" \
++    '{status:$status,local_gpu_processes:$local_gpu_processes,remote_gpu_processes:$remote_gpu_processes,etcd_listeners:$etcd_listeners}' \
++    > "${RUN_ROOT}/cleanup_audit.json"
++  exit "${code}"
++}
++trap cleanup EXIT
++trap 'exit 130' INT TERM
++
++local_gpu_processes="$(nvidia-smi -i "${LOCAL_DECODE_GPU}" \
++  --query-compute-apps=pid --format=csv,noheader,nounits)"
++[[ -z "${local_gpu_processes//[[:space:]]/}" ]] \
++  || die "local Decode GPU is occupied"
++remote_gpu_processes="$(ssh "${REMOTE_HOST}" \
++  'nvidia-smi -i 0,1,2,3,4,5,6 --query-compute-apps=pid --format=csv,noheader,nounits')"
++[[ -z "${remote_gpu_processes//[[:space:]]/}" ]] \
++  || die "remote Prefill GPUs are occupied"
++local_link_speed="$(cat "/sys/class/net/${LOCAL_UCX_DEVICE}/speed")"
++remote_link_speed="$(ssh "${REMOTE_HOST}" \
++  "cat '/sys/class/net/${REMOTE_UCX_DEVICE}/speed'")"
++[[ "${local_link_speed}" == "${EXPECTED_LINK_SPEED_MBIT_S}" \
++  && "${remote_link_speed}" == "${EXPECTED_LINK_SPEED_MBIT_S}" ]] \
++  || die "cross-host link speed mismatch"
++
++local_version="$(${DYNAMO_PYTHON} -P -c \
++  "import importlib.metadata as m; print(m.version('ai-dynamo'), m.version('vllm'))")"
++remote_version="$(ssh "${REMOTE_HOST}" "${REMOTE_ROOT}/.venv-dynamo/bin/python -P -c \"import importlib.metadata as m; print(m.version('ai-dynamo'), m.version('vllm'))\"")"
++[[ "${local_version}" == "1.4.1 0.26.0" && "${remote_version}" == "${local_version}" ]] \
++  || die "Dynamo/vLLM version mismatch: local=${local_version}, remote=${remote_version}"
++
++rsync -a \
++  "${ROOT_DIR}/benchmarks/pap/scripts/run_cross_host_dynamo_7p1d_aiperf.sh" \
++  "${ROOT_DIR}/benchmarks/pap/scripts/configure_cross_host_nixl.sh" \
++  "${REMOTE_HOST}:${REMOTE_ROOT}/benchmarks/pap/scripts/"
++ssh "${REMOTE_HOST}" "mkdir -p '${REMOTE_LOG_ROOT}' '${REMOTE_RUN_ROOT}/launch'"
++
++setsid "${ETCD_BIN}" --name pap-dynamo-cross \
++  --data-dir "${RUN_ROOT}/etcd" \
++  --listen-client-urls "http://127.0.0.1:${ETCD_PORT},${ETCD_ENDPOINTS}" \
++  --advertise-client-urls "${ETCD_ENDPOINTS}" \
++  --listen-peer-urls "http://127.0.0.1:$((ETCD_PORT + 1))" \
++  --initial-advertise-peer-urls "http://127.0.0.1:$((ETCD_PORT + 1))" \
++  --initial-cluster "pap-dynamo-cross=http://127.0.0.1:$((ETCD_PORT + 1))" \
++  --initial-cluster-state new > "${LOG_ROOT}/etcd.log" 2>&1 &
++ETCD_PID=$!
++LOCAL_PIDS+=("${ETCD_PID}")
++
++deadline=$((SECONDS + 60))
++until curl -fsS "${ETCD_ENDPOINTS}/health" >/dev/null 2>&1; do
++  kill -0 "${ETCD_PID}" 2>/dev/null || die "etcd exited during startup"
++  (( SECONDS < deadline )) || die "timed out waiting for etcd"
++  sleep 1
++done
++
++frontend_env=(
++  PYTHONSAFEPATH=1 PYTHONPATH= DYN_NAMESPACE="${NAMESPACE}"
++  DYN_DISCOVERY_BACKEND=etcd DYN_REQUEST_PLANE=tcp DYN_EVENT_PLANE=zmq
++  ETCD_ENDPOINTS="${ETCD_ENDPOINTS}" ETCD_LEASE_TTL="${ETCD_LEASE_TTL}"
++  NO_PROXY="localhost,127.0.0.1,${LOCAL_IP},${REMOTE_IP}"
++  no_proxy="localhost,127.0.0.1,${LOCAL_IP},${REMOTE_IP}"
++  HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
++)
++setsid env "${frontend_env[@]}" "${DYNAMO_PYTHON}" -P -m dynamo.frontend \
++  --discovery-backend etcd --request-plane tcp --event-plane zmq \
++  --router-mode kv --router-prefill-load-scale "${ROUTER_PREFILL_LOAD_SCALE}" \
++  --router-min-initial-workers 1 --kv-cache-block-size "${BLOCK_SIZE}" \
++  --http-port "${FRONTEND_PORT}" --model-name "${MODEL_PATH}" \
++  --model-path "${MODEL_PATH}" --enforce-disagg \
++  > "${LOG_ROOT}/frontend.log" 2>&1 &
++LOCAL_PIDS+=("$!")
++LOCAL_PGIDS+=("$!")
++
++setsid env \
++  DYNAMO_CROSS_HOST_ROLE=decode DYNAMO_CROSS_HOST_INDEX=0 \
++  PAP_ROOT="${ROOT_DIR}" DYNAMO_RUN_ID="${RUN_ID}" \
++  DYNAMO_RUN_ROOT="${RUN_ROOT}" DYNAMO_NAMESPACE="${NAMESPACE}" \
++  DYNAMO_LOCAL_IP="${LOCAL_IP}" DYNAMO_REMOTE_IP="${REMOTE_IP}" \
++  DYNAMO_LOCAL_UCX_DEVICE="${LOCAL_UCX_DEVICE}" \
++  DYNAMO_REMOTE_UCX_DEVICE="${REMOTE_UCX_DEVICE}" \
++  DYNAMO_ETCD_PORT="${ETCD_PORT}" DYNAMO_SYSTEM_PORT_BASE="${SYSTEM_PORT_BASE}" \
++  DYNAMO_NIXL_PORT_BASE="${NIXL_PORT_BASE}" \
++  DYNAMO_KV_EVENT_PORT_BASE="${KV_EVENT_PORT_BASE}" \
++  DYNAMO_VLLM_PORT_BASE="${VLLM_PORT_BASE}" \
++  DYNAMO_MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
++  DYNAMO_PREFILL_MAX_NUM_BATCHED_TOKENS="${PREFILL_MAX_NUM_BATCHED_TOKENS}" \
++  DYNAMO_DECODE_MAX_NUM_BATCHED_TOKENS="${DECODE_MAX_NUM_BATCHED_TOKENS}" \
++  DYNAMO_MAX_NUM_SEQS="${MAX_NUM_SEQS}" \
++  DYNAMO_GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION}" \
++  DYNAMO_BLOCK_SIZE="${BLOCK_SIZE}" \
++  DYNAMO_ETCD_LEASE_TTL="${ETCD_LEASE_TTL}" \
++  DYNAMO_KV_LEASE_DURATION="${KV_LEASE_DURATION}" \
++  DYNAMO_PREFILL_CUDAGRAPH_CAPTURE_SIZES="${PREFILL_CUDAGRAPH_CAPTURE_SIZES}" \
++  DYNAMO_DECODE_CUDAGRAPH_CAPTURE_SIZES="${DECODE_CUDAGRAPH_CAPTURE_SIZES}" \
++  bash "$0" > "${LOG_ROOT}/decode_0.log" 2>&1 &
++LOCAL_PIDS+=("$!")
++LOCAL_PGIDS+=("$!")
++
++for ((index = 0; index < PREFILL_COUNT; index++)); do
++  launch="${RUN_ROOT}/launch/prefill_${index}.sh"
++  cat > "${launch}" <<EOF
++#!/usr/bin/env bash
++set -euo pipefail
++export DYNAMO_CROSS_HOST_ROLE=prefill DYNAMO_CROSS_HOST_INDEX=${index}
++export PAP_ROOT=$(printf %q "${REMOTE_ROOT}")
++export DYNAMO_RUN_ID=$(printf %q "${RUN_ID}")
++export DYNAMO_RUN_ROOT=$(printf %q "${REMOTE_RUN_ROOT}")
++export DYNAMO_NAMESPACE=$(printf %q "${NAMESPACE}")
++export DYNAMO_LOCAL_IP=$(printf %q "${LOCAL_IP}") DYNAMO_REMOTE_IP=$(printf %q "${REMOTE_IP}")
++export DYNAMO_LOCAL_UCX_DEVICE=$(printf %q "${LOCAL_UCX_DEVICE}") DYNAMO_REMOTE_UCX_DEVICE=$(printf %q "${REMOTE_UCX_DEVICE}")
++export DYNAMO_ETCD_PORT=${ETCD_PORT} DYNAMO_SYSTEM_PORT_BASE=${SYSTEM_PORT_BASE}
++export DYNAMO_NIXL_PORT_BASE=${NIXL_PORT_BASE} DYNAMO_KV_EVENT_PORT_BASE=${KV_EVENT_PORT_BASE} DYNAMO_VLLM_PORT_BASE=${VLLM_PORT_BASE}
++export DYNAMO_MAX_MODEL_LEN=${MAX_MODEL_LEN} DYNAMO_PREFILL_MAX_NUM_BATCHED_TOKENS=${PREFILL_MAX_NUM_BATCHED_TOKENS}
++export DYNAMO_DECODE_MAX_NUM_BATCHED_TOKENS=${DECODE_MAX_NUM_BATCHED_TOKENS} DYNAMO_MAX_NUM_SEQS=${MAX_NUM_SEQS}
++export DYNAMO_GPU_MEMORY_UTILIZATION=${GPU_MEMORY_UTILIZATION} DYNAMO_BLOCK_SIZE=${BLOCK_SIZE}
++export DYNAMO_ETCD_LEASE_TTL=${ETCD_LEASE_TTL} DYNAMO_KV_LEASE_DURATION=${KV_LEASE_DURATION}
++export DYNAMO_PREFILL_CUDAGRAPH_CAPTURE_SIZES=$(printf %q "${PREFILL_CUDAGRAPH_CAPTURE_SIZES}")
++export DYNAMO_DECODE_CUDAGRAPH_CAPTURE_SIZES=$(printf %q "${DECODE_CUDAGRAPH_CAPTURE_SIZES}")
++exec bash $(printf %q "${REMOTE_ROOT}/benchmarks/pap/scripts/run_cross_host_dynamo_7p1d_aiperf.sh")
++EOF
++  chmod +x "${launch}"
++  rsync -a "${launch}" "${REMOTE_HOST}:${REMOTE_RUN_ROOT}/launch/"
++  remote_pid="$(ssh "${REMOTE_HOST}" \
++    "nohup setsid '${REMOTE_RUN_ROOT}/launch/prefill_${index}.sh' > '${REMOTE_LOG_ROOT}/prefill_${index}.log' 2>&1 < /dev/null & echo \$!")"
++  [[ "${remote_pid}" =~ ^[0-9]+$ ]] || die "failed to start remote Prefill ${index}"
++  REMOTE_PIDS+=("${remote_pid}")
++done
++
++deadline=$((SECONDS + 900))
++while true; do
++  local_ready="$(rg -c 'VllmWorker for .* has been initialized' "${LOG_ROOT}/decode_0.log" || true)"
++  remote_ready="$(ssh "${REMOTE_HOST}" \
++    "grep -l 'VllmWorker for .* has been initialized' '${REMOTE_LOG_ROOT}'/prefill_*.log 2>/dev/null | wc -l")"
++  [[ "${local_ready}" == 1 && "${remote_ready}" == "${PREFILL_COUNT}" ]] && break
++  kill -0 "${LOCAL_PIDS[2]}" 2>/dev/null || die "Decode exited during startup"
++  (( SECONDS < deadline )) || die "timed out waiting for workers"
++  sleep 2
++done
++
++deadline=$((SECONDS + 300))
++registered=0
++until (( registered >= 8 )) && curl -fsS \
++  "http://127.0.0.1:${FRONTEND_PORT}/v1/models" > "${RUN_ROOT}/models.json"; do
++  registered="$(rg -c 'added model' "${LOG_ROOT}/frontend.log" || true)"
++  (( SECONDS < deadline )) || die "timed out waiting for 8 Dynamo workers"
++  sleep 1
++done
++sleep "${CLUSTER_READY_WAIT_SECONDS}"
++
++{
++  printf 'TOPOLOGY=7P1D\nPLACEMENT=cross_host\n'
++  printf 'LOCAL_HOST=%q\nLOCAL_IP=%q\nLOCAL_DECODE_GPU=%q\n' "$(hostname)" "${LOCAL_IP}" "${LOCAL_DECODE_GPU}"
++  printf 'REMOTE_HOST=%q\nREMOTE_IP=%q\nREMOTE_PREFILL_GPUS=0,1,2,3,4,5,6\n' "${REMOTE_HOST}" "${REMOTE_IP}"
++  printf 'DYNAMO_VERSION=%q\nVLLM_VERSION=%q\n' "${local_version%% *}" "${local_version##* }"
++  printf 'NAMESPACE=%q\nETCD_ENDPOINTS=%q\nROUTER_MODE=kv\n' "${NAMESPACE}" "${ETCD_ENDPOINTS}"
++  printf 'ETCD_LEASE_TTL=%q\nKV_LEASE_DURATION=%q\n' \
++    "${ETCD_LEASE_TTL}" "${KV_LEASE_DURATION}"
++  printf 'UCX_TLS=tcp,cuda_copy\nLOCAL_UCX_DEVICE=%q\nREMOTE_UCX_DEVICE=%q\n' "${LOCAL_UCX_DEVICE}" "${REMOTE_UCX_DEVICE}"
++  printf 'LOCAL_LINK_SPEED_MBIT_S=%q\nREMOTE_LINK_SPEED_MBIT_S=%q\n' "${local_link_speed}" "${remote_link_speed}"
++  printf 'MODEL_PATH=%q\nMAX_MODEL_LEN=%q\nBLOCK_SIZE=%q\n' "${MODEL_PATH}" "${MAX_MODEL_LEN}" "${BLOCK_SIZE}"
++  printf 'PREFILL_MAX_NUM_BATCHED_TOKENS=%q\nDECODE_MAX_NUM_BATCHED_TOKENS=%q\n' "${PREFILL_MAX_NUM_BATCHED_TOKENS}" "${DECODE_MAX_NUM_BATCHED_TOKENS}"
++  printf 'MIN_KV_TRANSFER_MB_S=%q\n' "${MIN_KV_TRANSFER_MB_S}"
++  printf 'AIPERF_INPUT_FILE=%q\nAIPERF_INPUT_SHA256=%q\n' "${AIPERF_INPUT_FILE}" "${AIPERF_INPUT_SHA256:-${actual_sha:-not_applicable}}"
++  printf 'AIPERF_SESSIONS=%q\nAIPERF_CONCURRENCY=%q\nAIPERF_EXPECTED_REQUESTS=%q\n' "${AIPERF_SESSIONS}" "${AIPERF_CONCURRENCY}" "${AIPERF_EXPECTED_REQUESTS}"
++  printf 'DYNAMO_RUN_ID=%q\nDYNAMO_RUN_ROOT=%q\nDYNAMO_REMOTE_RUN_ROOT=%q\n' "${RUN_ID}" "${RUN_ROOT}" "${REMOTE_RUN_ROOT}"
++  printf 'GIT_COMMIT=%q\n' "$(git rev-parse HEAD)"
++} > "${RUN_ROOT}/effective_config.env"
++
++local_compute="$(nvidia-smi -i "${LOCAL_DECODE_GPU}" --query-compute-apps=pid \
++  --format=csv,noheader,nounits | sed '/^$/d' | wc -l)"
++remote_compute="$(ssh "${REMOTE_HOST}" \
++  'for gpu in 0 1 2 3 4 5 6; do nvidia-smi -i "$gpu" --query-compute-apps=pid --format=csv,noheader,nounits | sed "/^$/d" | wc -l; done')"
++[[ "${local_compute}" == 1 ]] || die "expected one Decode GPU process"
++[[ "${remote_compute}" == $'1\n1\n1\n1\n1\n1\n1' ]] \
++  || die "expected one Prefill GPU process per remote GPU"
++jq -n --argjson local_compute "${local_compute}" \
++  --arg remote_compute "${remote_compute}" --argjson registered "${registered}" \
++  --argjson local_pid "${LOCAL_PIDS[2]}" --arg remote_pids "${REMOTE_PIDS[*]}" \
++  '{status:"passed",registered_workers:$registered,local_decode:{launcher_pid:$local_pid,gpu_processes:$local_compute},remote_prefills:{launcher_pids:($remote_pids|split(" ")|map(tonumber)),gpu_processes_per_gpu:($remote_compute|split("\n")|map(tonumber))}}' \
++  > "${RUN_ROOT}/startup_audit.json"
++
++if (( SMOKE_ONLY == 1 )); then
++  jq -n --arg model "${MODEL_PATH}" \
++    '{model:$model,messages:[{role:"user",content:"Say hello."}],max_tokens:8,temperature:0}' \
++    | curl -fsS -H 'Content-Type: application/json' --data-binary @- \
++      "http://127.0.0.1:${FRONTEND_PORT}/v1/chat/completions" \
++      > "${RUN_ROOT}/smoke_response.json"
++  jq -e '.choices[0].message.content | length > 0' \
++    "${RUN_ROOT}/smoke_response.json" >/dev/null || die "smoke returned no content"
++else
++  telemetry_launch="${RUN_ROOT}/launch/remote_telemetry.sh"
++  cat > "${telemetry_launch}" <<'EOF'
++#!/usr/bin/env bash
++set -euo pipefail
++while true; do
++  nvidia-smi \
++    --query-gpu=timestamp,index,utilization.gpu,memory.used,power.draw \
++    --format=csv,noheader,nounits
++  sleep 1
++done
++EOF
++  chmod +x "${telemetry_launch}"
++  rsync -a "${telemetry_launch}" "${REMOTE_HOST}:${REMOTE_RUN_ROOT}/launch/"
++  ssh "${REMOTE_HOST}" \
++    "nohup setsid '${REMOTE_RUN_ROOT}/launch/remote_telemetry.sh' > '${REMOTE_RUN_ROOT}/remote_gpu_telemetry.csv' 2>&1 < /dev/null & echo \$!" \
++    > "${RUN_ROOT}/remote_telemetry.pid"
++  telemetry_pid="$(cat "${RUN_ROOT}/remote_telemetry.pid")"
++  REMOTE_PIDS+=("${telemetry_pid}")
++  env PAP_ROOT="${ROOT_DIR}" AIPERF_BIN="${AIPERF_BIN}" \
++    MODEL_PATH="${MODEL_PATH}" AIPERF_INPUT_FILE="${AIPERF_INPUT_FILE}" \
++    AIPERF_CUSTOM_DATASET_TYPE=mooncake-trace \
++    AIPERF_TARGET_URL="http://127.0.0.1:${FRONTEND_PORT}" \
++    AIPERF_OUTPUT_DIR="${AIPERF_OUTPUT_DIR}" \
++    AIPERF_SESSIONS="${AIPERF_SESSIONS}" \
++    AIPERF_CONCURRENCY="${AIPERF_CONCURRENCY}" \
++    AIPERF_TIMING_MODE=concurrency AIPERF_REQUEST_RATE= \
++    AIPERF_ARRIVAL_PATTERN=poisson \
++    AIPERF_EXPECTED_REQUESTS="${AIPERF_EXPECTED_REQUESTS}" \
++    AIPERF_REQUEST_TIMEOUT_SECONDS="${AIPERF_REQUEST_TIMEOUT_SECONDS}" \
++    AIPERF_WARMUP_DURATION_SECONDS=0 AIPERF_WARMUP_CONCURRENCY="${AIPERF_CONCURRENCY}" \
++    AIPERF_BENCHMARK_DURATION_SECONDS= AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS=0 \
++    NO_PROXY="localhost,127.0.0.1,${LOCAL_IP},${REMOTE_IP}" \
++    no_proxy="localhost,127.0.0.1,${LOCAL_IP},${REMOTE_IP}" \
++    "${AIPERF_RUNNER}" > "${RUN_ROOT}/aiperf.log" 2>&1
++  jq -e '(.error_summary // []) | length == 0' \
++    "${AIPERF_OUTPUT_DIR}/profile.json" >/dev/null || die "AIPerf reported errors"
++  actual_requests="$(jq -r '.request_count.avg' "${AIPERF_OUTPUT_DIR}/profile.json")"
++  [[ "${actual_requests}" == "${AIPERF_EXPECTED_REQUESTS}" \
++    || "${actual_requests}" == "${AIPERF_EXPECTED_REQUESTS}.0" ]] \
++    || die "AIPerf request count mismatch"
++fi
++
++pull_remote_logs
++if rg --no-ignore -n -i \
++  'CUDA out of memory|EngineDeadError|Traceback|NIXL_ERR|NixlConnector.*failed|Keep-alive lease expired|Unable to maintain lease|Releasing expired KV blocks' \
++  "${LOG_ROOT}" > "${RUN_ROOT}/correctness_audit_matches.log"; then
++  die "Dynamo correctness audit failed"
++fi
++printf 'STATUS=passed\nMATCH_COUNT=0\n' > "${RUN_ROOT}/correctness_audit.env"
++
++if (( SMOKE_ONLY == 0 )); then
++  "${PAP_PYTHON}" "${ROOT_DIR}/benchmarks/pap/tooling/analyze_dynamo_ttft.py" \
++    "${RUN_ROOT}" --block-size "${BLOCK_SIZE}" \
++    --output "${RUN_ROOT}/dynamo_ttft_analysis.json"
++  jq -e --argjson expected "${AIPERF_EXPECTED_REQUESTS}" \
++    --argjson sessions "${AIPERF_SESSIONS}" \
++    '.joined_requests == $expected and .request_metadata_matches == $expected and .session_routing.complete_conversations == $sessions' \
++    "${RUN_ROOT}/dynamo_ttft_analysis.json" >/dev/null \
++    || die "Dynamo request/session analysis is incomplete"
++  observed="$(jq -r '.kv_transfer.throughput_mb_s.p90 // 0' \
++    "${RUN_ROOT}/dynamo_ttft_analysis.json")"
++  awk -v observed="${observed}" -v minimum="${MIN_KV_TRANSFER_MB_S}" \
++    'BEGIN {exit !(observed >= minimum)}' || die "cross-host KV throughput audit failed"
++  printf 'STATUS=passed\nMINIMUM_MB_S=%s\nOBSERVED_MB_S=%s\n' \
++    "${MIN_KV_TRANSFER_MB_S}" "${observed}" > "${RUN_ROOT}/kv_transfer_audit.env"
++fi
++
++printf 'STATUS=passed\n' > "${RUN_ROOT}/completion_audit.env"
++echo "DYNAMO_RUN_ROOT=${RUN_ROOT}"
+diff --git a/benchmarks/pap/tooling/analyze_dynamo_ttft.py b/benchmarks/pap/tooling/analyze_dynamo_ttft.py
+index e7f6fa1961..75e60c372e 100644
+--- a/benchmarks/pap/tooling/analyze_dynamo_ttft.py
++++ b/benchmarks/pap/tooling/analyze_dynamo_ttft.py
+@@ -105,12 +105,22 @@ def _parse_worker_logs(
+ 
+ def _parse_frontend(
+     path: Path,
+-) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
++) -> tuple[
++    dict[str, dict[str, Any]],
++    dict[str, dict[str, Any]],
++    dict[str, str],
++]:
+     selected: dict[str, dict[str, Any]] = {}
+     completions: dict[str, dict[str, Any]] = {}
++    client_request_ids: dict[str, str] = {}
+     for line in _read_lines(path):
+         timestamp = _timestamp(line)
+-        if "Selected worker" in line and "worker_type=prefill" in line:
++        if "request received" in line and "x_request_id=" in line:
++            request_ids = UUID_RE.findall(line)
++            client_id = re.search(r'x_request_id="([0-9a-f-]+)"', line)
++            if request_ids and client_id is not None:
++                client_request_ids.setdefault(request_ids[0], client_id.group(1))
++        elif "Selected worker" in line and "worker_type=prefill" in line:
+             request_ids = re.findall(r'request_id="([0-9a-f-]+)"', line)
+             worker = re.search(r"worker_id=(\d+)", line)
+             cached = re.search(r"effective_cached_blocks=([0-9.]+)", line)
+@@ -135,7 +145,104 @@ def _parse_frontend(
+                     "input_tokens": int(input_tokens.group(1)),
+                     "ttft_ms": float(ttft.group(1)),
+                 }
+-    return selected, completions
++    return selected, completions, client_request_ids
++
++
++def _load_request_metadata(run_root: Path) -> dict[str, dict[str, Any]]:
++    path = run_root / "aiperf" / "profile.jsonl"
++    if not path.exists():
++        return {}
++    output = {}
++    for line in path.read_text().splitlines():
++        row = json.loads(line)
++        metadata = row.get("metadata", {})
++        client_id = metadata.get("x_request_id")
++        if client_id is not None:
++            output[client_id] = {
++                "conversation_id": metadata.get("conversation_id"),
++                "turn_index": metadata.get("turn_index"),
++            }
++    return output
++
++
++def _session_routing(rows: list[dict[str, Any]]) -> dict[str, Any]:
++    conversations: dict[str, list[dict[str, Any]]] = defaultdict(list)
++    for row in rows:
++        conversation_id = row.get("conversation_id")
++        turn_index = row.get("turn_index")
++        if conversation_id is not None and turn_index is not None:
++            conversations[conversation_id].append(row)
++
++    transitions = []
++    complete_conversations = 0
++    for conversation_rows in conversations.values():
++        ordered = sorted(conversation_rows, key=lambda row: row["turn_index"])
++        if [row["turn_index"] for row in ordered] != list(range(len(ordered))):
++            continue
++        complete_conversations += 1
++        for previous, current in zip(ordered, ordered[1:]):
++            transition = dict(current)
++            transition["migrated"] = previous["worker_id"] != current["worker_id"]
++            transitions.append(transition)
++
++    def summarize(items: list[dict[str, Any]]) -> dict[str, Any]:
++        input_tokens = sum(row["input_tokens"] for row in items)
++        cached_tokens = sum(row["cached_tokens"] or 0 for row in items)
++        return {
++            "count": len(items),
++            "input_tokens": input_tokens,
++            "estimated_cached_tokens": cached_tokens,
++            "estimated_computed_tokens": input_tokens - cached_tokens,
++            "estimated_cache_read_pct": (
++                cached_tokens / input_tokens * 100 if input_tokens else None
++            ),
++            "ttft_ms": _summary([row["ttft_ms"] for row in items]),
++            "prefill_service_ms": _summary(
++                [
++                    row["prefill_service_ms"]
++                    for row in items
++                    if row["prefill_service_ms"] is not None
++                ]
++            ),
++            "router_to_decode_ms": _summary(
++                [
++                    row["router_to_decode_ms"]
++                    for row in items
++                    if row["router_to_decode_ms"] is not None
++                ]
++            ),
++        }
++
++    migrated = [row for row in transitions if row["migrated"]]
++    stable = [row for row in transitions if not row["migrated"]]
++    by_turn = []
++    for turn_index in sorted(
++        {row["turn_index"] for row in rows if row.get("turn_index") is not None}
++    ):
++        turn_rows = [row for row in rows if row.get("turn_index") == turn_index]
++        turn_transitions = [
++            row for row in transitions if row.get("turn_index") == turn_index
++        ]
++        output = {"turn_index": turn_index, **summarize(turn_rows)}
++        output.update(
++            {
++                "transitions": len(turn_transitions),
++                "migrations": sum(row["migrated"] for row in turn_transitions),
++            }
++        )
++        by_turn.append(output)
++    return {
++        "conversations": len(conversations),
++        "complete_conversations": complete_conversations,
++        "transitions": len(transitions),
++        "migrations": len(migrated),
++        "migration_rate_pct": (
++            len(migrated) / len(transitions) * 100 if transitions else None
++        ),
++        "migrated": summarize(migrated),
++        "stable": summarize(stable),
++        "by_turn": by_turn,
++    }
+ 
+ 
+ def _parse_transfer_metrics(paths: list[Path]) -> dict[str, float | int | None]:
+@@ -183,8 +290,9 @@ def analyze(run_root: Path, block_size: int) -> dict[str, Any]:
+     prefill_workers, prefill_received, prefill_completed = _parse_worker_logs(
+         sorted(logs.glob("prefill_*.log"))
+     )
+-    _, decode_received, _ = _parse_worker_logs(decode_logs)
+-    selected, completions = _parse_frontend(frontend_log)
++    decode_workers, decode_received, _ = _parse_worker_logs(decode_logs)
++    selected, completions, client_request_ids = _parse_frontend(frontend_log)
++    request_metadata = _load_request_metadata(run_root)
+ 
+     rows: list[dict[str, Any]] = []
+     for request_id, completion in completions.items():
+@@ -199,9 +307,14 @@ def analyze(run_root: Path, block_size: int) -> dict[str, Any]:
+             if cached_blocks is not None
+             else None
+         )
++        client_request_id = client_request_ids.get(request_id)
++        metadata = request_metadata.get(client_request_id or "", {})
+         rows.append(
+             {
+                 "request_id": request_id,
++                "client_request_id": client_request_id,
++                "conversation_id": metadata.get("conversation_id"),
++                "turn_index": metadata.get("turn_index"),
+                 "worker_id": completion["worker_id"],
+                 "input_tokens": completion["input_tokens"],
+                 "cached_tokens": cached_tokens,
+@@ -288,6 +401,12 @@ def analyze(run_root: Path, block_size: int) -> dict[str, Any]:
+         "selected_requests": len(selected),
+         "completed_requests": len(completions),
+         "joined_requests": len(rows),
++        "request_metadata_matches": sum(
++            row["conversation_id"] is not None for row in rows
++        ),
++        "session_routing": _session_routing(rows),
++        "requests": rows,
++        "decode_workers": list(decode_workers.values()),
+         "kv_transfer": transfer_metrics,
+         "overall": {
+             "ttft_ms": _summary([row["ttft_ms"] for row in rows]),
