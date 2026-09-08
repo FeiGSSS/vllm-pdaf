@@ -358,6 +358,7 @@ service.shutdown()
 PY
 PAP_DYNAMO_MODEL_NAME="${PAP_DYNAMO_MODEL_NAME:-pap}"
 PAP_DYNAMO_PREFILL_LOAD_SCALE="${PAP_DYNAMO_PREFILL_LOAD_SCALE:-2.0}"
+PAP_DYNAMO_ROUTING_TRACE_OUTPUT="${PAP_DYNAMO_ROUTING_TRACE_OUTPUT:-}"
 PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-256}"
 PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS:-1}"
 PAP_BLOCK_SIZE="${PAP_BLOCK_SIZE:-16}"
@@ -1546,6 +1547,8 @@ write_effective_config() {
     printf 'PAP_DECODE_COMMIT_FLUSH_TIMEOUT=%q\n' "${PAP_DECODE_COMMIT_FLUSH_TIMEOUT}"
     printf 'VLLM_USE_V2_MODEL_RUNNER=%q\n' "${VLLM_USE_V2_MODEL_RUNNER}"
     printf 'PAP_PREFILL_IPC_PROFILE=%q\n' "${PAP_PREFILL_IPC_PROFILE}"
+    printf 'PAP_DYNAMO_ROUTING_TRACE_OUTPUT=%q\n' \
+      "${PAP_DYNAMO_ROUTING_TRACE_OUTPUT}"
     printf 'PAP_RUNTIME_CUDA_CONTEXT_AUDIT=%q\n' \
       "${PAP_RUNTIME_CUDA_CONTEXT_AUDIT}"
     printf 'PAP_PREFILL_TORCH_PROFILE=%q\n' \
@@ -2190,12 +2193,6 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
 done
 
 for (( idx=0; idx<PA_COUNT; idx++ )); do
-  wait_for_http \
-    "http://127.0.0.1:$((ATTENTION_PORT_BASE + idx))/health" \
-    "PAP Attention ${idx}"
-done
-
-for (( idx=0; idx<PA_COUNT; idx++ )); do
   prefill_port=$((PREFILL_PORT_BASE + idx))
   prefill_env=("CUDA_VISIBLE_DEVICES=${PREFILL_GPUS[idx]}")
   if [[ "${PAP_ENABLE_MPS}" == "1" ]]; then
@@ -2311,6 +2308,12 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
       --gpu-memory-utilization "${PROJECTION_GPU_MEMORY_UTILIZATION}" \
       > "${RUN_LOG_DIR}/projection_${idx}.log" 2>&1 &
   PIDS+=("$!")
+done
+
+for (( idx=0; idx<PA_COUNT; idx++ )); do
+  wait_for_http \
+    "http://127.0.0.1:$((ATTENTION_PORT_BASE + idx))/health" \
+    "PAP Attention ${idx}"
 done
 
 for (( idx=0; idx<PA_COUNT; idx++ )); do

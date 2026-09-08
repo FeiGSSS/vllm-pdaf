@@ -1,0 +1,156 @@
+{
+  "runs": [
+    {
+      "run": "samehost_trace_r3",
+      "root": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/_staging/dynamo_pa_migration/20260909_task1_samehost_trace_r3",
+      "requests": 180,
+      "conversations": 60,
+      "transitions": 120,
+      "migrations": 33,
+      "migration_rate": 0.275,
+      "same_pa_transitions": 87,
+      "previous_prefix_visibility": {
+        "visible_transitions": 117,
+        "missing_transitions": 3,
+        "visibility_rate": 0.975,
+        "visible_migrations": 33,
+        "missing_migrations": 0,
+        "visible_inter_turn_gap_ms_mean": 35.59484792307692,
+        "missing_inter_turn_gap_ms_mean": 35.175044666666665,
+        "router_missing_on_same_pa": 3,
+        "actual_full_hit_despite_router_missing": 0
+      },
+      "migration_reasons": {
+        "previous_pa_had_more_overlap": 33,
+        "selected_pa_had_more_overlap": 0,
+        "equal_overlap": 0
+      },
+      "migration_load_delta_selected_minus_previous": {
+        "active_requests_mean": -0.15151515151515152,
+        "prefill_tokens_mean": -11654.60606060606,
+        "decode_blocks_mean": -452.3030303030303
+      },
+      "selected_max_overlap_requests": 133,
+      "prompt_tokens": 3372144,
+      "cached_tokens": 1959392,
+      "cache_read_rate": 0.5810522919543175,
+      "computed_tokens": 1412752,
+      "prefill_ms": {
+        "mean": 4786.233333333334,
+        "p99": 9968.710000000001
+      },
+      "ttft_ms": {
+        "mean": 5284.591079572222,
+        "p99": 11908.83643668
+      },
+      "trace_overhead_ms": {
+        "overlap_and_load_probe_mean": 22.766087816666666,
+        "overlap_and_load_probe_p99": 317.04164374000004,
+        "selection_mean": 9.349965283333333,
+        "selection_p99": 280.31734719
+      },
+      "by_turn": {
+        "0": {
+          "requests": 60,
+          "migrations": 0,
+          "cache_read_rate": 0.3192870757331161,
+          "computed_tokens": 541420,
+          "prefill_ms_mean": 4710.333333333333,
+          "ttft_ms_mean": 5778.93382715
+        },
+        "1": {
+          "requests": 60,
+          "migrations": 21,
+          "cache_read_rate": 0.5919839474412708,
+          "computed_tokens": 462802,
+          "prefill_ms_mean": 5316.716666666666,
+          "ttft_ms_mean": 5515.9868781
+        },
+        "2": {
+          "requests": 60,
+          "migrations": 12,
+          "cache_read_rate": 0.7167899019617359,
+          "computed_tokens": 408530,
+          "prefill_ms_mean": 4331.65,
+          "ttft_ms_mean": 4558.8525334666665
+        }
+      }
+    },
+    {
+      "run": "crosshost_trace_r2",
+      "root": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/_staging/cross_host_nvshmem_7pa1p_c30/20260909_task1_crosshost_trace_r2",
+      "requests": 180,
+      "conversations": 60,
+      "transitions": 120,
+      "migrations": 82,
+      "migration_rate": 0.6833333333333333,
+      "same_pa_transitions": 38,
+      "previous_prefix_visibility": {
+        "visible_transitions": 20,
+        "missing_transitions": 100,
+        "visibility_rate": 0.16666666666666666,
+        "visible_migrations": 9,
+        "missing_migrations": 73,
+        "visible_inter_turn_gap_ms_mean": 34.7454831,
+        "missing_inter_turn_gap_ms_mean": 35.318383749999995,
+        "router_missing_on_same_pa": 27,
+        "actual_full_hit_despite_router_missing": 27
+      },
+      "migration_reasons": {
+        "previous_pa_had_more_overlap": 9,
+        "selected_pa_had_more_overlap": 11,
+        "equal_overlap": 62
+      },
+      "migration_load_delta_selected_minus_previous": {
+        "active_requests_mean": -0.18292682926829268,
+        "prefill_tokens_mean": -12470.756097560976,
+        "decode_blocks_mean": -242.70731707317074
+      },
+      "selected_max_overlap_requests": 55,
+      "prompt_tokens": 3372301,
+      "cached_tokens": 1340224,
+      "cache_read_rate": 0.3974212266342773,
+      "computed_tokens": 2032077,
+      "prefill_ms": {
+        "mean": 8127.488888888889,
+        "p99": 15547.560000000005
+      },
+      "ttft_ms": {
+        "mean": 8674.337297627777,
+        "p99": 15747.401530680005
+      },
+      "trace_overhead_ms": {
+        "overlap_and_load_probe_mean": 32.9448799,
+        "overlap_and_load_probe_p99": 810.5524983600001,
+        "selection_mean": 30.687056872222225,
+        "selection_p99": 811.5517410000001
+      },
+      "by_turn": {
+        "0": {
+          "requests": 60,
+          "migrations": 0,
+          "cache_read_rate": 0.32186197150515733,
+          "computed_tokens": 539372,
+          "prefill_ms_mean": 6211.383333333333,
+          "ttft_ms_mean": 7478.252731583333
+        },
+        "1": {
+          "requests": 60,
+          "migrations": 44,
+          "cache_read_rate": 0.3887950924529184,
+          "computed_tokens": 693261,
+          "prefill_ms_mean": 8127.416666666667,
+          "ttft_ms_mean": 8306.368208049998
+        },
+        "2": {
+          "requests": 60,
+          "migrations": 38,
+          "cache_read_rate": 0.4458603317723453,
+          "computed_tokens": 799444,
+          "prefill_ms_mean": 10043.666666666666,
+          "ttft_ms_mean": 10238.39095325
+        }
+      }
+    }
+  ]
+}

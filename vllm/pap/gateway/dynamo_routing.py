@@ -5,16 +5,37 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import sys
+import threading
+import time
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from vllm.pap.gateway.topology import PAPGroup
 
 logger = logging.getLogger("pap_gateway")
+
+
+class _RoutingTrace:
+    def __init__(self, output_path: str) -> None:
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        self._output: TextIO = path.open("x", encoding="utf-8", buffering=1)
+        self._lock = threading.Lock()
+
+    def record(self, payload: dict[str, Any]) -> None:
+        record = {"timestamp_ns": time.time_ns(), **payload}
+        line = json.dumps(record, separators=(",", ":"), sort_keys=True)
+        with self._lock:
+            self._output.write(line + "\n")
+
+    def close(self) -> None:
+        with self._lock:
+            self._output.close()
 
 
 class PAPDynamoRouter:
@@ -38,6 +59,8 @@ class PAPDynamoRouter:
         self._pending_selections: dict[str, asyncio.Task[PAPGroup]] = {}
         self._closed = False
         self._healthy = True
+        trace_output = os.environ.get("PAP_DYNAMO_ROUTING_TRACE_OUTPUT")
+        self._trace = _RoutingTrace(trace_output) if trace_output else None
 
     @classmethod
     async def create(
@@ -130,6 +153,7 @@ class PAPDynamoRouter:
         *,
         request_id: str,
         expected_output_tokens: int,
+        conversation_id: str = "",
     ) -> PAPGroup:
         """Select a PA and reserve its Prefill and active Decode load."""
         if self._closed or not self._healthy:
@@ -137,7 +161,12 @@ class PAPDynamoRouter:
         if request_id in self._reservations or request_id in self._pending_selections:
             raise ValueError(f"Duplicate Dynamo request ID: {request_id}")
         task = asyncio.create_task(
-            self._select_group(token_ids, request_id, expected_output_tokens),
+            self._select_group(
+                token_ids,
+                request_id,
+                expected_output_tokens,
+                conversation_id,
+            ),
             name=f"pap-dynamo-select-{request_id}",
         )
         self._pending_selections[request_id] = task
@@ -162,8 +191,32 @@ class PAPDynamoRouter:
         self.finish_request(request_id)
 
     async def _select_group(
-        self, token_ids: list[int], request_id: str, expected_output_tokens: int
+        self,
+        token_ids: list[int],
+        request_id: str,
+        expected_output_tokens: int,
+        conversation_id: str,
     ) -> PAPGroup:
+        trace = self._trace
+        observation: dict[str, Any] | None = None
+        if trace is not None:
+            probe_start_ns = time.perf_counter_ns()
+            overlap_scores = await self._service.overlap_scores(
+                {"model_name": self._model_name, "token_ids": token_ids}
+            )
+            loads = self._service.loads(model_name=self._model_name)
+            observation = {
+                "event": "selection",
+                "request_id": request_id,
+                "conversation_id": conversation_id,
+                "prompt_tokens": len(token_ids),
+                "expected_output_tokens": expected_output_tokens,
+                "probe_start_ns": probe_start_ns,
+                "probe_done_ns": time.perf_counter_ns(),
+                "overlap_scores": overlap_scores,
+                "loads_before": loads,
+            }
+        selection_start_ns = time.perf_counter_ns()
         try:
             selected = await self._service.select_and_reserve(
                 {
@@ -176,7 +229,7 @@ class PAPDynamoRouter:
             worker_id = int(selected["worker_id"])
             if not 0 <= worker_id < len(self._groups):
                 raise RuntimeError(f"Dynamo selected unknown PAP worker {worker_id}")
-        except BaseException:
+        except BaseException as exc:
             self._failures += 1
             # A failed response must not orphan a booking that already committed.
             try:
@@ -186,9 +239,32 @@ class PAPDynamoRouter:
             except Exception:
                 self._healthy = False
                 logger.exception("Failed to unwind Dynamo selection %s", request_id)
+            if observation is not None and trace is not None:
+                observation.update(
+                    {
+                        "selection_start_ns": selection_start_ns,
+                        "selection_done_ns": time.perf_counter_ns(),
+                        "selection_error": repr(exc),
+                    }
+                )
+                trace.record(observation)
             raise
         self._reservations.add(request_id)
         self._selections += 1
+        if observation is not None and trace is not None:
+            selected_trace = {
+                key: value
+                for key, value in selected.items()
+                if key != "sequence_hashes"
+            }
+            observation.update(
+                {
+                    "selection_start_ns": selection_start_ns,
+                    "selection_done_ns": time.perf_counter_ns(),
+                    "selected": selected_trace,
+                }
+            )
+            trace.record(observation)
         logger.info(
             "PAP Dynamo placement request_id=%s selected_pa=%d "
             "prompt_tokens=%d effective_prefill_tokens=%s overlap=%s",
@@ -199,6 +275,30 @@ class PAPDynamoRouter:
             selected.get("overlap"),
         )
         return self._groups[worker_id]
+
+    def record_prefill_result(
+        self,
+        *,
+        request_id: str,
+        conversation_id: str,
+        worker_id: int,
+        prompt_tokens: int,
+        cached_tokens: int,
+        prefill_ms: int,
+    ) -> None:
+        if self._trace is None:
+            return
+        self._trace.record(
+            {
+                "event": "prefill_result",
+                "request_id": request_id,
+                "conversation_id": conversation_id,
+                "worker_id": worker_id,
+                "prompt_tokens": prompt_tokens,
+                "cached_tokens": cached_tokens,
+                "prefill_ms": prefill_ms,
+            }
+        )
 
     async def mark_prefill_completed(self, request_id: str) -> None:
         """Move an existing reservation from Prefill to Decode load."""
@@ -262,3 +362,6 @@ class PAPDynamoRouter:
         while self._cleanup_tasks:
             await asyncio.gather(*tuple(self._cleanup_tasks), return_exceptions=True)
         self._service.shutdown()
+        if self._trace is not None:
+            self._trace.close()
+            self._trace = None

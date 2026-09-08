@@ -234,6 +234,9 @@ build_kv_endpoints() {
 
 run_gateway() {
   set_common_env
+  if [[ "${PAP_CROSS_HOST_ROUTING_TRACE:-0}" == "1" ]]; then
+    export PAP_DYNAMO_ROUTING_TRACE_OUTPUT="${RUN_ROOT}/routing_trace.jsonl"
+  fi
   exec "${PYTHON_BIN}" -m vllm.pap.gateway.app \
     --host 127.0.0.1 \
     --port "${GATEWAY_PORT}" \
@@ -437,6 +440,8 @@ write_effective_config() {
     printf 'export PAP_CROSS_HOST_PA_GPUS=%q\n' "${REMOTE_GPUS}"
     printf 'export PAP_CROSS_HOST_START_TIMEOUT=%q\n' "${START_TIMEOUT}"
     printf 'export PAP_CROSS_HOST_BENCH_TIMEOUT=%q\n' "${BENCH_TIMEOUT}"
+    printf 'export PAP_CROSS_HOST_ROUTING_TRACE=%q\n' \
+      "${PAP_CROSS_HOST_ROUTING_TRACE:-0}"
     printf 'export PAP_CROSS_HOST_UID_PORT=%q\n' "${UID_PORT}"
     printf 'export PAP_CROSS_HOST_PREFILL_PORT_BASE=%q\n' "${PREFILL_PORT_BASE}"
     printf 'export PAP_CROSS_HOST_PROJECTION_PORT=%q\n' "${PROJECTION_PORT}"
@@ -458,6 +463,8 @@ audit_source() {
     vllm/pap/transport/nvshmem/runtime.py
     vllm/pap/transport/nvshmem/transport.py
     vllm/pap/attention/peers.py
+    vllm/pap/gateway/dynamo_routing.py
+    vllm/pap/gateway/request_pipeline.py
     vllm/pap/transport/nvshmem/device_bridge.cu
     benchmarks/pap/scripts/configure_nvshmem.sh
     benchmarks/pap/scripts/build_nvshmem_device_bridge.sh
@@ -471,13 +478,32 @@ audit_source() {
   ssh -o BatchMode=yes -o ConnectTimeout=5 "${REMOTE_SSH}" \
     "cd '${REMOTE_ROOT}' && git rev-parse HEAD" \
     >"${RUN_ROOT}/remote_git_revision.txt"
-  cmp "${RUN_ROOT}/local_git_revision.txt" "${RUN_ROOT}/remote_git_revision.txt"
   sha256sum "${files[@]}" >"${RUN_ROOT}/local_source_checksums.txt"
   ssh -o BatchMode=yes -o ConnectTimeout=5 "${REMOTE_SSH}" \
     "cd '${REMOTE_ROOT}' && sha256sum ${files[*]}" \
     >"${RUN_ROOT}/remote_source_checksums.txt"
-  cmp "${RUN_ROOT}/local_source_checksums.txt" \
-    "${RUN_ROOT}/remote_source_checksums.txt"
+  local revision_match=false checksum_match=false
+  if cmp -s "${RUN_ROOT}/local_git_revision.txt" \
+    "${RUN_ROOT}/remote_git_revision.txt"; then
+    revision_match=true
+  fi
+  if cmp -s "${RUN_ROOT}/local_source_checksums.txt" \
+    "${RUN_ROOT}/remote_source_checksums.txt"; then
+    checksum_match=true
+  fi
+  jq -n \
+    --argjson revision_match "${revision_match}" \
+    --argjson checksum_match "${checksum_match}" \
+    --arg local_revision "$(cat "${RUN_ROOT}/local_git_revision.txt")" \
+    --arg remote_revision "$(cat "${RUN_ROOT}/remote_git_revision.txt")" \
+    '{
+      status: (if $checksum_match then "passed" else "failed" end),
+      participating_source_checksums_match: $checksum_match,
+      git_revisions_match: $revision_match,
+      local_git_revision: $local_revision,
+      remote_git_revision: $remote_revision
+    }' >"${RUN_ROOT}/source_audit.json"
+  [[ "${checksum_match}" == "true" ]]
 }
 
 audit_contexts() {

@@ -3,6 +3,7 @@
 """PAP gateway topology and Dynamo routing tests."""
 
 import asyncio
+import json
 import sys
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -176,7 +177,7 @@ def test_dynamo_rejects_cache_salt_before_prefill_can_publish_incompatible_event
     assert b"cache_salt" in response.body
 
 
-def test_dynamo_router_reserves_prefill_and_frees_decode() -> None:
+def test_dynamo_router_reserves_prefill_and_frees_decode(tmp_path, monkeypatch) -> None:
     class FakeSelectionService:
         def __init__(self) -> None:
             self.completed: list[str] = []
@@ -190,6 +191,10 @@ def test_dynamo_router_reserves_prefill_and_frees_decode() -> None:
                 "effective_prefill_tokens": 3,
                 "overlap": {},
             }
+
+        async def overlap_scores(self, request):
+            assert request == {"model_name": "pap", "token_ids": [1, 2, 3]}
+            return {"workers": [{"worker_id": 0, "device_blocks": 0}]}
 
         async def prefill_complete(self, request_id: str) -> None:
             self.completed.append(request_id)
@@ -207,6 +212,8 @@ def test_dynamo_router_reserves_prefill_and_frees_decode() -> None:
             return None
 
     async def run() -> None:
+        trace_path = tmp_path / "routing.jsonl"
+        monkeypatch.setenv("PAP_DYNAMO_ROUTING_TRACE_OUTPUT", str(trace_path))
         groups = _groups(2)
         service = FakeSelectionService()
         router = PAPDynamoRouter(groups, service, model_name="pap")
@@ -215,6 +222,15 @@ def test_dynamo_router_reserves_prefill_and_frees_decode() -> None:
             [1, 2, 3],
             request_id="request-0",
             expected_output_tokens=64,
+            conversation_id="conversation-0",
+        )
+        router.record_prefill_result(
+            request_id="request-0",
+            conversation_id="conversation-0",
+            worker_id=1,
+            prompt_tokens=3,
+            cached_tokens=2,
+            prefill_ms=17,
         )
         await router.mark_prefill_completed("request-0")
         router.finish_request("request-0")
@@ -224,6 +240,14 @@ def test_dynamo_router_reserves_prefill_and_frees_decode() -> None:
         assert service.completed == ["request-0"]
         assert service.freed == ["request-0"]
         assert router.stats()["active_reservations"] == 0
+        records = [json.loads(line) for line in trace_path.read_text().splitlines()]
+        assert [record["event"] for record in records] == [
+            "selection",
+            "prefill_result",
+        ]
+        assert records[0]["conversation_id"] == "conversation-0"
+        assert records[0]["selected"]["worker_id"] == 1
+        assert records[1]["cached_tokens"] == 2
 
     asyncio.run(run())
 

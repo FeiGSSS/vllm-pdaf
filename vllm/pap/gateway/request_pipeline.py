@@ -170,6 +170,7 @@ async def _handle_parsed_openai_request(
         routing_token_ids,
         request_id=request_id,
         expected_output_tokens=decode_capacity_tokens,
+        conversation_id=conversation_id,
     )
     projection = select_projection_for_group(
         group, request.app.state.groups, request.app.state.projections
@@ -286,6 +287,18 @@ async def _handle_parsed_openai_request(
                 f"prompt_token_ids={len(prompt_token_ids)} prefix_len={prefix_len}"
             )
         prefill_cache_usage = _extract_prefill_cache_usage(prefill_resp)
+        dynamo_router.record_prefill_result(
+            request_id=request_id,
+            conversation_id=conversation_id,
+            worker_id=group_index,
+            prompt_tokens=len(prompt_token_ids),
+            cached_tokens=(
+                prefill_cache_usage.cached_tokens
+                if prefill_cache_usage is not None
+                else 0
+            ),
+            prefill_ms=prefill_ms,
+        )
         exact_prompt_hashes = tokenizer.hash_token_ids(
             prompt_token_ids,
             cache_salt=req_data.get("cache_salt"),
