@@ -29,7 +29,10 @@ def _install_engine_control() -> None:
 
         control = getattr(engine_core, "_pap_engine_control", None)
         if control is None:
-            control = PAPEngineControl(engine_core.scheduler)
+            control = PAPEngineControl(
+                engine_core.scheduler,
+                engine_core.model_executor,
+            )
             engine_core._pap_engine_control = control
         result = control.apply(operation, payload)
         if (

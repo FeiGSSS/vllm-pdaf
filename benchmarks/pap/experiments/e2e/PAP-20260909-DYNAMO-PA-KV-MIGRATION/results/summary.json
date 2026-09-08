@@ -1,0 +1,2202 @@
+{
+  "comparability": {
+    "status": "passed",
+    "runs_per_mode": 2,
+    "only_intentional_variable": "PAP_ENABLE_PA_KV_MIGRATION",
+    "matched_fields": [
+      "source_fingerprint",
+      "dataset_selection_sha256",
+      "effective_config",
+      "run_metadata",
+      "topology_manifest"
+    ],
+    "source_fingerprint": {
+      "git_commit": "c72c6483707051a636cb979dbe37a92b9fe93ea4",
+      "tracked_worktree_patch_sha256": "c94a9cb80a639fbfacc90c65cb1980941d41b422d71e8a8de89f128a56bd2468",
+      "tracked_index_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "experiment_launcher_sha256": "71886cbcefcc663210897b0bf92075da7d3a9225df7e48e78e42d728b90de30f"
+    },
+    "dataset_selection_sha256": "da44f273c96497956423cd71e2ef18160572181e6f390ab4ebd40e58d3c7bb80"
+  },
+  "runs": [
+    {
+      "run": "control_r5",
+      "mode": "control",
+      "root": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/_staging/dynamo_pa_kv_migration/20260909_dynamo_migration_control_r5",
+      "requests": 180,
+      "conversations": 60,
+      "transitions": 120,
+      "migrations": 31,
+      "migration_rate": 0.25833333333333336,
+      "route_counts": {
+        "0": 26,
+        "1": 26,
+        "2": 23,
+        "3": 29,
+        "4": 24,
+        "5": 26,
+        "6": 26
+      },
+      "route_count_range": 6,
+      "prompt_tokens": 3372355,
+      "cached_tokens": 1939712,
+      "computed_tokens": 1432643,
+      "cache_read_rate": 0.5751802523755655,
+      "output_tokens": 14696,
+      "benchmark_duration_s": 62.412581676,
+      "request_throughput": 2.8840338785283226,
+      "output_token_throughput": 235.46534377140128,
+      "prefill_ms": {
+        "mean": 4845.488888888889,
+        "p50": 4753.5,
+        "p95": 7839.3499999999985,
+        "p99": 9892.640000000003
+      },
+      "ttft_ms": {
+        "mean": 5332.634615411111,
+        "p50": 5190.470149499999,
+        "p95": 9161.462454049995,
+        "p99": 11843.157626130002
+      },
+      "itl_ms": {
+        "mean": 43.92278328882184,
+        "p50": 45.34773557212037,
+        "p95": 49.02340554012345,
+        "p99": 50.7848632929375
+      },
+      "e2e_ms": {
+        "mean": 8882.76279136111,
+        "p50": 8544.115783000001,
+        "p95": 14010.171238299992,
+        "p99": 15396.413870030005
+      },
+      "by_turn": {
+        "0": {
+          "requests": 60,
+          "migrations": 0,
+          "cache_read_rate": 0.32958665882128113,
+          "computed_tokens": 533228,
+          "prefill_ms": {
+            "mean": 5195.916666666667,
+            "p50": 4891.5,
+            "p95": 9362.749999999998,
+            "p99": 10264.189999999999
+          },
+          "ttft_ms": {
+            "mean": 6232.383299783333,
+            "p50": 5785.694399999999,
+            "p95": 11298.564426899999,
+            "p99": 12195.630585819998
+          },
+          "itl_ms": {
+            "mean": 42.31344889532245,
+            "p50": 41.30836422147493,
+            "p95": 50.542641727430556,
+            "p99": 50.83399651835416
+          },
+          "e2e_ms": {
+            "mean": 9578.522083633334,
+            "p50": 9232.054209999998,
+            "p95": 14991.488990749998,
+            "p99": 16479.054636219997
+          }
+        },
+        "1": {
+          "requests": 60,
+          "migrations": 17,
+          "cache_read_rate": 0.6069741302172639,
+          "computed_tokens": 445823,
+          "prefill_ms": {
+            "mean": 4734.783333333334,
+            "p50": 4795.5,
+            "p95": 6573.149999999999,
+            "p99": 7401.8099999999995
+          },
+          "ttft_ms": {
+            "mean": 4937.808292933333,
+            "p50": 4990.7645315,
+            "p95": 6777.184987949999,
+            "p99": 7614.768207419999
+          },
+          "itl_ms": {
+            "mean": 44.5313714346478,
+            "p50": 44.8560795302386,
+            "p95": 48.394605465898614,
+            "p99": 50.42458530853957
+          },
+          "e2e_ms": {
+            "mean": 8563.287996033332,
+            "p50": 8089.5283825,
+            "p95": 14011.820895599998,
+            "p99": 14971.490219389998
+          }
+        },
+        "2": {
+          "requests": 60,
+          "migrations": 14,
+          "cache_read_rate": 0.6855837321370147,
+          "computed_tokens": 453592,
+          "prefill_ms": {
+            "mean": 4605.766666666666,
+            "p50": 4642.0,
+            "p95": 7304.9,
+            "p99": 7900.879999999998
+          },
+          "ttft_ms": {
+            "mean": 4827.712253516666,
+            "p50": 4880.435160999999,
+            "p95": 7559.98663935,
+            "p99": 8124.177141929998
+          },
+          "itl_ms": {
+            "mean": 44.92352953649526,
+            "p50": 46.03917439414414,
+            "p95": 48.303492555342274,
+            "p99": 48.905549776334276
+          },
+          "e2e_ms": {
+            "mean": 8506.478294416667,
+            "p50": 8574.3342015,
+            "p95": 13195.480183549998,
+            "p99": 14279.591593129993
+          }
+        }
+      },
+      "migration": {
+        "enabled": false,
+        "conversation_bindings": 0,
+        "active_conversations": 0,
+        "max_conversations": 60,
+        "attempts": 0,
+        "exports": 0,
+        "misses": 0,
+        "failures": 0,
+        "exported_prefix_tokens": 0,
+        "pending_releases": 0,
+        "healthy": true,
+        "export_http_200": 0,
+        "release_http_200": 0,
+        "worker_copy_logs": 0,
+        "copied_tokens": 0,
+        "copied_bytes": 0,
+        "export_ms": null,
+        "copy_ms": null,
+        "release_ms": null,
+        "copy_bandwidth_gbps": null
+      },
+      "source_fingerprint": {
+        "git_commit": "c72c6483707051a636cb979dbe37a92b9fe93ea4",
+        "tracked_worktree_patch_sha256": "c94a9cb80a639fbfacc90c65cb1980941d41b422d71e8a8de89f128a56bd2468",
+        "tracked_index_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "experiment_launcher_sha256": "71886cbcefcc663210897b0bf92075da7d3a9225df7e48e78e42d728b90de30f"
+      },
+      "dataset_selection_sha256": "da44f273c96497956423cd71e2ef18160572181e6f390ab4ebd40e58d3c7bb80",
+      "effective_config": {
+        "MODE": "pap",
+        "PAP_BENCH_CLIENT": "aiperf",
+        "PAP_TOPOLOGY": "7pa1p",
+        "PAP_PA_COUNT": "7",
+        "PAP_PROJECTION_COUNT": "1",
+        "TOPOLOGY": "7pa1p",
+        "PA_COUNT": "7",
+        "PROJECTION_COUNT": "1",
+        "MODEL_PATH": "/data/ssd1/llm-models/Qwen3-8B",
+        "NUM_PROMPTS": "180",
+        "PAP_ENABLE_PROMPT_TOKENS_DETAILS": "1",
+        "PAP_BLOCK_SIZE": "16",
+        "PAP_AIPERF_SESSIONS": "60",
+        "PAP_AIPERF_EXPECTED_REQUESTS": "180",
+        "AIPERF_BIN": "/home/fei/research/PD/vllm-pap/.venv-aiperf/bin/aiperf",
+        "PAP_AIPERF_INPUT_FILE": "/home/fei/research/PD/vllm-pap/benchmarks/pap/datasets/agentic-code/s60-t3-native32k-stratified-seed42/dataset.jsonl",
+        "PAP_AIPERF_CUSTOM_DATASET_TYPE": "mooncake-trace",
+        "PAP_AIPERF_CONCURRENCY": "30",
+        "AIPERF_VARIATION_COUNT": "1",
+        "AIPERF_NUM_PROFILE_RUNS": "1",
+        "PAP_AIPERF_TIMING_MODE": "concurrency",
+        "PAP_AIPERF_REQUEST_RATE": "''",
+        "PAP_AIPERF_ARRIVAL_PATTERN": "poisson",
+        "PAP_AIPERF_WARMUP_DURATION_SECONDS": "''",
+        "PAP_AIPERF_BENCHMARK_DURATION_SECONDS": "''",
+        "PAP_AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS": "''",
+        "BENCH_TIMEOUT": "1800",
+        "SERVER_START_TIMEOUT": "900",
+        "RESULTS_ROOT": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/_runs",
+        "PROXY_PORT": "9460",
+        "VLLM_BIN": "/home/fei/research/PD/vllm-pap/.venv/bin/vllm",
+        "PYTHON_BIN": "/home/fei/research/PD/vllm-pap/.venv/bin/python",
+        "GIT_COMMIT": "c72c6483707051a636cb979dbe37a92b9fe93ea4",
+        "GIT_COMMIT_SHORT": "c72c648370",
+        "GIT_TRACKED_WORKTREE_DIRTY": "1",
+        "PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE": "0",
+        "PAP_BENCH_STRICT_CORRECTNESS_AUDIT": "1",
+        "PAP_ATTENTION_KERNEL_POLICY": "auto",
+        "PAP_PAT_PLAN_CACHE_ENTRIES": "32",
+        "PAP_ATTENTION_GPU_RESIDENT_DISPATCH": "0",
+        "DISABLE_STREAM": "1",
+        "VLLM_USE_FLASHINFER_SAMPLER": "0",
+        "NO_PROXY": "10.128.6.226\\,10.128.6.226\\,localhost\\,127.0.0.1",
+        "no_proxy": "10.128.6.226\\,10.128.6.226\\,localhost\\,127.0.0.1",
+        "PAP_PROXY_PORT": "9460",
+        "PAP_PREFILL_GPU_MEMORY_UTILIZATION": "0.90",
+        "PROJECTION_MEMORY_POLICY": "model_weights_x1.20_plus_kv_validation_plus_runtime_headroom",
+        "PROJECTION_GPU_MEMORY_UTILIZATION": "0.5181",
+        "PROJECTION_MODEL_WEIGHT_BYTES": "16381470720",
+        "PROJECTION_PER_RANK_WEIGHT_BYTES": "16381470720",
+        "PROJECTION_VALIDATION_KV_BYTES": "4831838208",
+        "PROJECTION_MEMORY_TARGET_BYTES": "25026473984",
+        "PROJECTION_GPU_TOTAL_BYTES": "48305799168",
+        "PAP_STATIC_PREFILL_CHUNKS": "20",
+        "PAP_STATIC_ATTENTION_CHUNKS": "3",
+        "PAP_STATIC_PREFILL_EXPECTED_SMS": "80",
+        "PAP_STATIC_ATTENTION_EXPECTED_SMS": "12",
+        "PAP_ENABLE_MPS": "1",
+        "PAP_OFFLOAD_KV_TRANSPORT": "cuda_ipc",
+        "PAP_NVSHMEM_INIT_TIMEOUT": "900",
+        "PAP_NVSHMEM_BUFFER_BYTES": "4194304",
+        "PAP_NVSHMEM_CONTROL_BYTES": "32768",
+        "PAP_DEFERRED_CUDA_TRACE": "0",
+        "PAP_DEFERRED_CUDA_TRACE_MAX_PENDING": "1024",
+        "PAP_UNIFIED_MD_CACHE_LIMIT": "256",
+        "PAP_DECODE_SLOT_PLAN_CACHE_LIMIT": "256",
+        "PAP_PREFILL_GPUS": "0\\,1\\,2\\,3\\,4\\,5\\,6",
+        "PAP_PROJECTION_GPUS": "7",
+        "PAP_VLLM_DTYPE": "float16",
+        "PAP_HF_OVERRIDES": "\\{\\\"rope_parameters\\\":\\{\\\"rope_type\\\":\\\"yarn\\\"\\,\\\"factor\\\":4.0\\,\\\"original_max_position_embeddings\\\":32768\\}\\}",
+        "ENABLE_AUTO_TOOL_CHOICE": "0",
+        "TOOL_CALL_PARSER": "''",
+        "PAP_ROUTING_POLICY": "dynamo",
+        "PAP_SESSION_ROUTER_MAX_CONVERSATIONS": "100000",
+        "PAP_KV_MIGRATION_VERIFY": "0",
+        "PAP_MIGRATION_MAX_CONVERSATIONS": "60",
+        "PAP_DYNAMO_SITE_PACKAGES": "/home/fei/research/PD/vllm-pap/.local/pap-dynamo-router",
+        "PAP_DYNAMO_PREFILL_LOAD_SCALE": "2.0",
+        "PREFILL_PORT_BASE": "8100",
+        "PROJECTION_PORT_BASE": "8200",
+        "ATTENTION_PORT_BASE": "8300",
+        "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS": "256",
+        "PAP_DECODE_CAPACITY_SOURCE": "request_max_tokens_with_environment_fallback",
+        "PAP_DECODE_COMMIT_ENDPOINT": "''",
+        "PAP_DECODE_COMMIT_FAIL_CLOSED": "1",
+        "PAP_DECODE_COMMIT_TIMEOUT": "5.0",
+        "PAP_DECODE_COMMIT_QUEUE_SIZE": "1024",
+        "PAP_DECODE_COMMIT_MAX_ATTEMPTS": "8",
+        "PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS": "0.05",
+        "PAP_DECODE_COMMIT_RETRY_MAX_SECONDS": "0.5",
+        "PAP_DECODE_COMMIT_FLUSH_TIMEOUT": "15.0",
+        "VLLM_USE_V2_MODEL_RUNNER": "1",
+        "PAP_PREFILL_IPC_PROFILE": "0",
+        "PAP_DYNAMO_ROUTING_TRACE_OUTPUT": "''",
+        "PAP_RUNTIME_CUDA_CONTEXT_AUDIT": "1",
+        "PAP_PREFILL_TORCH_PROFILE": "0",
+        "PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS": "32",
+        "PAP_PREFILL_TORCH_PROFILE_FLUSH_TIMEOUT": "120",
+        "PAP_DECODE_TOKEN_TIMEOUT": "0.2",
+        "PAP_DECODE_TOKEN_QUEUE_SIZE": "1024",
+        "PAP_DECODE_TOKEN_MAX_ATTEMPTS": "8",
+        "PAP_DECODE_TOKEN_RETRY_INITIAL_SECONDS": "0.05",
+        "PAP_DECODE_TOKEN_RETRY_MAX_SECONDS": "0.5",
+        "PAP_DECODE_TOKEN_FLUSH_TIMEOUT": "5.0",
+        "PAP_LEASE_RELEASE_ENDPOINT": "''",
+        "PAP_LEASE_RELEASE_TIMEOUT": "5.0",
+        "PAP_LEASE_RELEASE_MAX_ATTEMPTS": "5",
+        "PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS": "0.05",
+        "PAP_LEASE_RELEASE_RETRY_MAX_SECONDS": "0.5",
+        "PAP_KV_LEASE_TTL_SECONDS": "300",
+        "MAX_MODEL_LEN": "32768",
+        "MAX_NUM_BATCHED_TOKENS": "16384",
+        "MAX_NUM_SEQS": "64",
+        "PAP_PREFILL_MAX_NUM_BATCHED_TOKENS": "2048",
+        "PAP_PREFILL_MAX_NUM_SEQS": "256",
+        "PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS": "256",
+        "PAP_PROJECTION_MAX_NUM_SEQS": "256",
+        "PAP_PROJECTION_RUNTIME_HEADROOM_BYTES": "536870912",
+        "PAP_PROJECTION_ASYNC_SCHEDULING": "on",
+        "PAP_PREFILL_EXECUTION_MODE": "piecewise_cuda_graph",
+        "PAP_PROJECTION_EXECUTION_MODE": "pap_whole_step_cuda_graph",
+        "PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES": "1\\,2\\,4\\,8\\,16\\,32\\,64\\,128",
+        "PAP_PREFILL_ASYNC_SCHEDULING": "off",
+        "PAP_ATTENTION_PROJECTION_GRAPH_MODE": "whole_step",
+        "CLUSTER_READY_WAIT_SECONDS": "30",
+        "PAP_BENCH_GATEWAY_DRAIN_TIMEOUT": "120",
+        "PAP_BENCH_SESSION_DRAIN_TIMEOUT": "15",
+        "PAP_DEFERRED_TRACE_FLUSH_TIMEOUT": "30"
+      },
+      "run_metadata": {
+        "mode": "pap",
+        "client": "aiperf",
+        "topology": "7pa1p",
+        "pa_count": 7,
+        "projection_count": 1,
+        "routing_policy": "dynamo",
+        "load_accounting": "gateway_request_lifecycle",
+        "expected_requests": 180,
+        "model_path": "/data/ssd1/llm-models/Qwen3-8B",
+        "hf_overrides": {
+          "rope_parameters": {
+            "rope_type": "yarn",
+            "factor": 4.0,
+            "original_max_position_embeddings": 32768
+          }
+        },
+        "max_model_len": "32768",
+        "max_num_seqs": "64",
+        "offload_exec_transport": "nvshmem_graph",
+        "nvshmem_buffer_bytes": 4194304,
+        "nvshmem_control_bytes": 32768,
+        "offload_kv_transport": "cuda_ipc",
+        "batched_route_copy": true,
+        "unified_md_fast_key": true,
+        "projection_async_scheduling": true,
+        "projection_scheduling_audit": "projection_scheduling_audit.env",
+        "projection_runner_microbatch_pipeline": false,
+        "prefill_kv_async": true,
+        "prefill_ipc_profile": false,
+        "kv_handoff_mode": "sealed_manifest",
+        "decode_slot_plan_cache_limit": 256,
+        "attention_dispatch_mode": "nvshmem_graph",
+        "prompt_tokens_details": true,
+        "aiperf_sessions": 60,
+        "aiperf_concurrency_points": [
+          30
+        ],
+        "aiperf_custom_dataset_type": "mooncake-trace",
+        "aiperf_num_profile_runs": 1,
+        "aiperf_timing_mode": "concurrency",
+        "aiperf_request_rate": null,
+        "dtype": "float16",
+        "git_commit": "c72c6483707051a636cb979dbe37a92b9fe93ea4",
+        "git_commit_short": "c72c648370",
+        "git_tracked_worktree_dirty": true,
+        "proxy_port": "9460",
+        "config_dir": "project-owned PAP runner"
+      },
+      "topology_manifest": {
+        "topology": "7pa1p",
+        "routing_policy": "dynamo",
+        "pa_groups": [
+          {
+            "id": 0,
+            "gpu": "0",
+            "prefill": "http://127.0.0.1:8100",
+            "attention": "http://127.0.0.1:8300",
+            "attention_tcp_port": 9300
+          },
+          {
+            "id": 1,
+            "gpu": "1",
+            "prefill": "http://127.0.0.1:8101",
+            "attention": "http://127.0.0.1:8301",
+            "attention_tcp_port": 9301
+          },
+          {
+            "id": 2,
+            "gpu": "2",
+            "prefill": "http://127.0.0.1:8102",
+            "attention": "http://127.0.0.1:8302",
+            "attention_tcp_port": 9302
+          },
+          {
+            "id": 3,
+            "gpu": "3",
+            "prefill": "http://127.0.0.1:8103",
+            "attention": "http://127.0.0.1:8303",
+            "attention_tcp_port": 9303
+          },
+          {
+            "id": 4,
+            "gpu": "4",
+            "prefill": "http://127.0.0.1:8104",
+            "attention": "http://127.0.0.1:8304",
+            "attention_tcp_port": 9304
+          },
+          {
+            "id": 5,
+            "gpu": "5",
+            "prefill": "http://127.0.0.1:8105",
+            "attention": "http://127.0.0.1:8305",
+            "attention_tcp_port": 9305
+          },
+          {
+            "id": 6,
+            "gpu": "6",
+            "prefill": "http://127.0.0.1:8106",
+            "attention": "http://127.0.0.1:8306",
+            "attention_tcp_port": 9306
+          }
+        ],
+        "projections": [
+          {
+            "id": 0,
+            "gpu": "7",
+            "endpoint": "http://127.0.0.1:8200"
+          }
+        ]
+      }
+    },
+    {
+      "run": "migration_r5",
+      "mode": "migration",
+      "root": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/_staging/dynamo_pa_kv_migration/20260909_dynamo_migration_enabled_r5",
+      "requests": 180,
+      "conversations": 60,
+      "transitions": 120,
+      "migrations": 42,
+      "migration_rate": 0.35,
+      "route_counts": {
+        "0": 26,
+        "1": 24,
+        "2": 26,
+        "3": 29,
+        "4": 22,
+        "5": 25,
+        "6": 28
+      },
+      "route_count_range": 7,
+      "prompt_tokens": 3372106,
+      "cached_tokens": 2190192,
+      "computed_tokens": 1181914,
+      "cache_read_rate": 0.6495027143274855,
+      "output_tokens": 14696,
+      "benchmark_duration_s": 59.582977011000004,
+      "request_throughput": 3.0209970872514313,
+      "output_token_throughput": 246.64762885692795,
+      "prefill_ms": {
+        "mean": 3809.7944444444443,
+        "p50": 3442.0,
+        "p95": 7130.049999999992,
+        "p99": 9641.800000000007
+      },
+      "ttft_ms": {
+        "mean": 4550.923518077778,
+        "p50": 4170.297379,
+        "p95": 8400.611242799987,
+        "p99": 11162.988599760007
+      },
+      "itl_ms": {
+        "mean": 44.74556375210248,
+        "p50": 46.10490792364466,
+        "p95": 49.657730563770485,
+        "p99": 50.342035289855765
+      },
+      "e2e_ms": {
+        "mean": 8161.226839588889,
+        "p50": 7636.339862499999,
+        "p95": 13727.818137799997,
+        "p99": 16028.932078430003
+      },
+      "by_turn": {
+        "0": {
+          "requests": 60,
+          "migrations": 0,
+          "cache_read_rate": 0.32186197150515733,
+          "computed_tokens": 539372,
+          "prefill_ms": {
+            "mean": 5003.066666666667,
+            "p50": 4260.0,
+            "p95": 9445.7,
+            "p99": 10312.529999999999
+          },
+          "ttft_ms": {
+            "mean": 5846.492171100001,
+            "p50": 5394.7348005,
+            "p95": 10964.60302445,
+            "p99": 11852.13693821
+          },
+          "itl_ms": {
+            "mean": 41.95046629301389,
+            "p50": 41.58453382304858,
+            "p95": 49.49828508124081,
+            "p99": 50.381612067740384
+          },
+          "e2e_ms": {
+            "mean": 9181.36386975,
+            "p50": 8970.7505835,
+            "p95": 15021.235271799997,
+            "p99": 16544.945640159996
+          }
+        },
+        "1": {
+          "requests": 60,
+          "migrations": 26,
+          "cache_read_rate": 0.703298873282397,
+          "computed_tokens": 336565,
+          "prefill_ms": {
+            "mean": 3421.15,
+            "p50": 3297.5,
+            "p95": 5321.999999999998,
+            "p99": 6316.319999999999
+          },
+          "ttft_ms": {
+            "mean": 4303.767954133333,
+            "p50": 4535.579184,
+            "p95": 6523.402512549999,
+            "p99": 7134.607175109997
+          },
+          "itl_ms": {
+            "mean": 46.692865935962004,
+            "p50": 47.04358658731809,
+            "p95": 49.82333998238096,
+            "p99": 50.47441312437254
+          },
+          "e2e_ms": {
+            "mean": 8053.5415686666665,
+            "p50": 7509.828443999999,
+            "p95": 13885.710644649998,
+            "p99": 15154.146973309997
+          }
+        },
+        "2": {
+          "requests": 60,
+          "migrations": 16,
+          "cache_read_rate": 0.787866140405733,
+          "computed_tokens": 305977,
+          "prefill_ms": {
+            "mean": 3005.1666666666665,
+            "p50": 2807.5,
+            "p95": 5313.549999999999,
+            "p99": 6157.279999999994
+          },
+          "ttft_ms": {
+            "mean": 3502.510429,
+            "p50": 3451.9461565,
+            "p95": 5636.988046399999,
+            "p99": 6398.124610559995
+          },
+          "itl_ms": {
+            "mean": 45.59335902733154,
+            "p50": 46.84420715233415,
+            "p95": 49.641828779454734,
+            "p99": 49.86110696235797
+          },
+          "e2e_ms": {
+            "mean": 7248.775080349999,
+            "p50": 6600.2347265,
+            "p95": 11529.675249349997,
+            "p99": 12938.395763779998
+          }
+        }
+      },
+      "migration": {
+        "enabled": true,
+        "conversation_bindings": 60,
+        "active_conversations": 0,
+        "max_conversations": 60,
+        "attempts": 42,
+        "exports": 42,
+        "misses": 0,
+        "failures": 0,
+        "exported_prefix_tokens": 589872,
+        "pending_releases": 0,
+        "healthy": true,
+        "export_http_200": 42,
+        "release_http_200": 42,
+        "worker_copy_logs": 42,
+        "copied_tokens": 326352,
+        "copied_bytes": 48122560512,
+        "export_ms": {
+          "mean": 1351.274642857143,
+          "p50": 1146.4434999999999,
+          "p95": 2953.4583499999994,
+          "p99": 3194.25488
+        },
+        "copy_ms": {
+          "mean": 121.85859523809523,
+          "p50": 46.2335,
+          "p95": 210.2346499999998,
+          "p99": 1295.6576899999998
+        },
+        "release_ms": {
+          "mean": 835.5791904761905,
+          "p50": 513.491,
+          "p95": 2689.7122999999992,
+          "p99": 3217.0310999999992
+        },
+        "copy_bandwidth_gbps": {
+          "mean": 19.560705214834567,
+          "p50": 24.55300862823252,
+          "p95": 25.86881555088966,
+          "p99": 26.06116332798392
+        }
+      },
+      "source_fingerprint": {
+        "git_commit": "c72c6483707051a636cb979dbe37a92b9fe93ea4",
+        "tracked_worktree_patch_sha256": "c94a9cb80a639fbfacc90c65cb1980941d41b422d71e8a8de89f128a56bd2468",
+        "tracked_index_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "experiment_launcher_sha256": "71886cbcefcc663210897b0bf92075da7d3a9225df7e48e78e42d728b90de30f"
+      },
+      "dataset_selection_sha256": "da44f273c96497956423cd71e2ef18160572181e6f390ab4ebd40e58d3c7bb80",
+      "effective_config": {
+        "MODE": "pap",
+        "PAP_BENCH_CLIENT": "aiperf",
+        "PAP_TOPOLOGY": "7pa1p",
+        "PAP_PA_COUNT": "7",
+        "PAP_PROJECTION_COUNT": "1",
+        "TOPOLOGY": "7pa1p",
+        "PA_COUNT": "7",
+        "PROJECTION_COUNT": "1",
+        "MODEL_PATH": "/data/ssd1/llm-models/Qwen3-8B",
+        "NUM_PROMPTS": "180",
+        "PAP_ENABLE_PROMPT_TOKENS_DETAILS": "1",
+        "PAP_BLOCK_SIZE": "16",
+        "PAP_AIPERF_SESSIONS": "60",
+        "PAP_AIPERF_EXPECTED_REQUESTS": "180",
+        "AIPERF_BIN": "/home/fei/research/PD/vllm-pap/.venv-aiperf/bin/aiperf",
+        "PAP_AIPERF_INPUT_FILE": "/home/fei/research/PD/vllm-pap/benchmarks/pap/datasets/agentic-code/s60-t3-native32k-stratified-seed42/dataset.jsonl",
+        "PAP_AIPERF_CUSTOM_DATASET_TYPE": "mooncake-trace",
+        "PAP_AIPERF_CONCURRENCY": "30",
+        "AIPERF_VARIATION_COUNT": "1",
+        "AIPERF_NUM_PROFILE_RUNS": "1",
+        "PAP_AIPERF_TIMING_MODE": "concurrency",
+        "PAP_AIPERF_REQUEST_RATE": "''",
+        "PAP_AIPERF_ARRIVAL_PATTERN": "poisson",
+        "PAP_AIPERF_WARMUP_DURATION_SECONDS": "''",
+        "PAP_AIPERF_BENCHMARK_DURATION_SECONDS": "''",
+        "PAP_AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS": "''",
+        "BENCH_TIMEOUT": "1800",
+        "SERVER_START_TIMEOUT": "900",
+        "RESULTS_ROOT": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/_runs",
+        "PROXY_PORT": "9460",
+        "VLLM_BIN": "/home/fei/research/PD/vllm-pap/.venv/bin/vllm",
+        "PYTHON_BIN": "/home/fei/research/PD/vllm-pap/.venv/bin/python",
+        "GIT_COMMIT": "c72c6483707051a636cb979dbe37a92b9fe93ea4",
+        "GIT_COMMIT_SHORT": "c72c648370",
+        "GIT_TRACKED_WORKTREE_DIRTY": "1",
+        "PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE": "0",
+        "PAP_BENCH_STRICT_CORRECTNESS_AUDIT": "1",
+        "PAP_ATTENTION_KERNEL_POLICY": "auto",
+        "PAP_PAT_PLAN_CACHE_ENTRIES": "32",
+        "PAP_ATTENTION_GPU_RESIDENT_DISPATCH": "0",
+        "DISABLE_STREAM": "1",
+        "VLLM_USE_FLASHINFER_SAMPLER": "0",
+        "NO_PROXY": "10.128.6.226\\,10.128.6.226\\,localhost\\,127.0.0.1",
+        "no_proxy": "10.128.6.226\\,10.128.6.226\\,localhost\\,127.0.0.1",
+        "PAP_PROXY_PORT": "9460",
+        "PAP_PREFILL_GPU_MEMORY_UTILIZATION": "0.90",
+        "PROJECTION_MEMORY_POLICY": "model_weights_x1.20_plus_kv_validation_plus_runtime_headroom",
+        "PROJECTION_GPU_MEMORY_UTILIZATION": "0.5181",
+        "PROJECTION_MODEL_WEIGHT_BYTES": "16381470720",
+        "PROJECTION_PER_RANK_WEIGHT_BYTES": "16381470720",
+        "PROJECTION_VALIDATION_KV_BYTES": "4831838208",
+        "PROJECTION_MEMORY_TARGET_BYTES": "25026473984",
+        "PROJECTION_GPU_TOTAL_BYTES": "48305799168",
+        "PAP_STATIC_PREFILL_CHUNKS": "20",
+        "PAP_STATIC_ATTENTION_CHUNKS": "3",
+        "PAP_STATIC_PREFILL_EXPECTED_SMS": "80",
+        "PAP_STATIC_ATTENTION_EXPECTED_SMS": "12",
+        "PAP_ENABLE_MPS": "1",
+        "PAP_OFFLOAD_KV_TRANSPORT": "cuda_ipc",
+        "PAP_NVSHMEM_INIT_TIMEOUT": "900",
+        "PAP_NVSHMEM_BUFFER_BYTES": "4194304",
+        "PAP_NVSHMEM_CONTROL_BYTES": "32768",
+        "PAP_DEFERRED_CUDA_TRACE": "0",
+        "PAP_DEFERRED_CUDA_TRACE_MAX_PENDING": "1024",
+        "PAP_UNIFIED_MD_CACHE_LIMIT": "256",
+        "PAP_DECODE_SLOT_PLAN_CACHE_LIMIT": "256",
+        "PAP_PREFILL_GPUS": "0\\,1\\,2\\,3\\,4\\,5\\,6",
+        "PAP_PROJECTION_GPUS": "7",
+        "PAP_VLLM_DTYPE": "float16",
+        "PAP_HF_OVERRIDES": "\\{\\\"rope_parameters\\\":\\{\\\"rope_type\\\":\\\"yarn\\\"\\,\\\"factor\\\":4.0\\,\\\"original_max_position_embeddings\\\":32768\\}\\}",
+        "ENABLE_AUTO_TOOL_CHOICE": "0",
+        "TOOL_CALL_PARSER": "''",
+        "PAP_ROUTING_POLICY": "dynamo",
+        "PAP_SESSION_ROUTER_MAX_CONVERSATIONS": "100000",
+        "PAP_KV_MIGRATION_VERIFY": "0",
+        "PAP_MIGRATION_MAX_CONVERSATIONS": "60",
+        "PAP_DYNAMO_SITE_PACKAGES": "/home/fei/research/PD/vllm-pap/.local/pap-dynamo-router",
+        "PAP_DYNAMO_PREFILL_LOAD_SCALE": "2.0",
+        "PREFILL_PORT_BASE": "8100",
+        "PROJECTION_PORT_BASE": "8200",
+        "ATTENTION_PORT_BASE": "8300",
+        "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS": "256",
+        "PAP_DECODE_CAPACITY_SOURCE": "request_max_tokens_with_environment_fallback",
+        "PAP_DECODE_COMMIT_ENDPOINT": "''",
+        "PAP_DECODE_COMMIT_FAIL_CLOSED": "1",
+        "PAP_DECODE_COMMIT_TIMEOUT": "5.0",
+        "PAP_DECODE_COMMIT_QUEUE_SIZE": "1024",
+        "PAP_DECODE_COMMIT_MAX_ATTEMPTS": "8",
+        "PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS": "0.05",
+        "PAP_DECODE_COMMIT_RETRY_MAX_SECONDS": "0.5",
+        "PAP_DECODE_COMMIT_FLUSH_TIMEOUT": "15.0",
+        "VLLM_USE_V2_MODEL_RUNNER": "1",
+        "PAP_PREFILL_IPC_PROFILE": "0",
+        "PAP_DYNAMO_ROUTING_TRACE_OUTPUT": "''",
+        "PAP_RUNTIME_CUDA_CONTEXT_AUDIT": "1",
+        "PAP_PREFILL_TORCH_PROFILE": "0",
+        "PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS": "32",
+        "PAP_PREFILL_TORCH_PROFILE_FLUSH_TIMEOUT": "120",
+        "PAP_DECODE_TOKEN_TIMEOUT": "0.2",
+        "PAP_DECODE_TOKEN_QUEUE_SIZE": "1024",
+        "PAP_DECODE_TOKEN_MAX_ATTEMPTS": "8",
+        "PAP_DECODE_TOKEN_RETRY_INITIAL_SECONDS": "0.05",
+        "PAP_DECODE_TOKEN_RETRY_MAX_SECONDS": "0.5",
+        "PAP_DECODE_TOKEN_FLUSH_TIMEOUT": "5.0",
+        "PAP_LEASE_RELEASE_ENDPOINT": "''",
+        "PAP_LEASE_RELEASE_TIMEOUT": "5.0",
+        "PAP_LEASE_RELEASE_MAX_ATTEMPTS": "5",
+        "PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS": "0.05",
+        "PAP_LEASE_RELEASE_RETRY_MAX_SECONDS": "0.5",
+        "PAP_KV_LEASE_TTL_SECONDS": "300",
+        "MAX_MODEL_LEN": "32768",
+        "MAX_NUM_BATCHED_TOKENS": "16384",
+        "MAX_NUM_SEQS": "64",
+        "PAP_PREFILL_MAX_NUM_BATCHED_TOKENS": "2048",
+        "PAP_PREFILL_MAX_NUM_SEQS": "256",
+        "PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS": "256",
+        "PAP_PROJECTION_MAX_NUM_SEQS": "256",
+        "PAP_PROJECTION_RUNTIME_HEADROOM_BYTES": "536870912",
+        "PAP_PROJECTION_ASYNC_SCHEDULING": "on",
+        "PAP_PREFILL_EXECUTION_MODE": "piecewise_cuda_graph",
+        "PAP_PROJECTION_EXECUTION_MODE": "pap_whole_step_cuda_graph",
+        "PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES": "1\\,2\\,4\\,8\\,16\\,32\\,64\\,128",
+        "PAP_PREFILL_ASYNC_SCHEDULING": "off",
+        "PAP_ATTENTION_PROJECTION_GRAPH_MODE": "whole_step",
+        "CLUSTER_READY_WAIT_SECONDS": "30",
+        "PAP_BENCH_GATEWAY_DRAIN_TIMEOUT": "120",
+        "PAP_BENCH_SESSION_DRAIN_TIMEOUT": "15",
+        "PAP_DEFERRED_TRACE_FLUSH_TIMEOUT": "30"
+      },
+      "run_metadata": {
+        "mode": "pap",
+        "client": "aiperf",
+        "topology": "7pa1p",
+        "pa_count": 7,
+        "projection_count": 1,
+        "routing_policy": "dynamo",
+        "load_accounting": "gateway_request_lifecycle",
+        "expected_requests": 180,
+        "model_path": "/data/ssd1/llm-models/Qwen3-8B",
+        "hf_overrides": {
+          "rope_parameters": {
+            "rope_type": "yarn",
+            "factor": 4.0,
+            "original_max_position_embeddings": 32768
+          }
+        },
+        "max_model_len": "32768",
+        "max_num_seqs": "64",
+        "offload_exec_transport": "nvshmem_graph",
+        "nvshmem_buffer_bytes": 4194304,
+        "nvshmem_control_bytes": 32768,
+        "offload_kv_transport": "cuda_ipc",
+        "batched_route_copy": true,
+        "unified_md_fast_key": true,
+        "projection_async_scheduling": true,
+        "projection_scheduling_audit": "projection_scheduling_audit.env",
+        "projection_runner_microbatch_pipeline": false,
+        "prefill_kv_async": true,
+        "prefill_ipc_profile": false,
+        "kv_handoff_mode": "sealed_manifest",
+        "decode_slot_plan_cache_limit": 256,
+        "attention_dispatch_mode": "nvshmem_graph",
+        "prompt_tokens_details": true,
+        "aiperf_sessions": 60,
+        "aiperf_concurrency_points": [
+          30
+        ],
+        "aiperf_custom_dataset_type": "mooncake-trace",
+        "aiperf_num_profile_runs": 1,
+        "aiperf_timing_mode": "concurrency",
+        "aiperf_request_rate": null,
+        "dtype": "float16",
+        "git_commit": "c72c6483707051a636cb979dbe37a92b9fe93ea4",
+        "git_commit_short": "c72c648370",
+        "git_tracked_worktree_dirty": true,
+        "proxy_port": "9460",
+        "config_dir": "project-owned PAP runner"
+      },
+      "topology_manifest": {
+        "topology": "7pa1p",
+        "routing_policy": "dynamo",
+        "pa_groups": [
+          {
+            "id": 0,
+            "gpu": "0",
+            "prefill": "http://127.0.0.1:8100",
+            "attention": "http://127.0.0.1:8300",
+            "attention_tcp_port": 9300
+          },
+          {
+            "id": 1,
+            "gpu": "1",
+            "prefill": "http://127.0.0.1:8101",
+            "attention": "http://127.0.0.1:8301",
+            "attention_tcp_port": 9301
+          },
+          {
+            "id": 2,
+            "gpu": "2",
+            "prefill": "http://127.0.0.1:8102",
+            "attention": "http://127.0.0.1:8302",
+            "attention_tcp_port": 9302
+          },
+          {
+            "id": 3,
+            "gpu": "3",
+            "prefill": "http://127.0.0.1:8103",
+            "attention": "http://127.0.0.1:8303",
+            "attention_tcp_port": 9303
+          },
+          {
+            "id": 4,
+            "gpu": "4",
+            "prefill": "http://127.0.0.1:8104",
+            "attention": "http://127.0.0.1:8304",
+            "attention_tcp_port": 9304
+          },
+          {
+            "id": 5,
+            "gpu": "5",
+            "prefill": "http://127.0.0.1:8105",
+            "attention": "http://127.0.0.1:8305",
+            "attention_tcp_port": 9305
+          },
+          {
+            "id": 6,
+            "gpu": "6",
+            "prefill": "http://127.0.0.1:8106",
+            "attention": "http://127.0.0.1:8306",
+            "attention_tcp_port": 9306
+          }
+        ],
+        "projections": [
+          {
+            "id": 0,
+            "gpu": "7",
+            "endpoint": "http://127.0.0.1:8200"
+          }
+        ]
+      }
+    },
+    {
+      "run": "control_r6",
+      "mode": "control",
+      "root": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/_staging/dynamo_pa_kv_migration/20260909_dynamo_migration_control_r6",
+      "requests": 180,
+      "conversations": 60,
+      "transitions": 120,
+      "migrations": 37,
+      "migration_rate": 0.30833333333333335,
+      "route_counts": {
+        "0": 24,
+        "1": 25,
+        "2": 27,
+        "3": 28,
+        "4": 22,
+        "5": 28,
+        "6": 26
+      },
+      "route_count_range": 6,
+      "prompt_tokens": 3372283,
+      "cached_tokens": 1881424,
+      "computed_tokens": 1490859,
+      "cache_read_rate": 0.5579080996464413,
+      "output_tokens": 14696,
+      "benchmark_duration_s": 66.034714926,
+      "request_throughput": 2.7258389803259098,
+      "output_token_throughput": 222.54960919371985,
+      "prefill_ms": {
+        "mean": 5232.85,
+        "p50": 5033.5,
+        "p95": 8435.349999999999,
+        "p99": 9706.110000000002
+      },
+      "ttft_ms": {
+        "mean": 5791.927191077777,
+        "p50": 5463.3310624999995,
+        "p95": 10301.3353517,
+        "p99": 11816.59678879
+      },
+      "itl_ms": {
+        "mean": 43.903333600067654,
+        "p50": 44.706228921957674,
+        "p95": 50.66217295202019,
+        "p99": 52.00854792224762
+      },
+      "e2e_ms": {
+        "mean": 9343.872624994445,
+        "p50": 8940.040927499998,
+        "p95": 15017.292177799998,
+        "p99": 17233.62897190002
+      },
+      "by_turn": {
+        "0": {
+          "requests": 60,
+          "migrations": 0,
+          "cache_read_rate": 0.3244368672771986,
+          "computed_tokens": 537324,
+          "prefill_ms": {
+            "mean": 5567.15,
+            "p50": 5167.0,
+            "p95": 9257.75,
+            "p99": 10195.129999999996
+          },
+          "ttft_ms": {
+            "mean": 6831.548979333334,
+            "p50": 6436.591203,
+            "p95": 11715.13926555,
+            "p99": 12636.663200509995
+          },
+          "itl_ms": {
+            "mean": 41.330765558876244,
+            "p50": 41.00316447403628,
+            "p95": 46.89168685570136,
+            "p99": 47.86536554944444
+          },
+          "e2e_ms": {
+            "mean": 10117.5615942,
+            "p50": 9905.243924499999,
+            "p95": 15538.267461849997,
+            "p99": 19174.80746428
+          }
+        },
+        "1": {
+          "requests": 60,
+          "migrations": 22,
+          "cache_read_rate": 0.5729298172611029,
+          "computed_tokens": 484424,
+          "prefill_ms": {
+            "mean": 4843.9,
+            "p50": 4757.5,
+            "p95": 7383.999999999999,
+            "p99": 7902.029999999999
+          },
+          "ttft_ms": {
+            "mean": 5044.451806916666,
+            "p50": 4951.0877365,
+            "p95": 7612.831640749999,
+            "p99": 8126.626118299999
+          },
+          "itl_ms": {
+            "mean": 45.928248840168024,
+            "p50": 45.905824225568004,
+            "p95": 51.83011882295238,
+            "p99": 52.598560042992304
+          },
+          "e2e_ms": {
+            "mean": 8727.11577035,
+            "p50": 8592.733289,
+            "p95": 13412.446589049998,
+            "p99": 14874.468710989993
+          }
+        },
+        "2": {
+          "requests": 60,
+          "migrations": 15,
+          "cache_read_rate": 0.6748189919001258,
+          "computed_tokens": 469111,
+          "prefill_ms": {
+            "mean": 5287.5,
+            "p50": 5489.5,
+            "p95": 8585.849999999999,
+            "p99": 9622.649999999998
+          },
+          "ttft_ms": {
+            "mean": 5499.780786983333,
+            "p50": 5660.718869,
+            "p95": 8779.333459599999,
+            "p99": 9842.370267149998
+          },
+          "itl_ms": {
+            "mean": 44.450986401158715,
+            "p50": 45.51656485109508,
+            "p95": 49.41174291501326,
+            "p99": 49.92619725525
+          },
+          "e2e_ms": {
+            "mean": 9186.940510433333,
+            "p50": 8801.284749999999,
+            "p95": 15017.2921778,
+            "p99": 16135.677865819996
+          }
+        }
+      },
+      "migration": {
+        "enabled": false,
+        "conversation_bindings": 0,
+        "active_conversations": 0,
+        "max_conversations": 60,
+        "attempts": 0,
+        "exports": 0,
+        "misses": 0,
+        "failures": 0,
+        "exported_prefix_tokens": 0,
+        "pending_releases": 0,
+        "healthy": true,
+        "export_http_200": 0,
+        "release_http_200": 0,
+        "worker_copy_logs": 0,
+        "copied_tokens": 0,
+        "copied_bytes": 0,
+        "export_ms": null,
+        "copy_ms": null,
+        "release_ms": null,
+        "copy_bandwidth_gbps": null
+      },
+      "source_fingerprint": {
+        "git_commit": "c72c6483707051a636cb979dbe37a92b9fe93ea4",
+        "tracked_worktree_patch_sha256": "c94a9cb80a639fbfacc90c65cb1980941d41b422d71e8a8de89f128a56bd2468",
+        "tracked_index_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "experiment_launcher_sha256": "71886cbcefcc663210897b0bf92075da7d3a9225df7e48e78e42d728b90de30f"
+      },
+      "dataset_selection_sha256": "da44f273c96497956423cd71e2ef18160572181e6f390ab4ebd40e58d3c7bb80",
+      "effective_config": {
+        "MODE": "pap",
+        "PAP_BENCH_CLIENT": "aiperf",
+        "PAP_TOPOLOGY": "7pa1p",
+        "PAP_PA_COUNT": "7",
+        "PAP_PROJECTION_COUNT": "1",
+        "TOPOLOGY": "7pa1p",
+        "PA_COUNT": "7",
+        "PROJECTION_COUNT": "1",
+        "MODEL_PATH": "/data/ssd1/llm-models/Qwen3-8B",
+        "NUM_PROMPTS": "180",
+        "PAP_ENABLE_PROMPT_TOKENS_DETAILS": "1",
+        "PAP_BLOCK_SIZE": "16",
+        "PAP_AIPERF_SESSIONS": "60",
+        "PAP_AIPERF_EXPECTED_REQUESTS": "180",
+        "AIPERF_BIN": "/home/fei/research/PD/vllm-pap/.venv-aiperf/bin/aiperf",
+        "PAP_AIPERF_INPUT_FILE": "/home/fei/research/PD/vllm-pap/benchmarks/pap/datasets/agentic-code/s60-t3-native32k-stratified-seed42/dataset.jsonl",
+        "PAP_AIPERF_CUSTOM_DATASET_TYPE": "mooncake-trace",
+        "PAP_AIPERF_CONCURRENCY": "30",
+        "AIPERF_VARIATION_COUNT": "1",
+        "AIPERF_NUM_PROFILE_RUNS": "1",
+        "PAP_AIPERF_TIMING_MODE": "concurrency",
+        "PAP_AIPERF_REQUEST_RATE": "''",
+        "PAP_AIPERF_ARRIVAL_PATTERN": "poisson",
+        "PAP_AIPERF_WARMUP_DURATION_SECONDS": "''",
+        "PAP_AIPERF_BENCHMARK_DURATION_SECONDS": "''",
+        "PAP_AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS": "''",
+        "BENCH_TIMEOUT": "1800",
+        "SERVER_START_TIMEOUT": "900",
+        "RESULTS_ROOT": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/_runs",
+        "PROXY_PORT": "9460",
+        "VLLM_BIN": "/home/fei/research/PD/vllm-pap/.venv/bin/vllm",
+        "PYTHON_BIN": "/home/fei/research/PD/vllm-pap/.venv/bin/python",
+        "GIT_COMMIT": "c72c6483707051a636cb979dbe37a92b9fe93ea4",
+        "GIT_COMMIT_SHORT": "c72c648370",
+        "GIT_TRACKED_WORKTREE_DIRTY": "1",
+        "PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE": "0",
+        "PAP_BENCH_STRICT_CORRECTNESS_AUDIT": "1",
+        "PAP_ATTENTION_KERNEL_POLICY": "auto",
+        "PAP_PAT_PLAN_CACHE_ENTRIES": "32",
+        "PAP_ATTENTION_GPU_RESIDENT_DISPATCH": "0",
+        "DISABLE_STREAM": "1",
+        "VLLM_USE_FLASHINFER_SAMPLER": "0",
+        "NO_PROXY": "10.128.6.226\\,10.128.6.226\\,localhost\\,127.0.0.1",
+        "no_proxy": "10.128.6.226\\,10.128.6.226\\,localhost\\,127.0.0.1",
+        "PAP_PROXY_PORT": "9460",
+        "PAP_PREFILL_GPU_MEMORY_UTILIZATION": "0.90",
+        "PROJECTION_MEMORY_POLICY": "model_weights_x1.20_plus_kv_validation_plus_runtime_headroom",
+        "PROJECTION_GPU_MEMORY_UTILIZATION": "0.5181",
+        "PROJECTION_MODEL_WEIGHT_BYTES": "16381470720",
+        "PROJECTION_PER_RANK_WEIGHT_BYTES": "16381470720",
+        "PROJECTION_VALIDATION_KV_BYTES": "4831838208",
+        "PROJECTION_MEMORY_TARGET_BYTES": "25026473984",
+        "PROJECTION_GPU_TOTAL_BYTES": "48305799168",
+        "PAP_STATIC_PREFILL_CHUNKS": "20",
+        "PAP_STATIC_ATTENTION_CHUNKS": "3",
+        "PAP_STATIC_PREFILL_EXPECTED_SMS": "80",
+        "PAP_STATIC_ATTENTION_EXPECTED_SMS": "12",
+        "PAP_ENABLE_MPS": "1",
+        "PAP_OFFLOAD_KV_TRANSPORT": "cuda_ipc",
+        "PAP_NVSHMEM_INIT_TIMEOUT": "900",
+        "PAP_NVSHMEM_BUFFER_BYTES": "4194304",
+        "PAP_NVSHMEM_CONTROL_BYTES": "32768",
+        "PAP_DEFERRED_CUDA_TRACE": "0",
+        "PAP_DEFERRED_CUDA_TRACE_MAX_PENDING": "1024",
+        "PAP_UNIFIED_MD_CACHE_LIMIT": "256",
+        "PAP_DECODE_SLOT_PLAN_CACHE_LIMIT": "256",
+        "PAP_PREFILL_GPUS": "0\\,1\\,2\\,3\\,4\\,5\\,6",
+        "PAP_PROJECTION_GPUS": "7",
+        "PAP_VLLM_DTYPE": "float16",
+        "PAP_HF_OVERRIDES": "\\{\\\"rope_parameters\\\":\\{\\\"rope_type\\\":\\\"yarn\\\"\\,\\\"factor\\\":4.0\\,\\\"original_max_position_embeddings\\\":32768\\}\\}",
+        "ENABLE_AUTO_TOOL_CHOICE": "0",
+        "TOOL_CALL_PARSER": "''",
+        "PAP_ROUTING_POLICY": "dynamo",
+        "PAP_SESSION_ROUTER_MAX_CONVERSATIONS": "100000",
+        "PAP_KV_MIGRATION_VERIFY": "0",
+        "PAP_MIGRATION_MAX_CONVERSATIONS": "60",
+        "PAP_DYNAMO_SITE_PACKAGES": "/home/fei/research/PD/vllm-pap/.local/pap-dynamo-router",
+        "PAP_DYNAMO_PREFILL_LOAD_SCALE": "2.0",
+        "PREFILL_PORT_BASE": "8100",
+        "PROJECTION_PORT_BASE": "8200",
+        "ATTENTION_PORT_BASE": "8300",
+        "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS": "256",
+        "PAP_DECODE_CAPACITY_SOURCE": "request_max_tokens_with_environment_fallback",
+        "PAP_DECODE_COMMIT_ENDPOINT": "''",
+        "PAP_DECODE_COMMIT_FAIL_CLOSED": "1",
+        "PAP_DECODE_COMMIT_TIMEOUT": "5.0",
+        "PAP_DECODE_COMMIT_QUEUE_SIZE": "1024",
+        "PAP_DECODE_COMMIT_MAX_ATTEMPTS": "8",
+        "PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS": "0.05",
+        "PAP_DECODE_COMMIT_RETRY_MAX_SECONDS": "0.5",
+        "PAP_DECODE_COMMIT_FLUSH_TIMEOUT": "15.0",
+        "VLLM_USE_V2_MODEL_RUNNER": "1",
+        "PAP_PREFILL_IPC_PROFILE": "0",
+        "PAP_DYNAMO_ROUTING_TRACE_OUTPUT": "''",
+        "PAP_RUNTIME_CUDA_CONTEXT_AUDIT": "1",
+        "PAP_PREFILL_TORCH_PROFILE": "0",
+        "PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS": "32",
+        "PAP_PREFILL_TORCH_PROFILE_FLUSH_TIMEOUT": "120",
+        "PAP_DECODE_TOKEN_TIMEOUT": "0.2",
+        "PAP_DECODE_TOKEN_QUEUE_SIZE": "1024",
+        "PAP_DECODE_TOKEN_MAX_ATTEMPTS": "8",
+        "PAP_DECODE_TOKEN_RETRY_INITIAL_SECONDS": "0.05",
+        "PAP_DECODE_TOKEN_RETRY_MAX_SECONDS": "0.5",
+        "PAP_DECODE_TOKEN_FLUSH_TIMEOUT": "5.0",
+        "PAP_LEASE_RELEASE_ENDPOINT": "''",
+        "PAP_LEASE_RELEASE_TIMEOUT": "5.0",
+        "PAP_LEASE_RELEASE_MAX_ATTEMPTS": "5",
+        "PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS": "0.05",
+        "PAP_LEASE_RELEASE_RETRY_MAX_SECONDS": "0.5",
+        "PAP_KV_LEASE_TTL_SECONDS": "300",
+        "MAX_MODEL_LEN": "32768",
+        "MAX_NUM_BATCHED_TOKENS": "16384",
+        "MAX_NUM_SEQS": "64",
+        "PAP_PREFILL_MAX_NUM_BATCHED_TOKENS": "2048",
+        "PAP_PREFILL_MAX_NUM_SEQS": "256",
+        "PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS": "256",
+        "PAP_PROJECTION_MAX_NUM_SEQS": "256",
+        "PAP_PROJECTION_RUNTIME_HEADROOM_BYTES": "536870912",
+        "PAP_PROJECTION_ASYNC_SCHEDULING": "on",
+        "PAP_PREFILL_EXECUTION_MODE": "piecewise_cuda_graph",
+        "PAP_PROJECTION_EXECUTION_MODE": "pap_whole_step_cuda_graph",
+        "PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES": "1\\,2\\,4\\,8\\,16\\,32\\,64\\,128",
+        "PAP_PREFILL_ASYNC_SCHEDULING": "off",
+        "PAP_ATTENTION_PROJECTION_GRAPH_MODE": "whole_step",
+        "CLUSTER_READY_WAIT_SECONDS": "30",
+        "PAP_BENCH_GATEWAY_DRAIN_TIMEOUT": "120",
+        "PAP_BENCH_SESSION_DRAIN_TIMEOUT": "15",
+        "PAP_DEFERRED_TRACE_FLUSH_TIMEOUT": "30"
+      },
+      "run_metadata": {
+        "mode": "pap",
+        "client": "aiperf",
+        "topology": "7pa1p",
+        "pa_count": 7,
+        "projection_count": 1,
+        "routing_policy": "dynamo",
+        "load_accounting": "gateway_request_lifecycle",
+        "expected_requests": 180,
+        "model_path": "/data/ssd1/llm-models/Qwen3-8B",
+        "hf_overrides": {
+          "rope_parameters": {
+            "rope_type": "yarn",
+            "factor": 4.0,
+            "original_max_position_embeddings": 32768
+          }
+        },
+        "max_model_len": "32768",
+        "max_num_seqs": "64",
+        "offload_exec_transport": "nvshmem_graph",
+        "nvshmem_buffer_bytes": 4194304,
+        "nvshmem_control_bytes": 32768,
+        "offload_kv_transport": "cuda_ipc",
+        "batched_route_copy": true,
+        "unified_md_fast_key": true,
+        "projection_async_scheduling": true,
+        "projection_scheduling_audit": "projection_scheduling_audit.env",
+        "projection_runner_microbatch_pipeline": false,
+        "prefill_kv_async": true,
+        "prefill_ipc_profile": false,
+        "kv_handoff_mode": "sealed_manifest",
+        "decode_slot_plan_cache_limit": 256,
+        "attention_dispatch_mode": "nvshmem_graph",
+        "prompt_tokens_details": true,
+        "aiperf_sessions": 60,
+        "aiperf_concurrency_points": [
+          30
+        ],
+        "aiperf_custom_dataset_type": "mooncake-trace",
+        "aiperf_num_profile_runs": 1,
+        "aiperf_timing_mode": "concurrency",
+        "aiperf_request_rate": null,
+        "dtype": "float16",
+        "git_commit": "c72c6483707051a636cb979dbe37a92b9fe93ea4",
+        "git_commit_short": "c72c648370",
+        "git_tracked_worktree_dirty": true,
+        "proxy_port": "9460",
+        "config_dir": "project-owned PAP runner"
+      },
+      "topology_manifest": {
+        "topology": "7pa1p",
+        "routing_policy": "dynamo",
+        "pa_groups": [
+          {
+            "id": 0,
+            "gpu": "0",
+            "prefill": "http://127.0.0.1:8100",
+            "attention": "http://127.0.0.1:8300",
+            "attention_tcp_port": 9300
+          },
+          {
+            "id": 1,
+            "gpu": "1",
+            "prefill": "http://127.0.0.1:8101",
+            "attention": "http://127.0.0.1:8301",
+            "attention_tcp_port": 9301
+          },
+          {
+            "id": 2,
+            "gpu": "2",
+            "prefill": "http://127.0.0.1:8102",
+            "attention": "http://127.0.0.1:8302",
+            "attention_tcp_port": 9302
+          },
+          {
+            "id": 3,
+            "gpu": "3",
+            "prefill": "http://127.0.0.1:8103",
+            "attention": "http://127.0.0.1:8303",
+            "attention_tcp_port": 9303
+          },
+          {
+            "id": 4,
+            "gpu": "4",
+            "prefill": "http://127.0.0.1:8104",
+            "attention": "http://127.0.0.1:8304",
+            "attention_tcp_port": 9304
+          },
+          {
+            "id": 5,
+            "gpu": "5",
+            "prefill": "http://127.0.0.1:8105",
+            "attention": "http://127.0.0.1:8305",
+            "attention_tcp_port": 9305
+          },
+          {
+            "id": 6,
+            "gpu": "6",
+            "prefill": "http://127.0.0.1:8106",
+            "attention": "http://127.0.0.1:8306",
+            "attention_tcp_port": 9306
+          }
+        ],
+        "projections": [
+          {
+            "id": 0,
+            "gpu": "7",
+            "endpoint": "http://127.0.0.1:8200"
+          }
+        ]
+      }
+    },
+    {
+      "run": "migration_r6",
+      "mode": "migration",
+      "root": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/_staging/dynamo_pa_kv_migration/20260909_dynamo_migration_enabled_r6",
+      "requests": 180,
+      "conversations": 60,
+      "transitions": 120,
+      "migrations": 42,
+      "migration_rate": 0.35,
+      "route_counts": {
+        "0": 26,
+        "1": 23,
+        "2": 25,
+        "3": 34,
+        "4": 25,
+        "5": 22,
+        "6": 25
+      },
+      "route_count_range": 12,
+      "prompt_tokens": 3372230,
+      "cached_tokens": 2190192,
+      "computed_tokens": 1182038,
+      "cache_read_rate": 0.6494788315150509,
+      "output_tokens": 14696,
+      "benchmark_duration_s": 57.648817253000004,
+      "request_throughput": 3.1223537372856147,
+      "output_token_throughput": 254.92283623971886,
+      "prefill_ms": {
+        "mean": 3716.2555555555555,
+        "p50": 3405.5,
+        "p95": 8097.499999999995,
+        "p99": 9220.84
+      },
+      "ttft_ms": {
+        "mean": 4633.968303361111,
+        "p50": 4272.330544,
+        "p95": 10259.201991149994,
+        "p99": 11591.48337468
+      },
+      "itl_ms": {
+        "mean": 46.689443890067764,
+        "p50": 47.534486392734834,
+        "p95": 54.62975710155038,
+        "p99": 55.10365712208976
+      },
+      "e2e_ms": {
+        "mean": 8423.533541283334,
+        "p50": 7439.688792999999,
+        "p95": 14692.220365899993,
+        "p99": 16856.981570160006
+      },
+      "by_turn": {
+        "0": {
+          "requests": 60,
+          "migrations": 0,
+          "cache_read_rate": 0.32186197150515733,
+          "computed_tokens": 539372,
+          "prefill_ms": {
+            "mean": 4697.85,
+            "p50": 4072.5,
+            "p95": 9023.25,
+            "p99": 9969.249999999995
+          },
+          "ttft_ms": {
+            "mean": 5966.674419999999,
+            "p50": 5247.3238034999995,
+            "p95": 11426.6734775,
+            "p99": 12349.579903999995
+          },
+          "itl_ms": {
+            "mean": 43.7248279914616,
+            "p50": 42.986443439496746,
+            "p95": 53.93979225657753,
+            "p99": 54.94307191840958
+          },
+          "e2e_ms": {
+            "mean": 9444.878927633334,
+            "p50": 8672.77536,
+            "p95": 16615.67132555,
+            "p99": 17675.817453919997
+          }
+        },
+        "1": {
+          "requests": 60,
+          "migrations": 26,
+          "cache_read_rate": 0.703392183845627,
+          "computed_tokens": 336455,
+          "prefill_ms": {
+            "mean": 3596.483333333333,
+            "p50": 3491.0,
+            "p95": 5664.75,
+            "p99": 7015.769999999997
+          },
+          "ttft_ms": {
+            "mean": 4461.40167575,
+            "p50": 4753.734442,
+            "p95": 6888.400840849999,
+            "p99": 8075.750399459997
+          },
+          "itl_ms": {
+            "mean": 47.96513130751423,
+            "p50": 47.66712230515884,
+            "p95": 54.63579775688372,
+            "p99": 54.91003763310608
+          },
+          "e2e_ms": {
+            "mean": 8364.641929533333,
+            "p50": 7444.030694499999,
+            "p95": 14108.558014499999,
+            "p99": 15489.158345479997
+          }
+        },
+        "2": {
+          "requests": 60,
+          "migrations": 16,
+          "cache_read_rate": 0.7877242177724322,
+          "computed_tokens": 306211,
+          "prefill_ms": {
+            "mean": 2854.4333333333334,
+            "p50": 2789.0,
+            "p95": 4612.549999999999,
+            "p99": 6475.199999999987
+          },
+          "ttft_ms": {
+            "mean": 3473.8288143333334,
+            "p50": 3503.768199,
+            "p95": 5202.970201349999,
+            "p99": 7438.67817375999
+          },
+          "itl_ms": {
+            "mean": 48.37837237122745,
+            "p50": 49.01049136363636,
+            "p95": 54.68606956480139,
+            "p99": 55.039748247823276
+          },
+          "e2e_ms": {
+            "mean": 7461.079766683333,
+            "p50": 6952.6918895,
+            "p95": 11725.3364154,
+            "p99": 13235.85661379999
+          }
+        }
+      },
+      "migration": {
+        "enabled": true,
+        "conversation_bindings": 60,
+        "active_conversations": 0,
+        "max_conversations": 60,
+        "attempts": 42,
+        "exports": 42,
+        "misses": 0,
+        "failures": 0,
+        "exported_prefix_tokens": 586864,
+        "pending_releases": 0,
+        "healthy": true,
+        "export_http_200": 42,
+        "release_http_200": 42,
+        "worker_copy_logs": 42,
+        "copied_tokens": 323472,
+        "copied_bytes": 47697887232,
+        "export_ms": {
+          "mean": 1482.7952857142857,
+          "p50": 1401.4805000000001,
+          "p95": 3103.119399999999,
+          "p99": 3520.7393199999997
+        },
+        "copy_ms": {
+          "mean": 134.3630238095238,
+          "p50": 50.3365,
+          "p95": 668.5988499999978,
+          "p99": 1333.6000599999993
+        },
+        "release_ms": {
+          "mean": 836.1143809523809,
+          "p50": 733.6945000000001,
+          "p95": 1820.40845,
+          "p99": 2021.0965999999994
+        },
+        "copy_bandwidth_gbps": {
+          "mean": 19.978580662806596,
+          "p50": 24.81138252143035,
+          "p95": 25.92781999179515,
+          "p99": 25.969130615570442
+        }
+      },
+      "source_fingerprint": {
+        "git_commit": "c72c6483707051a636cb979dbe37a92b9fe93ea4",
+        "tracked_worktree_patch_sha256": "c94a9cb80a639fbfacc90c65cb1980941d41b422d71e8a8de89f128a56bd2468",
+        "tracked_index_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "experiment_launcher_sha256": "71886cbcefcc663210897b0bf92075da7d3a9225df7e48e78e42d728b90de30f"
+      },
+      "dataset_selection_sha256": "da44f273c96497956423cd71e2ef18160572181e6f390ab4ebd40e58d3c7bb80",
+      "effective_config": {
+        "MODE": "pap",
+        "PAP_BENCH_CLIENT": "aiperf",
+        "PAP_TOPOLOGY": "7pa1p",
+        "PAP_PA_COUNT": "7",
+        "PAP_PROJECTION_COUNT": "1",
+        "TOPOLOGY": "7pa1p",
+        "PA_COUNT": "7",
+        "PROJECTION_COUNT": "1",
+        "MODEL_PATH": "/data/ssd1/llm-models/Qwen3-8B",
+        "NUM_PROMPTS": "180",
+        "PAP_ENABLE_PROMPT_TOKENS_DETAILS": "1",
+        "PAP_BLOCK_SIZE": "16",
+        "PAP_AIPERF_SESSIONS": "60",
+        "PAP_AIPERF_EXPECTED_REQUESTS": "180",
+        "AIPERF_BIN": "/home/fei/research/PD/vllm-pap/.venv-aiperf/bin/aiperf",
+        "PAP_AIPERF_INPUT_FILE": "/home/fei/research/PD/vllm-pap/benchmarks/pap/datasets/agentic-code/s60-t3-native32k-stratified-seed42/dataset.jsonl",
+        "PAP_AIPERF_CUSTOM_DATASET_TYPE": "mooncake-trace",
+        "PAP_AIPERF_CONCURRENCY": "30",
+        "AIPERF_VARIATION_COUNT": "1",
+        "AIPERF_NUM_PROFILE_RUNS": "1",
+        "PAP_AIPERF_TIMING_MODE": "concurrency",
+        "PAP_AIPERF_REQUEST_RATE": "''",
+        "PAP_AIPERF_ARRIVAL_PATTERN": "poisson",
+        "PAP_AIPERF_WARMUP_DURATION_SECONDS": "''",
+        "PAP_AIPERF_BENCHMARK_DURATION_SECONDS": "''",
+        "PAP_AIPERF_BENCHMARK_GRACE_PERIOD_SECONDS": "''",
+        "BENCH_TIMEOUT": "1800",
+        "SERVER_START_TIMEOUT": "900",
+        "RESULTS_ROOT": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/_runs",
+        "PROXY_PORT": "9460",
+        "VLLM_BIN": "/home/fei/research/PD/vllm-pap/.venv/bin/vllm",
+        "PYTHON_BIN": "/home/fei/research/PD/vllm-pap/.venv/bin/python",
+        "GIT_COMMIT": "c72c6483707051a636cb979dbe37a92b9fe93ea4",
+        "GIT_COMMIT_SHORT": "c72c648370",
+        "GIT_TRACKED_WORKTREE_DIRTY": "1",
+        "PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE": "0",
+        "PAP_BENCH_STRICT_CORRECTNESS_AUDIT": "1",
+        "PAP_ATTENTION_KERNEL_POLICY": "auto",
+        "PAP_PAT_PLAN_CACHE_ENTRIES": "32",
+        "PAP_ATTENTION_GPU_RESIDENT_DISPATCH": "0",
+        "DISABLE_STREAM": "1",
+        "VLLM_USE_FLASHINFER_SAMPLER": "0",
+        "NO_PROXY": "10.128.6.226\\,10.128.6.226\\,localhost\\,127.0.0.1",
+        "no_proxy": "10.128.6.226\\,10.128.6.226\\,localhost\\,127.0.0.1",
+        "PAP_PROXY_PORT": "9460",
+        "PAP_PREFILL_GPU_MEMORY_UTILIZATION": "0.90",
+        "PROJECTION_MEMORY_POLICY": "model_weights_x1.20_plus_kv_validation_plus_runtime_headroom",
+        "PROJECTION_GPU_MEMORY_UTILIZATION": "0.5181",
+        "PROJECTION_MODEL_WEIGHT_BYTES": "16381470720",
+        "PROJECTION_PER_RANK_WEIGHT_BYTES": "16381470720",
+        "PROJECTION_VALIDATION_KV_BYTES": "4831838208",
+        "PROJECTION_MEMORY_TARGET_BYTES": "25026473984",
+        "PROJECTION_GPU_TOTAL_BYTES": "48305799168",
+        "PAP_STATIC_PREFILL_CHUNKS": "20",
+        "PAP_STATIC_ATTENTION_CHUNKS": "3",
+        "PAP_STATIC_PREFILL_EXPECTED_SMS": "80",
+        "PAP_STATIC_ATTENTION_EXPECTED_SMS": "12",
+        "PAP_ENABLE_MPS": "1",
+        "PAP_OFFLOAD_KV_TRANSPORT": "cuda_ipc",
+        "PAP_NVSHMEM_INIT_TIMEOUT": "900",
+        "PAP_NVSHMEM_BUFFER_BYTES": "4194304",
+        "PAP_NVSHMEM_CONTROL_BYTES": "32768",
+        "PAP_DEFERRED_CUDA_TRACE": "0",
+        "PAP_DEFERRED_CUDA_TRACE_MAX_PENDING": "1024",
+        "PAP_UNIFIED_MD_CACHE_LIMIT": "256",
+        "PAP_DECODE_SLOT_PLAN_CACHE_LIMIT": "256",
+        "PAP_PREFILL_GPUS": "0\\,1\\,2\\,3\\,4\\,5\\,6",
+        "PAP_PROJECTION_GPUS": "7",
+        "PAP_VLLM_DTYPE": "float16",
+        "PAP_HF_OVERRIDES": "\\{\\\"rope_parameters\\\":\\{\\\"rope_type\\\":\\\"yarn\\\"\\,\\\"factor\\\":4.0\\,\\\"original_max_position_embeddings\\\":32768\\}\\}",
+        "ENABLE_AUTO_TOOL_CHOICE": "0",
+        "TOOL_CALL_PARSER": "''",
+        "PAP_ROUTING_POLICY": "dynamo",
+        "PAP_SESSION_ROUTER_MAX_CONVERSATIONS": "100000",
+        "PAP_KV_MIGRATION_VERIFY": "0",
+        "PAP_MIGRATION_MAX_CONVERSATIONS": "60",
+        "PAP_DYNAMO_SITE_PACKAGES": "/home/fei/research/PD/vllm-pap/.local/pap-dynamo-router",
+        "PAP_DYNAMO_PREFILL_LOAD_SCALE": "2.0",
+        "PREFILL_PORT_BASE": "8100",
+        "PROJECTION_PORT_BASE": "8200",
+        "ATTENTION_PORT_BASE": "8300",
+        "PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS": "256",
+        "PAP_DECODE_CAPACITY_SOURCE": "request_max_tokens_with_environment_fallback",
+        "PAP_DECODE_COMMIT_ENDPOINT": "''",
+        "PAP_DECODE_COMMIT_FAIL_CLOSED": "1",
+        "PAP_DECODE_COMMIT_TIMEOUT": "5.0",
+        "PAP_DECODE_COMMIT_QUEUE_SIZE": "1024",
+        "PAP_DECODE_COMMIT_MAX_ATTEMPTS": "8",
+        "PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS": "0.05",
+        "PAP_DECODE_COMMIT_RETRY_MAX_SECONDS": "0.5",
+        "PAP_DECODE_COMMIT_FLUSH_TIMEOUT": "15.0",
+        "VLLM_USE_V2_MODEL_RUNNER": "1",
+        "PAP_PREFILL_IPC_PROFILE": "0",
+        "PAP_DYNAMO_ROUTING_TRACE_OUTPUT": "''",
+        "PAP_RUNTIME_CUDA_CONTEXT_AUDIT": "1",
+        "PAP_PREFILL_TORCH_PROFILE": "0",
+        "PAP_PREFILL_TORCH_PROFILE_MAX_ITERATIONS": "32",
+        "PAP_PREFILL_TORCH_PROFILE_FLUSH_TIMEOUT": "120",
+        "PAP_DECODE_TOKEN_TIMEOUT": "0.2",
+        "PAP_DECODE_TOKEN_QUEUE_SIZE": "1024",
+        "PAP_DECODE_TOKEN_MAX_ATTEMPTS": "8",
+        "PAP_DECODE_TOKEN_RETRY_INITIAL_SECONDS": "0.05",
+        "PAP_DECODE_TOKEN_RETRY_MAX_SECONDS": "0.5",
+        "PAP_DECODE_TOKEN_FLUSH_TIMEOUT": "5.0",
+        "PAP_LEASE_RELEASE_ENDPOINT": "''",
+        "PAP_LEASE_RELEASE_TIMEOUT": "5.0",
+        "PAP_LEASE_RELEASE_MAX_ATTEMPTS": "5",
+        "PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS": "0.05",
+        "PAP_LEASE_RELEASE_RETRY_MAX_SECONDS": "0.5",
+        "PAP_KV_LEASE_TTL_SECONDS": "300",
+        "MAX_MODEL_LEN": "32768",
+        "MAX_NUM_BATCHED_TOKENS": "16384",
+        "MAX_NUM_SEQS": "64",
+        "PAP_PREFILL_MAX_NUM_BATCHED_TOKENS": "2048",
+        "PAP_PREFILL_MAX_NUM_SEQS": "256",
+        "PAP_PROJECTION_MAX_NUM_BATCHED_TOKENS": "256",
+        "PAP_PROJECTION_MAX_NUM_SEQS": "256",
+        "PAP_PROJECTION_RUNTIME_HEADROOM_BYTES": "536870912",
+        "PAP_PROJECTION_ASYNC_SCHEDULING": "on",
+        "PAP_PREFILL_EXECUTION_MODE": "piecewise_cuda_graph",
+        "PAP_PROJECTION_EXECUTION_MODE": "pap_whole_step_cuda_graph",
+        "PAP_PREFILL_CUDAGRAPH_CAPTURE_SIZES": "1\\,2\\,4\\,8\\,16\\,32\\,64\\,128",
+        "PAP_PREFILL_ASYNC_SCHEDULING": "off",
+        "PAP_ATTENTION_PROJECTION_GRAPH_MODE": "whole_step",
+        "CLUSTER_READY_WAIT_SECONDS": "30",
+        "PAP_BENCH_GATEWAY_DRAIN_TIMEOUT": "120",
+        "PAP_BENCH_SESSION_DRAIN_TIMEOUT": "15",
+        "PAP_DEFERRED_TRACE_FLUSH_TIMEOUT": "30"
+      },
+      "run_metadata": {
+        "mode": "pap",
+        "client": "aiperf",
+        "topology": "7pa1p",
+        "pa_count": 7,
+        "projection_count": 1,
+        "routing_policy": "dynamo",
+        "load_accounting": "gateway_request_lifecycle",
+        "expected_requests": 180,
+        "model_path": "/data/ssd1/llm-models/Qwen3-8B",
+        "hf_overrides": {
+          "rope_parameters": {
+            "rope_type": "yarn",
+            "factor": 4.0,
+            "original_max_position_embeddings": 32768
+          }
+        },
+        "max_model_len": "32768",
+        "max_num_seqs": "64",
+        "offload_exec_transport": "nvshmem_graph",
+        "nvshmem_buffer_bytes": 4194304,
+        "nvshmem_control_bytes": 32768,
+        "offload_kv_transport": "cuda_ipc",
+        "batched_route_copy": true,
+        "unified_md_fast_key": true,
+        "projection_async_scheduling": true,
+        "projection_scheduling_audit": "projection_scheduling_audit.env",
+        "projection_runner_microbatch_pipeline": false,
+        "prefill_kv_async": true,
+        "prefill_ipc_profile": false,
+        "kv_handoff_mode": "sealed_manifest",
+        "decode_slot_plan_cache_limit": 256,
+        "attention_dispatch_mode": "nvshmem_graph",
+        "prompt_tokens_details": true,
+        "aiperf_sessions": 60,
+        "aiperf_concurrency_points": [
+          30
+        ],
+        "aiperf_custom_dataset_type": "mooncake-trace",
+        "aiperf_num_profile_runs": 1,
+        "aiperf_timing_mode": "concurrency",
+        "aiperf_request_rate": null,
+        "dtype": "float16",
+        "git_commit": "c72c6483707051a636cb979dbe37a92b9fe93ea4",
+        "git_commit_short": "c72c648370",
+        "git_tracked_worktree_dirty": true,
+        "proxy_port": "9460",
+        "config_dir": "project-owned PAP runner"
+      },
+      "topology_manifest": {
+        "topology": "7pa1p",
+        "routing_policy": "dynamo",
+        "pa_groups": [
+          {
+            "id": 0,
+            "gpu": "0",
+            "prefill": "http://127.0.0.1:8100",
+            "attention": "http://127.0.0.1:8300",
+            "attention_tcp_port": 9300
+          },
+          {
+            "id": 1,
+            "gpu": "1",
+            "prefill": "http://127.0.0.1:8101",
+            "attention": "http://127.0.0.1:8301",
+            "attention_tcp_port": 9301
+          },
+          {
+            "id": 2,
+            "gpu": "2",
+            "prefill": "http://127.0.0.1:8102",
+            "attention": "http://127.0.0.1:8302",
+            "attention_tcp_port": 9302
+          },
+          {
+            "id": 3,
+            "gpu": "3",
+            "prefill": "http://127.0.0.1:8103",
+            "attention": "http://127.0.0.1:8303",
+            "attention_tcp_port": 9303
+          },
+          {
+            "id": 4,
+            "gpu": "4",
+            "prefill": "http://127.0.0.1:8104",
+            "attention": "http://127.0.0.1:8304",
+            "attention_tcp_port": 9304
+          },
+          {
+            "id": 5,
+            "gpu": "5",
+            "prefill": "http://127.0.0.1:8105",
+            "attention": "http://127.0.0.1:8305",
+            "attention_tcp_port": 9305
+          },
+          {
+            "id": 6,
+            "gpu": "6",
+            "prefill": "http://127.0.0.1:8106",
+            "attention": "http://127.0.0.1:8306",
+            "attention_tcp_port": 9306
+          }
+        ],
+        "projections": [
+          {
+            "id": 0,
+            "gpu": "7",
+            "endpoint": "http://127.0.0.1:8200"
+          }
+        ]
+      }
+    }
+  ],
+  "modes": {
+    "control": {
+      "mode": "control",
+      "runs": [
+        "control_r5",
+        "control_r6"
+      ],
+      "requests": 360,
+      "transitions": 240,
+      "migrations": 68,
+      "migration_rate": 0.2833333333333333,
+      "prompt_tokens": 6744638,
+      "cached_tokens": 3821136,
+      "computed_tokens": 2923502,
+      "cache_read_rate": 0.5665442682023853,
+      "route_counts": {
+        "0": 50,
+        "1": 51,
+        "2": 50,
+        "3": 57,
+        "4": 46,
+        "5": 54,
+        "6": 52
+      },
+      "route_count_range": 11,
+      "benchmark_duration_s": 128.447296602,
+      "request_throughput": 2.802705930942844,
+      "output_token_throughput": 228.825368672978,
+      "prefill_ms": {
+        "mean": 5039.169444444445,
+        "p50": 4912.5,
+        "p95": 8157.05,
+        "p99": 9907.620000000004
+      },
+      "ttft_ms": {
+        "mean": 5562.280903244444,
+        "p50": 5272.512031,
+        "p95": 9814.063170799998,
+        "p99": 11895.648456730007
+      },
+      "itl_ms": {
+        "mean": 43.91305844444475,
+        "p50": 44.89619470719178,
+        "p95": 49.89604832625,
+        "p99": 51.79084779436056
+      },
+      "e2e_ms": {
+        "mean": 9113.317708177778,
+        "p50": 8759.317083499998,
+        "p95": 14582.285007250002,
+        "p99": 16449.586002330012
+      },
+      "by_turn": {
+        "0": {
+          "requests": 120,
+          "prompt_tokens": 1590744,
+          "cached_tokens": 520192,
+          "computed_tokens": 1070552,
+          "cache_read_rate": 0.32701176304923985,
+          "prefill_ms": {
+            "mean": 5381.533333333334,
+            "p50": 5039.0,
+            "p95": 9311.4,
+            "p99": 10407.79
+          },
+          "ttft_ms": {
+            "mean": 6531.966139558333,
+            "p50": 6330.535851,
+            "p95": 11715.13926555,
+            "p99": 12339.729975490001
+          },
+          "itl_ms": {
+            "mean": 41.822107227099345,
+            "p50": 41.249990797777784,
+            "p95": 49.36064126975308,
+            "p99": 50.71378362517361
+          },
+          "e2e_ms": {
+            "mean": 9848.041838916666,
+            "p50": 9508.0858405,
+            "p95": 15263.9737699,
+            "p99": 18625.551051330003
+          },
+          "migrations": 0
+        },
+        "1": {
+          "requests": 120,
+          "prompt_tokens": 2268631,
+          "cached_tokens": 1338384,
+          "computed_tokens": 930247,
+          "cache_read_rate": 0.5899522663668089,
+          "prefill_ms": {
+            "mean": 4789.341666666666,
+            "p50": 4770.5,
+            "p95": 7281.3,
+            "p99": 7745.0
+          },
+          "ttft_ms": {
+            "mean": 4991.130049925,
+            "p50": 4951.0877365,
+            "p95": 7500.71443675,
+            "p99": 7967.88347671
+          },
+          "itl_ms": {
+            "mean": 45.22981013740791,
+            "p50": 45.46122199588403,
+            "p95": 51.31151612568437,
+            "p99": 52.28733450281905
+          },
+          "e2e_ms": {
+            "mean": 8645.201883191667,
+            "p50": 8181.0728149999995,
+            "p95": 13719.701871399999,
+            "p99": 15123.43981099
+          },
+          "migrations": 39
+        },
+        "2": {
+          "requests": 120,
+          "prompt_tokens": 2885263,
+          "cached_tokens": 1962560,
+          "computed_tokens": 922703,
+          "cache_read_rate": 0.6802014235790637,
+          "prefill_ms": {
+            "mean": 4946.633333333333,
+            "p50": 4973.0,
+            "p95": 8054.45,
+            "p99": 9272.86
+          },
+          "ttft_ms": {
+            "mean": 5163.74652025,
+            "p50": 5190.470149499999,
+            "p95": 8292.545103449998,
+            "p99": 9502.8194066
+          },
+          "itl_ms": {
+            "mean": 44.687257968826984,
+            "p50": 45.78418359072682,
+            "p95": 48.84031206381118,
+            "p99": 49.82167295990385
+          },
+          "e2e_ms": {
+            "mean": 8846.709402425,
+            "p50": 8731.589463,
+            "p95": 13660.962829949996,
+            "p99": 15603.70107854
+          },
+          "migrations": 29
+        }
+      },
+      "by_transition": {
+        "stayed": {
+          "requests": 172,
+          "prompt_tokens": 3852599,
+          "cached_tokens": 2929088,
+          "computed_tokens": 923511,
+          "cache_read_rate": 0.7602888335899999,
+          "prefill_ms": {
+            "mean": 4618.453488372093,
+            "p50": 4617.0,
+            "p95": 7745.0,
+            "p99": 8676.329999999996
+          },
+          "ttft_ms": {
+            "mean": 4831.233891860465,
+            "p50": 4851.3061875,
+            "p95": 7966.184099949999,
+            "p99": 8877.853817679998
+          },
+          "itl_ms": {
+            "mean": 45.223665189160776,
+            "p50": 45.7534424306391,
+            "p95": 50.309370154772715,
+            "p99": 52.0457194663238
+          },
+          "e2e_ms": {
+            "mean": 8543.224668337209,
+            "p50": 8101.833192,
+            "p95": 14097.531529349997,
+            "p99": 15369.355052859995
+          }
+        },
+        "migrated": {
+          "requests": 68,
+          "prompt_tokens": 1301295,
+          "cached_tokens": 371856,
+          "computed_tokens": 929439,
+          "cache_read_rate": 0.2857584175763374,
+          "prefill_ms": {
+            "mean": 5499.161764705882,
+            "p50": 5442.0,
+            "p95": 7444.8,
+            "p99": 8668.969999999998
+          },
+          "ttft_ms": {
+            "mean": 5700.190573838235,
+            "p50": 5625.798763499999,
+            "p95": 7664.2140196,
+            "p99": 8835.058132299997
+          },
+          "itl_ms": {
+            "mean": 44.28790823841962,
+            "p50": 45.49196337680867,
+            "p95": 49.793577782826084,
+            "p99": 51.03058467363066
+          },
+          "e2e_ms": {
+            "mean": 9258.745754705882,
+            "p50": 8919.639525499999,
+            "p95": 13355.279814349999,
+            "p99": 15638.118638559998
+          }
+        }
+      },
+      "migration": {
+        "exports": 0,
+        "misses": 0,
+        "exported_tokens": 0,
+        "copied_tokens": 0,
+        "copied_bytes": 0,
+        "export_ms": null,
+        "copy_ms": null,
+        "release_ms": null,
+        "copy_bandwidth_gbps": null
+      }
+    },
+    "migration": {
+      "mode": "migration",
+      "runs": [
+        "migration_r5",
+        "migration_r6"
+      ],
+      "requests": 360,
+      "transitions": 240,
+      "migrations": 84,
+      "migration_rate": 0.35,
+      "prompt_tokens": 6744336,
+      "cached_tokens": 4380384,
+      "computed_tokens": 2363952,
+      "cache_read_rate": 0.649490772701716,
+      "route_counts": {
+        "0": 52,
+        "1": 47,
+        "2": 51,
+        "3": 63,
+        "4": 47,
+        "5": 47,
+        "6": 53
+      },
+      "route_count_range": 16,
+      "benchmark_duration_s": 117.231794264,
+      "request_throughput": 3.070839291167876,
+      "output_token_throughput": 250.71696790557277,
+      "prefill_ms": {
+        "mean": 3763.025,
+        "p50": 3433.5,
+        "p95": 7881.7,
+        "p99": 9457.94
+      },
+      "ttft_ms": {
+        "mean": 4592.445910719444,
+        "p50": 4227.6580825,
+        "p95": 9433.190082650002,
+        "p99": 11613.664076280002
+      },
+      "itl_ms": {
+        "mean": 45.71750382108512,
+        "p50": 46.85743768647838,
+        "p95": 53.91782389841737,
+        "p99": 54.857662038130435
+      },
+      "e2e_ms": {
+        "mean": 8292.380190436112,
+        "p50": 7512.066726499999,
+        "p95": 14329.495781950003,
+        "p99": 16646.213383910002
+      },
+      "by_turn": {
+        "0": {
+          "requests": 120,
+          "prompt_tokens": 1590744,
+          "cached_tokens": 512000,
+          "computed_tokens": 1078744,
+          "cache_read_rate": 0.32186197150515733,
+          "prefill_ms": {
+            "mean": 4850.458333333333,
+            "p50": 4208.0,
+            "p95": 9204.199999999999,
+            "p99": 10365.73
+          },
+          "ttft_ms": {
+            "mean": 5906.583295549999,
+            "p50": 5324.461743,
+            "p95": 11162.26442625,
+            "p99": 11911.832970610001
+          },
+          "itl_ms": {
+            "mean": 42.83764714223775,
+            "p50": 42.82527329558404,
+            "p95": 52.05547808735876,
+            "p99": 54.496420782465236
+          },
+          "e2e_ms": {
+            "mean": 9313.121398691666,
+            "p50": 8779.947285499999,
+            "p95": 15971.470241149998,
+            "p99": 17350.92371364
+          },
+          "migrations": 0
+        },
+        "1": {
+          "requests": 120,
+          "prompt_tokens": 2268700,
+          "cached_tokens": 1595680,
+          "computed_tokens": 673020,
+          "cache_read_rate": 0.7033455282761053,
+          "prefill_ms": {
+            "mean": 3508.8166666666666,
+            "p50": 3388.0,
+            "p95": 5664.75,
+            "p99": 6635.650000000001
+          },
+          "ttft_ms": {
+            "mean": 4382.584814941667,
+            "p50": 4589.5869975000005,
+            "p95": 6819.14994195,
+            "p99": 7765.69319008
+          },
+          "itl_ms": {
+            "mean": 47.328998621738116,
+            "p50": 47.2368668725,
+            "p95": 51.67005041950608,
+            "p99": 54.79678410712
+          },
+          "e2e_ms": {
+            "mean": 8209.0917491,
+            "p50": 7458.389741999999,
+            "p95": 14091.58539355,
+            "p99": 15681.12145329
+          },
+          "migrations": 52
+        },
+        "2": {
+          "requests": 120,
+          "prompt_tokens": 2884892,
+          "cached_tokens": 2272704,
+          "computed_tokens": 612188,
+          "cache_read_rate": 0.7877951756946188,
+          "prefill_ms": {
+            "mean": 2929.8,
+            "p50": 2789.0,
+            "p95": 4735.299999999999,
+            "p99": 6800.480000000003
+          },
+          "ttft_ms": {
+            "mean": 3488.1696216666664,
+            "p50": 3466.1746805,
+            "p95": 5506.243898199999,
+            "p99": 7147.464460640002
+          },
+          "itl_ms": {
+            "mean": 46.9858656992795,
+            "p50": 47.52769087946429,
+            "p95": 54.59888792820682,
+            "p99": 54.876353337260866
+          },
+          "e2e_ms": {
+            "mean": 7354.927423516667,
+            "p50": 6834.110102,
+            "p95": 11725.3364154,
+            "p99": 13231.473906980002
+          },
+          "migrations": 32
+        }
+      },
+      "by_transition": {
+        "stayed": {
+          "requests": 156,
+          "prompt_tokens": 3505599,
+          "cached_tokens": 2691648,
+          "computed_tokens": 813951,
+          "cache_read_rate": 0.7678140026854183,
+          "prefill_ms": {
+            "mean": 3389.4551282051284,
+            "p50": 3264.0,
+            "p95": 5578.0,
+            "p99": 7303.549999999995
+          },
+          "ttft_ms": {
+            "mean": 3611.460736673077,
+            "p50": 3503.768199,
+            "p95": 5841.92760525,
+            "p99": 7541.402708249994
+          },
+          "itl_ms": {
+            "mean": 47.235495003936435,
+            "p50": 47.53905497172619,
+            "p95": 54.5522603502811,
+            "p99": 54.79686349743478
+          },
+          "e2e_ms": {
+            "mean": 7659.222379179487,
+            "p50": 7055.437366,
+            "p95": 12772.8731965,
+            "p99": 15433.783882049991
+          }
+        },
+        "migrated": {
+          "requests": 84,
+          "prompt_tokens": 1647993,
+          "cached_tokens": 1176736,
+          "computed_tokens": 471257,
+          "cache_read_rate": 0.7140418678962835,
+          "prefill_ms": {
+            "mean": 2903.3214285714284,
+            "p50": 2759.5,
+            "p95": 4936.249999999999,
+            "p99": 5680.95
+          },
+          "ttft_ms": {
+            "mean": 4536.93639847619,
+            "p50": 4542.1103594999995,
+            "p95": 6632.223401349999,
+            "p99": 7738.602898580001
+          },
+          "itl_ms": {
+            "mean": 47.012458308428926,
+            "p50": 47.17198351191781,
+            "p95": 53.94837744676357,
+            "p99": 55.09563463092566
+          },
+          "e2e_ms": {
+            "mean": 8010.042970976191,
+            "p50": 7345.0559605,
+            "p95": 13115.070154299998,
+            "p99": 14754.4479202
+          }
+        }
+      },
+      "migration": {
+        "exports": 84,
+        "misses": 0,
+        "exported_tokens": 1176736,
+        "copied_tokens": 649824,
+        "copied_bytes": 95820447744,
+        "export_ms": {
+          "mean": 1417.0349642857143,
+          "p50": 1360.453,
+          "p95": 3088.638049999999,
+          "p99": 3507.40516
+        },
+        "copy_ms": {
+          "mean": 128.1108095238095,
+          "p50": 47.467,
+          "p95": 622.0051999999972,
+          "p99": 1329.55383
+        },
+        "release_ms": {
+          "mean": 835.8467857142857,
+          "p50": 646.1935000000001,
+          "p95": 2482.577199999998,
+          "p99": 3158.4033
+        },
+        "copy_bandwidth_gbps": {
+          "mean": 19.76964293882058,
+          "p50": 24.764440607929473,
+          "p95": 25.92718692660917,
+          "p99": 26.03859416052463
+        }
+      }
+    }
+  },
+  "comparison": {
+    "migration_rate_percentage_points": 6.666666666666665,
+    "cache_read_rate_percentage_points": 8.29465044993306,
+    "computed_tokens_percent": -19.139716682252995,
+    "prefill_ms_mean_percent": -25.324499573066774,
+    "ttft_ms_mean_percent": -17.435922589945086,
+    "itl_ms_mean_percent": 4.109131635463759,
+    "e2e_ms_mean_percent": -9.008108177826424,
+    "request_throughput_percent": 9.566945902698777,
+    "output_token_throughput_percent": 9.566945902698754
+  }
+}

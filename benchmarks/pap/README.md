@@ -48,6 +48,13 @@ keeps later turns on the same PA. It requires explicit conversation IDs and a
 positive `PAP_SESSION_ROUTER_MAX_CONVERSATIONS`; reaching that bound fails the
 request instead of evicting a binding. Other policy values fail before startup.
 
+With Dynamo routing, `PAP_ENABLE_PA_KV_MIGRATION=1` enables same-host prefix-KV
+copy after a conversation changes PA. The source prefix is matched by full
+block hashes and pinned until the selected target finishes its Prefill load.
+The runner audits export/copy/release counts and requires all source pins and
+Gateway release tasks to drain. `PAP_KV_MIGRATION_VERIFY=1` additionally checks
+every copied layer byte-for-byte and is intended only for correctness runs.
+
 A targeted PAP run uses environment configuration:
 
 ```bash

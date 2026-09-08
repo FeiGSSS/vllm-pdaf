@@ -31,7 +31,10 @@ from vllm.v1.core.kv_cache_utils import (
 logger = logging.getLogger("pap_gateway")
 
 PromptHashes: TypeAlias = tuple[ExternalBlockHash, ...]
-PromptRoutingInput: TypeAlias = tuple[list[int], PromptHashes, str | None]
+RawPromptHashes: TypeAlias = tuple[BlockHash, ...]
+PromptRoutingInput: TypeAlias = tuple[
+    list[int], PromptHashes, RawPromptHashes, str | None
+]
 
 
 class PAPPromptTokenizer:
@@ -75,6 +78,10 @@ class PAPPromptTokenizer:
     @property
     def enabled(self) -> bool:
         return self._renderer is not None
+
+    @property
+    def block_size(self) -> int:
+        return self._block_size
 
     async def prompt_hashes(
         self,
@@ -150,12 +157,14 @@ class PAPPromptTokenizer:
         ):
             return None
         prompt = engine_input.get("prompt")
+        raw_hashes = self.raw_hash_token_ids(
+            token_ids,
+            cache_salt=request.get("cache_salt"),
+        )
         return (
             token_ids,
-            self.hash_token_ids(
-                token_ids,
-                cache_salt=request.get("cache_salt"),
-            ),
+            tuple(maybe_convert_block_hash(value) for value in raw_hashes),
+            raw_hashes,
             prompt if isinstance(prompt, str) else None,
         )
 
@@ -174,8 +183,23 @@ class PAPPromptTokenizer:
         *,
         cache_salt: object = None,
     ) -> PromptHashes:
+        return tuple(
+            maybe_convert_block_hash(block_hash)
+            for block_hash in self.raw_hash_token_ids(
+                token_ids,
+                cache_salt=cache_salt,
+            )
+        )
+
+    def raw_hash_token_ids(
+        self,
+        token_ids: Sequence[int],
+        *,
+        cache_salt: object = None,
+    ) -> RawPromptHashes:
+        """Return full hashes for internal cache-block lookup."""
         parent: BlockHash | None = None
-        hashes = []
+        hashes: list[BlockHash] = []
         for start in range(0, len(token_ids) - self._block_size + 1, self._block_size):
             extra_keys = (str(cache_salt),) if start == 0 and cache_salt else None
             parent = hash_block_tokens(
@@ -184,8 +208,13 @@ class PAPPromptTokenizer:
                 token_ids[start : start + self._block_size],
                 extra_keys,
             )
-            hashes.append(maybe_convert_block_hash(parent))
+            hashes.append(parent)
         return tuple(hashes)
 
 
-__all__ = ["PAPPromptTokenizer", "PromptHashes", "PromptRoutingInput"]
+__all__ = [
+    "PAPPromptTokenizer",
+    "PromptHashes",
+    "PromptRoutingInput",
+    "RawPromptHashes",
+]

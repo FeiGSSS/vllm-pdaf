@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pybase64 as base64
 import pytest
 
 from vllm.pap.integration.engine import PAPEngineControl
@@ -355,7 +356,61 @@ def test_control_reports_non_evictable_kv_capacity() -> None:
         "decode_allocation_blocks": 0,
         "decode_allocation_failures": 0,
         "prefill_revocations": 0,
+        "migration_exports_active": 0,
+        "migration_exported_blocks": 0,
     }
+
+
+def test_control_pins_longest_migration_prefix_until_release() -> None:
+    blocks = [SimpleNamespace(block_id=index) for index in (4, 5)]
+    touched = []
+    freed = []
+
+    def get_cached_block(block_hash, group_ids):
+        assert group_ids == [0]
+        return {
+            b"first": [blocks[0]],
+            b"second": [blocks[1]],
+        }.get(block_hash)
+
+    block_pool = SimpleNamespace(
+        get_cached_block=get_cached_block,
+        touch=lambda value: touched.extend(value),
+        free_blocks=lambda value: freed.extend(value),
+    )
+    scheduler = SimpleNamespace(
+        kv_cache_manager=SimpleNamespace(
+            num_kv_cache_groups=1,
+            block_pool=block_pool,
+        ),
+        block_size=16,
+    )
+    executor = SimpleNamespace(
+        collective_rpc=lambda _method: [({"layer_name": "layer.0"},)]
+    )
+    control = PAPEngineControl(scheduler, executor)
+    response = control.apply(
+        "kv_migration_export",
+        {
+            "transfer_id": "transfer",
+            "source_worker_id": 2,
+            "block_hashes_b64": [
+                base64.b64encode(value).decode("ascii")
+                for value in (b"first", b"second", b"missing")
+            ],
+        },
+    )
+
+    assert response["status"] == "exported"
+    assert response["prefix_tokens"] == 32
+    assert response["source_block_ids"] == [4, 5]
+    assert touched == blocks
+    assert control.apply("kv_migration_release", {"transfer_id": "transfer"}) == {
+        "transfer_id": "transfer",
+        "released": True,
+        "blocks": 2,
+    }
+    assert freed == list(reversed(blocks))
 
 
 def test_control_includes_running_and_queued_prefill_tokens() -> None:

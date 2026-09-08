@@ -10,6 +10,8 @@ from typing import Any, SupportsIndex, SupportsInt, TypeAlias, cast
 
 from typing_extensions import Buffer
 
+from vllm.pap.protocol import PAPPrefillKVCacheCatalogDescriptor
+
 _IntInput: TypeAlias = str | Buffer | SupportsInt | SupportsIndex
 
 
@@ -34,6 +36,56 @@ def _optional_positive_int(value: object, *, name: str) -> int | None:
 
 
 @dataclass(frozen=True, slots=True)
+class PAPKVCacheMigration:
+    """A pinned source prefix that can be copied into a selected PA."""
+
+    transfer_id: str
+    source_worker_id: int
+    prefix_tokens: int
+    block_size: int
+    source_block_ids: tuple[int, ...]
+    catalogs: tuple[PAPPrefillKVCacheCatalogDescriptor, ...]
+
+    @classmethod
+    def from_mapping(cls, value: Mapping[str, Any]) -> PAPKVCacheMigration:
+        migration = cls(
+            transfer_id=str(value["transfer_id"]),
+            source_worker_id=int(value["source_worker_id"]),
+            prefix_tokens=int(value["prefix_tokens"]),
+            block_size=int(value["block_size"]),
+            source_block_ids=tuple(int(item) for item in value["source_block_ids"]),
+            catalogs=tuple(
+                PAPPrefillKVCacheCatalogDescriptor.from_dict(item)
+                for item in value["catalogs"]
+            ),
+        )
+        if not migration.transfer_id:
+            raise ValueError("PAP KV migration transfer ID must not be empty")
+        if migration.source_worker_id < 0:
+            raise ValueError("PAP KV migration source worker must be nonnegative")
+        if migration.prefix_tokens <= 0 or migration.block_size <= 0:
+            raise ValueError("PAP KV migration lengths must be positive")
+        if migration.prefix_tokens % migration.block_size:
+            raise ValueError("PAP KV migration prefix must be block aligned")
+        expected_blocks = migration.prefix_tokens // migration.block_size
+        if len(migration.source_block_ids) != expected_blocks:
+            raise ValueError("PAP KV migration source blocks do not cover prefix")
+        if len(set(migration.source_block_ids)) != expected_blocks:
+            raise ValueError("PAP KV migration source blocks must not alias")
+        if not migration.catalogs:
+            raise ValueError("PAP KV migration requires source catalogs")
+        if any(
+            catalog.block_size != migration.block_size for catalog in migration.catalogs
+        ):
+            raise ValueError("PAP KV migration catalog block size mismatch")
+        if len({catalog.layer_name for catalog in migration.catalogs}) != len(
+            migration.catalogs
+        ):
+            raise ValueError("PAP KV migration catalog layers must be unique")
+        return migration
+
+
+@dataclass(frozen=True, slots=True)
 class PAPRequestMetadata:
     """PAP fields carried through vLLM ``kv_transfer_params``."""
 
@@ -46,6 +98,7 @@ class PAPRequestMetadata:
     prefill_kv_handle: str | None = None
     import_prefill_kv_to_attention: bool = False
     attention_kv_installed: bool = False
+    kv_migration: PAPKVCacheMigration | None = None
 
     @classmethod
     def from_mapping(
@@ -58,6 +111,9 @@ class PAPRequestMetadata:
         remote_prefix_len = params.get("pap_remote_prefix_len")
         if remote_prefix_len is None:
             remote_prefix_len = params.get("remote_num_tokens")
+        raw_migration = params.get("pap_kv_migration")
+        if raw_migration is not None and not isinstance(raw_migration, Mapping):
+            raise ValueError("pap_kv_migration must be an object")
         return cls(
             projection_kv_unaware=bool(params.get("pap_projection_kv_unaware")),
             tokenized_input=bool(params.get("pap_tokenized_input")),
@@ -79,6 +135,11 @@ class PAPRequestMetadata:
                 params.get("pap_import_prefill_kv_to_attention")
             ),
             attention_kv_installed=bool(params.get("pap_attention_kv_installed")),
+            kv_migration=(
+                None
+                if raw_migration is None
+                else PAPKVCacheMigration.from_mapping(raw_migration)
+            ),
         )
 
 

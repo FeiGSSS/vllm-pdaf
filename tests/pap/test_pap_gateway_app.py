@@ -15,6 +15,7 @@ import vllm.pap.gateway.lifecycle as gateway_lifecycle
 from vllm.pap.gateway.admission import PAPProjectionAdmission
 from vllm.pap.gateway.app import parse_args
 from vllm.pap.gateway.dynamo_routing import PAPDynamoRouter
+from vllm.pap.gateway.kv_migration import PAPKVCacheMigrationCoordinator
 from vllm.pap.gateway.lifecycle import PAPLifecycleManager
 from vllm.pap.gateway.load_tracker import PAPLoadTracker
 from vllm.pap.gateway.observability import (
@@ -164,6 +165,86 @@ def test_session_round_robin_fails_closed_without_identity_or_capacity() -> None
                 [1], request_id="b", expected_output_tokens=1, conversation_id="b"
             )
         await router.shutdown()
+
+    asyncio.run(run())
+
+
+def test_kv_migration_tracks_previous_pa_and_releases_export() -> None:
+    async def run() -> None:
+        catalog = {
+            "catalog_id": "source",
+            "layer_name": "layer.0",
+            "block_size": 16,
+            "num_kv_heads": 8,
+            "layout": "NHD",
+            "kv_cache": {
+                "dtype": "float16",
+                "shape": [8, 8, 16, 16],
+                "ipc_handle": {"GPU-source": [{"pap_type": "bytes", "data": "eA=="}]},
+            },
+        }
+        export = {
+            "status": "exported",
+            "transfer_id": "r1:0:1",
+            "source_worker_id": 0,
+            "prefix_tokens": 32,
+            "block_size": 16,
+            "source_block_ids": [2, 3],
+            "catalogs": [catalog],
+        }
+        responses = [
+            SimpleNamespace(raise_for_status=lambda: None, json=lambda: export),
+            SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {"released": True},
+            ),
+        ]
+        source = SimpleNamespace(
+            client=SimpleNamespace(post=AsyncMock(side_effect=responses))
+        )
+        coordinator = PAPKVCacheMigrationCoordinator(enabled=True, max_conversations=1)
+
+        coordinator.begin_request("conversation", "r0")
+        assert (
+            await coordinator.prepare(
+                conversation_id="conversation",
+                request_id="r0",
+                target_worker_id=0,
+                raw_block_hashes=(b"a",),
+                prefill_clients=[source, source],
+            )
+            is None
+        )
+        coordinator.record_prefill("conversation", "r0", 0)
+        coordinator.finish_request("conversation", "r0")
+
+        coordinator.begin_request("conversation", "r1")
+        lease = await coordinator.prepare(
+            conversation_id="conversation",
+            request_id="r1",
+            target_worker_id=1,
+            raw_block_hashes=(b"a", b"b"),
+            prefill_clients=[source, source],
+        )
+        assert lease is not None
+        await coordinator.release(lease)
+        coordinator.record_prefill("conversation", "r1", 1)
+        coordinator.finish_request("conversation", "r1")
+
+        assert source.client.post.await_count == 2
+        assert coordinator.stats() == {
+            "enabled": True,
+            "conversation_bindings": 1,
+            "active_conversations": 0,
+            "max_conversations": 1,
+            "attempts": 1,
+            "exports": 1,
+            "misses": 0,
+            "failures": 0,
+            "exported_prefix_tokens": 32,
+            "pending_releases": 0,
+            "healthy": True,
+        }
 
     asyncio.run(run())
 

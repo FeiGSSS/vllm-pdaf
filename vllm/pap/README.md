@@ -78,6 +78,15 @@ evicting a live binding would silently turn into a migration. Set
 `PAP_ROUTING_POLICY=session_round_robin` to enable it. The native Dynamo
 selector remains the owner of the KV event index when the `dynamo` policy is
 selected.
+
+Same-host Dynamo routing can copy a conversation prefix when a later turn moves
+to another PA. Set `PAP_ENABLE_PA_KV_MIGRATION=1`. The Gateway tracks the
+previous PA, asks it to pin the longest matching block-hash prefix, and passes
+its process-lifetime CUDA IPC catalog to the selected target. The target vLLM
+allocator creates its own blocks, the Prefill connector copies only blocks not
+already cached locally, and source pins are released by tracked asynchronous
+Gateway tasks. New turns fail closed after a release failure. Cross-host PA KV
+migration is not implemented by this CUDA IPC path.
 `gateway/tokenizer.py` renders prompt tokens and hashes for routing and local
 load accounting, without a second Python KV-event subscriber.
 `gateway/topology.py` maps the chosen PA to its fixed Projection owner.

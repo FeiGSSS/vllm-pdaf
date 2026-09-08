@@ -369,6 +369,37 @@ if [[ ! "${PAP_SESSION_ROUTER_MAX_CONVERSATIONS}" =~ ^[1-9][0-9]*$ ]]; then
   echo "ERROR: PAP_SESSION_ROUTER_MAX_CONVERSATIONS must be positive" >&2
   exit 2
 fi
+PAP_ENABLE_PA_KV_MIGRATION="${PAP_ENABLE_PA_KV_MIGRATION:-0}"
+if [[ "${PAP_ENABLE_PA_KV_MIGRATION}" != "0" \
+  && "${PAP_ENABLE_PA_KV_MIGRATION}" != "1" ]]; then
+  echo "ERROR: PAP_ENABLE_PA_KV_MIGRATION must be 0 or 1" >&2
+  exit 2
+fi
+PAP_KV_MIGRATION_VERIFY="${PAP_KV_MIGRATION_VERIFY:-0}"
+if [[ "${PAP_KV_MIGRATION_VERIFY}" != "0" \
+  && "${PAP_KV_MIGRATION_VERIFY}" != "1" ]]; then
+  echo "ERROR: PAP_KV_MIGRATION_VERIFY must be 0 or 1" >&2
+  exit 2
+fi
+if [[ "${PAP_KV_MIGRATION_VERIFY}" == "1" \
+  && "${PAP_ENABLE_PA_KV_MIGRATION}" != "1" ]]; then
+  echo "ERROR: PAP_KV_MIGRATION_VERIFY requires PA KV migration" >&2
+  exit 2
+fi
+if [[ "${PAP_ENABLE_PA_KV_MIGRATION}" == "1" \
+  && "${PAP_ROUTING_POLICY}" != "dynamo" ]]; then
+  echo "ERROR: PA KV migration requires Dynamo routing" >&2
+  exit 2
+fi
+PAP_MIGRATION_MAX_CONVERSATIONS="${PAP_MIGRATION_MAX_CONVERSATIONS:-100000}"
+if [[ ! "${PAP_MIGRATION_MAX_CONVERSATIONS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: PAP_MIGRATION_MAX_CONVERSATIONS must be positive" >&2
+  exit 2
+fi
+PAP_GATEWAY_MIGRATION_ARGS=()
+if [[ "${PAP_ENABLE_PA_KV_MIGRATION}" == "1" ]]; then
+  PAP_GATEWAY_MIGRATION_ARGS+=(--enable-pa-kv-migration)
+fi
 PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-256}"
 PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS:-1}"
 PAP_BLOCK_SIZE="${PAP_BLOCK_SIZE:-16}"
@@ -1017,6 +1048,10 @@ wait_gateway_requests_drained() {
       .inflight_requests == 0
       and .lifecycle.active == 0
       and .lifecycle.failed == 0
+      and .kv_migration.active_conversations == 0
+      and .kv_migration.pending_releases == 0
+      and .kv_migration.failures == 0
+      and .kv_migration.healthy == true
       and (
         .dynamo_router.enabled == false
         or (
@@ -1370,6 +1405,53 @@ capture_proxy_topology_stats() {
     || die "Failed to capture PAP proxy topology stats"
 }
 
+audit_migration_sources_drained() {
+  local index
+  for (( index=0; index<PA_COUNT; index++ )); do
+    curl -fsS \
+      "http://127.0.0.1:$((PREFILL_PORT_BASE + index))/v1/pap/prefill/kv-load" \
+      -o "${RUN_ROOT}/prefill_kv_load_final_${index}.json" \
+      || die "Failed to capture final Prefill KV state for PA ${index}"
+  done
+  RUN_ROOT="${RUN_ROOT}" PA_COUNT="${PA_COUNT}" "${PYTHON_BIN}" - <<'PY'
+import json
+import os
+from pathlib import Path
+
+root = Path(os.environ["RUN_ROOT"])
+snapshots = []
+for index in range(int(os.environ["PA_COUNT"])):
+    snapshot = json.loads(
+        (root / f"prefill_kv_load_final_{index}.json").read_text()
+    )
+    snapshots.append(
+        {
+            "pa": index,
+            "migration_exports_active": snapshot["migration_exports_active"],
+            "migration_exported_blocks": snapshot["migration_exported_blocks"],
+        }
+    )
+errors = [
+    f"PA {item['pa']} retains {item['migration_exports_active']} migration exports"
+    for item in snapshots
+    if item["migration_exports_active"] != 0
+]
+(root / "migration_source_audit.json").write_text(
+    json.dumps(
+        {
+            "status": "failed" if errors else "passed",
+            "sources": snapshots,
+            "errors": errors,
+        },
+        indent=2,
+    )
+    + "\n"
+)
+if errors:
+    raise SystemExit("; ".join(errors))
+PY
+}
+
 ensure_ports_free() {
   "${PYTHON_BIN}" - "$@" <<'PY'
 import socket
@@ -1550,6 +1632,11 @@ write_effective_config() {
     printf 'PAP_ROUTING_POLICY=%q\n' "${PAP_ROUTING_POLICY}"
     printf 'PAP_SESSION_ROUTER_MAX_CONVERSATIONS=%q\n' \
       "${PAP_SESSION_ROUTER_MAX_CONVERSATIONS}"
+    printf 'PAP_ENABLE_PA_KV_MIGRATION=%q\n' \
+      "${PAP_ENABLE_PA_KV_MIGRATION}"
+    printf 'PAP_KV_MIGRATION_VERIFY=%q\n' "${PAP_KV_MIGRATION_VERIFY}"
+    printf 'PAP_MIGRATION_MAX_CONVERSATIONS=%q\n' \
+      "${PAP_MIGRATION_MAX_CONVERSATIONS}"
     printf 'PAP_DYNAMO_SITE_PACKAGES=%q\n' "${PAP_DYNAMO_SITE_PACKAGES}"
     printf 'PAP_DYNAMO_PREFILL_LOAD_SCALE=%q\n' \
       "${PAP_DYNAMO_PREFILL_LOAD_SCALE}"
@@ -1637,6 +1724,7 @@ write_topology_manifest() {
   ATTENTION_TCP_PORT_BASE="${ATTENTION_TCP_PORT_BASE}" \
   PROJECTION_PORT_BASE="${PROJECTION_PORT_BASE}" \
   PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY}" \
+  PAP_ENABLE_PA_KV_MIGRATION="${PAP_ENABLE_PA_KV_MIGRATION}" \
   "${PYTHON_BIN}" - <<'PY'
 import json
 import os
@@ -1652,6 +1740,7 @@ def base(name: str) -> int:
 manifest = {
     "topology": os.environ["TOPOLOGY"],
     "routing_policy": os.environ["PAP_ROUTING_POLICY"],
+    "pa_kv_migration": os.environ["PAP_ENABLE_PA_KV_MIGRATION"] == "1",
     "pa_groups": [
         {
             "id": index,
@@ -1715,6 +1804,7 @@ write_run_metadata() {
   PA_COUNT="${PA_COUNT}" \
   PROJECTION_COUNT="${PROJECTION_COUNT}" \
   PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY}" \
+  PAP_ENABLE_PA_KV_MIGRATION="${PAP_ENABLE_PA_KV_MIGRATION}" \
   RUN_ID="${RUN_ID}" \
   "${PYTHON_BIN}" - <<'PY'
 import json
@@ -1730,6 +1820,7 @@ metadata = {
     "pa_count": pa_count,
     "projection_count": projection_count,
     "routing_policy": os.environ["PAP_ROUTING_POLICY"],
+    "pa_kv_migration": os.environ["PAP_ENABLE_PA_KV_MIGRATION"] == "1",
     "load_accounting": "gateway_request_lifecycle",
     "run_id": os.environ["RUN_ID"],
     "result_root": os.environ["RUN_ROOT"],
@@ -1849,6 +1940,7 @@ audit_xy_routes() {
     PREFILL_PORT_BASE="${PREFILL_PORT_BASE}" \
     PROJECTION_PORT_BASE="${PROJECTION_PORT_BASE}" \
     PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY}" \
+    PAP_ENABLE_PA_KV_MIGRATION="${PAP_ENABLE_PA_KV_MIGRATION}" \
     PAP_AIPERF_SESSIONS="${PAP_AIPERF_SESSIONS}" \
     ALLOW_PREDECODE_CANCELLATION="${PAP_AIPERF_ALLOW_PREDECODE_CANCELLATION}" \
     "${PYTHON_BIN}" - <<'PY'
@@ -1866,6 +1958,7 @@ projection_count = int(os.environ["PROJECTION_COUNT"])
 prefill_base = int(os.environ["PREFILL_PORT_BASE"])
 projection_base = int(os.environ["PROJECTION_PORT_BASE"])
 routing_policy = os.environ["PAP_ROUTING_POLICY"]
+kv_migration_enabled = os.environ["PAP_ENABLE_PA_KV_MIGRATION"] == "1"
 allow_predecode_cancellation = (
     os.environ["ALLOW_PREDECODE_CANCELLATION"] == "1"
 )
@@ -1968,6 +2061,16 @@ if routing_policy == "session_round_robin":
         "worker_counts": dict(sorted(Counter(actual_workers).items())),
     }
 
+topology_stats = json.loads((run_root / "topology_runtime_stats.json").read_text())
+migration_stats = topology_stats["kv_migration"]
+export_marker = '"POST /v1/pap/prefill/kv-migration/export HTTP/1.1" 200 OK'
+release_migration_marker = (
+    '"POST /v1/pap/prefill/kv-migration/release HTTP/1.1" 200 OK'
+)
+migration_export_200 = 0
+migration_release_200 = 0
+migration_copy_logs = 0
+
 control_counts = {}
 total_releases = 0
 release_marker = '"POST /v1/pap/prefill/lease-release HTTP/1.1" 200 OK'
@@ -1979,6 +2082,9 @@ for index in range(pa_count):
     )
     releases = prefill_text.count(release_marker)
     commits = prefill_text.count(commit_marker)
+    migration_export_200 += prefill_text.count(export_marker)
+    migration_release_200 += prefill_text.count(release_migration_marker)
+    migration_copy_logs += prefill_text.count("PAP KV migration copied request_id=")
     routed = pa_routes[port]
     total_releases += releases
     control_counts[port] = {
@@ -1999,6 +2105,28 @@ for index in range(pa_count):
             f"PA port {port} commit count {commits} < routed {routed}"
         )
 
+if bool(migration_stats["enabled"]) != kv_migration_enabled:
+    errors.append("Gateway KV migration mode differs from effective configuration")
+if migration_stats["active_conversations"] != 0:
+    errors.append("KV migration conversations did not drain")
+if migration_stats["pending_releases"] != 0:
+    errors.append("KV migration source releases did not drain")
+if migration_stats["failures"] != 0 or not migration_stats["healthy"]:
+    errors.append("KV migration coordinator reported a failure")
+if migration_stats["attempts"] != (
+    migration_stats["exports"] + migration_stats["misses"]
+):
+    errors.append("KV migration attempt accounting is inconsistent")
+if migration_export_200 != migration_stats["attempts"]:
+    errors.append("KV migration export HTTP count is inconsistent")
+if migration_release_200 != migration_stats["exports"]:
+    errors.append("KV migration source releases do not match exports")
+if not kv_migration_enabled and any(
+    migration_stats[key] != 0
+    for key in ("attempts", "exports", "misses", "failures")
+):
+    errors.append("disabled KV migration reported activity")
+
 audit = {
     "status": "failed" if errors else "passed",
     "route_count": len(routes),
@@ -2007,6 +2135,12 @@ audit = {
     "pair_routes": dict(sorted(pair_routes.items())),
     "expected_pair_routes": dict(sorted(expected_pair_routes.items())),
     "session_placement": session_placement,
+    "kv_migration": {
+        **migration_stats,
+        "export_http_200": migration_export_200,
+        "release_http_200": migration_release_200,
+        "worker_copy_logs": migration_copy_logs,
+    },
     "prefill_control_counts": control_counts,
     "total_lease_release_200": total_releases,
     "allow_predecode_cancellation": allow_predecode_cancellation,
@@ -2397,6 +2531,8 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
         .paths
         | has("/v1/pap/prefill/decode-commit")
           and has("/v1/pap/prefill/lease-release")
+          and has("/v1/pap/prefill/kv-migration/export")
+          and has("/v1/pap/prefill/kv-migration/release")
       ' >/dev/null \
     || die "PAP Prefill ${idx} control plugin routes are missing"
 done
@@ -2444,6 +2580,8 @@ env \
   --dynamo-prefill-load-scale "${PAP_DYNAMO_PREFILL_LOAD_SCALE}" \
   --session-routing-max-conversations \
     "${PAP_SESSION_ROUTER_MAX_CONVERSATIONS}" \
+  --migration-max-conversations "${PAP_MIGRATION_MAX_CONVERSATIONS}" \
+  "${PAP_GATEWAY_MIGRATION_ARGS[@]}" \
   --routing-policy "${PAP_ROUTING_POLICY}" \
   > "${RUN_LOG_DIR}/proxy.log" 2>&1 &
 PIDS+=("$!")
@@ -2489,6 +2627,7 @@ fi
 wait_prefill_torch_profiles
 wait_gateway_requests_drained
 wait_attention_sessions_drained
+audit_migration_sources_drained
 if [[ -n "${PAP_AIPERF_BENCHMARK_DURATION_SECONDS}" ]]; then
   NUM_PROMPTS="$(
     rg -o 'request_id=\S+ pa=[^:\s]+:[0-9]+.*? projection=[^:\s]+:[0-9]+' \

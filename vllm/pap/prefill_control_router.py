@@ -44,6 +44,16 @@ class DecodeAllocationRequest(BaseModel):
     reserve_tokens: int = Field(default=256, ge=0, le=4096)
 
 
+class KVMigrationExportRequest(BaseModel):
+    transfer_id: str = Field(min_length=1)
+    source_worker_id: int = Field(ge=0)
+    block_hashes_b64: list[str] = Field(min_length=1)
+
+
+class KVMigrationReleaseRequest(BaseModel):
+    transfer_id: str = Field(min_length=1)
+
+
 @dataclass(slots=True)
 class _ControlItem:
     operation: str
@@ -194,6 +204,22 @@ def build_prefill_control_router() -> APIRouter:
             "decode_allocate", req.model_dump(), wait=True
         )
 
+    @router.post("/v1/pap/prefill/kv-migration/export")
+    async def export_kv_migration(
+        req: KVMigrationExportRequest, raw_request: Request
+    ) -> dict[str, Any]:
+        return await _dispatcher(raw_request).submit(
+            "kv_migration_export", req.model_dump(), wait=True
+        )
+
+    @router.post("/v1/pap/prefill/kv-migration/release")
+    async def release_kv_migration(
+        req: KVMigrationReleaseRequest, raw_request: Request
+    ) -> dict[str, Any]:
+        return await _dispatcher(raw_request).submit(
+            "kv_migration_release", req.model_dump(), wait=True
+        )
+
     @router.post("/v1/pap/prefill/lease-release")
     async def release_lease(
         req: LeaseReleaseRequest, raw_request: Request
@@ -238,6 +264,8 @@ def build_projection_control_router() -> APIRouter:
 __all__ = [
     "DecodeAllocationRequest",
     "DecodeCommitRequest",
+    "KVMigrationExportRequest",
+    "KVMigrationReleaseRequest",
     "LeaseReleaseRequest",
     "PAPControlDispatcher",
     "RequestQuiesceRequest",

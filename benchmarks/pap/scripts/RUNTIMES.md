@@ -56,6 +56,21 @@ patch, binding, lockfile and library identities in `build.txt`; experiment
 provenance preserves the build record and CPU library alongside source/config.
 Official DP/PD packages and their launchers remain unchanged.
 
+## Same-host PA KV migration
+
+`PAP_ENABLE_PA_KV_MIGRATION=1` keeps Dynamo selection and copies reusable KV
+when the chosen PA differs from the conversation's previous PA. Source Prefill
+control resolves the longest block-hash prefix and pins those allocator blocks.
+Its worker exports cached process-lifetime CUDA IPC handles. The target
+connector allocates authoritative destination blocks and submits coalesced
+CUDA peer copies before its model forward. The source pin is released by a
+Gateway-owned task after target Prefill returns; release failures make the
+coordinator unhealthy and reject later conversation turns.
+
+The path is TP1 and same-host only. It does not fall back to recomputing after a
+control or copy error. An ordinary source cache miss is reported explicitly and
+allows normal Prefill, because there is then no source KV to move.
+
 ## Same-node NIXL (Dynamo PD baselines)
 
 Install once, from the repository root:

@@ -40,7 +40,9 @@ def _resolve_ipc_gpu_uuid(
     )
 
 
-def open_ipc_tensor_handle(handle: PAPCudaIPCTensorHandle) -> torch.Tensor:
+def open_ipc_tensor_handle(
+    handle: PAPCudaIPCTensorHandle, *, allow_remote_device: bool = False
+) -> torch.Tensor:
     """Open one CUDA IPC tensor handle on the current physical GPU."""
     from torch.multiprocessing.reductions import rebuild_cuda_tensor
 
@@ -49,6 +51,8 @@ def open_ipc_tensor_handle(handle: PAPCudaIPCTensorHandle) -> torch.Tensor:
     physical_gpu_id = str(props.uuid)
     ipc_handle = handle.ipc_handle
     ipc_gpu_id = _resolve_ipc_gpu_uuid(physical_gpu_id, list(ipc_handle))
+    if ipc_gpu_id is None and allow_remote_device and len(ipc_handle) == 1:
+        ipc_gpu_id = next(iter(ipc_handle))
     if ipc_gpu_id is None:
         raise ValueError(
             f"IPC handle not found for GPU UUID {physical_gpu_id}. "
@@ -148,7 +152,7 @@ def _gpu_uuid_for_tensor(tensor: torch.Tensor) -> str:
     return str(torch.cuda.get_device_properties(device_index).uuid)
 
 
-def _make_cuda_ipc_tensor_handle(
+def make_cuda_ipc_tensor_handle(
     tensor: torch.Tensor,
 ) -> PAPCudaIPCTensorHandle:
     from vllm.pap.protocol import PAPCudaIPCTensorHandle
@@ -275,7 +279,7 @@ def register_prefill_kv_catalog(
         block_size=block_size,
         num_kv_heads=num_kv_heads,
         layout=layout,
-        kv_cache=_make_cuda_ipc_tensor_handle(kv_cache),
+        kv_cache=make_cuda_ipc_tensor_handle(kv_cache),
     )
     request_body = serialize_tensor_bundle(
         {

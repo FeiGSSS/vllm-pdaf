@@ -18,6 +18,7 @@ from fastapi import FastAPI, Request
 from vllm.pap.config import reject_removed_pap_flags
 from vllm.pap.gateway.admission import PAPProjectionAdmission
 from vllm.pap.gateway.dynamo_routing import PAPDynamoRouter
+from vllm.pap.gateway.kv_migration import PAPKVCacheMigrationCoordinator
 from vllm.pap.gateway.lifecycle import PAPLifecycleManager
 from vllm.pap.gateway.load_tracker import PAPLoadTracker
 from vllm.pap.gateway.request_pipeline import _handle_openai_request
@@ -53,6 +54,8 @@ async def lifespan(app: FastAPI):
     reject_removed_pap_flags(os.environ)
     if args.routing_policy not in {"dynamo", "session_round_robin"}:
         raise ValueError(f"unsupported PAP routing policy: {args.routing_policy}")
+    if args.enable_pa_kv_migration and args.routing_policy != "dynamo":
+        raise ValueError("PA KV migration requires Dynamo routing")
     app.state.groups = parse_pap_groups(args.pap_groups)
     app.state.projections = parse_projection_instances(args.projections)
     app.state.pap_active_request_ids = set()
@@ -64,6 +67,10 @@ async def lifespan(app: FastAPI):
     }
     app.state.pap_load_tracker = PAPLoadTracker(app.state.prefill_clients)
     await app.state.pap_load_tracker.start()
+    app.state.pap_kv_migration = PAPKVCacheMigrationCoordinator(
+        enabled=args.enable_pa_kv_migration,
+        max_conversations=args.migration_max_conversations,
+    )
     event_endpoints = tuple(
         endpoint.strip()
         for endpoint in args.kv_event_endpoints.split(",")
@@ -116,6 +123,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await app.state.pap_kv_migration.shutdown()
         await app.state.pap_dynamo_router.shutdown()
         await app.state.pap_lifecycle_manager.shutdown()
         attention_clients = [
@@ -162,6 +170,7 @@ async def health() -> dict[str, Any]:
         "load_tracker": app.state.pap_load_tracker.stats(),
         "prompt_tokenizer": {"enabled": app.state.pap_prompt_tokenizer.enabled},
         "dynamo_router": app.state.pap_dynamo_router.stats(),
+        "kv_migration": app.state.pap_kv_migration.stats(),
         "lifecycle": app.state.pap_lifecycle_manager.stats(),
     }
 
@@ -181,6 +190,7 @@ async def topology_stats() -> dict[str, Any]:
         "load_tracker": app.state.pap_load_tracker.stats(),
         "prompt_tokenizer": {"enabled": app.state.pap_prompt_tokenizer.enabled},
         "dynamo_router": app.state.pap_dynamo_router.stats(),
+        "kv_migration": app.state.pap_kv_migration.stats(),
         "lifecycle": app.state.pap_lifecycle_manager.stats(),
     }
 
@@ -263,11 +273,25 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=int(os.environ.get("PAP_SESSION_ROUTER_MAX_CONVERSATIONS", "100000")),
     )
+    parser.add_argument(
+        "--enable-pa-kv-migration",
+        action=argparse.BooleanOptionalAction,
+        default=os.environ.get("PAP_ENABLE_PA_KV_MIGRATION", "0") == "1",
+    )
+    parser.add_argument(
+        "--migration-max-conversations",
+        type=int,
+        default=int(os.environ.get("PAP_MIGRATION_MAX_CONVERSATIONS", "100000")),
+    )
     args = parser.parse_args()
     if args.routing_policy not in {"dynamo", "session_round_robin"}:
         parser.error(f"unsupported PAP routing policy: {args.routing_policy}")
     if args.session_routing_max_conversations <= 0:
         parser.error("session routing conversation limit must be positive")
+    if args.migration_max_conversations <= 0:
+        parser.error("KV migration conversation limit must be positive")
+    if args.enable_pa_kv_migration and args.routing_policy != "dynamo":
+        parser.error("PA KV migration requires Dynamo routing")
     return args
 
 

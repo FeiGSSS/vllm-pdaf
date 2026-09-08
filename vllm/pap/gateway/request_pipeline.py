@@ -155,7 +155,9 @@ async def _handle_parsed_openai_request(
     prefix_input = await tokenizer.prompt_hashes(api_path, req_data)
     if prefix_input is None:
         raise RuntimeError("Dynamo routing requires Gateway prompt token IDs")
-    routing_token_ids, prompt_hashes, routing_prompt_text = prefix_input
+    routing_token_ids, prompt_hashes, raw_prompt_hashes, routing_prompt_text = (
+        prefix_input
+    )
     initial_context_tokens = len(routing_token_ids)
     tokenization_ms = (
         (time.perf_counter() - tokenization_start) * 1000.0 if profile else 0.0
@@ -182,6 +184,7 @@ async def _handle_parsed_openai_request(
     prefill = request.app.state.prefill_clients[group]
     attention_clients = request.app.state.attention_clients[group]
     load_tracker = request.app.state.pap_load_tracker
+    kv_migration = request.app.state.pap_kv_migration
     load_tracker.begin_request(
         request_id,
         group,
@@ -198,6 +201,7 @@ async def _handle_parsed_openai_request(
     def finish_request() -> None:
         dynamo_router.finish_request(request_id)
         load_tracker.finish_request(request_id)
+        kv_migration.finish_request(conversation_id, request_id)
         active_request_ids.discard(request_id)
 
     lifecycle = request.app.state.pap_lifecycle_manager.create(
@@ -211,7 +215,11 @@ async def _handle_parsed_openai_request(
         on_finished=finish_request,
     )
     request.app.state.pap_pending_route_request_ids.discard(request_id)
+    migration_lease = None
+    migration_prefix_tokens = 0
+    migration_ms = 0.0
     try:
+        kv_migration.begin_request(conversation_id, request_id)
         register_start = time.perf_counter() if profile else 0.0
         attention_sessions = await register_attention_handles(
             attention_clients,
@@ -239,17 +247,44 @@ async def _handle_parsed_openai_request(
             pap_prefill_kv_handle=str(attention_session.get("prefill_kv_handle")),
             pap_mode=request.app.state.args.pap_mode,
         )
+        migration_start = time.perf_counter() if profile else 0.0
+        migration_hash_count = max(
+            0,
+            (len(routing_token_ids) - 1) // tokenizer.block_size,
+        )
+        migration_lease = await kv_migration.prepare(
+            conversation_id=conversation_id,
+            request_id=request_id,
+            target_worker_id=group_index,
+            raw_block_hashes=raw_prompt_hashes[:migration_hash_count],
+            prefill_clients=[
+                request.app.state.prefill_clients[item]
+                for item in request.app.state.groups
+            ],
+        )
+        if migration_lease is not None:
+            migration_prefix_tokens = int(migration_lease.metadata["prefix_tokens"])
+            prefill_payload["kv_transfer_params"]["pap_kv_migration"] = (
+                migration_lease.metadata
+            )
+        migration_ms = (
+            (time.perf_counter() - migration_start) * 1000.0 if profile else 0.0
+        )
         prefill_payload_ms = (
             (time.perf_counter() - prefill_payload_start) * 1000.0 if profile else 0.0
         )
         prefill_start = time.time()
         lifecycle.mark_prefill_started()
-        prefill_resp = await _post_json(
-            prefill,
-            api_path,
-            prefill_payload,
-            request_id,
-        )
+        try:
+            prefill_resp = await _post_json(
+                prefill,
+                api_path,
+                prefill_payload,
+                request_id,
+            )
+        finally:
+            if migration_lease is not None:
+                kv_migration.release_after_prefill(migration_lease)
         lifecycle.mark_prefill_completed()
         prefill_ms = int((time.time() - prefill_start) * 1000)
 
@@ -299,6 +334,7 @@ async def _handle_parsed_openai_request(
             ),
             prefill_ms=prefill_ms,
         )
+        kv_migration.record_prefill(conversation_id, request_id, group_index)
         exact_prompt_hashes = tokenizer.hash_token_ids(
             prompt_token_ids,
             cache_salt=req_data.get("cache_salt"),
@@ -353,7 +389,8 @@ async def _handle_parsed_openai_request(
         logger.info(
             "request_id=%s pa=%s:%d attention=%s:%s projection=%s:%d "
             "pa_index=%d projection_index=%d pair=%s prefill_ms=%d "
-            "prefill_prefix_len=%s attention_ready=%s projection_kv_keys=%s",
+            "prefill_prefix_len=%s migration_prefix_tokens=%d "
+            "attention_ready=%s projection_kv_keys=%s",
             request_id,
             group.prefill_host,
             group.prefill_port,
@@ -366,6 +403,7 @@ async def _handle_parsed_openai_request(
             pair_name,
             prefill_ms,
             prefix_len,
+            migration_prefix_tokens,
             attention_ready,
             sorted(projection_kv_params.keys()),
         )
@@ -373,12 +411,14 @@ async def _handle_parsed_openai_request(
             logger.info(
                 "PAP proxy prefill IPC profile request_id=%s register_ms=%.3f "
                 "tokenization_ms=%.3f routing_ms=%.3f "
-                "prefill_payload_ms=%.3f prefill_ms=%d readiness_ms=%.3f "
+                "migration_ms=%.3f prefill_payload_ms=%.3f prefill_ms=%d "
+                "readiness_ms=%.3f "
                 "projection_payload_ms=%.3f pre_projection_ms=%.3f",
                 request_id,
                 register_ms,
                 tokenization_ms,
                 routing_ms,
+                migration_ms,
                 prefill_payload_ms,
                 prefill_ms,
                 attention_ready_ms,
@@ -392,6 +432,7 @@ async def _handle_parsed_openai_request(
             "X-PAP-Projection": str(projection.port),
             "X-PAP-Projection-Index": str(projection_index),
             "X-PAP-Pair": pair_name,
+            "X-PAP-KV-Migration-Prefix-Tokens": str(migration_prefix_tokens),
         }
         response_headers.update(_prefill_usage_headers(prefill_resp))
 
