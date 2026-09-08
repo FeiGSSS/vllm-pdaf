@@ -81,7 +81,7 @@ async def _handle_openai_request(api_path: str, request: Request):
                 "error": {
                     "type": "invalid_request_error",
                     "message": (
-                        "PAP Dynamo routing does not support cache_salt isolation; "
+                        "PAP routing does not support cache_salt isolation; "
                         "the current selector cannot index salted KV events safely."
                     ),
                 }

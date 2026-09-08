@@ -21,6 +21,7 @@ from vllm.pap.gateway.dynamo_routing import PAPDynamoRouter
 from vllm.pap.gateway.lifecycle import PAPLifecycleManager
 from vllm.pap.gateway.load_tracker import PAPLoadTracker
 from vllm.pap.gateway.request_pipeline import _handle_openai_request
+from vllm.pap.gateway.session_routing import PAPSessionRoundRobinRouter
 from vllm.pap.gateway.tokenizer import PAPPromptTokenizer
 from vllm.pap.gateway.topology import (
     _make_client,
@@ -50,8 +51,8 @@ def _parse_hf_overrides(value: str) -> dict[str, Any]:
 async def lifespan(app: FastAPI):
     args = app.state.args
     reject_removed_pap_flags(os.environ)
-    if args.routing_policy != "dynamo":
-        raise ValueError("PAP supports only Dynamo routing")
+    if args.routing_policy not in {"dynamo", "session_round_robin"}:
+        raise ValueError(f"unsupported PAP routing policy: {args.routing_policy}")
     app.state.groups = parse_pap_groups(args.pap_groups)
     app.state.projections = parse_projection_instances(args.projections)
     app.state.pap_active_request_ids = set()
@@ -81,16 +82,22 @@ async def lifespan(app: FastAPI):
             int(snapshot["total_kv_blocks"])
             for snapshot in app.state.pap_load_tracker.snapshot().values()
         ]
-    app.state.pap_dynamo_router = await PAPDynamoRouter.create(
-        app.state.groups,
-        event_endpoints=event_endpoints,
-        site_packages=args.dynamo_site_packages,
-        model_name=args.dynamo_model_name,
-        block_size=args.prefix_block_size,
-        max_num_batched_tokens=args.dynamo_max_num_batched_tokens,
-        total_kv_blocks=total_kv_blocks,
-        prefill_load_scale=args.dynamo_prefill_load_scale,
-    )
+    if args.routing_policy == "dynamo":
+        app.state.pap_dynamo_router = await PAPDynamoRouter.create(
+            app.state.groups,
+            event_endpoints=event_endpoints,
+            site_packages=args.dynamo_site_packages,
+            model_name=args.dynamo_model_name,
+            block_size=args.prefix_block_size,
+            max_num_batched_tokens=args.dynamo_max_num_batched_tokens,
+            total_kv_blocks=total_kv_blocks,
+            prefill_load_scale=args.dynamo_prefill_load_scale,
+        )
+    else:
+        app.state.pap_dynamo_router = PAPSessionRoundRobinRouter(
+            app.state.groups,
+            max_conversations=args.session_routing_max_conversations,
+        )
     app.state.attention_clients = {}
     for group in app.state.groups:
         if isinstance(group.attention_port, int):
@@ -248,12 +255,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--routing-policy",
         default=os.environ.get("PAP_ROUTING_POLICY", "dynamo"),
-        choices=("dynamo",),
-        help="PAP supports only Dynamo KV-aware PA routing",
+        choices=("dynamo", "session_round_robin"),
+        help="PA routing policy",
+    )
+    parser.add_argument(
+        "--session-routing-max-conversations",
+        type=int,
+        default=int(os.environ.get("PAP_SESSION_ROUTER_MAX_CONVERSATIONS", "100000")),
     )
     args = parser.parse_args()
-    if args.routing_policy != "dynamo":
-        parser.error("PAP supports only Dynamo routing; check PAP_ROUTING_POLICY")
+    if args.routing_policy not in {"dynamo", "session_round_robin"}:
+        parser.error(f"unsupported PAP routing policy: {args.routing_policy}")
+    if args.session_routing_max_conversations <= 0:
+        parser.error("session routing conversation limit must be positive")
     return args
 
 

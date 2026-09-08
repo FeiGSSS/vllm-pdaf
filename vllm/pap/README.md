@@ -70,9 +70,14 @@ non-evictable KV saturation without weakening this ownership rule.
 `gateway/lifecycle.py` remains separate: it owns the entire distributed
 request, including engine cancellation and router reservations, not only KV.
 
-PAP supports only Dynamo PA selection, on every conversation turn. Retired
-round-robin and conversation-affinity policies fail validation; there is no
-fallback selector. The native Dynamo selector owns the KV event index.
+PAP defaults to Dynamo PA selection on every conversation turn. The optional
+`session_round_robin` policy assigns each new conversation to the next PA and
+keeps all later turns on that PA. It requires an explicit conversation ID and
+fails closed when `PAP_SESSION_ROUTER_MAX_CONVERSATIONS` is reached, because
+evicting a live binding would silently turn into a migration. Set
+`PAP_ROUTING_POLICY=session_round_robin` to enable it. The native Dynamo
+selector remains the owner of the KV event index when the `dynamo` policy is
+selected.
 `gateway/tokenizer.py` renders prompt tokens and hashes for routing and local
 load accounting, without a second Python KV-event subscriber.
 `gateway/topology.py` maps the chosen PA to its fixed Projection owner.

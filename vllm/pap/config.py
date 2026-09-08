@@ -77,6 +77,7 @@ class PAPRoutingPolicy(str, Enum):
     """The supported PAP PA selection policy."""
 
     DYNAMO = "dynamo"
+    SESSION_ROUND_ROBIN = "session_round_robin"
 
 
 class PAPMPSMode(str, Enum):

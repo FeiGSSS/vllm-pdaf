@@ -2,10 +2,13 @@
 set -euo pipefail
 
 PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-dynamo}"
-if [[ "${PAP_ROUTING_POLICY}" != "dynamo" ]]; then
-  echo "ERROR: PAP supports only Dynamo routing; remove the retired PAP_ROUTING_POLICY value" >&2
-  exit 2
-fi
+case "${PAP_ROUTING_POLICY}" in
+  dynamo | session_round_robin) ;;
+  *)
+    echo "ERROR: unsupported PAP routing policy: ${PAP_ROUTING_POLICY}" >&2
+    exit 2
+    ;;
+esac
 
 # PAP service/workload runner used by project-owned benchmark entrypoints.
 
@@ -345,7 +348,8 @@ PAP_UNIFIED_MD_CACHE_LIMIT="${PAP_UNIFIED_MD_CACHE_LIMIT:-256}"
 PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT:-256}"
 [[ ! -v PAP_DYNAMO_PYTHON ]] || die "PAP_DYNAMO_PYTHON is retired; build the PAP-only Dynamo router dependency"
 PAP_DYNAMO_SITE_PACKAGES="${PAP_DYNAMO_SITE_PACKAGES:-${ROOT_DIR}/.local/pap-dynamo-router}"
-"${PYTHON_BIN}" - "${PAP_DYNAMO_SITE_PACKAGES}" <<'PY'
+if [[ "${PAP_ROUTING_POLICY}" == "dynamo" ]]; then
+  "${PYTHON_BIN}" - "${PAP_DYNAMO_SITE_PACKAGES}" <<'PY'
 import sys
 sys.path.insert(0, sys.argv[1])
 try:
@@ -356,9 +360,15 @@ service = SelectionService(indexer_threads=1)
 assert service.reservation_lifetime == "explicit-owner-v1"
 service.shutdown()
 PY
+fi
 PAP_DYNAMO_MODEL_NAME="${PAP_DYNAMO_MODEL_NAME:-pap}"
 PAP_DYNAMO_PREFILL_LOAD_SCALE="${PAP_DYNAMO_PREFILL_LOAD_SCALE:-2.0}"
 PAP_DYNAMO_ROUTING_TRACE_OUTPUT="${PAP_DYNAMO_ROUTING_TRACE_OUTPUT:-}"
+PAP_SESSION_ROUTER_MAX_CONVERSATIONS="${PAP_SESSION_ROUTER_MAX_CONVERSATIONS:-100000}"
+if [[ ! "${PAP_SESSION_ROUTER_MAX_CONVERSATIONS}" =~ ^[1-9][0-9]*$ ]]; then
+  echo "ERROR: PAP_SESSION_ROUTER_MAX_CONVERSATIONS must be positive" >&2
+  exit 2
+fi
 PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-256}"
 PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS:-1}"
 PAP_BLOCK_SIZE="${PAP_BLOCK_SIZE:-16}"
@@ -1011,15 +1021,25 @@ wait_gateway_requests_drained() {
         .dynamo_router.enabled == false
         or (
           .dynamo_router.healthy == true
-          and .dynamo_router.reservation_lifetime == "explicit-owner-v1"
           and .dynamo_router.failures == 0
           and .dynamo_router.active_reservations == 0
           and .dynamo_router.pending_cleanup == 0
           and .dynamo_router.pending_selections == 0
-          and ([.dynamo_router.loads[].pending_count] | all(. == 0))
-          and ([.dynamo_router.loads[].loads[] |
-            .active_requests, .potential_prefill_tokens, .potential_decode_blocks]
-            | all(. == 0))
+          and (
+            (
+              .routing_policy == "dynamo"
+              and .dynamo_router.reservation_lifetime == "explicit-owner-v1"
+              and ([.dynamo_router.loads[].pending_count] | all(. == 0))
+              and ([.dynamo_router.loads[].loads[] |
+                .active_requests, .potential_prefill_tokens,
+                .potential_decode_blocks] | all(. == 0))
+            )
+            or (
+              .routing_policy == "session_round_robin"
+              and .dynamo_router.policy == "session_round_robin"
+              and .dynamo_router.reservation_lifetime == "gateway-request-v1"
+            )
+          )
         )
       )
     ' <<< "${response}" >/dev/null 2>&1; then
@@ -1528,6 +1548,8 @@ write_effective_config() {
     printf 'ENABLE_AUTO_TOOL_CHOICE=%q\nTOOL_CALL_PARSER=%q\n' \
       "${ENABLE_AUTO_TOOL_CHOICE}" "${TOOL_CALL_PARSER}"
     printf 'PAP_ROUTING_POLICY=%q\n' "${PAP_ROUTING_POLICY}"
+    printf 'PAP_SESSION_ROUTER_MAX_CONVERSATIONS=%q\n' \
+      "${PAP_SESSION_ROUTER_MAX_CONVERSATIONS}"
     printf 'PAP_DYNAMO_SITE_PACKAGES=%q\n' "${PAP_DYNAMO_SITE_PACKAGES}"
     printf 'PAP_DYNAMO_PREFILL_LOAD_SCALE=%q\n' \
       "${PAP_DYNAMO_PREFILL_LOAD_SCALE}"
@@ -1865,7 +1887,7 @@ pair_routes = Counter(
 expected_projection_routes = Counter()
 expected_pair_routes = Counter()
 errors = []
-if routing_policy != "dynamo":
+if routing_policy not in {"dynamo", "session_round_robin"}:
     raise SystemExit(f"unsupported PAP routing policy {routing_policy!r}")
 groups_per_projection = (pa_count + projection_count - 1) // projection_count
 for pa_port, projection_port in routes:
@@ -1898,6 +1920,53 @@ if pair_routes != expected_pair_routes:
         f"PA/Projection pair counts {dict(pair_routes)} != expected "
         f"{dict(expected_pair_routes)}"
     )
+
+session_placement = None
+if routing_policy == "session_round_robin":
+    placement_pattern = re.compile(
+        r"PAP session round-robin placement request_id=\S+ "
+        r"conversation_id=(\S+) selected_pa=(\d+) new_binding=(True|False)"
+    )
+    placements = [
+        (match.group(1), int(match.group(2)), match.group(3) == "True")
+        for match in placement_pattern.finditer(proxy_text)
+    ]
+    workers_by_conversation = {}
+    new_bindings = []
+    for conversation_id, worker_id, new_binding in placements:
+        workers_by_conversation.setdefault(conversation_id, set()).add(worker_id)
+        if new_binding:
+            new_bindings.append((conversation_id, worker_id))
+    migrations = sum(
+        len(workers) > 1 for workers in workers_by_conversation.values()
+    )
+    expected_sessions = int(os.environ["PAP_AIPERF_SESSIONS"])
+    if len(placements) != expected_requests:
+        errors.append(
+            f"session placement count {len(placements)} != {expected_requests}"
+        )
+    if len(workers_by_conversation) != expected_sessions:
+        errors.append(
+            "session binding count "
+            f"{len(workers_by_conversation)} != {expected_sessions}"
+        )
+    if migrations:
+        errors.append(f"session round-robin migrated {migrations} conversations")
+    if len(new_bindings) != expected_sessions:
+        errors.append(
+            f"new session binding count {len(new_bindings)} != {expected_sessions}"
+        )
+    expected_workers = [index % pa_count for index in range(expected_sessions)]
+    actual_workers = [worker_id for _, worker_id in new_bindings]
+    if actual_workers != expected_workers:
+        errors.append("new conversation assignments are not round-robin")
+    session_placement = {
+        "placements": len(placements),
+        "conversations": len(workers_by_conversation),
+        "migrations": migrations,
+        "new_bindings": len(new_bindings),
+        "worker_counts": dict(sorted(Counter(actual_workers).items())),
+    }
 
 control_counts = {}
 total_releases = 0
@@ -1937,6 +2006,7 @@ audit = {
     "projection_routes": dict(sorted(projection_routes.items())),
     "pair_routes": dict(sorted(pair_routes.items())),
     "expected_pair_routes": dict(sorted(expected_pair_routes.items())),
+    "session_placement": session_placement,
     "prefill_control_counts": control_counts,
     "total_lease_release_200": total_releases,
     "allow_predecode_cancellation": allow_predecode_cancellation,
@@ -2021,10 +2091,12 @@ if flashinfer != cubin:
 PY
 
 mkdir -p "${RUN_ROOT}" "${RUN_LOG_DIR}"
-mkdir -p "${RUN_ROOT}/pap_dynamo_router"
-cp "${PAP_DYNAMO_SITE_PACKAGES}/build.txt" \
-  "${PAP_DYNAMO_SITE_PACKAGES}/pap_dynamo_router.abi3.so" \
-  "${RUN_ROOT}/pap_dynamo_router/"
+if [[ "${PAP_ROUTING_POLICY}" == "dynamo" ]]; then
+  mkdir -p "${RUN_ROOT}/pap_dynamo_router"
+  cp "${PAP_DYNAMO_SITE_PACKAGES}/build.txt" \
+    "${PAP_DYNAMO_SITE_PACKAGES}/pap_dynamo_router.abi3.so" \
+    "${RUN_ROOT}/pap_dynamo_router/"
+fi
 capture_git_state
 prepare_aiperf_dataset
 split_csv "${PAP_PREFILL_GPUS}" PREFILL_GPUS
@@ -2370,6 +2442,8 @@ env \
   --dynamo-max-num-batched-tokens \
     "${PAP_PREFILL_MAX_NUM_BATCHED_TOKENS}" \
   --dynamo-prefill-load-scale "${PAP_DYNAMO_PREFILL_LOAD_SCALE}" \
+  --session-routing-max-conversations \
+    "${PAP_SESSION_ROUTER_MAX_CONVERSATIONS}" \
   --routing-policy "${PAP_ROUTING_POLICY}" \
   > "${RUN_LOG_DIR}/proxy.log" 2>&1 &
 PIDS+=("$!")

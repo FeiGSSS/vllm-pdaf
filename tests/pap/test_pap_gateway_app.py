@@ -27,6 +27,7 @@ from vllm.pap.gateway.request_pipeline import (
     _handle_openai_request,
     _pop_conversation_id,
 )
+from vllm.pap.gateway.session_routing import PAPSessionRoundRobinRouter
 from vllm.pap.gateway.topology import (
     PAPGroup,
     ProjectionInstance,
@@ -102,6 +103,71 @@ def test_gateway_defaults_to_dynamo(monkeypatch) -> None:
     assert args.dynamo_prefill_load_scale == 2.0
 
 
+def test_gateway_accepts_session_round_robin(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "pap-gateway",
+            "--pap-groups",
+            "127.0.0.1:8100:127.0.0.1:8300",
+            "--projections",
+            "127.0.0.1:8200",
+            "--routing-policy",
+            "session_round_robin",
+        ],
+    )
+
+    assert parse_args().routing_policy == "session_round_robin"
+
+
+def test_session_round_robin_keeps_conversation_on_initial_pa() -> None:
+    async def run() -> None:
+        groups = _groups(3)
+        router = PAPSessionRoundRobinRouter(groups, max_conversations=3)
+
+        first = await router.select_group(
+            [1], request_id="a0", expected_output_tokens=1, conversation_id="a"
+        )
+        second = await router.select_group(
+            [2], request_id="b0", expected_output_tokens=1, conversation_id="b"
+        )
+        repeated = await router.select_group(
+            [3], request_id="a1", expected_output_tokens=1, conversation_id="a"
+        )
+
+        assert first == groups[0]
+        assert second == groups[1]
+        assert repeated == groups[0]
+        assert router.stats()["conversation_bindings"] == 2
+        assert router.stats()["active_reservations"] == 3
+        for request_id in ("a0", "b0", "a1"):
+            router.finish_request(request_id)
+        assert router.stats()["active_reservations"] == 0
+        await router.shutdown()
+
+    asyncio.run(run())
+
+
+def test_session_round_robin_fails_closed_without_identity_or_capacity() -> None:
+    async def run() -> None:
+        router = PAPSessionRoundRobinRouter(_groups(1), max_conversations=1)
+        with pytest.raises(ValueError, match="conversation ID"):
+            await router.select_group(
+                [1], request_id="missing", expected_output_tokens=1
+            )
+        await router.select_group(
+            [1], request_id="a", expected_output_tokens=1, conversation_id="a"
+        )
+        with pytest.raises(RuntimeError, match="conversation limit"):
+            await router.select_group(
+                [1], request_id="b", expected_output_tokens=1, conversation_id="b"
+            )
+        await router.shutdown()
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("source", ["env", "cli"])
 def test_gateway_empty_hf_overrides_disable_model_overrides(monkeypatch, source):
     monkeypatch.delenv("PAP_HF_OVERRIDES", raising=False)
@@ -165,11 +231,12 @@ def test_dynamo_selected_pa_has_fixed_projection_owner(
     ] == owners
 
 
-def test_dynamo_rejects_cache_salt_before_prefill_can_publish_incompatible_events():
+@pytest.mark.parametrize("routing_policy", ["dynamo", "session_round_robin"])
+def test_gateway_rejects_cache_salt_before_prefill(routing_policy: str):
     request = SimpleNamespace(
         json=AsyncMock(return_value={"cache_salt": "tenant-a"}),
         app=SimpleNamespace(
-            state=SimpleNamespace(args=SimpleNamespace(routing_policy="dynamo"))
+            state=SimpleNamespace(args=SimpleNamespace(routing_policy=routing_policy))
         ),
     )
     response = asyncio.run(_handle_openai_request("/v1/chat/completions", request))

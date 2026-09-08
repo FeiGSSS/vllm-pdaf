@@ -13,21 +13,21 @@ startup. Old input/output-length and turn-generation controls are rejected.
 Input/output lengths in a heterogeneous workload come from the dataset and
 client records, not synthetic defaults in the launcher.
 
-The current in-process Dynamo selector does not support per-request `cache_salt`
-isolation. PAP rejects such requests before Prefill; replay preflight rejects
-salted datasets with Dynamo routing. The source data must not be silently
-rewritten to remove isolation. See the controlled
+PAP routing does not support per-request `cache_salt` isolation. PAP rejects
+such requests before Prefill; replay preflight rejects salted datasets when a
+routing policy is selected. The source data must not be silently rewritten to
+remove isolation. See the controlled
 `experiments/microbench/PAP-20260905-DYNAMO-CACHE-SALT/` reproduction.
 
 New multi-turn workloads omit salt by default, allowing identical prefixes to
 be shared across conversations. The `qwen3-8b-yarn131k-shared-prefix` dataset
 is a separately registered derivative; old salted fixtures remain unchanged.
 
-## PAP-only Dynamo selector
+## PAP selectors
 
-This selector is mandatory for PAP. Both the launcher and Gateway reject
-retired routing policies, including conversation affinity and round robin.
-The official Dynamo DP/PD baseline environment is unchanged.
+The default selector is Dynamo. The optional `session_round_robin` selector
+keeps a conversation on its initial PA and does not use the native Dynamo
+index. The official Dynamo DP/PD baseline environment is unchanged.
 
 ```bash
 rustup toolchain install 1.94.1 --profile minimal

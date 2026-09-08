@@ -19,8 +19,8 @@ def inspect_replay(
     not every schema supported by AIPerf. Counts describe the available replay;
     a timed run can stop before these requests have all been sent.
     """
-    if routing_policy not in (None, "dynamo"):
-        raise ValueError("PAP supports only Dynamo routing")
+    if routing_policy not in (None, "dynamo", "session_round_robin"):
+        raise ValueError(f"unsupported PAP routing policy: {routing_policy}")
     raw = path.read_bytes()
     text = raw.decode("utf-8").strip()
     records = (
@@ -70,9 +70,9 @@ def inspect_replay(
         raise ValueError(f"requested {sessions} sessions; dataset has {len(counts)}")
     selected = list(counts)[:sessions]
     selected_salted = len(salted_sessions.intersection(selected))
-    if routing_policy == "dynamo" and selected_salted:
+    if routing_policy is not None and selected_salted:
         raise ValueError(
-            "PAP Dynamo routing cannot index cache_salt-isolated prefixes; "
+            "PAP routing cannot index cache_salt-isolated prefixes; "
             f"{selected_salted} selected sessions require this unsupported feature"
         )
     return {
@@ -95,7 +95,7 @@ def main() -> None:
     parser.add_argument("--dataset-type", required=True)
     parser.add_argument("--sessions", required=True, type=int)
     parser.add_argument("--expected-requests", type=int)
-    parser.add_argument("--routing-policy", choices=("dynamo",))
+    parser.add_argument("--routing-policy", choices=("dynamo", "session_round_robin"))
     args = parser.parse_args()
     try:
         result = inspect_replay(

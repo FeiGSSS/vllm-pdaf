@@ -70,6 +70,12 @@ def test_runtime_config_accepts_dynamo_routing() -> None:
     assert config.routing_policy is PAPRoutingPolicy.DYNAMO
 
 
+def test_runtime_config_accepts_session_round_robin_routing() -> None:
+    config = PAPRuntimeConfig.from_env({"PAP_ROUTING_POLICY": "session_round_robin"})
+
+    assert config.routing_policy is PAPRoutingPolicy.SESSION_ROUND_ROBIN
+
+
 @pytest.mark.parametrize(
     "policy",
     [

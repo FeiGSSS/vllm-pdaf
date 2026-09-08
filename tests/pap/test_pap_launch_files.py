@@ -129,7 +129,7 @@ def test_pap_runner_rejects_retired_routing_before_startup(tmp_path, entrypoint)
         text=True,
     )
     assert result.returncode == 2
-    assert "only Dynamo" in result.stderr
+    assert "routing" in result.stderr
     assert not run_dir.exists()
 
 

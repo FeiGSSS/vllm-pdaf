@@ -13,8 +13,9 @@ The supported PAP benchmark topology is same-host `xPAyP`, TP1, with:
 - synchronous v0.26 Prefill scheduling for immediate KV handoff;
 - CUDA IPC for colocated Prefill--Attention KV sharing;
 - NVSHMEM P2P inside the whole-step Projection--Attention CUDA Graph;
-- Dynamo KV-aware PA placement on every turn, with fixed PA-to-Projection
-  ownership and no PA-to-PA KV relocation;
+- Dynamo KV-aware PA placement on every turn, or explicit conversation-sticky
+  round-robin placement, with fixed PA-to-Projection ownership and no PA-to-PA
+  KV relocation;
 - Qwen3-8B static YaRN with a 131,072-token serving limit;
 - AIPerf as the serving workload client.
 
@@ -41,10 +42,11 @@ Formal workload settings belong to each E2E experiment's `experiment.env`.
 Shared runners intentionally provide no canonical request rate, concurrency,
 or duration.
 
-PAP supports only Dynamo routing. `PAP_ROUTING_POLICY` and `--routing-policy`
-accept only `dynamo`; they remain explicit in saved configurations for replay
-auditing. Retired policy values fail before startup rather than falling back.
-Historical non-Dynamo experiments require their recorded source revision.
+`PAP_ROUTING_POLICY` and `--routing-policy` accept `dynamo` or
+`session_round_robin`. The latter assigns new conversations round-robin and
+keeps later turns on the same PA. It requires explicit conversation IDs and a
+positive `PAP_SESSION_ROUTER_MAX_CONVERSATIONS`; reaching that bound fails the
+request instead of evicting a binding. Other policy values fail before startup.
 
 A targeted PAP run uses environment configuration:
 
@@ -52,13 +54,13 @@ A targeted PAP run uses environment configuration:
 PAP_TOPOLOGY=7pa1p \
 PAP_PREFILL_GPUS=0,1,2,3,4,5,6 \
 PAP_PROJECTION_GPUS=7 \
-  PAP_ROUTING_POLICY=dynamo \
+PAP_ROUTING_POLICY=dynamo \
 PAP_AIPERF_INPUT_FILE=/path/to/workload.jsonl \
 PAP_AIPERF_SESSIONS=128 \
 PAP_AIPERF_EXPECTED_REQUESTS=455 \
 PAP_AIPERF_CONCURRENCY=32 \
 MAX_MODEL_LEN=131072 \
-  bash benchmarks/pap/scripts/run_pap_workload.sh
+bash benchmarks/pap/scripts/run_pap_workload.sh
 ```
 
 The direct PAP runner supplies Qwen's official static-YaRN configuration to
