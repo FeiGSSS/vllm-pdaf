@@ -89,8 +89,14 @@ class PAPAttentionPeerManager:
             threads = tuple(self.receiver_threads.values())
             bound = bool(self.transports)
             stopping = self._stopping or self._stopped
+            initial_transport = self.initial_transport
         dead = sorted(thread.name for thread in threads if not thread.is_alive())
         health = self.runtime.health()
+        if initial_transport is not None:
+            world_status = initial_transport.world.initialization_status()
+            health["nvshmem_world"] = world_status
+            if world_status["state"] != "ready":
+                health["status"] = "error"
         health["receiver_threads"] = len(threads)
         if dead or (bound and not threads) or stopping:
             health["status"] = "error"

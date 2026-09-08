@@ -3,14 +3,15 @@
 This directory contains thin launchers and request examples for the
 Prefill-Attention-Projection service. Gateway implementation lives in
 `vllm/pap/gateway/`; Attention implementation lives in `vllm/pap/attention/`.
-The canonical launcher is the AIPerf runner. Attention--Projection execution
-always uses same-host NVSHMEM P2P inside a whole-step CUDA Graph; there is no
-runtime transport selector. Prefill--Attention KV sharing remains CUDA IPC,
-and each request remains on its initially selected PA.
-The current runtime testbed is the eight-GPU AIPerf matrix, validated through
-the owner-specific `vllm/pap/integration/` boundary. Same-host `xPAyP` has a
-controlled correctness smoke; cross-host `xPAyP` remains available but is not
-an active E2E lane. The validated multi-turn path reuses
+The canonical performance launcher is the AIPerf runner. Attention--Projection
+execution uses NVSHMEM inside a whole-step CUDA Graph. The default `local` mode
+uses same-host P2P; the cross-host correctness launcher uses IBGDA. Prefill--
+Attention KV sharing remains CUDA IPC, so each PA's Prefill and Attention stay
+on the same host and GPU.
+The current runtime testbed is the AIPerf matrix, validated through the
+owner-specific `vllm/pap/integration/` boundary. Same-host `xPAyP` and
+cross-host `7PA1P` have performance lanes. The cross-host `1PA1P` smoke isolates
+the transport correctness path. The validated multi-turn path reuses
 Prefill-owned KV through vLLM's native prefix cache; it does not keep an
 Attention session resident between turns.
 
@@ -79,6 +80,31 @@ bash benchmarks/pap/scripts/run_pap_workload.sh
 Each run records `topology_manifest.json`, `routing_audit.json`, strict log
 audit results, and an all-Attention session-drain result. One-off service smoke
 requests should use the benchmark runner with a reduced workload.
+
+Run the L20B/L20T cross-host correctness smoke from L20B after synchronizing the
+same source tree and Python environment to L20T:
+
+```bash
+bash benchmarks/pap/scripts/run_cross_host_nvshmem_1pa1p.sh
+```
+
+The launcher places Projection and Gateway on L20B and the colocated
+Prefill/Attention pair on L20T. It requires NVSHMEM 3.3.24 with IBGDA,
+`PeerMappingOverride=1`, and an active `mlx5_0:1` on both hosts. It validates
+PAP control routes, process/device topology, request output, Attention counters,
+Dynamo state, and session drain.
+
+Run the cross-host 7PA1P AIPerf lane with:
+
+```bash
+bash benchmarks/pap/scripts/run_cross_host_nvshmem_7pa1p_aiperf.sh
+```
+
+NVSHMEM requires an equal PE count on both nodes. The launcher therefore starts
+Projection plus six idle PEs on L20B and seven Attention PEs on L20T, then
+colocates each Prefill with its Attention through an audited 80/12-SM static MPS
+partition. The business topology remains seven PA pairs and one Projection.
+The fixed workload contains 60 three-turn sessions and runs at concurrency 30.
 
 The current eight-GPU capacity comparison is driven by AIPerf. Every matrix
 point serves the same 128 conversations and 640 requests: five turns per

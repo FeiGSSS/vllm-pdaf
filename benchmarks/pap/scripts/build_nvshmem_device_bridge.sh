@@ -9,6 +9,7 @@ OUTPUT="${NVSHMEM_PREFIX}/lib/libpap_nvshmem_device.so"
 VENV_NVCC="${ROOT_DIR}/.venv/lib/python3.12/site-packages/nvidia/cu13/bin/nvcc"
 NVCC="${PAP_NVSHMEM_NVCC:-${VENV_NVCC}}"
 CUDA_BIN="$(dirname "${NVCC}")"
+CUDA_LIB="$(dirname "${CUDA_BIN}")/lib"
 BUILD_RECORD="${OUTPUT}.build.txt"
 
 if [[ ! -f "${NVSHMEM_PREFIX}/lib/libnvshmem_device.a" ]]; then
@@ -17,6 +18,11 @@ if [[ ! -f "${NVSHMEM_PREFIX}/lib/libnvshmem_device.a" ]]; then
 fi
 if [[ ! -x "${NVCC}" ]]; then
   echo "CUDA 13 nvcc is missing: ${NVCC}" >&2
+  exit 2
+fi
+if [[ ! -f "${CUDA_LIB}/libcudadevrt.a" \
+  || ! -f "${CUDA_LIB}/libcudart_static.a" ]]; then
+  echo "CUDA 13 static runtime libraries are missing: ${CUDA_LIB}" >&2
   exit 2
 fi
 NVCC_VERSION="$("${NVCC}" --version)"
@@ -30,7 +36,8 @@ BUILD_ARGS=(
   "-Xlinker=--version-script=${VERSION_SCRIPT}"
   "-arch=${PAP_NVSHMEM_GPU_ARCH:-sm_89}"
   "-I${NVSHMEM_PREFIX}/include" "${SOURCE}"
-  "-L${NVSHMEM_PREFIX}/lib" -lcuda -lnvshmem_host -lnvshmem_device
+  "-L${CUDA_LIB}" "-L${NVSHMEM_PREFIX}/lib"
+  -lcuda -lnvshmem_host -lnvshmem_device
 )
 
 # Serialize both cache inspection and publication across concurrent launchers.

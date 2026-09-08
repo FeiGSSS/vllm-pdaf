@@ -3,6 +3,9 @@
 
 from __future__ import annotations
 
+import json
+import socket
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,12 +15,17 @@ import torch
 
 from vllm.pap.cuda_stream_memops import cuda_stream_handle
 from vllm.pap.protocol import PAPOffloadExecBatchDescriptor
-from vllm.pap.transport.nvshmem.protocol import decode_step_plan, encode_step_plan
+from vllm.pap.transport.nvshmem.protocol import (
+    METADATA_VERSION,
+    decode_step_plan,
+    encode_step_plan,
+)
 from vllm.pap.transport.nvshmem.runtime import (
     PAPNVSHMEMAllocation,
     PAPNVSHMEMError,
     PAPNVSHMEMRuntime,
 )
+from vllm.pap.transport.nvshmem.transport import PAPNVSHMEMTransport
 from vllm.pap.transport.nvshmem.world import PAPNVSHMEMWorld, PAPNVSHMEMWorldConfig
 
 
@@ -69,6 +77,126 @@ def test_nvshmem_world_config_requires_uid_file(monkeypatch) -> None:
         PAPNVSHMEMWorldConfig.from_env(device_index=0, buffer_bytes=4096)
 
 
+def test_nvshmem_world_config_reads_cross_host_bootstrap(monkeypatch) -> None:
+    monkeypatch.setenv("PAP_NVSHMEM_RANK", "1")
+    monkeypatch.setenv("PAP_NVSHMEM_WORLD_SIZE", "2")
+    monkeypatch.setenv("PAP_NVSHMEM_MODE", "ibgda")
+    monkeypatch.setenv("PAP_NVSHMEM_UID_HOST", "10.0.0.1")
+    monkeypatch.setenv("PAP_NVSHMEM_UID_PORT", "29508")
+    monkeypatch.delenv("PAP_NVSHMEM_UID_FILE", raising=False)
+
+    config = PAPNVSHMEMWorldConfig.from_env(
+        device_index=0,
+        buffer_bytes=4096,
+    )
+
+    assert config.mode == "ibgda"
+    assert config.uid_path is None
+    assert config.uid_host == "10.0.0.1"
+    assert config.uid_port == 29508
+
+
+def test_cross_host_nvshmem_requires_tcp_bootstrap(monkeypatch) -> None:
+    monkeypatch.setenv("PAP_NVSHMEM_RANK", "1")
+    monkeypatch.setenv("PAP_NVSHMEM_WORLD_SIZE", "2")
+    monkeypatch.setenv("PAP_NVSHMEM_MODE", "ibgda")
+    monkeypatch.delenv("PAP_NVSHMEM_UID_FILE", raising=False)
+    monkeypatch.delenv("PAP_NVSHMEM_UID_HOST", raising=False)
+    monkeypatch.delenv("PAP_NVSHMEM_UID_PORT", raising=False)
+
+    with pytest.raises(PAPNVSHMEMError, match="TCP UID bootstrap"):
+        PAPNVSHMEMWorldConfig.from_env(device_index=0, buffer_bytes=4096)
+
+
+def test_cross_host_nvshmem_rejects_mixed_uid_bootstrap(monkeypatch) -> None:
+    monkeypatch.setenv("PAP_NVSHMEM_RANK", "1")
+    monkeypatch.setenv("PAP_NVSHMEM_WORLD_SIZE", "2")
+    monkeypatch.setenv("PAP_NVSHMEM_MODE", "ibgda")
+    monkeypatch.setenv("PAP_NVSHMEM_UID_FILE", "/tmp/pap-test.uid")
+    monkeypatch.setenv("PAP_NVSHMEM_UID_HOST", "10.0.0.1")
+    monkeypatch.setenv("PAP_NVSHMEM_UID_PORT", "29508")
+
+    with pytest.raises(PAPNVSHMEMError, match="does not accept a UID file"):
+        PAPNVSHMEMWorldConfig.from_env(device_index=0, buffer_bytes=4096)
+
+
+def _transport_for_peer_binding(mode: str) -> PAPNVSHMEMTransport:
+    transport = object.__new__(PAPNVSHMEMTransport)
+    transport._closed = False
+    transport._world_ready = True
+    transport.mode = mode
+    transport.peer_rank = None
+    transport.buffer_bytes = 4096
+    transport.world = SimpleNamespace(rank=0, world_size=2)
+    return transport
+
+
+def _peer_metadata(*, mode: str, hostname: str) -> bytes:
+    return json.dumps(
+        {
+            "version": METADATA_VERSION,
+            "transport": "nvshmem_graph",
+            "hostname": hostname,
+            "rank": 1,
+            "world_size": 2,
+            "buffer_bytes": 4096,
+            "mode": mode,
+        }
+    ).encode("utf-8")
+
+
+def test_local_nvshmem_rejects_cross_host_peer() -> None:
+    transport = _transport_for_peer_binding("local")
+    with pytest.raises(PAPNVSHMEMError, match="same host"):
+        transport.bind_peer(
+            _peer_metadata(mode="local", hostname=f"{socket.gethostname()}-remote")
+        )
+
+
+def test_ibgda_nvshmem_accepts_cross_host_peer() -> None:
+    transport = _transport_for_peer_binding("ibgda")
+    transport.bind_peer(_peer_metadata(mode="ibgda", hostname="remote-peer"))
+    assert transport.peer_rank == 1
+
+
+def test_transport_allocates_cuda_resources_after_world_ready(monkeypatch) -> None:
+    events: list[str] = []
+    transport = object.__new__(PAPNVSHMEMTransport)
+    transport._world_ready = False
+    transport._resource_lock = threading.Lock()
+    transport._qkv_stream = None
+    transport._control_host = None
+    transport._control_send = None
+    transport.device = torch.device("cuda", 0)
+    transport.world = SimpleNamespace(
+        wait_ready=lambda: events.append("world_ready"),
+        config=SimpleNamespace(control_bytes=64),
+    )
+
+    @contextmanager
+    def fake_device_index(_device_index):
+        yield
+
+    def fake_stream(*, device):
+        assert device == torch.device("cuda", 0)
+        events.append("stream")
+        return object()
+
+    def fake_empty(*args, **kwargs):
+        del args, kwargs
+        events.append("buffer")
+        return object()
+
+    monkeypatch.setattr("torch.accelerator.device_index", fake_device_index)
+    monkeypatch.setattr("torch.cuda.Stream", fake_stream)
+    monkeypatch.setattr("torch.empty", fake_empty)
+
+    transport._ensure_world_ready()
+
+    assert events == ["world_ready", "stream", "buffer", "buffer"]
+    assert transport._world_ready
+
+
 @pytest.mark.parametrize("timeout", ["nan", "inf", "-1", "0"])
 def test_nvshmem_world_rejects_invalid_init_timeout_before_start(monkeypatch, timeout):
     monkeypatch.setenv("PAP_NVSHMEM_RANK", "0")
@@ -87,10 +215,11 @@ def test_nvshmem_wait_uses_configured_timeout_snapshot(monkeypatch):
         return True
 
     world = object.__new__(PAPNVSHMEMWorld)
-    world.config = SimpleNamespace(init_timeout_s=7.0, rank=0)
+    world.config = SimpleNamespace(init_timeout_s=7.0, rank=0, mode="local")
     world._ready = SimpleNamespace(wait=ready)
     world._error = None
     world.data = world.control = world.signals = world.graph_signals = object()
+    world.staging = None
     monkeypatch.setenv("PAP_NVSHMEM_INIT_TIMEOUT", "nan")
     world.wait_ready()
     assert waits == [7.0]

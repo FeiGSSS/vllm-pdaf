@@ -13,7 +13,7 @@ for the remaining Decode model computation and scheduling.
 | `model/` | Model-facing Prefill KV publication and Projection whole-step CUDA Graph execution |
 | `attention/` | Attention service execution, whole-step CUDA Graphs and backend selection |
 | `kv/` | KV mapping, readiness, paged metadata, Decode updates, token commits and block leases |
-| `transport/` | Same-host NVSHMEM Attention–Projection communication and tracing |
+| `transport/` | NVSHMEM Attention–Projection communication and tracing |
 | `protocol/` | Shared descriptors, service request models and KV control-message codecs |
 
 These are responsibility boundaries, not a strict dependency hierarchy.
@@ -109,6 +109,11 @@ change kernel math, Graph ownership, wire formats or asynchronous delivery.
 - `deferred_cuda_trace.py` and `runtime_cuda_context_audit.py`: optional
   diagnostics. The unconnected prefix-cache audit and old eager-Attention
   locality logger were removed; active cached-token reporting remains.
+
+The default `local` NVSHMEM mode uses same-host P2P and a UID file. The
+`ibgda` mode uses TCP UID bootstrap and symmetric source staging for device-side
+puts across hosts. Both modes execute the mandatory whole-step CUDA Graph
+protocol; the runtime does not fall back between them.
 
 `attention/compute.py` now only prepares step state for the Graph executor.
 The unused per-batch Attention execution path, adapter logging wrappers and

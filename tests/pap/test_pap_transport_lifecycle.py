@@ -67,6 +67,28 @@ def test_attention_graph_cache_evicts_oldest_entry_safely() -> None:
     assert not executor._entries
 
 
+@pytest.mark.parametrize(
+    ("world_state", "health_status"),
+    [("initializing", "error"), ("failed", "error"), ("ready", "ok")],
+)
+def test_peer_health_tracks_nvshmem_world(world_state, health_status) -> None:
+    runtime = SimpleNamespace(health=lambda: {"status": "ok"})
+    manager = PAPAttentionPeerManager(
+        runtime=runtime,
+        config=SimpleNamespace(
+            attention=SimpleNamespace(local_rank=0, actor_id="attention")
+        ),
+    )
+    manager.initial_transport = SimpleNamespace(
+        world=SimpleNamespace(initialization_status=lambda: {"state": world_state})
+    )
+
+    health = manager.health()
+
+    assert health["status"] == health_status
+    assert health["nvshmem_world"] == {"state": world_state}
+
+
 def test_peer_manager_stops_receiver_before_runtime_and_transport() -> None:
     events: list[str] = []
     receive_stopped = Event()

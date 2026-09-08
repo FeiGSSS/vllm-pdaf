@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-"""PAP Attention--Projection transport over same-host NVSHMEM P2P."""
+"""PAP Attention--Projection transport over NVSHMEM."""
 
 from __future__ import annotations
 
@@ -91,8 +91,10 @@ class PAPNVSHMEMTransport:
             device_index=self.device.index,
             buffer_bytes=self.buffer_bytes,
         )
+        self.mode = self.world.config.mode
         self.peer_rank: int | None = None
         self._world_ready = False
+        self._resource_lock = threading.Lock()
         self._stopped = threading.Event()
         self.tracing = PAPNVSHMEMTraceRecorder(
             world=self.world,
@@ -112,19 +114,9 @@ class PAPNVSHMEMTransport:
         self._payload_views: dict[
             tuple[int, tuple[int, int], torch.dtype, int], torch.Tensor
         ] = {}
-        with torch.accelerator.device_index(self.device.index):
-            self._qkv_stream = torch.cuda.Stream(device=self.device)
-            control_bytes = self.world.config.control_bytes
-            self._control_host = torch.empty(
-                control_bytes,
-                dtype=torch.uint8,
-                pin_memory=True,
-            )
-            self._control_send = torch.empty(
-                control_bytes,
-                dtype=torch.uint8,
-                device=self.device,
-            )
+        self._qkv_stream: torch.Stream | None = None
+        self._control_host: torch.Tensor | None = None
+        self._control_send: torch.Tensor | None = None
         self._graph_layer_count = 0
 
     @property
@@ -136,6 +128,7 @@ class PAPNVSHMEMTransport:
             "rank": self.world.rank,
             "world_size": self.world.world_size,
             "buffer_bytes": self.buffer_bytes,
+            "mode": self.mode,
         }
         return json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
@@ -155,7 +148,12 @@ class PAPNVSHMEMTransport:
             raise PAPNVSHMEMError("PAP NVSHMEM metadata version mismatch")
         if payload.get("transport") != "nvshmem_graph":
             raise PAPNVSHMEMError("PAP NVSHMEM peer uses another transport")
-        if str(payload.get("hostname")) != socket.gethostname():
+        if str(payload.get("mode")) != self.mode:
+            raise PAPNVSHMEMError("PAP NVSHMEM peer mode mismatch")
+        if (
+            self.mode == "local"
+            and str(payload.get("hostname")) != socket.gethostname()
+        ):
             raise PAPNVSHMEMError("PAP NVSHMEM Graph requires the same host")
         if int(payload.get("world_size", -1)) != self.world.world_size:
             raise PAPNVSHMEMError("PAP NVSHMEM world size mismatch")
@@ -469,11 +467,18 @@ class PAPNVSHMEMTransport:
         """Dispatch variable row counts to every active PA in one kernel."""
         self._require_graph_ready(layer_count)
         trace = self.tracing.projection
+        packed_source = packed
+        if self.world.staging is not None:
+            packed_source = self.world.staging.tensor.narrow(
+                0,
+                0,
+                packed.numel() * packed.element_size(),
+            )
         self.world.runtime.graph_dispatch_qkv(
             data=self._data(),
             data_slot_bytes=self.buffer_bytes,
             source=tensor,
-            packed=packed,
+            packed=packed_source,
             route_indices=route_indices,
             route_counts=route_counts,
             peer_ranks=peer_ranks,
@@ -567,6 +572,9 @@ class PAPNVSHMEMTransport:
         self._step_preflight_handler = handler
 
     def step_prepare_stream(self) -> torch.Stream:
+        self._ensure_world_ready()
+        if self._qkv_stream is None:
+            raise PAPNVSHMEMError("PAP NVSHMEM control stream is unavailable")
         return self._qkv_stream
 
     def stop_receiving(self) -> None:
@@ -620,6 +628,10 @@ class PAPNVSHMEMTransport:
         with self._send_lock:
             generation = self._qkv_send_generation
             stream = self._qkv_stream
+            control_host = self._control_host
+            control_send = self._control_send
+            if stream is None or control_host is None or control_send is None:
+                raise PAPNVSHMEMError("PAP NVSHMEM control resources are unavailable")
             current = torch.cuda.current_stream(self.device)
             stream.wait_stream(current)
             if self._last_qkv_sent:
@@ -632,16 +644,24 @@ class PAPNVSHMEMTransport:
                     generation=self._last_qkv_sent,
                     stream=stream,
                 )
-            self._control_host[:record_bytes].copy_(source)
+            control_host[:record_bytes].copy_(source)
             with torch.cuda.stream(stream):
-                self._control_send[:record_bytes].copy_(
-                    self._control_host[:record_bytes],
+                control_send[:record_bytes].copy_(
+                    control_host[:record_bytes],
                     non_blocking=True,
                 )
+            control_source = control_send
+            if self.world.staging is not None:
+                offset = self.world.staging_control_slot_offset(peer_rank)
+                control_source = self.world.staging.tensor.narrow(
+                    0, offset, self.world.config.control_bytes
+                )
+                with torch.cuda.stream(stream):
+                    control_source[:record_bytes].copy_(control_send[:record_bytes])
             self.world.runtime.put_signal_on_stream(
                 destination=self._control(),
                 destination_offset=self.world.control_slot_offset(self.world.rank),
-                source=self._control_send,
+                source=control_source,
                 num_bytes=record_bytes,
                 signal=self._signals(),
                 signal_offset=self.world.signal_offset(_READY_QKV, self.world.rank),
@@ -658,6 +678,9 @@ class PAPNVSHMEMTransport:
         generation = self._qkv_recv_generation
         peer_rank = self._require_peer_rank()
         stream = self._qkv_stream
+        control_host = self._control_host
+        if stream is None or control_host is None:
+            raise PAPNVSHMEMError("PAP NVSHMEM control resources are unavailable")
         self.world.runtime.wait_signal_on_stream(
             signal=self._signals(),
             signal_offset=self.world.signal_offset(_READY_QKV, peer_rank),
@@ -667,7 +690,7 @@ class PAPNVSHMEMTransport:
         control = self._control()
         offset = self.world.control_slot_offset(peer_rank)
         with torch.cuda.stream(stream):
-            self._control_host.copy_(
+            control_host.copy_(
                 control.tensor.narrow(0, offset, self.world.config.control_bytes),
                 non_blocking=True,
             )
@@ -678,7 +701,7 @@ class PAPNVSHMEMTransport:
         self._require_open()
         control_decode_started_ns = time.perf_counter_ns() if trace_host else 0
         descriptor, dtype, qkv_width, layer_count = decode_step_plan(
-            self._control_host,
+            control_host,
             capacity=self.world.config.control_bytes,
         )
         layer_info = layer_index_and_template(descriptor.layer_name)
@@ -795,6 +818,15 @@ class PAPNVSHMEMTransport:
         num_bytes = source.numel() * source.element_size()
         if num_bytes > self.buffer_bytes:
             raise PAPNVSHMEMError("PAP NVSHMEM graph payload exceeds its slot")
+        if self.world.staging is not None:
+            staging_offset = self.world.staging_data_slot_offset(
+                self._require_peer_rank()
+            )
+            staging = self.world.staging.tensor.narrow(
+                0, staging_offset, self.buffer_bytes
+            )
+            staging[:num_bytes].copy_(source.view(torch.uint8).reshape(-1))
+            source = staging
         self.world.runtime.graph_put_signal(
             destination=self._data(),
             destination_offset=self.world.data_slot_offset(self.world.rank),
@@ -865,7 +897,23 @@ class PAPNVSHMEMTransport:
         if self._world_ready:
             return
         self.world.wait_ready()
-        self._world_ready = True
+        with self._resource_lock:
+            if self._world_ready:
+                return
+            with torch.accelerator.device_index(self.device.index):
+                self._qkv_stream = torch.cuda.Stream(device=self.device)
+                control_bytes = self.world.config.control_bytes
+                self._control_host = torch.empty(
+                    control_bytes,
+                    dtype=torch.uint8,
+                    pin_memory=True,
+                )
+                self._control_send = torch.empty(
+                    control_bytes,
+                    dtype=torch.uint8,
+                    device=self.device,
+                )
+            self._world_ready = True
 
     def _require_open(self) -> None:
         if self._closed or self._stopped.is_set():

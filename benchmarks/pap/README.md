@@ -31,6 +31,9 @@ The fixed protocol and first full comparison are recorded in
 | Purpose | Entry point |
 | --- | --- |
 | One PAP E2E run | `scripts/run_pap_workload.sh` |
+| Cross-host 7PA1P AIPerf C30 | `scripts/run_cross_host_nvshmem_7pa1p_aiperf.sh` |
+| Cross-host 1PA1P correctness smoke | `scripts/run_cross_host_nvshmem_1pa1p.sh` |
+| Cross-host IBGDA Graph smoke | `scripts/run_cross_host_nvshmem_graph_smoke.sh` |
 | AIPerf client wrapper | `scripts/run_aiperf_profile.sh` |
 | Dynamo DP8/6P2D/4P4D baseline | `scripts/run_dynamo_workload.sh` |
 

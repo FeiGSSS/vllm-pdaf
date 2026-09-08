@@ -108,10 +108,18 @@ compile does not overwrite the previous library. Preserve this record with
 experiments; it is not a complete lockfile for the system CUDA toolkit, driver,
 or host compiler's transitive dependencies.
 
-The launcher configures same-host P2P, disables the VMM heap for PAP's differing
-visible-device/MPS mappings, and disables remote transport and IBGDA. This is
-not the future cross-machine path. Runtime selection belongs to the launcher,
-not to a user's `.bashrc`.
+`configure_nvshmem.sh` has two fail-closed modes. `local` configures same-host
+P2P, disables the VMM heap for differing visible-device/MPS mappings, and
+disables remote transport. `ibgda` requires `PeerMappingOverride=1` and the
+configured HCA (default `mlx5_0:1`), enables the GPU NIC handler, and retains
+the VMM heap. Cross-host jobs use TCP UID bootstrap because local UID files are
+not a distributed rendezvous mechanism. Runtime selection belongs to the
+launcher, not to a user's `.bashrc`.
+
+Device-side NVSHMEM puts require a symmetric or registered source. PAP's IBGDA
+mode therefore allocates process-lifetime symmetric staging for packed QKV,
+Attention output, and control records. The cross-host Graph smoke validates
+this data path before the model-level 1PA1P smoke is accepted.
 
 ## PAT
 

@@ -107,7 +107,6 @@ def test_runtime_config_rejects_tensor_parallel_execution() -> None:
         "PAP_KV_LOCALITY_PROFILE",
         "PAP_KV_LOCALITY_PROFILE_MIN_BATCH",
         "PAP_NVSHMEM_GPU_GRAPH",
-        "PAP_NVSHMEM_MODE",
         "PAP_NVSHMEM_SIGNAL_WAIT",
         "PAP_DIRECT_MAILBOX_OUTPUT",
         "PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND",
