@@ -444,10 +444,28 @@ wait_for_health() {
       echo "Ready: ${label}"
       return 0
     fi
+    check_children_alive
     sleep 1
   done
   echo "Timed out waiting for ${label}: ${endpoint}" >&2
   return 1
+}
+
+check_children_alive() {
+  local pid
+  for pid in "${LOCAL_PIDS[@]}"; do
+    if ! kill -0 "${pid}" 2>/dev/null; then
+      echo "Local PAP process exited during startup: pid=${pid}" >&2
+      return 1
+    fi
+  done
+  for pid in "${REMOTE_PIDS[@]}"; do
+    if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "${REMOTE_SSH}" \
+      "kill -0 '${pid}'"; then
+      echo "Remote PAP process exited during startup: pid=${pid}" >&2
+      return 1
+    fi
+  done
 }
 
 write_effective_config() {
@@ -495,6 +513,7 @@ audit_source() {
     vllm/pap/transport/nvshmem/transport.py
     vllm/pap/attention/peers.py
     vllm/pap/endpoint_plugin.py
+    vllm/pap/plugin.py
     vllm/pap/gateway/app.py
     vllm/pap/gateway/dynamo_routing.py
     vllm/pap/gateway/kv_fence.py
