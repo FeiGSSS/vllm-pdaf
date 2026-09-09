@@ -18,6 +18,7 @@ from fastapi import FastAPI, Request
 from vllm.pap.config import reject_removed_pap_flags
 from vllm.pap.gateway.admission import PAPProjectionAdmission
 from vllm.pap.gateway.dynamo_routing import PAPDynamoRouter
+from vllm.pap.gateway.kv_fence import PAPKVFenceCoordinator
 from vllm.pap.gateway.kv_migration import PAPKVCacheMigrationCoordinator
 from vllm.pap.gateway.lifecycle import PAPLifecycleManager
 from vllm.pap.gateway.load_tracker import PAPLoadTracker
@@ -56,6 +57,8 @@ async def lifespan(app: FastAPI):
         raise ValueError(f"unsupported PAP routing policy: {args.routing_policy}")
     if args.enable_pa_kv_migration and args.routing_policy != "dynamo":
         raise ValueError("PA KV migration requires Dynamo routing")
+    if args.enable_dynamo_kv_fence and args.routing_policy != "dynamo":
+        raise ValueError("Dynamo KV fence requires Dynamo routing")
     app.state.groups = parse_pap_groups(args.pap_groups)
     app.state.projections = parse_projection_instances(args.projections)
     app.state.pap_active_request_ids = set()
@@ -69,6 +72,10 @@ async def lifespan(app: FastAPI):
     await app.state.pap_load_tracker.start()
     app.state.pap_kv_migration = PAPKVCacheMigrationCoordinator(
         enabled=args.enable_pa_kv_migration,
+        max_conversations=args.migration_max_conversations,
+    )
+    app.state.pap_kv_fence = PAPKVFenceCoordinator(
+        enabled=args.enable_dynamo_kv_fence,
         max_conversations=args.migration_max_conversations,
     )
     event_endpoints = tuple(
@@ -129,6 +136,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await app.state.pap_kv_fence.shutdown()
         await app.state.pap_kv_migration.shutdown()
         await app.state.pap_dynamo_router.shutdown()
         await app.state.pap_lifecycle_manager.shutdown()
@@ -177,6 +185,7 @@ async def health() -> dict[str, Any]:
         "prompt_tokenizer": {"enabled": app.state.pap_prompt_tokenizer.enabled},
         "dynamo_router": app.state.pap_dynamo_router.stats(),
         "kv_migration": app.state.pap_kv_migration.stats(),
+        "kv_fence": app.state.pap_kv_fence.stats(),
         "lifecycle": app.state.pap_lifecycle_manager.stats(),
     }
 
@@ -197,6 +206,7 @@ async def topology_stats() -> dict[str, Any]:
         "prompt_tokenizer": {"enabled": app.state.pap_prompt_tokenizer.enabled},
         "dynamo_router": app.state.pap_dynamo_router.stats(),
         "kv_migration": app.state.pap_kv_migration.stats(),
+        "kv_fence": app.state.pap_kv_fence.stats(),
         "lifecycle": app.state.pap_lifecycle_manager.stats(),
     }
 
@@ -287,6 +297,11 @@ def parse_args() -> argparse.Namespace:
         "--enable-pa-kv-migration",
         action=argparse.BooleanOptionalAction,
         default=os.environ.get("PAP_ENABLE_PA_KV_MIGRATION", "0") == "1",
+    )
+    parser.add_argument(
+        "--enable-dynamo-kv-fence",
+        action=argparse.BooleanOptionalAction,
+        default=os.environ.get("PAP_ENABLE_DYNAMO_KV_FENCE", "0") == "1",
     )
     parser.add_argument(
         "--migration-max-conversations",
