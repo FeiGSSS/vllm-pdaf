@@ -16,8 +16,8 @@ REMOTE_HOST="${DYNAMO_REMOTE_HOST:-L20T}"
 REMOTE_ROOT="${DYNAMO_REMOTE_ROOT:-${ROOT_DIR}}"
 LOCAL_IP="${DYNAMO_LOCAL_IP:-10.128.7.24}"
 REMOTE_IP="${DYNAMO_REMOTE_IP:-10.128.7.25}"
-LOCAL_UCX_DEVICE="${DYNAMO_LOCAL_UCX_DEVICE:-enx9c69d3247e5c}"
-REMOTE_UCX_DEVICE="${DYNAMO_REMOTE_UCX_DEVICE:-enx9c69d341f8cb}"
+LOCAL_UCX_DEVICE="${DYNAMO_LOCAL_UCX_DEVICE:-mlx5_0:1}"
+REMOTE_UCX_DEVICE="${DYNAMO_REMOTE_UCX_DEVICE:-mlx5_0:1}"
 LOCAL_DECODE_GPU="${DYNAMO_LOCAL_DECODE_GPU:-7}"
 PREFILL_COUNT=7
 
@@ -47,8 +47,8 @@ PREFILL_CUDAGRAPH_CAPTURE_SIZES="${DYNAMO_PREFILL_CUDAGRAPH_CAPTURE_SIZES:-1,2,4
 DECODE_CUDAGRAPH_CAPTURE_SIZES="${DYNAMO_DECODE_CUDAGRAPH_CAPTURE_SIZES:-1,2,4,8,16,32,64,128}"
 ROUTER_PREFILL_LOAD_SCALE="${DYNAMO_ROUTER_PREFILL_LOAD_SCALE:-2.0}"
 CLUSTER_READY_WAIT_SECONDS="${DYNAMO_CLUSTER_READY_WAIT_SECONDS:-30}"
-MIN_KV_TRANSFER_MB_S="${DYNAMO_MIN_KV_TRANSFER_MB_S:-10}"
-EXPECTED_LINK_SPEED_MBIT_S="${DYNAMO_EXPECTED_LINK_SPEED_MBIT_S:-1000}"
+MIN_KV_TRANSFER_MB_S="${DYNAMO_MIN_KV_TRANSFER_MB_S:-1000}"
+EXPECTED_LINK_RATE_GBPS="${DYNAMO_EXPECTED_LINK_RATE_GBPS:-400}"
 KV_LEASE_DURATION="${DYNAMO_KV_LEASE_DURATION:-3600}"
 SMOKE_ONLY="${DYNAMO_SMOKE_ONLY:-0}"
 
@@ -243,12 +243,18 @@ remote_gpu_processes="$(ssh "${REMOTE_HOST}" \
   'nvidia-smi -i 0,1,2,3,4,5,6 --query-compute-apps=pid --format=csv,noheader,nounits')"
 [[ -z "${remote_gpu_processes//[[:space:]]/}" ]] \
   || die "remote Prefill GPUs are occupied"
-local_link_speed="$(cat "/sys/class/net/${LOCAL_UCX_DEVICE}/speed")"
-remote_link_speed="$(ssh "${REMOTE_HOST}" \
-  "cat '/sys/class/net/${REMOTE_UCX_DEVICE}/speed'")"
-[[ "${local_link_speed}" == "${EXPECTED_LINK_SPEED_MBIT_S}" \
-  && "${remote_link_speed}" == "${EXPECTED_LINK_SPEED_MBIT_S}" ]] \
-  || die "cross-host link speed mismatch"
+local_hca="${LOCAL_UCX_DEVICE%%:*}"
+local_port="${LOCAL_UCX_DEVICE##*:}"
+remote_hca="${REMOTE_UCX_DEVICE%%:*}"
+remote_port="${REMOTE_UCX_DEVICE##*:}"
+local_link_rate="$(
+  cat "/sys/class/infiniband/${local_hca}/ports/${local_port}/rate"
+)"
+remote_link_rate="$(ssh "${REMOTE_HOST}" \
+  "cat '/sys/class/infiniband/${remote_hca}/ports/${remote_port}/rate'")"
+[[ "${local_link_rate}" == "${EXPECTED_LINK_RATE_GBPS} Gb/sec"* \
+  && "${remote_link_rate}" == "${EXPECTED_LINK_RATE_GBPS} Gb/sec"* ]] \
+  || die "cross-host InfiniBand rate mismatch"
 
 local_version="$(${DYNAMO_PYTHON} -P -c \
   "import importlib.metadata as m; print(m.version('ai-dynamo'), m.version('vllm'))")"
@@ -382,8 +388,11 @@ sleep "${CLUSTER_READY_WAIT_SECONDS}"
   printf 'NAMESPACE=%q\nETCD_ENDPOINTS=%q\nROUTER_MODE=kv\n' "${NAMESPACE}" "${ETCD_ENDPOINTS}"
   printf 'ETCD_LEASE_TTL=%q\nKV_LEASE_DURATION=%q\n' \
     "${ETCD_LEASE_TTL}" "${KV_LEASE_DURATION}"
-  printf 'UCX_TLS=tcp,cuda_copy\nLOCAL_UCX_DEVICE=%q\nREMOTE_UCX_DEVICE=%q\n' "${LOCAL_UCX_DEVICE}" "${REMOTE_UCX_DEVICE}"
-  printf 'LOCAL_LINK_SPEED_MBIT_S=%q\nREMOTE_LINK_SPEED_MBIT_S=%q\n' "${local_link_speed}" "${remote_link_speed}"
+  printf 'PAP_NIXL_RUNTIME_MODE=cross_host_ucx122_rdma\n'
+  printf 'UCX_TLS=rc,cuda_copy\nLOCAL_UCX_DEVICE=%q\nREMOTE_UCX_DEVICE=%q\n' "${LOCAL_UCX_DEVICE}" "${REMOTE_UCX_DEVICE}"
+  printf 'EXPECTED_LINK_RATE_GBPS=%q\n' "${EXPECTED_LINK_RATE_GBPS}"
+  printf 'LOCAL_LINK_RATE=%q\nREMOTE_LINK_RATE=%q\n' \
+    "${local_link_rate}" "${remote_link_rate}"
   printf 'MODEL_PATH=%q\nMAX_MODEL_LEN=%q\nBLOCK_SIZE=%q\n' "${MODEL_PATH}" "${MAX_MODEL_LEN}" "${BLOCK_SIZE}"
   printf 'PREFILL_MAX_NUM_BATCHED_TOKENS=%q\nDECODE_MAX_NUM_BATCHED_TOKENS=%q\n' "${PREFILL_MAX_NUM_BATCHED_TOKENS}" "${DECODE_MAX_NUM_BATCHED_TOKENS}"
   printf 'MIN_KV_TRANSFER_MB_S=%q\n' "${MIN_KV_TRANSFER_MB_S}"

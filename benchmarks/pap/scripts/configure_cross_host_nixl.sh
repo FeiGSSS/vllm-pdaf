@@ -3,12 +3,12 @@
 pap_configure_cross_host_nixl() {
   local root_dir="${1:?repository root is required}"
   local host_ip="${2:?routable host IP is required}"
-  local net_device="${3:?UCX network device is required}"
-  local ucx_prefix="${PAP_UCX_PREFIX:-${root_dir}/.local/ucx-1.22}"
+  local ucx_device="${3:?UCX device is required}"
+  local ucx_prefix="${PAP_UCX_PREFIX:-${root_dir}/.local/ucx-1.22-rdma}"
   local plugin_dir="${PAP_NIXL_PLUGIN_DIR:-${root_dir}/.local/nixl-ucx122/src/plugins/ucx}"
   local ucx_info="${ucx_prefix}/bin/ucx_info"
   local plugin="${plugin_dir}/libplugin_UCX.so"
-  local devices ldd_output library version
+  local devices hca link_layer ldd_output library port rate state version
 
   [[ -x "${ucx_info}" ]] || {
     echo "UCX runtime is missing: ${ucx_info}" >&2
@@ -27,17 +27,36 @@ pap_configure_cross_host_nixl() {
     echo "UCX 1.22.0 must be built with --enable-mt" >&2
     return 1
   }
-  devices="$("${ucx_info}" -d)"
-  [[ "${devices}" == *"Transport: tcp"* ]] || {
-    echo "UCX TCP transport is unavailable" >&2
+  devices="$(
+    LD_LIBRARY_PATH="${ucx_prefix}/lib:${LD_LIBRARY_PATH:-}" \
+      "${ucx_info}" -d
+  )"
+  [[ "${devices}" == *"Transport: rc_mlx5"* \
+    || "${devices}" == *"Transport: rc_verbs"* ]] || {
+    echo "UCX reliable-connection RDMA transport is unavailable" >&2
+    return 1
+  }
+  [[ "${devices}" == *"Device: ${ucx_device}"* ]] || {
+    echo "UCX RDMA device is unavailable: ${ucx_device}" >&2
     return 1
   }
   [[ "${devices}" == *"Transport: cuda_copy"* ]] || {
     echo "UCX CUDA copy transport is unavailable" >&2
     return 1
   }
-  [[ "$(cat "/sys/class/net/${net_device}/operstate" 2>/dev/null)" == up ]] || {
-    echo "UCX network device is not up: ${net_device}" >&2
+  [[ "${ucx_device}" =~ ^([^:]+):([1-9][0-9]*)$ ]] || {
+    echo "UCX RDMA device must use HCA:port syntax: ${ucx_device}" >&2
+    return 1
+  }
+  hca="${BASH_REMATCH[1]}"
+  port="${BASH_REMATCH[2]}"
+  state="$(cat "/sys/class/infiniband/${hca}/ports/${port}/state" 2>/dev/null)"
+  rate="$(cat "/sys/class/infiniband/${hca}/ports/${port}/rate" 2>/dev/null)"
+  link_layer="$(
+    cat "/sys/class/infiniband/${hca}/ports/${port}/link_layer" 2>/dev/null
+  )"
+  [[ "${state}" == "4: ACTIVE" && "${link_layer}" == "InfiniBand" ]] || {
+    echo "UCX RDMA device is not active InfiniBand: ${ucx_device}" >&2
     return 1
   }
 
@@ -51,17 +70,18 @@ pap_configure_cross_host_nixl() {
     }
   done
 
-  export PAP_NIXL_RUNTIME_MODE=cross_host_ucx122_tcp
+  export PAP_NIXL_RUNTIME_MODE=cross_host_ucx122_rdma
   export PAP_NIXL_UCX_VERSION="${version}"
+  export PAP_NIXL_UCX_DEVICE="${ucx_device}"
+  export PAP_NIXL_UCX_LINK_RATE="${rate}"
   export PAP_UCX_PREFIX="${ucx_prefix}"
   export PAP_NIXL_PLUGIN_DIR="${plugin_dir}"
   export NIXL_PLUGIN_DIR="${plugin_dir}"
   export UCX_MODULE_DIR="${ucx_prefix}/lib/ucx"
   export LD_LIBRARY_PATH="${ucx_prefix}/lib:${LD_LIBRARY_PATH:-}"
   export UCX_PROTO_EMULATION_ENABLE=n
-  export UCX_CUDA_IPC_ENABLE_GET_ZCOPY=n
-  export UCX_TLS=tcp,cuda_copy
-  export UCX_NET_DEVICES="${net_device}"
+  export UCX_TLS=rc,cuda_copy
+  export UCX_NET_DEVICES="${ucx_device}"
   export UCX_RCACHE_MAX_UNRELEASED="${UCX_RCACHE_MAX_UNRELEASED:-1024}"
   export VLLM_NIXL_SIDE_CHANNEL_HOST="${host_ip}"
 }
