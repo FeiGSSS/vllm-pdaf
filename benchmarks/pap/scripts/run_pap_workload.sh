@@ -376,12 +376,6 @@ if [[ "${PAP_ENABLE_PA_KV_MIGRATION}" != "0" \
   echo "ERROR: PAP_ENABLE_PA_KV_MIGRATION must be 0 or 1" >&2
   exit 2
 fi
-PAP_ENABLE_DYNAMO_KV_FENCE="${PAP_ENABLE_DYNAMO_KV_FENCE:-0}"
-if [[ "${PAP_ENABLE_DYNAMO_KV_FENCE}" != "0" \
-  && "${PAP_ENABLE_DYNAMO_KV_FENCE}" != "1" ]]; then
-  echo "ERROR: PAP_ENABLE_DYNAMO_KV_FENCE must be 0 or 1" >&2
-  exit 2
-fi
 PAP_KV_MIGRATION_EXPORT_MODE="${PAP_KV_MIGRATION_EXPORT_MODE:-snapshot}"
 if [[ "${PAP_KV_MIGRATION_EXPORT_MODE}" != "snapshot" \
   && "${PAP_KV_MIGRATION_EXPORT_MODE}" != "engine_core" ]]; then
@@ -412,10 +406,6 @@ fi
 PAP_GATEWAY_MIGRATION_ARGS=()
 if [[ "${PAP_ENABLE_PA_KV_MIGRATION}" == "1" ]]; then
   PAP_GATEWAY_MIGRATION_ARGS+=(--enable-pa-kv-migration)
-fi
-PAP_GATEWAY_FENCE_ARGS=()
-if [[ "${PAP_ENABLE_DYNAMO_KV_FENCE}" == "1" ]]; then
-  PAP_GATEWAY_FENCE_ARGS+=(--enable-dynamo-kv-fence)
 fi
 PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS:-256}"
 PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS:-1}"
@@ -1446,13 +1436,6 @@ audit_migration_sources_drained() {
         -o "${RUN_ROOT}/prefill_kv_snapshot_final_${index}.json" \
         || die "Failed to capture final KV snapshot state for PA ${index}"
     fi
-    if [[ "${PAP_ENABLE_DYNAMO_KV_FENCE}" == "1" \
-      && ! -f "${RUN_ROOT}/prefill_kv_snapshot_final_${index}.json" ]]; then
-      curl -fsS \
-        "http://127.0.0.1:$((PREFILL_PORT_BASE + index))/v1/pap/prefill/kv-migration/snapshot" \
-        -o "${RUN_ROOT}/prefill_kv_snapshot_final_${index}.json" \
-        || die "Failed to capture final KV fence state for PA ${index}"
-    fi
   done
   RUN_ROOT="${RUN_ROOT}" PA_COUNT="${PA_COUNT}" "${PYTHON_BIN}" - <<'PY'
 import json
@@ -1688,8 +1671,6 @@ write_effective_config() {
       "${PAP_SESSION_ROUTER_MAX_CONVERSATIONS}"
     printf 'PAP_ENABLE_PA_KV_MIGRATION=%q\n' \
       "${PAP_ENABLE_PA_KV_MIGRATION}"
-    printf 'PAP_ENABLE_DYNAMO_KV_FENCE=%q\n' \
-      "${PAP_ENABLE_DYNAMO_KV_FENCE}"
     printf 'PAP_KV_MIGRATION_EXPORT_MODE=%q\n' \
       "${PAP_KV_MIGRATION_EXPORT_MODE}"
     printf 'PAP_KV_MIGRATION_VERIFY=%q\n' "${PAP_KV_MIGRATION_VERIFY}"
@@ -2502,9 +2483,8 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     )" \
     PAP_RUNTIME_CUDA_CONTEXT_ROLE=prefill \
     PAP_KV_SNAPSHOT_SOCKET="$(
-      if [[ "${PAP_ENABLE_DYNAMO_KV_FENCE}" == "1" \
-        || ( "${PAP_ENABLE_PA_KV_MIGRATION}" == "1" \
-        && "${PAP_KV_MIGRATION_EXPORT_MODE}" == "snapshot" ) ]]; then
+      if [[ "${PAP_ENABLE_PA_KV_MIGRATION}" == "1" \
+        && "${PAP_KV_MIGRATION_EXPORT_MODE}" == "snapshot" ]]; then
         printf '/tmp/pap-kv-snapshot-%s-%d.sock' "${RUN_ID}" "${idx}"
       fi
     )" \
@@ -2603,13 +2583,10 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
           and has("/v1/pap/prefill/kv-migration/export")
           and has("/v1/pap/prefill/kv-migration/release")
           and has("/v1/pap/prefill/kv-migration/snapshot")
-          and has("/v1/pap/prefill/kv-fence/acquire")
-          and has("/v1/pap/prefill/kv-fence/release")
       ' >/dev/null \
     || die "PAP Prefill ${idx} control plugin routes are missing"
-  if [[ "${PAP_ENABLE_DYNAMO_KV_FENCE}" == "1" \
-    || ( "${PAP_ENABLE_PA_KV_MIGRATION}" == "1" \
-    && "${PAP_KV_MIGRATION_EXPORT_MODE}" == "snapshot" ) ]]; then
+  if [[ "${PAP_ENABLE_PA_KV_MIGRATION}" == "1" \
+    && "${PAP_KV_MIGRATION_EXPORT_MODE}" == "snapshot" ]]; then
     curl -fsS \
       "http://127.0.0.1:$((PREFILL_PORT_BASE + idx))/v1/pap/prefill/kv-migration/snapshot" \
       | jq -e '.ready == true and .failures == 0' >/dev/null \
@@ -2664,7 +2641,6 @@ env \
     "${PAP_SESSION_ROUTER_MAX_CONVERSATIONS}" \
   --migration-max-conversations "${PAP_MIGRATION_MAX_CONVERSATIONS}" \
   "${PAP_GATEWAY_MIGRATION_ARGS[@]}" \
-  "${PAP_GATEWAY_FENCE_ARGS[@]}" \
   --routing-policy "${PAP_ROUTING_POLICY}" \
   > "${RUN_LOG_DIR}/proxy.log" 2>&1 &
 PIDS+=("$!")

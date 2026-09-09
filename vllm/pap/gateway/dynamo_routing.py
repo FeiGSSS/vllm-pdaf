@@ -47,19 +47,15 @@ class PAPDynamoRouter:
         service: Any,
         *,
         model_name: str,
-        block_size: int,
     ) -> None:
         self._groups = tuple(groups)
         self._service = service
         self._model_name = model_name
-        self._block_size = block_size
         self._reservations: set[str] = set()
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
         self._releasing: set[str] = set()
         self._selections = 0
         self._failures = 0
-        self._fence_checks = 0
-        self._fence_pins = 0
         self._pending_selections: dict[str, asyncio.Task[PAPGroup]] = {}
         self._closed = False
         self._healthy = True
@@ -116,7 +112,7 @@ class PAPDynamoRouter:
         if service.reservation_lifetime != "explicit-owner-v1":
             service.shutdown()
             raise RuntimeError("PAP requires explicit-owner Dynamo reservations")
-        router = cls(groups, service, model_name=model_name, block_size=block_size)
+        router = cls(groups, service, model_name=model_name)
         try:
             worker_capacities: list[int | None]
             if total_kv_blocks is None:
@@ -167,8 +163,6 @@ class PAPDynamoRouter:
         request_id: str,
         expected_output_tokens: int,
         conversation_id: str = "",
-        verified_worker_id: int | None = None,
-        verified_prefix_tokens: int = 0,
     ) -> PAPGroup:
         """Select a PA and reserve its Prefill and active Decode load."""
         if self._closed or not self._healthy:
@@ -181,8 +175,6 @@ class PAPDynamoRouter:
                 request_id,
                 expected_output_tokens,
                 conversation_id,
-                verified_worker_id,
-                verified_prefix_tokens,
             ),
             name=f"pap-dynamo-select-{request_id}",
         )
@@ -213,20 +205,15 @@ class PAPDynamoRouter:
         request_id: str,
         expected_output_tokens: int,
         conversation_id: str,
-        verified_worker_id: int | None,
-        verified_prefix_tokens: int,
     ) -> PAPGroup:
         trace = self._trace
         observation: dict[str, Any] | None = None
-        overlap_scores: dict[str, Any] | None = None
-        if trace is not None or verified_worker_id is not None:
+        if trace is not None:
             probe_start_ns = time.perf_counter_ns()
             overlap_scores = await self._service.overlap_scores(
                 {"model_name": self._model_name, "token_ids": token_ids}
             )
-        if trace is not None:
             loads = self._service.loads(model_name=self._model_name)
-            assert overlap_scores is not None
             observation = {
                 "event": "selection",
                 "request_id": request_id,
@@ -238,63 +225,16 @@ class PAPDynamoRouter:
                 "overlap_scores": overlap_scores,
                 "loads_before": loads,
             }
-        selection_request: dict[str, Any] = {
-            "model_name": self._model_name,
-            "token_ids": token_ids,
-            "selection_id": request_id,
-            "expected_output_tokens": expected_output_tokens,
-        }
-        fence_applied = False
-        if verified_worker_id is not None:
-            if not 0 <= verified_worker_id < len(self._groups):
-                raise ValueError("verified Dynamo worker is out of range")
-            if verified_prefix_tokens <= 0 or verified_prefix_tokens % self._block_size:
-                raise ValueError(
-                    "verified Dynamo prefix must be positive and block aligned"
-                )
-            assert overlap_scores is not None
-            if int(overlap_scores["block_size"]) != self._block_size:
-                raise RuntimeError("Dynamo overlap block size changed")
-            indexed_blocks = {
-                int(row["worker_id"]): int(row["device_blocks"])
-                for row in overlap_scores["workers"]
-            }
-            if verified_worker_id not in indexed_blocks:
-                raise RuntimeError(
-                    "verified Dynamo worker is absent from overlap scores"
-                )
-            verified_blocks = verified_prefix_tokens // self._block_size
-            max_indexed_blocks = max(indexed_blocks.values(), default=0)
-            self._fence_checks += 1
-            if verified_blocks > max_indexed_blocks:
-                selection_request["pinned_worker"] = {
-                    "worker_id": verified_worker_id,
-                    "dp_rank": 0,
-                }
-                self._fence_pins += 1
-                fence_applied = True
-            logger.info(
-                "PAP Dynamo KV fence request_id=%s source_pa=%d "
-                "verified_blocks=%d indexed_source_blocks=%d "
-                "max_indexed_blocks=%d pinned=%s",
-                request_id,
-                verified_worker_id,
-                verified_blocks,
-                indexed_blocks[verified_worker_id],
-                max_indexed_blocks,
-                fence_applied,
-            )
-            if observation is not None:
-                observation["kv_fence"] = {
-                    "source_worker_id": verified_worker_id,
-                    "verified_prefix_tokens": verified_prefix_tokens,
-                    "indexed_source_blocks": indexed_blocks[verified_worker_id],
-                    "max_indexed_blocks": max_indexed_blocks,
-                    "pinned": fence_applied,
-                }
         selection_start_ns = time.perf_counter_ns()
         try:
-            selected = await self._service.select_and_reserve(selection_request)
+            selected = await self._service.select_and_reserve(
+                {
+                    "model_name": self._model_name,
+                    "token_ids": token_ids,
+                    "selection_id": request_id,
+                    "expected_output_tokens": expected_output_tokens,
+                }
+            )
             worker_id = int(selected["worker_id"])
             if not 0 <= worker_id < len(self._groups):
                 raise RuntimeError(f"Dynamo selected unknown PAP worker {worker_id}")
@@ -408,8 +348,6 @@ class PAPDynamoRouter:
             "enabled": True,
             "selections": self._selections,
             "failures": self._failures,
-            "kv_fence_checks": self._fence_checks,
-            "kv_fence_pins": self._fence_pins,
             "active_reservations": len(self._reservations),
             "pending_cleanup": len(self._cleanup_tasks),
             "pending_selections": len(self._pending_selections),

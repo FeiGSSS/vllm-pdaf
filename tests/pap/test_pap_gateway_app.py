@@ -15,7 +15,6 @@ import vllm.pap.gateway.lifecycle as gateway_lifecycle
 from vllm.pap.gateway.admission import PAPProjectionAdmission
 from vllm.pap.gateway.app import parse_args
 from vllm.pap.gateway.dynamo_routing import PAPDynamoRouter
-from vllm.pap.gateway.kv_fence import PAPKVFenceCoordinator
 from vllm.pap.gateway.kv_migration import PAPKVCacheMigrationCoordinator
 from vllm.pap.gateway.lifecycle import PAPLifecycleManager
 from vllm.pap.gateway.load_tracker import PAPLoadTracker
@@ -152,129 +151,6 @@ def test_dynamo_workers_register_replay_endpoints(monkeypatch, tmp_path) -> None
             "tcp://host:8501",
         ]
         await router.shutdown()
-
-    asyncio.run(run())
-
-
-def test_dynamo_fence_pins_only_when_snapshot_beats_index() -> None:
-    async def run() -> None:
-        requests = []
-
-        class Service:
-            async def overlap_scores(self, request):
-                return {
-                    "block_size": 16,
-                    "workers": [
-                        {"worker_id": 0, "device_blocks": 10},
-                        {"worker_id": 1, "device_blocks": 5},
-                    ],
-                }
-
-            async def select_and_reserve(self, request):
-                requests.append(request)
-                worker = request.get("pinned_worker", {"worker_id": 0})
-                return {"worker_id": worker["worker_id"]}
-
-            async def free_reservation(self, request_id):
-                pass
-
-            def stop_scheduling(self):
-                pass
-
-            def shutdown(self):
-                pass
-
-            def loads(self, **kwargs):
-                return []
-
-        router = PAPDynamoRouter(_groups(2), Service(), model_name="pap", block_size=16)
-        selected = await router.select_group(
-            [1] * 256,
-            request_id="fenced",
-            expected_output_tokens=1,
-            verified_worker_id=1,
-            verified_prefix_tokens=192,
-        )
-        assert selected == _groups(2)[1]
-        assert requests[0]["pinned_worker"] == {"worker_id": 1, "dp_rank": 0}
-        router.finish_request("fenced")
-        selected = await router.select_group(
-            [1] * 256,
-            request_id="indexed",
-            expected_output_tokens=1,
-            verified_worker_id=1,
-            verified_prefix_tokens=160,
-        )
-        assert selected == _groups(2)[0]
-        assert "pinned_worker" not in requests[1]
-        router.finish_request("indexed")
-        await router.shutdown()
-        assert router.stats()["kv_fence_checks"] == 2
-        assert router.stats()["kv_fence_pins"] == 1
-
-    asyncio.run(run())
-
-
-def test_kv_fence_tracks_and_releases_verified_prefix() -> None:
-    async def run() -> None:
-        catalog = {
-            "catalog_id": "source",
-            "layer_name": "layer.0",
-            "block_size": 16,
-            "num_kv_heads": 8,
-            "layout": "NHD",
-            "kv_cache": {
-                "dtype": "float16",
-                "shape": [8, 8, 16, 16],
-                "ipc_handle": {"GPU-source": [{"pap_type": "bytes", "data": "eA=="}]},
-            },
-        }
-        export = {
-            "status": "exported",
-            "transfer_id": "fence:r1:0",
-            "source_worker_id": 0,
-            "prefix_tokens": 32,
-            "block_size": 16,
-            "source_block_ids": [2, 3],
-            "catalogs": [catalog],
-        }
-        responses = [
-            SimpleNamespace(raise_for_status=lambda: None, json=lambda: export),
-            SimpleNamespace(
-                raise_for_status=lambda: None,
-                json=lambda: {"released": True},
-            ),
-        ]
-        source = SimpleNamespace(
-            client=SimpleNamespace(post=AsyncMock(side_effect=responses))
-        )
-        fence = PAPKVFenceCoordinator(enabled=True, max_conversations=1)
-        fence.begin_request("conversation", "r0")
-        assert (
-            await fence.acquire(
-                conversation_id="conversation",
-                request_id="r0",
-                raw_block_hashes=(b"a",),
-                prefill_clients=[source],
-            )
-            is None
-        )
-        fence.record_prefill("conversation", "r0", 0)
-        fence.finish_request("conversation", "r0")
-        fence.begin_request("conversation", "r1")
-        lease = await fence.acquire(
-            conversation_id="conversation",
-            request_id="r1",
-            raw_block_hashes=(b"a", b"b"),
-            prefill_clients=[source],
-        )
-        assert lease is not None and lease.prefix_tokens == 32
-        await fence.release(lease)
-        fence.record_prefill("conversation", "r1", 0)
-        fence.finish_request("conversation", "r1")
-        assert fence.stats()["checks"] == 1
-        assert fence.stats()["exports"] == 1
-        assert fence.stats()["failures"] == 0
 
     asyncio.run(run())
 
@@ -539,7 +415,7 @@ def test_dynamo_router_reserves_prefill_and_frees_decode(tmp_path, monkeypatch) 
         monkeypatch.setenv("PAP_DYNAMO_ROUTING_TRACE_OUTPUT", str(trace_path))
         groups = _groups(2)
         service = FakeSelectionService()
-        router = PAPDynamoRouter(groups, service, model_name="pap", block_size=16)
+        router = PAPDynamoRouter(groups, service, model_name="pap")
 
         selected = await router.select_group(
             [1, 2, 3],
@@ -597,7 +473,7 @@ def test_dynamo_cancelled_selection_releases_committed_booking(cancel_before_boo
             stop_scheduling=lambda: None,
             shutdown=lambda: None,
         )
-        router = PAPDynamoRouter(_groups(1), service, model_name="pap", block_size=16)
+        router = PAPDynamoRouter(_groups(1), service, model_name="pap")
         task = asyncio.create_task(
             router.select_group([1], request_id="r", expected_output_tokens=1)
         )
@@ -626,7 +502,7 @@ def test_dynamo_release_failure_retains_ownership_and_blocks_new_routing():
             stop_scheduling=lambda: None,
             shutdown=lambda: None,
         )
-        router = PAPDynamoRouter(_groups(1), service, model_name="pap", block_size=16)
+        router = PAPDynamoRouter(_groups(1), service, model_name="pap")
         await router.select_group([1], request_id="r", expected_output_tokens=1)
         router.finish_request("r")
         await asyncio.sleep(0)

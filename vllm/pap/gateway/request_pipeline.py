@@ -167,101 +167,57 @@ async def _handle_parsed_openai_request(
         routing_prompt_text if req_data.get("return_prompt_text") else None
     )
     dynamo_router = request.app.state.pap_dynamo_router
-    kv_fence = request.app.state.pap_kv_fence
-    kv_fence.begin_request(conversation_id, request_id)
-    routing_hash_count = max(
-        0,
-        (len(routing_token_ids) - 1) // tokenizer.block_size,
-    )
-    try:
-        fence_lease = await kv_fence.acquire(
-            conversation_id=conversation_id,
-            request_id=request_id,
-            raw_block_hashes=raw_prompt_hashes[:routing_hash_count],
-            prefill_clients=[
-                request.app.state.prefill_clients[item]
-                for item in request.app.state.groups
-            ],
-        )
-    except BaseException:
-        kv_fence.finish_request(conversation_id, request_id)
-        raise
     routing_start = time.perf_counter() if profile else 0.0
-    try:
-        group = await dynamo_router.select_group(
-            routing_token_ids,
-            request_id=request_id,
-            expected_output_tokens=decode_capacity_tokens,
-            conversation_id=conversation_id,
-            verified_worker_id=(
-                fence_lease.source_worker_id if fence_lease is not None else None
-            ),
-            verified_prefix_tokens=(
-                fence_lease.prefix_tokens if fence_lease is not None else 0
-            ),
-        )
-    except BaseException:
-        if fence_lease is not None:
-            await kv_fence.release(fence_lease)
-        kv_fence.finish_request(conversation_id, request_id)
-        raise
-    try:
-        projection = select_projection_for_group(
-            group, request.app.state.groups, request.app.state.projections
-        )
-        routing_ms = (time.perf_counter() - routing_start) * 1000.0 if profile else 0.0
-        projection_client = request.app.state.projection_clients[projection]
-        projection_index = request.app.state.projections.index(projection)
-        group_index = request.app.state.groups.index(group)
-        prefill = request.app.state.prefill_clients[group]
-        attention_clients = request.app.state.attention_clients[group]
-        load_tracker = request.app.state.pap_load_tracker
-        kv_migration = request.app.state.pap_kv_migration
-        load_tracker.begin_request(
-            request_id,
-            group,
-            prefill_tokens=max(1, initial_context_tokens),
-            decode_capacity_tokens=decode_capacity_tokens,
-            prompt_hashes=prompt_hashes,
-        )
+    group = await dynamo_router.select_group(
+        routing_token_ids,
+        request_id=request_id,
+        expected_output_tokens=decode_capacity_tokens,
+        conversation_id=conversation_id,
+    )
+    projection = select_projection_for_group(
+        group, request.app.state.groups, request.app.state.projections
+    )
+    routing_ms = (time.perf_counter() - routing_start) * 1000.0 if profile else 0.0
+    projection_client = request.app.state.projection_clients[projection]
+    projection_index = request.app.state.projections.index(projection)
+    group_index = request.app.state.groups.index(group)
+    prefill = request.app.state.prefill_clients[group]
+    attention_clients = request.app.state.attention_clients[group]
+    load_tracker = request.app.state.pap_load_tracker
+    kv_migration = request.app.state.pap_kv_migration
+    load_tracker.begin_request(
+        request_id,
+        group,
+        prefill_tokens=max(1, initial_context_tokens),
+        decode_capacity_tokens=decode_capacity_tokens,
+        prompt_hashes=prompt_hashes,
+    )
 
-        handed_off_stream_cleanup = False
-        active_request_ids: set[str] = request.app.state.pap_active_request_ids
-        active_request_ids.add(request_id)
-        admission = request.app.state.projection_admission
+    handed_off_stream_cleanup = False
+    active_request_ids: set[str] = request.app.state.pap_active_request_ids
+    active_request_ids.add(request_id)
+    admission = request.app.state.projection_admission
 
-        def finish_request() -> None:
-            dynamo_router.finish_request(request_id)
-            load_tracker.finish_request(request_id)
-            kv_migration.finish_request(conversation_id, request_id)
-            kv_fence.finish_request(conversation_id, request_id)
-            active_request_ids.discard(request_id)
+    def finish_request() -> None:
+        dynamo_router.finish_request(request_id)
+        load_tracker.finish_request(request_id)
+        kv_migration.finish_request(conversation_id, request_id)
+        active_request_ids.discard(request_id)
 
-        lifecycle = request.app.state.pap_lifecycle_manager.create(
-            request_id=request_id,
-            attention_clients=attention_clients,
-            prefill_client=prefill,
-            projection_client=projection_client,
-            admission=admission,
-            group=group,
-            projection=projection,
-            on_finished=finish_request,
-        )
-    except BaseException:
-        if fence_lease is not None:
-            try:
-                await kv_fence.release(fence_lease)
-            except Exception:
-                logger.exception(
-                    "PAP KV fence setup unwind failed request_id=%s", request_id
-                )
-        kv_fence.finish_request(conversation_id, request_id)
-        raise
+    lifecycle = request.app.state.pap_lifecycle_manager.create(
+        request_id=request_id,
+        attention_clients=attention_clients,
+        prefill_client=prefill,
+        projection_client=projection_client,
+        admission=admission,
+        group=group,
+        projection=projection,
+        on_finished=finish_request,
+    )
     request.app.state.pap_pending_route_request_ids.discard(request_id)
     migration_lease = None
     migration_prefix_tokens = 0
     migration_ms = 0.0
-    fence_release_scheduled = False
     try:
         kv_migration.begin_request(conversation_id, request_id)
         register_start = time.perf_counter() if profile else 0.0
@@ -329,9 +285,6 @@ async def _handle_parsed_openai_request(
         finally:
             if migration_lease is not None:
                 kv_migration.release_after_prefill(migration_lease)
-            if fence_lease is not None:
-                kv_fence.release_after_prefill(fence_lease)
-                fence_release_scheduled = True
         lifecycle.mark_prefill_completed()
         prefill_ms = int((time.time() - prefill_start) * 1000)
 
@@ -382,7 +335,6 @@ async def _handle_parsed_openai_request(
             prefill_ms=prefill_ms,
         )
         kv_migration.record_prefill(conversation_id, request_id, group_index)
-        kv_fence.record_prefill(conversation_id, request_id, group_index)
         exact_prompt_hashes = tokenizer.hash_token_ids(
             prompt_token_ids,
             cache_salt=req_data.get("cache_salt"),
@@ -543,7 +495,5 @@ async def _handle_parsed_openai_request(
         )
         return JSONResponse(projection_resp, headers=response_headers)
     finally:
-        if fence_lease is not None and not fence_release_scheduled:
-            kv_fence.release_after_prefill(fence_lease)
         if not handed_off_stream_cleanup:
             await lifecycle.terminate("request_pipeline_exit")

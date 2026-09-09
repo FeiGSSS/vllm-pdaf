@@ -226,24 +226,6 @@ def build_prefill_control_router() -> APIRouter:
             "kv_migration_release", req.model_dump(), wait=True
         )
 
-    @router.post("/v1/pap/prefill/kv-fence/acquire")
-    async def acquire_kv_fence(
-        req: KVMigrationExportRequest, raw_request: Request
-    ) -> dict[str, Any]:
-        snapshot = getattr(raw_request.app.state, "pap_kv_snapshot_client", None)
-        if snapshot is None:
-            raise HTTPException(status_code=503, detail="KV snapshot is not enabled")
-        return await snapshot.request("export", req.model_dump())
-
-    @router.post("/v1/pap/prefill/kv-fence/release")
-    async def release_kv_fence(
-        req: KVMigrationReleaseRequest, raw_request: Request
-    ) -> dict[str, Any]:
-        snapshot = getattr(raw_request.app.state, "pap_kv_snapshot_client", None)
-        if snapshot is None:
-            raise HTTPException(status_code=503, detail="KV snapshot is not enabled")
-        return await snapshot.request("release", req.model_dump())
-
     @router.get("/v1/pap/prefill/kv-migration/snapshot")
     async def kv_migration_snapshot(raw_request: Request) -> dict[str, Any]:
         snapshot = getattr(raw_request.app.state, "pap_kv_snapshot_client", None)

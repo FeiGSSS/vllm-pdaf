@@ -63,12 +63,6 @@ set_common_env() {
   export PAP_OFFLOAD_KV_TRANSPORT=cuda_ipc
   export PAP_BLOCK_SIZE=16
   export PYTHONHASHSEED=123
-  export PAP_ENABLE_DYNAMO_KV_FENCE="${PAP_CROSS_HOST_ENABLE_KV_FENCE:-1}"
-  if [[ "${PAP_ENABLE_DYNAMO_KV_FENCE}" != "0" \
-    && "${PAP_ENABLE_DYNAMO_KV_FENCE}" != "1" ]]; then
-    echo "PAP_CROSS_HOST_ENABLE_KV_FENCE must be 0 or 1" >&2
-    return 2
-  fi
   export PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS=256
   export PAP_DECODE_COMMIT_FAIL_CLOSED=1
   export PAP_DECODE_COMMIT_TIMEOUT=5.0
@@ -172,9 +166,6 @@ run_prefill() {
   export VLLM_PORT="$((VLLM_PREFILL_PORT_BASE + index * 20))"
   export PAP_RUNTIME_CUDA_CONTEXT_AUDIT_PATH="${REMOTE_RUN_ROOT}/runtime_cuda_context_prefill_${index}.json"
   export PAP_RUNTIME_CUDA_CONTEXT_ROLE=prefill
-  if [[ "${PAP_ENABLE_DYNAMO_KV_FENCE}" == "1" ]]; then
-    export PAP_KV_SNAPSHOT_SOCKET="/tmp/pap-kv-snapshot-${RUN_ID}-${index}.sock"
-  fi
   exec "${VLLM_BIN}" serve "${MODEL_PATH}" \
     --host 0.0.0.0 \
     --port "$((PREFILL_PORT_BASE + index))" \
@@ -254,10 +245,6 @@ build_kv_replay_endpoints() {
 
 run_gateway() {
   set_common_env
-  local fence_args=()
-  if [[ "${PAP_ENABLE_DYNAMO_KV_FENCE}" == "1" ]]; then
-    fence_args+=(--enable-dynamo-kv-fence)
-  fi
   if [[ "${PAP_CROSS_HOST_ROUTING_TRACE:-0}" == "1" ]]; then
     export PAP_DYNAMO_ROUTING_TRACE_OUTPUT="${RUN_ROOT}/routing_trace.jsonl"
   fi
@@ -275,7 +262,6 @@ run_gateway() {
     --dynamo-site-packages "${ROOT_DIR}/.local/pap-dynamo-router" \
     --dynamo-max-num-batched-tokens "${PREFILL_BUDGET}" \
     --dynamo-prefill-load-scale 2.0 \
-    "${fence_args[@]}" \
     --routing-policy dynamo
 }
 
@@ -285,7 +271,7 @@ case "${ROLE}" in
   idle) run_idle_pe ;;
   projection) run_projection ;;
   gateway) run_gateway ;;
-  coordinator) set_common_env ;;
+  coordinator) ;;
   *)
     echo "Unknown role: ${ROLE}" >&2
     exit 2
@@ -488,8 +474,6 @@ write_effective_config() {
     printf 'export PAP_CROSS_HOST_BENCH_TIMEOUT=%q\n' "${BENCH_TIMEOUT}"
     printf 'export PAP_CROSS_HOST_ROUTING_TRACE=%q\n' \
       "${PAP_CROSS_HOST_ROUTING_TRACE:-0}"
-    printf 'export PAP_CROSS_HOST_ENABLE_KV_FENCE=%q\n' \
-      "${PAP_CROSS_HOST_ENABLE_KV_FENCE:-1}"
     printf 'export PYTHONHASHSEED=%q\n' "${PYTHONHASHSEED}"
     printf 'export PAP_CROSS_HOST_UID_PORT=%q\n' "${UID_PORT}"
     printf 'export PAP_CROSS_HOST_PREFILL_PORT_BASE=%q\n' "${PREFILL_PORT_BASE}"
@@ -670,10 +654,6 @@ wait_drained() {
       and .dynamo_router.active_reservations == 0
       and .dynamo_router.pending_cleanup == 0
       and .dynamo_router.pending_selections == 0
-      and .kv_fence.healthy == true
-      and .kv_fence.failures == 0
-      and .kv_fence.active_conversations == 0
-      and .kv_fence.pending_releases == 0
     ' <<<"${healthy}" >/dev/null 2>&1; then
       for ((index = 0; index < PA_COUNT; index++)); do
         curl --noproxy '*' -fsS \
@@ -697,36 +677,22 @@ capture_and_audit_results() {
     curl --noproxy '*' -fsS \
       "http://${REMOTE_IP}:$((ATTENTION_PORT_BASE + index))/v1/pap/attention/stats" \
       -o "${RUN_ROOT}/attention_stats_${index}.json"
-    if [[ "${PAP_ENABLE_DYNAMO_KV_FENCE}" == "1" ]]; then
-      curl --noproxy '*' -fsS \
-        "http://${REMOTE_IP}:$((PREFILL_PORT_BASE + index))/v1/pap/prefill/kv-migration/snapshot" \
-        -o "${RUN_ROOT}/prefill_kv_snapshot_final_${index}.json"
-    fi
   done
   curl --noproxy '*' -fsS \
     "http://127.0.0.1:${GATEWAY_PORT}/v1/pap/topology/stats" \
     -o "${RUN_ROOT}/topology_stats.json"
   rsync -a "${REMOTE_SSH}:${REMOTE_RUN_ROOT}/" \
     "${RUN_ROOT}/remote_logs/"
-  "${PYTHON_BIN}" - "${RUN_ROOT}" "${PAP_ENABLE_DYNAMO_KV_FENCE}" <<'PY'
+  "${PYTHON_BIN}" - "${RUN_ROOT}" <<'PY'
 import json
 import re
 import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
-fence_enabled = sys.argv[2] == "1"
 profile = json.loads((root / "aiperf/profile.json").read_text())
 stats = [json.loads((root / f"attention_stats_{index}.json").read_text()) for index in range(7)]
 topology = json.loads((root / "topology_stats.json").read_text())
-snapshots = (
-    [
-        json.loads((root / f"prefill_kv_snapshot_final_{index}.json").read_text())
-        for index in range(7)
-    ]
-    if fence_enabled
-    else []
-)
 errors = []
 if profile["request_count"]["avg"] != 180 or profile["time_to_first_token"]["count"] != 180:
     errors.append("AIPerf did not complete 180 requests")
@@ -756,27 +722,6 @@ if topology["lifecycle"]["completed"] != 180 or topology["lifecycle"]["failed"] 
     errors.append("Gateway lifecycle mismatch")
 if topology["dynamo_router"]["failures"] != 0 or topology["dynamo_router"]["active_reservations"] != 0:
     errors.append("Dynamo routing did not drain")
-fence = topology.get("kv_fence", {})
-if fence.get("enabled") != fence_enabled or not fence.get("healthy"):
-    errors.append("Dynamo KV fence is not enabled and healthy")
-if fence_enabled and fence.get("checks") != 120:
-    errors.append(f"Dynamo KV fence checks={fence.get('checks')} expected=120")
-if fence_enabled and fence.get("exports", 0) + fence.get("misses", 0) != fence.get("checks"):
-    errors.append("Dynamo KV fence outcome accounting mismatch")
-if (
-    fence.get("failures") != 0
-    or fence.get("active_conversations") != 0
-    or fence.get("pending_releases") != 0
-):
-    errors.append("Dynamo KV fence did not drain")
-router = topology["dynamo_router"]
-if router.get("kv_fence_checks") != fence.get("exports"):
-    errors.append("Dynamo router and KV fence check counts differ")
-for index, snapshot in enumerate(snapshots):
-    if not snapshot.get("ready") or snapshot.get("failures") != 0:
-        errors.append(f"Prefill snapshot[{index}] is unhealthy")
-    if snapshot.get("active_exports") != 0:
-        errors.append(f"Prefill snapshot[{index}] retained exports")
 pattern = re.compile(
     r"CUDA out of memory|EngineDeadError|^Traceback| ERROR .*Traceback|"
     r"Exception in thread|PAP decode commit failed|PAP lease release failed|"
@@ -802,9 +747,6 @@ summary = {
     "request_throughput": profile["request_throughput"]["avg"],
     "output_token_throughput": profile["output_token_throughput"]["avg"],
     "total_output_tokens": int(profile["total_output_tokens"]["avg"]),
-    "kv_fence": fence,
-    "dynamo_kv_fence_checks": router.get("kv_fence_checks"),
-    "dynamo_kv_fence_pins": router.get("kv_fence_pins"),
     "errors": errors,
 }
 (root / "performance_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
@@ -861,13 +803,8 @@ wait_for_health "http://127.0.0.1:${PROJECTION_PORT}/health" Projection
 for ((INDEX = 0; INDEX < PA_COUNT; INDEX++)); do
   curl --noproxy '*' -fsS \
     "http://${REMOTE_IP}:$((PREFILL_PORT_BASE + INDEX))/openapi.json" \
-    | jq -e '.paths | has("/v1/pap/prefill/kv-load") and has("/v1/pap/prefill/decode-commit") and has("/v1/pap/prefill/lease-release") and has("/v1/pap/prefill/kv-fence/acquire") and has("/v1/pap/prefill/kv-fence/release")' \
+    | jq -e '.paths | has("/v1/pap/prefill/kv-load") and has("/v1/pap/prefill/decode-commit") and has("/v1/pap/prefill/lease-release")' \
       >/dev/null
-  if [[ "${PAP_ENABLE_DYNAMO_KV_FENCE}" == "1" ]]; then
-    curl --noproxy '*' -fsS \
-      "http://${REMOTE_IP}:$((PREFILL_PORT_BASE + INDEX))/v1/pap/prefill/kv-migration/snapshot" \
-      | jq -e '.ready == true and .failures == 0' >/dev/null
-  fi
   grep -Fq "Successfully initialized the transport: IBGDA" \
     <(ssh -o BatchMode=yes -o ConnectTimeout=5 "${REMOTE_SSH}" \
       "cat '${REMOTE_RUN_ROOT}/attention_${INDEX}.log'")

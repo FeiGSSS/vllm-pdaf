@@ -43,15 +43,8 @@ class PAPSessionRoundRobinRouter:
         request_id: str,
         expected_output_tokens: int,
         conversation_id: str = "",
-        verified_worker_id: int | None = None,
-        verified_prefix_tokens: int = 0,
     ) -> PAPGroup:
-        del (
-            token_ids,
-            expected_output_tokens,
-            verified_worker_id,
-            verified_prefix_tokens,
-        )
+        del token_ids, expected_output_tokens
         if self._closed:
             raise RuntimeError("session round-robin router is closed")
         if not conversation_id:
