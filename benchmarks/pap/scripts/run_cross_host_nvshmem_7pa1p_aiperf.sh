@@ -506,23 +506,11 @@ write_effective_config() {
 }
 
 audit_source() {
+  local pap_files=()
+  mapfile -t pap_files < <(git ls-files vllm/pap)
+  [[ "${#pap_files[@]}" -gt 0 ]]
   local files=(
-    vllm/pap/config.py
-    vllm/pap/transport/nvshmem/world.py
-    vllm/pap/transport/nvshmem/runtime.py
-    vllm/pap/transport/nvshmem/transport.py
-    vllm/pap/attention/peers.py
-    vllm/pap/endpoint_plugin.py
-    vllm/pap/plugin.py
-    vllm/pap/gateway/app.py
-    vllm/pap/gateway/dynamo_routing.py
-    vllm/pap/gateway/kv_fence.py
-    vllm/pap/gateway/request_pipeline.py
-    vllm/pap/gateway/session_routing.py
-    vllm/pap/integration/engine.py
-    vllm/pap/kv_snapshot.py
-    vllm/pap/prefill_control_router.py
-    vllm/pap/transport/nvshmem/device_bridge.cu
+    "${pap_files[@]}"
     vllm/v1/core/block_pool.py
     benchmarks/pap/scripts/configure_nvshmem.sh
     benchmarks/pap/scripts/build_nvshmem_device_bridge.sh
