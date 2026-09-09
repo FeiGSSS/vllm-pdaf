@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 from collections.abc import Iterable, Sequence
+from threading import RLock
 from typing import Any
 
 from vllm.distributed.kv_events import (
@@ -183,6 +184,7 @@ class BlockPool:
         # Cache for block lookup
         self.cached_block_hash_to_block: BlockHashToBlockMap = BlockHashToBlockMap()
         self.cached_block_hashes_by_block: dict[int, set[BlockHashWithGroupId]] = {}
+        self._export_lock = RLock()
 
         # To represent a placeholder block with block_id=0.
         # The ref_cnt of null_block is not maintained, needs special care to
@@ -221,6 +223,23 @@ class BlockPool:
                 return None
             cached_blocks.append(block)
         return cached_blocks
+
+    def acquire_cached_prefix(
+        self,
+        block_hashes: Sequence[BlockHash],
+        kv_cache_group_ids: list[int],
+    ) -> list[KVCacheBlock]:
+        """Pin the longest cached prefix for a concurrent export reader."""
+        with self._export_lock:
+            blocks: list[KVCacheBlock] = []
+            for block_hash in block_hashes:
+                matched = self.get_cached_block(block_hash, kv_cache_group_ids)
+                if matched is None:
+                    break
+                blocks.extend(matched)
+            if blocks:
+                self.touch(blocks)
+            return blocks
 
     def cache_full_blocks(
         self,
@@ -572,22 +591,25 @@ class BlockPool:
         self,
         block: KVCacheBlock,
     ) -> list[BlockHashWithGroupId]:
-        block_hashes: list[BlockHashWithGroupId] = []
-        if block.block_hash is not None:
-            block_hashes.append(block.block_hash)
-        block_hashes.extend(self.cached_block_hashes_by_block.pop(block.block_id, ()))
-        if not block_hashes:
-            return []
+        with self._export_lock:
+            block_hashes: list[BlockHashWithGroupId] = []
+            if block.block_hash is not None:
+                block_hashes.append(block.block_hash)
+            block_hashes.extend(
+                self.cached_block_hashes_by_block.pop(block.block_id, ())
+            )
+            if not block_hashes:
+                return []
 
-        removed_hashes: list[BlockHashWithGroupId] = []
-        for block_hash in block_hashes:
-            if (
-                self.cached_block_hash_to_block.pop(block_hash, block.block_id)
-                is not None
-            ):
-                removed_hashes.append(block_hash)
-        block.reset_hash()
-        return removed_hashes
+            removed_hashes: list[BlockHashWithGroupId] = []
+            for block_hash in block_hashes:
+                if (
+                    self.cached_block_hash_to_block.pop(block_hash, block.block_id)
+                    is not None
+                ):
+                    removed_hashes.append(block_hash)
+            block.reset_hash()
+            return removed_hashes
 
     def _emit_block_removed_events(
         self,
@@ -610,21 +632,22 @@ class BlockPool:
         block: KVCacheBlock,
         num_tokens: int | None,
     ) -> None:
-        if block.block_hash == block_hash_with_group_id:
-            return
+        with self._export_lock:
+            if block.block_hash == block_hash_with_group_id:
+                return
 
-        if self.cached_block_hash_to_block.contain(
-            block_hash_with_group_id, block.block_id
-        ):
-            return
+            if self.cached_block_hash_to_block.contain(
+                block_hash_with_group_id, block.block_id
+            ):
+                return
 
-        if block.block_hash is None:
-            block.set_block_hash(block_hash_with_group_id, num_tokens=num_tokens)
-        else:
-            self.cached_block_hashes_by_block.setdefault(block.block_id, set()).add(
-                block_hash_with_group_id
-            )
-        self.cached_block_hash_to_block.insert(block_hash_with_group_id, block)
+            if block.block_hash is None:
+                block.set_block_hash(block_hash_with_group_id, num_tokens=num_tokens)
+            else:
+                self.cached_block_hashes_by_block.setdefault(block.block_id, set()).add(
+                    block_hash_with_group_id
+                )
+            self.cached_block_hash_to_block.insert(block_hash_with_group_id, block)
 
     def move_block_hashes(
         self,
@@ -637,12 +660,13 @@ class BlockPool:
         : the prefix cache holds a private copy (``dst_block``)
         under the same hashes instead. Entries stay live; no events emitted.
         """
-        assert dst_block.block_hash is None
-        assert dst_block.block_id not in self.cached_block_hashes_by_block
-        num_tokens = src_block.block_hash_num_tokens
-        for block_hash in self._remove_cached_block_hashes(src_block):
-            # `num_tokens` only applies to the first (primary) insertion.
-            self._insert_block_hash(block_hash, dst_block, num_tokens=num_tokens)
+        with self._export_lock:
+            assert dst_block.block_hash is None
+            assert dst_block.block_id not in self.cached_block_hashes_by_block
+            num_tokens = src_block.block_hash_num_tokens
+            for block_hash in self._remove_cached_block_hashes(src_block):
+                # `num_tokens` only applies to the first (primary) insertion.
+                self._insert_block_hash(block_hash, dst_block, num_tokens=num_tokens)
 
     def get_new_blocks(self, num_blocks: int) -> list[KVCacheBlock]:
         """Get new blocks from the free block pool.
@@ -655,26 +679,27 @@ class BlockPool:
         Returns:
             A list of new block.
         """
-        if num_blocks > self.get_num_free_blocks():
-            raise ValueError(f"Cannot get {num_blocks} free blocks from the pool")
+        with self._export_lock:
+            if num_blocks > self.get_num_free_blocks():
+                raise ValueError(f"Cannot get {num_blocks} free blocks from the pool")
 
-        ret: list[KVCacheBlock] = self.free_block_queue.popleft_n(num_blocks)
+            ret: list[KVCacheBlock] = self.free_block_queue.popleft_n(num_blocks)
 
-        # In order to only iterate the list once, we duplicated code a bit
-        if self.enable_caching:
-            for block in ret:
-                self._maybe_evict_cached_block(block)
-                assert block.ref_cnt == 0
-                block.ref_cnt += 1
-                if self.metrics_collector:
-                    self.metrics_collector.on_block_allocated(block)
-        else:
-            for block in ret:
-                assert block.ref_cnt == 0
-                block.ref_cnt += 1
-                if self.metrics_collector:
-                    self.metrics_collector.on_block_allocated(block)
-        return ret
+            # In order to only iterate the list once, we duplicated code a bit
+            if self.enable_caching:
+                for block in ret:
+                    self._maybe_evict_cached_block(block)
+                    assert block.ref_cnt == 0
+                    block.ref_cnt += 1
+                    if self.metrics_collector:
+                        self.metrics_collector.on_block_allocated(block)
+            else:
+                for block in ret:
+                    assert block.ref_cnt == 0
+                    block.ref_cnt += 1
+                    if self.metrics_collector:
+                        self.metrics_collector.on_block_allocated(block)
+            return ret
 
     def _maybe_evict_cached_block(self, block: KVCacheBlock) -> bool:
         """
@@ -707,14 +732,15 @@ class BlockPool:
         Args:
             blocks: A list of blocks to touch.
         """
-        for block in blocks:
-            # ref_cnt=0 means this block is in the free list (i.e. eviction
-            # candidate), so remove it.
-            if block.ref_cnt == 0 and not block.is_null:
-                self.free_block_queue.remove(block)
-            block.ref_cnt += 1
-            if self.metrics_collector:
-                self.metrics_collector.on_block_accessed(block)
+        with self._export_lock:
+            for block in blocks:
+                # ref_cnt=0 means this block is in the free list (i.e. eviction
+                # candidate), so remove it.
+                if block.ref_cnt == 0 and not block.is_null:
+                    self.free_block_queue.remove(block)
+                block.ref_cnt += 1
+                if self.metrics_collector:
+                    self.metrics_collector.on_block_accessed(block)
 
     def free_blocks(self, ordered_blocks: Iterable[KVCacheBlock]) -> None:
         """Free a list of blocks. The blocks should be ordered by their
@@ -724,20 +750,21 @@ class BlockPool:
             ordered_blocks: A list of blocks to free ordered by their eviction
                 priority.
         """
-        # Identify blocks with hash (LRU cache) and without it (will never match in APC)
-        blocks_with_hash = []
-        blocks_without_hash = []
-        for block in ordered_blocks:
-            block.ref_cnt -= 1
-            if block.ref_cnt == 0 and not block.is_null:
-                if block.block_hash is None:
-                    blocks_without_hash.append(block)
-                else:
-                    blocks_with_hash.append(block)
+        with self._export_lock:
+            # Split cached blocks from blocks that can never match in APC.
+            blocks_with_hash = []
+            blocks_without_hash = []
+            for block in ordered_blocks:
+                block.ref_cnt -= 1
+                if block.ref_cnt == 0 and not block.is_null:
+                    if block.block_hash is None:
+                        blocks_without_hash.append(block)
+                    else:
+                        blocks_with_hash.append(block)
 
-        # Blocks without hash always get evicted first - prepend them last to the tail
-        self.free_block_queue.prepend_n(blocks_without_hash)
-        self.free_block_queue.append_n(blocks_with_hash)
+            # Blocks without hash are evicted first: prepend them at the LRU tail.
+            self.free_block_queue.prepend_n(blocks_without_hash)
+            self.free_block_queue.append_n(blocks_with_hash)
 
     def evict_blocks(self, block_ids: set[int]) -> None:
         """evict blocks from the prefix cache by their block IDs.
@@ -767,32 +794,33 @@ class BlockPool:
             bool: True if the prefix cache is successfully reset,
             False otherwise.
         """
-        num_used_blocks = self.num_gpu_blocks - self.get_num_free_blocks()
-        if num_used_blocks != 1:  # The null block is always marked as used
-            logger.warning(
-                "Failed to reset prefix cache because some "
-                "blocks (%d) are not freed yet",
-                num_used_blocks - 1,
-            )
-            return False
+        with self._export_lock:
+            num_used_blocks = self.num_gpu_blocks - self.get_num_free_blocks()
+            if num_used_blocks != 1:  # The null block is always marked as used
+                logger.warning(
+                    "Failed to reset prefix cache because some "
+                    "blocks (%d) are not freed yet",
+                    num_used_blocks - 1,
+                )
+                return False
 
-        # Remove all hashes so that no new blocks will hit.
-        self.cached_block_hash_to_block = BlockHashToBlockMap()
-        self.cached_block_hashes_by_block.clear()
+            # Remove all hashes so that no new blocks will hit.
+            self.cached_block_hash_to_block = BlockHashToBlockMap()
+            self.cached_block_hashes_by_block.clear()
 
-        # Remove all hashes from all blocks.
-        for block in self.blocks:
-            block.reset_hash()
+            # Remove all hashes from all blocks.
+            for block in self.blocks:
+                block.reset_hash()
 
-        if self.metrics_collector:
-            self.metrics_collector.reset()
+            if self.metrics_collector:
+                self.metrics_collector.reset()
 
-        logger.info("Successfully reset prefix cache")
+            logger.info("Successfully reset prefix cache")
 
-        if self.enable_kv_cache_events:
-            self.kv_event_queue.append(AllBlocksCleared())
+            if self.enable_kv_cache_events:
+                self.kv_event_queue.append(AllBlocksCleared())
 
-        return True
+            return True
 
     def get_num_free_blocks(self) -> int:
         """Get the number of free blocks in the pool.

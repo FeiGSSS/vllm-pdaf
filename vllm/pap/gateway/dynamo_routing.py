@@ -68,6 +68,7 @@ class PAPDynamoRouter:
         groups: Sequence[PAPGroup],
         *,
         event_endpoints: Sequence[str],
+        replay_endpoints: Sequence[str],
         site_packages: str,
         model_name: str,
         block_size: int,
@@ -78,6 +79,8 @@ class PAPDynamoRouter:
         """Create a selector and register each PA as one Dynamo worker."""
         if len(event_endpoints) != len(groups):
             raise ValueError("Dynamo KV event endpoint count must match PA count")
+        if len(replay_endpoints) != len(groups):
+            raise ValueError("Dynamo KV replay endpoint count must match PA count")
         if prefill_load_scale <= 0:
             raise ValueError("Dynamo Prefill load scale must be positive")
         os.environ.update(
@@ -120,14 +123,20 @@ class PAPDynamoRouter:
                 worker_capacities = list(total_kv_blocks)
                 if len(worker_capacities) != len(groups):
                     raise ValueError("Dynamo KV capacity count must match PA count")
-            for worker_id, (group, event_endpoint, worker_capacity) in enumerate(
-                zip(groups, event_endpoints, worker_capacities)
+            for worker_id, (
+                group,
+                event_endpoint,
+                replay_endpoint,
+                worker_capacity,
+            ) in enumerate(
+                zip(groups, event_endpoints, replay_endpoints, worker_capacities)
             ):
                 worker = {
                     "worker_id": worker_id,
                     "model_name": model_name,
                     "endpoint": group.prefill_base_url,
                     "kv_events_endpoint": event_endpoint,
+                    "replay_endpoint": replay_endpoint,
                     "block_size": block_size,
                     "max_num_batched_tokens": max_num_batched_tokens,
                 }

@@ -276,6 +276,7 @@ PREFILL_PORT_BASE="${PAP_PREFILL_PORT_BASE:-${PAP_PREFILL_PORT:-8100}}"
 PROJECTION_PORT_BASE="${PAP_PROJECTION_PORT_BASE:-${PAP_PROJECTION_PORT:-8200}}"
 ATTENTION_PORT_BASE="${PAP_ATTENTION_PORT_BASE:-${PAP_ATTENTION_PORT:-8300}}"
 KV_EVENT_PORT_BASE="${PAP_KV_EVENT_PORT_BASE:-8400}"
+KV_EVENT_REPLAY_PORT_BASE="${PAP_KV_EVENT_REPLAY_PORT_BASE:-8500}"
 ATTENTION_TCP_PORT_BASE="${PAP_ATTENTION_TCP_PORT_BASE:-${PAP_ATTENTION_TCP_PORT:-9300}}"
 VLLM_PREFILL_PORT_BASE="${PAP_VLLM_PREFILL_PORT_BASE:-${PAP_VLLM_PREFILL_PORT:-50000}}"
 VLLM_PROJECTION_PORT_BASE="${PAP_VLLM_PROJECTION_PORT_BASE:-${PAP_VLLM_PROJECTION_PORT:-$((VLLM_PREFILL_PORT_BASE + PA_COUNT * 20))}}"
@@ -373,6 +374,12 @@ PAP_ENABLE_PA_KV_MIGRATION="${PAP_ENABLE_PA_KV_MIGRATION:-0}"
 if [[ "${PAP_ENABLE_PA_KV_MIGRATION}" != "0" \
   && "${PAP_ENABLE_PA_KV_MIGRATION}" != "1" ]]; then
   echo "ERROR: PAP_ENABLE_PA_KV_MIGRATION must be 0 or 1" >&2
+  exit 2
+fi
+PAP_KV_MIGRATION_EXPORT_MODE="${PAP_KV_MIGRATION_EXPORT_MODE:-snapshot}"
+if [[ "${PAP_KV_MIGRATION_EXPORT_MODE}" != "snapshot" \
+  && "${PAP_KV_MIGRATION_EXPORT_MODE}" != "engine_core" ]]; then
+  echo "ERROR: PAP_KV_MIGRATION_EXPORT_MODE must be snapshot or engine_core" >&2
   exit 2
 fi
 PAP_KV_MIGRATION_VERIFY="${PAP_KV_MIGRATION_VERIFY:-0}"
@@ -625,6 +632,15 @@ build_kv_event_endpoints() {
   local idx
   for (( idx=0; idx<PA_COUNT; idx++ )); do
     items+=("tcp://127.0.0.1:$((KV_EVENT_PORT_BASE + idx))")
+  done
+  join_by_comma "${items[@]}"
+}
+
+build_kv_event_replay_endpoints() {
+  local items=()
+  local idx
+  for (( idx=0; idx<PA_COUNT; idx++ )); do
+    items+=("tcp://127.0.0.1:$((KV_EVENT_REPLAY_PORT_BASE + idx))")
   done
   join_by_comma "${items[@]}"
 }
@@ -921,6 +937,7 @@ wait_for_http() {
       echo "${name} is ready at ${url}"
       return 0
     fi
+    check_children_alive
     if (( "$(date +%s)" - start > SERVER_START_TIMEOUT )); then
       die "Timed out waiting for ${name} at ${url}"
     fi
@@ -1412,6 +1429,13 @@ audit_migration_sources_drained() {
       "http://127.0.0.1:$((PREFILL_PORT_BASE + index))/v1/pap/prefill/kv-load" \
       -o "${RUN_ROOT}/prefill_kv_load_final_${index}.json" \
       || die "Failed to capture final Prefill KV state for PA ${index}"
+    if [[ "${PAP_ENABLE_PA_KV_MIGRATION}" == "1" \
+      && "${PAP_KV_MIGRATION_EXPORT_MODE}" == "snapshot" ]]; then
+      curl -fsS \
+        "http://127.0.0.1:$((PREFILL_PORT_BASE + index))/v1/pap/prefill/kv-migration/snapshot" \
+        -o "${RUN_ROOT}/prefill_kv_snapshot_final_${index}.json" \
+        || die "Failed to capture final KV snapshot state for PA ${index}"
+    fi
   done
   RUN_ROOT="${RUN_ROOT}" PA_COUNT="${PA_COUNT}" "${PYTHON_BIN}" - <<'PY'
 import json
@@ -1431,11 +1455,24 @@ for index in range(int(os.environ["PA_COUNT"])):
             "migration_exported_blocks": snapshot["migration_exported_blocks"],
         }
     )
+    snapshot_path = root / f"prefill_kv_snapshot_final_{index}.json"
+    if snapshot_path.exists():
+        snapshots[-1]["snapshot"] = json.loads(snapshot_path.read_text())
 errors = [
     f"PA {item['pa']} retains {item['migration_exports_active']} migration exports"
     for item in snapshots
     if item["migration_exports_active"] != 0
 ]
+errors.extend(
+    f"PA {item['pa']} snapshot is unhealthy: {item['snapshot']}"
+    for item in snapshots
+    if "snapshot" in item
+    and (
+        not item["snapshot"]["ready"]
+        or item["snapshot"]["failures"]
+        or item["snapshot"]["active_exports"]
+    )
+)
 (root / "migration_source_audit.json").write_text(
     json.dumps(
         {
@@ -1634,6 +1671,8 @@ write_effective_config() {
       "${PAP_SESSION_ROUTER_MAX_CONVERSATIONS}"
     printf 'PAP_ENABLE_PA_KV_MIGRATION=%q\n' \
       "${PAP_ENABLE_PA_KV_MIGRATION}"
+    printf 'PAP_KV_MIGRATION_EXPORT_MODE=%q\n' \
+      "${PAP_KV_MIGRATION_EXPORT_MODE}"
     printf 'PAP_KV_MIGRATION_VERIFY=%q\n' "${PAP_KV_MIGRATION_VERIFY}"
     printf 'PAP_MIGRATION_MAX_CONVERSATIONS=%q\n' \
       "${PAP_MIGRATION_MAX_CONVERSATIONS}"
@@ -1643,6 +1682,9 @@ write_effective_config() {
     printf 'PREFILL_PORT_BASE=%q\n' "${PREFILL_PORT_BASE}"
     printf 'PROJECTION_PORT_BASE=%q\n' "${PROJECTION_PORT_BASE}"
     printf 'ATTENTION_PORT_BASE=%q\n' "${ATTENTION_PORT_BASE}"
+    printf 'KV_EVENT_PORT_BASE=%q\n' "${KV_EVENT_PORT_BASE}"
+    printf 'KV_EVENT_REPLAY_PORT_BASE=%q\n' \
+      "${KV_EVENT_REPLAY_PORT_BASE}"
     printf 'PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS=%q\n' "${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}"
     printf 'PAP_DECODE_CAPACITY_SOURCE=%q\n' \
       "request_max_tokens_with_environment_fallback"
@@ -2281,6 +2323,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     "$((PREFILL_PORT_BASE + idx))"
     "$((ATTENTION_PORT_BASE + idx))"
     "$((KV_EVENT_PORT_BASE + idx))"
+    "$((KV_EVENT_REPLAY_PORT_BASE + idx))"
     "$((ATTENTION_TCP_PORT_BASE + idx))"
     "$((VLLM_PREFILL_PORT_BASE + idx * 20))"
   )
@@ -2439,6 +2482,12 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       fi
     )" \
     PAP_RUNTIME_CUDA_CONTEXT_ROLE=prefill \
+    PAP_KV_SNAPSHOT_SOCKET="$(
+      if [[ "${PAP_ENABLE_PA_KV_MIGRATION}" == "1" \
+        && "${PAP_KV_MIGRATION_EXPORT_MODE}" == "snapshot" ]]; then
+        printf '/tmp/pap-kv-snapshot-%s-%d.sock' "${RUN_ID}" "${idx}"
+      fi
+    )" \
     VLLM_PLUGINS=pap \
     PAP_MODEL_HOOKS=1 \
     PAP_KV_LEASE_TTL_SECONDS="${PAP_KV_LEASE_TTL_SECONDS}" \
@@ -2453,7 +2502,7 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
       "${PREFILL_OBSERVABILITY_ARGS[@]}" \
       --enable-prefix-caching \
       --kv-events-config \
-        "{\"enable_kv_cache_events\":true,\"publisher\":\"zmq\",\"endpoint\":\"tcp://*:$((KV_EVENT_PORT_BASE + idx))\",\"topic\":\"pap-pa-${idx}\",\"hwm\":100000,\"max_queue_size\":0}" \
+        "{\"enable_kv_cache_events\":true,\"publisher\":\"zmq\",\"endpoint\":\"tcp://*:$((KV_EVENT_PORT_BASE + idx))\",\"replay_endpoint\":\"tcp://*:$((KV_EVENT_REPLAY_PORT_BASE + idx))\",\"topic\":\"pap-pa-${idx}\",\"hwm\":100000,\"max_queue_size\":0}" \
       --enable-chunked-prefill \
       --block-size "${PAP_BLOCK_SIZE}" \
       --max-model-len "${MAX_MODEL_LEN}" \
@@ -2533,8 +2582,16 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
           and has("/v1/pap/prefill/lease-release")
           and has("/v1/pap/prefill/kv-migration/export")
           and has("/v1/pap/prefill/kv-migration/release")
+          and has("/v1/pap/prefill/kv-migration/snapshot")
       ' >/dev/null \
     || die "PAP Prefill ${idx} control plugin routes are missing"
+  if [[ "${PAP_ENABLE_PA_KV_MIGRATION}" == "1" \
+    && "${PAP_KV_MIGRATION_EXPORT_MODE}" == "snapshot" ]]; then
+    curl -fsS \
+      "http://127.0.0.1:$((PREFILL_PORT_BASE + idx))/v1/pap/prefill/kv-migration/snapshot" \
+      | jq -e '.ready == true and .failures == 0' >/dev/null \
+      || die "PAP Prefill ${idx} KV snapshot is not ready"
+  fi
 done
 for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
   wait_for_http \
@@ -2559,6 +2616,7 @@ audit_runtime_cuda_contexts
 PAP_GROUPS_SPEC="$(build_pap_groups_spec)"
 PROJECTIONS_SPEC="$(build_projections_spec)"
 KV_EVENT_ENDPOINTS="$(build_kv_event_endpoints)"
+KV_EVENT_REPLAY_ENDPOINTS="$(build_kv_event_replay_endpoints)"
 
 echo "Starting PAP Gateway on port ${PAP_PROXY_PORT}"
 env \
@@ -2572,6 +2630,7 @@ env \
   --pap-groups "${PAP_GROUPS_SPEC}" \
   --projections "${PROJECTIONS_SPEC}" \
   --kv-event-endpoints "${KV_EVENT_ENDPOINTS}" \
+  --kv-event-replay-endpoints "${KV_EVENT_REPLAY_ENDPOINTS}" \
   --prefix-block-size "${PAP_BLOCK_SIZE}" \
   --dynamo-site-packages "${PAP_DYNAMO_SITE_PACKAGES}" \
   --dynamo-model-name "${PAP_DYNAMO_MODEL_NAME}" \

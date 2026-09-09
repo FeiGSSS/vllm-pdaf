@@ -76,6 +76,11 @@ async def lifespan(app: FastAPI):
         for endpoint in args.kv_event_endpoints.split(",")
         if endpoint.strip()
     )
+    replay_endpoints = tuple(
+        endpoint.strip()
+        for endpoint in args.kv_event_replay_endpoints.split(",")
+        if endpoint.strip()
+    )
     app.state.pap_prompt_tokenizer = PAPPromptTokenizer(
         model=args.model,
         block_size=args.prefix_block_size,
@@ -93,6 +98,7 @@ async def lifespan(app: FastAPI):
         app.state.pap_dynamo_router = await PAPDynamoRouter.create(
             app.state.groups,
             event_endpoints=event_endpoints,
+            replay_endpoints=replay_endpoints,
             site_packages=args.dynamo_site_packages,
             model_name=args.dynamo_model_name,
             block_size=args.prefix_block_size,
@@ -224,6 +230,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--kv-event-endpoints",
         default=os.environ.get("PAP_KV_EVENT_ENDPOINTS", ""),
+    )
+    parser.add_argument(
+        "--kv-event-replay-endpoints",
+        default=os.environ.get("PAP_KV_EVENT_REPLAY_ENDPOINTS", ""),
     )
     parser.add_argument(
         "--prefix-block-size",

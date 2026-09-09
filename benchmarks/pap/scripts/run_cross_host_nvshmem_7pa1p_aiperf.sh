@@ -29,6 +29,7 @@ PREFILL_PORT_BASE="${PAP_CROSS_HOST_PREFILL_PORT_BASE:-8100}"
 PROJECTION_PORT="${PAP_CROSS_HOST_PROJECTION_PORT:-8200}"
 ATTENTION_PORT_BASE="${PAP_CROSS_HOST_ATTENTION_PORT_BASE:-8300}"
 KV_EVENT_PORT_BASE="${PAP_CROSS_HOST_KV_EVENT_PORT_BASE:-8400}"
+KV_EVENT_REPLAY_PORT_BASE="${PAP_CROSS_HOST_KV_EVENT_REPLAY_PORT_BASE:-8500}"
 ATTENTION_TCP_PORT_BASE="${PAP_CROSS_HOST_ATTENTION_TCP_PORT_BASE:-9300}"
 GATEWAY_PORT="${PAP_CROSS_HOST_GATEWAY_PORT:-9460}"
 VLLM_PREFILL_PORT_BASE="${PAP_CROSS_HOST_VLLM_PREFILL_PORT_BASE:-50000}"
@@ -175,7 +176,7 @@ run_prefill() {
     --enable-prompt-tokens-details \
     --enable-prefix-caching \
     --kv-events-config \
-      "{\"enable_kv_cache_events\":true,\"publisher\":\"zmq\",\"endpoint\":\"tcp://*:$((KV_EVENT_PORT_BASE + index))\",\"topic\":\"pap-pa-${index}\",\"hwm\":100000,\"max_queue_size\":0}" \
+      "{\"enable_kv_cache_events\":true,\"publisher\":\"zmq\",\"endpoint\":\"tcp://*:$((KV_EVENT_PORT_BASE + index))\",\"replay_endpoint\":\"tcp://*:$((KV_EVENT_REPLAY_PORT_BASE + index))\",\"topic\":\"pap-pa-${index}\",\"hwm\":100000,\"max_queue_size\":0}" \
     --enable-chunked-prefill \
     --block-size 16 \
     --max-model-len "${MAX_MODEL_LEN}" \
@@ -232,6 +233,15 @@ build_kv_endpoints() {
   printf '%s\n' "${items[*]}"
 }
 
+build_kv_replay_endpoints() {
+  local index items=()
+  for ((index = 0; index < PA_COUNT; index++)); do
+    items+=("tcp://${REMOTE_IP}:$((KV_EVENT_REPLAY_PORT_BASE + index))")
+  done
+  local IFS=,
+  printf '%s\n' "${items[*]}"
+}
+
 run_gateway() {
   set_common_env
   if [[ "${PAP_CROSS_HOST_ROUTING_TRACE:-0}" == "1" ]]; then
@@ -246,6 +256,7 @@ run_gateway() {
     --pap-groups "$(build_pap_groups)" \
     --projections "127.0.0.1:${PROJECTION_PORT}" \
     --kv-event-endpoints "$(build_kv_endpoints)" \
+    --kv-event-replay-endpoints "$(build_kv_replay_endpoints)" \
     --prefix-block-size 16 \
     --dynamo-site-packages "${ROOT_DIR}/.local/pap-dynamo-router" \
     --dynamo-max-num-batched-tokens "${PREFILL_BUDGET}" \
@@ -365,10 +376,11 @@ remote_start() {
   local command pid
   # shellcheck disable=SC2016  # Expanded by the remote shell after printf.
   printf -v command \
-    'cd %q || exit 1; nohup setsid env PAP_ROOT=%q MODEL_PATH=%q RUN_ID=%q PAP_CROSS_HOST_REMOTE_RUN_ROOT=%q PAP_CROSS_HOST_LOCAL_IP=%q PAP_CROSS_HOST_REMOTE_IP=%q PAP_CROSS_HOST_PA_GPUS=%q PAP_CROSS_HOST_PREFILL_PORT_BASE=%q PAP_CROSS_HOST_ATTENTION_PORT_BASE=%q PAP_CROSS_HOST_KV_EVENT_PORT_BASE=%q PAP_CROSS_HOST_ATTENTION_TCP_PORT_BASE=%q PAP_CROSS_HOST_VLLM_PREFILL_PORT_BASE=%q PAP_CROSS_HOST_UID_PORT=%q PAP_CROSS_HOST_START_TIMEOUT=%q bash %q %q %q > %q 2>&1 < /dev/null & pid=$!; echo "${pid}"' \
+    'cd %q || exit 1; nohup setsid env PAP_ROOT=%q MODEL_PATH=%q RUN_ID=%q PAP_CROSS_HOST_REMOTE_RUN_ROOT=%q PAP_CROSS_HOST_LOCAL_IP=%q PAP_CROSS_HOST_REMOTE_IP=%q PAP_CROSS_HOST_PA_GPUS=%q PAP_CROSS_HOST_PREFILL_PORT_BASE=%q PAP_CROSS_HOST_ATTENTION_PORT_BASE=%q PAP_CROSS_HOST_KV_EVENT_PORT_BASE=%q PAP_CROSS_HOST_KV_EVENT_REPLAY_PORT_BASE=%q PAP_CROSS_HOST_ATTENTION_TCP_PORT_BASE=%q PAP_CROSS_HOST_VLLM_PREFILL_PORT_BASE=%q PAP_CROSS_HOST_UID_PORT=%q PAP_CROSS_HOST_START_TIMEOUT=%q bash %q %q %q > %q 2>&1 < /dev/null & pid=$!; echo "${pid}"' \
     "${REMOTE_ROOT}" "${REMOTE_ROOT}" "${MODEL_PATH}" "${RUN_ID}" \
     "${REMOTE_RUN_ROOT}" "${LOCAL_IP}" "${REMOTE_IP}" "${REMOTE_GPUS}" \
     "${PREFILL_PORT_BASE}" "${ATTENTION_PORT_BASE}" "${KV_EVENT_PORT_BASE}" \
+    "${KV_EVENT_REPLAY_PORT_BASE}" \
     "${ATTENTION_TCP_PORT_BASE}" "${VLLM_PREFILL_PORT_BASE}" "${UID_PORT}" \
     "${START_TIMEOUT}" "${SCRIPT_RELATIVE}" "${role}" "${index}" \
     "${REMOTE_RUN_ROOT}/${role}_${index}.log"
@@ -395,6 +407,7 @@ local_start() {
     PAP_CROSS_HOST_PROJECTION_PORT="${PROJECTION_PORT}" \
     PAP_CROSS_HOST_ATTENTION_PORT_BASE="${ATTENTION_PORT_BASE}" \
     PAP_CROSS_HOST_KV_EVENT_PORT_BASE="${KV_EVENT_PORT_BASE}" \
+    PAP_CROSS_HOST_KV_EVENT_REPLAY_PORT_BASE="${KV_EVENT_REPLAY_PORT_BASE}" \
     PAP_CROSS_HOST_ATTENTION_TCP_PORT_BASE="${ATTENTION_TCP_PORT_BASE}" \
     PAP_CROSS_HOST_GATEWAY_PORT="${GATEWAY_PORT}" \
     PAP_CROSS_HOST_VLLM_PREFILL_PORT_BASE="${VLLM_PREFILL_PORT_BASE}" \
@@ -447,6 +460,8 @@ write_effective_config() {
     printf 'export PAP_CROSS_HOST_PROJECTION_PORT=%q\n' "${PROJECTION_PORT}"
     printf 'export PAP_CROSS_HOST_ATTENTION_PORT_BASE=%q\n' "${ATTENTION_PORT_BASE}"
     printf 'export PAP_CROSS_HOST_KV_EVENT_PORT_BASE=%q\n' "${KV_EVENT_PORT_BASE}"
+    printf 'export PAP_CROSS_HOST_KV_EVENT_REPLAY_PORT_BASE=%q\n' \
+      "${KV_EVENT_REPLAY_PORT_BASE}"
     printf 'export PAP_CROSS_HOST_ATTENTION_TCP_PORT_BASE=%q\n' \
       "${ATTENTION_TCP_PORT_BASE}"
     printf 'export PAP_CROSS_HOST_GATEWAY_PORT=%q\n' "${GATEWAY_PORT}"
@@ -463,9 +478,15 @@ audit_source() {
     vllm/pap/transport/nvshmem/runtime.py
     vllm/pap/transport/nvshmem/transport.py
     vllm/pap/attention/peers.py
+    vllm/pap/endpoint_plugin.py
+    vllm/pap/gateway/app.py
     vllm/pap/gateway/dynamo_routing.py
     vllm/pap/gateway/request_pipeline.py
+    vllm/pap/integration/engine.py
+    vllm/pap/kv_snapshot.py
+    vllm/pap/prefill_control_router.py
     vllm/pap/transport/nvshmem/device_bridge.cu
+    vllm/v1/core/block_pool.py
     benchmarks/pap/scripts/configure_nvshmem.sh
     benchmarks/pap/scripts/build_nvshmem_device_bridge.sh
     benchmarks/pap/microbench/nvshmem_idle_pe.py

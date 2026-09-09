@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pybase64 as base64
@@ -12,7 +13,10 @@ from vllm.pap.integration.engine import PAPEngineControl
 from vllm.pap.integration.request import PAPRequestMetadata
 from vllm.pap.kv import lease as pap_lease
 from vllm.pap.kv_connector import PAPPrefillConnector
+from vllm.pap.kv_snapshot import PAPKVSnapshotClient
 from vllm.sampling_params import SamplingParams
+from vllm.v1.core.block_pool import BlockPool
+from vllm.v1.core.kv_cache_utils import BlockHash, make_block_hash_with_group_id
 from vllm.v1.request import Request, RequestStatus
 
 
@@ -363,19 +367,24 @@ def test_control_reports_non_evictable_kv_capacity() -> None:
 
 def test_control_pins_longest_migration_prefix_until_release() -> None:
     blocks = [SimpleNamespace(block_id=index) for index in (4, 5)]
-    touched = []
     freed = []
 
-    def get_cached_block(block_hash, group_ids):
+    def acquire_cached_prefix(block_hashes, group_ids):
         assert group_ids == [0]
-        return {
+        values = {
             b"first": [blocks[0]],
             b"second": [blocks[1]],
-        }.get(block_hash)
+        }
+        result = []
+        for block_hash in block_hashes:
+            matched = values.get(block_hash)
+            if matched is None:
+                break
+            result.extend(matched)
+        return result
 
     block_pool = SimpleNamespace(
-        get_cached_block=get_cached_block,
-        touch=lambda value: touched.extend(value),
+        acquire_cached_prefix=acquire_cached_prefix,
         free_blocks=lambda value: freed.extend(value),
     )
     scheduler = SimpleNamespace(
@@ -404,13 +413,86 @@ def test_control_pins_longest_migration_prefix_until_release() -> None:
     assert response["status"] == "exported"
     assert response["prefix_tokens"] == 32
     assert response["source_block_ids"] == [4, 5]
-    assert touched == blocks
     assert control.apply("kv_migration_release", {"transfer_id": "transfer"}) == {
         "transfer_id": "transfer",
         "released": True,
         "blocks": 2,
     }
     assert freed == list(reversed(blocks))
+
+
+def test_snapshot_export_bypasses_engine_control_queue(tmp_path) -> None:
+    blocks = [SimpleNamespace(block_id=index) for index in (4, 5)]
+    freed = []
+    block_pool = SimpleNamespace(
+        acquire_cached_prefix=lambda hashes, groups: (
+            blocks if hashes == [b"first", b"second"] and groups == [0] else []
+        ),
+        free_blocks=lambda value: freed.extend(value),
+    )
+    scheduler = SimpleNamespace(
+        kv_cache_manager=SimpleNamespace(
+            num_kv_cache_groups=1,
+            block_pool=block_pool,
+        ),
+        block_size=16,
+    )
+    calls = []
+
+    def collective_rpc(method):
+        calls.append(method)
+        return [({"layer_name": "layer.0"},)]
+
+    executor = SimpleNamespace(collective_rpc=collective_rpc)
+    control = PAPEngineControl(scheduler, executor)
+    socket_path = str(tmp_path / "snapshot.sock")
+    assert control.apply("kv_snapshot_start", {"socket_path": socket_path}) == {
+        "ready": True,
+        "socket_path": socket_path,
+    }
+
+    async def exercise() -> None:
+        client = PAPKVSnapshotClient(socket_path)
+        export = await client.request(
+            "export",
+            {
+                "transfer_id": "snapshot-transfer",
+                "source_worker_id": 0,
+                "block_hashes_b64": [
+                    base64.b64encode(value).decode("ascii")
+                    for value in (b"first", b"second")
+                ],
+            },
+        )
+        assert export["source_block_ids"] == [4, 5]
+        release = await client.request("release", {"transfer_id": "snapshot-transfer"})
+        assert release["released"] is True
+        stats = await client.request("stats", {})
+        assert stats["ready"] is True
+        assert stats["failures"] == 0
+
+    asyncio.run(exercise())
+    control._snapshot_server.close()
+    assert len(calls) == 1
+    assert freed == list(reversed(blocks))
+
+
+def test_snapshot_lease_prevents_cached_block_reuse() -> None:
+    pool = BlockPool(num_gpu_blocks=4, enable_caching=True, hash_block_size=16)
+    block_hash = BlockHash(b"snapshot-hash")
+    cached = pool.get_new_blocks(1)[0]
+    pool._insert_block_hash(
+        make_block_hash_with_group_id(block_hash, 0), cached, num_tokens=16
+    )
+    pool.free_blocks([cached])
+
+    lease = pool.acquire_cached_prefix([block_hash], [0])
+    allocated = pool.get_new_blocks(2)
+
+    assert lease == [cached]
+    assert cached not in allocated
+    pool.free_blocks(allocated)
+    pool.free_blocks(reversed(lease))
 
 
 def test_control_includes_running_and_queued_prefill_tokens() -> None:

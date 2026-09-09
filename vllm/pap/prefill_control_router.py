@@ -208,6 +208,9 @@ def build_prefill_control_router() -> APIRouter:
     async def export_kv_migration(
         req: KVMigrationExportRequest, raw_request: Request
     ) -> dict[str, Any]:
+        snapshot = getattr(raw_request.app.state, "pap_kv_snapshot_client", None)
+        if snapshot is not None:
+            return await snapshot.request("export", req.model_dump())
         return await _dispatcher(raw_request).submit(
             "kv_migration_export", req.model_dump(), wait=True
         )
@@ -216,9 +219,19 @@ def build_prefill_control_router() -> APIRouter:
     async def release_kv_migration(
         req: KVMigrationReleaseRequest, raw_request: Request
     ) -> dict[str, Any]:
+        snapshot = getattr(raw_request.app.state, "pap_kv_snapshot_client", None)
+        if snapshot is not None:
+            return await snapshot.request("release", req.model_dump())
         return await _dispatcher(raw_request).submit(
             "kv_migration_release", req.model_dump(), wait=True
         )
+
+    @router.get("/v1/pap/prefill/kv-migration/snapshot")
+    async def kv_migration_snapshot(raw_request: Request) -> dict[str, Any]:
+        snapshot = getattr(raw_request.app.state, "pap_kv_snapshot_client", None)
+        if snapshot is None:
+            raise HTTPException(status_code=503, detail="KV snapshot is not enabled")
+        return await snapshot.request("stats", {})
 
     @router.post("/v1/pap/prefill/lease-release")
     async def release_lease(

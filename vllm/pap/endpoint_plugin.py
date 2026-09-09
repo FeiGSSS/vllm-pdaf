@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import os
 from argparse import Namespace
 from contextlib import asynccontextmanager
 from typing import Any
@@ -12,6 +13,7 @@ from fastapi import FastAPI
 from starlette.datastructures import State
 
 from vllm.pap.integration.settings import PAPRuntimeSettings
+from vllm.pap.kv_snapshot import PAPKVSnapshotClient
 from vllm.pap.prefill_control_router import (
     PAPControlDispatcher,
     build_prefill_control_router,
@@ -70,6 +72,16 @@ class PAPEndpointPlugin:
         dispatcher = PAPControlDispatcher(engine_client)
         dispatcher.start()
         state.pap_control_dispatcher = dispatcher
+        snapshot_socket = os.environ.get("PAP_KV_SNAPSHOT_SOCKET", "")
+        if self._prefill_enabled and snapshot_socket:
+            result = await dispatcher.submit(
+                "kv_snapshot_start",
+                {"socket_path": snapshot_socket},
+                wait=True,
+            )
+            if not result.get("ready") or result.get("socket_path") != snapshot_socket:
+                raise RuntimeError(f"PAP KV snapshot failed to start: {result}")
+            state.pap_kv_snapshot_client = PAPKVSnapshotClient(snapshot_socket)
 
 
 __all__ = ["PAPEndpointPlugin"]

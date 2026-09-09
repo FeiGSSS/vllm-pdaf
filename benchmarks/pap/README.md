@@ -51,6 +51,9 @@ request instead of evicting a binding. Other policy values fail before startup.
 With Dynamo routing, `PAP_ENABLE_PA_KV_MIGRATION=1` enables same-host prefix-KV
 copy after a conversation changes PA. The source prefix is matched by full
 block hashes and pinned until the selected target finishes its Prefill load.
+The default `PAP_KV_MIGRATION_EXPORT_MODE=snapshot` serves this lease through a
+dedicated local side channel, with the IPC catalog collected once at startup.
+`engine_core` retains the old queued export path only as an A/B control.
 The runner audits export/copy/release counts and requires all source pins and
 Gateway release tasks to drain. `PAP_KV_MIGRATION_VERIFY=1` additionally checks
 every copied layer byte-for-byte and is intended only for correctness runs.

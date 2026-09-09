@@ -104,6 +104,57 @@ def test_gateway_defaults_to_dynamo(monkeypatch) -> None:
     assert args.dynamo_prefill_load_scale == 2.0
 
 
+def test_dynamo_workers_register_replay_endpoints(monkeypatch, tmp_path) -> None:
+    async def run() -> None:
+        workers = []
+
+        class SelectionService:
+            reservation_lifetime = "explicit-owner-v1"
+
+            def __init__(self, *, indexer_threads):
+                assert indexer_threads == 4
+
+            async def upsert_worker(self, worker):
+                workers.append(worker)
+                return {"lifecycle": "schedulable"}
+
+            def ready(self):
+                return {"ready": True, "schedulable_workers": 2}
+
+            def stop_scheduling(self):
+                pass
+
+            def shutdown(self):
+                pass
+
+            def loads(self, *, model_name):
+                return []
+
+        monkeypatch.setitem(
+            sys.modules,
+            "pap_dynamo_router",
+            SimpleNamespace(SelectionService=SelectionService),
+        )
+        router = await PAPDynamoRouter.create(
+            _groups(2),
+            event_endpoints=("tcp://host:8400", "tcp://host:8401"),
+            replay_endpoints=("tcp://host:8500", "tcp://host:8501"),
+            site_packages=str(tmp_path),
+            model_name="pap",
+            block_size=16,
+            max_num_batched_tokens=2048,
+            total_kv_blocks=100,
+            prefill_load_scale=2.0,
+        )
+        assert [worker["replay_endpoint"] for worker in workers] == [
+            "tcp://host:8500",
+            "tcp://host:8501",
+        ]
+        await router.shutdown()
+
+    asyncio.run(run())
+
+
 def test_gateway_accepts_session_round_robin(monkeypatch) -> None:
     monkeypatch.setattr(
         sys,

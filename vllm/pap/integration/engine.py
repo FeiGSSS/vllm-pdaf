@@ -4,6 +4,9 @@
 
 from __future__ import annotations
 
+import atexit
+import threading
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -41,6 +44,12 @@ class PAPEngineControl:
         self._migration_exports: dict[str, _MigrationExport] = {}
         self._migration_catalog: tuple[dict[str, Any], ...] | None = None
         self._migration_exported_blocks = 0
+        self._migration_lock = threading.RLock()
+        self._snapshot_server: Any | None = None
+        self._snapshot_requests = 0
+        self._snapshot_failures = 0
+        self._snapshot_total_ms = 0.0
+        self._snapshot_max_ms = 0.0
 
     def apply(self, operation: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Apply one serialized endpoint-plugin operation."""
@@ -60,6 +69,8 @@ class PAPEngineControl:
             return self._export_kv_migration(payload)
         if operation == "kv_migration_release":
             return self._release_kv_migration(payload)
+        if operation == "kv_snapshot_start":
+            return self._start_kv_snapshot(payload)
         if operation in {"projection_quiesce", "request_quiesce"}:
             request_ids = tuple(str(item) for item in payload["request_ids"])
             active = [
@@ -73,98 +84,156 @@ class PAPEngineControl:
             }
         raise ValueError(f"unknown PAP control operation: {operation!r}")
 
+    def _ensure_migration_catalog(self) -> tuple[dict[str, Any], ...]:
+        if self._migration_catalog is None:
+            if self._model_executor is None:
+                raise RuntimeError("PAP KV migration requires a model executor")
+            catalogs = self._model_executor.collective_rpc(
+                _collect_prefill_migration_catalog
+            )
+            if len(catalogs) != 1:
+                raise RuntimeError("PAP KV migration requires TP1 source Prefill")
+            self._migration_catalog = catalogs[0]
+        return self._migration_catalog
+
+    def _start_kv_snapshot(self, payload: dict[str, Any]) -> dict[str, Any]:
+        socket_path = str(payload["socket_path"])
+        with self._migration_lock:
+            if self._snapshot_server is not None:
+                if self._snapshot_server.socket_path != socket_path:
+                    raise RuntimeError("PAP KV snapshot socket path changed")
+                return {"ready": True, "socket_path": socket_path}
+            self._ensure_migration_catalog()
+            from vllm.pap.kv_snapshot import PAPKVSnapshotServer
+
+            self._snapshot_server = PAPKVSnapshotServer(
+                socket_path, self._dispatch_kv_snapshot
+            )
+            atexit.register(self._snapshot_server.close)
+            return {"ready": True, "socket_path": socket_path}
+
+    def _dispatch_kv_snapshot(
+        self, operation: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        start = time.perf_counter()
+        failed = False
+        try:
+            if operation == "export":
+                return self._export_kv_migration(payload)
+            if operation == "release":
+                return self._release_kv_migration(payload)
+            if operation == "stats":
+                return self._kv_snapshot_stats()
+            raise ValueError(f"unknown PAP KV snapshot operation: {operation!r}")
+        except BaseException:
+            failed = True
+            raise
+        finally:
+            elapsed_ms = (time.perf_counter() - start) * 1000.0
+            with self._migration_lock:
+                self._snapshot_requests += 1
+                self._snapshot_failures += int(failed)
+                self._snapshot_total_ms += elapsed_ms
+                self._snapshot_max_ms = max(self._snapshot_max_ms, elapsed_ms)
+
+    def _kv_snapshot_stats(self) -> dict[str, Any]:
+        with self._migration_lock:
+            mean_ms = (
+                self._snapshot_total_ms / self._snapshot_requests
+                if self._snapshot_requests
+                else 0.0
+            )
+            return {
+                "ready": self._snapshot_server is not None,
+                "requests": self._snapshot_requests,
+                "failures": self._snapshot_failures,
+                "mean_service_ms": mean_ms,
+                "max_service_ms": self._snapshot_max_ms,
+                "active_exports": len(self._migration_exports),
+            }
+
     def _export_kv_migration(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Pin the longest source prefix and publish worker IPC catalogs."""
-        transfer_id = str(payload["transfer_id"])
-        if not transfer_id:
-            raise ValueError("PAP KV migration transfer ID must not be empty")
-        existing = self._migration_exports.get(transfer_id)
-        if existing is not None:
-            return existing.response
-        if self._model_executor is None:
-            raise RuntimeError("PAP KV migration requires a model executor")
-        encoded_hashes = payload.get("block_hashes_b64")
-        if not isinstance(encoded_hashes, list) or not encoded_hashes:
-            raise ValueError("PAP KV migration requires block hashes")
-        hashes = []
-        for value in encoded_hashes:
+        with self._migration_lock:
+            transfer_id = str(payload["transfer_id"])
+            if not transfer_id:
+                raise ValueError("PAP KV migration transfer ID must not be empty")
+            existing = self._migration_exports.get(transfer_id)
+            if existing is not None:
+                return existing.response
+            encoded_hashes = payload.get("block_hashes_b64")
+            if not isinstance(encoded_hashes, list) or not encoded_hashes:
+                raise ValueError("PAP KV migration requires block hashes")
+            hashes = []
+            for value in encoded_hashes:
+                try:
+                    raw_hash = base64.b64decode(str(value), validate=True)
+                except ValueError as exc:
+                    raise ValueError("invalid PAP KV migration block hash") from exc
+                if not raw_hash:
+                    raise ValueError("PAP KV migration block hash must not be empty")
+                hashes.append(raw_hash)
+
+            manager = self._scheduler.kv_cache_manager
+            if manager.num_kv_cache_groups != 1:
+                raise RuntimeError("PAP KV migration requires one KV cache group")
+            blocks = manager.block_pool.acquire_cached_prefix(hashes, [0])
+            if not blocks:
+                return {
+                    "status": "miss",
+                    "transfer_id": transfer_id,
+                    "source_worker_id": int(payload["source_worker_id"]),
+                    "prefix_tokens": 0,
+                    "block_size": int(self._scheduler.block_size),
+                    "source_block_ids": [],
+                    "catalogs": [],
+                }
+            if len({block.block_id for block in blocks}) != len(blocks):
+                manager.block_pool.free_blocks(reversed(blocks))
+                raise RuntimeError("PAP KV migration source blocks alias")
+
             try:
-                raw_hash = base64.b64decode(str(value), validate=True)
-            except ValueError as exc:
-                raise ValueError("invalid PAP KV migration block hash") from exc
-            if not raw_hash:
-                raise ValueError("PAP KV migration block hash must not be empty")
-            hashes.append(raw_hash)
-
-        manager = self._scheduler.kv_cache_manager
-        if manager.num_kv_cache_groups != 1:
-            raise RuntimeError("PAP KV migration requires one KV cache group")
-        blocks = []
-        for block_hash in hashes:
-            matched = manager.block_pool.get_cached_block(block_hash, [0])
-            if matched is None:
-                break
-            blocks.append(matched[0])
-        if not blocks:
-            return {
-                "status": "miss",
-                "transfer_id": transfer_id,
-                "source_worker_id": int(payload["source_worker_id"]),
-                "prefix_tokens": 0,
-                "block_size": int(self._scheduler.block_size),
-                "source_block_ids": [],
-                "catalogs": [],
-            }
-        if len({block.block_id for block in blocks}) != len(blocks):
-            raise RuntimeError("PAP KV migration source blocks alias")
-
-        manager.block_pool.touch(blocks)
-        try:
-            if self._migration_catalog is None:
-                catalogs = self._model_executor.collective_rpc(
-                    _collect_prefill_migration_catalog
-                )
-                if len(catalogs) != 1:
-                    raise RuntimeError("PAP KV migration requires TP1 source Prefill")
-                self._migration_catalog = catalogs[0]
-            response = {
-                "status": "exported",
-                "transfer_id": transfer_id,
-                "source_worker_id": int(payload["source_worker_id"]),
-                "prefix_tokens": len(blocks) * int(self._scheduler.block_size),
-                "block_size": int(self._scheduler.block_size),
-                "source_block_ids": [block.block_id for block in blocks],
-                "catalogs": self._migration_catalog,
-            }
-        except BaseException:
-            manager.block_pool.free_blocks(reversed(blocks))
-            raise
-        self._migration_exports[transfer_id] = _MigrationExport(blocks, response)
-        self._migration_exported_blocks += len(blocks)
-        logger.info(
-            "PAP KV migration export transfer_id=%s blocks=%d prefix_tokens=%d",
-            transfer_id,
-            len(blocks),
-            response["prefix_tokens"],
-        )
-        return response
+                response = {
+                    "status": "exported",
+                    "transfer_id": transfer_id,
+                    "source_worker_id": int(payload["source_worker_id"]),
+                    "prefix_tokens": len(blocks) * int(self._scheduler.block_size),
+                    "block_size": int(self._scheduler.block_size),
+                    "source_block_ids": [block.block_id for block in blocks],
+                    "catalogs": self._ensure_migration_catalog(),
+                }
+            except BaseException:
+                manager.block_pool.free_blocks(reversed(blocks))
+                raise
+            self._migration_exports[transfer_id] = _MigrationExport(blocks, response)
+            self._migration_exported_blocks += len(blocks)
+            logger.info(
+                "PAP KV migration export transfer_id=%s blocks=%d prefix_tokens=%d",
+                transfer_id,
+                len(blocks),
+                response["prefix_tokens"],
+            )
+            return response
 
     def _release_kv_migration(self, payload: dict[str, Any]) -> dict[str, Any]:
-        transfer_id = str(payload["transfer_id"])
-        export = self._migration_exports.pop(transfer_id, None)
-        if export is None:
-            return {"transfer_id": transfer_id, "released": False, "blocks": 0}
-        self._scheduler.kv_cache_manager.block_pool.free_blocks(reversed(export.blocks))
-        logger.info(
-            "PAP KV migration release transfer_id=%s blocks=%d",
-            transfer_id,
-            len(export.blocks),
-        )
-        return {
-            "transfer_id": transfer_id,
-            "released": True,
-            "blocks": len(export.blocks),
-        }
+        with self._migration_lock:
+            transfer_id = str(payload["transfer_id"])
+            export = self._migration_exports.pop(transfer_id, None)
+            if export is None:
+                return {"transfer_id": transfer_id, "released": False, "blocks": 0}
+            self._scheduler.kv_cache_manager.block_pool.free_blocks(
+                reversed(export.blocks)
+            )
+            logger.info(
+                "PAP KV migration release transfer_id=%s blocks=%d",
+                transfer_id,
+                len(export.blocks),
+            )
+            return {
+                "transfer_id": transfer_id,
+                "released": True,
+                "blocks": len(export.blocks),
+            }
 
     def _allocate_decode(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Extend allocator-owned storage, never the computed-token watermark."""
