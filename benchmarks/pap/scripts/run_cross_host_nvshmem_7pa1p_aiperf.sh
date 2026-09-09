@@ -62,6 +62,7 @@ set_common_env() {
   export PAP_PROJECTION_GPUS=7
   export PAP_OFFLOAD_KV_TRANSPORT=cuda_ipc
   export PAP_BLOCK_SIZE=16
+  export PYTHONHASHSEED=123
   export PAP_ENABLE_DYNAMO_KV_FENCE="${PAP_CROSS_HOST_ENABLE_KV_FENCE:-1}"
   if [[ "${PAP_ENABLE_DYNAMO_KV_FENCE}" != "0" \
     && "${PAP_ENABLE_DYNAMO_KV_FENCE}" != "1" ]]; then
@@ -489,6 +490,7 @@ write_effective_config() {
       "${PAP_CROSS_HOST_ROUTING_TRACE:-0}"
     printf 'export PAP_CROSS_HOST_ENABLE_KV_FENCE=%q\n' \
       "${PAP_CROSS_HOST_ENABLE_KV_FENCE:-1}"
+    printf 'export PYTHONHASHSEED=%q\n' "${PYTHONHASHSEED}"
     printf 'export PAP_CROSS_HOST_UID_PORT=%q\n' "${UID_PORT}"
     printf 'export PAP_CROSS_HOST_PREFILL_PORT_BASE=%q\n' "${PREFILL_PORT_BASE}"
     printf 'export PAP_CROSS_HOST_PROJECTION_PORT=%q\n' "${PROJECTION_PORT}"
@@ -512,6 +514,7 @@ audit_source() {
   local files=(
     "${pap_files[@]}"
     vllm/v1/core/block_pool.py
+    vllm/v1/core/kv_cache_utils.py
     benchmarks/pap/scripts/configure_nvshmem.sh
     benchmarks/pap/scripts/build_nvshmem_device_bridge.sh
     benchmarks/pap/microbench/nvshmem_idle_pe.py
@@ -550,6 +553,31 @@ audit_source() {
       remote_git_revision: $remote_revision
     }' >"${RUN_ROOT}/source_audit.json"
   [[ "${checksum_match}" == "true" ]]
+}
+
+audit_block_hash_contract() {
+  local probe remote_command local_hash remote_hash
+  probe='from vllm.utils.hashing import get_hash_fn_by_name; from vllm.v1.core.kv_cache_utils import hash_block_tokens, init_none_hash; fn = get_hash_fn_by_name("sha256"); init_none_hash(fn); print(hash_block_tokens(fn, None, list(range(16)), None).hex())'
+  PYTHONHASHSEED="${PYTHONHASHSEED}" "${PYTHON_BIN}" -c "${probe}" \
+    >"${RUN_ROOT}/local_block_hash.txt"
+  printf -v remote_command \
+    'cd %q && PYTHONHASHSEED=%q %q -c %q' \
+    "${REMOTE_ROOT}" "${PYTHONHASHSEED}" "${PYTHON_BIN}" "${probe}"
+  ssh -o BatchMode=yes -o ConnectTimeout=5 "${REMOTE_SSH}" "${remote_command}" \
+    >"${RUN_ROOT}/remote_block_hash.txt"
+  local_hash="$(cat "${RUN_ROOT}/local_block_hash.txt")"
+  remote_hash="$(cat "${RUN_ROOT}/remote_block_hash.txt")"
+  jq -n \
+    --arg local_hash "${local_hash}" \
+    --arg remote_hash "${remote_hash}" \
+    --arg seed "${PYTHONHASHSEED}" \
+    '{
+      status: (if $local_hash == $remote_hash then "passed" else "failed" end),
+      python_hash_seed: $seed,
+      local_hash: $local_hash,
+      remote_hash: $remote_hash
+    }' >"${RUN_ROOT}/block_hash_audit.json"
+  [[ "${local_hash}" =~ ^[0-9a-f]{64}$ && "${local_hash}" == "${remote_hash}" ]]
 }
 
 audit_contexts() {
@@ -800,6 +828,7 @@ ssh -o BatchMode=yes -o ConnectTimeout=5 "${REMOTE_SSH}" \
 
 write_effective_config
 audit_source
+audit_block_hash_contract
 gpu_processes_local >"${RUN_ROOT}/gpu_processes_before_local.csv"
 gpu_processes_remote >"${RUN_ROOT}/gpu_processes_before_remote.csv"
 [[ ! -s "${RUN_ROOT}/gpu_processes_before_local.csv" ]]
