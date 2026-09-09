@@ -286,7 +286,7 @@ case "${ROLE}" in
   idle) run_idle_pe ;;
   projection) run_projection ;;
   gateway) run_gateway ;;
-  coordinator) ;;
+  coordinator) set_common_env ;;
   *)
     echo "Unknown role: ${ROLE}" >&2
     exit 2
