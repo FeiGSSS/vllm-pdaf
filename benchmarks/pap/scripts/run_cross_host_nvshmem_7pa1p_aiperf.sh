@@ -46,6 +46,12 @@ BENCH_TIMEOUT="${PAP_CROSS_HOST_BENCH_TIMEOUT:-21600}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
 RUN_ROOT="${PAP_CROSS_HOST_RUN_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/_staging/cross_host_nvshmem_7pa1p_c30/${RUN_ID}}"
 REMOTE_RUN_ROOT="${PAP_CROSS_HOST_REMOTE_RUN_ROOT:-/tmp/pap-cross-host-7pa1p-${RUN_ID}}"
+ENABLE_PA_KV_MIGRATION="${PAP_CROSS_HOST_ENABLE_PA_KV_MIGRATION:-1}"
+if [[ "${ENABLE_PA_KV_MIGRATION}" != "0" \
+  && "${ENABLE_PA_KV_MIGRATION}" != "1" ]]; then
+  echo "PAP_CROSS_HOST_ENABLE_PA_KV_MIGRATION must be 0 or 1" >&2
+  exit 2
+fi
 
 IFS=, read -r -a PA_GPUS <<<"${REMOTE_GPUS}"
 [[ "${#PA_GPUS[@]}" == "${PA_COUNT}" ]]
@@ -63,6 +69,7 @@ set_common_env() {
   export PAP_OFFLOAD_KV_TRANSPORT=cuda_ipc
   export PAP_BLOCK_SIZE=16
   export PYTHONHASHSEED=123
+  export PAP_ENABLE_PA_KV_MIGRATION="${ENABLE_PA_KV_MIGRATION}"
   export PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS=256
   export PAP_DECODE_COMMIT_FAIL_CLOSED=1
   export PAP_DECODE_COMMIT_TIMEOUT=5.0
@@ -166,6 +173,9 @@ run_prefill() {
   export VLLM_PORT="$((VLLM_PREFILL_PORT_BASE + index * 20))"
   export PAP_RUNTIME_CUDA_CONTEXT_AUDIT_PATH="${REMOTE_RUN_ROOT}/runtime_cuda_context_prefill_${index}.json"
   export PAP_RUNTIME_CUDA_CONTEXT_ROLE=prefill
+  if [[ "${ENABLE_PA_KV_MIGRATION}" == "1" ]]; then
+    export PAP_KV_SNAPSHOT_SOCKET="/tmp/pap-kv-snapshot-${RUN_ID}-${index}.sock"
+  fi
   exec "${VLLM_BIN}" serve "${MODEL_PATH}" \
     --host 0.0.0.0 \
     --port "$((PREFILL_PORT_BASE + index))" \
@@ -245,6 +255,10 @@ build_kv_replay_endpoints() {
 
 run_gateway() {
   set_common_env
+  local migration_args=()
+  if [[ "${ENABLE_PA_KV_MIGRATION}" == "1" ]]; then
+    migration_args+=(--enable-pa-kv-migration --migration-max-conversations 60)
+  fi
   if [[ "${PAP_CROSS_HOST_ROUTING_TRACE:-0}" == "1" ]]; then
     export PAP_DYNAMO_ROUTING_TRACE_OUTPUT="${RUN_ROOT}/routing_trace.jsonl"
   fi
@@ -262,6 +276,7 @@ run_gateway() {
     --dynamo-site-packages "${ROOT_DIR}/.local/pap-dynamo-router" \
     --dynamo-max-num-batched-tokens "${PREFILL_BUDGET}" \
     --dynamo-prefill-load-scale 2.0 \
+    "${migration_args[@]}" \
     --routing-policy dynamo
 }
 
@@ -377,9 +392,10 @@ remote_start() {
   local command pid
   # shellcheck disable=SC2016  # Expanded by the remote shell after printf.
   printf -v command \
-    'cd %q || exit 1; nohup setsid env PAP_ROOT=%q MODEL_PATH=%q RUN_ID=%q PAP_CROSS_HOST_REMOTE_RUN_ROOT=%q PAP_CROSS_HOST_LOCAL_IP=%q PAP_CROSS_HOST_REMOTE_IP=%q PAP_CROSS_HOST_PA_GPUS=%q PAP_CROSS_HOST_PREFILL_PORT_BASE=%q PAP_CROSS_HOST_ATTENTION_PORT_BASE=%q PAP_CROSS_HOST_KV_EVENT_PORT_BASE=%q PAP_CROSS_HOST_KV_EVENT_REPLAY_PORT_BASE=%q PAP_CROSS_HOST_ATTENTION_TCP_PORT_BASE=%q PAP_CROSS_HOST_VLLM_PREFILL_PORT_BASE=%q PAP_CROSS_HOST_UID_PORT=%q PAP_CROSS_HOST_START_TIMEOUT=%q bash %q %q %q > %q 2>&1 < /dev/null & pid=$!; echo "${pid}"' \
+    'cd %q || exit 1; nohup setsid env PAP_ROOT=%q MODEL_PATH=%q RUN_ID=%q PAP_CROSS_HOST_REMOTE_RUN_ROOT=%q PAP_CROSS_HOST_LOCAL_IP=%q PAP_CROSS_HOST_REMOTE_IP=%q PAP_CROSS_HOST_PA_GPUS=%q PAP_CROSS_HOST_ENABLE_PA_KV_MIGRATION=%q PAP_CROSS_HOST_PREFILL_PORT_BASE=%q PAP_CROSS_HOST_ATTENTION_PORT_BASE=%q PAP_CROSS_HOST_KV_EVENT_PORT_BASE=%q PAP_CROSS_HOST_KV_EVENT_REPLAY_PORT_BASE=%q PAP_CROSS_HOST_ATTENTION_TCP_PORT_BASE=%q PAP_CROSS_HOST_VLLM_PREFILL_PORT_BASE=%q PAP_CROSS_HOST_UID_PORT=%q PAP_CROSS_HOST_START_TIMEOUT=%q bash %q %q %q > %q 2>&1 < /dev/null & pid=$!; echo "${pid}"' \
     "${REMOTE_ROOT}" "${REMOTE_ROOT}" "${MODEL_PATH}" "${RUN_ID}" \
     "${REMOTE_RUN_ROOT}" "${LOCAL_IP}" "${REMOTE_IP}" "${REMOTE_GPUS}" \
+    "${ENABLE_PA_KV_MIGRATION}" \
     "${PREFILL_PORT_BASE}" "${ATTENTION_PORT_BASE}" "${KV_EVENT_PORT_BASE}" \
     "${KV_EVENT_REPLAY_PORT_BASE}" \
     "${ATTENTION_TCP_PORT_BASE}" "${VLLM_PREFILL_PORT_BASE}" "${UID_PORT}" \
@@ -404,6 +420,7 @@ local_start() {
     PAP_CROSS_HOST_PROJECTION_GPU="${LOCAL_GPU}" \
     PAP_CROSS_HOST_LOCAL_NVSHMEM_GPUS="${LOCAL_NVSHMEM_GPUS}" \
     PAP_CROSS_HOST_PA_GPUS="${REMOTE_GPUS}" \
+    PAP_CROSS_HOST_ENABLE_PA_KV_MIGRATION="${ENABLE_PA_KV_MIGRATION}" \
     PAP_CROSS_HOST_PREFILL_PORT_BASE="${PREFILL_PORT_BASE}" \
     PAP_CROSS_HOST_PROJECTION_PORT="${PROJECTION_PORT}" \
     PAP_CROSS_HOST_ATTENTION_PORT_BASE="${ATTENTION_PORT_BASE}" \
@@ -474,6 +491,8 @@ write_effective_config() {
     printf 'export PAP_CROSS_HOST_BENCH_TIMEOUT=%q\n' "${BENCH_TIMEOUT}"
     printf 'export PAP_CROSS_HOST_ROUTING_TRACE=%q\n' \
       "${PAP_CROSS_HOST_ROUTING_TRACE:-0}"
+    printf 'export PAP_CROSS_HOST_ENABLE_PA_KV_MIGRATION=%q\n' \
+      "${ENABLE_PA_KV_MIGRATION}"
     printf 'export PYTHONHASHSEED=%q\n' "${PYTHONHASHSEED}"
     printf 'export PAP_CROSS_HOST_UID_PORT=%q\n' "${UID_PORT}"
     printf 'export PAP_CROSS_HOST_PREFILL_PORT_BASE=%q\n' "${PREFILL_PORT_BASE}"
@@ -654,6 +673,10 @@ wait_drained() {
       and .dynamo_router.active_reservations == 0
       and .dynamo_router.pending_cleanup == 0
       and .dynamo_router.pending_selections == 0
+      and .kv_migration.healthy == true
+      and .kv_migration.failures == 0
+      and .kv_migration.active_conversations == 0
+      and .kv_migration.pending_releases == 0
     ' <<<"${healthy}" >/dev/null 2>&1; then
       for ((index = 0; index < PA_COUNT; index++)); do
         curl --noproxy '*' -fsS \
@@ -677,22 +700,36 @@ capture_and_audit_results() {
     curl --noproxy '*' -fsS \
       "http://${REMOTE_IP}:$((ATTENTION_PORT_BASE + index))/v1/pap/attention/stats" \
       -o "${RUN_ROOT}/attention_stats_${index}.json"
+    if [[ "${ENABLE_PA_KV_MIGRATION}" == "1" ]]; then
+      curl --noproxy '*' -fsS \
+        "http://${REMOTE_IP}:$((PREFILL_PORT_BASE + index))/v1/pap/prefill/kv-migration/snapshot" \
+        -o "${RUN_ROOT}/prefill_kv_snapshot_final_${index}.json"
+    fi
   done
   curl --noproxy '*' -fsS \
     "http://127.0.0.1:${GATEWAY_PORT}/v1/pap/topology/stats" \
     -o "${RUN_ROOT}/topology_stats.json"
   rsync -a "${REMOTE_SSH}:${REMOTE_RUN_ROOT}/" \
     "${RUN_ROOT}/remote_logs/"
-  "${PYTHON_BIN}" - "${RUN_ROOT}" <<'PY'
+  "${PYTHON_BIN}" - "${RUN_ROOT}" "${ENABLE_PA_KV_MIGRATION}" <<'PY'
 import json
 import re
 import sys
 from pathlib import Path
 
 root = Path(sys.argv[1])
+migration_enabled = sys.argv[2] == "1"
 profile = json.loads((root / "aiperf/profile.json").read_text())
 stats = [json.loads((root / f"attention_stats_{index}.json").read_text()) for index in range(7)]
 topology = json.loads((root / "topology_stats.json").read_text())
+snapshots = (
+    [
+        json.loads((root / f"prefill_kv_snapshot_final_{index}.json").read_text())
+        for index in range(7)
+    ]
+    if migration_enabled
+    else []
+)
 errors = []
 if profile["request_count"]["avg"] != 180 or profile["time_to_first_token"]["count"] != 180:
     errors.append("AIPerf did not complete 180 requests")
@@ -722,6 +759,57 @@ if topology["lifecycle"]["completed"] != 180 or topology["lifecycle"]["failed"] 
     errors.append("Gateway lifecycle mismatch")
 if topology["dynamo_router"]["failures"] != 0 or topology["dynamo_router"]["active_reservations"] != 0:
     errors.append("Dynamo routing did not drain")
+migration = topology["kv_migration"]
+if migration.get("enabled") != migration_enabled or not migration.get("healthy"):
+    errors.append("PA KV migration effective state mismatch")
+if (
+    migration.get("failures") != 0
+    or migration.get("active_conversations") != 0
+    or migration.get("pending_releases") != 0
+):
+    errors.append("PA KV migration did not drain")
+if migration_enabled:
+    if migration.get("attempts", 0) <= 0:
+        errors.append("PA KV migration did not observe a PA change")
+    if migration.get("exports") != migration.get("attempts"):
+        errors.append("PA KV migration export count differs from attempts")
+    if migration.get("misses") != 0:
+        errors.append(f"PA KV migration misses={migration.get('misses')}")
+    if migration.get("exported_prefix_tokens", 0) <= 0:
+        errors.append("PA KV migration exported no prefix tokens")
+for index, snapshot in enumerate(snapshots):
+    if not snapshot.get("ready") or snapshot.get("failures") != 0:
+        errors.append(f"Prefill snapshot[{index}] is unhealthy")
+    if snapshot.get("active_exports") != 0:
+        errors.append(f"Prefill snapshot[{index}] retained exports")
+remote_logs = sorted((root / "remote_logs").glob("prefill_*.log"))
+remote_text = "\n".join(path.read_text(errors="replace") for path in remote_logs)
+copy_count = len(re.findall(r"PAP KV migration copied request_id=", remote_text))
+copy_ms = [
+    float(value)
+    for value in re.findall(
+        r"PAP KV migration copy timing request_id=\S+ copy_ms=([0-9.]+)",
+        remote_text,
+    )
+]
+gateway_text = (root / "service_logs/gateway.log").read_text(errors="replace")
+prepared_count = len(re.findall(r"PAP KV migration prepared request_id=", gateway_text))
+export_ms = [
+    float(value)
+    for value in re.findall(
+        r"PAP KV migration export timing request_id=\S+ transfer_id=\S+ export_ms=([0-9.]+)",
+        gateway_text,
+    )
+]
+if migration_enabled:
+    expected_copies = int(migration.get("exports", 0))
+    if copy_count != expected_copies or prepared_count != expected_copies:
+        errors.append(
+            "PA KV migration copy/prepared/export counts differ: "
+            f"copy={copy_count} prepared={prepared_count} export={expected_copies}"
+        )
+    if len(copy_ms) != expected_copies or len(export_ms) != expected_copies:
+        errors.append("PA KV migration timing count differs from exports")
 pattern = re.compile(
     r"CUDA out of memory|EngineDeadError|^Traceback| ERROR .*Traceback|"
     r"Exception in thread|PAP decode commit failed|PAP lease release failed|"
@@ -747,6 +835,12 @@ summary = {
     "request_throughput": profile["request_throughput"]["avg"],
     "output_token_throughput": profile["output_token_throughput"]["avg"],
     "total_output_tokens": int(profile["total_output_tokens"]["avg"]),
+    "kv_migration": migration,
+    "kv_migration_copies": copy_count,
+    "kv_migration_copy_ms_mean": sum(copy_ms) / len(copy_ms) if copy_ms else 0.0,
+    "kv_migration_export_ms_mean": (
+        sum(export_ms) / len(export_ms) if export_ms else 0.0
+    ),
     "errors": errors,
 }
 (root / "performance_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
@@ -803,8 +897,14 @@ wait_for_health "http://127.0.0.1:${PROJECTION_PORT}/health" Projection
 for ((INDEX = 0; INDEX < PA_COUNT; INDEX++)); do
   curl --noproxy '*' -fsS \
     "http://${REMOTE_IP}:$((PREFILL_PORT_BASE + INDEX))/openapi.json" \
-    | jq -e '.paths | has("/v1/pap/prefill/kv-load") and has("/v1/pap/prefill/decode-commit") and has("/v1/pap/prefill/lease-release")' \
+    | jq -e '.paths | has("/v1/pap/prefill/kv-load") and has("/v1/pap/prefill/decode-commit") and has("/v1/pap/prefill/lease-release") and has("/v1/pap/prefill/kv-migration/export") and has("/v1/pap/prefill/kv-migration/release") and has("/v1/pap/prefill/kv-migration/snapshot")' \
       >/dev/null
+  if [[ "${ENABLE_PA_KV_MIGRATION}" == "1" ]]; then
+    curl --noproxy '*' -fsS \
+      "http://${REMOTE_IP}:$((PREFILL_PORT_BASE + INDEX))/v1/pap/prefill/kv-migration/snapshot" \
+      | jq -e '.ready == true and .failures == 0 and .active_exports == 0' \
+        >/dev/null
+  fi
   grep -Fq "Successfully initialized the transport: IBGDA" \
     <(ssh -o BatchMode=yes -o ConnectTimeout=5 "${REMOTE_SSH}" \
       "cat '${REMOTE_RUN_ROOT}/attention_${INDEX}.log'")
