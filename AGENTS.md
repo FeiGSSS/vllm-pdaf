@@ -140,6 +140,45 @@ Signed-off-by: Your Name <your.email@example.com>
 
 ---
 
+## 3. Tool Output and Evidence Budgets
+
+- Apply output budgets to all tools: service/test/build logs, GPU/process
+  checks, searches, directory listings, and structured results. Before querying,
+  identify the question and select relevant files, devices, fields, time windows,
+  or request/batch identifiers. Prefer counts or existence checks when sufficient.
+- Routine status checks: at most 30 lines and approximately 1,000 tokens.
+  Diagnostic inspection: initially at most 120 lines and approximately 4,000
+  tokens per result. Budget combined output across files and commands, including
+  long lines; per-file match limits alone are insufficient. Set explicit output
+  limits on execution and polling calls when supported.
+- These are initial budgets, not limits on necessary evidence. Expand targeted
+  windows with a stated diagnostic purpose. If truncated, narrow the query or
+  summarize locally first; do not blindly dump or paginate through whole files.
+- Save verbose stdout/stderr to unique per-run artifacts; preserve exit status
+  and report completion/failure and artifact paths. Avoid full dumps, unbounded
+  searches, and terminal-streaming `tee`. Inspect saved output with bounded
+  queries; never pipe a running service into an early-exiting consumer like `head`.
+- On failure, locate the earliest relevant error and its surrounding events and
+  complete exception chain. Use the log tail only as supplementary evidence.
+  Extract selected fields from large JSON/results and mark omitted content.
+- Use bounded monitoring snapshots. Query only needed GPU devices and fields;
+  avoid full `nvidia-smi -q` unless justified. Do not stream `nvidia-smi -l`,
+  `watch`, or `tail -f` into tool output; save required time series to disk.
+- Read new log content since the previous cursor, with small overlaps as needed;
+  detect rotation/truncation. Repeat checks only when an action, elapsed time,
+  or the monitoring task justifies them; avoid returning unchanged content.
+- Preserve full raw evidence. Excerpts/summaries must retain source paths and
+  line ranges, time windows, or record identifiers. Mark partial views; absence
+  from filtered/truncated output does not establish absence from the raw evidence.
+- Aggregate repetition with counts, representative examples, first/last times,
+  and process/rank identity. Keep distinct failures separate; file order alone
+  cannot establish cross-process chronology. Prefer deterministic extraction and
+  aggregation, and verify decisive conclusions against underlying records.
+- Do not change logging levels, instrumentation, workload, or serving settings
+  solely to reduce context. Run expensive parsing outside timed benchmarks where
+  possible and keep required monitoring consistent across compared runs. Output
+  reduction never relaxes topology, replay, failure-handling, or evidence checks.
+
 ## Domain-Specific Guides
 
 Do not modify code in these areas without first reading and following the

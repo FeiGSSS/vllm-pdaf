@@ -1,0 +1,4 @@
+{"event": "campaign_started", "pid": 15735, "rounds": 10, "utc": "2026-09-10T04:51:53.601662+00:00"}
+{"event": "round_started", "index": 1, "run": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260910-PCIE-NUMA-DIAG/runs/20260910T045130Z_node0_repeat_r01", "witness_pid": "1098780", "utc": "2026-09-10T04:51:54.458317+00:00"}
+{"event": "round_finished", "index": 1, "returncode": 0, "passed": true, "status": {"state": "FINISHED", "accepted": true, "runner_exit": 0, "failure": null}, "utc": "2026-09-10T04:55:30.733700+00:00"}
+{"event": "round_started", "index": 2, "run": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260910-PCIE-NUMA-DIAG/runs/20260910T045130Z_node0_repeat_r02", "witness_pid": "1115589", "utc": "2026-09-10T04:55:37.202259+00:00"}

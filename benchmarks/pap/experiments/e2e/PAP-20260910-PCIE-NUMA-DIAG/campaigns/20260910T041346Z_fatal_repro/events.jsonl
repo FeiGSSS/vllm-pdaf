@@ -1,0 +1,6 @@
+{"event": "campaign_started", "pid": 41750, "rounds": 10, "utc": "2026-09-10T04:14:06.503971+00:00"}
+{"event": "round_started", "index": 1, "run": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260910-PCIE-NUMA-DIAG/runs/20260910T041346Z_fatal_repro_r01", "witness_pid": "1050382", "utc": "2026-09-10T04:14:07.230676+00:00"}
+{"event": "round_finished", "index": 1, "returncode": 0, "passed": true, "status": {"state": "FINISHED", "accepted": true, "runner_exit": 0, "failure": null}, "utc": "2026-09-10T04:17:09.291699+00:00"}
+{"event": "round_started", "index": 2, "run": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260910-PCIE-NUMA-DIAG/runs/20260910T041346Z_fatal_repro_r02", "witness_pid": "1065363", "utc": "2026-09-10T04:17:15.771560+00:00"}
+{"event": "round_finished", "index": 2, "returncode": 0, "passed": true, "status": {"state": "FINISHED", "accepted": true, "runner_exit": 0, "failure": null}, "utc": "2026-09-10T04:20:13.088190+00:00"}
+{"event": "round_started", "index": 3, "run": "/home/fei/research/PD/vllm-pap/benchmarks/pap/experiments/e2e/PAP-20260910-PCIE-NUMA-DIAG/runs/20260910T041346Z_fatal_repro_r03", "witness_pid": "1080280", "utc": "2026-09-10T04:20:19.543832+00:00"}

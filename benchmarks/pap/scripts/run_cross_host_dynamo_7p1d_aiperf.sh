@@ -18,8 +18,30 @@ LOCAL_IP="${DYNAMO_LOCAL_IP:-10.128.7.24}"
 REMOTE_IP="${DYNAMO_REMOTE_IP:-10.128.7.25}"
 LOCAL_UCX_DEVICE="${DYNAMO_LOCAL_UCX_DEVICE:-mlx5_0:1}"
 REMOTE_UCX_DEVICE="${DYNAMO_REMOTE_UCX_DEVICE:-mlx5_0:1}"
-LOCAL_DECODE_GPU="${DYNAMO_LOCAL_DECODE_GPU:-7}"
-PREFILL_COUNT=7
+PREFILL_COUNT="${DYNAMO_PREFILL_COUNT:-7}"
+DECODE_COUNT="${DYNAMO_DECODE_COUNT:-1}"
+if ! [[ "${PREFILL_COUNT}" =~ ^[1-7]$ && "${DECODE_COUNT}" =~ ^[1-7]$ ]]; then
+  echo "Expected worker counts between one and seven" >&2
+  exit 2
+fi
+if (( PREFILL_COUNT + DECODE_COUNT != 8 )); then
+  echo "Expected eight total workers" >&2
+  exit 2
+fi
+LOCAL_DECODE_GPUS="${DYNAMO_LOCAL_DECODE_GPUS:-$(seq -s, "$((8 - DECODE_COUNT))" 7)}"
+if ! [[ "${LOCAL_DECODE_GPUS}" =~ ^[0-7](,[0-7])*$ ]]; then
+  echo "Invalid DYNAMO_LOCAL_DECODE_GPUS" >&2
+  exit 2
+fi
+IFS=, read -r -a DECODE_GPU_ARRAY <<< "${LOCAL_DECODE_GPUS}"
+if (( ${#DECODE_GPU_ARRAY[@]} != DECODE_COUNT )) || 
+   [[ "$(printf '%s\n' "${DECODE_GPU_ARRAY[@]}" | sort -u | wc -l)" != "${DECODE_COUNT}" ]]; then
+  echo "Decode GPU list must have exactly DECODE_COUNT distinct GPUs" >&2
+  exit 2
+fi
+export DYNAMO_LOCAL_DECODE_GPUS="${LOCAL_DECODE_GPUS}"
+REMOTE_PREFILL_GPUS="$(seq -s, 0 "$((PREFILL_COUNT - 1))")"
+export DYNAMO_PREFILL_COUNT="${PREFILL_COUNT}" DYNAMO_DECODE_COUNT="${DECODE_COUNT}"
 
 RUN_ID="${DYNAMO_RUN_ID:-$(date -u +%Y%m%dT%H%M%SZ)_cross_host_dynamo_7p1d}"
 RUN_ROOT="${DYNAMO_RUN_ROOT:-${ROOT_DIR}/benchmarks/pap/experiments/e2e/_runs/dynamo/${RUN_ID}}"
@@ -87,10 +109,11 @@ run_worker() {
   local -a mode_args scheduling_args event_args
   case "${ROLE}" in
     decode)
+      (( index >= 0 && index < DECODE_COUNT )) || die "invalid Decode index"
       host_ip="${LOCAL_IP}"
       net_device="${LOCAL_UCX_DEVICE}"
-      gpu="${LOCAL_DECODE_GPU}"
-      ordinal=0
+      gpu="${DECODE_GPU_ARRAY[index]}"
+      ordinal="${index}"
       log_role=decode
       mode_args=(--disaggregation-mode decode)
       scheduling_args=(--async-scheduling)
@@ -102,7 +125,7 @@ run_worker() {
       host_ip="${REMOTE_IP}"
       net_device="${REMOTE_UCX_DEVICE}"
       gpu="${index}"
-      ordinal=$((index + 1))
+      ordinal=$((index + DECODE_COUNT))
       log_role=prefill
       mode_args=(--disaggregation-mode prefill)
       scheduling_args=(--no-async-scheduling)
@@ -206,11 +229,11 @@ cleanup() {
   local deadline=$((SECONDS + 30))
   local local_gpu_left remote_gpu_left etcd_left
   while true; do
-    local_gpu_left="$(nvidia-smi -i "${LOCAL_DECODE_GPU}" \
+    local_gpu_left="$(nvidia-smi -i "${LOCAL_DECODE_GPUS}" \
       --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null \
       | sed '/^$/d' | wc -l)"
     remote_gpu_left="$(ssh "${REMOTE_HOST}" \
-      'nvidia-smi -i 0,1,2,3,4,5,6 --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | sed "/^$/d" | wc -l' \
+      "nvidia-smi -i ${REMOTE_PREFILL_GPUS} --query-compute-apps=pid --format=csv,noheader,nounits 2>/dev/null | sed '/^$/d' | wc -l" \
       2>/dev/null || echo unknown)"
     etcd_left="$(ss -ltn 2>/dev/null | grep -c ":${ETCD_PORT} " || true)"
     [[ "${local_gpu_left}" == 0 && "${remote_gpu_left}" == 0 \
@@ -235,12 +258,12 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT TERM
 
-local_gpu_processes="$(nvidia-smi -i "${LOCAL_DECODE_GPU}" \
+local_gpu_processes="$(nvidia-smi -i "${LOCAL_DECODE_GPUS}" \
   --query-compute-apps=pid --format=csv,noheader,nounits)"
 [[ -z "${local_gpu_processes//[[:space:]]/}" ]] \
   || die "local Decode GPU is occupied"
 remote_gpu_processes="$(ssh "${REMOTE_HOST}" \
-  'nvidia-smi -i 0,1,2,3,4,5,6 --query-compute-apps=pid --format=csv,noheader,nounits')"
+  "nvidia-smi -i ${REMOTE_PREFILL_GPUS} --query-compute-apps=pid --format=csv,noheader,nounits")"
 [[ -z "${remote_gpu_processes//[[:space:]]/}" ]] \
   || die "remote Prefill GPUs are occupied"
 local_hca="${LOCAL_UCX_DEVICE%%:*}"
@@ -304,36 +327,42 @@ setsid env "${frontend_env[@]}" "${DYNAMO_PYTHON}" -P -m dynamo.frontend \
 LOCAL_PIDS+=("$!")
 LOCAL_PGIDS+=("$!")
 
-setsid env \
-  DYNAMO_CROSS_HOST_ROLE=decode DYNAMO_CROSS_HOST_INDEX=0 \
-  PAP_ROOT="${ROOT_DIR}" DYNAMO_RUN_ID="${RUN_ID}" \
-  DYNAMO_RUN_ROOT="${RUN_ROOT}" DYNAMO_NAMESPACE="${NAMESPACE}" \
-  DYNAMO_LOCAL_IP="${LOCAL_IP}" DYNAMO_REMOTE_IP="${REMOTE_IP}" \
-  DYNAMO_LOCAL_UCX_DEVICE="${LOCAL_UCX_DEVICE}" \
-  DYNAMO_REMOTE_UCX_DEVICE="${REMOTE_UCX_DEVICE}" \
-  DYNAMO_ETCD_PORT="${ETCD_PORT}" DYNAMO_SYSTEM_PORT_BASE="${SYSTEM_PORT_BASE}" \
-  DYNAMO_NIXL_PORT_BASE="${NIXL_PORT_BASE}" \
-  DYNAMO_KV_EVENT_PORT_BASE="${KV_EVENT_PORT_BASE}" \
-  DYNAMO_VLLM_PORT_BASE="${VLLM_PORT_BASE}" \
-  DYNAMO_MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
-  DYNAMO_PREFILL_MAX_NUM_BATCHED_TOKENS="${PREFILL_MAX_NUM_BATCHED_TOKENS}" \
-  DYNAMO_DECODE_MAX_NUM_BATCHED_TOKENS="${DECODE_MAX_NUM_BATCHED_TOKENS}" \
-  DYNAMO_MAX_NUM_SEQS="${MAX_NUM_SEQS}" \
-  DYNAMO_GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION}" \
-  DYNAMO_BLOCK_SIZE="${BLOCK_SIZE}" \
-  DYNAMO_ETCD_LEASE_TTL="${ETCD_LEASE_TTL}" \
-  DYNAMO_KV_LEASE_DURATION="${KV_LEASE_DURATION}" \
-  DYNAMO_PREFILL_CUDAGRAPH_CAPTURE_SIZES="${PREFILL_CUDAGRAPH_CAPTURE_SIZES}" \
-  DYNAMO_DECODE_CUDAGRAPH_CAPTURE_SIZES="${DECODE_CUDAGRAPH_CAPTURE_SIZES}" \
-  bash "$0" > "${LOG_ROOT}/decode_0.log" 2>&1 &
-LOCAL_PIDS+=("$!")
-LOCAL_PGIDS+=("$!")
+DECODE_PIDS=()
+for ((decode_index = 0; decode_index < DECODE_COUNT; decode_index++)); do
+  setsid env \
+    DYNAMO_CROSS_HOST_ROLE=decode DYNAMO_CROSS_HOST_INDEX="${decode_index}" \
+    PAP_ROOT="${ROOT_DIR}" DYNAMO_RUN_ID="${RUN_ID}" \
+    DYNAMO_RUN_ROOT="${RUN_ROOT}" DYNAMO_NAMESPACE="${NAMESPACE}" \
+    DYNAMO_LOCAL_IP="${LOCAL_IP}" DYNAMO_REMOTE_IP="${REMOTE_IP}" \
+    DYNAMO_LOCAL_UCX_DEVICE="${LOCAL_UCX_DEVICE}" \
+    DYNAMO_REMOTE_UCX_DEVICE="${REMOTE_UCX_DEVICE}" \
+    DYNAMO_ETCD_PORT="${ETCD_PORT}" DYNAMO_SYSTEM_PORT_BASE="${SYSTEM_PORT_BASE}" \
+    DYNAMO_NIXL_PORT_BASE="${NIXL_PORT_BASE}" \
+    DYNAMO_KV_EVENT_PORT_BASE="${KV_EVENT_PORT_BASE}" \
+    DYNAMO_VLLM_PORT_BASE="${VLLM_PORT_BASE}" \
+    DYNAMO_MAX_MODEL_LEN="${MAX_MODEL_LEN}" \
+    DYNAMO_PREFILL_MAX_NUM_BATCHED_TOKENS="${PREFILL_MAX_NUM_BATCHED_TOKENS}" \
+    DYNAMO_DECODE_MAX_NUM_BATCHED_TOKENS="${DECODE_MAX_NUM_BATCHED_TOKENS}" \
+    DYNAMO_MAX_NUM_SEQS="${MAX_NUM_SEQS}" \
+    DYNAMO_GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION}" \
+    DYNAMO_BLOCK_SIZE="${BLOCK_SIZE}" \
+    DYNAMO_ETCD_LEASE_TTL="${ETCD_LEASE_TTL}" \
+    DYNAMO_KV_LEASE_DURATION="${KV_LEASE_DURATION}" \
+    DYNAMO_PREFILL_CUDAGRAPH_CAPTURE_SIZES="${PREFILL_CUDAGRAPH_CAPTURE_SIZES}" \
+    DYNAMO_DECODE_CUDAGRAPH_CAPTURE_SIZES="${DECODE_CUDAGRAPH_CAPTURE_SIZES}" \
+    bash "$0" > "${LOG_ROOT}/decode_${decode_index}.log" 2>&1 &
+  LOCAL_PIDS+=("$!")
+  LOCAL_PGIDS+=("$!")
+  DECODE_PIDS+=("$!")
+done
 
 for ((index = 0; index < PREFILL_COUNT; index++)); do
   launch="${RUN_ROOT}/launch/prefill_${index}.sh"
   cat > "${launch}" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+export DYNAMO_PREFILL_COUNT=${PREFILL_COUNT} DYNAMO_DECODE_COUNT=${DECODE_COUNT}
+export DYNAMO_LOCAL_DECODE_GPUS=$(printf %q "${LOCAL_DECODE_GPUS}")
 export DYNAMO_CROSS_HOST_ROLE=prefill DYNAMO_CROSS_HOST_INDEX=${index}
 export PAP_ROOT=$(printf %q "${REMOTE_ROOT}")
 export DYNAMO_RUN_ID=$(printf %q "${RUN_ID}")
@@ -361,11 +390,13 @@ done
 
 deadline=$((SECONDS + 900))
 while true; do
-  local_ready="$(rg -c 'VllmWorker for .* has been initialized' "${LOG_ROOT}/decode_0.log" || true)"
+  local_ready="$(find "${LOG_ROOT}" -name 'decode_*.log' -exec grep -l 'VllmWorker for .* has been initialized' {} + | wc -l || true)"
   remote_ready="$(ssh "${REMOTE_HOST}" \
     "grep -l 'VllmWorker for .* has been initialized' '${REMOTE_LOG_ROOT}'/prefill_*.log 2>/dev/null | wc -l")"
-  [[ "${local_ready}" == 1 && "${remote_ready}" == "${PREFILL_COUNT}" ]] && break
-  kill -0 "${LOCAL_PIDS[2]}" 2>/dev/null || die "Decode exited during startup"
+  [[ "${local_ready}" == "${DECODE_COUNT}" && "${remote_ready}" == "${PREFILL_COUNT}" ]] && break
+  for pid in "${DECODE_PIDS[@]}"; do
+    kill -0 "${pid}" 2>/dev/null || die "Decode exited during startup"
+  done
   (( SECONDS < deadline )) || die "timed out waiting for workers"
   sleep 2
 done
@@ -381,9 +412,9 @@ done
 sleep "${CLUSTER_READY_WAIT_SECONDS}"
 
 {
-  printf 'TOPOLOGY=7P1D\nPLACEMENT=cross_host\n'
-  printf 'LOCAL_HOST=%q\nLOCAL_IP=%q\nLOCAL_DECODE_GPU=%q\n' "$(hostname)" "${LOCAL_IP}" "${LOCAL_DECODE_GPU}"
-  printf 'REMOTE_HOST=%q\nREMOTE_IP=%q\nREMOTE_PREFILL_GPUS=0,1,2,3,4,5,6\n' "${REMOTE_HOST}" "${REMOTE_IP}"
+  printf 'TOPOLOGY=%sP%sD\nPLACEMENT=cross_host\n' "${PREFILL_COUNT}" "${DECODE_COUNT}"
+  printf 'LOCAL_HOST=%q\nLOCAL_IP=%q\nLOCAL_DECODE_GPUS=%q\n' "$(hostname)" "${LOCAL_IP}" "${LOCAL_DECODE_GPUS}"
+  printf 'REMOTE_HOST=%q\nREMOTE_IP=%q\nREMOTE_PREFILL_GPUS=%q\n' "${REMOTE_HOST}" "${REMOTE_IP}" "${REMOTE_PREFILL_GPUS}"
   printf 'DYNAMO_VERSION=%q\nVLLM_VERSION=%q\n' "${local_version%% *}" "${local_version##* }"
   printf 'NAMESPACE=%q\nETCD_ENDPOINTS=%q\nROUTER_MODE=kv\n' "${NAMESPACE}" "${ETCD_ENDPOINTS}"
   printf 'ETCD_LEASE_TTL=%q\nKV_LEASE_DURATION=%q\n' \
@@ -401,19 +432,26 @@ sleep "${CLUSTER_READY_WAIT_SECONDS}"
   printf 'DYNAMO_RUN_ID=%q\nDYNAMO_RUN_ROOT=%q\nDYNAMO_REMOTE_RUN_ROOT=%q\n' "${RUN_ID}" "${RUN_ROOT}" "${REMOTE_RUN_ROOT}"
   printf 'GIT_COMMIT=%q\n' "$(git rev-parse HEAD)"
 } > "${RUN_ROOT}/effective_config.env"
+# Preserve canonical runner inputs as executable exports for direct replay.
+{
+  for setting in PREFILL_COUNT DECODE_COUNT LOCAL_DECODE_GPUS REMOTE_HOST REMOTE_ROOT LOCAL_IP REMOTE_IP LOCAL_UCX_DEVICE REMOTE_UCX_DEVICE MAX_MODEL_LEN PREFILL_MAX_NUM_BATCHED_TOKENS DECODE_MAX_NUM_BATCHED_TOKENS MAX_NUM_SEQS GPU_MEMORY_UTILIZATION BLOCK_SIZE PREFILL_CUDAGRAPH_CAPTURE_SIZES DECODE_CUDAGRAPH_CAPTURE_SIZES ROUTER_PREFILL_LOAD_SCALE CLUSTER_READY_WAIT_SECONDS MIN_KV_TRANSFER_MB_S EXPECTED_LINK_RATE_GBPS KV_LEASE_DURATION ETCD_LEASE_TTL SMOKE_ONLY AIPERF_INPUT_FILE AIPERF_INPUT_SHA256 AIPERF_SESSIONS AIPERF_CONCURRENCY AIPERF_EXPECTED_REQUESTS AIPERF_REQUEST_TIMEOUT_SECONDS FRONTEND_PORT ETCD_PORT SYSTEM_PORT_BASE NIXL_PORT_BASE KV_EVENT_PORT_BASE VLLM_PORT_BASE; do
+    printf 'export DYNAMO_%s=%q\n' "${setting}" "${!setting}"
+  done
+  printf 'export MODEL_PATH=%q PAP_ROOT=%q\n' "${MODEL_PATH}" "${ROOT_DIR}"
+} >> "${RUN_ROOT}/effective_config.env"
 
-local_compute="$(nvidia-smi -i "${LOCAL_DECODE_GPU}" --query-compute-apps=pid \
-  --format=csv,noheader,nounits | sed '/^$/d' | wc -l)"
+local_compute="$(for gpu in ${LOCAL_DECODE_GPUS//,/ }; do
+  nvidia-smi -i "${gpu}" --query-compute-apps=pid --format=csv,noheader,nounits | sed '/^$/d' | wc -l
+done)"
 remote_compute="$(ssh "${REMOTE_HOST}" \
-  'for gpu in 0 1 2 3 4 5 6; do nvidia-smi -i "$gpu" --query-compute-apps=pid --format=csv,noheader,nounits | sed "/^$/d" | wc -l; done')"
-[[ "${local_compute}" == 1 ]] || die "expected one Decode GPU process"
-[[ "${remote_compute}" == $'1\n1\n1\n1\n1\n1\n1' ]] \
-  || die "expected one Prefill GPU process per remote GPU"
-jq -n --argjson local_compute "${local_compute}" \
-  --arg remote_compute "${remote_compute}" --argjson registered "${registered}" \
-  --argjson local_pid "${LOCAL_PIDS[2]}" --arg remote_pids "${REMOTE_PIDS[*]}" \
-  '{status:"passed",registered_workers:$registered,local_decode:{launcher_pid:$local_pid,gpu_processes:$local_compute},remote_prefills:{launcher_pids:($remote_pids|split(" ")|map(tonumber)),gpu_processes_per_gpu:($remote_compute|split("\n")|map(tonumber))}}' \
-  > "${RUN_ROOT}/startup_audit.json"
+  "for gpu in ${REMOTE_PREFILL_GPUS//,/ }; do nvidia-smi -i \$gpu --query-compute-apps=pid --format=csv,noheader,nounits | sed '/^$/d' | wc -l; done")"
+[[ "${registered}" == 8 ]] || die "expected exactly eight workers"
+[[ "${local_compute}" == "$(seq "${DECODE_COUNT}" | sed 's/.*/1/')" ]] || die "Decode GPU mapping mismatch"
+[[ "${remote_compute}" == "$(seq "${PREFILL_COUNT}" | sed 's/.*/1/')" ]] || die "Prefill GPU mapping mismatch"
+jq -n --arg lc "${local_compute}" --arg rc "${remote_compute}" \
+  --arg lg "${LOCAL_DECODE_GPUS}" --arg rg "${REMOTE_PREFILL_GPUS}" \
+  --arg lp "${DECODE_PIDS[*]}" --arg rp "${REMOTE_PIDS[*]}" \
+  '{status:"passed",registered_workers:8,local_decode:{launcher_pids:($lp|split(" ")|map(tonumber)),gpus:$lg,gpu_processes_per_gpu:($lc|split("\n")|map(tonumber))},remote_prefills:{launcher_pids:($rp|split(" ")|map(tonumber)),gpus:$rg,gpu_processes_per_gpu:($rc|split("\n")|map(tonumber))}}' > "${RUN_ROOT}/startup_audit.json"
 
 if (( SMOKE_ONLY == 1 )); then
   jq -n --arg model "${MODEL_PATH}" \

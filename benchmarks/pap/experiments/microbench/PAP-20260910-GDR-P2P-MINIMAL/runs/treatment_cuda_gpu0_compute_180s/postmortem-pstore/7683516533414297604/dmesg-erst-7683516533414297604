@@ -1,0 +1,190 @@
+Panic#1 Part4
+<6>[   10.910922] ipmi_si: Trying ACPI-specified kcs state machine at i/o address 0xca2, slave address 0x20, irq 0
+<6>[   10.916403] i2c i2c-5: Successfully instantiated SPD at 0x53
+<6>[   10.927031] i2c i2c-5: Successfully instantiated SPD at 0x54
+<6>[   10.936736] i2c i2c-5: Successfully instantiated SPD at 0x55
+<6>[   10.943303] i2c i2c-5: Successfully instantiated SPD at 0x56
+<6>[   10.944116] ccp 0000:53:00.5: enabling device (0000 -> 0002)
+<6>[   10.946631] ccp 0000:53:00.5: SEV: memory encryption not enabled by BIOS
+<5>[   10.946633] ccp 0000:53:00.5: psp enabled
+<6>[   10.956267] i2c i2c-5: Successfully instantiated SPD at 0x57
+<6>[   10.963231] ccp 0000:d1:00.5: enabling device (0000 -> 0002)
+<5>[   10.989692] ccp 0000:d1:00.5: psp enabled
+<6>[   11.047680] usbcore: registered new interface driver cdc_wdm
+<6>[   11.055676] RAPL PMU: API unit is 2^-32 Joules, 2 fixed counters, 163840 ms ovfl timer
+<6>[   11.055682] RAPL PMU: hw unit of domain package 2^-16 Joules
+<6>[   11.055683] RAPL PMU: hw unit of domain core 2^-16 Joules
+<6>[   11.084937] usbcore: registered new interface driver cdc_mbim
+<4>[   11.113018] nvidia: loading out-of-tree module taints kernel.
+<5>[   11.113027] nvidia: module verification failed: signature and/or required key missing - tainting kernel
+<5>[   11.144287] ses 0:1:124:0: Attached Enclosure device
+<6>[   11.158178] nvidia-nvlink: Nvlink Core is being initialized, major device number 511
+<3>[   11.158196] 
+<6>[   11.160513] nvidia 0000:01:00.0: enabling device (0000 -> 0002)
+<6>[   11.205641] nvidia 0000:11:00.0: enabling device (0000 -> 0002)
+<6>[   11.255647] nvidia 0000:61:00.0: enabling device (0000 -> 0002)
+<6>[   11.278882] ast 0000:52:00.0: vgaarb: deactivate vga console
+<6>[   11.278949] ast 0000:52:00.0: Using default configuration
+<6>[   11.278950] ast 0000:52:00.0: AST 2600 detected
+<6>[   11.278965] ast 0000:52:00.0: [drm] Using ASPEED DisplayPort transmitter
+<6>[   11.279187] ast 0000:52:00.0: [drm] Registered 1 planes with drm panic
+<6>[   11.306678] nvidia 0000:71:00.0: enabling device (0000 -> 0002)
+<6>[   11.355614] [drm] Initialized ast 0.1.0 for 0000:52:00.0 on minor 1
+<6>[   11.355644] nvidia 0000:81:00.0: enabling device (0000 -> 0002)
+<6>[   11.356037] fbcon: astdrmfb (fb0) is primary device
+<6>[   11.356039] fbcon: Deferring console take-over
+<6>[   11.356040] ast 0000:52:00.0: [drm] fb0: astdrmfb frame buffer device
+<6>[   11.404718] nvidia 0000:91:00.0: enabling device (0000 -> 0002)
+<6>[   11.432676] kvm_amd: TSC scaling supported
+<6>[   11.432679] kvm_amd: Nested Virtualization enabled
+<6>[   11.432681] kvm_amd: Nested Paging enabled
+<6>[   11.432683] kvm_amd: LBR virtualization supported
+<6>[   11.432686] kvm_amd: AVIC enabled
+<6>[   11.432686] kvm_amd: x2AVIC enabled (max 512 vCPUs)
+<6>[   11.432687] kvm_amd: Virtual VMLOAD VMSAVE supported
+<6>[   11.432687] kvm_amd: Virtual GIF supported
+<6>[   11.432688] kvm_amd: Virtual NMI enabled
+<6>[   11.457632] nvidia 0000:e1:00.0: enabling device (0000 -> 0002)
+<6>[   11.502635] nvidia 0000:f1:00.0: enabling device (0000 -> 0002)
+<6>[   11.502916] mlx5_core 0000:31:00.0 ibs6: renamed from ib0
+<4>[   11.546693] NVRM: loading NVIDIA UNIX Open Kernel Module for x86_64  595.84  Release Build  (dvs-builder@U22-I3-AM25-26-2)  Wed Jun 10 21:06:37 UTC 2026
+<6>[   11.606670] nvidia-modeset: Loading NVIDIA UNIX Open Kernel Mode Setting Driver for x86_64  595.84  Release Build  (dvs-builder@U22-I3-AM25-26-2)  Wed Jun 10 20:53:33 UTC 2026
+<6>[   11.613223] Loading iSCSI transport class v2.0-870.
+<6>[   11.622988] [drm] [nvidia-drm] [GPU ID 0x00000100] Loading driver
+<5>[   11.626330] iscsi: registered transport (iser)
+<6>[   11.627225] MCE: In-kernel MCE decoding enabled.
+<6>[   11.631870] EDAC MC0: Giving out device to module amd64_edac controller F1Ah_M02h: DEV 0000:00:18.3 (INTERRUPT)
+<6>[   11.631874] EDAC amd64: F1Ah_M02h detected (node 0).
+<7>[   11.631875] EDAC MC: UMC0 chip selects:
+<6>[   11.631875] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.631876] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631877] EDAC MC: UMC1 chip selects:
+<6>[   11.631878] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.631878] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631879] EDAC MC: UMC2 chip selects:
+<6>[   11.631879] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   11.631879] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631880] EDAC MC: UMC3 chip selects:
+<6>[   11.631880] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.631880] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631881] EDAC MC: UMC4 chip selects:
+<6>[   11.631881] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.631881] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631881] EDAC MC: UMC5 chip selects:
+<6>[   11.631882] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   11.631882] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631882] EDAC MC: UMC6 chip selects:
+<6>[   11.631882] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.631883] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631883] EDAC MC: UMC7 chip selects:
+<6>[   11.631883] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.631884] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631884] EDAC MC: UMC8 chip selects:
+<6>[   11.631884] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   11.631885] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631885] EDAC MC: UMC9 chip selects:
+<6>[   11.631885] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.631885] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631886] EDAC MC: UMC10 chip selects:
+<6>[   11.631886] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.631886] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631887] EDAC MC: UMC11 chip selects:
+<6>[   11.631887] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   11.631887] EDAC amd64: MC: 2:     0MB 3:     0MB
+<6>[   11.632216] EDAC MC1: Giving out device to module amd64_edac controller F1Ah_M02h: DEV 0000:00:19.3 (INTERRUPT)
+<6>[   11.632217] EDAC amd64: F1Ah_M02h detected (node 1).
+<7>[   11.632217] EDAC MC: UMC0 chip selects:
+<6>[   11.632217] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.632218] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632218] EDAC MC: UMC1 chip selects:
+<6>[   11.632218] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.632219] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632219] EDAC MC: UMC2 chip selects:
+<6>[   11.632219] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   11.632219] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632220] EDAC MC: UMC3 chip selects:
+<6>[   11.632220] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.632220] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632221] EDAC MC: UMC4 chip selects:
+<6>[   11.632221] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.632221] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632221] EDAC MC: UMC5 chip selects:
+<6>[   11.632222] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   11.632222] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632222] EDAC MC: UMC6 chip selects:
+<6>[   11.632223] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.632223] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632223] EDAC MC: UMC7 chip selects:
+<6>[   11.632223] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.632224] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632224] EDAC MC: UMC8 chip selects:
+<6>[   11.632224] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   11.632225] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632225] EDAC MC: UMC9 chip selects:
+<6>[   11.632225] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.632225] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632226] EDAC MC: UMC10 chip selects:
+<6>[   11.632226] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.632226] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632227] EDAC MC: UMC11 chip selects:
+<6>[   11.632227] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   11.632227] EDAC amd64: MC: 2:     0MB 3:     0MB
+<6>[   11.651989] intel_rapl_common: Found RAPL domain package
+<6>[   11.651992] intel_rapl_common: Found RAPL domain core
+<6>[   11.652999] intel_rapl_common: Found RAPL domain package
+<6>[   11.653003] intel_rapl_common: Found RAPL domain core
+<6>[   11.658118] EXT4-fs (sdb1): mounted filesystem cbf0716d-f059-4d6d-bc54-175197cb8cf8 r/w with ordered data mode. Quota mode: none.
+<6>[   11.663035] EXT4-fs (sde1): mounted filesystem 3ec96b97-8bd4-43a3-a471-e7acf2be7374 r/w with ordered data mode. Quota mode: none.
+<6>[   11.663580] EXT4-fs (sdc1): mounted filesystem 15312723-0fea-4a05-99c6-97cd7cfeb957 r/w with ordered data mode. Quota mode: none.
+<6>[   11.665550] EXT4-fs (sdd1): mounted filesystem 1ede4fa3-2d2b-40ea-92d0-836ea9e50d85 r/w with ordered data mode. Quota mode: none.
+<6>[   11.667210] EXT4-fs (sdf1): mounted filesystem 28dada2e-d407-4167-bf51-ebd21e980952 r/w with ordered data mode. Quota mode: none.
+<6>[   11.745093] amd_atl: AMD Address Translation Library initialized
+<6>[   11.748737] RPC: Registered named UNIX socket transport module.
+<6>[   11.748741] RPC: Registered udp transport module.
+<6>[   11.748742] RPC: Registered tcp transport module.
+<6>[   11.748742] RPC: Registered tcp-with-tls transport module.
+<6>[   11.748743] RPC: Registered tcp NFSv4.1 backchannel transport module.
+<6>[   11.845203] RPC: Registered rdma transport module.
+<6>[   11.845205] RPC: Registered rdma backchannel transport module.
+<5>[   11.875600] audit: type=1400 audit(1788837748.498:2): apparmor="STATUS" operation="profile_load" profile="unconfined" name="notepadqq" pid=3635 comm="apparmor_parser"
+<5>[   11.875652] audit: type=1400 audit(1788837748.499:3): apparmor="STATUS" operation="profile_load" profile="unconfined" name="wpcom" pid=3718 comm="apparmor_parser"
+<5>[   11.875698] audit: type=1400 audit(1788837748.499:4): apparmor="STATUS" operation="profile_load" profile="unconfined" name="toybox" pid=3684 comm="apparmor_parser"
+<5>[   11.875723] audit: type=1400 audit(1788837748.499:5): apparmor="STATUS" operation="profile_load" profile="unconfined" name="virtiofsd" pid=3714 comm="apparmor_parser"
+<5>[   11.875749] audit: type=1400 audit(1788837748.499:6): apparmor="STATUS" operation="profile_load" profile="unconfined" name="libcamerify" pid=3622 comm="apparmor_parser"
+<5>[   11.875799] audit: type=1400 audit(1788837748.499:7): apparmor="STATUS" operation="profile_load" profile="unconfined" name="sbuild-createchroot" pid=3667 comm="apparmor_parser"
+<5>[   11.875882] audit: type=1400 audit(1788837748.499:8): apparmor="STATUS" operation="profile_load" profile="unconfined" name="surfshark" pid=3681 comm="apparmor_parser"
+<6>[   11.963538] ipmi_si IPI0001:00: IPMI message handler: Found new BMC (man_id: 0x000000, prod_id: 0x0202, dev_id: 0x20)
+<6>[   12.311715] ipmi_si IPI0001:00: IPMI kcs interface initialized
+<6>[   12.313683] ipmi_ssif: IPMI SSIF Interface driver
+<4>[   12.661601] hrtimer: interrupt took 8783 ns
+<6>[   13.384635] [drm] Initialized nvidia-drm 0.0.0 for 0000:01:00.0 on minor 0
+<4>[   13.384710] nvidia 0000:01:00.0: [drm] No compatible format found
+<6>[   13.384713] nvidia 0000:01:00.0: [drm] Cannot find any crtc or sizes
+<6>[   13.384755] [drm] [nvidia-drm] [GPU ID 0x00001100] Loading driver
+<6>[   14.515877] [drm] Initialized nvidia-drm 0.0.0 for 0000:11:00.0 on minor 2
+<4>[   14.515922] nvidia 0000:11:00.0: [drm] No compatible format found
+<6>[   14.515924] nvidia 0000:11:00.0: [drm] Cannot find any crtc or sizes
+<6>[   14.515967] [drm] [nvidia-drm] [GPU ID 0x00006100] Loading driver
+<6>[   15.784798] [drm] Initialized nvidia-drm 0.0.0 for 0000:61:00.0 on minor 3
+<4>[   15.784845] nvidia 0000:61:00.0: [drm] No compatible format found
+<6>[   15.784848] nvidia 0000:61:00.0: [drm] Cannot find any crtc or sizes
+<6>[   15.784891] [drm] [nvidia-drm] [GPU ID 0x00007100] Loading driver
+<6>[   17.046295] [drm] Initialized nvidia-drm 0.0.0 for 0000:71:00.0 on minor 4
+<4>[   17.046359] nvidia 0000:71:00.0: [drm] No compatible format found
+<6>[   17.046362] nvidia 0000:71:00.0: [drm] Cannot find any crtc or sizes
+<6>[   17.046411] [drm] [nvidia-drm] [GPU ID 0x00008100] Loading driver
+<6>[   18.201434] [drm] Initialized nvidia-drm 0.0.0 for 0000:81:00.0 on minor 5
+<4>[   18.201499] nvidia 0000:81:00.0: [drm] No compatible format found
+<6>[   18.201502] nvidia 0000:81:00.0: [drm] Cannot find any crtc or sizes
+<6>[   18.201533] [drm] [nvidia-drm] [GPU ID 0x00009100] Loading driver
+<4>[   18.781226] kauditd_printk_skb: 173 callbacks suppressed
+<5>[   18.781228] audit: type=1400 audit(1788837755.404:182): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="rsyslogd" pid=3889 comm="apparmor_parser"
+<6>[   19.068316] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link ACTIVE
+<6>[   19.322679] NET: Registered PF_QIPCRTR protocol family
+<6>[   19.525353] [drm] Initialized nvidia-drm 0.0.0 for 0000:91:00.0 on minor 6
+<4>[   19.525407] nvidia 0000:91:00.0: [drm] No compatible format found
+<6>[   19.525410] nvidia 0000:91:00.0: [drm] Cannot find any crtc or sizes
+<6>[   19.525454] [drm] [nvidia-drm] [GPU ID 0x0000e100] Loading driver
+<6>[   20.174188] mlx5_core 0000:c2:00.0 ens17f0np0: Link down
+<4>[   20.252887] set_capacity_and_notify: 12 callbacks suppressed
+<6>[   20.252890] loop22: detected capacity change from 0 to 8

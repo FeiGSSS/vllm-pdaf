@@ -1,0 +1,170 @@
+Panic#1 Part4
+<6>[    3.232637] megaraid_sas 0000:c1:00.0: FW provided TM TaskAbort/Reset timeout	: 6 secs/60 secs
+<6>[    3.232638] megaraid_sas 0000:c1:00.0: JBOD sequence map support	: Yes
+<6>[    3.232638] megaraid_sas 0000:c1:00.0: PCI Lane Margining support	: Yes
+<6>[    3.250390] usb 3-2: New USB device found, idVendor=045b, idProduct=0209, bcdDevice= 1.00
+<6>[    3.250394] usb 3-2: New USB device strings: Mfr=0, Product=0, SerialNumber=0
+<6>[    3.253673] megaraid_sas 0000:c1:00.0: NVME page size	: (4096)
+<6>[    3.254191] megaraid_sas 0000:c1:00.0: megasas_enable_intr_fusion is called outbound_intr_mask:0x40000000
+<6>[    3.254193] megaraid_sas 0000:c1:00.0: INIT adapter done
+<6>[    3.254607] megaraid_sas 0000:c1:00.0: Snap dump wait time	: 15
+<6>[    3.254608] megaraid_sas 0000:c1:00.0: pci id		: (0x1000)/(0x10e2)/(0x1000)/(0x4010)
+<6>[    3.254609] megaraid_sas 0000:c1:00.0: unevenspan support	: no
+<6>[    3.254610] megaraid_sas 0000:c1:00.0: firmware crash dump	: no
+<6>[    3.254610] megaraid_sas 0000:c1:00.0: JBOD sequence map	: enabled
+<6>[    3.254685] megaraid_sas 0000:c1:00.0: Max firmware commands: 5100 shared with default hw_queues = 120 poll_queues 0
+<6>[    3.254687] scsi host0: Avago SAS based MegaRAID driver
+<5>[    3.289941] scsi 0:1:124:0: Enclosure         BROADCOM VirtualSES       03   PQ: 0 ANSI: 7
+<6>[    3.303345] hub 3-2:1.0: USB hub found
+<6>[    3.303641] hub 3-2:1.0: 4 ports detected
+<5>[    3.332835] scsi 0:3:106:0: Direct-Access     BROADCOM MR9560-8i        5.32 PQ: 0 ANSI: 5
+<5>[    3.333545] scsi 0:3:107:0: Direct-Access     BROADCOM MR9560-8i        5.32 PQ: 0 ANSI: 5
+<5>[    3.334246] scsi 0:3:108:0: Direct-Access     BROADCOM MR9560-8i        5.32 PQ: 0 ANSI: 5
+<5>[    3.334962] scsi 0:3:109:0: Direct-Access     BROADCOM MR9560-8i        5.32 PQ: 0 ANSI: 5
+<5>[    3.335745] scsi 0:3:110:0: Direct-Access     BROADCOM MR9560-8i        5.32 PQ: 0 ANSI: 5
+<5>[    3.336438] scsi 0:3:111:0: Direct-Access     BROADCOM MR9560-8i        5.32 PQ: 0 ANSI: 5
+<5>[    3.339730] scsi 0:1:124:0: Attached scsi generic sg0 type 13
+<5>[    3.339782] sd 0:3:106:0: Attached scsi generic sg1 type 0
+<5>[    3.339828] scsi 0:3:107:0: Attached scsi generic sg2 type 0
+<5>[    3.339875] scsi 0:3:108:0: Attached scsi generic sg3 type 0
+<5>[    3.339914] sd 0:3:106:0: [sda] 7500398592 512-byte logical blocks: (3.84 TB/3.49 TiB)
+<5>[    3.339916] scsi 0:3:109:0: Attached scsi generic sg4 type 0
+<5>[    3.339918] sd 0:3:106:0: [sda] 4096-byte physical blocks
+<5>[    3.339952] sd 0:3:106:0: [sda] Write Protect is off
+<7>[    3.339954] sd 0:3:106:0: [sda] Mode Sense: 1f 00 00 08
+<5>[    3.339971] scsi 0:3:110:0: Attached scsi generic sg5 type 0
+<5>[    3.340010] sd 0:3:106:0: [sda] Write cache: disabled, read cache: enabled, doesn't support DPO or FUA
+<5>[    3.340013] sd 0:3:107:0: [sdb] 7500398592 512-byte logical blocks: (3.84 TB/3.49 TiB)
+<5>[    3.340017] sd 0:3:107:0: [sdb] 4096-byte physical blocks
+<5>[    3.340019] scsi 0:3:111:0: Attached scsi generic sg6 type 0
+<5>[    3.340038] sd 0:3:107:0: [sdb] Write Protect is off
+<7>[    3.340041] sd 0:3:107:0: [sdb] Mode Sense: 1f 00 00 08
+<6>[    3.340245] sd 0:3:106:0: [sda] Preferred minimum I/O size 262144 bytes
+<5>[    3.340251] sd 0:3:108:0: [sdc] 7500398592 512-byte logical blocks: (3.84 TB/3.49 TiB)
+<5>[    3.340255] sd 0:3:108:0: [sdc] 4096-byte physical blocks
+<5>[    3.340264] sd 0:3:109:0: [sdd] 7500398592 512-byte logical blocks: (3.84 TB/3.49 TiB)
+<5>[    3.340266] sd 0:3:109:0: [sdd] 4096-byte physical blocks
+<5>[    3.340266] sd 0:3:107:0: [sdb] Write cache: disabled, read cache: enabled, doesn't support DPO or FUA
+<5>[    3.340285] sd 0:3:108:0: [sdc] Write Protect is off
+<5>[    3.340286] sd 0:3:111:0: [sdf] 936640512 512-byte logical blocks: (480 GB/447 GiB)
+<7>[    3.340288] sd 0:3:108:0: [sdc] Mode Sense: 1f 00 00 08
+<5>[    3.340288] sd 0:3:111:0: [sdf] 4096-byte physical blocks
+<5>[    3.340304] sd 0:3:109:0: [sdd] Write Protect is off
+<7>[    3.340305] sd 0:3:109:0: [sdd] Mode Sense: 1f 00 00 08
+<5>[    3.340308] sd 0:3:110:0: [sde] 936640512 512-byte logical blocks: (480 GB/447 GiB)
+<5>[    3.340312] sd 0:3:110:0: [sde] 4096-byte physical blocks
+<5>[    3.340321] sd 0:3:111:0: [sdf] Write Protect is off
+<7>[    3.340323] sd 0:3:111:0: [sdf] Mode Sense: 1f 00 00 08
+<6>[    3.340510] sd 0:3:107:0: [sdb] Preferred minimum I/O size 262144 bytes
+<5>[    3.340511] sd 0:3:108:0: [sdc] Write cache: disabled, read cache: enabled, doesn't support DPO or FUA
+<5>[    3.340512] sd 0:3:110:0: [sde] Write Protect is off
+<7>[    3.340515] sd 0:3:110:0: [sde] Mode Sense: 1f 00 00 08
+<5>[    3.340530] sd 0:3:109:0: [sdd] Write cache: disabled, read cache: enabled, doesn't support DPO or FUA
+<5>[    3.340547] sd 0:3:111:0: [sdf] Write cache: disabled, read cache: enabled, doesn't support DPO or FUA
+<5>[    3.340750] sd 0:3:110:0: [sde] Write cache: disabled, read cache: enabled, doesn't support DPO or FUA
+<6>[    3.340751] sd 0:3:108:0: [sdc] Preferred minimum I/O size 262144 bytes
+<6>[    3.340944] sd 0:3:109:0: [sdd] Preferred minimum I/O size 262144 bytes
+<6>[    3.341126] sd 0:3:111:0: [sdf] Preferred minimum I/O size 262144 bytes
+<6>[    3.341335] sd 0:3:110:0: [sde] Preferred minimum I/O size 262144 bytes
+<6>[    3.361790] usb 4-2: new SuperSpeed USB device number 2 using xhci_hcd
+<6>[    3.368406]  sdb: sdb1
+<6>[    3.368446]  sda: sda1 sda2
+<5>[    3.368455] sd 0:3:107:0: [sdb] Attached SCSI disk
+<5>[    3.368500] sd 0:3:106:0: [sda] Attached SCSI disk
+<6>[    3.372500]  sdc: sdc1
+<5>[    3.372533] sd 0:3:108:0: [sdc] Attached SCSI disk
+<6>[    3.373044]  sde: sde1
+<5>[    3.373095] sd 0:3:110:0: [sde] Attached SCSI disk
+<6>[    3.373274]  sdf: sdf1
+<5>[    3.373300] sd 0:3:111:0: [sdf] Attached SCSI disk
+<6>[    3.374281] usb 4-2: New USB device found, idVendor=045b, idProduct=0210, bcdDevice= 1.00
+<6>[    3.374283] usb 4-2: New USB device strings: Mfr=0, Product=0, SerialNumber=0
+<6>[    3.375222]  sdd: sdd1
+<5>[    3.375257] sd 0:3:109:0: [sdd] Attached SCSI disk
+<6>[    3.399347] hub 4-2:1.0: USB hub found
+<6>[    3.399616] hub 4-2:1.0: 4 ports detected
+<6>[    3.425901] ata2: SATA link down (SStatus 0 SControl 300)
+<6>[    3.425901] ata1: SATA link down (SStatus 0 SControl 300)
+<6>[    3.433869] ata3: SATA link down (SStatus 0 SControl 300)
+<6>[    3.433869] ata11: SATA link down (SStatus 0 SControl 300)
+<6>[    3.589633] usb 3-2.1: new high-speed USB device number 3 using xhci_hcd
+<6>[    3.676150] usb 3-2.1: New USB device found, idVendor=046b, idProduct=ff01, bcdDevice= 1.00
+<6>[    3.676153] usb 3-2.1: New USB device strings: Mfr=3, Product=2, SerialNumber=1
+<6>[    3.676155] usb 3-2.1: Product: Virtual Hub
+<6>[    3.676156] usb 3-2.1: Manufacturer: American Megatrends Inc.
+<6>[    3.676157] usb 3-2.1: SerialNumber: serial
+<6>[    3.720033] hub 3-2.1:1.0: USB hub found
+<6>[    3.720397] hub 3-2.1:1.0: 7 ports detected
+<6>[    3.736755] usb 4-2.3: new SuperSpeed USB device number 3 using xhci_hcd
+<5>[    3.749792] usb 4-2.3: Int endpoint with wBytesPerInterval of 0 in config 1 interface 0 altsetting 0 ep 129: setting to 16
+<5>[    3.750886] usb 4-2.3: Int endpoint with wBytesPerInterval of 0 in config 2 interface 0 altsetting 0 ep 129: setting to 16
+<5>[    3.751936] usb 4-2.3: Int endpoint with wBytesPerInterval of 0 in config 3 interface 0 altsetting 0 ep 129: setting to 16
+<6>[    3.753022] usb 4-2.3: New USB device found, idVendor=0b95, idProduct=1790, bcdDevice= 2.00
+<6>[    3.753023] usb 4-2.3: New USB device strings: Mfr=1, Product=2, SerialNumber=3
+<6>[    3.753024] usb 4-2.3: Product: AX88179B
+<6>[    3.753024] usb 4-2.3: Manufacturer: ASIX
+<6>[    3.753025] usb 4-2.3: SerialNumber: 00247E5C
+<6>[    3.753889] ata4: SATA link down (SStatus 0 SControl 300)
+<6>[    3.836630] tsc: Refined TSC clocksource calibration: 3295.047 MHz
+<6>[    3.836747] clocksource: tsc: mask: 0xffffffffffffffff max_cycles: 0x2f7f0540ebc, max_idle_ns: 440795231921 ns
+<6>[    3.837097] clocksource: Switched to clocksource tsc
+<6>[    4.002637] usb 3-2.1.4: new high-speed USB device number 4 using xhci_hcd
+<6>[    4.073901] ata5: SATA link down (SStatus 0 SControl 300)
+<6>[    4.078157] usb 3-2.1.4: New USB device found, idVendor=046b, idProduct=ff10, bcdDevice= 5.04
+<6>[    4.078160] usb 3-2.1.4: New USB device strings: Mfr=1, Product=2, SerialNumber=3
+<6>[    4.078162] usb 3-2.1.4: Product: Virtual Mouse Gadget
+<6>[    4.078162] usb 3-2.1.4: Manufacturer: American Megatrends Inc.
+<6>[    4.078163] usb 3-2.1.4: SerialNumber: 0123456789
+<6>[    4.230632] usb 3-2.1.6: new high-speed USB device number 5 using xhci_hcd
+<6>[    4.306151] usb 3-2.1.6: New USB device found, idVendor=046b, idProduct=ff10, bcdDevice= 5.04
+<6>[    4.306153] usb 3-2.1.6: New USB device strings: Mfr=1, Product=2, SerialNumber=3
+<6>[    4.306154] usb 3-2.1.6: Product: Virtual Keyboard Gadget
+<6>[    4.306155] usb 3-2.1.6: Manufacturer: American Megatrends Inc.
+<6>[    4.306156] usb 3-2.1.6: SerialNumber: 0123456789
+<6>[    4.393923] ata6: SATA link down (SStatus 0 SControl 300)
+<6>[    4.396071] hid: raw HID events driver (C) Jiri Kosina
+<6>[    4.713902] ata7: SATA link down (SStatus 0 SControl 300)
+<6>[    5.033890] ata8: SATA link down (SStatus 0 SControl 300)
+<6>[    5.353892] ata9: SATA link down (SStatus 0 SControl 300)
+<6>[    5.673910] ata10: SATA link down (SStatus 0 SControl 300)
+<6>[    5.993892] ata12: SATA link down (SStatus 0 SControl 300)
+<6>[    6.313900] ata13: SATA link down (SStatus 0 SControl 300)
+<6>[    6.633904] ata14: SATA link down (SStatus 0 SControl 300)
+<6>[    6.953889] ata15: SATA link down (SStatus 0 SControl 300)
+<6>[    7.273900] ata16: SATA link down (SStatus 0 SControl 300)
+<6>[    7.593907] ata17: SATA link down (SStatus 0 SControl 300)
+<6>[    7.913895] ata18: SATA link down (SStatus 0 SControl 300)
+<6>[    7.928905] usbcore: registered new interface driver cdc_ether
+<6>[    7.930760] usbcore: registered new interface driver usbhid
+<6>[    7.930769] usbhid: USB HID core driver
+<6>[    7.932482] input: American Megatrends Inc. Virtual Mouse Gadget as /devices/pci0000:70/0000:70:07.1/0000:72:00.4/usb3/3-2/3-2.1/3-2.1.4/3-2.1.4:1.0/0003:046B:FF10.0001/input/input1
+<6>[    7.932570] hid-generic 0003:046B:FF10.0001: input,hidraw0: USB HID v1.01 Mouse [American Megatrends Inc. Virtual Mouse Gadget] on usb-0000:72:00.4-2.1.4/input0
+<6>[    7.932672] input: American Megatrends Inc. Virtual Keyboard Gadget as /devices/pci0000:70/0000:70:07.1/0000:72:00.4/usb3/3-2/3-2.1/3-2.1.6/3-2.1.6:1.0/0003:046B:FF10.0002/input/input2
+<6>[    7.932718] hid-generic 0003:046B:FF10.0002: input,hidraw1: USB HID v1.01 Keyboard [American Megatrends Inc. Virtual Keyboard Gadget] on usb-0000:72:00.4-2.1.6/input0
+<6>[    7.964487] cdc_ncm 4-2.3:2.0: MAC-Address: 9c:69:d3:24:7e:5c
+<6>[    7.964490] cdc_ncm 4-2.3:2.0: setting rx_max = 16384
+<6>[    7.964743] cdc_ncm 4-2.3:2.0: setting tx_max = 16384
+<6>[    7.965139] cdc_ncm 4-2.3:2.0 eth0: register 'cdc_ncm' at usb-0000:72:00.4-2.3, CDC NCM (NO ZLP), 9c:69:d3:24:7e:5c
+<6>[    7.965154] usbcore: registered new interface driver cdc_ncm
+<6>[    8.021331] cdc_ncm 4-2.3:2.0 enx9c69d3247e5c: renamed from eth0
+<6>[    8.115387] mlx5_core 0000:31:00.0: firmware version: 28.43.2026
+<6>[    8.115410] mlx5_core 0000:31:00.0: 504.112 Gb/s available PCIe bandwidth (32.0 GT/s PCIe x16 link)
+<6>[    8.395798] mlx5_core 0000:31:00.0: Flow counters bulk query buffer size increased, bulk_query_len(8)
+<6>[    8.397765] mlx5_core 0000:31:00.0: Port module event: module 0, Cable plugged
+<6>[    8.397949] mlx5_core 0000:31:00.0: mlx5_pcie_event:322:(pid 12): PCIe slot power capability was not advertised.
+<6>[    8.404387] mlx5_core 0000:c2:00.0: firmware version: 26.44.1036
+<6>[    8.404413] mlx5_core 0000:c2:00.0: 126.024 Gb/s available PCIe bandwidth (16.0 GT/s PCIe x8 link)
+<6>[    8.927943] mlx5_core 0000:c2:00.0: Rate limit: 127 rates are supported, range: 0Mbps to 24414Mbps
+<6>[    8.928012] mlx5_core 0000:c2:00.0: E-Switch: Total vports 10, per vport: max uc(128) max mc(2048)
+<6>[    8.928296] mlx5_core 0000:c2:00.0: Flow counters bulk query buffer size increased, bulk_query_len(8)
+<6>[    8.935599] mlx5_core 0000:c2:00.0: Port module event: module 0, Cable unplugged
+<6>[    8.936120] mlx5_core 0000:c2:00.0: mlx5_pcie_event:331:(pid 2216): PCIe slot advertised sufficient power (75W).
+<4>[    8.947621] hrtimer: interrupt took 3605 ns
+<6>[    9.159096] mlx5_core 0000:c2:00.0: MLX5E: StrdRq(1) RqSz(8) StrdSz(2048) RxCqeCmprss(0 enhanced)
+<6>[    9.161726] mlx5_core 0000:c2:00.1: firmware version: 26.44.1036
+<6>[    9.161749] mlx5_core 0000:c2:00.1: 126.024 Gb/s available PCIe bandwidth (16.0 GT/s PCIe x8 link)
+<6>[    9.685545] mlx5_core 0000:c2:00.1: Rate limit: 127 rates are supported, range: 0Mbps to 24414Mbps
+<6>[    9.685611] mlx5_core 0000:c2:00.1: E-Switch: Total vports 10, per vport: max uc(128) max mc(2048)
+<6>[    9.685872] mlx5_core 0000:c2:00.1: Flow counters bulk query buffer size increased, bulk_query_len(8)
+<6>[    9.694534] mlx5_core 0000:c2:00.1: Port module event: module 1, Cable unplugged
+<6>[    9.695030] mlx5_core 0000:c2:00.1: mlx5_pcie_event:331:(pid 2216): PCIe slot advertised sufficient power (75W).

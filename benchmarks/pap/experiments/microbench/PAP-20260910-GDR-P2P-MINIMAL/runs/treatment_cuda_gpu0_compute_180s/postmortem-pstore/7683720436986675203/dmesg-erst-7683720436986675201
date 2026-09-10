@@ -1,0 +1,157 @@
+Panic#1 Part1
+<6>[   10.107981] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   10.107981] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   10.107981] EDAC MC: UMC9 chip selects:
+<6>[   10.107982] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   10.107982] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   10.107982] EDAC MC: UMC10 chip selects:
+<6>[   10.107983] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   10.107983] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   10.107983] EDAC MC: UMC11 chip selects:
+<6>[   10.107983] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   10.107984] EDAC amd64: MC: 2:     0MB 3:     0MB
+<6>[   10.116174] intel_rapl_common: Found RAPL domain package
+<6>[   10.116178] intel_rapl_common: Found RAPL domain core
+<6>[   10.119340] amd_atl: AMD Address Translation Library initialized
+<6>[   10.120740] intel_rapl_common: Found RAPL domain package
+<6>[   10.120744] intel_rapl_common: Found RAPL domain core
+<6>[   10.134661] nvidia 0000:91:00.0: enabling device (0000 -> 0002)
+<6>[   10.175636] nvidia 0000:e1:00.0: enabling device (0000 -> 0002)
+<6>[   10.211267] RPC: Registered named UNIX socket transport module.
+<6>[   10.211269] RPC: Registered udp transport module.
+<6>[   10.211270] RPC: Registered tcp transport module.
+<6>[   10.211271] RPC: Registered tcp-with-tls transport module.
+<6>[   10.211272] RPC: Registered tcp NFSv4.1 backchannel transport module.
+<6>[   10.225678] nvidia 0000:f1:00.0: enabling device (0000 -> 0002)
+<6>[   10.227565] EXT4-fs (sdf1): mounted filesystem 28dada2e-d407-4167-bf51-ebd21e980952 r/w with ordered data mode. Quota mode: none.
+<6>[   10.227938] EXT4-fs (sde1): mounted filesystem 3ec96b97-8bd4-43a3-a471-e7acf2be7374 r/w with ordered data mode. Quota mode: none.
+<6>[   10.229606] EXT4-fs (sdb1): mounted filesystem cbf0716d-f059-4d6d-bc54-175197cb8cf8 r/w with ordered data mode. Quota mode: none.
+<6>[   10.230019] EXT4-fs (sdc1): mounted filesystem 15312723-0fea-4a05-99c6-97cd7cfeb957 r/w with ordered data mode. Quota mode: none.
+<6>[   10.233073] EXT4-fs (sdd1): mounted filesystem 1ede4fa3-2d2b-40ea-92d0-836ea9e50d85 r/w with ordered data mode. Quota mode: none.
+<4>[   10.276676] NVRM: loading NVIDIA UNIX Open Kernel Module for x86_64  595.84  Release Build  (dvs-builder@U22-I3-AM25-26-2)  Wed Jun 10 21:06:37 UTC 2026
+<6>[   10.289941] RPC: Registered rdma transport module.
+<6>[   10.289943] RPC: Registered rdma backchannel transport module.
+<6>[   10.297675] nvidia-modeset: Loading NVIDIA UNIX Open Kernel Mode Setting Driver for x86_64  595.84  Release Build  (dvs-builder@U22-I3-AM25-26-2)  Wed Jun 10 20:53:33 UTC 2026
+<6>[   10.303523] [drm] [nvidia-drm] [GPU ID 0x00000100] Loading driver
+<5>[   10.465200] audit: type=1400 audit(1789003874.075:2): apparmor="STATUS" operation="profile_load" profile="unconfined" name="tuxedo-control-center" pid=3696 comm="apparmor_parser"
+<5>[   10.465221] audit: type=1400 audit(1789003874.075:3): apparmor="STATUS" operation="profile_load" profile="unconfined" name="sbuild-destroychroot" pid=3676 comm="apparmor_parser"
+<5>[   10.465252] audit: type=1400 audit(1789003874.075:4): apparmor="STATUS" operation="profile_load" profile="unconfined" name="goldendict" pid=3625 comm="apparmor_parser"
+<5>[   10.465300] audit: type=1400 audit(1789003874.075:5): apparmor="STATUS" operation="profile_load" profile="unconfined" name="desktop-icons-ng" pid=3615 comm="apparmor_parser"
+<5>[   10.465327] audit: type=1400 audit(1789003874.075:6): apparmor="STATUS" operation="profile_load" profile="unconfined" name="geary" pid=3623 comm="apparmor_parser"
+<5>[   10.465359] audit: type=1400 audit(1789003874.075:7): apparmor="STATUS" operation="profile_load" profile="unconfined" name="vscode" pid=3613 comm="apparmor_parser"
+<5>[   10.465387] audit: type=1400 audit(1789003874.075:8): apparmor="STATUS" operation="profile_load" profile="unconfined" name="surfshark" pid=3689 comm="apparmor_parser"
+<5>[   10.465438] audit: type=1400 audit(1789003874.075:9): apparmor="STATUS" operation="profile_load" profile="unconfined" name="thunderbird" pid=3691 comm="apparmor_parser"
+<5>[   10.465482] audit: type=1400 audit(1789003874.075:10): apparmor="STATUS" operation="profile_load" profile="unconfined" name=4D6F6E676F444220436F6D70617373 pid=3602 comm="apparmor_parser"
+<5>[   10.465525] audit: type=1400 audit(1789003874.075:11): apparmor="STATUS" operation="profile_load" profile="unconfined" name="QtWebEngineProcess" pid=3603 comm="apparmor_parser"
+<6>[   11.650474] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link ACTIVE
+<6>[   11.850639] NET: Registered PF_QIPCRTR protocol family
+<6>[   12.712165] mlx5_core 0000:c2:00.0 ens17f0np0: Link down
+<6>[   12.875473] [drm] Initialized nvidia-drm 0.0.0 for 0000:01:00.0 on minor 0
+<4>[   12.875537] nvidia 0000:01:00.0: [drm] No compatible format found
+<6>[   12.875540] nvidia 0000:01:00.0: [drm] Cannot find any crtc or sizes
+<6>[   12.875581] [drm] [nvidia-drm] [GPU ID 0x00001100] Loading driver
+<6>[   13.170051] mlx5_core 0000:c2:00.1 ens17f1np1: Link down
+<4>[   13.389016] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<44>[   13.675591] systemd-journald[2478]: File /var/log/journal/a4a8b971a913429eb4435f42fa9c8f65/user-1000.journal corrupted or uncleanly shut down, renaming and replacing.
+<4>[   15.429183] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[   18.017826] [drm] Initialized nvidia-drm 0.0.0 for 0000:11:00.0 on minor 2
+<4>[   18.017906] nvidia 0000:11:00.0: [drm] No compatible format found
+<6>[   18.017909] nvidia 0000:11:00.0: [drm] Cannot find any crtc or sizes
+<6>[   18.017956] [drm] [nvidia-drm] [GPU ID 0x00006100] Loading driver
+<6>[   18.026710] [drm] Initialized nvidia-drm 0.0.0 for 0000:61:00.0 on minor 3
+<4>[   18.026741] nvidia 0000:61:00.0: [drm] No compatible format found
+<6>[   18.026742] nvidia 0000:61:00.0: [drm] Cannot find any crtc or sizes
+<6>[   18.026758] [drm] [nvidia-drm] [GPU ID 0x00007100] Loading driver
+<6>[   18.031741] [drm] Initialized nvidia-drm 0.0.0 for 0000:71:00.0 on minor 4
+<4>[   18.031783] nvidia 0000:71:00.0: [drm] No compatible format found
+<6>[   18.031785] nvidia 0000:71:00.0: [drm] Cannot find any crtc or sizes
+<6>[   18.031810] [drm] [nvidia-drm] [GPU ID 0x00008100] Loading driver
+<6>[   18.035712] [drm] Initialized nvidia-drm 0.0.0 for 0000:81:00.0 on minor 5
+<4>[   18.035742] nvidia 0000:81:00.0: [drm] No compatible format found
+<6>[   18.035743] nvidia 0000:81:00.0: [drm] Cannot find any crtc or sizes
+<6>[   18.035761] [drm] [nvidia-drm] [GPU ID 0x00009100] Loading driver
+<6>[   18.041782] [drm] Initialized nvidia-drm 0.0.0 for 0000:91:00.0 on minor 6
+<4>[   18.041803] nvidia 0000:91:00.0: [drm] No compatible format found
+<6>[   18.041804] nvidia 0000:91:00.0: [drm] Cannot find any crtc or sizes
+<6>[   18.041819] [drm] [nvidia-drm] [GPU ID 0x0000e100] Loading driver
+<6>[   18.045877] [drm] Initialized nvidia-drm 0.0.0 for 0000:e1:00.0 on minor 7
+<4>[   18.045887] nvidia 0000:e1:00.0: [drm] No compatible format found
+<6>[   18.045888] nvidia 0000:e1:00.0: [drm] Cannot find any crtc or sizes
+<6>[   18.045901] [drm] [nvidia-drm] [GPU ID 0x0000f100] Loading driver
+<6>[   18.051443] [drm] Initialized nvidia-drm 0.0.0 for 0000:f1:00.0 on minor 8
+<4>[   18.051454] nvidia 0000:f1:00.0: [drm] No compatible format found
+<6>[   18.051455] nvidia 0000:f1:00.0: [drm] Cannot find any crtc or sizes
+<4>[   19.461071] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   19.964798] kauditd_printk_skb: 172 callbacks suppressed
+<5>[   19.964801] audit: type=1400 audit(1789003883.575:184): apparmor="STATUS" operation="profile_load" profile="unconfined" name="docker-default" pid=6765 comm="apparmor_parser"
+<6>[   20.167234] Initializing XFRM netlink socket
+<6>[   20.201815] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+<7>[   27.176532] rfkill: input handler disabled
+<4>[   27.781162] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   44.097652] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   60.251175] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   76.610323] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   79.095886] hrtimer: interrupt took 12158 ns
+<4>[   92.994595] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  109.378787] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  125.762895] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  142.144474] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  158.519059] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  174.896898] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  191.276685] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  207.657614] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  224.039198] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  240.421375] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  256.803555] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  273.186039] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  289.568552] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[  979.529184] usb 3-2.1: USB disconnect, device number 3
+<6>[  979.529194] usb 3-2.1.4: USB disconnect, device number 4
+<6>[  979.560527] usb 3-2.1.6: USB disconnect, device number 5
+<0>[ 1711.294206] {1}[Hardware Error]: Hardware error from APEI Generic Hardware Error Source: 515
+<0>[ 1711.294210] {1}[Hardware Error]: event severity: fatal
+<0>[ 1711.294212] {1}[Hardware Error]:  Error 0, type: fatal
+<0>[ 1711.294212] {1}[Hardware Error]:  fru_text: PcieError
+<0>[ 1711.294213] {1}[Hardware Error]:   section_type: PCIe error
+<0>[ 1711.294214] {1}[Hardware Error]:   port_type: 1, legacy PCI end point
+<0>[ 1711.294215] {1}[Hardware Error]:   version: 0.2
+<0>[ 1711.294215] {1}[Hardware Error]:   command: 0x0406, status: 0x0010
+<0>[ 1711.294216] {1}[Hardware Error]:   device_id: 0000:e1:00.0
+<0>[ 1711.294217] {1}[Hardware Error]:   slot: 0
+<0>[ 1711.294217] {1}[Hardware Error]:   secondary_bus: 0x00
+<0>[ 1711.294218] {1}[Hardware Error]:   vendor_id: 0x10de, device_id: 0x26ba
+<0>[ 1711.294218] {1}[Hardware Error]:   class_code: 030200
+<0>[ 1711.294219] {1}[Hardware Error]:   bridge: secondary_status: 0x4000, control: 0x0000
+<0>[ 1711.294219] {1}[Hardware Error]:   aer_cor_status: 0x00008000, aer_cor_mask: 0x0000b1c1
+<0>[ 1711.294220] {1}[Hardware Error]:   aer_uncor_status: 0x00014000, aer_uncor_mask: 0x00000000
+<0>[ 1711.294220] {1}[Hardware Error]:   aer_uncor_severity: 0x00476030
+<0>[ 1711.294221] {1}[Hardware Error]:   TLP Header: 00000000 00000000 00000000 00000000
+<0>[ 1711.294222] GHES: Fatal hardware error but panic disabled
+<0>[ 1711.294223] Kernel panic - not syncing: GHES: Fatal hardware error
+<4>[ 1711.294226] CPU: 230 UID: 1000 PID: 39398 Comm: VLLM::EngineCor Tainted: G   M       OE       7.0.0-31-generic #31~24.04.1-Ubuntu PREEMPT(lazy) 
+<4>[ 1711.294229] Tainted: [M]=MACHINE_CHECK, [O]=OOT_MODULE, [E]=UNSIGNED_MODULE
+<4>[ 1711.294230] Hardware name: IEIT SYSTEMS NF5468-A8-A0-R0-00/NF5468-A8-A0-R0-00, BIOS 01.07.00 10/16/2025
+<4>[ 1711.294232] Call Trace:
+<4>[ 1711.294234]  <TASK>
+<4>[ 1711.294239]  dump_stack_lvl+0x27/0xa0
+<4>[ 1711.294245]  dump_stack+0x10/0x20
+<4>[ 1711.294247]  vpanic+0x45e/0x550
+<4>[ 1711.294250]  panic+0x5f/0x60
+<4>[ 1711.294253]  ? ghes_clear_estatus.part.0+0x38/0xd0
+<4>[ 1711.294258]  __ghes_panic+0x6c/0x90
+<4>[ 1711.294260]  ghes_in_nmi_queue_one_entry.constprop.0+0x1e8/0x2c0
+<4>[ 1711.294262]  ghes_notify_nmi+0xa5/0x110
+<4>[ 1711.294264]  nmi_handle.part.0+0x5d/0x180
+<4>[ 1711.294268]  default_do_nmi+0x131/0x170
+<4>[ 1711.294272]  exc_nmi+0x1c4/0x290
+<4>[ 1711.294274]  asm_exc_nmi+0xb8/0x101
+<4>[ 1711.294277] RIP: 0033:0x70e03da2607d
+<4>[ 1711.294281] Code: 90 ff 50 78 31 c0 48 8b 55 e8 64 48 2b 14 25 28 00 00 00 75 17 48 83 c4 10 5b 41 5c 5d c3 0f 1f 80 00 00 00 00 b8 ff ff ff ff <eb> da e8 3c ca fe ff 66 66 2e 0f 1f 84 00 00 00 00 00 90 f3 0f 1e
+<4>[ 1711.294284] RSP: 002b:000070db61ffed00 EFLAGS: 00000282
+<4>[ 1711.294285] RAX: 00000000ffffffff RBX: 000070db61ffed38 RCX: 0000000000000000
+<4>[ 1711.294286] RDX: 0000000000000000 RSI: 000070db61ffed00 RDI: 000070db61fff9c8
+<4>[ 1711.294287] RBP: 000070db61ffed20 R08: 0000000000000000 R09: 0000000000000000
+<4>[ 1711.294288] R10: 0000000038278240 R11: 0000000000000246 R12: 000070db61ffed40
+<4>[ 1711.294289] R13: 0000000000000000 R14: 0000000000000000 R15: 0000000025a47010
+<4>[ 1711.294291]  </TASK>
+<0>[ 1711.295006] Kernel Offset: 0x2a600000 from 0xffffffff81000000 (relocation range: 0xffffffff80000000-0xffffffffbfffffff)

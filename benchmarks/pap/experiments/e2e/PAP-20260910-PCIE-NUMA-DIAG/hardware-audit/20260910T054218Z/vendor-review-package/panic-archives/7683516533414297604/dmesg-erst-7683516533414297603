@@ -1,0 +1,180 @@
+Panic#1 Part3
+<6>[   20.600991] mlx5_core 0000:c2:00.1 ens17f1np1: Link down
+<4>[   20.822321] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<5>[   20.917715] audit: type=1400 audit(1788837757.541:183): apparmor="DENIED" operation="capable" class="cap" profile="/usr/sbin/cupsd" pid=5149 comm="cupsd" capability=12  capname="net_admin"
+<6>[   21.122977] [drm] Initialized nvidia-drm 0.0.0 for 0000:e1:00.0 on minor 7
+<4>[   21.123059] nvidia 0000:e1:00.0: [drm] No compatible format found
+<6>[   21.123062] nvidia 0000:e1:00.0: [drm] Cannot find any crtc or sizes
+<6>[   21.123096] [drm] [nvidia-drm] [GPU ID 0x0000f100] Loading driver
+<6>[   21.128358] [drm] Initialized nvidia-drm 0.0.0 for 0000:f1:00.0 on minor 8
+<4>[   21.128397] nvidia 0000:f1:00.0: [drm] No compatible format found
+<6>[   21.128398] nvidia 0000:f1:00.0: [drm] Cannot find any crtc or sizes
+<46>[   21.139621] systemd-journald[2460]: /var/log/journal/a4a8b971a913429eb4435f42fa9c8f65/user-1000.journal: Journal file uses a different sequence number ID, rotating.
+<4>[   22.841141] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   26.873024] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<5>[   27.584735] audit: type=1400 audit(1788837764.208:184): apparmor="STATUS" operation="profile_load" profile="unconfined" name="docker-default" pid=7115 comm="apparmor_parser"
+<6>[   27.772773] Initializing XFRM netlink socket
+<6>[   27.803317] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+<7>[   30.532935] rfkill: input handler disabled
+<4>[   34.936109] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   51.332881] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   67.754953] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   84.143229] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  100.527666] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  116.911682] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  133.295756] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  149.676805] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  166.058870] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  182.441759] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  198.825040] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  215.208919] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  231.592835] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  247.976494] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  264.360129] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  280.743695] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  297.127293] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[  353.155216] evm: overlay not supported
+<6>[  353.260017] docker0: port 1(vethd6ca9d8) entered blocking state
+<6>[  353.260023] docker0: port 1(vethd6ca9d8) entered disabled state
+<6>[  353.260041] vethd6ca9d8: entered allmulticast mode
+<6>[  353.260080] vethd6ca9d8: entered promiscuous mode
+<6>[  353.263363] eth0: renamed from veth4707b65
+<6>[  353.264333] docker0: port 1(vethd6ca9d8) entered blocking state
+<6>[  353.264338] docker0: port 1(vethd6ca9d8) entered forwarding state
+<6>[  353.299433] docker0: port 1(vethd6ca9d8) entered disabled state
+<6>[  353.299539] veth4707b65: renamed from eth0
+<6>[  353.365793] docker0: port 1(vethd6ca9d8) entered disabled state
+<6>[  353.367689] vethd6ca9d8 (unregistering): left allmulticast mode
+<6>[  353.367696] vethd6ca9d8 (unregistering): left promiscuous mode
+<6>[  353.367702] docker0: port 1(vethd6ca9d8) entered disabled state
+<6>[  368.638887] docker0: port 1(veth38984bb) entered blocking state
+<6>[  368.638893] docker0: port 1(veth38984bb) entered disabled state
+<6>[  368.638907] veth38984bb: entered allmulticast mode
+<6>[  368.638952] veth38984bb: entered promiscuous mode
+<6>[  368.642028] eth0: renamed from veth9dcf957
+<6>[  368.642546] docker0: port 1(veth38984bb) entered blocking state
+<6>[  368.642551] docker0: port 1(veth38984bb) entered forwarding state
+<6>[  368.667324] docker0: port 1(veth38984bb) entered disabled state
+<6>[  368.667392] veth9dcf957: renamed from eth0
+<6>[  368.717622] docker0: port 1(veth38984bb) entered disabled state
+<6>[  368.717989] veth38984bb (unregistering): left allmulticast mode
+<6>[  368.717993] veth38984bb (unregistering): left promiscuous mode
+<6>[  368.717995] docker0: port 1(veth38984bb) entered disabled state
+<6>[  396.979741] docker0: port 1(veth6673da4) entered blocking state
+<6>[  396.979747] docker0: port 1(veth6673da4) entered disabled state
+<6>[  396.979766] veth6673da4: entered allmulticast mode
+<6>[  396.979808] veth6673da4: entered promiscuous mode
+<6>[  396.982387] eth0: renamed from vethe0d16e5
+<6>[  396.984316] docker0: port 1(veth6673da4) entered blocking state
+<6>[  396.984322] docker0: port 1(veth6673da4) entered forwarding state
+<6>[  397.010959] docker0: port 1(veth6673da4) entered disabled state
+<6>[  397.011026] vethe0d16e5: renamed from eth0
+<6>[  397.064333] docker0: port 1(veth6673da4) entered disabled state
+<6>[  397.064562] veth6673da4 (unregistering): left allmulticast mode
+<6>[  397.064566] veth6673da4 (unregistering): left promiscuous mode
+<6>[  397.064572] docker0: port 1(veth6673da4) entered disabled state
+<6>[  415.132685] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link DOWN
+<6>[  428.809589] docker0: port 1(veth2271d64) entered blocking state
+<6>[  428.809595] docker0: port 1(veth2271d64) entered disabled state
+<6>[  428.809606] veth2271d64: entered allmulticast mode
+<6>[  428.809647] veth2271d64: entered promiscuous mode
+<6>[  428.812230] eth0: renamed from vethe7c5152
+<6>[  428.812749] docker0: port 1(veth2271d64) entered blocking state
+<6>[  428.812753] docker0: port 1(veth2271d64) entered forwarding state
+<6>[  428.838795] docker0: port 1(veth2271d64) entered disabled state
+<6>[  428.838854] vethe7c5152: renamed from eth0
+<6>[  428.895856] docker0: port 1(veth2271d64) entered disabled state
+<6>[  428.896163] veth2271d64 (unregistering): left allmulticast mode
+<6>[  428.896169] veth2271d64 (unregistering): left promiscuous mode
+<6>[  428.896171] docker0: port 1(veth2271d64) entered disabled state
+<6>[  436.547077] docker0: port 1(veth5c313e5) entered blocking state
+<6>[  436.547084] docker0: port 1(veth5c313e5) entered disabled state
+<6>[  436.547100] veth5c313e5: entered allmulticast mode
+<6>[  436.547151] veth5c313e5: entered promiscuous mode
+<6>[  436.550571] eth0: renamed from vethfb60f64
+<6>[  436.551127] docker0: port 1(veth5c313e5) entered blocking state
+<6>[  436.551130] docker0: port 1(veth5c313e5) entered forwarding state
+<6>[  436.576559] docker0: port 1(veth5c313e5) entered disabled state
+<6>[  436.576602] vethfb60f64: renamed from eth0
+<6>[  436.623541] docker0: port 1(veth5c313e5) entered disabled state
+<6>[  436.623879] veth5c313e5 (unregistering): left allmulticast mode
+<6>[  436.623883] veth5c313e5 (unregistering): left promiscuous mode
+<6>[  436.623890] docker0: port 1(veth5c313e5) entered disabled state
+<6>[  505.296976] docker0: port 1(vethf5220b3) entered blocking state
+<6>[  505.296984] docker0: port 1(vethf5220b3) entered disabled state
+<6>[  505.296992] vethf5220b3: entered allmulticast mode
+<6>[  505.297034] vethf5220b3: entered promiscuous mode
+<6>[  505.299797] eth0: renamed from veth2d22405
+<6>[  505.300452] docker0: port 1(vethf5220b3) entered blocking state
+<6>[  505.300457] docker0: port 1(vethf5220b3) entered forwarding state
+<6>[  505.324240] docker0: port 1(vethf5220b3) entered disabled state
+<6>[  505.324314] veth2d22405: renamed from eth0
+<6>[  505.375081] docker0: port 1(vethf5220b3) entered disabled state
+<6>[  505.375464] vethf5220b3 (unregistering): left allmulticast mode
+<6>[  505.375471] vethf5220b3 (unregistering): left promiscuous mode
+<6>[  505.375475] docker0: port 1(vethf5220b3) entered disabled state
+<6>[  565.328596] docker0: port 1(vetha9b5c93) entered blocking state
+<6>[  565.328602] docker0: port 1(vetha9b5c93) entered disabled state
+<6>[  565.328613] vetha9b5c93: entered allmulticast mode
+<6>[  565.328663] vetha9b5c93: entered promiscuous mode
+<6>[  565.331930] eth0: renamed from veth3b8807d
+<6>[  565.333863] docker0: port 1(vetha9b5c93) entered blocking state
+<6>[  565.333869] docker0: port 1(vetha9b5c93) entered forwarding state
+<6>[  565.436007] docker0: port 1(vetha9b5c93) entered disabled state
+<6>[  565.436059] veth3b8807d: renamed from eth0
+<6>[  565.492409] docker0: port 1(vetha9b5c93) entered disabled state
+<6>[  565.492648] vetha9b5c93 (unregistering): left allmulticast mode
+<6>[  565.492651] vetha9b5c93 (unregistering): left promiscuous mode
+<6>[  565.492658] docker0: port 1(vetha9b5c93) entered disabled state
+<6>[  588.774716] docker0: port 1(veth4f869e1) entered blocking state
+<6>[  588.774724] docker0: port 1(veth4f869e1) entered disabled state
+<6>[  588.774762] veth4f869e1: entered allmulticast mode
+<6>[  588.774836] veth4f869e1: entered promiscuous mode
+<6>[  588.777982] eth0: renamed from vetheb8c963
+<6>[  588.778511] docker0: port 1(veth4f869e1) entered blocking state
+<6>[  588.778517] docker0: port 1(veth4f869e1) entered forwarding state
+<6>[  588.883257] docker0: port 1(veth4f869e1) entered disabled state
+<6>[  588.883345] vetheb8c963: renamed from eth0
+<6>[  588.928877] docker0: port 1(veth4f869e1) entered disabled state
+<6>[  588.929072] veth4f869e1 (unregistering): left allmulticast mode
+<6>[  588.929077] veth4f869e1 (unregistering): left promiscuous mode
+<6>[  588.929086] docker0: port 1(veth4f869e1) entered disabled state
+<6>[  599.089280] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link INIT
+<6>[  599.090831] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link ACTIVE
+<4>[  599.091331] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  601.120712] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  605.152759] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  613.536813] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[  620.869707] docker0: port 1(vethd71620b) entered blocking state
+<6>[  620.869713] docker0: port 1(vethd71620b) entered disabled state
+<6>[  620.869727] vethd71620b: entered allmulticast mode
+<6>[  620.869777] vethd71620b: entered promiscuous mode
+<6>[  620.872552] eth0: renamed from veth53b563d
+<6>[  620.873085] docker0: port 1(vethd71620b) entered blocking state
+<6>[  620.873089] docker0: port 1(vethd71620b) entered forwarding state
+<4>[  629.920885] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  646.304814] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[  651.824997] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link DOWN
+<6>[  669.089597] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link INIT
+<6>[  669.091689] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link ACTIVE
+<4>[  669.092114] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  671.136633] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  675.168624] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  683.680492] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  700.064403] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  716.448236] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  732.832071] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[  739.976826] docker0: port 2(vethbd04ed2) entered blocking state
+<6>[  739.976834] docker0: port 2(vethbd04ed2) entered disabled state
+<6>[  739.976843] vethbd04ed2: entered allmulticast mode
+<6>[  739.976883] vethbd04ed2: entered promiscuous mode
+<6>[  739.979310] eth0: renamed from veth95169fa
+<6>[  739.979809] docker0: port 2(vethbd04ed2) entered blocking state
+<6>[  739.979812] docker0: port 2(vethbd04ed2) entered forwarding state
+<6>[  740.042966] docker0: port 2(vethbd04ed2) entered disabled state
+<6>[  740.043038] veth95169fa: renamed from eth0
+<6>[  740.094486] docker0: port 2(vethbd04ed2) entered disabled state
+<6>[  740.095788] vethbd04ed2 (unregistering): left allmulticast mode
+<6>[  740.095791] vethbd04ed2 (unregistering): left promiscuous mode
+<6>[  740.095794] docker0: port 2(vethbd04ed2) entered disabled state
+<6>[  743.900389] docker0: port 2(vethc73b321) entered blocking state

@@ -1,0 +1,173 @@
+# dmidecode 3.5
+Getting SMBIOS data from sysfs.
+SMBIOS 3.5.0 present.
+
+Handle 0x007D, DMI type 9, 24 bytes
+System Slot Information
+	Designation: CPU0_P2_PCIE1
+	Type: x16 PCI Express 4 x16
+	Current Usage: In Use
+	Length: Long
+	ID: 3
+	Characteristics:
+		3.3 V is provided
+		PME signal is supported
+	Bus Address: 0000:01:00.0
+	Data Bus Width: 0
+	Peer Devices: 0
+	Height: Not applicable
+
+Handle 0x007E, DMI type 9, 24 bytes
+System Slot Information
+	Designation: CPU0_P3_PCIE2
+	Type: x16 PCI Express 4 x16
+	Current Usage: In Use
+	Length: Long
+	ID: 5
+	Characteristics:
+		3.3 V is provided
+		PME signal is supported
+	Bus Address: 0000:11:00.0
+	Data Bus Width: 0
+	Peer Devices: 0
+	Height: Not applicable
+
+Handle 0x007F, DMI type 9, 24 bytes
+System Slot Information
+	Designation: CPU0_G3_PCIE0
+	Type: x16 PCI Express 5 x16
+	Current Usage: In Use
+	Length: Long
+	ID: 6
+	Characteristics:
+		3.3 V is provided
+		PME signal is supported
+		Hot-plug devices are supported
+	Bus Address: 0000:31:00.0
+	Data Bus Width: 0
+	Peer Devices: 0
+	Height: Not applicable
+
+Handle 0x0080, DMI type 9, 24 bytes
+System Slot Information
+	Designation: CPU0_P1_PCIE3
+	Type: x16 PCI Express 4 x16
+	Current Usage: In Use
+	Length: Long
+	ID: 2
+	Characteristics:
+		3.3 V is provided
+		PME signal is supported
+	Bus Address: 0000:61:00.0
+	Data Bus Width: 0
+	Peer Devices: 0
+	Height: Not applicable
+
+Handle 0x0081, DMI type 9, 24 bytes
+System Slot Information
+	Designation: CPU0_P0_PCIE4
+	Type: x16 PCI Express 4 x16
+	Current Usage: In Use
+	Length: Long
+	ID: 1
+	Characteristics:
+		3.3 V is provided
+		PME signal is supported
+		Hot-plug devices are supported
+	Bus Address: 0000:71:00.0
+	Data Bus Width: 0
+	Peer Devices: 0
+	Height: Not applicable
+
+Handle 0x0082, DMI type 9, 24 bytes
+System Slot Information
+	Designation: CPU1_P2_PCIE5
+	Type: x16 PCI Express 4 x16
+	Current Usage: In Use
+	Length: Long
+	ID: 22
+	Characteristics:
+		3.3 V is provided
+		PME signal is supported
+	Bus Address: 0000:81:00.0
+	Data Bus Width: 0
+	Peer Devices: 0
+	Height: Not applicable
+
+Handle 0x0083, DMI type 9, 24 bytes
+System Slot Information
+	Designation: CPU1_P3_PCIE6
+	Type: x16 PCI Express 4 x16
+	Current Usage: In Use
+	Length: Long
+	ID: 24
+	Characteristics:
+		3.3 V is provided
+		PME signal is supported
+	Bus Address: 0000:91:00.0
+	Data Bus Width: 0
+	Peer Devices: 0
+	Height: Not applicable
+
+Handle 0x0084, DMI type 9, 24 bytes
+System Slot Information
+	Designation: CPU1_G1_AC_PCIE10
+	Type: x8 PCI Express 4 x8
+	Current Usage: In Use
+	Length: Long
+	ID: 16
+	Characteristics:
+		3.3 V is provided
+		PME signal is supported
+		Hot-plug devices are supported
+	Bus Address: 0000:c1:00.0
+	Data Bus Width: 0
+	Peer Devices: 0
+	Height: Not applicable
+
+Handle 0x0085, DMI type 9, 24 bytes
+System Slot Information
+	Designation: CPU1_G1_EG_PCIE9
+	Type: x8 PCI Express 4 x8
+	Current Usage: In Use
+	Length: Long
+	ID: 17
+	Characteristics:
+		3.3 V is provided
+		PME signal is supported
+		Hot-plug devices are supported
+	Bus Address: 0000:c2:00.0
+	Data Bus Width: 0
+	Peer Devices: 0
+	Height: Not applicable
+
+Handle 0x0086, DMI type 9, 24 bytes
+System Slot Information
+	Designation: CPU1_P1_PCIE7
+	Type: x16 PCI Express 4 x16
+	Current Usage: In Use
+	Length: Long
+	ID: 14
+	Characteristics:
+		3.3 V is provided
+		PME signal is supported
+	Bus Address: 0000:e1:00.0
+	Data Bus Width: 0
+	Peer Devices: 0
+	Height: Not applicable
+
+Handle 0x0087, DMI type 9, 24 bytes
+System Slot Information
+	Designation: CPU1_P0_PCIE8
+	Type: x16 PCI Express 4 x16
+	Current Usage: In Use
+	Length: Long
+	ID: 13
+	Characteristics:
+		3.3 V is provided
+		PME signal is supported
+	Bus Address: 0000:f1:00.0
+	Data Bus Width: 0
+	Peer Devices: 0
+	Height: Not applicable
+

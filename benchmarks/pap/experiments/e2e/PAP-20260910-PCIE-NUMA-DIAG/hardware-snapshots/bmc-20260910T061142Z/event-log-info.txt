@@ -1,0 +1,15 @@
+IANA PEN registry open failed: No such file or directory
+SEL Information
+Version          : 1.5 (v1.5, v2 compliant)
+Entries          : 197
+Free Space       : 61956 bytes 
+Percent Used     : 4%
+Last Add Time    : 09/10/2026 01:31:20 PM CST
+Last Del Time    : 12/10/2025 06:39:57 AM CST
+Overflow         : false
+Supported Cmds   : 'Delete' 'Partial Add' 'Reserve' 'Get Alloc Info' 
+# of Alloc Units : 3639
+Alloc Unit Size  : 18
+# Free Units     : 3442
+Largest Free Blk : 3442
+Max Record Size  : 1

@@ -1,0 +1,151 @@
+Panic#1 Part2
+<6>[  743.900396] docker0: port 2(vethc73b321) entered disabled state
+<6>[  743.900419] vethc73b321: entered allmulticast mode
+<6>[  743.900762] vethc73b321: entered promiscuous mode
+<6>[  743.909326] eth0: renamed from veth040a703
+<6>[  743.910425] docker0: port 2(vethc73b321) entered blocking state
+<6>[  743.910429] docker0: port 2(vethc73b321) entered forwarding state
+<4>[  749.215892] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  765.599666] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  781.983368] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  798.367090] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  814.751846] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[  829.478547] docker0: port 1(vethd71620b) entered disabled state
+<6>[  829.478623] veth53b563d: renamed from eth0
+<6>[  829.526490] docker0: port 1(vethd71620b) entered disabled state
+<6>[  829.526932] vethd71620b (unregistering): left allmulticast mode
+<6>[  829.526941] vethd71620b (unregistering): left promiscuous mode
+<6>[  829.526945] docker0: port 1(vethd71620b) entered disabled state
+<4>[  831.134571] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  847.518184] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  863.901962] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  880.285599] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  896.669276] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  913.052949] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  929.436542] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  945.820225] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[  984.240199] docker0: port 2(vethc73b321) entered disabled state
+<6>[  984.240278] veth040a703: renamed from eth0
+<6>[  984.276338] docker0: port 2(vethc73b321) entered disabled state
+<6>[  984.276574] vethc73b321 (unregistering): left allmulticast mode
+<6>[  984.276578] vethc73b321 (unregistering): left promiscuous mode
+<6>[  984.276580] docker0: port 2(vethc73b321) entered disabled state
+<6>[ 1541.369925] docker0: port 1(veth8779abf) entered blocking state
+<6>[ 1541.369933] docker0: port 1(veth8779abf) entered disabled state
+<6>[ 1541.369949] veth8779abf: entered allmulticast mode
+<6>[ 1541.369989] veth8779abf: entered promiscuous mode
+<6>[ 1541.373188] eth0: renamed from vethd8d84c5
+<6>[ 1541.373890] docker0: port 1(veth8779abf) entered blocking state
+<6>[ 1541.373894] docker0: port 1(veth8779abf) entered forwarding state
+<5>[ 2277.699553] audit: type=1400 audit(1788840014.316:185): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=29691 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<5>[ 2277.699561] audit: type=1400 audit(1788840014.316:186): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=29693 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<6>[ 2560.048722] docker0: port 1(veth8779abf) entered disabled state
+<6>[ 2560.048783] vethd8d84c5: renamed from eth0
+<6>[ 2560.089697] docker0: port 1(veth8779abf) entered disabled state
+<6>[ 2560.089918] veth8779abf (unregistering): left allmulticast mode
+<6>[ 2560.089921] veth8779abf (unregistering): left promiscuous mode
+<6>[ 2560.089923] docker0: port 1(veth8779abf) entered disabled state
+<6>[ 3657.529311] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link DOWN
+<6>[ 3839.117594] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link INIT
+<6>[ 3839.119130] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link ACTIVE
+<4>[ 3839.119651] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3841.130486] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3845.162397] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3853.482401] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3869.866313] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3886.250193] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[ 3895.521661] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link DOWN
+<6>[ 3909.117589] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link INIT
+<6>[ 3909.119658] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link ACTIVE
+<4>[ 3909.120179] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3911.145953] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3915.177944] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3923.625884] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3940.009841] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3956.393736] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3972.777626] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3989.161451] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4005.545395] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4021.929239] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4038.313140] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4054.697087] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4071.081014] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4087.464892] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4103.848785] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4120.232763] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4136.616746] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[ 4144.443901] docker0: port 1(vetha475e6e) entered blocking state
+<6>[ 4144.443908] docker0: port 1(vetha475e6e) entered disabled state
+<6>[ 4144.443926] vetha475e6e: entered allmulticast mode
+<6>[ 4144.443968] vetha475e6e: entered promiscuous mode
+<6>[ 4144.446628] eth0: renamed from veth5af1d06
+<6>[ 4144.447226] docker0: port 1(vetha475e6e) entered blocking state
+<6>[ 4144.447230] docker0: port 1(vetha475e6e) entered forwarding state
+<4>[ 4153.000668] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4169.384599] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4185.768588] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[ 6081.132429] docker0: port 1(vetha475e6e) entered disabled state
+<6>[ 6081.132504] veth5af1d06: renamed from eth0
+<6>[ 6081.162292] docker0: port 1(vetha475e6e) entered disabled state
+<6>[ 6081.162542] vetha475e6e (unregistering): left allmulticast mode
+<6>[ 6081.162545] vetha475e6e (unregistering): left promiscuous mode
+<6>[ 6081.162561] docker0: port 1(vetha475e6e) entered disabled state
+<4>[ 8294.464054] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 27282): FWTracer: Events were lost
+<6>[10207.529046] docker0: port 1(vethcac5e1a) entered blocking state
+<6>[10207.529052] docker0: port 1(vethcac5e1a) entered disabled state
+<6>[10207.529060] vethcac5e1a: entered allmulticast mode
+<6>[10207.529111] vethcac5e1a: entered promiscuous mode
+<6>[10207.532026] eth0: renamed from veth0d039e8
+<6>[10207.532631] docker0: port 1(vethcac5e1a) entered blocking state
+<6>[10207.532635] docker0: port 1(vethcac5e1a) entered forwarding state
+<6>[10337.414225] docker0: port 1(vethcac5e1a) entered disabled state
+<6>[10337.414286] veth0d039e8: renamed from eth0
+<6>[10337.450867] docker0: port 1(vethcac5e1a) entered disabled state
+<6>[10337.451056] vethcac5e1a (unregistering): left allmulticast mode
+<6>[10337.451060] vethcac5e1a (unregistering): left promiscuous mode
+<6>[10337.451062] docker0: port 1(vethcac5e1a) entered disabled state
+<6>[10702.510336] docker0: port 1(vethc44f066) entered blocking state
+<6>[10702.510342] docker0: port 1(vethc44f066) entered disabled state
+<6>[10702.510361] vethc44f066: entered allmulticast mode
+<6>[10702.510419] vethc44f066: entered promiscuous mode
+<6>[10702.512889] eth0: renamed from vethf6b417c
+<6>[10702.513403] docker0: port 1(vethc44f066) entered blocking state
+<6>[10702.513407] docker0: port 1(vethc44f066) entered forwarding state
+<6>[10842.952896] docker0: port 1(vethc44f066) entered disabled state
+<6>[10842.953001] vethf6b417c: renamed from eth0
+<6>[10843.012160] docker0: port 1(vethc44f066) entered disabled state
+<6>[10843.012589] vethc44f066 (unregistering): left allmulticast mode
+<6>[10843.012599] vethc44f066 (unregistering): left promiscuous mode
+<6>[10843.012603] docker0: port 1(vethc44f066) entered disabled state
+<5>[13077.537271] audit: type=1400 audit(1788850814.100:187): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=91351 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<5>[13077.560085] audit: type=1400 audit(1788850814.123:188): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=91349 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<4>[15883.450249] workqueue: output_poll_execute hogged CPU for >10000us 4 times, consider switching to WQ_UNBOUND
+<4>[16545.651081] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 136323): FWTracer: Events were lost
+<6>[16649.857835] docker0: port 1(veth748e6e2) entered blocking state
+<6>[16649.857841] docker0: port 1(veth748e6e2) entered disabled state
+<6>[16649.857862] veth748e6e2: entered allmulticast mode
+<6>[16649.857922] veth748e6e2: entered promiscuous mode
+<6>[16649.860788] eth0: renamed from veth8c45afb
+<6>[16649.861350] docker0: port 1(veth748e6e2) entered blocking state
+<6>[16649.861354] docker0: port 1(veth748e6e2) entered forwarding state
+<6>[16779.734317] docker0: port 1(veth748e6e2) entered disabled state
+<6>[16779.734420] veth8c45afb: renamed from eth0
+<6>[16779.772796] docker0: port 1(veth748e6e2) entered disabled state
+<6>[16779.773022] veth748e6e2 (unregistering): left allmulticast mode
+<6>[16779.773026] veth748e6e2 (unregistering): left promiscuous mode
+<6>[16779.773028] docker0: port 1(veth748e6e2) entered disabled state
+<6>[16790.360521] docker0: port 1(veth869e5bd) entered blocking state
+<6>[16790.360529] docker0: port 1(veth869e5bd) entered disabled state
+<6>[16790.360545] veth869e5bd: entered allmulticast mode
+<6>[16790.360625] veth869e5bd: entered promiscuous mode
+<6>[16790.363725] eth0: renamed from veth0a3f6a6
+<6>[16790.364417] docker0: port 1(veth869e5bd) entered blocking state
+<6>[16790.364422] docker0: port 1(veth869e5bd) entered forwarding state
+<6>[16832.201419] loop22: detected capacity change from 0 to 102952
+<5>[16832.288507] audit: type=1400 audit(1788854568.856:189): apparmor="STATUS" operation="profile_load" profile="unconfined" name="/snap/snapd/27738/usr/lib/snapd/snap-confine" pid=143545 comm="apparmor_parser"
+<6>[16836.108198] loop23: detected capacity change from 0 to 8
+<5>[16836.540631] audit: type=1400 audit(1788854573.108:190): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="/snap/snapd/27738/usr/lib/snapd/snap-confine" pid=143796 comm="apparmor_parser"
+<5>[16836.664924] audit: type=1400 audit(1788854573.232:191): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="snap-update-ns.snap-store" pid=143801 comm="apparmor_parser"
+<5>[16836.669920] audit: type=1400 audit(1788854573.237:192): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="snap-update-ns.firmware-updater" pid=143800 comm="apparmor_parser"
+<5>[16836.675300] audit: type=1400 audit(1788854573.242:193): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="snap-update-ns.firefox" pid=143799 comm="apparmor_parser"
+<5>[16836.691930] audit: type=1400 audit(1788854573.259:194): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="snap-update-ns.snapd-desktop-integration" pid=143798 comm="apparmor_parser"

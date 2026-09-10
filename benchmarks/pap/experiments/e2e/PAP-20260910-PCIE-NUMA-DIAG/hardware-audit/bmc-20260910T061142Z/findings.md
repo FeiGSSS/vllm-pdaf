@@ -1,0 +1,13 @@
+# Current BMC health vs red indicator
+
+Snapshot bmc-20260910T061142Z, about14:12 CST. All8 commands exited0, but mc info printed Get Device ID failed0xbf and unexpected response ID0 vs1; qualify identity/firmware output rather than treating it as a clean query. Capture script now flags such protocol errors even on exit0. The missing IANA registry warning concerns manufacturer-name lookup, not proof of a sensor fault.
+
+Current chassis: power on, overload false, main power fault false, power control fault false, cooling/fan fault false, drive fault false. BMC selftest result passed. SDR Sys_Health/PCIe_Status/System_Error/SEL_Status have no asserted event listed. All4 PSU inputs232V, outputs12V; PSU3 output160W, presence detected with no failure/AC-lost event in current reading. PSU_Redundant/PSU_Mismatch sensors list no asserted event; this is not independent certification of reserve capacity under full load. No fan faults listed; fan speed sensors8850–9000RPM. Inlet23C, outlet30C, CPU42/45C, CPU VR36/34C. Total system power805W (single current snapshot).
+
+SEL has197 entries,4% usage,no overflow. PSU3 predictive failure and AC-lost deassert at09:17:45 and redundancy lost deassert09:17:46, with no later PSU3 reassert in this export. Latest PCIe Fatal12:57:31, Critical12:57:38; Fatal cleared13:26:59 and Critical cleared13:27:05, followed by reboot. Last add13:31:20. Thus current standard readings do not indicate persistent PSU3 failure or an asserted general chassis fault.
+
+Some sensors are disabled/event-only (including PCIE0_GPU_Temp); they are not equivalent to failed hardware. Seven GPU-temperature entries report readings; Linux sees all8 GPUs. The exact BMC sensor-to-slot mapping and why one GPU sensor is disabled remain unverified; do not assert GPU0 is missing. BMC has OEM FRU placeholder records for switch cards/risers: these do not establish actual installed PCIe switch topology.
+
+Red indicator cause remains unestablished: physical location/LED-specific OEM state is unknown, and current generic chassis health is not asserted. Do not call it PSU3 failure, or assume it is a latched history indication, without evidence. Current clean readings cannot exclude load-dependent PCIe completion errors already confirmed in six persistent panic records. No load, power action, reset or SEL clearing performed.
+
+Clock correction: ipmitool renders BMC SEL timestamps and clock in CST and they match local host time. Earlier web page strings appear8h behind with an inconsistent offset label; addition8h applies to those supplied web strings only, not this CLI export. Do not change BMC RTC based solely on that display difference.

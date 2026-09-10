@@ -1,0 +1,115 @@
+Panic#1 Part1
+<5>[16836.696595] audit: type=1400 audit(1788854573.264:195): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="snap-update-ns.mesa-2404" pid=143819 comm="apparmor_parser"
+<5>[16836.696775] audit: type=1400 audit(1788854573.264:196): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="snap.firefox.hook.post-refresh" pid=143810 comm="apparmor_parser"
+<5>[16836.696817] audit: type=1400 audit(1788854573.264:197): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="snap.firefox.hook.install" pid=143809 comm="apparmor_parser"
+<5>[16836.696860] audit: type=1400 audit(1788854573.264:198): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="snap.firefox.hook.disconnect-plug-host-hunspell" pid=143808 comm="apparmor_parser"
+<6>[16919.759286] docker0: port 1(veth869e5bd) entered disabled state
+<6>[16919.759367] veth0a3f6a6: renamed from eth0
+<6>[16919.803764] docker0: port 1(veth869e5bd) entered disabled state
+<6>[16919.803983] veth869e5bd (unregistering): left allmulticast mode
+<6>[16919.803986] veth869e5bd (unregistering): left promiscuous mode
+<6>[16919.803988] docker0: port 1(veth869e5bd) entered disabled state
+<4>[23878.361953] kauditd_printk_skb: 39 callbacks suppressed
+<5>[23878.361956] audit: type=1400 audit(1788861614.928:238): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=201272 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<5>[23878.379042] audit: type=1400 audit(1788861614.945:239): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=201273 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<4>[24723.979845] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 190770): FWTracer: Events were lost
+<4>[33103.032126] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 217773): FWTracer: Events were lost
+<5>[34677.550317] audit: type=1400 audit(1788872414.104:240): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=270158 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<5>[34677.572292] audit: type=1400 audit(1788872414.126:241): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=270157 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<4>[41268.558837] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 395685): FWTracer: Events were lost
+<6>[42316.499336] perf: interrupt took too long (2502 > 2500), lowering kernel.perf_event_max_sample_rate to 79000
+<5>[45463.575158] audit: type=1400 audit(1788883200.118:242): apparmor="DENIED" operation="capable" class="cap" profile="/usr/sbin/cupsd" pid=628697 comm="cupsd" capability=12  capname="net_admin"
+<5>[45477.558676] audit: type=1400 audit(1788883214.101:243): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=629728 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<5>[45477.579395] audit: type=1400 audit(1788883214.122:244): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=629727 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<6>[45497.186212] perf: interrupt took too long (3136 > 3127), lowering kernel.perf_event_max_sample_rate to 63000
+<4>[48371.205506] workqueue: mmput_async_fn hogged CPU for >10000us 4 times, consider switching to WQ_UNBOUND
+<4>[48371.205511] workqueue: mmput_async_fn hogged CPU for >10000us 11 times, consider switching to WQ_UNBOUND
+<4>[48371.205507] workqueue: mmput_async_fn hogged CPU for >10000us 5 times, consider switching to WQ_UNBOUND
+<4>[48371.205509] workqueue: mmput_async_fn hogged CPU for >10000us 7 times, consider switching to WQ_UNBOUND
+<4>[48371.207502] workqueue: mmput_async_fn hogged CPU for >10000us 19 times, consider switching to WQ_UNBOUND
+<4>[49502.040799] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 368804): FWTracer: Events were lost
+<6>[49918.115999] perf: interrupt took too long (4750 > 3920), lowering kernel.perf_event_max_sample_rate to 42000
+<4>[50088.606907] workqueue: mmput_async_fn hogged CPU for >10000us 35 times, consider switching to WQ_UNBOUND
+<5>[56277.566153] audit: type=1400 audit(1788894014.109:245): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=750452 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<5>[56277.579883] audit: type=1400 audit(1788894014.123:246): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=750453 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<4>[57688.869239] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 747851): FWTracer: Events were lost
+<4>[65944.107691] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 747851): FWTracer: Events were lost
+<5>[67077.584073] audit: type=1400 audit(1788904814.116:247): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=775363 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<5>[67077.589014] audit: type=1400 audit(1788904814.121:248): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=775364 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<4>[74129.488038] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 756372): FWTracer: Events were lost
+<5>[77877.571303] audit: type=1400 audit(1788915614.094:249): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=806116 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<5>[77877.598829] audit: type=1400 audit(1788915614.121:250): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=806117 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<4>[82335.670222] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 798413): FWTracer: Events were lost
+<5>[88677.581846] audit: type=1400 audit(1788926414.099:251): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=949906 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<5>[88677.612241] audit: type=1400 audit(1788926414.130:252): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=949907 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<4>[90534.800860] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 997103): FWTracer: Events were lost
+<4>[98734.382777] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 1057517): FWTracer: Events were lost
+<5>[99477.616994] audit: type=1400 audit(1788937214.115:253): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=1088930 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<5>[99477.628412] audit: type=1400 audit(1788937214.127:254): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=1088928 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<4>[106937.863611] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 1167788): FWTracer: Events were lost
+<5>[110277.595812] audit: type=1400 audit(1788948014.098:255): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=1186847 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<5>[110277.624789] audit: type=1400 audit(1788948014.127:256): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=1186849 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<4>[115201.252941] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 1211210): FWTracer: Events were lost
+<0>[120363.918143] {1}[Hardware Error]: Hardware error from APEI Generic Hardware Error Source: 515
+<0>[120363.918147] {1}[Hardware Error]: event severity: fatal
+<0>[120363.918148] {1}[Hardware Error]:  Error 0, type: fatal
+<0>[120363.918149] {1}[Hardware Error]:  fru_text: PcieError
+<0>[120363.918149] {1}[Hardware Error]:   section_type: PCIe error
+<0>[120363.918150] {1}[Hardware Error]:   port_type: 1, legacy PCI end point
+<0>[120363.918151] {1}[Hardware Error]:   version: 0.2
+<0>[120363.918152] {1}[Hardware Error]:   command: 0x0406, status: 0x0010
+<0>[120363.918153] {1}[Hardware Error]:   device_id: 0000:f1:00.0
+<0>[120363.918154] {1}[Hardware Error]:   slot: 0
+<0>[120363.918155] {1}[Hardware Error]:   secondary_bus: 0x00
+<0>[120363.918155] {1}[Hardware Error]:   vendor_id: 0x10de, device_id: 0x26ba
+<0>[120363.918156] {1}[Hardware Error]:   class_code: 030200
+<0>[120363.918156] {1}[Hardware Error]:   bridge: secondary_status: 0x4000, control: 0x0000
+<0>[120363.918156] {1}[Hardware Error]:   aer_cor_status: 0x00008000, aer_cor_mask: 0x0000b1c1
+<0>[120363.918157] {1}[Hardware Error]:   aer_uncor_status: 0x00014000, aer_uncor_mask: 0x00000000
+<0>[120363.918158] {1}[Hardware Error]:   aer_uncor_severity: 0x00476030
+<0>[120363.918158] {1}[Hardware Error]:   TLP Header: 00000000 00000000 00000000 00000000
+<0>[120363.918159] GHES: Fatal hardware error but panic disabled
+<0>[120363.918160] Kernel panic - not syncing: GHES: Fatal hardware error
+<4>[120363.918163] CPU: 26 UID: 0 PID: 0 Comm: swapper/26 Tainted: G   M       OE       7.0.0-31-generic #31~24.04.1-Ubuntu PREEMPT(lazy) 
+<4>[120363.918167] Tainted: [M]=MACHINE_CHECK, [O]=OOT_MODULE, [E]=UNSIGNED_MODULE
+<4>[120363.918167] Hardware name: IEIT SYSTEMS NF5468-A8-A0-R0-00/NF5468-A8-A0-R0-00, BIOS 01.07.00 10/16/2025
+<4>[120363.918169] Call Trace:
+<4>[120363.918171]  <NMI>
+<4>[120363.918175]  dump_stack_lvl+0x27/0xa0
+<4>[120363.918182]  dump_stack+0x10/0x20
+<4>[120363.918185]  vpanic+0x45e/0x550
+<4>[120363.918190]  panic+0x5f/0x60
+<4>[120363.918193]  ? ghes_clear_estatus.part.0+0x38/0xd0
+<4>[120363.918198]  __ghes_panic+0x6c/0x90
+<4>[120363.918199]  ghes_in_nmi_queue_one_entry.constprop.0+0x1e8/0x2c0
+<4>[120363.918200]  ghes_notify_nmi+0xa5/0x110
+<4>[120363.918202]  nmi_handle.part.0+0x5d/0x180
+<4>[120363.918205]  default_do_nmi+0x131/0x170
+<4>[120363.918209]  exc_nmi+0x1c4/0x290
+<4>[120363.918211]  end_repeat_nmi+0xf/0x53
+<4>[120363.918214] RIP: 0010:io_idle+0x3/0x30
+<4>[120363.918216] Code: 31 c9 45 31 d2 45 31 db c3 cc cc cc cc 66 2e 0f 1f 84 00 00 00 00 00 90 90 90 90 90 90 90 90 90 90 90 90 90 90 90 90 89 fa ec <48> 8b 05 66 a0 83 01 a9 00 00 00 80 75 11 80 3d 1a a0 83 01 00 75
+<4>[120363.918218] RSP: 0018:ff4ebae49030fda8 EFLAGS: 00000093
+<4>[120363.918220] RAX: 0000000000000000 RBX: ff3e99d497bd8498 RCX: 0000000000000000
+<4>[120363.918221] RDX: 0000000000000814 RSI: ff3e99d497bd8400 RDI: 0000000000000814
+<4>[120363.918222] RBP: ff4ebae49030fdb8 R08: 0000000000000000 R09: 0000000000000000
+<4>[120363.918223] R10: 0000000000000000 R11: 0000000000000000 R12: ffffffffb764c990
+<4>[120363.918224] R13: 000000000000001a R14: ffffffffb6f67e20 R15: ff3e9a91158e3000
+<4>[120363.918228]  ? io_idle+0x3/0x30
+<4>[120363.918229]  ? io_idle+0x3/0x30
+<4>[120363.918231]  </NMI>
+<4>[120363.918231]  <TASK>
+<4>[120363.918232]  ? acpi_idle_do_entry+0x26/0x80
+<4>[120363.918234]  acpi_idle_enter+0xaf/0x160
+<4>[120363.918235]  cpuidle_enter_state+0x91/0x720
+<4>[120363.918237]  ? tick_nohz_stop_tick+0xed/0x260
+<4>[120363.918240]  ? raw_spin_rq_unlock+0x14/0x50
+<4>[120363.918243]  cpuidle_enter+0x2e/0x50
+<4>[120363.918246]  call_cpuidle+0x21/0x50
+<4>[120363.918249]  cpuidle_idle_call+0x173/0x200
+<4>[120363.918250]  do_idle+0x90/0xf0
+<4>[120363.918251]  cpu_startup_entry+0x29/0x30
+<4>[120363.918252]  start_secondary+0x128/0x170
+<4>[120363.918254]  common_startup_64+0x13e/0x141
+<4>[120363.918257]  </TASK>
+<0>[120363.919044] Kernel Offset: 0x33200000 from 0xffffffff81000000 (relocation range: 0xffffffff80000000-0xffffffffbfffffff)

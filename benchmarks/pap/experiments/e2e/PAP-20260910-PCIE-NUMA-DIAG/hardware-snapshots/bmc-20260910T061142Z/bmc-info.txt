@@ -1,0 +1,26 @@
+IANA PEN registry open failed: No such file or directory
+Get Device ID command failed: 0xbf Unknown (0xBF)
+Received a response with unexpected ID 0 vs. 1
+Device ID                 : 32
+Device Revision           : 1
+Firmware Revision         : 1.09
+IPMI Version              : 2.0
+Manufacturer ID           : 0
+Manufacturer Name         : Unknown (0x00)
+Product ID                : 514 (0x0202)
+Product Name              : Unknown (0x202)
+Device Available          : yes
+Provides Device SDRs      : yes
+Additional Device Support :
+    Sensor Device
+    SDR Repository Device
+    SEL Device
+    FRU Inventory Device
+    IPMB Event Receiver
+    IPMB Event Generator
+    Chassis Device
+Aux Firmware Rev Info     : 
+    0x00
+    0x00
+    0x00
+    0x00

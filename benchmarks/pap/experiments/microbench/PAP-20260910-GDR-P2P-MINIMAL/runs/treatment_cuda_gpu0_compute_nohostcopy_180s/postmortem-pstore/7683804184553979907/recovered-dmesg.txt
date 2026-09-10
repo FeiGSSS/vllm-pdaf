@@ -1,0 +1,485 @@
+Panic#1 Part3
+<6>[    7.956564] cdc_ncm 4-2.3:2.0: setting tx_max = 16384
+<6>[    7.956916] cdc_ncm 4-2.3:2.0 eth0: register 'cdc_ncm' at usb-0000:72:00.4-2.3, CDC NCM (NO ZLP), 9c:69:d3:24:7e:5c
+<6>[    7.956928] usbcore: registered new interface driver cdc_ncm
+<6>[    8.009619] cdc_ncm 4-2.3:2.0 enx9c69d3247e5c: renamed from eth0
+<6>[    8.105564] mlx5_core 0000:31:00.0: firmware version: 28.43.2026
+<6>[    8.105583] mlx5_core 0000:31:00.0: 504.112 Gb/s available PCIe bandwidth (32.0 GT/s PCIe x16 link)
+<6>[    8.384824] mlx5_core 0000:31:00.0: Flow counters bulk query buffer size increased, bulk_query_len(8)
+<6>[    8.386754] mlx5_core 0000:31:00.0: Port module event: module 0, Cable plugged
+<6>[    8.386962] mlx5_core 0000:31:00.0: mlx5_pcie_event:322:(pid 1862): PCIe slot power capability was not advertised.
+<6>[    8.393442] mlx5_core 0000:c2:00.0: firmware version: 26.44.1036
+<6>[    8.393467] mlx5_core 0000:c2:00.0: 126.024 Gb/s available PCIe bandwidth (16.0 GT/s PCIe x8 link)
+<6>[    8.915300] mlx5_core 0000:c2:00.0: Rate limit: 127 rates are supported, range: 0Mbps to 24414Mbps
+<6>[    8.915379] mlx5_core 0000:c2:00.0: E-Switch: Total vports 10, per vport: max uc(128) max mc(2048)
+<6>[    8.915740] mlx5_core 0000:c2:00.0: Flow counters bulk query buffer size increased, bulk_query_len(8)
+<6>[    8.923416] mlx5_core 0000:c2:00.0: Port module event: module 0, Cable unplugged
+<6>[    8.923911] mlx5_core 0000:c2:00.0: mlx5_pcie_event:331:(pid 2188): PCIe slot advertised sufficient power (75W).
+<6>[    9.146066] mlx5_core 0000:c2:00.0: MLX5E: StrdRq(1) RqSz(8) StrdSz(2048) RxCqeCmprss(0 enhanced)
+<6>[    9.148814] mlx5_core 0000:c2:00.1: firmware version: 26.44.1036
+<6>[    9.148838] mlx5_core 0000:c2:00.1: 126.024 Gb/s available PCIe bandwidth (16.0 GT/s PCIe x8 link)
+<6>[    9.672065] mlx5_core 0000:c2:00.1: Rate limit: 127 rates are supported, range: 0Mbps to 24414Mbps
+<6>[    9.672132] mlx5_core 0000:c2:00.1: E-Switch: Total vports 10, per vport: max uc(128) max mc(2048)
+<6>[    9.672427] mlx5_core 0000:c2:00.1: Flow counters bulk query buffer size increased, bulk_query_len(8)
+<6>[    9.680964] mlx5_core 0000:c2:00.1: Port module event: module 1, Cable unplugged
+<6>[    9.681448] mlx5_core 0000:c2:00.1: mlx5_pcie_event:331:(pid 2188): PCIe slot advertised sufficient power (75W).
+<6>[    9.902540] mlx5_core 0000:c2:00.1: MLX5E: StrdRq(1) RqSz(8) StrdSz(2048) RxCqeCmprss(0 enhanced)
+<6>[    9.905022] mlx5_core 0000:c2:00.0 ens17f0np0: renamed from eth0
+<6>[    9.905182] mlx5_core 0000:c2:00.1 ens17f1np1: renamed from eth1
+<6>[    9.943855] MACsec IEEE 802.1AE
+<6>[   10.732850] EXT4-fs (sda2): mounted filesystem 7b7712dd-103b-4547-913e-5a6509d96697 ro with ordered data mode. Quota mode: none.
+<30>[   10.868848] systemd[1]: Inserted module 'autofs4'
+<30>[   10.905797] systemd[1]: systemd 255.4-1ubuntu8.17 running in system mode (+PAM +AUDIT +SELINUX +APPARMOR +IMA +SMACK +SECCOMP +GCRYPT -GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +IPTC +KMOD +LIBCRYPTSETUP +LIBFDISK +PCRE2 -PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD -BPF_FRAMEWORK -XKBCOMMON +UTMP +SYSVINIT default-hierarchy=unified)
+<30>[   10.905802] systemd[1]: Detected architecture x86-64.
+<30>[   10.906737] systemd[1]: Hostname set to <NF5468-L20B>.
+<30>[   11.085789] systemd[1]: Queued start job for default target graphical.target.
+<30>[   11.102564] systemd[1]: Created slice system-modprobe.slice - Slice /system/modprobe.
+<30>[   11.103124] systemd[1]: Created slice system-systemd\x2dfsck.slice - Slice /system/systemd-fsck.
+<30>[   11.103398] systemd[1]: Created slice user.slice - User and Session Slice.
+<30>[   11.103430] systemd[1]: Started systemd-ask-password-wall.path - Forward Password Requests to Wall Directory Watch.
+<30>[   11.103528] systemd[1]: Set up automount proc-sys-fs-binfmt_misc.automount - Arbitrary Executable File Formats File System Automount Point.
+<30>[   11.103535] systemd[1]: Expecting device dev-disk-by\x2duuid-15312723\x2d0fea\x2d4a05\x2d99c6\x2d97cd7cfeb957.device - /dev/disk/by-uuid/15312723-0fea-4a05-99c6-97cd7cfeb957...
+<30>[   11.103538] systemd[1]: Expecting device dev-disk-by\x2duuid-1ede4fa3\x2d2d2b\x2d40ea\x2d92d0\x2d836ea9e50d85.device - /dev/disk/by-uuid/1ede4fa3-2d2b-40ea-92d0-836ea9e50d85...
+<30>[   11.103541] systemd[1]: Expecting device dev-disk-by\x2duuid-21E8\x2dBD07.device - /dev/disk/by-uuid/21E8-BD07...
+<30>[   11.103543] systemd[1]: Expecting device dev-disk-by\x2duuid-28dada2e\x2dd407\x2d4167\x2dbf51\x2debd21e980952.device - /dev/disk/by-uuid/28dada2e-d407-4167-bf51-ebd21e980952...
+<30>[   11.103545] systemd[1]: Expecting device dev-disk-by\x2duuid-3ec96b97\x2d8bd4\x2d43a3\x2da471\x2de7acf2be7374.device - /dev/disk/by-uuid/3ec96b97-8bd4-43a3-a471-e7acf2be7374...
+<30>[   11.103547] systemd[1]: Expecting device dev-disk-by\x2duuid-cbf0716d\x2df059\x2d4d6d\x2dbc54\x2d175197cb8cf8.device - /dev/disk/by-uuid/cbf0716d-f059-4d6d-bc54-175197cb8cf8...
+<30>[   11.103555] systemd[1]: Reached target integritysetup.target - Local Integrity Protected Volumes.
+<30>[   11.103565] systemd[1]: Reached target remote-fs.target - Remote File Systems.
+<30>[   11.103569] systemd[1]: Reached target slices.target - Slice Units.
+<30>[   11.103574] systemd[1]: Reached target snapd.mounts-pre.target - Mounting snaps.
+<30>[   11.103584] systemd[1]: Reached target veritysetup.target - Local Verity Protected Volumes.
+<30>[   11.104538] systemd[1]: Listening on syslog.socket - Syslog Socket.
+<30>[   11.104569] systemd[1]: Listening on systemd-fsckd.socket - fsck to fsckd communication Socket.
+<30>[   11.104595] systemd[1]: Listening on systemd-initctl.socket - initctl Compatibility Named Pipe.
+<30>[   11.104688] systemd[1]: Listening on systemd-journald-dev-log.socket - Journal Socket (/dev/log).
+<30>[   11.104728] systemd[1]: Listening on systemd-journald.socket - Journal Socket.
+<30>[   11.104783] systemd[1]: Listening on systemd-oomd.socket - Userspace Out-Of-Memory (OOM) Killer Socket.
+<30>[   11.104801] systemd[1]: systemd-pcrextend.socket - TPM2 PCR Extension (Varlink) was skipped because of an unmet condition check (ConditionSecurity=measured-uki).
+<30>[   11.104842] systemd[1]: Listening on systemd-udevd-control.socket - udev Control Socket.
+<30>[   11.104867] systemd[1]: Listening on systemd-udevd-kernel.socket - udev Kernel Socket.
+<30>[   11.105768] systemd[1]: Mounting dev-hugepages.mount - Huge Pages File System...
+<30>[   11.106370] systemd[1]: Mounting dev-mqueue.mount - POSIX Message Queue File System...
+<30>[   11.107062] systemd[1]: Mounting sys-kernel-debug.mount - Kernel Debug File System...
+<30>[   11.107611] systemd[1]: Mounting sys-kernel-tracing.mount - Kernel Trace File System...
+<30>[   11.110042] systemd[1]: Starting systemd-journald.service - Journal Service...
+<30>[   11.110737] systemd[1]: Starting keyboard-setup.service - Set the console keyboard layout...
+<30>[   11.111332] systemd[1]: Starting kmod-static-nodes.service - Create List of Static Device Nodes...
+<30>[   11.111818] systemd[1]: Starting modprobe@configfs.service - Load Kernel Module configfs...
+<30>[   11.112419] systemd[1]: Starting modprobe@dm_mod.service - Load Kernel Module dm_mod...
+<30>[   11.112815] systemd[1]: Starting modprobe@drm.service - Load Kernel Module drm...
+<30>[   11.113203] systemd[1]: Starting modprobe@efi_pstore.service - Load Kernel Module efi_pstore...
+<30>[   11.113635] systemd[1]: Starting modprobe@fuse.service - Load Kernel Module fuse...
+<30>[   11.114036] systemd[1]: Starting modprobe@loop.service - Load Kernel Module loop...
+<30>[   11.114083] systemd[1]: systemd-fsck-root.service - File System Check on Root Device was skipped because of an unmet condition check (ConditionPathExists=!/run/initramfs/fsck-root).
+<30>[   11.115200] systemd[1]: Starting systemd-modules-load.service - Load Kernel Modules...
+<30>[   11.115208] systemd[1]: systemd-pcrmachine.service - TPM2 PCR Machine ID Measurement was skipped because of an unmet condition check (ConditionSecurity=measured-uki).
+<30>[   11.115859] systemd[1]: Starting systemd-remount-fs.service - Remount Root and Kernel File Systems...
+<30>[   11.115876] systemd[1]: systemd-tpm2-setup-early.service - TPM2 SRK Setup (Early) was skipped because of an unmet condition check (ConditionSecurity=measured-uki).
+<30>[   11.116505] systemd[1]: Starting systemd-udev-trigger.service - Coldplug All udev Devices...
+<30>[   11.117034] systemd[1]: Mounted dev-hugepages.mount - Huge Pages File System.
+<30>[   11.117085] systemd[1]: Mounted dev-mqueue.mount - POSIX Message Queue File System.
+<30>[   11.117120] systemd[1]: Mounted sys-kernel-debug.mount - Kernel Debug File System.
+<30>[   11.117166] systemd[1]: Mounted sys-kernel-tracing.mount - Kernel Trace File System.
+<30>[   11.117277] systemd[1]: Finished kmod-static-nodes.service - Create List of Static Device Nodes.
+<30>[   11.117441] systemd[1]: modprobe@configfs.service: Deactivated successfully.
+<4>[   11.117444] pstore: backend 'erst' already in use: ignoring 'efi_pstore'
+<30>[   11.117504] systemd[1]: Finished modprobe@configfs.service - Load Kernel Module configfs.
+<30>[   11.117590] systemd[1]: modprobe@dm_mod.service: Deactivated successfully.
+<30>[   11.117661] systemd[1]: Finished modprobe@dm_mod.service - Load Kernel Module dm_mod.
+<30>[   11.117756] systemd[1]: modprobe@drm.service: Deactivated successfully.
+<30>[   11.117804] systemd[1]: Finished modprobe@drm.service - Load Kernel Module drm.
+<30>[   11.117889] systemd[1]: modprobe@efi_pstore.service: Deactivated successfully.
+<30>[   11.117940] systemd[1]: Finished modprobe@efi_pstore.service - Load Kernel Module efi_pstore.
+<30>[   11.118020] systemd[1]: modprobe@loop.service: Deactivated successfully.
+<30>[   11.118068] systemd[1]: Finished modprobe@loop.service - Load Kernel Module loop.
+<30>[   11.118983] systemd[1]: Mounting sys-kernel-config.mount - Kernel Configuration File System...
+<30>[   11.119008] systemd[1]: systemd-repart.service - Repartition Root Disk was skipped because no trigger condition checks were met.
+<30>[   11.119659] systemd[1]: Starting systemd-tmpfiles-setup-dev-early.service - Create Static Device Nodes in /dev gracefully...
+<30>[   11.119773] systemd[1]: modprobe@fuse.service: Deactivated successfully.
+<30>[   11.119835] systemd[1]: Finished modprobe@fuse.service - Load Kernel Module fuse.
+<30>[   11.120463] systemd[1]: Mounting sys-fs-fuse-connections.mount - FUSE Control File System...
+<30>[   11.121357] systemd[1]: Mounted sys-kernel-config.mount - Kernel Configuration File System.
+<30>[   11.122746] systemd[1]: Mounted sys-fs-fuse-connections.mount - FUSE Control File System.
+<46>[   11.123090] systemd-journald[2398]: Collecting audit messages is disabled.
+<6>[   11.128293] lp: driver loaded but no devices found
+<6>[   11.130745] ppdev: user-space parallel port driver
+<30>[   11.135994] systemd[1]: Finished systemd-tmpfiles-setup-dev-early.service - Create Static Device Nodes in /dev gracefully.
+<30>[   11.138160] systemd[1]: Finished keyboard-setup.service - Set the console keyboard layout.
+<6>[   11.154383] EXT4-fs (sda2): re-mounted 7b7712dd-103b-4547-913e-5a6509d96697 r/w.
+<30>[   11.154914] systemd[1]: Finished systemd-remount-fs.service - Remount Root and Kernel File Systems.
+<30>[   11.155754] systemd[1]: Activating swap swap.img.swap - /swap.img...
+<30>[   11.156146] systemd[1]: systemd-hwdb-update.service - Rebuild Hardware Database was skipped because of an unmet condition check (ConditionNeedsUpdate=/etc).
+<30>[   11.156859] systemd[1]: Starting systemd-pstore.service - Platform Persistent Storage Archival...
+<30>[   11.157767] systemd[1]: Starting systemd-random-seed.service - Load/Save OS Random Seed...
+<30>[   11.157793] systemd[1]: systemd-sysusers.service - Create System Users was skipped because no trigger condition checks were met.
+<30>[   11.158534] systemd[1]: Starting systemd-tmpfiles-setup-dev.service - Create Static Device Nodes in /dev...
+<30>[   11.158542] systemd[1]: systemd-tpm2-setup.service - TPM2 SRK Setup was skipped because of an unmet condition check (ConditionSecurity=measured-uki).
+<6>[   11.160379] Adding 8388604k swap on /swap.img.  Priority:-1 extents:65 across:2703097856k SS
+<30>[   11.160402] systemd[1]: Activated swap swap.img.swap - /swap.img.
+<30>[   11.160421] systemd[1]: Reached target swap.target - Swaps.
+<30>[   11.167156] systemd[1]: Finished systemd-pstore.service - Platform Persistent Storage Archival.
+<30>[   11.167306] systemd[1]: Finished systemd-modules-load.service - Load Kernel Modules.
+<30>[   11.167409] systemd[1]: Finished systemd-random-seed.service - Load/Save OS Random Seed.
+<30>[   11.168256] systemd[1]: Starting systemd-sysctl.service - Apply Kernel Variables...
+<30>[   11.168358] systemd[1]: Finished systemd-tmpfiles-setup-dev.service - Create Static Device Nodes in /dev.
+<30>[   11.168414] systemd[1]: Reached target local-fs-pre.target - Preparation for Local File Systems.
+<30>[   11.170116] systemd[1]: Mounting snap-bare-5.mount - Mount unit for bare, revision 5...
+<30>[   11.171287] systemd[1]: Mounting snap-core22-2411.mount - Mount unit for core22, revision 2411...
+<30>[   11.172519] systemd[1]: Mounting snap-core22-2437.mount - Mount unit for core22, revision 2437...
+
+Panic#1 Part2
+<30>[   11.174003] systemd[1]: Mounting snap-core24-1587.mount - Mount unit for core24, revision 1587...
+<6>[   11.174446] loop0: detected capacity change from 0 to 8
+<6>[   11.174555] loop1: detected capacity change from 0 to 151512
+<30>[   11.175045] systemd[1]: Mounting snap-core24-1643.mount - Mount unit for core24, revision 1643...
+<6>[   11.176636] loop2: detected capacity change from 0 to 136904
+<6>[   11.177531] loop3: detected capacity change from 0 to 136816
+<6>[   11.177811] loop4: detected capacity change from 0 to 151536
+<30>[   11.178996] systemd[1]: Mounting snap-firefox-8803.mount - Mount unit for firefox, revision 8803...
+<30>[   11.181006] systemd[1]: Mounting snap-firefox-8863.mount - Mount unit for firefox, revision 8863...
+<6>[   11.181227] loop5: detected capacity change from 0 to 534712
+<30>[   11.181993] systemd[1]: Mounting snap-firmware\x2dupdater-224.mount - Mount unit for firmware-updater, revision 224...
+<30>[   11.183019] systemd[1]: Mounting snap-firmware\x2dupdater-226.mount - Mount unit for firmware-updater, revision 226...
+<6>[   11.183482] loop6: detected capacity change from 0 to 534192
+<30>[   11.184080] systemd[1]: Mounting snap-gnome\x2d42\x2d2204-247.mount - Mount unit for gnome-42-2204, revision 247...
+<6>[   11.185491] loop7: detected capacity change from 0 to 33792
+<30>[   11.186181] systemd[1]: Mounting snap-gnome\x2d42\x2d2204-263.mount - Mount unit for gnome-42-2204, revision 263...
+<6>[   11.187182] loop8: detected capacity change from 0 to 33688
+<30>[   11.187246] systemd[1]: Mounting snap-gnome\x2d46\x2d2404-153.mount - Mount unit for gnome-46-2404, revision 153...
+<6>[   11.187472] loop9: detected capacity change from 0 to 1088256
+<30>[   11.188155] systemd[1]: Mounting snap-gnome\x2d46\x2d2404-164.mount - Mount unit for gnome-46-2404, revision 164...
+<30>[   11.189647] systemd[1]: Mounting snap-gtk\x2dcommon\x2dthemes-1535.mount - Mount unit for gtk-common-themes, revision 1535...
+<30>[   11.190989] systemd[1]: Mounting snap-mesa\x2d2404-1165.mount - Mount unit for mesa-2404, revision 1165...
+<30>[   11.192178] systemd[1]: Mounting snap-mesa\x2d2404-1839.mount - Mount unit for mesa-2404, revision 1839...
+<30>[   11.193211] systemd[1]: Mounting snap-snap\x2dstore-1367.mount - Mount unit for snap-store, revision 1367...
+<30>[   11.194448] systemd[1]: Mounting snap-snap\x2dstore-1390.mount - Mount unit for snap-store, revision 1390...
+<30>[   11.195734] systemd[1]: Mounting snap-snapd-27710.mount - Mount unit for snapd, revision 27710...
+<30>[   11.196556] systemd[1]: Mounting snap-snapd-27738.mount - Mount unit for snapd, revision 27738...
+<30>[   11.197589] systemd[1]: Mounting snap-snapd\x2ddesktop\x2dintegration-387.mount - Mount unit for snapd-desktop-integration, revision 387...
+<30>[   11.198790] systemd[1]: Mounting snap-snapd\x2ddesktop\x2dintegration-391.mount - Mount unit for snapd-desktop-integration, revision 391...
+<30>[   11.199725] systemd[1]: Starting systemd-udevd.service - Rule-based Manager for Device Events and Files...
+<30>[   11.203476] systemd[1]: Started systemd-journald.service - Journal Service.
+<46>[   11.226653] systemd-journald[2398]: Received client request to flush runtime journal.
+<44>[   11.228359] systemd-journald[2398]: File /var/log/journal/a4a8b971a913429eb4435f42fa9c8f65/system.journal corrupted or uncleanly shut down, renaming and replacing.
+<6>[   11.360143] IPMI message handler: version 39.2
+<6>[   11.363577] piix4_smbus 0000:00:14.0: SMBus Host Controller at 0xb00, revision 0
+<6>[   11.363580] piix4_smbus 0000:00:14.0: Using register 0x02 for SMBus port selection
+<6>[   11.368613] ipmi device interface
+<6>[   11.383120] piix4_smbus 0000:00:14.0: Auxiliary SMBus Host Controller at 0xb20
+<6>[   11.385632] ipmi_si: IPMI System Interface driver
+<6>[   11.387123] ipmi_si dmi-ipmi-si.0: ipmi_platform: probing via SMBIOS
+<6>[   11.387127] ipmi_platform: ipmi_si: SMBIOS: io 0xca2 regsize 1 spacing 1 irq 0
+<6>[   11.387131] ipmi_si: Adding SMBIOS-specified kcs state machine
+<6>[   11.391005] ipmi_si IPI0001:00: ipmi_platform: probing via ACPI
+<6>[   11.391117] ipmi_si IPI0001:00: ipmi_platform: [io  0x0ca2] regsize 1 spacing 1 irq 0
+<6>[   11.391390] ipmi_si dmi-ipmi-si.0: Removing SMBIOS-specified kcs state machine in favor of ACPI
+<6>[   11.391392] ipmi_si: Adding ACPI-specified kcs state machine
+<6>[   11.392279] i2c i2c-5: Successfully instantiated SPD at 0x50
+<6>[   11.394184] i2c i2c-5: Successfully instantiated SPD at 0x51
+<6>[   11.400792] ipmi_si: Trying ACPI-specified kcs state machine at i/o address 0xca2, slave address 0x20, irq 0
+<6>[   11.406906] i2c i2c-5: Successfully instantiated SPD at 0x52
+<6>[   11.430675] i2c i2c-5: Successfully instantiated SPD at 0x53
+<6>[   11.436485] usbcore: registered new interface driver cdc_wdm
+<6>[   11.437590] RAPL PMU: API unit is 2^-32 Joules, 2 fixed counters, 163840 ms ovfl timer
+<6>[   11.437596] RAPL PMU: hw unit of domain package 2^-16 Joules
+<6>[   11.437611] RAPL PMU: hw unit of domain core 2^-16 Joules
+<6>[   11.444729] i2c i2c-5: Successfully instantiated SPD at 0x54
+<6>[   11.451902] i2c i2c-5: Successfully instantiated SPD at 0x55
+<6>[   11.454096] ccp 0000:53:00.5: enabling device (0000 -> 0002)
+<6>[   11.457937] usbcore: registered new interface driver cdc_mbim
+<6>[   11.463732] i2c i2c-5: Successfully instantiated SPD at 0x56
+<6>[   11.467866] i2c i2c-5: Successfully instantiated SPD at 0x57
+<6>[   11.502822] ccp 0000:53:00.5: SEV: memory encryption not enabled by BIOS
+<5>[   11.502826] ccp 0000:53:00.5: psp enabled
+<6>[   11.509084] ccp 0000:d1:00.5: enabling device (0000 -> 0002)
+<5>[   11.522786] ccp 0000:d1:00.5: psp enabled
+<5>[   11.553298] ses 0:1:124:0: Attached Enclosure device
+<6>[   11.555693] ast 0000:52:00.0: vgaarb: deactivate vga console
+<6>[   11.557226] ast 0000:52:00.0: Using default configuration
+<6>[   11.557227] ast 0000:52:00.0: AST 2600 detected
+<6>[   11.557239] ast 0000:52:00.0: [drm] Using ASPEED DisplayPort transmitter
+<6>[   11.570444] ast 0000:52:00.0: [drm] Registered 1 planes with drm panic
+<4>[   11.646649] nvidia: loading out-of-tree module taints kernel.
+<5>[   11.646659] nvidia: module verification failed: signature and/or required key missing - tainting kernel
+<6>[   11.704437] ipmi_si IPI0001:00: IPMI message handler: Found new BMC (man_id: 0x000000, prod_id: 0x0202, dev_id: 0x20)
+<6>[   11.780605] [drm] Initialized ast 0.1.0 for 0000:52:00.0 on minor 1
+<6>[   11.781064] fbcon: astdrmfb (fb0) is primary device
+<6>[   11.781066] fbcon: Deferring console take-over
+<6>[   11.781067] ast 0000:52:00.0: [drm] fb0: astdrmfb frame buffer device
+<6>[   11.786680] ipmi_si IPI0001:00: IPMI kcs interface initialized
+<6>[   11.817048] ipmi_ssif: IPMI SSIF Interface driver
+<6>[   11.817433] nvidia-nvlink: Nvlink Core is being initialized, major device number 510
+<3>[   11.817452] 
+<6>[   11.819764] nvidia 0000:01:00.0: enabling device (0000 -> 0002)
+<6>[   11.851727] kvm_amd: TSC scaling supported
+<6>[   11.851731] kvm_amd: Nested Virtualization enabled
+<6>[   11.851733] kvm_amd: Nested Paging enabled
+<6>[   11.851733] kvm_amd: LBR virtualization supported
+<6>[   11.851736] kvm_amd: AVIC enabled
+<6>[   11.851736] kvm_amd: x2AVIC enabled (max 512 vCPUs)
+<6>[   11.851737] kvm_amd: Virtual VMLOAD VMSAVE supported
+<6>[   11.851738] kvm_amd: Virtual GIF supported
+<6>[   11.851738] kvm_amd: Virtual NMI enabled
+<6>[   11.866654] nvidia 0000:11:00.0: enabling device (0000 -> 0002)
+<6>[   11.895930] mlx5_core 0000:31:00.0 ibs6: renamed from ib0
+<6>[   11.914634] nvidia 0000:61:00.0: enabling device (0000 -> 0002)
+<6>[   11.962625] nvidia 0000:71:00.0: enabling device (0000 -> 0002)
+<6>[   11.974591] Loading iSCSI transport class v2.0-870.
+<5>[   11.996947] iscsi: registered transport (iser)
+<6>[   11.997516] MCE: In-kernel MCE decoding enabled.
+<6>[   12.001926] EDAC MC0: Giving out device to module amd64_edac controller F1Ah_M02h: DEV 0000:00:18.3 (INTERRUPT)
+<6>[   12.001930] EDAC amd64: F1Ah_M02h detected (node 0).
+<7>[   12.001930] EDAC MC: UMC0 chip selects:
+<6>[   12.001931] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.001931] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.001932] EDAC MC: UMC1 chip selects:
+<6>[   12.001932] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.001933] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.001933] EDAC MC: UMC2 chip selects:
+<6>[   12.001933] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   12.001934] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.001934] EDAC MC: UMC3 chip selects:
+<6>[   12.001934] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.001935] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.001935] EDAC MC: UMC4 chip selects:
+<6>[   12.001935] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.001936] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.001936] EDAC MC: UMC5 chip selects:
+<6>[   12.001936] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   12.001936] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.001937] EDAC MC: UMC6 chip selects:
+<6>[   12.001937] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.001937] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.001938] EDAC MC: UMC7 chip selects:
+<6>[   12.001938] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.001938] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.001939] EDAC MC: UMC8 chip selects:
+<6>[   12.001939] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   12.001939] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.001939] EDAC MC: UMC9 chip selects:
+<6>[   12.001940] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.001940] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.001940] EDAC MC: UMC10 chip selects:
+<6>[   12.001941] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.001941] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.001941] EDAC MC: UMC11 chip selects:
+<6>[   12.001942] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   12.001942] EDAC amd64: MC: 2:     0MB 3:     0MB
+<6>[   12.002271] EDAC MC1: Giving out device to module amd64_edac controller F1Ah_M02h: DEV 0000:00:19.3 (INTERRUPT)
+<6>[   12.002271] EDAC amd64: F1Ah_M02h detected (node 1).
+<7>[   12.002272] EDAC MC: UMC0 chip selects:
+<6>[   12.002272] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.002272] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.002273] EDAC MC: UMC1 chip selects:
+<6>[   12.002273] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.002273] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.002274] EDAC MC: UMC2 chip selects:
+<6>[   12.002274] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   12.002274] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.002274] EDAC MC: UMC3 chip selects:
+<6>[   12.002275] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.002275] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.002275] EDAC MC: UMC4 chip selects:
+<6>[   12.002276] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.002276] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.002276] EDAC MC: UMC5 chip selects:
+<6>[   12.002276] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   12.002277] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.002277] EDAC MC: UMC6 chip selects:
+<6>[   12.002277] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.002278] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.002278] EDAC MC: UMC7 chip selects:
+<6>[   12.002278] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.002278] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.002279] EDAC MC: UMC8 chip selects:
+<6>[   12.002279] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   12.002279] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.002280] EDAC MC: UMC9 chip selects:
+<6>[   12.002280] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.002280] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.002280] EDAC MC: UMC10 chip selects:
+<6>[   12.002281] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.002281] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.002281] EDAC MC: UMC11 chip selects:
+<6>[   12.002282] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   12.002282] EDAC amd64: MC: 2:     0MB 3:     0MB
+<6>[   12.004207] nvidia 0000:81:00.0: enabling device (0000 -> 0002)
+<6>[   12.012467] intel_rapl_common: Found RAPL domain package
+<6>[   12.012471] intel_rapl_common: Found RAPL domain core
+<6>[   12.015857] intel_rapl_common: Found RAPL domain package
+<6>[   12.015861] intel_rapl_common: Found RAPL domain core
+<6>[   12.052646] nvidia 0000:91:00.0: enabling device (0000 -> 0002)
+<6>[   12.095648] nvidia 0000:e1:00.0: enabling device (0000 -> 0002)
+<6>[   12.100030] amd_atl: AMD Address Translation Library initialized
+<6>[   12.103529] RPC: Registered named UNIX socket transport module.
+<6>[   12.103531] RPC: Registered udp transport module.
+<6>[   12.103532] RPC: Registered tcp transport module.
+<6>[   12.103533] RPC: Registered tcp-with-tls transport module.
+<6>[   12.103534] RPC: Registered tcp NFSv4.1 backchannel transport module.
+<6>[   12.146640] nvidia 0000:f1:00.0: enabling device (0000 -> 0002)
+<6>[   12.183335] RPC: Registered rdma transport module.
+<6>[   12.183338] RPC: Registered rdma backchannel transport module.
+<4>[   12.195687] NVRM: loading NVIDIA UNIX Open Kernel Module for x86_64  595.84  Release Build  (dvs-builder@U22-I3-AM25-26-2)  Wed Jun 10 21:06:37 UTC 2026
+
+Panic#1 Part1
+<6>[   12.196822] EXT4-fs (sde1): mounted filesystem 3ec96b97-8bd4-43a3-a471-e7acf2be7374 r/w with ordered data mode. Quota mode: none.
+<6>[   12.197116] EXT4-fs (sdf1): mounted filesystem 28dada2e-d407-4167-bf51-ebd21e980952 r/w with ordered data mode. Quota mode: none.
+<6>[   12.198147] EXT4-fs (sdd1): mounted filesystem 1ede4fa3-2d2b-40ea-92d0-836ea9e50d85 r/w with ordered data mode. Quota mode: none.
+<6>[   12.200069] EXT4-fs (sdb1): mounted filesystem cbf0716d-f059-4d6d-bc54-175197cb8cf8 r/w with ordered data mode. Quota mode: none.
+<6>[   12.200240] EXT4-fs (sdc1): mounted filesystem 15312723-0fea-4a05-99c6-97cd7cfeb957 r/w with ordered data mode. Quota mode: none.
+<6>[   12.214807] nvidia-modeset: Loading NVIDIA UNIX Open Kernel Mode Setting Driver for x86_64  595.84  Release Build  (dvs-builder@U22-I3-AM25-26-2)  Wed Jun 10 20:53:33 UTC 2026
+<6>[   12.221500] [drm] [nvidia-drm] [GPU ID 0x00000100] Loading driver
+<5>[   12.320794] audit: type=1400 audit(1789018299.937:2): apparmor="STATUS" operation="profile_load" profile="unconfined" name="buildah" pid=3576 comm="apparmor_parser"
+<5>[   12.320835] audit: type=1400 audit(1789018299.937:3): apparmor="STATUS" operation="profile_load" profile="unconfined" name="podman" pid=3620 comm="apparmor_parser"
+<5>[   12.320866] audit: type=1400 audit(1789018299.937:4): apparmor="STATUS" operation="profile_load" profile="unconfined" name="sbuild-destroychroot" pid=3645 comm="apparmor_parser"
+<5>[   12.320918] audit: type=1400 audit(1789018299.937:5): apparmor="STATUS" operation="profile_load" profile="unconfined" name="runc" pid=3629 comm="apparmor_parser"
+<5>[   12.320948] audit: type=1400 audit(1789018299.937:6): apparmor="STATUS" operation="profile_load" profile="unconfined" name="surfshark" pid=3658 comm="apparmor_parser"
+<5>[   12.320977] audit: type=1400 audit(1789018299.937:7): apparmor="STATUS" operation="profile_load" profile="unconfined" name="rpm" pid=3627 comm="apparmor_parser"
+<5>[   12.321010] audit: type=1400 audit(1789018299.937:8): apparmor="STATUS" operation="profile_load" profile="unconfined" name="tup" pid=3664 comm="apparmor_parser"
+<6>[   13.598107] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link ACTIVE
+<6>[   13.651443] [drm] Initialized nvidia-drm 0.0.0 for 0000:01:00.0 on minor 0
+<4>[   13.651490] nvidia 0000:01:00.0: [drm] No compatible format found
+<6>[   13.651493] nvidia 0000:01:00.0: [drm] Cannot find any crtc or sizes
+<6>[   13.651543] [drm] [nvidia-drm] [GPU ID 0x00001100] Loading driver
+<6>[   13.793781] NET: Registered PF_QIPCRTR protocol family
+<6>[   14.732440] mlx5_core 0000:c2:00.0 ens17f0np0: Link down
+<6>[   15.163154] mlx5_core 0000:c2:00.1 ens17f1np1: Link down
+<4>[   15.385122] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   15.509531] kauditd_printk_skb: 174 callbacks suppressed
+<5>[   15.509536] audit: type=1400 audit(1789018303.125:183): apparmor="DENIED" operation="capable" class="cap" profile="/usr/sbin/cupsd" pid=5118 comm="cupsd" capability=12  capname="net_admin"
+<44>[   15.673952] systemd-journald[2398]: File /var/log/journal/a4a8b971a913429eb4435f42fa9c8f65/user-1000.journal corrupted or uncleanly shut down, renaming and replacing.
+<4>[   17.411260] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[   18.378085] [drm] Initialized nvidia-drm 0.0.0 for 0000:11:00.0 on minor 2
+<4>[   18.378167] nvidia 0000:11:00.0: [drm] No compatible format found
+<6>[   18.378170] nvidia 0000:11:00.0: [drm] Cannot find any crtc or sizes
+<6>[   18.378247] [drm] [nvidia-drm] [GPU ID 0x00006100] Loading driver
+<6>[   18.391895] [drm] Initialized nvidia-drm 0.0.0 for 0000:61:00.0 on minor 3
+<4>[   18.391937] nvidia 0000:61:00.0: [drm] No compatible format found
+<6>[   18.391938] nvidia 0000:61:00.0: [drm] Cannot find any crtc or sizes
+<6>[   18.391955] [drm] [nvidia-drm] [GPU ID 0x00007100] Loading driver
+<6>[   18.397351] [drm] Initialized nvidia-drm 0.0.0 for 0000:71:00.0 on minor 4
+<4>[   18.397362] nvidia 0000:71:00.0: [drm] No compatible format found
+<6>[   18.397363] nvidia 0000:71:00.0: [drm] Cannot find any crtc or sizes
+<6>[   18.397379] [drm] [nvidia-drm] [GPU ID 0x00008100] Loading driver
+<6>[   18.401032] [drm] Initialized nvidia-drm 0.0.0 for 0000:81:00.0 on minor 5
+<4>[   18.401042] nvidia 0000:81:00.0: [drm] No compatible format found
+<6>[   18.401043] nvidia 0000:81:00.0: [drm] Cannot find any crtc or sizes
+<6>[   18.401057] [drm] [nvidia-drm] [GPU ID 0x00009100] Loading driver
+<6>[   18.406993] [drm] Initialized nvidia-drm 0.0.0 for 0000:91:00.0 on minor 6
+<4>[   18.407004] nvidia 0000:91:00.0: [drm] No compatible format found
+<6>[   18.407005] nvidia 0000:91:00.0: [drm] Cannot find any crtc or sizes
+<6>[   18.407019] [drm] [nvidia-drm] [GPU ID 0x0000e100] Loading driver
+<6>[   18.410775] [drm] Initialized nvidia-drm 0.0.0 for 0000:e1:00.0 on minor 7
+<4>[   18.410815] nvidia 0000:e1:00.0: [drm] No compatible format found
+<6>[   18.410816] nvidia 0000:e1:00.0: [drm] Cannot find any crtc or sizes
+<6>[   18.410829] [drm] [nvidia-drm] [GPU ID 0x0000f100] Loading driver
+<6>[   18.416196] [drm] Initialized nvidia-drm 0.0.0 for 0000:f1:00.0 on minor 8
+<4>[   18.416228] nvidia 0000:f1:00.0: [drm] No compatible format found
+<6>[   18.416229] nvidia 0000:f1:00.0: [drm] Cannot find any crtc or sizes
+<4>[   21.444030] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<5>[   21.993703] audit: type=1400 audit(1789018309.610:184): apparmor="STATUS" operation="profile_load" profile="unconfined" name="docker-default" pid=6743 comm="apparmor_parser"
+<6>[   22.192920] Initializing XFRM netlink socket
+<6>[   22.224048] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+<7>[   27.557658] rfkill: input handler disabled
+<4>[   29.827127] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   39.416675] hrtimer: interrupt took 65017 ns
+<4>[   46.211191] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   62.595099] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   78.979169] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   95.363224] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  111.747282] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  128.131261] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  144.515881] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  160.901483] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  177.286544] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  193.671240] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  210.055839] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  226.440209] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  242.824560] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  259.208877] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  275.593138] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  291.977446] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[ 1321.283141] usb 3-2.1: USB disconnect, device number 3
+<6>[ 1321.283148] usb 3-2.1.4: USB disconnect, device number 4
+<6>[ 1321.314547] usb 3-2.1.6: USB disconnect, device number 5
+<5>[ 5372.782298] audit: type=1400 audit(1789023659.578:185): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=41862 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<0>[ 6787.792940] {1}[Hardware Error]: Hardware error from APEI Generic Hardware Error Source: 515
+<0>[ 6787.792945] {1}[Hardware Error]: event severity: fatal
+<0>[ 6787.792947] {1}[Hardware Error]:  Error 0, type: fatal
+<0>[ 6787.792948] {1}[Hardware Error]:  fru_text: PcieError
+<0>[ 6787.792948] {1}[Hardware Error]:   section_type: PCIe error
+<0>[ 6787.792949] {1}[Hardware Error]:   port_type: 1, legacy PCI end point
+<0>[ 6787.792950] {1}[Hardware Error]:   version: 0.2
+<0>[ 6787.792950] {1}[Hardware Error]:   command: 0x0406, status: 0x0010
+<0>[ 6787.792951] {1}[Hardware Error]:   device_id: 0000:01:00.0
+<0>[ 6787.792952] {1}[Hardware Error]:   slot: 0
+<0>[ 6787.792952] {1}[Hardware Error]:   secondary_bus: 0x00
+<0>[ 6787.792953] {1}[Hardware Error]:   vendor_id: 0x10de, device_id: 0x26ba
+<0>[ 6787.792953] {1}[Hardware Error]:   class_code: 030200
+<0>[ 6787.792954] {1}[Hardware Error]:   bridge: secondary_status: 0x4000, control: 0x0000
+<0>[ 6787.792954] {1}[Hardware Error]:   aer_cor_status: 0x00008000, aer_cor_mask: 0x0000b1c1
+<0>[ 6787.792955] {1}[Hardware Error]:   aer_uncor_status: 0x00014000, aer_uncor_mask: 0x00000000
+<0>[ 6787.792955] {1}[Hardware Error]:   aer_uncor_severity: 0x00476030
+<0>[ 6787.792956] {1}[Hardware Error]:   TLP Header: 00000000 00000000 00000000 00000000
+<0>[ 6787.792956] {1}[Hardware Error]:  Error 1, type: fatal
+<0>[ 6787.792956] {1}[Hardware Error]:  fru_text: PcieError
+<0>[ 6787.792957] {1}[Hardware Error]:   section_type: PCIe error
+<0>[ 6787.792957] {1}[Hardware Error]:   port_type: 1, legacy PCI end point
+<0>[ 6787.792957] {1}[Hardware Error]:   version: 0.2
+<0>[ 6787.792958] {1}[Hardware Error]:   command: 0x0406, status: 0x0010
+<0>[ 6787.792958] {1}[Hardware Error]:   device_id: 0000:01:00.0
+<0>[ 6787.792959] {1}[Hardware Error]:   slot: 0
+<0>[ 6787.792959] {1}[Hardware Error]:   secondary_bus: 0x00
+<0>[ 6787.792959] {1}[Hardware Error]:   vendor_id: 0x10de, device_id: 0x26ba
+<0>[ 6787.792960] {1}[Hardware Error]:   class_code: 030200
+<0>[ 6787.792960] {1}[Hardware Error]:   bridge: secondary_status: 0x4000, control: 0x0000
+<0>[ 6787.792960] {1}[Hardware Error]:   aer_cor_status: 0x00008000, aer_cor_mask: 0x0000b1c1
+<0>[ 6787.792961] {1}[Hardware Error]:   aer_uncor_status: 0x00014000, aer_uncor_mask: 0x00000000
+<0>[ 6787.792961] {1}[Hardware Error]:   aer_uncor_severity: 0x00476030
+<0>[ 6787.792961] {1}[Hardware Error]:   TLP Header: 00000000 00000000 00000000 00000000
+<0>[ 6787.792962] GHES: Fatal hardware error but panic disabled
+<0>[ 6787.792963] Kernel panic - not syncing: GHES: Fatal hardware error
+<4>[ 6787.792966] CPU: 151 UID: 0 PID: 0 Comm: swapper/151 Tainted: G   M       OE       7.0.0-31-generic #31~24.04.1-Ubuntu PREEMPT(lazy) 
+<4>[ 6787.792968] Tainted: [M]=MACHINE_CHECK, [O]=OOT_MODULE, [E]=UNSIGNED_MODULE
+<4>[ 6787.792969] Hardware name: IEIT SYSTEMS NF5468-A8-A0-R0-00/NF5468-A8-A0-R0-00, BIOS 01.07.00 10/16/2025
+<4>[ 6787.792970] Call Trace:
+<4>[ 6787.792972]  <NMI>
+<4>[ 6787.792976]  dump_stack_lvl+0x27/0xa0
+<4>[ 6787.792982]  dump_stack+0x10/0x20
+<4>[ 6787.792984]  vpanic+0x45e/0x550
+<4>[ 6787.792987]  panic+0x5f/0x60
+<4>[ 6787.792989]  ? ghes_clear_estatus.part.0+0x38/0xd0
+<4>[ 6787.792992]  __ghes_panic+0x6c/0x90
+<4>[ 6787.792993]  ghes_in_nmi_queue_one_entry.constprop.0+0x1e8/0x2c0
+<4>[ 6787.792994]  ghes_notify_nmi+0xa5/0x110
+<4>[ 6787.792995]  nmi_handle.part.0+0x5d/0x180
+<4>[ 6787.792998]  default_do_nmi+0x131/0x170
+<4>[ 6787.793001]  exc_nmi+0x1c4/0x290
+<4>[ 6787.793002]  end_repeat_nmi+0xf/0x53
+<4>[ 6787.793005] RIP: 0010:io_idle+0x3/0x30
+<4>[ 6787.793007] Code: 31 c9 45 31 d2 45 31 db c3 cc cc cc cc 66 2e 0f 1f 84 00 00 00 00 00 90 90 90 90 90 90 90 90 90 90 90 90 90 90 90 90 89 fa ec <48> 8b 05 66 a0 83 01 a9 00 00 00 80 75 11 80 3d 1a a0 83 01 00 75
+<4>[ 6787.793008] RSP: 0018:ff7f080f58b07da8 EFLAGS: 00000093
+<4>[ 6787.793010] RAX: 0000000000000000 RBX: ff3f7dc317825098 RCX: 0000000000000000
+<4>[ 6787.793011] RDX: 0000000000000814 RSI: ff3f7dc317825000 RDI: 0000000000000814
+<4>[ 6787.793012] RBP: ff7f080f58b07db8 R08: 0000000000000000 R09: 0000000000000000
+<4>[ 6787.793012] R10: 0000000000000000 R11: 0000000000000000 R12: ffffffff95c4c990
+<4>[ 6787.793013] R13: 0000000000000097 R14: ffffffff95567e20 R15: ff3f7e7fb9163000
+<4>[ 6787.793015]  ? io_idle+0x3/0x30
+<4>[ 6787.793017]  ? io_idle+0x3/0x30
+<4>[ 6787.793018]  </NMI>
+<4>[ 6787.793018]  <TASK>
+<4>[ 6787.793019]  ? acpi_idle_do_entry+0x26/0x80
+<4>[ 6787.793020]  acpi_idle_enter+0xaf/0x160
+<4>[ 6787.793022]  cpuidle_enter_state+0x91/0x720
+<4>[ 6787.793023]  ? tick_nohz_stop_tick+0xed/0x260
+<4>[ 6787.793027]  ? raw_spin_rq_unlock+0x14/0x50
+<4>[ 6787.793030]  cpuidle_enter+0x2e/0x50
+<4>[ 6787.793033]  call_cpuidle+0x21/0x50
+<4>[ 6787.793035]  cpuidle_idle_call+0x173/0x200
+<4>[ 6787.793037]  do_idle+0x90/0xf0
+<4>[ 6787.793038]  cpu_startup_entry+0x29/0x30
+<4>[ 6787.793039]  start_secondary+0x128/0x170
+<4>[ 6787.793042]  common_startup_64+0x13e/0x141
+<4>[ 6787.793044]  </TASK>
+<0>[ 6787.793923] Kernel Offset: 0x11800000 from 0xffffffff81000000 (relocation range: 0xffffffff80000000-0xffffffffbfffffff)

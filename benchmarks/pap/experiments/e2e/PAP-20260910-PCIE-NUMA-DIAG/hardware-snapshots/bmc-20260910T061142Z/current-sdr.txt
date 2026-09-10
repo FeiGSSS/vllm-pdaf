@@ -1,0 +1,247 @@
+IANA PEN registry open failed: No such file or directory
+Inlet_Temp       | 00h | ok  |  3.0 | 23 degrees C
+Outlet_Temp      | 01h | ok  |  3.0 | 30 degrees C
+CPU0_Temp        | 02h | ok  |  3.0 | 42 degrees C
+CPU1_Temp        | 03h | ok  |  3.0 | 45 degrees C
+CPU0_DIMM_T      | 06h | ok  |  3.0 | 38 degrees C
+CPU1_DIMM_T      | 07h | ok  |  3.0 | 36 degrees C
+CPU0_VR_Temp     | 0Bh | ok  |  3.0 | 36 degrees C
+CPU1_VR_Temp     | 0Ch | ok  |  3.0 | 34 degrees C
+PCIE0_GPU_Temp   | B0h | ns  | 11.0 | Disabled
+PCIE1_GPU_Temp   | B1h | ok  | 11.1 | 33 degrees C
+PCIE2_GPU_Temp   | B2h | ok  | 11.2 | 33 degrees C
+PCIE3_GPU_Temp   | B3h | ok  | 11.3 | 33 degrees C
+PCIE4_GPU_Temp   | B4h | ok  | 11.4 | 32 degrees C
+PCIE5_GPU_Temp   | B5h | ok  | 11.5 | 32 degrees C
+PCIE6_GPU_Temp   | B6h | ok  | 11.6 | 32 degrees C
+PCIE7_GPU_Temp   | B7h | ok  | 11.7 | 33 degrees C
+PSU_Inlet_Temp   | 09h | ok  |  3.0 | 29 degrees C
+RAID_Temp        | B9h | ok  | 11.0 | 42 degrees C
+NVME_Temp        | 17h | ns  |  3.0 | Disabled
+HDD_MAX_Temp     | BBh | ok  | 11.0 | 29 degrees C
+OCP_NIC_Temp     | BCh | ns  | 11.0 | Disabled
+OCP_NIC_SFP_Temp | BDh | ns  | 11.0 | Disabled
+PCIe_NIC_Temp    | BEh | ok  | 11.0 | 47 degrees C
+PCIe_NIC_SFP_T   | BFh | ns  | 11.0 | Disabled
+PSU0_VIN         | 30h | ok  |  7.0 | 232 Volts
+PSU1_VIN         | 31h | ok  |  7.0 | 232 Volts
+PSU2_VIN         | 32h | ok  |  7.0 | 232 Volts
+PSU3_VIN         | 33h | ok  |  7.0 | 232 Volts
+PSU0_PIN         | 51h | ok  |  3.0 | 216 Watts
+PSU1_PIN         | 52h | ok  |  3.0 | 192 Watts
+PSU2_PIN         | 53h | ok  |  3.0 | 192 Watts
+PSU3_PIN         | 54h | ok  |  3.0 | 192 Watts
+PSU0_VOUT        | 34h | ok  |  7.0 | 12 Volts
+PSU1_VOUT        | 35h | ok  |  7.0 | 12 Volts
+PSU2_VOUT        | 36h | ok  |  7.0 | 12 Volts
+PSU3_VOUT        | 37h | ok  |  7.0 | 12 Volts
+PSU0_POUT        | 55h | ok  |  3.0 | 192 Watts
+PSU1_POUT        | 56h | ok  |  3.0 | 168 Watts
+PSU2_POUT        | 57h | ok  |  3.0 | 168 Watts
+PSU3_POUT        | 58h | ok  |  3.0 | 160 Watts
+SYS_12V          | 38h | ok  |  7.0 | 12.12 Volts
+SYS_5V           | 39h | ok  |  7.0 | 5.01 Volts
+SYS_3V3          | 3Ah | ok  |  7.0 | 3.32 Volts
+RTC_Battery      | 3Bh | ok  |  7.0 | 3.17 Volts
+PVDDCR_CPU0_P0   | 3Ch | ok  |  7.0 | 0.89 Volts
+PVDDCR_CPU1_P0   | 3Eh | ok  |  7.0 | 0.88 Volts
+PVDDIO_P0        | 40h | ok  |  7.0 | 1.09 Volts
+P12V_STBY        | 46h | ok  |  7.0 | 11.88 Volts
+PVDDCR_CPU0_P1   | 41h | ok  |  7.0 | 0.92 Volts
+PVDDCR_CPU1_P1   | 43h | ok  |  7.0 | 0.90 Volts
+PVDDIO_P1        | 45h | ok  |  7.0 | 1.09 Volts
+P3V3_STBY        | 47h | ok  |  7.0 | 3.24 Volts
+P12V_CPU0_DIMM1  | 48h | ok  |  7.0 | 12.24 Volts
+P12V_CPU1_DIMM1  | 49h | ok  |  7.0 | 12.06 Volts
+P5V_STBY         | 4Bh | ok  |  7.0 | 4.95 Volts
+P1V8_STBY        | 3Fh | ok  |  7.0 | 1.80 Volts
+PVDD33_S5        | 42h | ok  |  7.0 | 3.30 Volts
+P1V05_USB        | 44h | ok  |  7.0 | 1.05 Volts
+CPU0_Status      | 80h | ok  |  3.0 | Presence detected
+CPU1_Status      | 81h | ok  |  3.0 | Presence detected
+CPU0_CAD0        | 82h | ok  | 32.0 | Presence Detected
+CPU0_CBD0        | 83h | ok  | 32.2 | Presence Detected
+CPU0_CCD0        | 84h | ok  | 32.4 | Presence Detected
+CPU0_CDD0        | 85h | ns  | 32.6 | Disabled
+CPU0_CED0        | 86h | ok  | 32.8 | Presence Detected
+CPU0_CFD0        | 87h | ns  | 32.10 | Disabled
+CPU0_CGD0        | 88h | ok  | 32.12 | Presence Detected
+CPU0_CHD0        | 89h | ok  | 32.14 | Presence Detected
+CPU0_CID0        | 8Ah | ok  | 32.1 | Presence Detected
+CPU0_CJD0        | 8Bh | ns  | 32.3 | Disabled
+CPU0_CKD0        | 8Ch | ok  | 32.5 | Presence Detected
+CPU0_CLD0        | 8Dh | ns  | 32.7 | Disabled
+CPU1_CAD0        | 8Eh | ok  | 32.16 | Presence Detected
+CPU1_CBD0        | 8Fh | ok  | 32.18 | Presence Detected
+CPU1_CCD0        | 90h | ok  | 32.20 | Presence Detected
+CPU1_CDD0        | 91h | ns  | 32.22 | Disabled
+CPU1_CED0        | 92h | ok  | 32.24 | Presence Detected
+CPU1_CFD0        | 93h | ns  | 32.26 | Disabled
+CPU1_CGD0        | 94h | ok  | 32.28 | Presence Detected
+CPU1_CHD0        | 95h | ok  | 32.30 | Presence Detected
+CPU1_CID0        | 96h | ok  | 32.17 | Presence Detected
+CPU1_CJD0        | 97h | ns  | 32.19 | Disabled
+CPU1_CKD0        | 98h | ok  | 32.21 | Presence Detected
+CPU1_CLD0        | 99h | ns  | 32.23 | Disabled
+FAN0_Status      | 20h | ok  |  7.0 | Transition to OK
+FAN1_Status      | 21h | ok  |  7.0 | Transition to OK
+FAN2_Status      | 22h | ok  |  7.0 | Transition to OK
+FAN3_Status      | 23h | ok  |  7.0 | Transition to OK
+FAN4_Status      | 24h | ok  |  7.0 | Transition to OK
+FAN5_Status      | 25h | ok  |  7.0 | Transition to OK
+FAN0_F_Speed     | 60h | ok  |  7.0 | 9000 RPM
+FAN0_R_Speed     | 61h | ok  |  7.0 | 9000 RPM
+FAN1_F_Speed     | 62h | ok  |  7.0 | 8850 RPM
+FAN1_R_Speed     | 63h | ok  |  7.0 | 8850 RPM
+FAN2_F_Speed     | 64h | ok  |  7.0 | 8850 RPM
+FAN2_R_Speed     | 65h | ok  |  7.0 | 8850 RPM
+FAN3_F_Speed     | 66h | ok  |  7.0 | 8850 RPM
+FAN3_R_Speed     | 67h | ok  |  7.0 | 8850 RPM
+FAN4_F_Speed     | 68h | ok  |  7.0 | 8850 RPM
+FAN4_R_Speed     | 69h | ok  |  7.0 | 8850 RPM
+FAN5_F_Speed     | 6Ah | ok  |  7.0 | 8850 RPM
+FAN5_R_Speed     | 6Bh | ok  |  7.0 | 8850 RPM
+FAN6_F_Speed     | 6Ch | ok  |  7.0 | 9000 RPM
+FAN6_R_Speed     | 6Dh | ok  |  7.0 | 9000 RPM
+FAN7_F_Speed     | 6Eh | ok  |  7.0 | 8850 RPM
+FAN7_R_Speed     | 6Fh | ok  |  7.0 | 8850 RPM
+FAN8_F_Speed     | 70h | ok  |  7.0 | 8850 RPM
+FAN8_R_Speed     | 71h | ok  |  7.0 | 8850 RPM
+FAN9_F_Speed     | 72h | ok  |  7.0 | 8850 RPM
+FAN9_R_Speed     | 73h | ok  |  7.0 | 9000 RPM
+FAN10_F_Speed    | 74h | ok  |  7.0 | 8850 RPM
+FAN10_R_Speed    | 75h | ok  |  7.0 | 8850 RPM
+FAN11_F_Speed    | 76h | ok  |  7.0 | 8850 RPM
+FAN11_R_Speed    | 77h | ok  |  7.0 | 8850 RPM
+PSU0_Status      | 2Ch | ok  | 10.0 | Presence detected
+PSU1_Status      | 2Dh | ok  | 10.1 | Presence detected
+PSU2_Status      | 2Eh | ok  | 10.0 | Presence detected
+PSU3_Status      | 2Fh | ok  | 10.1 | Presence detected
+F_HDD0           | 00h | ok  |  4.0 | Drive Present
+F_HDD1           | 01h | ok  |  4.1 | Drive Present
+F_HDD2           | 02h | ok  |  4.2 | Drive Present
+F_HDD3           | 03h | ok  |  4.3 | Drive Present
+F_HDD4           | 04h | ok  |  4.4 | Drive Present
+F_HDD5           | 05h | ok  |  4.5 | Drive Present
+F_HDD6           | 06h | ok  |  4.6 | 
+F_HDD7           | 07h | ok  |  4.7 | 
+F_HDD8           | 08h | ns  |  4.8 | Disabled
+F_HDD9           | 09h | ns  |  4.9 | Disabled
+F_HDD10          | 0Ah | ns  |  4.10 | Disabled
+F_HDD11          | 0Bh | ns  |  4.11 | Disabled
+F_HDD12          | 0Ch | ns  |  4.12 | Disabled
+F_HDD13          | 0Dh | ns  |  4.13 | Disabled
+F_HDD14          | 0Eh | ns  |  4.14 | Disabled
+F_HDD15          | 0Fh | ns  |  4.14 | Disabled
+F_HDD16          | 10h | ns  |  4.16 | Disabled
+F_HDD17          | 11h | ns  |  4.17 | Disabled
+F_HDD18          | 12h | ns  |  4.18 | Disabled
+F_HDD19          | 13h | ns  |  4.19 | Disabled
+F_HDD20          | 14h | ns  |  4.20 | Disabled
+F_HDD21          | 15h | ns  |  4.21 | Disabled
+F_HDD22          | 16h | ns  |  4.22 | Disabled
+F_HDD23          | 17h | ns  |  4.23 | Disabled
+F_HDD24          | 18h | ns  |  4.23 | Disabled
+R_HDD0           | 19h | ns  |  4.24 | Disabled
+R_HDD1           | 1Ah | ns  |  4.25 | Disabled
+R_HDD2           | 1Bh | ns  |  4.32 | Disabled
+R_HDD3           | 1Ch | ns  |  4.33 | Disabled
+R_HDD4           | 1Dh | ns  |  4.34 | Disabled
+R_HDD5           | 1Eh | ns  |  4.35 | Disabled
+R_HDD6           | 1Fh | ns  |  4.35 | Disabled
+R_HDD7           | 20h | ns  |  4.35 | Disabled
+R_HDD8           | 21h | ns  |  4.35 | Disabled
+R_HDD9           | 22h | ns  |  4.35 | Disabled
+I_HDD0           | 25h | ns  |  4.36 | Disabled
+I_HDD1           | 26h | ns  |  4.37 | Disabled
+I_HDD2           | 27h | ns  |  4.37 | Disabled
+I_HDD3           | 28h | ns  |  4.37 | Disabled
+PSU_Redundant    | A2h | ok  | 32.0 | 
+FAN_Redundant    | A3h | ok  | 32.0 | 
+PSU_Mismatch     | 5Ch | ok  | 10.0 | 
+CPU_Power        | 59h | ok  |  3.0 | 216 Watts
+Memory_Power     | 5Ah | ok  |  3.0 | 39 Watts
+Fan_Power        | 5Bh | ok  |  3.0 | 63 Watts
+Total_Power      | 50h | ok  |  3.0 | 805 Watts
+AST2600_A7       | 00h | ok  |  0.1 | Dynamic MC @ 20h
+SCM FRU Device   | 00h | ns  |  7.1 | Logical FRU @08h
+HDD_F_BP0_FRU    | 00h | ns  |  7.1 | Logical FRU @09h
+HDD_F_BP1_FRU    | 00h | ns  |  7.1 | Logical FRU @0Ah
+HDD_F_BP2_FRU    | 00h | ns  |  7.1 | Logical FRU @0Bh
+PSU0_FRU         | 00h | ns  | 10.0 | Logical FRU @1Eh
+PSU1_FRU         | 00h | ns  | 10.1 | Logical FRU @1Fh
+PSU2_FRU         | 00h | ns  | 10.2 | Logical FRU @20h
+PSU3_FRU         | 00h | ns  | 10.3 | Logical FRU @21h
+CPU0 Prochot     | E0h | ns  |  0.0 | Event-Only
+CPU1 Prochot     | E1h | ns  |  0.0 | Event-Only
+CPU0 Memhot      | E2h | ns  |  0.0 | Event-Only
+CPU1 Memhot      | E3h | ns  |  0.0 | Event-Only
+CPU Thermal Trip | E5h | ns  |  0.0 | Event-Only
+CPU_Config       | 7Eh | ok  |  3.0 | 
+Intrusion        | 26h | ok  | 32.1 | 
+BIOS_Boot_Up     | C5h | ok  |  7.0 | State Asserted
+BMC_Boot_Up      | C6h | ok  |  7.0 | Initiated by power up
+Sys_Health       | C4h | ok  |  7.0 | 
+PCIe_Status      | DEh | ok  | 11.0 | 
+SEL_Status       | A4h | ok  |  6.2 | 
+POST_Status      | D0h | ok  |  7.0 | 
+SysRestart       | E8h | ns  |  7.0 | Event-Only
+Power_Button     | E7h | ns  |  0.0 | Event-Only
+SysShutdown      | E9h | ns  |  7.0 | Event-Only
+ACPI_PWR         | 7Fh | ok  |  3.0 | S0/G0: working
+LeakageSensor    | B8h | ok  | 29.0 | 
+Watchdog2        | F1h | ns  |  7.0 | Event-Only
+UID_Button       | E6h | ns  |  0.0 | Event-Only
+System_Error     | 19h | ok  |  7.0 | 
+FW_Update        | FFh | ns  |  0.0 | Event-Only
+TPM_Verify       | EBh | ok  |  6.2 | 
+PWR_CAP_Fail     | DBh | ok  |  7.0 | 
+AMDSATA_Status   | F4h | ns  |  0.0 | Event-Only
+AMDUSB_Status    | F5h | ns  |  0.0 | Event-Only
+AMDSMN_Status    | F6h | ns  |  0.0 | Event-Only
+AMDFCH_Status    | F3h | ns  |  0.0 | Event-Only
+GPU Board FRU    | 00h | ns  |  7.1 | Logical FRU @28h
+M.2 Riser FRU    | 00h | ns  |  7.1 | Logical FRU @29h
+SWITCH CARD0     | 00h | ns  |  7.1 | Logical FRU @2Ah
+SWITCH CARD1     | 00h | ns  |  7.1 | Logical FRU @2Bh
+SWITCH CARD2     | 00h | ns  |  7.1 | Logical FRU @2Ch
+RISER3X16_FRU    | 00h | ns  |  7.1 | Logical FRU @2Dh
+RAID_FRU         | 00h | ns  |  7.1 | Logical FRU @2Eh
+FAN6_Status      | C7h | ok  |  7.0 | Transition to OK
+FAN7_Status      | C8h | ok  |  7.0 | Transition to OK
+FAN8_Status      | C9h | ok  |  7.0 | Transition to OK
+FAN9_Status      | CAh | ok  |  7.0 | Transition to OK
+FAN10_Status     | CBh | ok  |  7.0 | Transition to OK
+FAN11_Status     | CCh | ok  |  7.0 | Transition to OK
+SYS_2V5          | 4Ch | ok  |  7.0 | 2.50 Volts
+SYS_1V2          | 4Dh | ok  |  7.0 | 1.20 Volts
+SYS_1V           | 4Eh | ok  |  7.0 | 1.00 Volts
+SYS_1V8          | 4Fh | ok  |  7.0 | 1.80 Volts
+SYS_3V3_BMC_RGM  | 4Ah | ok  |  7.0 | 3.32 Volts
+PCIE11_GPU_Temp  | A8h | ns  | 11.0 | Disabled
+PCIE10_GPU_Temp  | A7h | ns  | 11.0 | Disabled
+PCIE9_GPU_Temp   | A6h | ns  | 11.0 | Disabled
+PCIE8_GPU_Temp   | A5h | ok  | 11.0 | 32 degrees C
+PCIE_Switch_Temp | 7Ah | ns  | 11.0 | Disabled
+BMC_Status       | E0h | ok  |  7.0 | 
+PCIE_HCA_Temp    | A9h | ok  | 11.0 | 58 degrees C
+PCIe_HCA_SFP_T   | AAh | ns  | 11.0 | Disabled
+PCIE1_GPUTlimit  | D2h | ok  | 11.0 | 55 degrees C
+PCIE0_GPUTlimit  | D1h | ns  | 11.0 | Disabled
+PCIE2_GPUTlimit  | D3h | ok  | 11.0 | 55 degrees C
+PCIE3_GPUTlimit  | D4h | ok  | 11.0 | 55 degrees C
+PCIE4_GPUTlimit  | D5h | ok  | 11.0 | 56 degrees C
+PCIE5_GPUTlimit  | D6h | ok  | 11.0 | 56 degrees C
+PCIE6_GPUTlimit  | D7h | ok  | 11.0 | 56 degrees C
+PCIE7_GPUTlimit  | D8h | ok  | 11.0 | 55 degrees C
+PCIE8_GPUTlimit  | D9h | ok  | 11.0 | 56 degrees C
+PCIE9_GPUTlimit  | DAh | ns  | 11.0 | Disabled
+PCIE10_GPUTlimit | DCh | ns  | 11.0 | Disabled
+PCIE11_GPUTlimit | DFh | ns  | 11.0 | Disabled
+NVMe_M.2_T       | DDh | ns  | 11.0 | Disabled
+BFX_SOC_Temp     | E4h | ns  | 11.0 | Disabled
+BFX_SFP_Temp     | EAh | ns  | 11.0 | Disabled
+OS_Boot          | E9h | ns  |  7.0 | Event-Only
+AMDPMIC_Status   | F7h | ns  |  0.0 | Event-Only
+PcieIerr         | FBh | ns  |  7.0 | Event-Only
+HBA_Temp         | C3h | ns  | 11.0 | Disabled

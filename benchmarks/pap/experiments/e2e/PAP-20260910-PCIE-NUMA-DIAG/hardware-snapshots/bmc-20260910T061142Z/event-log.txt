@@ -1,0 +1,198 @@
+IANA PEN registry open failed: No such file or directory
+   1 | 12/10/2025 | 06:39:57 AM CST | Event Logging Disabled SEL_Status | Log area reset/cleared | Asserted
+   2 | 12/10/2025 | 06:40:13 AM CST | System ACPI Power State ACPI_PWR | S4/S5: soft-off | Asserted
+   3 | 01/01/2000 | 08:01:43 AM CST | Fan FAN0_Status | Transition to OK | Asserted
+   4 | 01/01/2000 | 08:01:43 AM CST | Fan FAN1_Status | Transition to OK | Asserted
+   5 | 01/01/2000 | 08:01:43 AM CST | Fan FAN2_Status | Transition to OK | Asserted
+   6 | 01/01/2000 | 08:01:44 AM CST | Fan FAN3_Status | Transition to OK | Asserted
+   7 | 01/01/2000 | 08:01:44 AM CST | Fan FAN4_Status | Transition to OK | Asserted
+   8 | 01/01/2000 | 08:01:44 AM CST | Fan FAN5_Status | Transition to OK | Asserted
+   9 | 01/01/2000 | 08:01:44 AM CST | Power Supply PSU0_Status | Presence detected | Asserted
+   a | 01/01/2000 | 08:01:44 AM CST | Power Supply PSU1_Status | Presence detected | Asserted
+   b | 01/01/2000 | 08:01:44 AM CST | Power Supply PSU2_Status | Presence detected | Asserted
+   c | 01/01/2000 | 08:01:44 AM CST | Power Supply PSU2_Status | Predictive failure | Asserted
+   d | 01/01/2000 | 08:01:44 AM CST | Power Supply PSU2_Status | AC lost or out-of-range | Asserted
+   e | 01/01/2000 | 08:01:44 AM CST | Power Supply PSU3_Status | Presence detected | Asserted
+   f | 01/01/2000 | 08:01:44 AM CST | Power Supply PSU3_Status | Predictive failure | Asserted
+  10 | 01/01/2000 | 08:01:44 AM CST | Power Supply PSU3_Status | AC lost or out-of-range | Asserted
+  11 | 01/01/2000 | 08:01:44 AM CST | Power Supply PSU_Redundant | Redundancy Lost | Asserted
+  12 | 01/01/2000 | 08:01:44 AM CST | Fan FAN6_Status | Transition to OK | Asserted
+  13 | 01/01/2000 | 08:01:44 AM CST | Fan FAN7_Status | Transition to OK | Asserted
+  14 | 01/01/2000 | 08:01:44 AM CST | Fan FAN8_Status | Transition to OK | Asserted
+  15 | 01/01/2000 | 08:01:44 AM CST | Fan FAN9_Status | Transition to OK | Asserted
+  16 | 01/01/2000 | 08:01:44 AM CST | Fan FAN10_Status | Transition to OK | Asserted
+  17 | 01/01/2000 | 08:01:44 AM CST | Fan FAN11_Status | Transition to OK | Asserted
+  18 | 01/01/2000 | 08:02:09 AM CST | Chassis Sys_Health | Transition to Critical from less severe | Asserted
+  19 | 01/01/2000 | 08:02:20 AM CST | System Boot Initiated BMC_Boot_Up | Initiated by power up | Asserted
+  1a | 01/01/2000 | 08:03:28 AM CST | Power Supply PSU3_Status | Predictive failure | Deasserted
+  1b | 01/01/2000 | 08:03:28 AM CST | Power Supply PSU3_Status | AC lost or out-of-range | Deasserted
+  1c | 01/01/2000 | 08:06:12 AM CST | Power Supply PSU2_Status | Predictive failure | Deasserted
+  1d | 01/01/2000 | 08:06:12 AM CST | Power Supply PSU2_Status | AC lost or out-of-range | Deasserted
+  1e | 01/01/2000 | 08:06:12 AM CST | Power Supply PSU_Redundant | Redundancy Lost | Deasserted
+  1f | 01/01/2000 | 08:06:18 AM CST | Chassis Sys_Health | Transition to Critical from less severe | Deasserted
+  20 | 01/01/2000 | 08:06:35 AM CST | Button Power_Button | Power Button pressed | Asserted
+  21 | 01/01/2000 | 08:07:13 AM CST | System ACPI Power State ACPI_PWR | S0/G0: working | Asserted
+  22 | 01/01/2000 | 08:07:21 AM CST | Drive Slot / Bay F_HDD0 | Drive Present | Asserted
+  23 | 01/01/2000 | 08:07:21 AM CST | Drive Slot / Bay F_HDD1 | Drive Present | Asserted
+  24 | 01/01/2000 | 08:07:21 AM CST | Drive Slot / Bay F_HDD2 | Drive Present | Asserted
+  25 | 01/01/2000 | 08:07:21 AM CST | Drive Slot / Bay F_HDD3 | Drive Present | Asserted
+  26 | 01/01/2000 | 08:07:21 AM CST | Drive Slot / Bay F_HDD4 | Drive Present | Asserted
+  27 | 01/01/2000 | 08:07:21 AM CST | Drive Slot / Bay F_HDD5 | Drive Present | Asserted
+  28 | 12/23/2025 | 12:28:14 AM CST | Memory CPU0_CAD0 | Presence Detected | Asserted
+  29 | 12/23/2025 | 12:28:14 AM CST | Memory CPU0_CBD0 | Presence Detected | Asserted
+  2a | 12/23/2025 | 12:28:14 AM CST | Memory CPU0_CCD0 | Presence Detected | Asserted
+  2b | 12/23/2025 | 12:28:14 AM CST | Memory CPU0_CED0 | Presence Detected | Asserted
+  2c | 12/23/2025 | 12:28:14 AM CST | Memory CPU0_CGD0 | Presence Detected | Asserted
+  2d | 12/23/2025 | 12:28:14 AM CST | Memory CPU0_CHD0 | Presence Detected | Asserted
+  2e | 12/23/2025 | 12:28:14 AM CST | Memory CPU0_CID0 | Presence Detected | Asserted
+  2f | 12/23/2025 | 12:28:14 AM CST | Memory CPU0_CKD0 | Presence Detected | Asserted
+  30 | 12/23/2025 | 12:28:14 AM CST | Memory CPU1_CAD0 | Presence Detected | Asserted
+  31 | 12/23/2025 | 12:28:15 AM CST | Memory CPU1_CBD0 | Presence Detected | Asserted
+  32 | 12/23/2025 | 12:28:15 AM CST | Memory CPU1_CCD0 | Presence Detected | Asserted
+  33 | 12/23/2025 | 12:28:15 AM CST | Memory CPU1_CED0 | Presence Detected | Asserted
+  34 | 12/23/2025 | 12:28:15 AM CST | Memory CPU1_CGD0 | Presence Detected | Asserted
+  35 | 12/23/2025 | 12:28:15 AM CST | Memory CPU1_CHD0 | Presence Detected | Asserted
+  36 | 12/23/2025 | 12:28:15 AM CST | Memory CPU1_CID0 | Presence Detected | Asserted
+  37 | 12/23/2025 | 12:28:15 AM CST | Memory CPU1_CKD0 | Presence Detected | Asserted
+  38 | 12/23/2025 | 12:28:18 AM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  39 | 12/23/2025 | 12:28:47 AM CST | Button Power_Button | Power Button pressed | Asserted
+  3a | 12/23/2025 | 12:28:50 AM CST | System ACPI Power State ACPI_PWR | S4/S5: soft-off | Asserted
+  3b | 12/23/2025 | 05:18:18 PM CST | Button Power_Button | Power Button pressed | Asserted
+  3c | 12/23/2025 | 05:18:57 PM CST | System ACPI Power State ACPI_PWR | S0/G0: working | Asserted
+  3d | 12/23/2025 | 05:22:01 PM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  3e | 12/23/2025 | 05:35:18 PM CST | System ACPI Power State ACPI_PWR | S4/S5: soft-off | Asserted
+  3f | 12/23/2025 | 05:35:18 PM CST | Button Power_Button | Power Button pressed | Asserted
+  40 | 12/23/2025 | 06:35:04 PM CST | Button Power_Button | Power Button pressed | Asserted
+  41 | 12/23/2025 | 06:35:44 PM CST | System ACPI Power State ACPI_PWR | S0/G0: working | Asserted
+  42 | 12/23/2025 | 06:39:36 PM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  43 | 12/23/2025 | 06:40:16 PM CST | Button Power_Button | Power Button pressed | Asserted
+  44 | 12/23/2025 | 06:40:16 PM CST | Button Power_Button | Power Button pressed | Asserted
+  45 | 12/23/2025 | 06:43:55 PM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  46 | 12/23/2025 | 06:51:04 PM CST | System Boot Initiated SysRestart | Initiated by warm reset | Asserted
+  47 | 12/23/2025 | 06:54:31 PM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  48 | 03/03/2026 | 02:24:59 AM CST | System ACPI Power State ACPI_PWR | S4/S5: soft-off | Asserted
+  49 | 03/03/2026 | 11:39:53 PM CST | System Boot Initiated SysRestart | Initiated by power up | Asserted
+  4a | 03/03/2026 | 11:40:33 PM CST | System ACPI Power State ACPI_PWR | S0/G0: working | Asserted
+  4b | 03/03/2026 | 03:44:17 PM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  4c | 03/03/2026 | 04:46:09 PM CST | System ACPI Power State ACPI_PWR | S4/S5: soft-off | Asserted
+  4d | 03/11/2026 | 06:08:46 PM CST | System Boot Initiated SysRestart | Initiated by power up | Asserted
+  4e | 03/11/2026 | 06:09:24 PM CST | System ACPI Power State ACPI_PWR | S0/G0: working | Asserted
+  4f | 03/11/2026 | 06:13:40 PM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  50 | 03/11/2026 | 06:28:58 PM CST | System Boot Initiated SysRestart | Initiated by warm reset | Asserted
+  51 | 03/11/2026 | 06:33:00 PM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  52 | 03/23/2026 | 03:00:10 PM CST | System Boot Initiated SysRestart | Initiated by warm reset | Asserted
+  53 | 03/23/2026 | 03:04:28 PM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  54 | 05/12/2026 | 10:33:08 AM CST | Power Supply PSU3_Status | Predictive failure | Asserted
+  55 | 05/12/2026 | 10:33:08 AM CST | Power Supply PSU3_Status | AC lost or out-of-range | Asserted
+  56 | 05/12/2026 | 10:33:09 AM CST | Power Supply PSU_Redundant | Redundancy Lost | Asserted
+  57 | 05/12/2026 | 10:33:13 AM CST | Chassis Sys_Health | Transition to Critical from less severe | Asserted
+  58 | 05/22/2026 | 10:32:57 PM CST | System Boot Initiated SysRestart | Initiated by warm reset | Asserted
+  59 | 05/22/2026 | 10:37:39 PM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  5a | 06/25/2026 | 04:56:15 PM CST | System Boot Initiated SysRestart | Initiated by warm reset | Asserted
+  5b | 06/25/2026 | 05:00:17 PM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  5c | 06/26/2026 | 09:54:16 AM CST | System Boot Initiated SysRestart | Initiated by warm reset | Asserted
+  5d | 06/26/2026 | 09:58:28 AM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  5e | 07/01/2026 | 05:54:02 PM CST | System Boot Initiated SysRestart | Initiated by warm reset | Asserted
+  5f | 07/01/2026 | 05:58:19 PM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  60 | 07/13/2026 | 10:02:16 PM CST | System Boot Initiated SysRestart | Initiated by warm reset | Asserted
+  61 | 07/13/2026 | 10:06:37 PM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  62 | 07/18/2026 | 12:00:18 PM CST | OS Critical Stop SysShutdown | OS graceful shutdown | Asserted
+  63 | 07/18/2026 | 12:00:18 PM CST | System ACPI Power State ACPI_PWR | S4/S5: soft-off | Asserted
+  64 | 01/01/2000 | 08:01:47 AM CST | Fan FAN0_Status | Transition to OK | Asserted
+  65 | 01/01/2000 | 08:01:48 AM CST | Fan FAN1_Status | Transition to OK | Asserted
+  66 | 01/01/2000 | 08:01:48 AM CST | Fan FAN2_Status | Transition to OK | Asserted
+  67 | 01/01/2000 | 08:01:48 AM CST | Fan FAN3_Status | Transition to OK | Asserted
+  68 | 01/01/2000 | 08:01:48 AM CST | Fan FAN4_Status | Transition to OK | Asserted
+  69 | 01/01/2000 | 08:01:48 AM CST | Fan FAN5_Status | Transition to OK | Asserted
+  6a | 01/01/2000 | 08:01:48 AM CST | Power Supply PSU0_Status | Presence detected | Asserted
+  6b | 01/01/2000 | 08:01:48 AM CST | Power Supply PSU1_Status | Presence detected | Asserted
+  6c | 01/01/2000 | 08:01:48 AM CST | Power Supply PSU2_Status | Presence detected | Asserted
+  6d | 01/01/2000 | 08:01:48 AM CST | Power Supply PSU3_Status | Presence detected | Asserted
+  6e | 01/01/2000 | 08:01:48 AM CST | Power Supply PSU3_Status | Predictive failure | Asserted
+  6f | 01/01/2000 | 08:01:48 AM CST | Power Supply PSU3_Status | AC lost or out-of-range | Asserted
+  70 | 01/01/2000 | 08:01:48 AM CST | Power Supply PSU_Redundant | Redundancy Lost | Asserted
+  71 | 01/01/2000 | 08:01:48 AM CST | Fan FAN6_Status | Transition to OK | Asserted
+  72 | 01/01/2000 | 08:01:48 AM CST | Fan FAN7_Status | Transition to OK | Asserted
+  73 | 01/01/2000 | 08:01:48 AM CST | Fan FAN8_Status | Transition to OK | Asserted
+  74 | 01/01/2000 | 08:01:48 AM CST | Fan FAN9_Status | Transition to OK | Asserted
+  75 | 01/01/2000 | 08:01:48 AM CST | Fan FAN10_Status | Transition to OK | Asserted
+  76 | 01/01/2000 | 08:01:48 AM CST | Fan FAN11_Status | Transition to OK | Asserted
+  77 | 01/01/2000 | 08:02:16 AM CST | Chassis Sys_Health | Transition to Critical from less severe | Asserted
+  78 | 01/01/2000 | 08:02:29 AM CST | System Boot Initiated BMC_Boot_Up | Initiated by power up | Asserted
+  79 | 01/03/2000 | 01:42:01 AM CST | System Boot Initiated SysRestart | Initiated by power up | Asserted
+  7a | 01/03/2000 | 01:42:42 AM CST | System ACPI Power State ACPI_PWR | S0/G0: working | Asserted
+  7b | 01/03/2000 | 01:42:46 AM CST | Drive Slot / Bay F_HDD0 | Drive Present | Asserted
+  7c | 01/03/2000 | 01:42:46 AM CST | Drive Slot / Bay F_HDD1 | Drive Present | Asserted
+  7d | 01/03/2000 | 01:42:46 AM CST | Drive Slot / Bay F_HDD2 | Drive Present | Asserted
+  7e | 01/03/2000 | 01:42:46 AM CST | Drive Slot / Bay F_HDD3 | Drive Present | Asserted
+  7f | 01/03/2000 | 01:42:47 AM CST | Drive Slot / Bay F_HDD4 | Drive Present | Asserted
+  80 | 01/03/2000 | 01:42:47 AM CST | Drive Slot / Bay F_HDD5 | Drive Present | Asserted
+  81 | 07/20/2026 | 09:24:05 AM CST | Memory CPU0_CAD0 | Presence Detected | Asserted
+  82 | 07/20/2026 | 09:24:05 AM CST | Memory CPU0_CBD0 | Presence Detected | Asserted
+  83 | 07/20/2026 | 09:24:05 AM CST | Memory CPU0_CCD0 | Presence Detected | Asserted
+  84 | 07/20/2026 | 09:24:05 AM CST | Memory CPU0_CED0 | Presence Detected | Asserted
+  85 | 07/20/2026 | 09:24:05 AM CST | Memory CPU0_CGD0 | Presence Detected | Asserted
+  86 | 07/20/2026 | 09:24:05 AM CST | Memory CPU0_CHD0 | Presence Detected | Asserted
+  87 | 07/20/2026 | 09:24:05 AM CST | Memory CPU0_CID0 | Presence Detected | Asserted
+  88 | 07/20/2026 | 09:24:05 AM CST | Memory CPU0_CKD0 | Presence Detected | Asserted
+  89 | 07/20/2026 | 09:24:05 AM CST | Memory CPU1_CAD0 | Presence Detected | Asserted
+  8a | 07/20/2026 | 09:24:05 AM CST | Memory CPU1_CBD0 | Presence Detected | Asserted
+  8b | 07/20/2026 | 09:24:05 AM CST | Memory CPU1_CCD0 | Presence Detected | Asserted
+  8c | 07/20/2026 | 09:24:06 AM CST | Memory CPU1_CED0 | Presence Detected | Asserted
+  8d | 07/20/2026 | 09:24:06 AM CST | Memory CPU1_CGD0 | Presence Detected | Asserted
+  8e | 07/20/2026 | 09:24:06 AM CST | Memory CPU1_CHD0 | Presence Detected | Asserted
+  8f | 07/20/2026 | 09:24:06 AM CST | Memory CPU1_CID0 | Presence Detected | Asserted
+  90 | 07/20/2026 | 09:24:06 AM CST | Memory CPU1_CKD0 | Presence Detected | Asserted
+  91 | 07/20/2026 | 09:24:53 AM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  92 | 07/24/2026 | 11:11:04 AM CST | System Boot Initiated SysRestart | Initiated by warm reset | Asserted
+  93 | 07/24/2026 | 11:15:08 AM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  94 | 09/08/2026 | 11:17:48 AM CST | System Boot Initiated SysRestart | Initiated by warm reset | Asserted
+  95 | 09/08/2026 | 11:22:11 AM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  96 | 09/09/2026 | 08:48:17 PM CST | Critical Interrupt PCIe_Status | Bus Fatal Error | Asserted
+  97 | 09/10/2026 | 08:48:06 AM CST | Critical Interrupt PCIe_Status | Bus Fatal Error | Deasserted
+  98 | 09/10/2026 | 08:48:10 AM CST | System ACPI Power State ACPI_PWR | S4/S5: soft-off | Asserted
+  99 | 09/10/2026 | 08:48:15 AM CST | System Boot Initiated SysRestart | Initiated by power up | Asserted
+  9a | 09/10/2026 | 08:48:53 AM CST | System ACPI Power State ACPI_PWR | S0/G0: working | Asserted
+  9b | 09/10/2026 | 08:52:16 AM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  9c | 09/10/2026 | 09:07:19 AM CST | Critical Interrupt PCIe_Status | Bus Fatal Error | Asserted
+  9d | 09/10/2026 | 09:17:45 AM CST | Power Supply PSU3_Status | Predictive failure | Deasserted
+  9e | 09/10/2026 | 09:17:45 AM CST | Power Supply PSU3_Status | AC lost or out-of-range | Deasserted
+  9f | 09/10/2026 | 09:17:46 AM CST | Power Supply PSU_Redundant | Redundancy Lost | Deasserted
+  a0 | 09/10/2026 | 09:26:34 AM CST | Critical Interrupt PCIe_Status | Bus Fatal Error | Deasserted
+  a1 | 09/10/2026 | 09:26:37 AM CST | System ACPI Power State ACPI_PWR | S4/S5: soft-off | Asserted
+  a2 | 09/10/2026 | 09:26:37 AM CST | Chassis Sys_Health | Transition to Critical from less severe | Deasserted
+  a3 | 09/10/2026 | 09:26:43 AM CST | System Boot Initiated SysRestart | Initiated by power up | Asserted
+  a4 | 09/10/2026 | 09:27:22 AM CST | System ACPI Power State ACPI_PWR | S0/G0: working | Asserted
+  a5 | 09/10/2026 | 09:30:57 AM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  a6 | 09/10/2026 | 09:59:32 AM CST | Critical Interrupt PCIe_Status | Bus Fatal Error | Asserted
+  a7 | 09/10/2026 | 09:59:41 AM CST | Chassis Sys_Health | Transition to Critical from less severe | Asserted
+  a8 | 09/10/2026 | 10:08:42 AM CST | Critical Interrupt PCIe_Status | Bus Fatal Error | Deasserted
+  a9 | 09/10/2026 | 10:08:45 AM CST | System ACPI Power State ACPI_PWR | S4/S5: soft-off | Asserted
+  aa | 09/10/2026 | 10:08:48 AM CST | Chassis Sys_Health | Transition to Critical from less severe | Deasserted
+  ab | 09/10/2026 | 10:08:51 AM CST | System Boot Initiated SysRestart | Initiated by power up | Asserted
+  ac | 09/10/2026 | 10:09:31 AM CST | System ACPI Power State ACPI_PWR | S0/G0: working | Asserted
+  ad | 09/10/2026 | 10:13:06 AM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  ae | 09/10/2026 | 11:16:00 AM CST | Critical Interrupt PCIe_Status | Bus Fatal Error | Asserted
+  af | 09/10/2026 | 11:16:07 AM CST | Chassis Sys_Health | Transition to Critical from less severe | Asserted
+  b0 | 09/10/2026 | 11:38:33 AM CST | Critical Interrupt PCIe_Status | Bus Fatal Error | Deasserted
+  b1 | 09/10/2026 | 11:38:35 AM CST | System ACPI Power State ACPI_PWR | S4/S5: soft-off | Asserted
+  b2 | 09/10/2026 | 11:38:38 AM CST | Chassis Sys_Health | Transition to Critical from less severe | Deasserted
+  b3 | 09/10/2026 | 11:38:41 AM CST | System Boot Initiated SysRestart | Initiated by power up | Asserted
+  b4 | 09/10/2026 | 11:39:20 AM CST | System ACPI Power State ACPI_PWR | S0/G0: working | Asserted
+  b5 | 09/10/2026 | 11:42:44 AM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  b6 | 09/10/2026 | 12:22:02 PM CST | Critical Interrupt PCIe_Status | Bus Fatal Error | Asserted
+  b7 | 09/10/2026 | 12:22:08 PM CST | Chassis Sys_Health | Transition to Critical from less severe | Asserted
+  b8 | 09/10/2026 | 12:25:55 PM CST | Critical Interrupt PCIe_Status | Bus Fatal Error | Deasserted
+  b9 | 09/10/2026 | 12:25:58 PM CST | System ACPI Power State ACPI_PWR | S4/S5: soft-off | Asserted
+  ba | 09/10/2026 | 12:26:02 PM CST | Chassis Sys_Health | Transition to Critical from less severe | Deasserted
+  bb | 09/10/2026 | 12:26:04 PM CST | System Boot Initiated SysRestart | Initiated by power up | Asserted
+  bc | 09/10/2026 | 12:26:44 PM CST | System ACPI Power State ACPI_PWR | S0/G0: working | Asserted
+  bd | 09/10/2026 | 12:30:18 PM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted
+  be | 09/10/2026 | 12:57:31 PM CST | Critical Interrupt PCIe_Status | Bus Fatal Error | Asserted
+  bf | 09/10/2026 | 12:57:38 PM CST | Chassis Sys_Health | Transition to Critical from less severe | Asserted
+  c0 | 09/10/2026 | 01:26:59 PM CST | Critical Interrupt PCIe_Status | Bus Fatal Error | Deasserted
+  c1 | 09/10/2026 | 01:27:00 PM CST | System ACPI Power State ACPI_PWR | S4/S5: soft-off | Asserted
+  c2 | 09/10/2026 | 01:27:05 PM CST | Chassis Sys_Health | Transition to Critical from less severe | Deasserted
+  c3 | 09/10/2026 | 01:27:07 PM CST | System Boot Initiated SysRestart | Initiated by power up | Asserted
+  c4 | 09/10/2026 | 01:27:47 PM CST | System ACPI Power State ACPI_PWR | S0/G0: working | Asserted
+  c5 | 09/10/2026 | 01:31:20 PM CST | System Boot Initiated BIOS_Boot_Up | State Asserted | Asserted

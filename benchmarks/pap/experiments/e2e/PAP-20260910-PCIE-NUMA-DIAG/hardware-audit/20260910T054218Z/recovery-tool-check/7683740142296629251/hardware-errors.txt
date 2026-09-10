@@ -1,0 +1,19 @@
+<0>[ 3769.828849] {1}[Hardware Error]: Hardware error from APEI Generic Hardware Error Source: 515
+<0>[ 3769.828853] {1}[Hardware Error]: event severity: fatal
+<0>[ 3769.828856] {1}[Hardware Error]:  Error 0, type: fatal
+<0>[ 3769.828857] {1}[Hardware Error]:  fru_text: PcieError
+<0>[ 3769.828859] {1}[Hardware Error]:   section_type: PCIe error
+<0>[ 3769.828860] {1}[Hardware Error]:   port_type: 1, legacy PCI end point
+<0>[ 3769.828861] {1}[Hardware Error]:   version: 0.2
+<0>[ 3769.828861] {1}[Hardware Error]:   command: 0x0406, status: 0x0010
+<0>[ 3769.828862] {1}[Hardware Error]:   device_id: 0000:e1:00.0
+<0>[ 3769.828863] {1}[Hardware Error]:   slot: 0
+<0>[ 3769.828864] {1}[Hardware Error]:   secondary_bus: 0x00
+<0>[ 3769.828864] {1}[Hardware Error]:   vendor_id: 0x10de, device_id: 0x26ba
+<0>[ 3769.828865] {1}[Hardware Error]:   class_code: 030200
+<0>[ 3769.828865] {1}[Hardware Error]:   bridge: secondary_status: 0x4000, control: 0x0000
+<0>[ 3769.828865] {1}[Hardware Error]:   aer_cor_status: 0x00008000, aer_cor_mask: 0x0000b1c1
+<0>[ 3769.828866] {1}[Hardware Error]:   aer_uncor_status: 0x00014000, aer_uncor_mask: 0x00000000
+<0>[ 3769.828866] {1}[Hardware Error]:   aer_uncor_severity: 0x00476030
+<0>[ 3769.828866] {1}[Hardware Error]:   TLP Header: 00000000 00000000 00000000 00000000
+<0>[ 3769.828869] Kernel panic - not syncing: GHES: Fatal hardware error

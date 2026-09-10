@@ -1,0 +1,172 @@
+Panic#1 Part2
+<30>[   11.797528] systemd[1]: Mounting snap-snapd-27738.mount - Mount unit for snapd, revision 27738...
+<30>[   11.799334] systemd[1]: Mounting snap-snapd\x2ddesktop\x2dintegration-387.mount - Mount unit for snapd-desktop-integration, revision 387...
+<30>[   11.800906] systemd[1]: Mounting snap-snapd\x2ddesktop\x2dintegration-391.mount - Mount unit for snapd-desktop-integration, revision 391...
+<6>[   11.800925] loop8: detected capacity change from 0 to 33688
+<30>[   11.802510] systemd[1]: Starting systemd-udevd.service - Rule-based Manager for Device Events and Files...
+<6>[   11.802552] loop11: detected capacity change from 0 to 1241248
+<30>[   11.805977] systemd[1]: Finished systemd-modules-load.service - Load Kernel Modules.
+<30>[   11.808614] systemd[1]: Mounted snap-bare-5.mount - Mount unit for bare, revision 5.
+<30>[   11.808705] systemd[1]: Mounted snap-core22-2411.mount - Mount unit for core22, revision 2411.
+<30>[   11.808768] systemd[1]: Mounted snap-core22-2437.mount - Mount unit for core22, revision 2437.
+<30>[   11.808906] systemd[1]: Mounted snap-core24-1587.mount - Mount unit for core24, revision 1587.
+<30>[   11.808961] systemd[1]: Mounted snap-core24-1643.mount - Mount unit for core24, revision 1643.
+<30>[   11.809014] systemd[1]: Mounted snap-firefox-8803.mount - Mount unit for firefox, revision 8803.
+<30>[   11.809079] systemd[1]: Mounted snap-firefox-8863.mount - Mount unit for firefox, revision 8863.
+<30>[   11.809142] systemd[1]: Mounted snap-firmware\x2dupdater-224.mount - Mount unit for firmware-updater, revision 224.
+<30>[   11.809202] systemd[1]: Mounted snap-firmware\x2dupdater-226.mount - Mount unit for firmware-updater, revision 226.
+<30>[   11.809263] systemd[1]: Mounted snap-gnome\x2d42\x2d2204-247.mount - Mount unit for gnome-42-2204, revision 247.
+<30>[   11.809328] systemd[1]: Mounted snap-gnome\x2d42\x2d2204-263.mount - Mount unit for gnome-42-2204, revision 263.
+<30>[   11.809374] systemd[1]: Mounted snap-gnome\x2d46\x2d2404-153.mount - Mount unit for gnome-46-2404, revision 153.
+<30>[   11.809416] systemd[1]: Mounted snap-gnome\x2d46\x2d2404-164.mount - Mount unit for gnome-46-2404, revision 164.
+<30>[   11.810627] systemd[1]: Starting systemd-sysctl.service - Apply Kernel Variables...
+<30>[   11.812378] systemd[1]: Mounted snap-gtk\x2dcommon\x2dthemes-1535.mount - Mount unit for gtk-common-themes, revision 1535.
+<30>[   11.813953] systemd[1]: Mounted snap-mesa\x2d2404-1165.mount - Mount unit for mesa-2404, revision 1165.
+<30>[   11.815326] systemd[1]: Mounted snap-mesa\x2d2404-1839.mount - Mount unit for mesa-2404, revision 1839.
+<30>[   11.816544] systemd[1]: Mounted snap-snap\x2dstore-1367.mount - Mount unit for snap-store, revision 1367.
+<30>[   11.818162] systemd[1]: Mounted snap-snap\x2dstore-1390.mount - Mount unit for snap-store, revision 1390.
+<30>[   11.818222] systemd[1]: Mounted snap-snapd-27710.mount - Mount unit for snapd, revision 27710.
+<30>[   11.818266] systemd[1]: Mounted snap-snapd-27738.mount - Mount unit for snapd, revision 27738.
+<30>[   11.818307] systemd[1]: Mounted snap-snapd\x2ddesktop\x2dintegration-387.mount - Mount unit for snapd-desktop-integration, revision 387.
+<30>[   11.818341] systemd[1]: Mounted snap-snapd\x2ddesktop\x2dintegration-391.mount - Mount unit for snapd-desktop-integration, revision 391.
+<30>[   11.818444] systemd[1]: Reached target snapd.mounts.target - Mounted snaps.
+<30>[   11.819341] systemd[1]: Started systemd-journald.service - Journal Service.
+<46>[   11.828442] systemd-journald[2435]: Received client request to flush runtime journal.
+<44>[   11.830677] systemd-journald[2435]: File /var/log/journal/a4a8b971a913429eb4435f42fa9c8f65/system.journal corrupted or uncleanly shut down, renaming and replacing.
+<6>[   12.010045] IPMI message handler: version 39.2
+<6>[   12.021799] ipmi device interface
+<6>[   12.034823] piix4_smbus 0000:00:14.0: SMBus Host Controller at 0xb00, revision 0
+<6>[   12.034827] piix4_smbus 0000:00:14.0: Using register 0x02 for SMBus port selection
+<6>[   12.036977] ipmi_si: IPMI System Interface driver
+<6>[   12.038848] ipmi_si dmi-ipmi-si.0: ipmi_platform: probing via SMBIOS
+<6>[   12.038851] ipmi_platform: ipmi_si: SMBIOS: io 0xca2 regsize 1 spacing 1 irq 0
+<6>[   12.038853] ipmi_si: Adding SMBIOS-specified kcs state machine
+<6>[   12.057171] ipmi_si IPI0001:00: ipmi_platform: probing via ACPI
+<6>[   12.057408] ipmi_si IPI0001:00: ipmi_platform: [io  0x0ca2] regsize 1 spacing 1 irq 0
+<6>[   12.057605] ipmi_si dmi-ipmi-si.0: Removing SMBIOS-specified kcs state machine in favor of ACPI
+<6>[   12.057607] ipmi_si: Adding ACPI-specified kcs state machine
+<6>[   12.059280] piix4_smbus 0000:00:14.0: Auxiliary SMBus Host Controller at 0xb20
+<6>[   12.075492] ipmi_si: Trying ACPI-specified kcs state machine at i/o address 0xca2, slave address 0x20, irq 0
+<6>[   12.082496] i2c i2c-5: Successfully instantiated SPD at 0x50
+<6>[   12.093062] i2c i2c-5: Successfully instantiated SPD at 0x51
+<6>[   12.098402] i2c i2c-5: Successfully instantiated SPD at 0x52
+<6>[   12.105593] i2c i2c-5: Successfully instantiated SPD at 0x53
+<6>[   12.107170] ccp 0000:53:00.5: enabling device (0000 -> 0002)
+<6>[   12.107969] i2c i2c-5: Successfully instantiated SPD at 0x54
+<6>[   12.109252] ccp 0000:53:00.5: SEV: memory encryption not enabled by BIOS
+<5>[   12.109254] ccp 0000:53:00.5: psp enabled
+<6>[   12.118817] ccp 0000:d1:00.5: enabling device (0000 -> 0002)
+<6>[   12.122514] i2c i2c-5: Successfully instantiated SPD at 0x55
+<6>[   12.125734] i2c i2c-5: Successfully instantiated SPD at 0x56
+<6>[   12.131674] i2c i2c-5: Successfully instantiated SPD at 0x57
+<5>[   12.137995] ccp 0000:d1:00.5: psp enabled
+<6>[   12.230357] usbcore: registered new interface driver cdc_wdm
+<6>[   12.232424] RAPL PMU: API unit is 2^-32 Joules, 2 fixed counters, 163840 ms ovfl timer
+<6>[   12.232428] RAPL PMU: hw unit of domain package 2^-16 Joules
+<6>[   12.232429] RAPL PMU: hw unit of domain core 2^-16 Joules
+<6>[   12.255213] usbcore: registered new interface driver cdc_mbim
+<6>[   12.322142] ast 0000:52:00.0: vgaarb: deactivate vga console
+<6>[   12.323760] ast 0000:52:00.0: Using default configuration
+<6>[   12.323762] ast 0000:52:00.0: AST 2600 detected
+<6>[   12.323775] ast 0000:52:00.0: [drm] Using ASPEED DisplayPort transmitter
+<4>[   12.337922] nvidia: loading out-of-tree module taints kernel.
+<5>[   12.337932] nvidia: module verification failed: signature and/or required key missing - tainting kernel
+<6>[   12.338314] ast 0000:52:00.0: [drm] Registered 1 planes with drm panic
+<5>[   12.408721] ses 0:1:124:0: Attached Enclosure device
+<6>[   12.574630] [drm] Initialized ast 0.1.0 for 0000:52:00.0 on minor 1
+<6>[   12.575106] fbcon: astdrmfb (fb0) is primary device
+<6>[   12.575108] fbcon: Deferring console take-over
+<6>[   12.575109] ast 0000:52:00.0: [drm] fb0: astdrmfb frame buffer device
+<6>[   12.583433] nvidia-nvlink: Nvlink Core is being initialized, major device number 510
+<3>[   12.583460] 
+<6>[   12.587643] nvidia 0000:01:00.0: enabling device (0000 -> 0002)
+<6>[   12.616416] kvm_amd: TSC scaling supported
+<6>[   12.616420] kvm_amd: Nested Virtualization enabled
+<6>[   12.616422] kvm_amd: Nested Paging enabled
+<6>[   12.616424] kvm_amd: LBR virtualization supported
+<6>[   12.616426] kvm_amd: AVIC enabled
+<6>[   12.616427] kvm_amd: x2AVIC enabled (max 512 vCPUs)
+<6>[   12.616427] kvm_amd: Virtual VMLOAD VMSAVE supported
+<6>[   12.616428] kvm_amd: Virtual GIF supported
+<6>[   12.616428] kvm_amd: Virtual NMI enabled
+<6>[   12.634740] nvidia 0000:11:00.0: enabling device (0000 -> 0002)
+<6>[   12.680663] nvidia 0000:61:00.0: enabling device (0000 -> 0002)
+<6>[   12.728680] nvidia 0000:71:00.0: enabling device (0000 -> 0002)
+<6>[   12.749986] EXT4-fs (sde1): mounted filesystem 3ec96b97-8bd4-43a3-a471-e7acf2be7374 r/w with ordered data mode. Quota mode: none.
+<6>[   12.751027] EXT4-fs (sdf1): mounted filesystem 28dada2e-d407-4167-bf51-ebd21e980952 r/w with ordered data mode. Quota mode: none.
+<6>[   12.754921] EXT4-fs (sdd1): mounted filesystem 1ede4fa3-2d2b-40ea-92d0-836ea9e50d85 r/w with ordered data mode. Quota mode: none.
+<6>[   12.756291] EXT4-fs (sdb1): mounted filesystem cbf0716d-f059-4d6d-bc54-175197cb8cf8 r/w with ordered data mode. Quota mode: none.
+<6>[   12.756743] EXT4-fs (sdc1): mounted filesystem 15312723-0fea-4a05-99c6-97cd7cfeb957 r/w with ordered data mode. Quota mode: none.
+<6>[   12.770673] nvidia 0000:81:00.0: enabling device (0000 -> 0002)
+<5>[   12.796072] audit: type=1400 audit(1789025443.407:2): apparmor="STATUS" operation="profile_load" profile="unconfined" name="podman" pid=3588 comm="apparmor_parser"
+<5>[   12.796109] audit: type=1400 audit(1789025443.407:3): apparmor="STATUS" operation="profile_load" profile="unconfined" name="notepadqq" pid=3580 comm="apparmor_parser"
+<5>[   12.796146] audit: type=1400 audit(1789025443.407:4): apparmor="STATUS" operation="profile_load" profile="unconfined" name="cam" pid=3546 comm="apparmor_parser"
+<5>[   12.796202] audit: type=1400 audit(1789025443.407:5): apparmor="STATUS" operation="profile_load" profile="unconfined" name="evolution" pid=3556 comm="apparmor_parser"
+<5>[   12.796230] audit: type=1400 audit(1789025443.407:6): apparmor="STATUS" operation="profile_load" profile="unconfined" name="foliate" pid=3559 comm="apparmor_parser"
+<5>[   12.796256] audit: type=1400 audit(1789025443.407:7): apparmor="STATUS" operation="profile_load" profile="unconfined" name="lc-compliance" pid=3566 comm="apparmor_parser"
+<5>[   12.796292] audit: type=1400 audit(1789025443.407:8): apparmor="STATUS" operation="profile_load" profile="unconfined" name="epiphany" pid=3555 comm="apparmor_parser"
+<6>[   12.807807] MCE: In-kernel MCE decoding enabled.
+<6>[   12.811178] EDAC MC0: Giving out device to module amd64_edac controller F1Ah_M02h: DEV 0000:00:18.3 (INTERRUPT)
+<6>[   12.811181] EDAC amd64: F1Ah_M02h detected (node 0).
+<7>[   12.811182] EDAC MC: UMC0 chip selects:
+<6>[   12.811183] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.811184] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811185] EDAC MC: UMC1 chip selects:
+<6>[   12.811186] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.811186] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811187] EDAC MC: UMC2 chip selects:
+<6>[   12.811187] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   12.811187] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811187] EDAC MC: UMC3 chip selects:
+<6>[   12.811188] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.811188] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811188] EDAC MC: UMC4 chip selects:
+<6>[   12.811189] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.811189] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811189] EDAC MC: UMC5 chip selects:
+<6>[   12.811189] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   12.811190] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811190] EDAC MC: UMC6 chip selects:
+<6>[   12.811190] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.811191] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811191] EDAC MC: UMC7 chip selects:
+<6>[   12.811191] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.811191] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811192] EDAC MC: UMC8 chip selects:
+<6>[   12.811192] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   12.811192] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811193] EDAC MC: UMC9 chip selects:
+<6>[   12.811193] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.811193] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811194] EDAC MC: UMC10 chip selects:
+<6>[   12.811194] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.811194] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811194] EDAC MC: UMC11 chip selects:
+<6>[   12.811195] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   12.811195] EDAC amd64: MC: 2:     0MB 3:     0MB
+<6>[   12.811537] EDAC MC1: Giving out device to module amd64_edac controller F1Ah_M02h: DEV 0000:00:19.3 (INTERRUPT)
+<6>[   12.811538] EDAC amd64: F1Ah_M02h detected (node 1).
+<7>[   12.811538] EDAC MC: UMC0 chip selects:
+<6>[   12.811538] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.811539] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811539] EDAC MC: UMC1 chip selects:
+<6>[   12.811539] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.811540] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811540] EDAC MC: UMC2 chip selects:
+<6>[   12.811540] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   12.811541] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811541] EDAC MC: UMC3 chip selects:
+<6>[   12.811541] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.811542] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811542] EDAC MC: UMC4 chip selects:
+<6>[   12.811542] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.811542] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811543] EDAC MC: UMC5 chip selects:
+<6>[   12.811543] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   12.811543] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811544] EDAC MC: UMC6 chip selects:
+<6>[   12.811544] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.811544] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   12.811545] EDAC MC: UMC7 chip selects:
+<6>[   12.811545] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   12.811545] EDAC amd64: MC: 2:     0MB 3:     0MB

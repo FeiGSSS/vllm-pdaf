@@ -1,0 +1,129 @@
+Panic#1 Part3
+<6>[    7.962024] cdc_ncm 4-2.3:2.0: MAC-Address: 9c:69:d3:24:7e:5c
+<6>[    7.962027] cdc_ncm 4-2.3:2.0: setting rx_max = 16384
+<6>[    7.962305] cdc_ncm 4-2.3:2.0: setting tx_max = 16384
+<6>[    7.962668] cdc_ncm 4-2.3:2.0 eth0: register 'cdc_ncm' at usb-0000:72:00.4-2.3, CDC NCM (NO ZLP), 9c:69:d3:24:7e:5c
+<6>[    7.962681] usbcore: registered new interface driver cdc_ncm
+<6>[    8.015638] cdc_ncm 4-2.3:2.0 enx9c69d3247e5c: renamed from eth0
+<6>[    8.111696] mlx5_core 0000:31:00.0: firmware version: 28.43.2026
+<6>[    8.111718] mlx5_core 0000:31:00.0: 504.112 Gb/s available PCIe bandwidth (32.0 GT/s PCIe x16 link)
+<6>[    8.390700] mlx5_core 0000:31:00.0: Flow counters bulk query buffer size increased, bulk_query_len(8)
+<6>[    8.392657] mlx5_core 0000:31:00.0: Port module event: module 0, Cable plugged
+<6>[    8.392838] mlx5_core 0000:31:00.0: mlx5_pcie_event:322:(pid 12): PCIe slot power capability was not advertised.
+<6>[    8.399320] mlx5_core 0000:c2:00.0: firmware version: 26.44.1036
+<6>[    8.399351] mlx5_core 0000:c2:00.0: 126.024 Gb/s available PCIe bandwidth (16.0 GT/s PCIe x8 link)
+<6>[    8.922402] mlx5_core 0000:c2:00.0: Rate limit: 127 rates are supported, range: 0Mbps to 24414Mbps
+<6>[    8.922477] mlx5_core 0000:c2:00.0: E-Switch: Total vports 10, per vport: max uc(128) max mc(2048)
+<6>[    8.922789] mlx5_core 0000:c2:00.0: Flow counters bulk query buffer size increased, bulk_query_len(8)
+<6>[    8.930511] mlx5_core 0000:c2:00.0: Port module event: module 0, Cable unplugged
+<6>[    8.930997] mlx5_core 0000:c2:00.0: mlx5_pcie_event:331:(pid 2261): PCIe slot advertised sufficient power (75W).
+<6>[    9.153178] mlx5_core 0000:c2:00.0: MLX5E: StrdRq(1) RqSz(8) StrdSz(2048) RxCqeCmprss(0 enhanced)
+<6>[    9.155912] mlx5_core 0000:c2:00.1: firmware version: 26.44.1036
+<6>[    9.155936] mlx5_core 0000:c2:00.1: 126.024 Gb/s available PCIe bandwidth (16.0 GT/s PCIe x8 link)
+<6>[    9.680134] mlx5_core 0000:c2:00.1: Rate limit: 127 rates are supported, range: 0Mbps to 24414Mbps
+<6>[    9.680194] mlx5_core 0000:c2:00.1: E-Switch: Total vports 10, per vport: max uc(128) max mc(2048)
+<6>[    9.680478] mlx5_core 0000:c2:00.1: Flow counters bulk query buffer size increased, bulk_query_len(8)
+<6>[    9.688858] mlx5_core 0000:c2:00.1: Port module event: module 1, Cable unplugged
+<6>[    9.689370] mlx5_core 0000:c2:00.1: mlx5_pcie_event:331:(pid 2261): PCIe slot advertised sufficient power (75W).
+<6>[    9.910007] mlx5_core 0000:c2:00.1: MLX5E: StrdRq(1) RqSz(8) StrdSz(2048) RxCqeCmprss(0 enhanced)
+<6>[    9.912735] mlx5_core 0000:c2:00.1 ens17f1np1: renamed from eth1
+<6>[    9.912922] mlx5_core 0000:c2:00.0 ens17f0np0: renamed from eth0
+<6>[    9.954459] MACsec IEEE 802.1AE
+<6>[   10.442437] EXT4-fs (sda2): mounted filesystem 7b7712dd-103b-4547-913e-5a6509d96697 ro with ordered data mode. Quota mode: none.
+<30>[   10.573130] systemd[1]: Inserted module 'autofs4'
+<30>[   10.613322] systemd[1]: systemd 255.4-1ubuntu8.17 running in system mode (+PAM +AUDIT +SELINUX +APPARMOR +IMA +SMACK +SECCOMP +GCRYPT -GNUTLS +OPENSSL +ACL +BLKID +CURL +ELFUTILS +FIDO2 +IDN2 -IDN +IPTC +KMOD +LIBCRYPTSETUP +LIBFDISK +PCRE2 -PWQUALITY +P11KIT +QRENCODE +TPM2 +BZIP2 +LZ4 +XZ +ZLIB +ZSTD -BPF_FRAMEWORK -XKBCOMMON +UTMP +SYSVINIT default-hierarchy=unified)
+<30>[   10.613327] systemd[1]: Detected architecture x86-64.
+<30>[   10.614247] systemd[1]: Hostname set to <NF5468-L20B>.
+<30>[   10.801109] systemd[1]: Queued start job for default target graphical.target.
+<30>[   10.825637] systemd[1]: Created slice system-modprobe.slice - Slice /system/modprobe.
+<30>[   10.826199] systemd[1]: Created slice system-systemd\x2dfsck.slice - Slice /system/systemd-fsck.
+<30>[   10.826472] systemd[1]: Created slice user.slice - User and Session Slice.
+<30>[   10.826507] systemd[1]: Started systemd-ask-password-wall.path - Forward Password Requests to Wall Directory Watch.
+<30>[   10.826620] systemd[1]: Set up automount proc-sys-fs-binfmt_misc.automount - Arbitrary Executable File Formats File System Automount Point.
+<30>[   10.826628] systemd[1]: Expecting device dev-disk-by\x2duuid-15312723\x2d0fea\x2d4a05\x2d99c6\x2d97cd7cfeb957.device - /dev/disk/by-uuid/15312723-0fea-4a05-99c6-97cd7cfeb957...
+<30>[   10.826631] systemd[1]: Expecting device dev-disk-by\x2duuid-1ede4fa3\x2d2d2b\x2d40ea\x2d92d0\x2d836ea9e50d85.device - /dev/disk/by-uuid/1ede4fa3-2d2b-40ea-92d0-836ea9e50d85...
+<30>[   10.826634] systemd[1]: Expecting device dev-disk-by\x2duuid-21E8\x2dBD07.device - /dev/disk/by-uuid/21E8-BD07...
+<30>[   10.826637] systemd[1]: Expecting device dev-disk-by\x2duuid-28dada2e\x2dd407\x2d4167\x2dbf51\x2debd21e980952.device - /dev/disk/by-uuid/28dada2e-d407-4167-bf51-ebd21e980952...
+<30>[   10.826640] systemd[1]: Expecting device dev-disk-by\x2duuid-3ec96b97\x2d8bd4\x2d43a3\x2da471\x2de7acf2be7374.device - /dev/disk/by-uuid/3ec96b97-8bd4-43a3-a471-e7acf2be7374...
+<30>[   10.826643] systemd[1]: Expecting device dev-disk-by\x2duuid-cbf0716d\x2df059\x2d4d6d\x2dbc54\x2d175197cb8cf8.device - /dev/disk/by-uuid/cbf0716d-f059-4d6d-bc54-175197cb8cf8...
+<30>[   10.826652] systemd[1]: Reached target integritysetup.target - Local Integrity Protected Volumes.
+<30>[   10.826662] systemd[1]: Reached target remote-fs.target - Remote File Systems.
+<30>[   10.826667] systemd[1]: Reached target slices.target - Slice Units.
+<30>[   10.826672] systemd[1]: Reached target snapd.mounts-pre.target - Mounting snaps.
+<30>[   10.826681] systemd[1]: Reached target veritysetup.target - Local Verity Protected Volumes.
+<30>[   10.827597] systemd[1]: Listening on syslog.socket - Syslog Socket.
+<30>[   10.827628] systemd[1]: Listening on systemd-fsckd.socket - fsck to fsckd communication Socket.
+<30>[   10.827647] systemd[1]: Listening on systemd-initctl.socket - initctl Compatibility Named Pipe.
+<30>[   10.827744] systemd[1]: Listening on systemd-journald-dev-log.socket - Journal Socket (/dev/log).
+<30>[   10.827777] systemd[1]: Listening on systemd-journald.socket - Journal Socket.
+<30>[   10.827830] systemd[1]: Listening on systemd-oomd.socket - Userspace Out-Of-Memory (OOM) Killer Socket.
+<30>[   10.827847] systemd[1]: systemd-pcrextend.socket - TPM2 PCR Extension (Varlink) was skipped because of an unmet condition check (ConditionSecurity=measured-uki).
+<30>[   10.827903] systemd[1]: Listening on systemd-udevd-control.socket - udev Control Socket.
+<30>[   10.827937] systemd[1]: Listening on systemd-udevd-kernel.socket - udev Kernel Socket.
+<30>[   10.828849] systemd[1]: Mounting dev-hugepages.mount - Huge Pages File System...
+<30>[   10.829433] systemd[1]: Mounting dev-mqueue.mount - POSIX Message Queue File System...
+<30>[   10.829981] systemd[1]: Mounting sys-kernel-debug.mount - Kernel Debug File System...
+<30>[   10.830862] systemd[1]: Mounting sys-kernel-tracing.mount - Kernel Trace File System...
+<30>[   10.832974] systemd[1]: Starting systemd-journald.service - Journal Service...
+<30>[   10.833725] systemd[1]: Starting keyboard-setup.service - Set the console keyboard layout...
+<30>[   10.834378] systemd[1]: Starting kmod-static-nodes.service - Create List of Static Device Nodes...
+<30>[   10.835026] systemd[1]: Starting modprobe@configfs.service - Load Kernel Module configfs...
+<30>[   10.835485] systemd[1]: Starting modprobe@dm_mod.service - Load Kernel Module dm_mod...
+<30>[   10.836042] systemd[1]: Starting modprobe@drm.service - Load Kernel Module drm...
+<30>[   10.836586] systemd[1]: Starting modprobe@efi_pstore.service - Load Kernel Module efi_pstore...
+<30>[   10.837232] systemd[1]: Starting modprobe@fuse.service - Load Kernel Module fuse...
+<30>[   10.837743] systemd[1]: Starting modprobe@loop.service - Load Kernel Module loop...
+<30>[   10.837790] systemd[1]: systemd-fsck-root.service - File System Check on Root Device was skipped because of an unmet condition check (ConditionPathExists=!/run/initramfs/fsck-root).
+<30>[   10.838943] systemd[1]: Starting systemd-modules-load.service - Load Kernel Modules...
+<30>[   10.838952] systemd[1]: systemd-pcrmachine.service - TPM2 PCR Machine ID Measurement was skipped because of an unmet condition check (ConditionSecurity=measured-uki).
+<30>[   10.839602] systemd[1]: Starting systemd-remount-fs.service - Remount Root and Kernel File Systems...
+<30>[   10.839619] systemd[1]: systemd-tpm2-setup-early.service - TPM2 SRK Setup (Early) was skipped because of an unmet condition check (ConditionSecurity=measured-uki).
+<30>[   10.840376] systemd[1]: Starting systemd-udev-trigger.service - Coldplug All udev Devices...
+<30>[   10.840916] systemd[1]: Mounted dev-hugepages.mount - Huge Pages File System.
+<30>[   10.840969] systemd[1]: Mounted dev-mqueue.mount - POSIX Message Queue File System.
+<30>[   10.841021] systemd[1]: Mounted sys-kernel-debug.mount - Kernel Debug File System.
+<30>[   10.841062] systemd[1]: Mounted sys-kernel-tracing.mount - Kernel Trace File System.
+<30>[   10.841203] systemd[1]: Finished kmod-static-nodes.service - Create List of Static Device Nodes.
+<30>[   10.841342] systemd[1]: modprobe@configfs.service: Deactivated successfully.
+<30>[   10.841407] systemd[1]: Finished modprobe@configfs.service - Load Kernel Module configfs.
+<30>[   10.841494] systemd[1]: modprobe@dm_mod.service: Deactivated successfully.
+<30>[   10.841548] systemd[1]: Finished modprobe@dm_mod.service - Load Kernel Module dm_mod.
+<30>[   10.841663] systemd[1]: modprobe@drm.service: Deactivated successfully.
+<30>[   10.841721] systemd[1]: Finished modprobe@drm.service - Load Kernel Module drm.
+<30>[   10.841802] systemd[1]: modprobe@fuse.service: Deactivated successfully.
+<30>[   10.841857] systemd[1]: Finished modprobe@fuse.service - Load Kernel Module fuse.
+<30>[   10.841934] systemd[1]: modprobe@loop.service: Deactivated successfully.
+<30>[   10.841985] systemd[1]: Finished modprobe@loop.service - Load Kernel Module loop.
+<4>[   10.842313] pstore: backend 'erst' already in use: ignoring 'efi_pstore'
+<30>[   10.842697] systemd[1]: Mounting sys-fs-fuse-connections.mount - FUSE Control File System...
+<30>[   10.843249] systemd[1]: Mounting sys-kernel-config.mount - Kernel Configuration File System...
+<30>[   10.843271] systemd[1]: systemd-repart.service - Repartition Root Disk was skipped because no trigger condition checks were met.
+<30>[   10.843879] systemd[1]: Starting systemd-tmpfiles-setup-dev-early.service - Create Static Device Nodes in /dev gracefully...
+<46>[   10.843892] systemd-journald[2472]: Collecting audit messages is disabled.
+<30>[   10.843967] systemd[1]: modprobe@efi_pstore.service: Deactivated successfully.
+<30>[   10.844035] systemd[1]: Finished modprobe@efi_pstore.service - Load Kernel Module efi_pstore.
+<30>[   10.845644] systemd[1]: Mounted sys-kernel-config.mount - Kernel Configuration File System.
+<30>[   10.845847] systemd[1]: Mounted sys-fs-fuse-connections.mount - FUSE Control File System.
+<6>[   10.851442] lp: driver loaded but no devices found
+<6>[   10.854065] ppdev: user-space parallel port driver
+<6>[   10.856414] EXT4-fs (sda2): re-mounted 7b7712dd-103b-4547-913e-5a6509d96697 r/w.
+<30>[   10.856974] systemd[1]: Finished systemd-remount-fs.service - Remount Root and Kernel File Systems.
+<30>[   10.857981] systemd[1]: Activating swap swap.img.swap - /swap.img...
+<30>[   10.858367] systemd[1]: systemd-hwdb-update.service - Rebuild Hardware Database was skipped because of an unmet condition check (ConditionNeedsUpdate=/etc).
+<30>[   10.859077] systemd[1]: Starting systemd-pstore.service - Platform Persistent Storage Archival...
+<30>[   10.859763] systemd[1]: Starting systemd-random-seed.service - Load/Save OS Random Seed...
+<30>[   10.859771] systemd[1]: systemd-tpm2-setup.service - TPM2 SRK Setup was skipped because of an unmet condition check (ConditionSecurity=measured-uki).
+<30>[   10.859928] systemd[1]: Finished systemd-tmpfiles-setup-dev-early.service - Create Static Device Nodes in /dev gracefully.
+<30>[   10.860002] systemd[1]: systemd-sysusers.service - Create System Users was skipped because no trigger condition checks were met.
+<30>[   10.860748] systemd[1]: Starting systemd-tmpfiles-setup-dev.service - Create Static Device Nodes in /dev...
+<30>[   10.860902] systemd[1]: Finished keyboard-setup.service - Set the console keyboard layout.
+<6>[   10.862531] Adding 8388604k swap on /swap.img.  Priority:-1 extents:65 across:2703097856k SS
+<30>[   10.862554] systemd[1]: Activated swap swap.img.swap - /swap.img.
+<30>[   10.862574] systemd[1]: Reached target swap.target - Swaps.
+<30>[   10.869398] systemd[1]: Finished systemd-pstore.service - Platform Persistent Storage Archival.
+<30>[   10.869546] systemd[1]: Finished systemd-random-seed.service - Load/Save OS Random Seed.
+<30>[   10.869925] systemd[1]: Finished systemd-tmpfiles-setup-dev.service - Create Static Device Nodes in /dev.
+<30>[   10.869964] systemd[1]: Reached target local-fs-pre.target - Preparation for Local File Systems.
+<30>[   10.871687] systemd[1]: Mounting snap-bare-5.mount - Mount unit for bare, revision 5...
+<30>[   10.872875] systemd[1]: Mounting snap-core22-2411.mount - Mount unit for core22, revision 2411...
+<30>[   10.874322] systemd[1]: Mounting snap-core22-2437.mount - Mount unit for core22, revision 2437...

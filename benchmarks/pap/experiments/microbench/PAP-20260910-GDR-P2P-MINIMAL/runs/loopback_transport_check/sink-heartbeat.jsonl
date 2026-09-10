@@ -1,0 +1,6 @@
+{"wall": 1789035300.3452063, "role": "sink", "completed": 79, "volume_gb": 21.206, "rate_gbps": 21.081, "where": "cuda", "backends": ["UCX"], "compute_iters": null}
+{"wall": 1789035301.345247, "role": "sink", "completed": 158, "volume_gb": 42.413, "rate_gbps": 21.144, "where": "cuda", "backends": ["UCX"], "compute_iters": null}
+{"wall": 1789035302.3561199, "role": "sink", "completed": 237, "volume_gb": 63.619, "rate_gbps": 21.087, "where": "cuda", "backends": ["UCX"], "compute_iters": null}
+{"wall": 1789035303.367651, "role": "sink", "completed": 318, "volume_gb": 85.362, "rate_gbps": 21.19, "where": "cuda", "backends": ["UCX"], "compute_iters": null}
+{"wall": 1789035304.3701265, "role": "sink", "completed": 398, "volume_gb": 106.837, "rate_gbps": 21.236, "where": "cuda", "backends": ["UCX"], "compute_iters": null}
+{"wall": 1789035305.4345388, "role": "sink", "finished": true, "completed": 476, "volume_gb": 127.775, "mean_rate_gbps": 20.963, "exit_code": 0, "where": "cuda", "compute_iters": 0}

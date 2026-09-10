@@ -1,0 +1,18 @@
+mode=same_host_ib_loopback
+hostname=NF5468-L20B
+local_ip=10.128.7.24
+ucx_device=ibp49s0:1
+ucx_tls=rc,cuda_copy
+ucx_version=1.22.0
+where=cuda
+chunk_mb=1400
+max_inflight=8
+duration_s=180
+sink_gpu=0
+src_gpu=1
+compute_gemm=8192
+target_gbps=0
+boot_id=9897f994-a140-4e27-8832-2802cf09e683
+kernel=7.0.0-31-generic
+cmdline=BOOT_IMAGE=/boot/vmlinuz-7.0.0-31-generic root=UUID=7b7712dd-103b-4547-913e-5a6509d96697 ro quiet splash amd_iommu=off vt.handoff=7
+git_commit=96a0d0c4ccbf387feb859ecdd2d470178743ae0e

@@ -1,0 +1,18 @@
+local_hostname=NF5468-L20B
+peer_hostname=NF5468-L20T
+where=cpu
+chunk_mb=1400
+num_descs=1
+max_inflight=8
+duration_s=30
+sink_gpu=0
+src_gpu=0
+sink_ucx_device=ibp49s0:1
+source_ucx_device=mlx5_0:1
+ucx_version=1.22.0
+sink_boot_id=fe775e0c-ac9d-4a03-b978-bf5f6ff6c9c2
+sink_cmdline=BOOT_IMAGE=/boot/vmlinuz-7.0.0-31-generic root=UUID=7b7712dd-103b-4547-913e-5a6509d96697 ro quiet splash amd_iommu=off vt.handoff=7
+sink_kernel=7.0.0-31-generic
+git_commit=96a0d0c4ccbf387feb859ecdd2d470178743ae0e
+peer_boot_id=bd875ef4-f708-4d59-8931-da2e46dbce2f
+peer_uptime_since=2026-09-08 12:27:12

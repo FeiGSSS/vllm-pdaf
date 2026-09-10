@@ -1,0 +1,639 @@
+Panic#1 Part4
+<6>[   10.910922] ipmi_si: Trying ACPI-specified kcs state machine at i/o address 0xca2, slave address 0x20, irq 0
+<6>[   10.916403] i2c i2c-5: Successfully instantiated SPD at 0x53
+<6>[   10.927031] i2c i2c-5: Successfully instantiated SPD at 0x54
+<6>[   10.936736] i2c i2c-5: Successfully instantiated SPD at 0x55
+<6>[   10.943303] i2c i2c-5: Successfully instantiated SPD at 0x56
+<6>[   10.944116] ccp 0000:53:00.5: enabling device (0000 -> 0002)
+<6>[   10.946631] ccp 0000:53:00.5: SEV: memory encryption not enabled by BIOS
+<5>[   10.946633] ccp 0000:53:00.5: psp enabled
+<6>[   10.956267] i2c i2c-5: Successfully instantiated SPD at 0x57
+<6>[   10.963231] ccp 0000:d1:00.5: enabling device (0000 -> 0002)
+<5>[   10.989692] ccp 0000:d1:00.5: psp enabled
+<6>[   11.047680] usbcore: registered new interface driver cdc_wdm
+<6>[   11.055676] RAPL PMU: API unit is 2^-32 Joules, 2 fixed counters, 163840 ms ovfl timer
+<6>[   11.055682] RAPL PMU: hw unit of domain package 2^-16 Joules
+<6>[   11.055683] RAPL PMU: hw unit of domain core 2^-16 Joules
+<6>[   11.084937] usbcore: registered new interface driver cdc_mbim
+<4>[   11.113018] nvidia: loading out-of-tree module taints kernel.
+<5>[   11.113027] nvidia: module verification failed: signature and/or required key missing - tainting kernel
+<5>[   11.144287] ses 0:1:124:0: Attached Enclosure device
+<6>[   11.158178] nvidia-nvlink: Nvlink Core is being initialized, major device number 511
+<3>[   11.158196] 
+<6>[   11.160513] nvidia 0000:01:00.0: enabling device (0000 -> 0002)
+<6>[   11.205641] nvidia 0000:11:00.0: enabling device (0000 -> 0002)
+<6>[   11.255647] nvidia 0000:61:00.0: enabling device (0000 -> 0002)
+<6>[   11.278882] ast 0000:52:00.0: vgaarb: deactivate vga console
+<6>[   11.278949] ast 0000:52:00.0: Using default configuration
+<6>[   11.278950] ast 0000:52:00.0: AST 2600 detected
+<6>[   11.278965] ast 0000:52:00.0: [drm] Using ASPEED DisplayPort transmitter
+<6>[   11.279187] ast 0000:52:00.0: [drm] Registered 1 planes with drm panic
+<6>[   11.306678] nvidia 0000:71:00.0: enabling device (0000 -> 0002)
+<6>[   11.355614] [drm] Initialized ast 0.1.0 for 0000:52:00.0 on minor 1
+<6>[   11.355644] nvidia 0000:81:00.0: enabling device (0000 -> 0002)
+<6>[   11.356037] fbcon: astdrmfb (fb0) is primary device
+<6>[   11.356039] fbcon: Deferring console take-over
+<6>[   11.356040] ast 0000:52:00.0: [drm] fb0: astdrmfb frame buffer device
+<6>[   11.404718] nvidia 0000:91:00.0: enabling device (0000 -> 0002)
+<6>[   11.432676] kvm_amd: TSC scaling supported
+<6>[   11.432679] kvm_amd: Nested Virtualization enabled
+<6>[   11.432681] kvm_amd: Nested Paging enabled
+<6>[   11.432683] kvm_amd: LBR virtualization supported
+<6>[   11.432686] kvm_amd: AVIC enabled
+<6>[   11.432686] kvm_amd: x2AVIC enabled (max 512 vCPUs)
+<6>[   11.432687] kvm_amd: Virtual VMLOAD VMSAVE supported
+<6>[   11.432687] kvm_amd: Virtual GIF supported
+<6>[   11.432688] kvm_amd: Virtual NMI enabled
+<6>[   11.457632] nvidia 0000:e1:00.0: enabling device (0000 -> 0002)
+<6>[   11.502635] nvidia 0000:f1:00.0: enabling device (0000 -> 0002)
+<6>[   11.502916] mlx5_core 0000:31:00.0 ibs6: renamed from ib0
+<4>[   11.546693] NVRM: loading NVIDIA UNIX Open Kernel Module for x86_64  595.84  Release Build  (dvs-builder@U22-I3-AM25-26-2)  Wed Jun 10 21:06:37 UTC 2026
+<6>[   11.606670] nvidia-modeset: Loading NVIDIA UNIX Open Kernel Mode Setting Driver for x86_64  595.84  Release Build  (dvs-builder@U22-I3-AM25-26-2)  Wed Jun 10 20:53:33 UTC 2026
+<6>[   11.613223] Loading iSCSI transport class v2.0-870.
+<6>[   11.622988] [drm] [nvidia-drm] [GPU ID 0x00000100] Loading driver
+<5>[   11.626330] iscsi: registered transport (iser)
+<6>[   11.627225] MCE: In-kernel MCE decoding enabled.
+<6>[   11.631870] EDAC MC0: Giving out device to module amd64_edac controller F1Ah_M02h: DEV 0000:00:18.3 (INTERRUPT)
+<6>[   11.631874] EDAC amd64: F1Ah_M02h detected (node 0).
+<7>[   11.631875] EDAC MC: UMC0 chip selects:
+<6>[   11.631875] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.631876] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631877] EDAC MC: UMC1 chip selects:
+<6>[   11.631878] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.631878] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631879] EDAC MC: UMC2 chip selects:
+<6>[   11.631879] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   11.631879] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631880] EDAC MC: UMC3 chip selects:
+<6>[   11.631880] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.631880] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631881] EDAC MC: UMC4 chip selects:
+<6>[   11.631881] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.631881] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631881] EDAC MC: UMC5 chip selects:
+<6>[   11.631882] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   11.631882] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631882] EDAC MC: UMC6 chip selects:
+<6>[   11.631882] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.631883] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631883] EDAC MC: UMC7 chip selects:
+<6>[   11.631883] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.631884] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631884] EDAC MC: UMC8 chip selects:
+<6>[   11.631884] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   11.631885] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631885] EDAC MC: UMC9 chip selects:
+<6>[   11.631885] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.631885] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631886] EDAC MC: UMC10 chip selects:
+<6>[   11.631886] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.631886] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.631887] EDAC MC: UMC11 chip selects:
+<6>[   11.631887] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   11.631887] EDAC amd64: MC: 2:     0MB 3:     0MB
+<6>[   11.632216] EDAC MC1: Giving out device to module amd64_edac controller F1Ah_M02h: DEV 0000:00:19.3 (INTERRUPT)
+<6>[   11.632217] EDAC amd64: F1Ah_M02h detected (node 1).
+<7>[   11.632217] EDAC MC: UMC0 chip selects:
+<6>[   11.632217] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.632218] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632218] EDAC MC: UMC1 chip selects:
+<6>[   11.632218] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.632219] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632219] EDAC MC: UMC2 chip selects:
+<6>[   11.632219] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   11.632219] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632220] EDAC MC: UMC3 chip selects:
+<6>[   11.632220] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.632220] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632221] EDAC MC: UMC4 chip selects:
+<6>[   11.632221] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.632221] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632221] EDAC MC: UMC5 chip selects:
+<6>[   11.632222] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   11.632222] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632222] EDAC MC: UMC6 chip selects:
+<6>[   11.632223] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.632223] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632223] EDAC MC: UMC7 chip selects:
+<6>[   11.632223] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.632224] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632224] EDAC MC: UMC8 chip selects:
+<6>[   11.632224] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   11.632225] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632225] EDAC MC: UMC9 chip selects:
+<6>[   11.632225] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.632225] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632226] EDAC MC: UMC10 chip selects:
+<6>[   11.632226] EDAC amd64: MC: 0: 49152MB 1: 49152MB
+<6>[   11.632226] EDAC amd64: MC: 2:     0MB 3:     0MB
+<7>[   11.632227] EDAC MC: UMC11 chip selects:
+<6>[   11.632227] EDAC amd64: MC: 0:     0MB 1:     0MB
+<6>[   11.632227] EDAC amd64: MC: 2:     0MB 3:     0MB
+<6>[   11.651989] intel_rapl_common: Found RAPL domain package
+<6>[   11.651992] intel_rapl_common: Found RAPL domain core
+<6>[   11.652999] intel_rapl_common: Found RAPL domain package
+<6>[   11.653003] intel_rapl_common: Found RAPL domain core
+<6>[   11.658118] EXT4-fs (sdb1): mounted filesystem cbf0716d-f059-4d6d-bc54-175197cb8cf8 r/w with ordered data mode. Quota mode: none.
+<6>[   11.663035] EXT4-fs (sde1): mounted filesystem 3ec96b97-8bd4-43a3-a471-e7acf2be7374 r/w with ordered data mode. Quota mode: none.
+<6>[   11.663580] EXT4-fs (sdc1): mounted filesystem 15312723-0fea-4a05-99c6-97cd7cfeb957 r/w with ordered data mode. Quota mode: none.
+<6>[   11.665550] EXT4-fs (sdd1): mounted filesystem 1ede4fa3-2d2b-40ea-92d0-836ea9e50d85 r/w with ordered data mode. Quota mode: none.
+<6>[   11.667210] EXT4-fs (sdf1): mounted filesystem 28dada2e-d407-4167-bf51-ebd21e980952 r/w with ordered data mode. Quota mode: none.
+<6>[   11.745093] amd_atl: AMD Address Translation Library initialized
+<6>[   11.748737] RPC: Registered named UNIX socket transport module.
+<6>[   11.748741] RPC: Registered udp transport module.
+<6>[   11.748742] RPC: Registered tcp transport module.
+<6>[   11.748742] RPC: Registered tcp-with-tls transport module.
+<6>[   11.748743] RPC: Registered tcp NFSv4.1 backchannel transport module.
+<6>[   11.845203] RPC: Registered rdma transport module.
+<6>[   11.845205] RPC: Registered rdma backchannel transport module.
+<5>[   11.875600] audit: type=1400 audit(1788837748.498:2): apparmor="STATUS" operation="profile_load" profile="unconfined" name="notepadqq" pid=3635 comm="apparmor_parser"
+<5>[   11.875652] audit: type=1400 audit(1788837748.499:3): apparmor="STATUS" operation="profile_load" profile="unconfined" name="wpcom" pid=3718 comm="apparmor_parser"
+<5>[   11.875698] audit: type=1400 audit(1788837748.499:4): apparmor="STATUS" operation="profile_load" profile="unconfined" name="toybox" pid=3684 comm="apparmor_parser"
+<5>[   11.875723] audit: type=1400 audit(1788837748.499:5): apparmor="STATUS" operation="profile_load" profile="unconfined" name="virtiofsd" pid=3714 comm="apparmor_parser"
+<5>[   11.875749] audit: type=1400 audit(1788837748.499:6): apparmor="STATUS" operation="profile_load" profile="unconfined" name="libcamerify" pid=3622 comm="apparmor_parser"
+<5>[   11.875799] audit: type=1400 audit(1788837748.499:7): apparmor="STATUS" operation="profile_load" profile="unconfined" name="sbuild-createchroot" pid=3667 comm="apparmor_parser"
+<5>[   11.875882] audit: type=1400 audit(1788837748.499:8): apparmor="STATUS" operation="profile_load" profile="unconfined" name="surfshark" pid=3681 comm="apparmor_parser"
+<6>[   11.963538] ipmi_si IPI0001:00: IPMI message handler: Found new BMC (man_id: 0x000000, prod_id: 0x0202, dev_id: 0x20)
+<6>[   12.311715] ipmi_si IPI0001:00: IPMI kcs interface initialized
+<6>[   12.313683] ipmi_ssif: IPMI SSIF Interface driver
+<4>[   12.661601] hrtimer: interrupt took 8783 ns
+<6>[   13.384635] [drm] Initialized nvidia-drm 0.0.0 for 0000:01:00.0 on minor 0
+<4>[   13.384710] nvidia 0000:01:00.0: [drm] No compatible format found
+<6>[   13.384713] nvidia 0000:01:00.0: [drm] Cannot find any crtc or sizes
+<6>[   13.384755] [drm] [nvidia-drm] [GPU ID 0x00001100] Loading driver
+<6>[   14.515877] [drm] Initialized nvidia-drm 0.0.0 for 0000:11:00.0 on minor 2
+<4>[   14.515922] nvidia 0000:11:00.0: [drm] No compatible format found
+<6>[   14.515924] nvidia 0000:11:00.0: [drm] Cannot find any crtc or sizes
+<6>[   14.515967] [drm] [nvidia-drm] [GPU ID 0x00006100] Loading driver
+<6>[   15.784798] [drm] Initialized nvidia-drm 0.0.0 for 0000:61:00.0 on minor 3
+<4>[   15.784845] nvidia 0000:61:00.0: [drm] No compatible format found
+<6>[   15.784848] nvidia 0000:61:00.0: [drm] Cannot find any crtc or sizes
+<6>[   15.784891] [drm] [nvidia-drm] [GPU ID 0x00007100] Loading driver
+<6>[   17.046295] [drm] Initialized nvidia-drm 0.0.0 for 0000:71:00.0 on minor 4
+<4>[   17.046359] nvidia 0000:71:00.0: [drm] No compatible format found
+<6>[   17.046362] nvidia 0000:71:00.0: [drm] Cannot find any crtc or sizes
+<6>[   17.046411] [drm] [nvidia-drm] [GPU ID 0x00008100] Loading driver
+<6>[   18.201434] [drm] Initialized nvidia-drm 0.0.0 for 0000:81:00.0 on minor 5
+<4>[   18.201499] nvidia 0000:81:00.0: [drm] No compatible format found
+<6>[   18.201502] nvidia 0000:81:00.0: [drm] Cannot find any crtc or sizes
+<6>[   18.201533] [drm] [nvidia-drm] [GPU ID 0x00009100] Loading driver
+<4>[   18.781226] kauditd_printk_skb: 173 callbacks suppressed
+<5>[   18.781228] audit: type=1400 audit(1788837755.404:182): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="rsyslogd" pid=3889 comm="apparmor_parser"
+<6>[   19.068316] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link ACTIVE
+<6>[   19.322679] NET: Registered PF_QIPCRTR protocol family
+<6>[   19.525353] [drm] Initialized nvidia-drm 0.0.0 for 0000:91:00.0 on minor 6
+<4>[   19.525407] nvidia 0000:91:00.0: [drm] No compatible format found
+<6>[   19.525410] nvidia 0000:91:00.0: [drm] Cannot find any crtc or sizes
+<6>[   19.525454] [drm] [nvidia-drm] [GPU ID 0x0000e100] Loading driver
+<6>[   20.174188] mlx5_core 0000:c2:00.0 ens17f0np0: Link down
+<4>[   20.252887] set_capacity_and_notify: 12 callbacks suppressed
+<6>[   20.252890] loop22: detected capacity change from 0 to 8
+
+Panic#1 Part3
+<6>[   20.600991] mlx5_core 0000:c2:00.1 ens17f1np1: Link down
+<4>[   20.822321] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<5>[   20.917715] audit: type=1400 audit(1788837757.541:183): apparmor="DENIED" operation="capable" class="cap" profile="/usr/sbin/cupsd" pid=5149 comm="cupsd" capability=12  capname="net_admin"
+<6>[   21.122977] [drm] Initialized nvidia-drm 0.0.0 for 0000:e1:00.0 on minor 7
+<4>[   21.123059] nvidia 0000:e1:00.0: [drm] No compatible format found
+<6>[   21.123062] nvidia 0000:e1:00.0: [drm] Cannot find any crtc or sizes
+<6>[   21.123096] [drm] [nvidia-drm] [GPU ID 0x0000f100] Loading driver
+<6>[   21.128358] [drm] Initialized nvidia-drm 0.0.0 for 0000:f1:00.0 on minor 8
+<4>[   21.128397] nvidia 0000:f1:00.0: [drm] No compatible format found
+<6>[   21.128398] nvidia 0000:f1:00.0: [drm] Cannot find any crtc or sizes
+<46>[   21.139621] systemd-journald[2460]: /var/log/journal/a4a8b971a913429eb4435f42fa9c8f65/user-1000.journal: Journal file uses a different sequence number ID, rotating.
+<4>[   22.841141] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   26.873024] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<5>[   27.584735] audit: type=1400 audit(1788837764.208:184): apparmor="STATUS" operation="profile_load" profile="unconfined" name="docker-default" pid=7115 comm="apparmor_parser"
+<6>[   27.772773] Initializing XFRM netlink socket
+<6>[   27.803317] bridge: filtering via arp/ip/ip6tables is no longer available by default. Update your scripts to load br_netfilter if you need this.
+<7>[   30.532935] rfkill: input handler disabled
+<4>[   34.936109] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   51.332881] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   67.754953] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[   84.143229] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  100.527666] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  116.911682] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  133.295756] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  149.676805] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  166.058870] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  182.441759] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  198.825040] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  215.208919] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  231.592835] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  247.976494] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  264.360129] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  280.743695] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  297.127293] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[  353.155216] evm: overlay not supported
+<6>[  353.260017] docker0: port 1(vethd6ca9d8) entered blocking state
+<6>[  353.260023] docker0: port 1(vethd6ca9d8) entered disabled state
+<6>[  353.260041] vethd6ca9d8: entered allmulticast mode
+<6>[  353.260080] vethd6ca9d8: entered promiscuous mode
+<6>[  353.263363] eth0: renamed from veth4707b65
+<6>[  353.264333] docker0: port 1(vethd6ca9d8) entered blocking state
+<6>[  353.264338] docker0: port 1(vethd6ca9d8) entered forwarding state
+<6>[  353.299433] docker0: port 1(vethd6ca9d8) entered disabled state
+<6>[  353.299539] veth4707b65: renamed from eth0
+<6>[  353.365793] docker0: port 1(vethd6ca9d8) entered disabled state
+<6>[  353.367689] vethd6ca9d8 (unregistering): left allmulticast mode
+<6>[  353.367696] vethd6ca9d8 (unregistering): left promiscuous mode
+<6>[  353.367702] docker0: port 1(vethd6ca9d8) entered disabled state
+<6>[  368.638887] docker0: port 1(veth38984bb) entered blocking state
+<6>[  368.638893] docker0: port 1(veth38984bb) entered disabled state
+<6>[  368.638907] veth38984bb: entered allmulticast mode
+<6>[  368.638952] veth38984bb: entered promiscuous mode
+<6>[  368.642028] eth0: renamed from veth9dcf957
+<6>[  368.642546] docker0: port 1(veth38984bb) entered blocking state
+<6>[  368.642551] docker0: port 1(veth38984bb) entered forwarding state
+<6>[  368.667324] docker0: port 1(veth38984bb) entered disabled state
+<6>[  368.667392] veth9dcf957: renamed from eth0
+<6>[  368.717622] docker0: port 1(veth38984bb) entered disabled state
+<6>[  368.717989] veth38984bb (unregistering): left allmulticast mode
+<6>[  368.717993] veth38984bb (unregistering): left promiscuous mode
+<6>[  368.717995] docker0: port 1(veth38984bb) entered disabled state
+<6>[  396.979741] docker0: port 1(veth6673da4) entered blocking state
+<6>[  396.979747] docker0: port 1(veth6673da4) entered disabled state
+<6>[  396.979766] veth6673da4: entered allmulticast mode
+<6>[  396.979808] veth6673da4: entered promiscuous mode
+<6>[  396.982387] eth0: renamed from vethe0d16e5
+<6>[  396.984316] docker0: port 1(veth6673da4) entered blocking state
+<6>[  396.984322] docker0: port 1(veth6673da4) entered forwarding state
+<6>[  397.010959] docker0: port 1(veth6673da4) entered disabled state
+<6>[  397.011026] vethe0d16e5: renamed from eth0
+<6>[  397.064333] docker0: port 1(veth6673da4) entered disabled state
+<6>[  397.064562] veth6673da4 (unregistering): left allmulticast mode
+<6>[  397.064566] veth6673da4 (unregistering): left promiscuous mode
+<6>[  397.064572] docker0: port 1(veth6673da4) entered disabled state
+<6>[  415.132685] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link DOWN
+<6>[  428.809589] docker0: port 1(veth2271d64) entered blocking state
+<6>[  428.809595] docker0: port 1(veth2271d64) entered disabled state
+<6>[  428.809606] veth2271d64: entered allmulticast mode
+<6>[  428.809647] veth2271d64: entered promiscuous mode
+<6>[  428.812230] eth0: renamed from vethe7c5152
+<6>[  428.812749] docker0: port 1(veth2271d64) entered blocking state
+<6>[  428.812753] docker0: port 1(veth2271d64) entered forwarding state
+<6>[  428.838795] docker0: port 1(veth2271d64) entered disabled state
+<6>[  428.838854] vethe7c5152: renamed from eth0
+<6>[  428.895856] docker0: port 1(veth2271d64) entered disabled state
+<6>[  428.896163] veth2271d64 (unregistering): left allmulticast mode
+<6>[  428.896169] veth2271d64 (unregistering): left promiscuous mode
+<6>[  428.896171] docker0: port 1(veth2271d64) entered disabled state
+<6>[  436.547077] docker0: port 1(veth5c313e5) entered blocking state
+<6>[  436.547084] docker0: port 1(veth5c313e5) entered disabled state
+<6>[  436.547100] veth5c313e5: entered allmulticast mode
+<6>[  436.547151] veth5c313e5: entered promiscuous mode
+<6>[  436.550571] eth0: renamed from vethfb60f64
+<6>[  436.551127] docker0: port 1(veth5c313e5) entered blocking state
+<6>[  436.551130] docker0: port 1(veth5c313e5) entered forwarding state
+<6>[  436.576559] docker0: port 1(veth5c313e5) entered disabled state
+<6>[  436.576602] vethfb60f64: renamed from eth0
+<6>[  436.623541] docker0: port 1(veth5c313e5) entered disabled state
+<6>[  436.623879] veth5c313e5 (unregistering): left allmulticast mode
+<6>[  436.623883] veth5c313e5 (unregistering): left promiscuous mode
+<6>[  436.623890] docker0: port 1(veth5c313e5) entered disabled state
+<6>[  505.296976] docker0: port 1(vethf5220b3) entered blocking state
+<6>[  505.296984] docker0: port 1(vethf5220b3) entered disabled state
+<6>[  505.296992] vethf5220b3: entered allmulticast mode
+<6>[  505.297034] vethf5220b3: entered promiscuous mode
+<6>[  505.299797] eth0: renamed from veth2d22405
+<6>[  505.300452] docker0: port 1(vethf5220b3) entered blocking state
+<6>[  505.300457] docker0: port 1(vethf5220b3) entered forwarding state
+<6>[  505.324240] docker0: port 1(vethf5220b3) entered disabled state
+<6>[  505.324314] veth2d22405: renamed from eth0
+<6>[  505.375081] docker0: port 1(vethf5220b3) entered disabled state
+<6>[  505.375464] vethf5220b3 (unregistering): left allmulticast mode
+<6>[  505.375471] vethf5220b3 (unregistering): left promiscuous mode
+<6>[  505.375475] docker0: port 1(vethf5220b3) entered disabled state
+<6>[  565.328596] docker0: port 1(vetha9b5c93) entered blocking state
+<6>[  565.328602] docker0: port 1(vetha9b5c93) entered disabled state
+<6>[  565.328613] vetha9b5c93: entered allmulticast mode
+<6>[  565.328663] vetha9b5c93: entered promiscuous mode
+<6>[  565.331930] eth0: renamed from veth3b8807d
+<6>[  565.333863] docker0: port 1(vetha9b5c93) entered blocking state
+<6>[  565.333869] docker0: port 1(vetha9b5c93) entered forwarding state
+<6>[  565.436007] docker0: port 1(vetha9b5c93) entered disabled state
+<6>[  565.436059] veth3b8807d: renamed from eth0
+<6>[  565.492409] docker0: port 1(vetha9b5c93) entered disabled state
+<6>[  565.492648] vetha9b5c93 (unregistering): left allmulticast mode
+<6>[  565.492651] vetha9b5c93 (unregistering): left promiscuous mode
+<6>[  565.492658] docker0: port 1(vetha9b5c93) entered disabled state
+<6>[  588.774716] docker0: port 1(veth4f869e1) entered blocking state
+<6>[  588.774724] docker0: port 1(veth4f869e1) entered disabled state
+<6>[  588.774762] veth4f869e1: entered allmulticast mode
+<6>[  588.774836] veth4f869e1: entered promiscuous mode
+<6>[  588.777982] eth0: renamed from vetheb8c963
+<6>[  588.778511] docker0: port 1(veth4f869e1) entered blocking state
+<6>[  588.778517] docker0: port 1(veth4f869e1) entered forwarding state
+<6>[  588.883257] docker0: port 1(veth4f869e1) entered disabled state
+<6>[  588.883345] vetheb8c963: renamed from eth0
+<6>[  588.928877] docker0: port 1(veth4f869e1) entered disabled state
+<6>[  588.929072] veth4f869e1 (unregistering): left allmulticast mode
+<6>[  588.929077] veth4f869e1 (unregistering): left promiscuous mode
+<6>[  588.929086] docker0: port 1(veth4f869e1) entered disabled state
+<6>[  599.089280] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link INIT
+<6>[  599.090831] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link ACTIVE
+<4>[  599.091331] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  601.120712] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  605.152759] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  613.536813] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[  620.869707] docker0: port 1(vethd71620b) entered blocking state
+<6>[  620.869713] docker0: port 1(vethd71620b) entered disabled state
+<6>[  620.869727] vethd71620b: entered allmulticast mode
+<6>[  620.869777] vethd71620b: entered promiscuous mode
+<6>[  620.872552] eth0: renamed from veth53b563d
+<6>[  620.873085] docker0: port 1(vethd71620b) entered blocking state
+<6>[  620.873089] docker0: port 1(vethd71620b) entered forwarding state
+<4>[  629.920885] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  646.304814] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[  651.824997] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link DOWN
+<6>[  669.089597] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link INIT
+<6>[  669.091689] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link ACTIVE
+<4>[  669.092114] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  671.136633] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  675.168624] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  683.680492] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  700.064403] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  716.448236] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  732.832071] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[  739.976826] docker0: port 2(vethbd04ed2) entered blocking state
+<6>[  739.976834] docker0: port 2(vethbd04ed2) entered disabled state
+<6>[  739.976843] vethbd04ed2: entered allmulticast mode
+<6>[  739.976883] vethbd04ed2: entered promiscuous mode
+<6>[  739.979310] eth0: renamed from veth95169fa
+<6>[  739.979809] docker0: port 2(vethbd04ed2) entered blocking state
+<6>[  739.979812] docker0: port 2(vethbd04ed2) entered forwarding state
+<6>[  740.042966] docker0: port 2(vethbd04ed2) entered disabled state
+<6>[  740.043038] veth95169fa: renamed from eth0
+<6>[  740.094486] docker0: port 2(vethbd04ed2) entered disabled state
+<6>[  740.095788] vethbd04ed2 (unregistering): left allmulticast mode
+<6>[  740.095791] vethbd04ed2 (unregistering): left promiscuous mode
+<6>[  740.095794] docker0: port 2(vethbd04ed2) entered disabled state
+<6>[  743.900389] docker0: port 2(vethc73b321) entered blocking state
+
+Panic#1 Part2
+<6>[  743.900396] docker0: port 2(vethc73b321) entered disabled state
+<6>[  743.900419] vethc73b321: entered allmulticast mode
+<6>[  743.900762] vethc73b321: entered promiscuous mode
+<6>[  743.909326] eth0: renamed from veth040a703
+<6>[  743.910425] docker0: port 2(vethc73b321) entered blocking state
+<6>[  743.910429] docker0: port 2(vethc73b321) entered forwarding state
+<4>[  749.215892] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  765.599666] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  781.983368] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  798.367090] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  814.751846] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[  829.478547] docker0: port 1(vethd71620b) entered disabled state
+<6>[  829.478623] veth53b563d: renamed from eth0
+<6>[  829.526490] docker0: port 1(vethd71620b) entered disabled state
+<6>[  829.526932] vethd71620b (unregistering): left allmulticast mode
+<6>[  829.526941] vethd71620b (unregistering): left promiscuous mode
+<6>[  829.526945] docker0: port 1(vethd71620b) entered disabled state
+<4>[  831.134571] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  847.518184] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  863.901962] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  880.285599] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  896.669276] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  913.052949] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  929.436542] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[  945.820225] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[  984.240199] docker0: port 2(vethc73b321) entered disabled state
+<6>[  984.240278] veth040a703: renamed from eth0
+<6>[  984.276338] docker0: port 2(vethc73b321) entered disabled state
+<6>[  984.276574] vethc73b321 (unregistering): left allmulticast mode
+<6>[  984.276578] vethc73b321 (unregistering): left promiscuous mode
+<6>[  984.276580] docker0: port 2(vethc73b321) entered disabled state
+<6>[ 1541.369925] docker0: port 1(veth8779abf) entered blocking state
+<6>[ 1541.369933] docker0: port 1(veth8779abf) entered disabled state
+<6>[ 1541.369949] veth8779abf: entered allmulticast mode
+<6>[ 1541.369989] veth8779abf: entered promiscuous mode
+<6>[ 1541.373188] eth0: renamed from vethd8d84c5
+<6>[ 1541.373890] docker0: port 1(veth8779abf) entered blocking state
+<6>[ 1541.373894] docker0: port 1(veth8779abf) entered forwarding state
+<5>[ 2277.699553] audit: type=1400 audit(1788840014.316:185): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=29691 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<5>[ 2277.699561] audit: type=1400 audit(1788840014.316:186): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=29693 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<6>[ 2560.048722] docker0: port 1(veth8779abf) entered disabled state
+<6>[ 2560.048783] vethd8d84c5: renamed from eth0
+<6>[ 2560.089697] docker0: port 1(veth8779abf) entered disabled state
+<6>[ 2560.089918] veth8779abf (unregistering): left allmulticast mode
+<6>[ 2560.089921] veth8779abf (unregistering): left promiscuous mode
+<6>[ 2560.089923] docker0: port 1(veth8779abf) entered disabled state
+<6>[ 3657.529311] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link DOWN
+<6>[ 3839.117594] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link INIT
+<6>[ 3839.119130] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link ACTIVE
+<4>[ 3839.119651] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3841.130486] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3845.162397] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3853.482401] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3869.866313] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3886.250193] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[ 3895.521661] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link DOWN
+<6>[ 3909.117589] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link INIT
+<6>[ 3909.119658] mlx5_core 0000:31:00.0 ibp49s0: Port: 1 Link ACTIVE
+<4>[ 3909.120179] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3911.145953] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3915.177944] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3923.625884] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3940.009841] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3956.393736] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3972.777626] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 3989.161451] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4005.545395] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4021.929239] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4038.313140] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4054.697087] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4071.081014] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4087.464892] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4103.848785] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4120.232763] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4136.616746] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[ 4144.443901] docker0: port 1(vetha475e6e) entered blocking state
+<6>[ 4144.443908] docker0: port 1(vetha475e6e) entered disabled state
+<6>[ 4144.443926] vetha475e6e: entered allmulticast mode
+<6>[ 4144.443968] vetha475e6e: entered promiscuous mode
+<6>[ 4144.446628] eth0: renamed from veth5af1d06
+<6>[ 4144.447226] docker0: port 1(vetha475e6e) entered blocking state
+<6>[ 4144.447230] docker0: port 1(vetha475e6e) entered forwarding state
+<4>[ 4153.000668] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4169.384599] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<4>[ 4185.768588] ibs6: multicast join failed for ff12:401b:ffff:0000:0000:0000:ffff:ffff, status -22
+<6>[ 6081.132429] docker0: port 1(vetha475e6e) entered disabled state
+<6>[ 6081.132504] veth5af1d06: renamed from eth0
+<6>[ 6081.162292] docker0: port 1(vetha475e6e) entered disabled state
+<6>[ 6081.162542] vetha475e6e (unregistering): left allmulticast mode
+<6>[ 6081.162545] vetha475e6e (unregistering): left promiscuous mode
+<6>[ 6081.162561] docker0: port 1(vetha475e6e) entered disabled state
+<4>[ 8294.464054] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 27282): FWTracer: Events were lost
+<6>[10207.529046] docker0: port 1(vethcac5e1a) entered blocking state
+<6>[10207.529052] docker0: port 1(vethcac5e1a) entered disabled state
+<6>[10207.529060] vethcac5e1a: entered allmulticast mode
+<6>[10207.529111] vethcac5e1a: entered promiscuous mode
+<6>[10207.532026] eth0: renamed from veth0d039e8
+<6>[10207.532631] docker0: port 1(vethcac5e1a) entered blocking state
+<6>[10207.532635] docker0: port 1(vethcac5e1a) entered forwarding state
+<6>[10337.414225] docker0: port 1(vethcac5e1a) entered disabled state
+<6>[10337.414286] veth0d039e8: renamed from eth0
+<6>[10337.450867] docker0: port 1(vethcac5e1a) entered disabled state
+<6>[10337.451056] vethcac5e1a (unregistering): left allmulticast mode
+<6>[10337.451060] vethcac5e1a (unregistering): left promiscuous mode
+<6>[10337.451062] docker0: port 1(vethcac5e1a) entered disabled state
+<6>[10702.510336] docker0: port 1(vethc44f066) entered blocking state
+<6>[10702.510342] docker0: port 1(vethc44f066) entered disabled state
+<6>[10702.510361] vethc44f066: entered allmulticast mode
+<6>[10702.510419] vethc44f066: entered promiscuous mode
+<6>[10702.512889] eth0: renamed from vethf6b417c
+<6>[10702.513403] docker0: port 1(vethc44f066) entered blocking state
+<6>[10702.513407] docker0: port 1(vethc44f066) entered forwarding state
+<6>[10842.952896] docker0: port 1(vethc44f066) entered disabled state
+<6>[10842.953001] vethf6b417c: renamed from eth0
+<6>[10843.012160] docker0: port 1(vethc44f066) entered disabled state
+<6>[10843.012589] vethc44f066 (unregistering): left allmulticast mode
+<6>[10843.012599] vethc44f066 (unregistering): left promiscuous mode
+<6>[10843.012603] docker0: port 1(vethc44f066) entered disabled state
+<5>[13077.537271] audit: type=1400 audit(1788850814.100:187): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=91351 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<5>[13077.560085] audit: type=1400 audit(1788850814.123:188): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=91349 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<4>[15883.450249] workqueue: output_poll_execute hogged CPU for >10000us 4 times, consider switching to WQ_UNBOUND
+<4>[16545.651081] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 136323): FWTracer: Events were lost
+<6>[16649.857835] docker0: port 1(veth748e6e2) entered blocking state
+<6>[16649.857841] docker0: port 1(veth748e6e2) entered disabled state
+<6>[16649.857862] veth748e6e2: entered allmulticast mode
+<6>[16649.857922] veth748e6e2: entered promiscuous mode
+<6>[16649.860788] eth0: renamed from veth8c45afb
+<6>[16649.861350] docker0: port 1(veth748e6e2) entered blocking state
+<6>[16649.861354] docker0: port 1(veth748e6e2) entered forwarding state
+<6>[16779.734317] docker0: port 1(veth748e6e2) entered disabled state
+<6>[16779.734420] veth8c45afb: renamed from eth0
+<6>[16779.772796] docker0: port 1(veth748e6e2) entered disabled state
+<6>[16779.773022] veth748e6e2 (unregistering): left allmulticast mode
+<6>[16779.773026] veth748e6e2 (unregistering): left promiscuous mode
+<6>[16779.773028] docker0: port 1(veth748e6e2) entered disabled state
+<6>[16790.360521] docker0: port 1(veth869e5bd) entered blocking state
+<6>[16790.360529] docker0: port 1(veth869e5bd) entered disabled state
+<6>[16790.360545] veth869e5bd: entered allmulticast mode
+<6>[16790.360625] veth869e5bd: entered promiscuous mode
+<6>[16790.363725] eth0: renamed from veth0a3f6a6
+<6>[16790.364417] docker0: port 1(veth869e5bd) entered blocking state
+<6>[16790.364422] docker0: port 1(veth869e5bd) entered forwarding state
+<6>[16832.201419] loop22: detected capacity change from 0 to 102952
+<5>[16832.288507] audit: type=1400 audit(1788854568.856:189): apparmor="STATUS" operation="profile_load" profile="unconfined" name="/snap/snapd/27738/usr/lib/snapd/snap-confine" pid=143545 comm="apparmor_parser"
+<6>[16836.108198] loop23: detected capacity change from 0 to 8
+<5>[16836.540631] audit: type=1400 audit(1788854573.108:190): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="/snap/snapd/27738/usr/lib/snapd/snap-confine" pid=143796 comm="apparmor_parser"
+<5>[16836.664924] audit: type=1400 audit(1788854573.232:191): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="snap-update-ns.snap-store" pid=143801 comm="apparmor_parser"
+<5>[16836.669920] audit: type=1400 audit(1788854573.237:192): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="snap-update-ns.firmware-updater" pid=143800 comm="apparmor_parser"
+<5>[16836.675300] audit: type=1400 audit(1788854573.242:193): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="snap-update-ns.firefox" pid=143799 comm="apparmor_parser"
+<5>[16836.691930] audit: type=1400 audit(1788854573.259:194): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="snap-update-ns.snapd-desktop-integration" pid=143798 comm="apparmor_parser"
+
+Panic#1 Part1
+<5>[16836.696595] audit: type=1400 audit(1788854573.264:195): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="snap-update-ns.mesa-2404" pid=143819 comm="apparmor_parser"
+<5>[16836.696775] audit: type=1400 audit(1788854573.264:196): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="snap.firefox.hook.post-refresh" pid=143810 comm="apparmor_parser"
+<5>[16836.696817] audit: type=1400 audit(1788854573.264:197): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="snap.firefox.hook.install" pid=143809 comm="apparmor_parser"
+<5>[16836.696860] audit: type=1400 audit(1788854573.264:198): apparmor="STATUS" operation="profile_replace" info="same as current profile, skipping" profile="unconfined" name="snap.firefox.hook.disconnect-plug-host-hunspell" pid=143808 comm="apparmor_parser"
+<6>[16919.759286] docker0: port 1(veth869e5bd) entered disabled state
+<6>[16919.759367] veth0a3f6a6: renamed from eth0
+<6>[16919.803764] docker0: port 1(veth869e5bd) entered disabled state
+<6>[16919.803983] veth869e5bd (unregistering): left allmulticast mode
+<6>[16919.803986] veth869e5bd (unregistering): left promiscuous mode
+<6>[16919.803988] docker0: port 1(veth869e5bd) entered disabled state
+<4>[23878.361953] kauditd_printk_skb: 39 callbacks suppressed
+<5>[23878.361956] audit: type=1400 audit(1788861614.928:238): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=201272 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<5>[23878.379042] audit: type=1400 audit(1788861614.945:239): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=201273 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<4>[24723.979845] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 190770): FWTracer: Events were lost
+<4>[33103.032126] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 217773): FWTracer: Events were lost
+<5>[34677.550317] audit: type=1400 audit(1788872414.104:240): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=270158 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<5>[34677.572292] audit: type=1400 audit(1788872414.126:241): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=270157 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<4>[41268.558837] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 395685): FWTracer: Events were lost
+<6>[42316.499336] perf: interrupt took too long (2502 > 2500), lowering kernel.perf_event_max_sample_rate to 79000
+<5>[45463.575158] audit: type=1400 audit(1788883200.118:242): apparmor="DENIED" operation="capable" class="cap" profile="/usr/sbin/cupsd" pid=628697 comm="cupsd" capability=12  capname="net_admin"
+<5>[45477.558676] audit: type=1400 audit(1788883214.101:243): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=629728 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<5>[45477.579395] audit: type=1400 audit(1788883214.122:244): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=629727 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<6>[45497.186212] perf: interrupt took too long (3136 > 3127), lowering kernel.perf_event_max_sample_rate to 63000
+<4>[48371.205506] workqueue: mmput_async_fn hogged CPU for >10000us 4 times, consider switching to WQ_UNBOUND
+<4>[48371.205511] workqueue: mmput_async_fn hogged CPU for >10000us 11 times, consider switching to WQ_UNBOUND
+<4>[48371.205507] workqueue: mmput_async_fn hogged CPU for >10000us 5 times, consider switching to WQ_UNBOUND
+<4>[48371.205509] workqueue: mmput_async_fn hogged CPU for >10000us 7 times, consider switching to WQ_UNBOUND
+<4>[48371.207502] workqueue: mmput_async_fn hogged CPU for >10000us 19 times, consider switching to WQ_UNBOUND
+<4>[49502.040799] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 368804): FWTracer: Events were lost
+<6>[49918.115999] perf: interrupt took too long (4750 > 3920), lowering kernel.perf_event_max_sample_rate to 42000
+<4>[50088.606907] workqueue: mmput_async_fn hogged CPU for >10000us 35 times, consider switching to WQ_UNBOUND
+<5>[56277.566153] audit: type=1400 audit(1788894014.109:245): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=750452 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<5>[56277.579883] audit: type=1400 audit(1788894014.123:246): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=750453 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<4>[57688.869239] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 747851): FWTracer: Events were lost
+<4>[65944.107691] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 747851): FWTracer: Events were lost
+<5>[67077.584073] audit: type=1400 audit(1788904814.116:247): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=775363 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<5>[67077.589014] audit: type=1400 audit(1788904814.121:248): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=775364 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<4>[74129.488038] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 756372): FWTracer: Events were lost
+<5>[77877.571303] audit: type=1400 audit(1788915614.094:249): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=806116 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<5>[77877.598829] audit: type=1400 audit(1788915614.121:250): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=806117 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<4>[82335.670222] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 798413): FWTracer: Events were lost
+<5>[88677.581846] audit: type=1400 audit(1788926414.099:251): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=949906 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<5>[88677.612241] audit: type=1400 audit(1788926414.130:252): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=949907 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<4>[90534.800860] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 997103): FWTracer: Events were lost
+<4>[98734.382777] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 1057517): FWTracer: Events were lost
+<5>[99477.616994] audit: type=1400 audit(1788937214.115:253): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=1088930 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<5>[99477.628412] audit: type=1400 audit(1788937214.127:254): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=1088928 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<4>[106937.863611] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 1167788): FWTracer: Events were lost
+<5>[110277.595812] audit: type=1400 audit(1788948014.098:255): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=1186847 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1000 ouid=0
+<5>[110277.624789] audit: type=1400 audit(1788948014.127:256): apparmor="DENIED" operation="open" class="file" profile="snap.firmware-updater.firmware-notifier" name="/proc/sys/vm/max_map_count" pid=1186849 comm="firmware-notifi" requested_mask="r" denied_mask="r" fsuid=1005 ouid=0
+<4>[115201.252941] mlx5_core 0000:c2:00.0: mlx5_fw_tracer_handle_traces:812:(pid 1211210): FWTracer: Events were lost
+<0>[120363.918143] {1}[Hardware Error]: Hardware error from APEI Generic Hardware Error Source: 515
+<0>[120363.918147] {1}[Hardware Error]: event severity: fatal
+<0>[120363.918148] {1}[Hardware Error]:  Error 0, type: fatal
+<0>[120363.918149] {1}[Hardware Error]:  fru_text: PcieError
+<0>[120363.918149] {1}[Hardware Error]:   section_type: PCIe error
+<0>[120363.918150] {1}[Hardware Error]:   port_type: 1, legacy PCI end point
+<0>[120363.918151] {1}[Hardware Error]:   version: 0.2
+<0>[120363.918152] {1}[Hardware Error]:   command: 0x0406, status: 0x0010
+<0>[120363.918153] {1}[Hardware Error]:   device_id: 0000:f1:00.0
+<0>[120363.918154] {1}[Hardware Error]:   slot: 0
+<0>[120363.918155] {1}[Hardware Error]:   secondary_bus: 0x00
+<0>[120363.918155] {1}[Hardware Error]:   vendor_id: 0x10de, device_id: 0x26ba
+<0>[120363.918156] {1}[Hardware Error]:   class_code: 030200
+<0>[120363.918156] {1}[Hardware Error]:   bridge: secondary_status: 0x4000, control: 0x0000
+<0>[120363.918156] {1}[Hardware Error]:   aer_cor_status: 0x00008000, aer_cor_mask: 0x0000b1c1
+<0>[120363.918157] {1}[Hardware Error]:   aer_uncor_status: 0x00014000, aer_uncor_mask: 0x00000000
+<0>[120363.918158] {1}[Hardware Error]:   aer_uncor_severity: 0x00476030
+<0>[120363.918158] {1}[Hardware Error]:   TLP Header: 00000000 00000000 00000000 00000000
+<0>[120363.918159] GHES: Fatal hardware error but panic disabled
+<0>[120363.918160] Kernel panic - not syncing: GHES: Fatal hardware error
+<4>[120363.918163] CPU: 26 UID: 0 PID: 0 Comm: swapper/26 Tainted: G   M       OE       7.0.0-31-generic #31~24.04.1-Ubuntu PREEMPT(lazy) 
+<4>[120363.918167] Tainted: [M]=MACHINE_CHECK, [O]=OOT_MODULE, [E]=UNSIGNED_MODULE
+<4>[120363.918167] Hardware name: IEIT SYSTEMS NF5468-A8-A0-R0-00/NF5468-A8-A0-R0-00, BIOS 01.07.00 10/16/2025
+<4>[120363.918169] Call Trace:
+<4>[120363.918171]  <NMI>
+<4>[120363.918175]  dump_stack_lvl+0x27/0xa0
+<4>[120363.918182]  dump_stack+0x10/0x20
+<4>[120363.918185]  vpanic+0x45e/0x550
+<4>[120363.918190]  panic+0x5f/0x60
+<4>[120363.918193]  ? ghes_clear_estatus.part.0+0x38/0xd0
+<4>[120363.918198]  __ghes_panic+0x6c/0x90
+<4>[120363.918199]  ghes_in_nmi_queue_one_entry.constprop.0+0x1e8/0x2c0
+<4>[120363.918200]  ghes_notify_nmi+0xa5/0x110
+<4>[120363.918202]  nmi_handle.part.0+0x5d/0x180
+<4>[120363.918205]  default_do_nmi+0x131/0x170
+<4>[120363.918209]  exc_nmi+0x1c4/0x290
+<4>[120363.918211]  end_repeat_nmi+0xf/0x53
+<4>[120363.918214] RIP: 0010:io_idle+0x3/0x30
+<4>[120363.918216] Code: 31 c9 45 31 d2 45 31 db c3 cc cc cc cc 66 2e 0f 1f 84 00 00 00 00 00 90 90 90 90 90 90 90 90 90 90 90 90 90 90 90 90 89 fa ec <48> 8b 05 66 a0 83 01 a9 00 00 00 80 75 11 80 3d 1a a0 83 01 00 75
+<4>[120363.918218] RSP: 0018:ff4ebae49030fda8 EFLAGS: 00000093
+<4>[120363.918220] RAX: 0000000000000000 RBX: ff3e99d497bd8498 RCX: 0000000000000000
+<4>[120363.918221] RDX: 0000000000000814 RSI: ff3e99d497bd8400 RDI: 0000000000000814
+<4>[120363.918222] RBP: ff4ebae49030fdb8 R08: 0000000000000000 R09: 0000000000000000
+<4>[120363.918223] R10: 0000000000000000 R11: 0000000000000000 R12: ffffffffb764c990
+<4>[120363.918224] R13: 000000000000001a R14: ffffffffb6f67e20 R15: ff3e9a91158e3000
+<4>[120363.918228]  ? io_idle+0x3/0x30
+<4>[120363.918229]  ? io_idle+0x3/0x30
+<4>[120363.918231]  </NMI>
+<4>[120363.918231]  <TASK>
+<4>[120363.918232]  ? acpi_idle_do_entry+0x26/0x80
+<4>[120363.918234]  acpi_idle_enter+0xaf/0x160
+<4>[120363.918235]  cpuidle_enter_state+0x91/0x720
+<4>[120363.918237]  ? tick_nohz_stop_tick+0xed/0x260
+<4>[120363.918240]  ? raw_spin_rq_unlock+0x14/0x50
+<4>[120363.918243]  cpuidle_enter+0x2e/0x50
+<4>[120363.918246]  call_cpuidle+0x21/0x50
+<4>[120363.918249]  cpuidle_idle_call+0x173/0x200
+<4>[120363.918250]  do_idle+0x90/0xf0
+<4>[120363.918251]  cpu_startup_entry+0x29/0x30
+<4>[120363.918252]  start_secondary+0x128/0x170
+<4>[120363.918254]  common_startup_64+0x13e/0x141
+<4>[120363.918257]  </TASK>
+<0>[120363.919044] Kernel Offset: 0x33200000 from 0xffffffff81000000 (relocation range: 0xffffffff80000000-0xffffffffbfffffff)
