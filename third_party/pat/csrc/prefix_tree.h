@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <iostream>
 #include <limits>
+#include <stdexcept>
 
 struct KernelInfo {
     std::vector<torch::Tensor> q_tables;
@@ -219,6 +220,23 @@ public:
 
         // Balance Pack
         packed_boxes = balancePack(packed_boxes, kvHead, HRatio);
+
+        std::vector<std::vector<bool>> assigned;
+        for (int count : split_per_seq) assigned.emplace_back(count, false);
+        for (const auto& box : packed_boxes) {
+            for (int qid : box.q_table) {
+                if (box.CTA_rank < 0 || box.CTA_rank >= split_per_seq[qid] ||
+                    assigned[qid][box.CTA_rank]) {
+                    throw std::runtime_error("PAT split ranks overlap or exceed capacity");
+                }
+                assigned[qid][box.CTA_rank] = true;
+            }
+        }
+        for (const auto& ranks : assigned) {
+            if (std::find(ranks.begin(), ranks.end(), false) != ranks.end()) {
+                throw std::runtime_error("PAT split ranks leave unwritten gather inputs");
+            }
+        }
 
         std::map<std::vector<int>, std::vector<PackedBox>> grouped;
         for (const auto& b : buckets) {
@@ -499,6 +517,12 @@ private:
     std::vector<PackedBox> balancePack(std::vector<PackedBox>& boxes, int kvHead, int HRatio = 1) {
         if (boxes.empty()) return {};
 
+        const auto can_split = [&](const PackedBox& box) {
+            const int next_rank = split_per_seq[box.q_table.front()];
+            return std::all_of(box.q_table.begin(), box.q_table.end(),
+                               [&](int qid) { return split_per_seq[qid] == next_rank; });
+        };
+
         std::vector<PackedBox> cropPack;
         cropPack.reserve(boxes.size() * 2);
 
@@ -518,7 +542,7 @@ private:
             for (auto& pack : boxes) {
                 size_t current_size = pack.block_table_ptr->size();
 
-                if (current_size > threshold) {
+                if (current_size > threshold && can_split(pack)) {
                     int num_splits = ceil_div((int)current_size, (int)avg_blocks);
                     int split_size = ceil_div((int)current_size, num_splits);
 
@@ -583,7 +607,7 @@ private:
             int longest_idx = -1;
             size_t max_len = 0;
             for (size_t i = 0; i < cropPack.size(); ++i) {
-                if (cropPack[i].block_table_ptr->size() > max_len) {
+                if (cropPack[i].block_table_ptr->size() > max_len && can_split(cropPack[i])) {
                     max_len = cropPack[i].block_table_ptr->size();
                     longest_idx = (int)i;
                 }

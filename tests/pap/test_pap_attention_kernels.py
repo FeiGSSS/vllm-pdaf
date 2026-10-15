@@ -28,6 +28,41 @@ from vllm.pap.config import PAPConfigError
 from vllm.pap.kv.metadata import PAPPagedFlashMetadata
 
 
+@pytest.mark.parametrize(
+    "batch,blocks,shared",
+    [(2, 1024, 512), (2, 2048, 1024), (4, 1024, 512), (3, 513, 200)],
+)
+def test_pat_balancing_writes_each_query_split_exactly_once(batch, blocks, shared):
+    """Shared CTA splits must not collide with a query's private split ranks."""
+    extension = pytest.importorskip("prefix_attn")
+    generator = torch.Generator().manual_seed(42)
+    table = torch.randperm(batch * blocks, generator=generator).reshape(batch, blocks)
+    table = table.to(torch.int32)
+    table[1:, :shared] = table[0, :shared]
+    tree = extension.PrefixTreeCPP(16)
+    tree.build_radix_tree([blocks * 16] * batch, table)
+    tree.pack_schedule([[16, 32, 1], [32, 32, 2]], 4, 8)
+    info = tree.kernel_info
+    ranks: list[list[int]] = [[] for _ in range(batch)]
+    tokens = [0] * batch
+    for queries, counts, split_ranks, sizes in zip(
+        info.q_tables,
+        info.num_seqs_per_CTAs,
+        info.CTA_ranks,
+        info.kv_in_CTAs,
+        strict=True,
+    ):
+        for query_row, count, rank, size in zip(
+            queries, counts, split_ranks, sizes, strict=True
+        ):
+            for query in query_row[: int(count)].tolist():
+                ranks[query].append(int(rank))
+                tokens[query] += int(size)
+    for query, expected in enumerate(info.num_split_per_seq.tolist()):
+        assert sorted(ranks[query]) == list(range(expected))
+        assert tokens[query] == blocks * 16
+
+
 def test_pat_rejects_negative_plan_cache_budget_before_building(monkeypatch):
     monkeypatch.setattr(
         pat.PAPPATPlanner, "unavailable_reason", staticmethod(lambda: None)
