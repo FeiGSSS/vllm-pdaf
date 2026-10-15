@@ -1,0 +1,33 @@
+valid=71 invalid=0
+dp8       C8   n=3 rps_min= 5.703 TTFTp95=    879 ITLp95=  32.0 Std_good= 5.694 feasible=SSR turn0hit=0.000
+dp8       C18  n=3 rps_min= 9.783 TTFTp95=   1190 ITLp95=  81.5 Std_good= 9.187 feasible=--R turn0hit=0.000
+dp8       C28  n=3 rps_min=11.977 TTFTp95=   1356 ITLp95= 129.8 Std_good= 8.890 feasible=--- turn0hit=0.000
+dp8       C36  n=2 rps_min=12.585 TTFTp95=   1565 ITLp95= 156.3 Std_good= 7.240 feasible=--- turn0hit=0.000
+dp8       C44  n=2 rps_min=13.312 TTFTp95=   1872 ITLp95= 191.1 Std_good= 5.179 feasible=--- turn0hit=0.000
+pap6pa2p  C24  n=2 rps_min=12.719 TTFTp95=   1695 ITLp95=  29.7 Std_good=12.719 feasible=SSR turn0hit=0.000
+pap6pa2p  C32  n=2 rps_min=14.922 TTFTp95=   2291 ITLp95=  31.5 Std_good=14.922 feasible=SSR turn0hit=0.000
+pap6pa2p  C40  n=3 rps_min=15.571 TTFTp95=   3535 ITLp95=  34.8 Std_good=15.571 feasible=SSR turn0hit=0.000
+pap6pa2p  C48  n=3 rps_min=16.217 TTFTp95=   4187 ITLp95=  40.7 Std_good=16.155 feasible=-SR turn0hit=0.000
+pap6pa2p  C56  n=3 rps_min=16.028 TTFTp95=   4983 ITLp95=  41.9 Std_good=16.028 feasible=-SR turn0hit=0.000
+pap6pa2p  C64  n=3 rps_min=16.544 TTFTp95=   6514 ITLp95=  44.7 Std_good=16.519 feasible=-SR turn0hit=0.000
+pap6pa2p  C72  n=3 rps_min=17.149 TTFTp95=   8277 ITLp95=  45.9 Std_good=16.667 feasible=-SR turn0hit=0.000
+pap6pa2p  C96  n=2 rps_min=16.309 TTFTp95=  10395 ITLp95=  49.3 Std_good=15.417 feasible=--R turn0hit=0.000
+pap7pa1p  C24  n=2 rps_min=12.826 TTFTp95=   1500 ITLp95=  31.9 Std_good=12.826 feasible=SSR turn0hit=0.000
+pap7pa1p  C30  n=2 rps_min=14.505 TTFTp95=   1852 ITLp95=  34.9 Std_good=14.505 feasible=SSR turn0hit=0.000
+pap7pa1p  C34  n=2 rps_min=15.649 TTFTp95=   2317 ITLp95=  40.3 Std_good=15.649 feasible=SSR turn0hit=0.000
+pap7pa1p  C40  n=2 rps_min=15.638 TTFTp95=   2707 ITLp95=  42.7 Std_good=15.614 feasible=SSR turn0hit=0.000
+pap7pa1p  C48  n=3 rps_min=17.145 TTFTp95=   3555 ITLp95=  47.6 Std_good=17.145 feasible=SSR turn0hit=0.000
+pap7pa1p  C56  n=3 rps_min=16.498 TTFTp95=   4942 ITLp95=  56.1 Std_good=16.498 feasible=-SR turn0hit=0.000
+pap7pa1p  C64  n=3 rps_min=17.433 TTFTp95=   6922 ITLp95=  54.3 Std_good=17.379 feasible=-SR turn0hit=0.000
+pap7pa1p  C72  n=3 rps_min=18.453 TTFTp95=   6416 ITLp95=  56.5 Std_good=18.453 feasible=-SR turn0hit=0.000
+pap7pa1p  C96  n=2 rps_min=17.873 TTFTp95=   8728 ITLp95=  67.8 Std_good=17.203 feasible=-SR turn0hit=0.000
+pd6p2d    C31  n=3 rps_min=13.636 TTFTp95=   1978 ITLp95=  46.4 Std_good=13.551 feasible=SSR turn0hit=0.000
+pd6p2d    C38  n=3 rps_min=13.645 TTFTp95=   2852 ITLp95=  73.9 Std_good=13.347 feasible=-SR turn0hit=0.000
+pd6p2d    C44  n=3 rps_min=14.709 TTFTp95=   3536 ITLp95=  98.6 Std_good=13.491 feasible=--R turn0hit=0.000
+pd6p2d    C48  n=3 rps_min=15.058 TTFTp95=   3806 ITLp95=  91.2 Std_good=13.576 feasible=--R turn0hit=0.000
+pd6p2d    C56  n=3 rps_min=13.711 TTFTp95=   5208 ITLp95= 143.8 Std_good=10.948 feasible=--- turn0hit=0.000
+Strict {"pap7pa1p": {"concurrency": 48, "goodput": 16.60887616375982}, "pap6pa2p": {"concurrency": 40, "goodput": 15.170308190472106}, "pd6p2d": {"concurrency": 31, "goodput": 13.389023038090468}, "dp8": {"concurrency": 8, "goodput": 5.6401342359978015}, "pap_over_pd": 1.240484545923118, "pap_over_dp": 2.944766111727397}
+Standard {"pap7pa1p": {"concurrency": 72, "goodput": 18.453412911219136}, "pap6pa2p": {"concurrency": 72, "goodput": 16.667097432087157}, "pd6p2d": {"concurrency": 31, "goodput": 13.550793617099968}, "dp8": {"concurrency": 8, "goodput": 5.693595224016738}, "pap_over_pd": 1.3617957318700855, "pap_over_dp": 3.241082687680168}
+Relaxed {"pap7pa1p": {"concurrency": 72, "goodput": 18.453412911219136}, "pap6pa2p": {"concurrency": 72, "goodput": 17.149425010507684}, "pd6p2d": {"concurrency": 48, "goodput": 14.517166174448988}, "dp8": {"concurrency": 18, "goodput": 9.615035132022076}, "pap_over_pd": 1.2711442914870092, "pap_over_dp": 1.9192246994253384}
+D2 {"pap7pa1p": {"concurrency": 72, "goodput": 18.453412911219136}, "pap6pa2p": {"concurrency": 72, "goodput": 16.667097432087157}, "pd6p2d": {"concurrency": 31, "goodput": 13.550793617099968}, "dp8": {"concurrency": 8, "goodput": 5.693595224016738}, "pap_over_pd": 1.3617957318700855, "pap_over_dp": 3.241082687680168}
+pd_reproduction {"july_standard_goodput": 15.305, "current": 13.550793617099968, "ratio": 0.8853834444364566}
