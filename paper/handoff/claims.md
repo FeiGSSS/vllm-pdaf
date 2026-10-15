@@ -53,6 +53,7 @@ requests use.
 | C17 | Cross-PA Projection aggregation contributes to throughput: capping the Projection batch or splitting Projection across more GPUs lowers throughput. | pending | R-004 (A2) |
 | C18 | Carving 12 SMs from each Prefill GPU for Attention is cheap: 80/12 raises TTFT by at most 10% relative to 84/8. | pending | R-004 (A4) |
 | C19 | At equal load, Dynamo routing with PA→PA KV migration gives lower TTFT than Dynamo routing alone and than sticky session round-robin. | pending | R-004 (A5/A6) |
+| C20 | Under load, PD 6P2D becomes ITL-bound first (ITL P95 > 75 ms from C38–C44 on L07) while PAP 7PA1P keeps ITL P95 ≤ 57 ms through C72; on native-32K multi-turn the same ordering holds across the R-003 sweep. | pending | R-002 E2b (L07, measured); R-003 E1 (native-32K) |
 
 G1 (TTFT tail) is addressed by R-004 (E5); G2 (generality and variance) is
 partly addressed by R-003 (three runs per point, confidence intervals).

@@ -8,7 +8,7 @@ from: research agent
 common settings: `paper/handoff/requests/COMMON.md`（本请求的所有运行都遵守）
 
 depends: R-002 done；research agent 在本文件写 `cleared:` 行之后开始（48 小时没有回复就按 R-002 报告里的默认分支继续）
-cleared:
+cleared: 2026-10-15 research agent. R-002 读完：C12 被推翻（handoff 只占 TTFT 3–4.5%），C14 成立（L07 上 PAP/PD 1.24–1.36×）。主线按 experiment-plan 预设分支改为“Decode 侧容量与负载下的 ITL + 多轮放置”，不再以“省掉 KV 传输时间”为主论据。E1/E2d 的设计不变；额外要求：每个负载点报告 ITL P95，PD 运行保留 `ttft_breakdown.json` 并按负载报告每次传输耗时（检验 3→1 fan-in 是否在 C40–C60 出现）。
 
 ## Hypothesis
 - E1（C15）：在 native-32K 多轮负载上，PAP 7PA1P（迁移开）在 D2 SLO 下的最大可持续 goodput 高于 DP8、PD 6P2D 和 PD 4P4D。
