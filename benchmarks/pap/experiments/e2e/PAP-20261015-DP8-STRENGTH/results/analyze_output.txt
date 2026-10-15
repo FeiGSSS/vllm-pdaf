@@ -1,0 +1,18 @@
+valid=24 invalid=0
+dp8b32k   C8   n=2 rps_min= 5.883 TTFTp95=    845 ITLp95=  27.1 Std_good= 5.883 feasible=SSR turn0hit=0.000
+dp8b32k   C12  n=2 rps_min= 7.935 TTFTp95=   1005 ITLp95=  43.4 Std_good= 7.898 feasible=SSR turn0hit=0.000
+dp8b32k   C16  n=2 rps_min= 9.399 TTFTp95=   1124 ITLp95=  75.4 Std_good= 8.899 feasible=--R turn0hit=0.000
+dp8b32k   C20  n=2 rps_min=10.531 TTFTp95=   1213 ITLp95=  88.3 Std_good= 9.675 feasible=--R turn0hit=0.000
+dp8b32k   C24  n=2 rps_min=11.213 TTFTp95=   1284 ITLp95= 116.5 Std_good= 9.163 feasible=--- turn0hit=0.000
+dp8b32k   C32  n=2 rps_min=11.713 TTFTp95=   1547 ITLp95= 148.4 Std_good= 7.009 feasible=--- turn0hit=0.000
+dp8base   C8   n=2 rps_min= 5.748 TTFTp95=    855 ITLp95=  28.5 Std_good= 5.748 feasible=SSR turn0hit=0.000
+dp8base   C12  n=2 rps_min= 7.757 TTFTp95=   1055 ITLp95=  47.0 Std_good= 7.660 feasible=SSR turn0hit=0.000
+dp8base   C16  n=2 rps_min= 9.301 TTFTp95=   1170 ITLp95=  69.4 Std_good= 8.909 feasible=-SR turn0hit=0.000
+dp8base   C20  n=2 rps_min=10.464 TTFTp95=   1219 ITLp95=  84.9 Std_good= 9.614 feasible=--R turn0hit=0.000
+dp8base   C24  n=2 rps_min=11.088 TTFTp95=   1316 ITLp95= 109.1 Std_good= 9.235 feasible=--- turn0hit=0.000
+dp8base   C32  n=2 rps_min=12.500 TTFTp95=   1524 ITLp95= 137.3 Std_good= 8.028 feasible=--- turn0hit=0.000
+Strict {"dp8base": {"concurrency": 12, "goodput": 7.453881257889029}, "dp8b32k": {"concurrency": 12, "goodput": 7.699519938689833}}
+Standard {"dp8base": {"concurrency": 16, "goodput": 8.908716695229051}, "dp8b32k": {"concurrency": 12, "goodput": 7.897897264002292}}
+Relaxed {"dp8base": {"concurrency": 20, "goodput": 10.120869912059694}, "dp8b32k": {"concurrency": 20, "goodput": 10.251055299536162}}
+D2 {"dp8base": {"concurrency": 16, "goodput": 8.908716695229051}, "dp8b32k": {"concurrency": 12, "goodput": 7.897897264002292}}
+standard_over_july_dp {"dp8base": 0.8103253315653131, "dp8b32k": 0.7183825053667721}

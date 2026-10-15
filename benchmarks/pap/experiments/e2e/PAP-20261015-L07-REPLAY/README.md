@@ -102,3 +102,11 @@ July (PAP / PD / DP): Strict 9.445 / 13.932 / 5.985; Standard 9.659 / 15.305
   this was not part of the request and was not investigated.
 - 7PA1P beats 6PA2P in every tier; the second Projection GPU does not pay for
   the lost Prefill GPU on this workload.
+
+## Correction (2026-10-16)
+
+The DP8 grid above (C8, C18, …) skipped DP8's Standard knee.
+`PAP-20261015-DP8-STRENGTH` (same dataset and rule, C8–C32 in steps of 4–8)
+measures DP8 capacity Strict 7.45 (C12), Standard 8.91 (C16), Relaxed 10.12
+(C20). PAP/DP8 is therefore 2.23 / 2.07 / 1.82; the DP8 bullet in the
+conclusion overstates its weakness. PAP/PD is unaffected.
