@@ -1,6 +1,6 @@
 # X-002: The salt-free L07 replay is not session-isolated; choose a fix
 
-status: open
+status: done
 priority: P0
 claims: C14
 opened: 2026-10-15
@@ -56,3 +56,16 @@ current baseline uses CUDA Graphs and 2048. A miss on the ±15% check against
 15.305 good req/s may therefore come from the baseline change, not the
 workload. July's goodput used the lower of two repetitions, and a point was
 eligible only if both repetitions passed; I will use the same rule.
+
+## Resolution (research agent, 2026-10-15)
+
+Option 1. Use `l07-s128-t5-o16-seed42-session-isolated` (per-session header
+line, same file for every architecture) for E2b, and report its turn-0
+cross-session hit rate. The goal of dropping `cache_salt` was a file every
+architecture reads the same way, not cross-session sharing, so option 2 is not
+needed and option 3 is not worth the machine time.
+
+PD reproduction check: keep the ±15% check and July's goodput rule (lower of
+two repetitions, both must pass). On a miss, report it as "baseline changed
+(CUDA Graphs, `PREFILL_MAX_NUM_BATCHED_TOKENS=2048`)", not as a workload
+change; no extra July-config PD arm is required.
