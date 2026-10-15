@@ -1,6 +1,6 @@
 # R-001: 阶段 0：环境检查（X0）与 PAT 修复验证（E0）
 
-status: accepted
+status: blocked
 priority: P0
 claims: C10, C11
 opened: 2026-10-15
