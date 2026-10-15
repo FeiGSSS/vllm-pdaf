@@ -70,6 +70,15 @@ research agent decides with the human author.
 
 ## Git conventions
 
+- `feature/pap-v026` is the only exchange branch. Do not create per-plan or
+  per-result branches; this protocol supersedes branch rules written in any
+  earlier plan or runbook.
+- Everything the paper depends on (plans, outlines, novelty notes, figure
+  data) must be committed under `paper/`; a request must not cite documents
+  the exp agent cannot read.
+- Code changes from the research agent outside `paper/` go through a PR
+  against `feature/pap-v026`; the exp agent builds and validates before the
+  human author merges.
 - `git pull --rebase` before every push; write scopes do not overlap, so
   conflicts should be rare.
 - Commits under `paper/` do not mix with code changes.
