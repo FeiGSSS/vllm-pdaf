@@ -1,0 +1,170 @@
+{
+  "dataset_id": "agentic-code/s240-t3-native32k-stratified-seed42",
+  "format": "mooncake-trace",
+  "source_generation": {
+    "generator": "aiperf synthesize agentic-code",
+    "aiperf_version": "0.11.0",
+    "config": "benchmarks/pap/datasets/agentic-code/generator-configs/native32k-s3.json",
+    "num_sessions": 10000,
+    "seed": 42,
+    "reason": "The 2000-session pool used for s60 has only 29 candidates in the 28-32K stratum; 60 per stratum need a larger pool (R-003)."
+  },
+  "source": "/tmp/claude-1000/-home-fei-research-PD-vllm-pap/1f8adff5-c8ea-4fbe-9f85-0ce8a3ee1ba3/scratchpad/pool10000/native32k-s3_10000s_seed42_20261015-151357/dataset.jsonl",
+  "source_sha256": "50a8d6e242f1d83b11041fcb24eb291b0e045696bd34b7a8916433d612b33cfd",
+  "output": "benchmarks/pap/datasets/agentic-code/s240-t3-native32k-stratified-seed42/dataset.jsonl",
+  "output_sha256": "6c1ee8f006f8d499f277e210b7f8c9bd40787ee601dd90e6a7897a7fd107d97a",
+  "selection": {
+    "sessions": 240,
+    "take_first_turns": 3,
+    "length_divisor": 1,
+    "hash_block_size": 512,
+    "seed": 42,
+    "eligible_sessions": 10000,
+    "sampling": "equal_count_final_context_strata",
+    "final_context_min": 16384,
+    "final_context_max": 32768,
+    "final_context_strata": 4,
+    "stratum_counts": [
+      {
+        "minimum": 16384,
+        "maximum": 20480,
+        "eligible": 4090,
+        "selected": 60
+      },
+      {
+        "minimum": 20480,
+        "maximum": 24576,
+        "eligible": 2839,
+        "selected": 60
+      },
+      {
+        "minimum": 24576,
+        "maximum": 28672,
+        "eligible": 919,
+        "selected": 60
+      },
+      {
+        "minimum": 28672,
+        "maximum": 32768,
+        "eligible": 149,
+        "selected": 60
+      }
+    ],
+    "eligibility": {
+      "minimum_source_turns": 3
+    }
+  },
+  "observed": {
+    "sessions": 240,
+    "turns": 720,
+    "turns_per_session": {
+      "mean": 3.0,
+      "median": 3.0,
+      "p95": 3.0,
+      "p99": 3.0,
+      "min": 3,
+      "max": 3
+    },
+    "total_input_tokens": 5758111,
+    "total_output_tokens": 57852,
+    "input_tokens_per_request": {
+      "mean": 7997.376,
+      "median": 7068.0,
+      "p95": 17085.3,
+      "p99": 18026.07,
+      "min": 1177,
+      "max": 18126
+    },
+    "output_tokens_per_request": {
+      "mean": 80.35,
+      "median": 69.0,
+      "p95": 163.05,
+      "p99": 222.05,
+      "min": 30,
+      "max": 253
+    },
+    "prompt_context_tokens_per_request": {
+      "mean": 18762.032,
+      "median": 17921.5,
+      "p95": 29376.85,
+      "p99": 31951.24,
+      "min": 8151,
+      "max": 32683
+    },
+    "initial_context_tokens": {
+      "mean": 13410.513,
+      "median": 13519.0,
+      "p95": 17831.45,
+      "p99": 18068.49,
+      "min": 8151,
+      "max": 18126
+    },
+    "final_context_tokens": {
+      "mean": 24233.179,
+      "median": 24531.0,
+      "p95": 31545.85,
+      "p99": 32441.41,
+      "min": 16388,
+      "max": 32729
+    },
+    "per_turn": [
+      {
+        "turn": 1,
+        "input_tokens": {
+          "mean": 13410.513,
+          "median": 13519.0,
+          "p95": 17831.45,
+          "p99": 18068.49,
+          "min": 8151,
+          "max": 18126
+        },
+        "output_tokens": {
+          "mean": 79.125,
+          "median": 64.5,
+          "p95": 161.05,
+          "p99": 206.15,
+          "min": 30,
+          "max": 253
+        }
+      },
+      {
+        "turn": 2,
+        "input_tokens": {
+          "mean": 5236.863,
+          "median": 5292.0,
+          "p95": 8654.1,
+          "p99": 8937.81,
+          "min": 1290,
+          "max": 8981
+        },
+        "output_tokens": {
+          "mean": 77.829,
+          "median": 68.0,
+          "p95": 159.25,
+          "p99": 228.49,
+          "min": 30,
+          "max": 247
+        }
+      },
+      {
+        "turn": 3,
+        "input_tokens": {
+          "mean": 5344.754,
+          "median": 5342.0,
+          "p95": 8459.95,
+          "p99": 8869.75,
+          "min": 1177,
+          "max": 8924
+        },
+        "output_tokens": {
+          "mean": 84.096,
+          "median": 73.0,
+          "p95": 170.05,
+          "p99": 218.71,
+          "min": 30,
+          "max": 253
+        }
+      }
+    ]
+  }
+}
