@@ -17,22 +17,20 @@ from vllm.pap.gateway.app import parse_args
 from vllm.pap.gateway.dynamo_routing import PAPDynamoRouter
 from vllm.pap.gateway.kv_migration import PAPKVCacheMigrationCoordinator
 from vllm.pap.gateway.lifecycle import PAPLifecycleManager
-from vllm.pap.gateway.load_tracker import PAPLoadTracker
 from vllm.pap.gateway.observability import (
     _extract_prefill_cache_usage,
     _merge_prefill_cache_usage,
     _prefill_usage_headers,
 )
+from vllm.pap.gateway.payloads import build_projection_kv_unaware_payload
 from vllm.pap.gateway.request_pipeline import (
     _cancel_on_client_disconnect,
     _handle_openai_request,
     _pop_conversation_id,
 )
-from vllm.pap.gateway.session_routing import PAPSessionRoundRobinRouter
 from vllm.pap.gateway.topology import (
     PAPGroup,
     ProjectionInstance,
-    build_projection_payload_for_group,
     parse_pap_groups,
     parse_projection_instances,
     select_projection_for_group,
@@ -85,8 +83,8 @@ def test_client_disconnect_cancels_downstream_request_task() -> None:
     asyncio.run(run())
 
 
-def test_gateway_defaults_to_dynamo(monkeypatch) -> None:
-    monkeypatch.delenv("PAP_ROUTING_POLICY", raising=False)
+def test_gateway_defaults_to_dynamo_prefill_load_scale(monkeypatch) -> None:
+    monkeypatch.delenv("PAP_DYNAMO_PREFILL_LOAD_SCALE", raising=False)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -99,9 +97,7 @@ def test_gateway_defaults_to_dynamo(monkeypatch) -> None:
         ],
     )
 
-    args = parse_args()
-    assert args.routing_policy == "dynamo"
-    assert args.dynamo_prefill_load_scale == 2.0
+    assert parse_args().dynamo_prefill_load_scale == 2.0
 
 
 def test_dynamo_workers_register_replay_endpoints(monkeypatch, tmp_path) -> None:
@@ -150,71 +146,6 @@ def test_dynamo_workers_register_replay_endpoints(monkeypatch, tmp_path) -> None
             "tcp://host:8500",
             "tcp://host:8501",
         ]
-        await router.shutdown()
-
-    asyncio.run(run())
-
-
-def test_gateway_accepts_session_round_robin(monkeypatch) -> None:
-    monkeypatch.setattr(
-        sys,
-        "argv",
-        [
-            "pap-gateway",
-            "--pap-groups",
-            "127.0.0.1:8100:127.0.0.1:8300",
-            "--projections",
-            "127.0.0.1:8200",
-            "--routing-policy",
-            "session_round_robin",
-        ],
-    )
-
-    assert parse_args().routing_policy == "session_round_robin"
-
-
-def test_session_round_robin_keeps_conversation_on_initial_pa() -> None:
-    async def run() -> None:
-        groups = _groups(3)
-        router = PAPSessionRoundRobinRouter(groups, max_conversations=3)
-
-        first = await router.select_group(
-            [1], request_id="a0", expected_output_tokens=1, conversation_id="a"
-        )
-        second = await router.select_group(
-            [2], request_id="b0", expected_output_tokens=1, conversation_id="b"
-        )
-        repeated = await router.select_group(
-            [3], request_id="a1", expected_output_tokens=1, conversation_id="a"
-        )
-
-        assert first == groups[0]
-        assert second == groups[1]
-        assert repeated == groups[0]
-        assert router.stats()["conversation_bindings"] == 2
-        assert router.stats()["active_reservations"] == 3
-        for request_id in ("a0", "b0", "a1"):
-            router.finish_request(request_id)
-        assert router.stats()["active_reservations"] == 0
-        await router.shutdown()
-
-    asyncio.run(run())
-
-
-def test_session_round_robin_fails_closed_without_identity_or_capacity() -> None:
-    async def run() -> None:
-        router = PAPSessionRoundRobinRouter(_groups(1), max_conversations=1)
-        with pytest.raises(ValueError, match="conversation ID"):
-            await router.select_group(
-                [1], request_id="missing", expected_output_tokens=1
-            )
-        await router.select_group(
-            [1], request_id="a", expected_output_tokens=1, conversation_id="a"
-        )
-        with pytest.raises(RuntimeError, match="conversation limit"):
-            await router.select_group(
-                [1], request_id="b", expected_output_tokens=1, conversation_id="b"
-            )
         await router.shutdown()
 
     asyncio.run(run())
@@ -319,36 +250,6 @@ def test_gateway_empty_hf_overrides_disable_model_overrides(monkeypatch, source)
     assert parse_args().hf_overrides == {}
 
 
-@pytest.mark.parametrize("source", ["env", "cli"])
-@pytest.mark.parametrize(
-    "policy",
-    [
-        "round_robin",
-        "crossbar_round_robin",
-        "projection_affinity",
-        "projection_sticky",
-        "conversation_affinity",
-    ],
-)
-def test_gateway_rejects_retired_routing_without_fallback(monkeypatch, source, policy):
-    monkeypatch.delenv("PAP_ROUTING_POLICY", raising=False)
-    argv = [
-        "pap-gateway",
-        "--pap-groups",
-        "127.0.0.1:8100:127.0.0.1:8300",
-        "--projections",
-        "127.0.0.1:8200",
-    ]
-    if source == "env":
-        monkeypatch.setenv("PAP_ROUTING_POLICY", policy)
-    else:
-        argv.extend(["--routing-policy", policy])
-    monkeypatch.setattr(sys, "argv", argv)
-    with pytest.raises(SystemExit) as error:
-        parse_args()
-    assert error.value.code == 2
-
-
 @pytest.mark.parametrize(
     "pa_count,projection_count,owners",
     [(7, 1, [0] * 7), (6, 2, [0, 0, 0, 1, 1, 1]), (7, 2, [0, 0, 0, 0, 1, 1, 1])],
@@ -363,13 +264,10 @@ def test_dynamo_selected_pa_has_fixed_projection_owner(
     ] == owners
 
 
-@pytest.mark.parametrize("routing_policy", ["dynamo", "session_round_robin"])
-def test_gateway_rejects_cache_salt_before_prefill(routing_policy: str):
+def test_gateway_rejects_cache_salt_before_prefill():
     request = SimpleNamespace(
         json=AsyncMock(return_value={"cache_salt": "tenant-a"}),
-        app=SimpleNamespace(
-            state=SimpleNamespace(args=SimpleNamespace(routing_policy=routing_policy))
-        ),
+        app=SimpleNamespace(state=SimpleNamespace()),
     )
     response = asyncio.run(_handle_openai_request("/v1/chat/completions", request))
     assert response.status_code == 400
@@ -515,90 +413,6 @@ def test_dynamo_release_failure_retains_ownership_and_blocks_new_routing():
     asyncio.run(run())
 
 
-def test_load_tracker_accounts_request_lifecycle_without_runtime_rpc(
-    monkeypatch,
-) -> None:
-    async def run() -> None:
-        groups = _groups(2)
-        calls: list[int] = []
-
-        async def sample(client):
-            calls.append(client)
-            return {
-                "total_kv_tokens": 100_000,
-                "kv_block_size": 16,
-            }
-
-        monkeypatch.setattr(
-            "vllm.pap.gateway.load_tracker.get_prefill_kv_load",
-            sample,
-        )
-        tracker = PAPLoadTracker({groups[0]: 1, groups[1]: 2})
-        await tracker.start()
-        tracker.begin_request(
-            "request-0",
-            groups[0],
-            prefill_tokens=1000,
-            decode_capacity_tokens=100,
-        )
-        assert tracker.snapshot()[groups[0]]["projected_kv_tokens"] == 1100
-        tracker.mark_prefill_completed("request-0", 1200)
-        assert tracker.snapshot()[groups[0]]["projected_kv_tokens"] == 1300
-        tracker.finish_request("request-0")
-        assert tracker.snapshot()[groups[0]]["projected_kv_tokens"] == 0
-        assert calls == [1, 2]
-
-    asyncio.run(run())
-
-
-def test_load_tracker_counts_shared_prefix_blocks_once(monkeypatch) -> None:
-    async def run() -> None:
-        group = _groups(1)[0]
-
-        async def sample(client):
-            del client
-            return {"total_kv_tokens": 100_000, "kv_block_size": 16}
-
-        monkeypatch.setattr(
-            "vllm.pap.gateway.load_tracker.get_prefill_kv_load",
-            sample,
-        )
-        tracker = PAPLoadTracker({group: 1})
-        await tracker.start()
-        tracker.begin_request(
-            "request-0",
-            group,
-            prefill_tokens=32,
-            decode_capacity_tokens=0,
-            prompt_hashes=(b"a", b"b"),
-        )
-        tracker.mark_prefill_completed(
-            "request-0",
-            32,
-            prompt_hashes=(b"a", b"b"),
-        )
-        tracker.begin_request(
-            "request-1",
-            group,
-            prefill_tokens=16,
-            decode_capacity_tokens=0,
-            prompt_hashes=(b"a", b"b", b"c"),
-            cached_tokens=32,
-        )
-        tracker.mark_prefill_completed(
-            "request-1",
-            48,
-            prompt_hashes=(b"a", b"b", b"c"),
-            cached_tokens=32,
-        )
-
-        assert tracker.snapshot()[group]["non_evictable_kv_tokens"] == 48
-        tracker.finish_request("request-0")
-        assert tracker.snapshot()[group]["non_evictable_kv_tokens"] == 48
-
-    asyncio.run(run())
-
-
 def test_parse_pap_groups_from_compact_spec() -> None:
     groups = parse_pap_groups(
         "127.0.0.1:8100:127.0.0.1:8300,127.0.0.1:8101:127.0.0.1:8301"
@@ -611,16 +425,6 @@ def test_parse_pap_groups_accepts_attention_tcp_port() -> None:
     groups = parse_pap_groups("127.0.0.1:8100:127.0.0.1:8300:9300")
 
     assert groups[0].attention_tcp_port == 9300
-    assert groups[0].attention_tcp_endpoint == "tcp://127.0.0.1:9300"
-
-
-def test_parse_pap_groups_accepts_ranked_attention_ports() -> None:
-    groups = parse_pap_groups("127.0.0.1:8100:127.0.0.1:8300|8301:9300")
-
-    assert groups[0].attention_port == (8300, 8301)
-    assert groups[0].attention_base_url == (
-        "http://127.0.0.1:8300,http://127.0.0.1:8301"
-    )
     assert groups[0].attention_tcp_endpoint == "tcp://127.0.0.1:9300"
 
 
@@ -707,22 +511,7 @@ def test_parse_projection_instances_from_compact_spec() -> None:
     )
 
 
-def _pa_load(
-    *,
-    prefill: int,
-    projected_kv: int,
-    total_kv: int = 100_000,
-) -> dict[str, int]:
-    return {
-        "outstanding_prefill_tokens": prefill,
-        "projected_kv_tokens": projected_kv,
-        "non_evictable_kv_tokens": projected_kv,
-        "total_kv_tokens": total_kv,
-        "kv_block_size": 16,
-    }
-
-
-def test_build_projection_payload_for_group_keeps_kv_uninstalled() -> None:
+def test_build_projection_payload_keeps_kv_uninstalled() -> None:
     group = PAPGroup("127.0.0.1", 8103, "127.0.0.1", 8303, 9303)
     kv_params = {
         "remote_engine_id": "prefill-3",
@@ -730,11 +519,12 @@ def test_build_projection_payload_for_group_keeps_kv_uninstalled() -> None:
         "remote_port": 5562,
     }
 
-    payload = build_projection_payload_for_group(
+    payload = build_projection_kv_unaware_payload(
         {"model": "qwen", "prompt": "hello"},
         kv_params,
-        group,
         prompt_token_ids=[1],
+        pap_attention_endpoint=group.attention_base_url,
+        pap_attention_tcp_endpoint=group.attention_tcp_endpoint,
     )
 
     result = payload["kv_transfer_params"]
@@ -746,13 +536,10 @@ def test_build_projection_payload_for_group_keeps_kv_uninstalled() -> None:
     assert "remote_host" not in result
 
 
-def test_build_projection_payload_for_group_attaches_prefill_kv_handle() -> None:
-    group = PAPGroup("127.0.0.1", 8103, "127.0.0.1", 8303)
-
-    payload = build_projection_payload_for_group(
+def test_build_projection_payload_attaches_prefill_kv_handle() -> None:
+    payload = build_projection_kv_unaware_payload(
         {"model": "qwen", "prompt": "hello"},
         {"remote_engine_id": "prefill-3"},
-        group,
         prompt_token_ids=[1],
         pap_prefill_kv_handle="req-9",
     )
@@ -812,7 +599,7 @@ def test_stream_cleanup_precedes_done_event(monkeypatch, split_done: bool) -> No
         manager = PAPLifecycleManager()
         lifecycle = manager.create(
             request_id="request-0",
-            attention_clients=[],
+            attention_client=None,
             prefill_client=None,
             projection_client=None,
             admission=FakeAdmission(),
@@ -823,19 +610,17 @@ def test_stream_cleanup_precedes_done_event(monkeypatch, split_done: bool) -> No
         lifecycle.mark_attention_registered()
         lifecycle.mark_projection_admitted()
         stream = gateway_handoff._stream_projection_with_cleanup(
-            None,
-            "/v1/completions",
-            {},
             "request-0",
             lifecycle,
+            gateway_handoff.OpenProjectionStream(None, 0.0, False),
         )
         async for chunk in stream:
             events.append(chunk)
 
-    monkeypatch.setattr(gateway_handoff, "_stream_projection", fake_stream)
+    monkeypatch.setattr(gateway_handoff, "_stream_projection_response", fake_stream)
     monkeypatch.setattr(
         gateway_lifecycle,
-        "release_attention_sessions",
+        "release_attention_session",
         fake_cleanup,
     )
     asyncio.run(run())
@@ -872,13 +657,13 @@ def test_lifecycle_cleanup_survives_caller_cancellation(monkeypatch) -> None:
 
         monkeypatch.setattr(
             gateway_lifecycle,
-            "release_attention_sessions",
+            "release_attention_session",
             delayed_cleanup,
         )
         manager = PAPLifecycleManager()
         lifecycle = manager.create(
             request_id="request-cancelled",
-            attention_clients=[],
+            attention_client=None,
             prefill_client=None,
             projection_client=None,
             admission=FakeAdmission(),

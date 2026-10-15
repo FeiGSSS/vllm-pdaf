@@ -17,13 +17,13 @@ from starlette.background import BackgroundTask
 from vllm.pap.gateway.clients import (
     prefill_kv_handle_from_kv_params,
     prefill_prefix_len_from_kv_params,
+    register_attention_handle,
     wait_attention_prefill_ready,
 )
 from vllm.pap.gateway.handoff import (
     _post_json,
     _stream_projection_with_cleanup,
     open_projection_stream,
-    register_attention_handles,
 )
 from vllm.pap.gateway.observability import (
     _extract_prefill_cache_usage,
@@ -34,12 +34,10 @@ from vllm.pap.gateway.observability import (
 from vllm.pap.gateway.payloads import (
     attach_pap_prefill_attention_params,
     build_prefill_payload,
+    build_projection_kv_unaware_payload,
     requested_decode_capacity,
 )
-from vllm.pap.gateway.topology import (
-    build_projection_payload_for_group,
-    select_projection_for_group,
-)
+from vllm.pap.gateway.topology import select_projection_for_group
 
 logger = logging.getLogger("pap_gateway")
 
@@ -131,7 +129,6 @@ async def _handle_openai_request(api_path: str, request: Request):
         if request_id in pending_route_request_ids:
             # No lifecycle coordinator took ownership (routing/setup failed).
             request.app.state.pap_dynamo_router.finish_request(request_id)
-            request.app.state.pap_load_tracker.finish_request(request_id)
             request.app.state.pap_active_request_ids.discard(request_id)
         pending_route_request_ids.discard(request_id)
 
@@ -155,10 +152,7 @@ async def _handle_parsed_openai_request(
     prefix_input = await tokenizer.prompt_hashes(api_path, req_data)
     if prefix_input is None:
         raise RuntimeError("Dynamo routing requires Gateway prompt token IDs")
-    routing_token_ids, prompt_hashes, raw_prompt_hashes, routing_prompt_text = (
-        prefix_input
-    )
-    initial_context_tokens = len(routing_token_ids)
+    routing_token_ids, raw_prompt_hashes, routing_prompt_text = prefix_input
     tokenization_ms = (
         (time.perf_counter() - tokenization_start) * 1000.0 if profile else 0.0
     )
@@ -182,16 +176,8 @@ async def _handle_parsed_openai_request(
     projection_index = request.app.state.projections.index(projection)
     group_index = request.app.state.groups.index(group)
     prefill = request.app.state.prefill_clients[group]
-    attention_clients = request.app.state.attention_clients[group]
-    load_tracker = request.app.state.pap_load_tracker
+    attention = request.app.state.attention_clients[group]
     kv_migration = request.app.state.pap_kv_migration
-    load_tracker.begin_request(
-        request_id,
-        group,
-        prefill_tokens=max(1, initial_context_tokens),
-        decode_capacity_tokens=decode_capacity_tokens,
-        prompt_hashes=prompt_hashes,
-    )
 
     handed_off_stream_cleanup = False
     active_request_ids: set[str] = request.app.state.pap_active_request_ids
@@ -200,13 +186,12 @@ async def _handle_parsed_openai_request(
 
     def finish_request() -> None:
         dynamo_router.finish_request(request_id)
-        load_tracker.finish_request(request_id)
         kv_migration.finish_request(conversation_id, request_id)
         active_request_ids.discard(request_id)
 
     lifecycle = request.app.state.pap_lifecycle_manager.create(
         request_id=request_id,
-        attention_clients=attention_clients,
+        attention_client=attention,
         prefill_client=prefill,
         projection_client=projection_client,
         admission=admission,
@@ -221,8 +206,8 @@ async def _handle_parsed_openai_request(
     try:
         kv_migration.begin_request(conversation_id, request_id)
         register_start = time.perf_counter() if profile else 0.0
-        attention_sessions = await register_attention_handles(
-            attention_clients,
+        attention_session = await register_attention_handle(
+            attention,
             request_id=request_id,
             conversation_id=conversation_id,
             prefill_endpoint=group.prefill_base_url,
@@ -233,7 +218,6 @@ async def _handle_parsed_openai_request(
         register_ms = (
             (time.perf_counter() - register_start) * 1000.0 if profile else 0.0
         )
-        attention_session = attention_sessions[0]
 
         prefill_payload_start = time.perf_counter() if profile else 0.0
         prefill_payload = attach_pap_prefill_attention_params(
@@ -245,7 +229,6 @@ async def _handle_parsed_openai_request(
             pap_attention_endpoint=group.attention_base_url,
             pap_attention_tcp_endpoint=group.attention_tcp_endpoint,
             pap_prefill_kv_handle=str(attention_session.get("prefill_kv_handle")),
-            pap_mode=request.app.state.args.pap_mode,
         )
         migration_start = time.perf_counter() if profile else 0.0
         migration_hash_count = max(
@@ -303,7 +286,7 @@ async def _handle_parsed_openai_request(
             or any(not isinstance(token_id, int) for token_id in prompt_token_ids)
         ):
             raise RuntimeError("PAP Prefill returned no valid prompt token IDs")
-        if routing_token_ids is not None and prompt_token_ids != routing_token_ids:
+        if prompt_token_ids != routing_token_ids:
             raise RuntimeError("PAP Prefill changed the Gateway prompt token IDs")
         prompt_text = prefill_resp.get("prompt_text")
         if not isinstance(prompt_text, str):
@@ -335,45 +318,24 @@ async def _handle_parsed_openai_request(
             prefill_ms=prefill_ms,
         )
         kv_migration.record_prefill(conversation_id, request_id, group_index)
-        exact_prompt_hashes = tokenizer.hash_token_ids(
-            prompt_token_ids,
-            cache_salt=req_data.get("cache_salt"),
-        )
-        load_tracker.mark_prefill_completed(
-            request_id,
-            prefix_len,
-            prompt_hashes=exact_prompt_hashes,
-            cached_tokens=(
-                prefill_cache_usage.cached_tokens
-                if prefill_cache_usage is not None
-                else 0
-            ),
-        )
         attention_ready_start = time.perf_counter() if profile else 0.0
-        attention_ready = all(
-            [
-                await wait_attention_prefill_ready(
-                    attention,
-                    request_id,
-                    expected_prefix_len=prefix_len,
-                    expected_session_handle=str(session["prefill_kv_handle"]),
-                )
-                for attention, session in zip(
-                    attention_clients,
-                    attention_sessions,
-                )
-            ]
+        attention_ready = await wait_attention_prefill_ready(
+            attention,
+            request_id,
+            expected_prefix_len=prefix_len,
+            expected_session_handle=str(attention_session["prefill_kv_handle"]),
         )
         attention_ready_ms = (
             (time.perf_counter() - attention_ready_start) * 1000.0 if profile else 0.0
         )
         await dynamo_router.mark_prefill_completed(request_id)
-        projection_payload = build_projection_payload_for_group(
+        projection_payload = build_projection_kv_unaware_payload(
             req_data,
             kv_params,
-            group,
             prompt_token_ids=prompt_token_ids,
             prompt_text=prompt_text,
+            pap_attention_endpoint=group.attention_base_url,
+            pap_attention_tcp_endpoint=group.attention_tcp_endpoint,
             pap_prefill_kv_handle=prefill_kv_handle,
             pap_attention_kv_installed=attention_ready,
         )
@@ -465,9 +427,6 @@ async def _handle_parsed_openai_request(
             handed_off_stream_cleanup = True
             return StreamingResponse(
                 _stream_projection_with_cleanup(
-                    projection_client,
-                    api_path,
-                    projection_payload,
                     request_id,
                     lifecycle,
                     opened_stream=opened_stream,

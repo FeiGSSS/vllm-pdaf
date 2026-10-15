@@ -70,14 +70,9 @@ non-evictable KV saturation without weakening this ownership rule.
 `gateway/lifecycle.py` remains separate: it owns the entire distributed
 request, including engine cancellation and router reservations, not only KV.
 
-PAP defaults to Dynamo PA selection on every conversation turn. The optional
-`session_round_robin` policy assigns each new conversation to the next PA and
-keeps all later turns on that PA. It requires an explicit conversation ID and
-fails closed when `PAP_SESSION_ROUTER_MAX_CONVERSATIONS` is reached, because
-evicting a live binding would silently turn into a migration. Set
-`PAP_ROUTING_POLICY=session_round_robin` to enable it. The native Dynamo
-selector remains the owner of the KV event index when the `dynamo` policy is
-selected. PAP registers both the live vLLM KV-event endpoint and its replay
+PAP selects a PA with Dynamo on every conversation turn; it has no other
+routing policy. The native Dynamo selector owns the KV event index. Each PA has
+exactly one Attention endpoint. PAP registers both the live vLLM KV-event endpoint and its replay
 endpoint, so Dynamo can recover a missing ZMQ batch instead of retaining an
 incomplete prefix index.
 
@@ -91,15 +86,30 @@ allocator creates its own blocks, the Prefill connector copies only blocks not
 already cached locally, and source pins are released by tracked asynchronous
 Gateway tasks. New turns fail closed after a release failure. Cross-host PA KV
 migration is not implemented by this CUDA IPC path.
-`gateway/tokenizer.py` renders prompt tokens and hashes for routing and local
-load accounting, without a second Python KV-event subscriber.
+`gateway/tokenizer.py` renders prompt tokens and block hashes for routing and KV
+migration, without a second Python KV-event subscriber.
 `gateway/topology.py` maps the chosen PA to its fixed Projection owner.
 
 Within vLLM integration, `engine.py` owns control validation and application;
 `scheduler.py` also owns accepted-token publication, and `projection.py` owns
 Decode route grouping. `model/projection.py` includes the generic Attention
-execution binding. The unused `integration/api.py` and `worker.py` adapters
-were removed; endpoint installation remains in `endpoint_plugin.py`.
+execution binding; endpoint installation lives in `endpoint_plugin.py`.
+
+## Upstream vLLM touch points
+
+PAP state machines stay in `vllm/pap/`. Upstream files only expose
+registration points or narrow delegation:
+
+| File | Hook |
+| --- | --- |
+| `entrypoints/openai/{chat_completion,completion}/serving.py` | PAP tokenized-input preparation when model hooks are enabled |
+| `model_executor/layers/attention/{attention,execution}.py` | Attention execution factory/override registration |
+| `forward_context.py` | Additional forward-context keys |
+| `v1/core/sched/scheduler.py` | `PAPSchedulerAdapter`, Decode lookahead and token notifications |
+| `v1/core/sched/output.py`, `v1/outputs.py` | Per-request `kv_transfer_params` and step `extension_data` carriers |
+| `v1/core/kv_cache_manager.py` | `allocate_local_slots=False` for compute-only Projection requests |
+| `v1/core/block_pool.py` | Allocator-synchronized cached-prefix pinning for KV snapshot export |
+| `v1/worker/gpu/model_runner.py` | `PAPModelRunnerAdapter` / `PAPKVCacheAdapter` |
 
 ## Attention backends
 
@@ -110,10 +120,9 @@ were removed; endpoint installation remains in `endpoint_plugin.py`.
 - `attention/triton_backend.py`: Triton paged-decode launch settings,
   workspace/metadata caches and execution.
 
-Backend selection remains unchanged: reuse a valid previous decision/plan,
-otherwise select PAT for physical KV reuse when available, or use Triton.
-Graph entries retain the plan state they capture. This layout change does not
-change kernel math, Graph ownership, wire formats or asynchronous delivery.
+Selection reuses a valid previous decision/plan, otherwise selects PAT for
+physical KV reuse when available, or uses Triton. Graph entries retain the plan
+state they capture.
 
 ## Entry points and shared helpers
 
@@ -124,40 +133,21 @@ change kernel math, Graph ownership, wire formats or asynchronous delivery.
 - `config.py`: runtime configuration and model-hook activation.
 - `transport/binding.py`: transport construction, Projection cache and peer
   binding; `transport/nvshmem/` owns the implementation and native CUDA bridge.
-- `deferred_cuda_trace.py` and `runtime_cuda_context_audit.py`: optional
-  diagnostics. The unconnected prefix-cache audit and old eager-Attention
-  locality logger were removed; active cached-token reporting remains.
+- `deferred_cuda_trace.py`, `runtime_cuda_context_audit.py` and the NVSHMEM
+  step recorder: optional diagnostics.
 
 The default `local` NVSHMEM mode uses same-host P2P and a UID file. The
 `ibgda` mode uses TCP UID bootstrap and symmetric source staging for device-side
 puts across hosts. Both modes execute the mandatory whole-step CUDA Graph
 protocol; the runtime does not fall back between them.
 
-`attention/compute.py` now only prepares step state for the Graph executor.
-The unused per-batch Attention execution path, adapter logging wrappers and
-redundant transport views are gone. `PAP_OFFLOAD_EXEC_TRACE`,
-`PAP_OFFLOAD_EXEC_TRACE_LAYER`, `PAP_PREFIX_CACHE_AUDIT`,
-`PAP_KV_LOCALITY_PROFILE` and `PAP_KV_LOCALITY_PROFILE_MIN_BATCH` are rejected
-as retired settings. Use the active NVSHMEM step recorder and deferred tracing
-for new diagnostics; they do not claim to reproduce the retired formats.
-
-Recursive cleanup also removed the old non-Graph KV append/slot-cache path,
-its unused compact slot and active-index tensors, and unconnected fan-in event
-collection. Graph execution still uses the full row-stable `graph_slot_tensor`
-with `-1` for rows that must not append KV. Current slot-topology counters,
-KV leases, readiness checks and the NVSHMEM PA/kernel/Projection recorder remain.
-Legacy always-zero append counters are no longer advertised as live metrics;
-the deferred trace's empty `fanins` output key is retained for report readers.
+`attention/compute.py` only prepares step state for the Graph executor. Graph
+execution uses the full row-stable `graph_slot_tensor`, with `-1` for rows that
+must not append KV.
 
 Static dead-code reports are review candidates, not deletion instructions.
 HTTP decorators, enum/serialized fields, native-resource lifetime references
-and test cleanup helpers may have no ordinary Python call site. In particular,
-the resident dispatch stream is retained to own the native dispatcher's stream.
-
-There are no forwarding modules at the removed `lifecycle/`, `topology/`,
-`model/hooks.py`, `transport/factory.py` or `transport/projection.py` paths.
-Use the current modules directly. Historical experiment snapshots retain the
-source paths of their recorded revisions.
+and test cleanup helpers may have no ordinary Python call site.
 
 Tests live in [tests/pap](../../tests/pap/README.md); workloads and experiments
 live in [benchmarks/pap](../../benchmarks/pap/README.md). A source-layout change

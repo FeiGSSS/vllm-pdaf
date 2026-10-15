@@ -10,7 +10,9 @@ def test_pap_lease_remembers_recently_released_request():
     from vllm.pap.kv import lease as pap_lease
 
     pap_lease.reset_global_kv_lease_registry()
-    lease_id = pap_lease.pap_pin_blocks("request", [1, 2])
+    lease_id = pap_lease.get_global_kv_lease_registry().pin_blocks(
+        request_id="request", block_ids=(1, 2)
+    )
 
     assert not pap_lease.pap_was_recently_released("request")
     assert pap_lease.pap_release_lease(lease_id) == (1, 2)

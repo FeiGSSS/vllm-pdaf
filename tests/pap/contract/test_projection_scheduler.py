@@ -69,7 +69,9 @@ def test_prefill_allocates_bounded_initial_decode_runway(monkeypatch) -> None:
         assert len(owned) == 8
         assert published.decode_capacity_tokens == 64
         assert published.allocated_block_ids == tuple(owned)
-        assert pap_lease.pap_leased_block_ids(request.request_id) == tuple(owned)
+        assert pap_lease.get_global_kv_lease_registry().leased_block_ids(
+            request.request_id
+        ) == tuple(owned)
 
         scheduler.finish_requests(
             request.request_id, RequestStatus.FINISHED_LENGTH_CAPPED

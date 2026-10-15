@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 def inspect_replay(
-    path: Path, dataset_type: str, sessions: int, routing_policy: str | None = None
+    path: Path, dataset_type: str, sessions: int, reject_cache_salt: bool = False
 ) -> dict:
     """Count the first sessions in AIPerf sequential loader order.
 
@@ -19,8 +19,6 @@ def inspect_replay(
     not every schema supported by AIPerf. Counts describe the available replay;
     a timed run can stop before these requests have all been sent.
     """
-    if routing_policy not in (None, "dynamo", "session_round_robin"):
-        raise ValueError(f"unsupported PAP routing policy: {routing_policy}")
     raw = path.read_bytes()
     text = raw.decode("utf-8").strip()
     records = (
@@ -70,7 +68,7 @@ def inspect_replay(
         raise ValueError(f"requested {sessions} sessions; dataset has {len(counts)}")
     selected = list(counts)[:sessions]
     selected_salted = len(salted_sessions.intersection(selected))
-    if routing_policy is not None and selected_salted:
+    if reject_cache_salt and selected_salted:
         raise ValueError(
             "PAP routing cannot index cache_salt-isolated prefixes; "
             f"{selected_salted} selected sessions require this unsupported feature"
@@ -95,11 +93,11 @@ def main() -> None:
     parser.add_argument("--dataset-type", required=True)
     parser.add_argument("--sessions", required=True, type=int)
     parser.add_argument("--expected-requests", type=int)
-    parser.add_argument("--routing-policy", choices=("dynamo", "session_round_robin"))
+    parser.add_argument("--reject-cache-salt", action="store_true")
     args = parser.parse_args()
     try:
         result = inspect_replay(
-            args.dataset, args.dataset_type, args.sessions, args.routing_policy
+            args.dataset, args.dataset_type, args.sessions, args.reject_cache_salt
         )
         if (
             args.expected_requests is not None

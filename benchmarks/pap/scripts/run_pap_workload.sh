@@ -1,15 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY:-dynamo}"
-case "${PAP_ROUTING_POLICY}" in
-  dynamo | session_round_robin) ;;
-  *)
-    echo "ERROR: unsupported PAP routing policy: ${PAP_ROUTING_POLICY}" >&2
-    exit 2
-    ;;
-esac
-
 # PAP service/workload runner used by project-owned benchmark entrypoints.
 
 for generation_flag in PAP_AIPERF_TURNS PAP_AIPERF_VARIABLE_TURNS \
@@ -24,108 +15,24 @@ for generation_flag in PAP_AIPERF_TURNS PAP_AIPERF_VARIABLE_TURNS \
   fi
 done
 
-for removed_flag in \
-  PAP_KV_LOCALITY_PROFILE \
-  PAP_KV_LOCALITY_PROFILE_MIN_BATCH \
-  PAP_OFFLOAD_EXEC_TRACE \
-  PAP_OFFLOAD_EXEC_TRACE_LAYER \
-  PAP_PREFIX_CACHE_AUDIT \
-  PAP_CUDAGRAPH_COMPATIBLE \
-  PAP_CUDAGRAPH_ROLE \
-  PAP_ASYNC_DECODE_TOKEN \
-  PAP_PREFILL_KV_ASYNC \
-  PAP_KV_HANDOFF_MODE \
-  PAP_UNIFIED_KV \
-  PAP_BATCHED_ROUTE_COPY \
-  PAP_UNIFIED_MD_FAST_KEY \
-  PAP_ATTENTION_DISPATCH_MODE \
-  PAP_ATTENTION_COMBINE_WAIT_US \
-  PAP_ATTENTION_ACTIVE_PEER_TRACKING \
-  PAP_ATTENTION_MAILBOX_PREFETCH \
-  PAP_SHARED_PREFIX_ATTENTION_BACKEND \
-  PAP_SHARED_PREFIX_CASCADE \
-  PAP_SHARED_PREFIX_PAT_MIN_TOKENS \
-  PAP_SHARED_PREFIX_PAT_CACHE_ENTRIES \
-  PAP_RUNNER_MICROBATCH_COUNT \
-  PAP_MPS_MODE \
-  PAP_BENCH_MPS_PROFILE \
-  PAP_ASYNC_DECODE_TOKEN_SYNC_ONLY_BARRIER \
-  PAP_PROJECTION_SYNC_ONLY_BARRIER \
-  PAP_PREFILL_SYNC_ONLY_BARRIER \
-  PAP_DIAG_R1_PROJECTION_GATE_COUNT \
-  PAP_DIAG_R1_COMMIT_GATE_COUNT \
-  PAP_DIAG_DECODE_COMMIT_GATE_FILE \
-  PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT \
-  PAP_BENCH_CLIENT_MODE \
-  PAP_MULTITURN_LOAD_ROUNDS \
-  PAP_MULTITURN_LOAD_CONVERSATIONS \
-  PAP_MULTITURN_LOAD_REQUEST_RATE \
-  PAP_MULTITURN_APPEND_TOKENS \
-  PAP_MULTITURN_FIRST_OUTPUT_TOKENS \
-  PAP_MULTITURN_BLOCK_SIZE \
-  PAP_MULTITURN_MIN_DECODE_HIT_BLOCKS; do
-  if [[ -v "${removed_flag}" ]]; then
-    case "${removed_flag}" in
-      PAP_CUDAGRAPH_*)
-        replacement="the native Prefill hook and PAP whole-step Projection graph"
-        experiment_id="PAP-20260905-REFACTOR-VALIDATION"
-        ;;
-      PAP_ASYNC_DECODE_TOKEN)
-        replacement="unconditional asynchronous sampled-token delivery"
-        experiment_id="PAP-20260713-ASYNC-DECODE-TOKEN-D2H"
-        ;;
-      PAP_PREFILL_KV_ASYNC)
-        replacement="unconditional safe asynchronous Prefill KV import"
-        experiment_id="PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC"
-        ;;
-      PAP_KV_HANDOFF_MODE)
-        replacement="sealed catalog and request manifest handoff"
-        experiment_id="PAP-20260714-SEAL-HANDOFF-KV"
-        ;;
-      PAP_UNIFIED_KV | PAP_BATCHED_ROUTE_COPY | PAP_UNIFIED_MD_FAST_KEY)
-        replacement="the current PAP data path"
-        experiment_id="PAP-20260703-UNIFIED-KV"
-        ;;
-      PAP_ATTENTION_MAILBOX_PREFETCH)
-        replacement="the serial Attention receive loop"
-        experiment_id="PAP-20260701-ATTENTION-MAILBOX-PREFETCH"
-        ;;
-      PAP_SHARED_PREFIX_*)
-        replacement="PAP_ATTENTION_KERNEL_POLICY=auto or triton"
-        experiment_id="PAP-20260827-PAT-OR-TRITON"
-        ;;
-      PAP_ATTENTION_*)
-        replacement="topology-derived Attention execution"
-        experiment_id="PAP-20260711-ATTENTION-COMBINE"
-        ;;
-      PAP_RUNNER_MICROBATCH_COUNT)
-        replacement="one unsplit vLLM Projection scheduler batch"
-        experiment_id="PAP-20260724-SINGLE-PROJECTION-BATCH"
-        ;;
-      PAP_MPS_MODE | PAP_BENCH_MPS_PROFILE)
-        replacement="the AIPerf static 80/12 MPS partition"
-        experiment_id="PAP-20260714-ASYNC-STATIC-BASELINE"
-        ;;
-      PAP_*_SYNC_ONLY_BARRIER)
-        replacement="no Projection or Prefill timing barrier"
-        experiment_id="PAP-20260714-ASYNC-TTFT-ROOTCAUSE"
-        ;;
-      PAP_BENCH_CLIENT_MODE | PAP_MULTITURN_*)
-        replacement="the AIPerf-only PAP benchmark interface"
-        experiment_id="PAP-20260722-AIPERF-CANONICAL-CUTOVER"
-        ;;
-      *)
-        replacement="unconditional decode-commit delivery"
-        experiment_id="PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION"
-        ;;
-    esac
-    echo "ERROR: ${removed_flag} was removed; use ${replacement}. Historical evidence: ${experiment_id}." >&2
-    exit 2
-  fi
-done
 
 ROOT_DIR="${PAP_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
 PYTHON_BIN="${PYTHON_BIN:-${ROOT_DIR}/.venv/bin/python}"
+"${PYTHON_BIN}" -I - "${ROOT_DIR}/vllm/pap/config.py" <<'PY' || exit 2
+import importlib.util
+import os
+import sys
+
+spec = importlib.util.spec_from_file_location("pap_config", sys.argv[1])
+config = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = config
+spec.loader.exec_module(config)
+try:
+    config.reject_removed_pap_flags(os.environ)
+except config.PAPConfigError as exc:
+    sys.exit(f"ERROR: {exc}")
+PY
+PAP_ROUTING_POLICY=dynamo
 VLLM_BIN="${VLLM_BIN:-${ROOT_DIR}/.venv/bin/vllm}"
 CUDA_GRAPH_AUDITOR="${ROOT_DIR}/benchmarks/pap/scripts/audit_cuda_graph_logs.sh"
 DEFERRED_TRACE_VALIDATOR="${ROOT_DIR}/benchmarks/pap/tooling/validate_deferred_trace.py"
@@ -137,14 +44,7 @@ PAP_BENCH_STRICT_CORRECTNESS_AUDIT="${PAP_BENCH_STRICT_CORRECTNESS_AUDIT:-1}"
 PAP_BENCH_CLIENT="aiperf"
 PAP_ATTENTION_KERNEL_POLICY="${PAP_ATTENTION_KERNEL_POLICY:-auto}"
 PAP_PAT_PLAN_CACHE_ENTRIES="${PAP_PAT_PLAN_CACHE_ENTRIES:-32}"
-PAP_ATTENTION_GPU_RESIDENT_DISPATCH="${PAP_ATTENTION_GPU_RESIDENT_DISPATCH:-0}"
 DISABLE_STREAM="${DISABLE_STREAM:-1}"
-
-if [[ "${PAP_ATTENTION_GPU_RESIDENT_DISPATCH}" != "0" \
-  && "${PAP_ATTENTION_GPU_RESIDENT_DISPATCH}" != "1" ]]; then
-  echo "ERROR: PAP_ATTENTION_GPU_RESIDENT_DISPATCH must be 0 or 1" >&2
-  exit 2
-fi
 
 case "${PAP_ATTENTION_KERNEL_POLICY}" in
   auto | triton) ;;
@@ -332,7 +232,6 @@ if (( PAP_STATIC_PREFILL_EXPECTED_SMS != PAP_STATIC_PREFILL_CHUNKS * 4 \
   echo "ERROR: PAP AIPerf expects four visible SMs per L20 MPS chunk" >&2
   exit 2
 fi
-PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT:-cuda_ipc}"
 PAP_NVSHMEM_WORLD_SIZE=$((PA_COUNT + PROJECTION_COUNT))
 PAP_NVSHMEM_UID_FILE="${PAP_NVSHMEM_UID_FILE:-${RUN_ROOT}/nvshmem.uid}"
 PAP_NVSHMEM_INIT_TIMEOUT="${PAP_NVSHMEM_INIT_TIMEOUT:-${SERVER_START_TIMEOUT}}"
@@ -349,8 +248,7 @@ PAP_UNIFIED_MD_CACHE_LIMIT="${PAP_UNIFIED_MD_CACHE_LIMIT:-256}"
 PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT:-256}"
 [[ ! -v PAP_DYNAMO_PYTHON ]] || die "PAP_DYNAMO_PYTHON is retired; build the PAP-only Dynamo router dependency"
 PAP_DYNAMO_SITE_PACKAGES="${PAP_DYNAMO_SITE_PACKAGES:-${ROOT_DIR}/.local/pap-dynamo-router}"
-if [[ "${PAP_ROUTING_POLICY}" == "dynamo" ]]; then
-  "${PYTHON_BIN}" - "${PAP_DYNAMO_SITE_PACKAGES}" <<'PY'
+"${PYTHON_BIN}" - "${PAP_DYNAMO_SITE_PACKAGES}" <<'PY'
 import sys
 sys.path.insert(0, sys.argv[1])
 try:
@@ -361,15 +259,9 @@ service = SelectionService(indexer_threads=1)
 assert service.reservation_lifetime == "explicit-owner-v1"
 service.shutdown()
 PY
-fi
 PAP_DYNAMO_MODEL_NAME="${PAP_DYNAMO_MODEL_NAME:-pap}"
 PAP_DYNAMO_PREFILL_LOAD_SCALE="${PAP_DYNAMO_PREFILL_LOAD_SCALE:-2.0}"
 PAP_DYNAMO_ROUTING_TRACE_OUTPUT="${PAP_DYNAMO_ROUTING_TRACE_OUTPUT:-}"
-PAP_SESSION_ROUTER_MAX_CONVERSATIONS="${PAP_SESSION_ROUTER_MAX_CONVERSATIONS:-100000}"
-if [[ ! "${PAP_SESSION_ROUTER_MAX_CONVERSATIONS}" =~ ^[1-9][0-9]*$ ]]; then
-  echo "ERROR: PAP_SESSION_ROUTER_MAX_CONVERSATIONS must be positive" >&2
-  exit 2
-fi
 PAP_ENABLE_PA_KV_MIGRATION="${PAP_ENABLE_PA_KV_MIGRATION:-0}"
 if [[ "${PAP_ENABLE_PA_KV_MIGRATION}" != "0" \
   && "${PAP_ENABLE_PA_KV_MIGRATION}" != "1" ]]; then
@@ -391,11 +283,6 @@ fi
 if [[ "${PAP_KV_MIGRATION_VERIFY}" == "1" \
   && "${PAP_ENABLE_PA_KV_MIGRATION}" != "1" ]]; then
   echo "ERROR: PAP_KV_MIGRATION_VERIFY requires PA KV migration" >&2
-  exit 2
-fi
-if [[ "${PAP_ENABLE_PA_KV_MIGRATION}" == "1" \
-  && "${PAP_ROUTING_POLICY}" != "dynamo" ]]; then
-  echo "ERROR: PA KV migration requires Dynamo routing" >&2
   exit 2
 fi
 PAP_MIGRATION_MAX_CONVERSATIONS="${PAP_MIGRATION_MAX_CONVERSATIONS:-100000}"
@@ -1077,21 +964,11 @@ wait_gateway_requests_drained() {
           and .dynamo_router.active_reservations == 0
           and .dynamo_router.pending_cleanup == 0
           and .dynamo_router.pending_selections == 0
-          and (
-            (
-              .routing_policy == "dynamo"
-              and .dynamo_router.reservation_lifetime == "explicit-owner-v1"
-              and ([.dynamo_router.loads[].pending_count] | all(. == 0))
-              and ([.dynamo_router.loads[].loads[] |
-                .active_requests, .potential_prefill_tokens,
-                .potential_decode_blocks] | all(. == 0))
-            )
-            or (
-              .routing_policy == "session_round_robin"
-              and .dynamo_router.policy == "session_round_robin"
-              and .dynamo_router.reservation_lifetime == "gateway-request-v1"
-            )
-          )
+          and .dynamo_router.reservation_lifetime == "explicit-owner-v1"
+          and ([.dynamo_router.loads[].pending_count] | all(. == 0))
+          and ([.dynamo_router.loads[].loads[] |
+            .active_requests, .potential_prefill_tokens,
+            .potential_decode_blocks] | all(. == 0))
         )
       )
     ' <<< "${response}" >/dev/null 2>&1; then
@@ -1547,7 +1424,7 @@ prepare_aiperf_dataset() {
     "${PAP_AIPERF_INPUT_FILE}" --dataset-type "${PAP_AIPERF_CUSTOM_DATASET_TYPE}" \
     --sessions "${PAP_AIPERF_SESSIONS}" \
     --expected-requests "${REQUESTS_PER_AIPERF_VARIATION}" \
-    --routing-policy "${PAP_ROUTING_POLICY}" \
+    --reject-cache-salt \
     > "${RUN_ROOT}/dataset_selection.json" \
     || die "dataset replay contract is invalid"
 }
@@ -1620,8 +1497,6 @@ write_effective_config() {
       "${PAP_ATTENTION_KERNEL_POLICY}"
     printf 'PAP_PAT_PLAN_CACHE_ENTRIES=%q\n' \
       "${PAP_PAT_PLAN_CACHE_ENTRIES}"
-    printf 'PAP_ATTENTION_GPU_RESIDENT_DISPATCH=%q\n' \
-      "${PAP_ATTENTION_GPU_RESIDENT_DISPATCH}"
     printf 'DISABLE_STREAM=%q\n' "${DISABLE_STREAM}"
     printf 'VLLM_USE_FLASHINFER_SAMPLER=%q\n' "${VLLM_USE_FLASHINFER_SAMPLER}"
     printf 'NO_PROXY=%q\n' "${NO_PROXY}"
@@ -1651,7 +1526,6 @@ write_effective_config() {
     printf 'PAP_STATIC_ATTENTION_EXPECTED_SMS=%q\n' \
       "${PAP_STATIC_ATTENTION_EXPECTED_SMS}"
     printf 'PAP_ENABLE_MPS=%q\n' "${PAP_ENABLE_MPS}"
-    printf 'PAP_OFFLOAD_KV_TRANSPORT=%q\n' "${PAP_OFFLOAD_KV_TRANSPORT}"
     printf 'PAP_NVSHMEM_INIT_TIMEOUT=%q\n' "${PAP_NVSHMEM_INIT_TIMEOUT}"
     printf 'PAP_NVSHMEM_BUFFER_BYTES=%q\n' "${PAP_NVSHMEM_BUFFER_BYTES}"
     printf 'PAP_NVSHMEM_CONTROL_BYTES=%q\n' "${PAP_NVSHMEM_CONTROL_BYTES}"
@@ -1667,8 +1541,6 @@ write_effective_config() {
     printf 'ENABLE_AUTO_TOOL_CHOICE=%q\nTOOL_CALL_PARSER=%q\n' \
       "${ENABLE_AUTO_TOOL_CHOICE}" "${TOOL_CALL_PARSER}"
     printf 'PAP_ROUTING_POLICY=%q\n' "${PAP_ROUTING_POLICY}"
-    printf 'PAP_SESSION_ROUTER_MAX_CONVERSATIONS=%q\n' \
-      "${PAP_SESSION_ROUTER_MAX_CONVERSATIONS}"
     printf 'PAP_ENABLE_PA_KV_MIGRATION=%q\n' \
       "${PAP_ENABLE_PA_KV_MIGRATION}"
     printf 'PAP_KV_MIGRATION_EXPORT_MODE=%q\n' \
@@ -1825,7 +1697,6 @@ write_run_metadata() {
   MAX_NUM_SEQS="${MAX_NUM_SEQS}" \
   PAP_NVSHMEM_BUFFER_BYTES="${PAP_NVSHMEM_BUFFER_BYTES:-}" \
   PAP_NVSHMEM_CONTROL_BYTES="${PAP_NVSHMEM_CONTROL_BYTES:-}" \
-  PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
   PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
   PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}" \
   PAP_ENABLE_PROMPT_TOKENS_DETAILS="${PAP_ENABLE_PROMPT_TOKENS_DETAILS}" \
@@ -1863,7 +1734,6 @@ metadata = {
     "projection_count": projection_count,
     "routing_policy": os.environ["PAP_ROUTING_POLICY"],
     "pa_kv_migration": os.environ["PAP_ENABLE_PA_KV_MIGRATION"] == "1",
-    "load_accounting": "gateway_request_lifecycle",
     "run_id": os.environ["RUN_ID"],
     "result_root": os.environ["RUN_ROOT"],
     "expected_requests": int(os.environ["NUM_PROMPTS"]),
@@ -1886,7 +1756,6 @@ metadata = {
         if os.environ["PAP_NVSHMEM_CONTROL_BYTES"]
         else None
     ),
-    "offload_kv_transport": os.environ["PAP_OFFLOAD_KV_TRANSPORT"],
     "batched_route_copy": True,
     "unified_md_fast_key": True,
     "projection_async_scheduling": os.environ["PAP_OBSERVED_PROJECTION_ASYNC"] == "on",
@@ -1981,9 +1850,7 @@ audit_xy_routes() {
     PROJECTION_COUNT="${PROJECTION_COUNT}" \
     PREFILL_PORT_BASE="${PREFILL_PORT_BASE}" \
     PROJECTION_PORT_BASE="${PROJECTION_PORT_BASE}" \
-    PAP_ROUTING_POLICY="${PAP_ROUTING_POLICY}" \
     PAP_ENABLE_PA_KV_MIGRATION="${PAP_ENABLE_PA_KV_MIGRATION}" \
-    PAP_AIPERF_SESSIONS="${PAP_AIPERF_SESSIONS}" \
     ALLOW_PREDECODE_CANCELLATION="${PAP_AIPERF_ALLOW_PREDECODE_CANCELLATION}" \
     "${PYTHON_BIN}" - <<'PY'
 import json
@@ -1999,7 +1866,6 @@ pa_count = int(os.environ["PA_COUNT"])
 projection_count = int(os.environ["PROJECTION_COUNT"])
 prefill_base = int(os.environ["PREFILL_PORT_BASE"])
 projection_base = int(os.environ["PROJECTION_PORT_BASE"])
-routing_policy = os.environ["PAP_ROUTING_POLICY"]
 kv_migration_enabled = os.environ["PAP_ENABLE_PA_KV_MIGRATION"] == "1"
 allow_predecode_cancellation = (
     os.environ["ALLOW_PREDECODE_CANCELLATION"] == "1"
@@ -2022,8 +1888,6 @@ pair_routes = Counter(
 expected_projection_routes = Counter()
 expected_pair_routes = Counter()
 errors = []
-if routing_policy not in {"dynamo", "session_round_robin"}:
-    raise SystemExit(f"unsupported PAP routing policy {routing_policy!r}")
 groups_per_projection = (pa_count + projection_count - 1) // projection_count
 for pa_port, projection_port in routes:
     group_index = pa_port - prefill_base
@@ -2055,53 +1919,6 @@ if pair_routes != expected_pair_routes:
         f"PA/Projection pair counts {dict(pair_routes)} != expected "
         f"{dict(expected_pair_routes)}"
     )
-
-session_placement = None
-if routing_policy == "session_round_robin":
-    placement_pattern = re.compile(
-        r"PAP session round-robin placement request_id=\S+ "
-        r"conversation_id=(\S+) selected_pa=(\d+) new_binding=(True|False)"
-    )
-    placements = [
-        (match.group(1), int(match.group(2)), match.group(3) == "True")
-        for match in placement_pattern.finditer(proxy_text)
-    ]
-    workers_by_conversation = {}
-    new_bindings = []
-    for conversation_id, worker_id, new_binding in placements:
-        workers_by_conversation.setdefault(conversation_id, set()).add(worker_id)
-        if new_binding:
-            new_bindings.append((conversation_id, worker_id))
-    migrations = sum(
-        len(workers) > 1 for workers in workers_by_conversation.values()
-    )
-    expected_sessions = int(os.environ["PAP_AIPERF_SESSIONS"])
-    if len(placements) != expected_requests:
-        errors.append(
-            f"session placement count {len(placements)} != {expected_requests}"
-        )
-    if len(workers_by_conversation) != expected_sessions:
-        errors.append(
-            "session binding count "
-            f"{len(workers_by_conversation)} != {expected_sessions}"
-        )
-    if migrations:
-        errors.append(f"session round-robin migrated {migrations} conversations")
-    if len(new_bindings) != expected_sessions:
-        errors.append(
-            f"new session binding count {len(new_bindings)} != {expected_sessions}"
-        )
-    expected_workers = [index % pa_count for index in range(expected_sessions)]
-    actual_workers = [worker_id for _, worker_id in new_bindings]
-    if actual_workers != expected_workers:
-        errors.append("new conversation assignments are not round-robin")
-    session_placement = {
-        "placements": len(placements),
-        "conversations": len(workers_by_conversation),
-        "migrations": migrations,
-        "new_bindings": len(new_bindings),
-        "worker_counts": dict(sorted(Counter(actual_workers).items())),
-    }
 
 topology_stats = json.loads((run_root / "topology_runtime_stats.json").read_text())
 migration_stats = topology_stats["kv_migration"]
@@ -2176,7 +1993,6 @@ audit = {
     "projection_routes": dict(sorted(projection_routes.items())),
     "pair_routes": dict(sorted(pair_routes.items())),
     "expected_pair_routes": dict(sorted(expected_pair_routes.items())),
-    "session_placement": session_placement,
     "kv_migration": {
         **migration_stats,
         "export_http_200": migration_export_200,
@@ -2267,12 +2083,10 @@ if flashinfer != cubin:
 PY
 
 mkdir -p "${RUN_ROOT}" "${RUN_LOG_DIR}"
-if [[ "${PAP_ROUTING_POLICY}" == "dynamo" ]]; then
-  mkdir -p "${RUN_ROOT}/pap_dynamo_router"
-  cp "${PAP_DYNAMO_SITE_PACKAGES}/build.txt" \
-    "${PAP_DYNAMO_SITE_PACKAGES}/pap_dynamo_router.abi3.so" \
-    "${RUN_ROOT}/pap_dynamo_router/"
-fi
+mkdir -p "${RUN_ROOT}/pap_dynamo_router"
+cp "${PAP_DYNAMO_SITE_PACKAGES}/build.txt" \
+  "${PAP_DYNAMO_SITE_PACKAGES}/pap_dynamo_router.abi3.so" \
+  "${RUN_ROOT}/pap_dynamo_router/"
 capture_git_state
 prepare_aiperf_dataset
 split_csv "${PAP_PREFILL_GPUS}" PREFILL_GPUS
@@ -2410,12 +2224,10 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_NVSHMEM_UID_FILE="${PAP_NVSHMEM_UID_FILE}" \
     PAP_NVSHMEM_BUFFER_BYTES="${PAP_NVSHMEM_BUFFER_BYTES:-}" \
     PAP_NVSHMEM_CONTROL_BYTES="${PAP_NVSHMEM_CONTROL_BYTES:-}" \
-    PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
     PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
     PAP_DECODE_SLOT_PLAN_CACHE_LIMIT="${PAP_DECODE_SLOT_PLAN_CACHE_LIMIT}" \
     PAP_ATTENTION_KERNEL_POLICY="${PAP_ATTENTION_KERNEL_POLICY}" \
     PAP_PAT_PLAN_CACHE_ENTRIES="${PAP_PAT_PLAN_CACHE_ENTRIES}" \
-    PAP_ATTENTION_GPU_RESIDENT_DISPATCH="${PAP_ATTENTION_GPU_RESIDENT_DISPATCH}" \
     DISABLE_STREAM="${DISABLE_STREAM}" \
     PAP_DEFERRED_CUDA_TRACE="${PAP_DEFERRED_CUDA_TRACE}" \
     PAP_DEFERRED_TRACE_ROLE=attention \
@@ -2473,7 +2285,6 @@ for (( idx=0; idx<PA_COUNT; idx++ )); do
     PAP_DEFERRED_CUDA_TRACE=0 \
     PAP_DEFERRED_TRACE_ROLE= \
     PAP_DEFERRED_TRACE_OUTPUT= \
-    PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
     PAP_PREFILL_IPC_PROFILE="${PAP_PREFILL_IPC_PROFILE}" \
     PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS="${PAP_UNIFIED_KV_DECODE_CAPACITY_TOKENS}" \
     PAP_RUNTIME_CUDA_CONTEXT_AUDIT_PATH="$(
@@ -2537,7 +2348,6 @@ for (( idx=0; idx<PROJECTION_COUNT; idx++ )); do
     PAP_DEFERRED_CUDA_TRACE="${PAP_DEFERRED_CUDA_TRACE}" \
     PAP_DEFERRED_TRACE_ROLE=projection \
     PAP_DEFERRED_TRACE_OUTPUT="${RUN_ROOT}/projection_deferred_trace_${idx}.json" \
-    PAP_OFFLOAD_KV_TRANSPORT="${PAP_OFFLOAD_KV_TRANSPORT}" \
     PAP_ATTENTION_PORT_BASE="${ATTENTION_PORT_BASE}" \
     PAP_TP_SIZE="${PAP_TP_SIZE}" \
     PAP_PROJECTION_KV_UNAWARE=1 \
@@ -2637,11 +2447,8 @@ env \
   --dynamo-max-num-batched-tokens \
     "${PAP_PREFILL_MAX_NUM_BATCHED_TOKENS}" \
   --dynamo-prefill-load-scale "${PAP_DYNAMO_PREFILL_LOAD_SCALE}" \
-  --session-routing-max-conversations \
-    "${PAP_SESSION_ROUTER_MAX_CONVERSATIONS}" \
   --migration-max-conversations "${PAP_MIGRATION_MAX_CONVERSATIONS}" \
   "${PAP_GATEWAY_MIGRATION_ARGS[@]}" \
-  --routing-policy "${PAP_ROUTING_POLICY}" \
   > "${RUN_LOG_DIR}/proxy.log" 2>&1 &
 PIDS+=("$!")
 

@@ -40,7 +40,6 @@ set_common_env() {
   export PAP_TOPOLOGY=1pa1p
   export PAP_PA_COUNT=1
   export PAP_PROJECTION_COUNT=1
-  export PAP_OFFLOAD_KV_TRANSPORT=cuda_ipc
   export PAP_BLOCK_SIZE=16
   export VLLM_PLUGINS=pap
   export PAP_MODEL_HOOKS=1
@@ -76,7 +75,6 @@ run_attention() {
   export PAP_OFFLOAD_EXEC_NUM_HEADS=32
   export PAP_OFFLOAD_EXEC_NUM_KV_HEADS=8
   export PAP_OFFLOAD_EXEC_HEAD_DIM=128
-  export PAP_ATTENTION_DECODE_KV_INITIAL_CAPACITY=64
   export PAP_ATTENTION_KERNEL_POLICY=triton
   export PAP_DECODE_COMMIT_FAIL_CLOSED=1
   export PAP_DECODE_COMMIT_ENDPOINT="http://127.0.0.1:${PREFILL_PORT}/v1/pap/prefill/decode-commit"

@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import os
 from collections import OrderedDict
 from dataclasses import dataclass
 from time import perf_counter_ns
@@ -14,7 +13,6 @@ import torch
 
 from vllm.logger import init_logger
 from vllm.pap.attention.backend import run_pap_decode_attention
-from vllm.pap.config import read_env_bool, read_env_int
 from vllm.pap.kv.layout import split_paged_kv_cache
 from vllm.pap.kv.models import PAPAttentionStepContext
 from vllm.pap.kv.registry import PAPAttentionRegistry
@@ -62,18 +60,6 @@ def run_offload_exec_nvshmem_graph_loop(
 logger = init_logger(__name__)
 
 
-def _device_launch_probe_enabled() -> bool:
-    return read_env_bool(os.environ, "PAP_ATTENTION_DEVICE_GRAPH_PROBE")
-
-
-def _device_graph_launch_enabled() -> bool:
-    return read_env_bool(os.environ, "PAP_ATTENTION_DEVICE_GRAPH_LAUNCH")
-
-
-def _resident_dispatch_enabled() -> bool:
-    return read_env_bool(os.environ, "PAP_ATTENTION_GPU_RESIDENT_DISPATCH")
-
-
 def _ordered_layers(context: PAPAttentionStepContext) -> tuple[str, ...]:
     def index(layer_name: str) -> int:
         layer_info = layer_index_and_template(layer_name)
@@ -92,7 +78,6 @@ class _PAPAttentionGraphEntry:
     stream: torch.cuda.Stream
     bound_tensors: tuple[torch.Tensor, ...]
     attention_plan: Any | None
-    device_graph_handle: int | None = None
 
 
 class PAPAttentionStepGraphExecutor:
@@ -113,10 +98,6 @@ class PAPAttentionStepGraphExecutor:
         self._entries: OrderedDict[tuple[Any, ...], _PAPAttentionGraphEntry] = (
             OrderedDict()
         )
-        self._resident_dispatch = _resident_dispatch_enabled()
-        self._resident_dispatch_handle: int | None = None
-        self._resident_dispatch_stream: torch.cuda.Stream | None = None
-        self._resident_generation = 0
 
     def execute(
         self,
@@ -145,8 +126,6 @@ class PAPAttentionStepGraphExecutor:
         workspace = context.paged_decode_workspace
         if metadata is None or workspace is None:
             raise RuntimeError("PAP Attention graph metadata was not prepared")
-        if self._resident_dispatch and self._resident_dispatch_handle is None:
-            self._create_resident_dispatcher(qkv_batch.device)
 
         trace_host = getattr(context, "_pap_trace_control_wait_ns", None) is not None
         graph_lookup_started_ns = perf_counter_ns() if trace_host else 0
@@ -170,62 +149,21 @@ class PAPAttentionStepGraphExecutor:
             )
 
         replay_started_ns = perf_counter_ns() if trace_host else 0
-        if self._resident_dispatch:
-            if context.prepare_event is not None and not context.prepare_event.query():
-                context.prepare_event.synchronize()
-            dispatcher_handle = self._resident_dispatch_handle
-            executable_handle = entry.device_graph_handle
-            if dispatcher_handle is None or executable_handle is None:
-                raise RuntimeError("PAP resident Attention graph is incomplete")
-            self._resident_generation += 1
-            self.transport.run_resident_device_graph(
-                dispatcher_handle=dispatcher_handle,
-                executable_handle=executable_handle,
-                generation=self._resident_generation,
+        if context.prepare_event is not None:
+            entry.stream.wait_event(context.prepare_event)
+        with torch.cuda.stream(entry.stream):
+            self.transport.graph_attention_replay_trace_start(
+                layer_count=layer_count,
+                stream=entry.stream,
             )
-        else:
-            if context.prepare_event is not None:
-                entry.stream.wait_event(context.prepare_event)
-            with torch.cuda.stream(entry.stream):
-                self.transport.graph_attention_replay_trace_start(
-                    layer_count=layer_count,
-                    stream=entry.stream,
-                )
-                if entry.device_graph_handle is None:
-                    entry.graph.replay()
-                else:
-                    self.transport.launch_device_graph(
-                        executable_handle=entry.device_graph_handle,
-                        stream=entry.stream,
-                    )
-            entry.stream.synchronize()
+            entry.graph.replay()
+        entry.stream.synchronize()
         if trace_host:
             context._pap_trace_graph_replay_submit_ns = (
                 perf_counter_ns() - replay_started_ns
             )
         return self.transport.commit_received_step(
             lambda: self._commit_context(context, layer_names)
-        )
-
-    def _create_resident_dispatcher(self, device: torch.device) -> None:
-        window_size = read_env_int(
-            os.environ, "PAP_ATTENTION_DISPATCH_WINDOW_STEPS", 1, minimum=1
-        )
-        if window_size != 1:
-            raise RuntimeError(
-                "PAP Attention dynamic dispatch currently requires a one-step window"
-            )
-        stream = torch.cuda.Stream(device=device)
-        self._resident_dispatch_handle = (
-            self.transport.create_resident_graph_dispatcher(
-                stream=stream,
-                window_size=window_size,
-            )
-        )
-        self._resident_dispatch_stream = stream
-        logger.info(
-            "PAP Attention GPU-resident dispatcher started window_steps=%d",
-            window_size,
         )
 
     def _entry_key(
@@ -280,11 +218,7 @@ class PAPAttentionStepGraphExecutor:
             stream,
             layer_count=len(layer_names),
         )
-        device_graph_launch = _device_graph_launch_enabled() or self._resident_dispatch
-        probe_device_launch = _device_launch_probe_enabled()
-        graph = torch.cuda.CUDAGraph(
-            keep_graph=device_graph_launch or probe_device_launch
-        )
+        graph = torch.cuda.CUDAGraph()
         attention_plan = context.attention_kernel_plan
         logger.info(
             "PAP Attention whole-step CUDA Graph capture begin "
@@ -312,19 +246,6 @@ class PAPAttentionStepGraphExecutor:
                 qkv_batch,
                 stream,
             )
-        device_graph_handle = None
-        if device_graph_launch:
-            device_graph_handle = self.transport.create_device_graph_launch(
-                graph_handle=int(graph.raw_cuda_graph()),
-                stream=stream,
-            )
-            logger.info("PAP Attention CUDA Graph uses device launch")
-        elif probe_device_launch:
-            self.transport.probe_device_graph_launch(
-                graph_handle=int(graph.raw_cuda_graph()),
-                stream=stream,
-            )
-            logger.info("PAP Attention CUDA Graph supports device launch")
         entry = _PAPAttentionGraphEntry(
             graph=graph,
             stream=stream,
@@ -337,7 +258,6 @@ class PAPAttentionStepGraphExecutor:
                 *captured_outputs,
             ),
             attention_plan=attention_plan,
-            device_graph_handle=device_graph_handle,
         )
         key = self._entry_key(
             context=context,
@@ -365,20 +285,11 @@ class PAPAttentionStepGraphExecutor:
         while len(self._entries) > self.max_entries:
             _, evicted = self._entries.popitem(last=False)
             evicted.stream.synchronize()
-            if evicted.device_graph_handle is not None:
-                self.transport.destroy_device_graph_launch(evicted.device_graph_handle)
 
     def shutdown(self) -> None:
         """Synchronize and release all captured Graph specializations."""
-        if self._resident_dispatch_handle is not None:
-            self.transport.destroy_resident_graph_dispatcher(
-                self._resident_dispatch_handle
-            )
-            self._resident_dispatch_handle = None
         for entry in self._entries.values():
             entry.stream.synchronize()
-            if entry.device_graph_handle is not None:
-                self.transport.destroy_device_graph_launch(entry.device_graph_handle)
         self._entries.clear()
 
     @staticmethod
@@ -446,11 +357,6 @@ class PAPAttentionStepGraphExecutor:
     ) -> tuple[torch.Tensor, ...]:
         layer_count = len(layer_names)
         outputs = []
-        if self._resident_dispatch:
-            self.transport.graph_attention_replay_trace_start(
-                layer_count=layer_count,
-                stream=stream,
-            )
         self.transport.graph_begin_step(
             layer_count=layer_count,
             stream=stream,

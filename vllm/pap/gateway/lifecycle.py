@@ -28,45 +28,32 @@ class PAPLifecycleCleanupError(RuntimeError):
     """One or more remote PAP resources could not be released."""
 
 
-async def release_attention_sessions(
-    attention_clients: list[PAPServiceClient],
+async def release_attention_session(
+    attention: PAPServiceClient,
     request_id: str,
 ) -> None:
-    """Idempotently release every Attention session with bounded retries."""
-
-    async def release_one(attention: PAPServiceClient) -> None:
-        delay_s = _ATTENTION_RELEASE_RETRY_INITIAL_S
-        last_error: Exception | None = None
-        for attempt in range(1, _ATTENTION_RELEASE_MAX_ATTEMPTS + 1):
-            try:
-                response = await attention.client.delete(
-                    f"/v1/pap/attention/sessions/{request_id}",
-                    headers=request_headers(request_id),
-                )
-                response.raise_for_status()
-                return
-            except Exception as exc:
-                last_error = exc
-                if attempt == _ATTENTION_RELEASE_MAX_ATTEMPTS:
-                    break
-                await asyncio.sleep(delay_s)
-                delay_s = min(
-                    _ATTENTION_RELEASE_RETRY_MAX_S,
-                    delay_s * 2,
-                )
-        raise PAPLifecycleCleanupError(
-            "failed to release PAP Attention session "
-            f"request_id={request_id} endpoint={attention.base_url} "
-            f"attempts={_ATTENTION_RELEASE_MAX_ATTEMPTS} error={last_error}"
-        )
-
-    results = await asyncio.gather(
-        *(release_one(attention) for attention in attention_clients),
-        return_exceptions=True,
+    """Idempotently release the Attention session with bounded retries."""
+    delay_s = _ATTENTION_RELEASE_RETRY_INITIAL_S
+    last_error: Exception | None = None
+    for attempt in range(1, _ATTENTION_RELEASE_MAX_ATTEMPTS + 1):
+        try:
+            response = await attention.client.delete(
+                f"/v1/pap/attention/sessions/{request_id}",
+                headers=request_headers(request_id),
+            )
+            response.raise_for_status()
+            return
+        except Exception as exc:
+            last_error = exc
+            if attempt == _ATTENTION_RELEASE_MAX_ATTEMPTS:
+                break
+            await asyncio.sleep(delay_s)
+            delay_s = min(_ATTENTION_RELEASE_RETRY_MAX_S, delay_s * 2)
+    raise PAPLifecycleCleanupError(
+        "failed to release PAP Attention session "
+        f"request_id={request_id} endpoint={attention.base_url} "
+        f"attempts={_ATTENTION_RELEASE_MAX_ATTEMPTS} error={last_error}"
     )
-    errors = [result for result in results if isinstance(result, BaseException)]
-    if errors:
-        raise PAPLifecycleCleanupError("; ".join(str(error) for error in errors))
 
 
 async def quiesce_engine_request(
@@ -142,7 +129,7 @@ class PAPRequestLifecycle:
         *,
         manager: PAPLifecycleManager,
         request_id: str,
-        attention_clients: list[PAPServiceClient],
+        attention_client: PAPServiceClient,
         prefill_client: PAPServiceClient | None,
         projection_client: PAPServiceClient | None,
         admission: PAPProjectionAdmission,
@@ -152,7 +139,7 @@ class PAPRequestLifecycle:
     ) -> None:
         self.manager = manager
         self.request_id = request_id
-        self.attention_clients = attention_clients
+        self.attention_client = attention_client
         self.prefill_client = prefill_client
         self.projection_client = projection_client
         self.admission = admission
@@ -241,8 +228,8 @@ class PAPRequestLifecycle:
 
         if self.attention_registered and projection_quiesced and prefill_quiesced:
             try:
-                await release_attention_sessions(
-                    self.attention_clients,
+                await release_attention_session(
+                    self.attention_client,
                     self.request_id,
                 )
             except Exception as exc:
@@ -284,7 +271,7 @@ class PAPLifecycleManager:
         self,
         *,
         request_id: str,
-        attention_clients: list[PAPServiceClient],
+        attention_client: PAPServiceClient,
         prefill_client: PAPServiceClient | None,
         projection_client: PAPServiceClient | None,
         admission: PAPProjectionAdmission,
@@ -297,7 +284,7 @@ class PAPLifecycleManager:
         lifecycle = PAPRequestLifecycle(
             manager=self,
             request_id=request_id,
-            attention_clients=attention_clients,
+            attention_client=attention_client,
             prefill_client=prefill_client,
             projection_client=projection_client,
             admission=admission,
@@ -360,5 +347,5 @@ __all__ = [
     "quiesce_engine_request",
     "quiesce_prefill_request",
     "quiesce_projection_request",
-    "release_attention_sessions",
+    "release_attention_session",
 ]

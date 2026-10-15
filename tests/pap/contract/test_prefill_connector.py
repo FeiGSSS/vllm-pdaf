@@ -60,7 +60,6 @@ def test_connector_metadata_matches_mrv2_batch_order() -> None:
     ]
     assert metadata.requests[1].prefill_kv_handle == "session-1"
     assert metadata.requests[1].allocated_block_ids == (3, 4)
-    assert metadata.finished_request_ids == ("old",)
 
 
 def test_migration_copy_ranges_require_both_sides_to_be_contiguous() -> None:

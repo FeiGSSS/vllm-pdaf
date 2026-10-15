@@ -17,8 +17,10 @@ import threading
 import time
 import uuid
 from collections import OrderedDict
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
+
+from vllm.pap.config import PAPLeaseReleaseConfig
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +35,7 @@ def _kv_lease_profile_enabled() -> bool:
 
 
 def _kv_lease_default_ttl_seconds() -> float:
-    raw = os.environ.get("PAP_KV_LEASE_TTL_SECONDS", "300")
-    if not raw:
-        return 300.0
-    try:
-        return max(0.0, float(raw))
-    except ValueError:
-        logger.warning("Invalid PAP_KV_LEASE_TTL_SECONDS=%r; using 300 seconds", raw)
-        return 300.0
+    return PAPLeaseReleaseConfig.from_env(os.environ).lease_ttl_s
 
 
 @dataclass(frozen=True)
@@ -332,14 +327,6 @@ def reset_global_kv_lease_registry() -> None:
         _GLOBAL_REGISTRY = None
 
 
-def pap_pin_blocks(
-    request_id: str, block_ids: Iterable[int], lease_id: str | None = None
-) -> str:
-    return get_global_kv_lease_registry().pin_blocks(
-        request_id=request_id, block_ids=tuple(block_ids), lease_id=lease_id
-    )
-
-
 def pap_release_lease(lease_id: str) -> tuple[int, ...]:
     return get_global_kv_lease_registry().release_lease(lease_id)
 
@@ -350,10 +337,6 @@ def pap_has_active_lease(request_id: str) -> bool:
 
 def pap_was_recently_released(request_id: str) -> bool:
     return get_global_kv_lease_registry().was_recently_released(request_id)
-
-
-def pap_leased_block_ids(request_id: str) -> tuple[int, ...]:
-    return get_global_kv_lease_registry().leased_block_ids(request_id)
 
 
 def pap_active_lease_id(request_id: str) -> str | None:

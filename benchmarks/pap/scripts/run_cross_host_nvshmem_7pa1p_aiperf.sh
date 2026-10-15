@@ -66,7 +66,6 @@ set_common_env() {
   export PAP_PREFILL_GPUS=0,1,2,3,4,5,6
   export PAP_ATTENTION_GPUS=0,1,2,3,4,5,6
   export PAP_PROJECTION_GPUS=7
-  export PAP_OFFLOAD_KV_TRANSPORT=cuda_ipc
   export PAP_BLOCK_SIZE=16
   export PYTHONHASHSEED=123
   export PAP_ENABLE_PA_KV_MIGRATION="${ENABLE_PA_KV_MIGRATION}"
@@ -91,7 +90,6 @@ set_common_env() {
   export PAP_KV_LEASE_TTL_SECONDS=300
   export PAP_DECODE_SLOT_PLAN_CACHE_LIMIT=256
   export PAP_PAT_PLAN_CACHE_ENTRIES=32
-  export PAP_ATTENTION_GPU_RESIDENT_DISPATCH=0
   export PAP_ATTENTION_KERNEL_POLICY=auto
   export DISABLE_STREAM=1
   export VLLM_PLUGINS=pap
@@ -141,7 +139,6 @@ run_attention() {
   export PAP_OFFLOAD_EXEC_NUM_HEADS=32
   export PAP_OFFLOAD_EXEC_NUM_KV_HEADS=8
   export PAP_OFFLOAD_EXEC_HEAD_DIM=128
-  export PAP_ATTENTION_DECODE_KV_INITIAL_CAPACITY=128
   export PAP_DECODE_COMMIT_ENDPOINT="http://127.0.0.1:$((PREFILL_PORT_BASE + index))/v1/pap/prefill/decode-commit"
   export PAP_LEASE_RELEASE_ENDPOINT="http://127.0.0.1:$((PREFILL_PORT_BASE + index))/v1/pap/prefill/lease-release"
   export PAP_RUNTIME_CUDA_CONTEXT_AUDIT_PATH="${REMOTE_RUN_ROOT}/runtime_cuda_context_attention_${index}.json"

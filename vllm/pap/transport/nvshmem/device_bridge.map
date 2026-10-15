@@ -2,13 +2,6 @@
   global:
     pap_nvshmem_device_bridge_version;
     pap_cuda_host_get_device_pointer;
-    pap_cuda_graph_probe_device_launch;
-    pap_cuda_graph_create_resident_dispatcher;
-    pap_cuda_graph_create_device_launch;
-    pap_cuda_graph_resident_run;
-    pap_cuda_graph_destroy_resident_dispatcher;
-    pap_cuda_graph_launch_from_device;
-    pap_cuda_graph_destroy_device_launch;
     pap_nvshmem_device_bridge_get_unique_id;
     pap_nvshmem_device_bridge_init_uid;
     pap_nvshmem_device_bridge_finalize;

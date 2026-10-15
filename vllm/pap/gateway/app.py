@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -17,18 +18,19 @@ from fastapi import FastAPI, Request
 
 from vllm.pap.config import reject_removed_pap_flags
 from vllm.pap.gateway.admission import PAPProjectionAdmission
+from vllm.pap.gateway.clients import PAPServiceClient, get_prefill_kv_load
 from vllm.pap.gateway.dynamo_routing import PAPDynamoRouter
 from vllm.pap.gateway.kv_migration import PAPKVCacheMigrationCoordinator
 from vllm.pap.gateway.lifecycle import PAPLifecycleManager
-from vllm.pap.gateway.load_tracker import PAPLoadTracker
 from vllm.pap.gateway.request_pipeline import _handle_openai_request
-from vllm.pap.gateway.session_routing import PAPSessionRoundRobinRouter
 from vllm.pap.gateway.tokenizer import PAPPromptTokenizer
 from vllm.pap.gateway.topology import (
     _make_client,
     parse_pap_groups,
     parse_projection_instances,
 )
+
+_CAPACITY_BOOTSTRAP_TIMEOUT_S = 5.0
 
 logging.basicConfig(
     level=logging.INFO,
@@ -48,14 +50,24 @@ def _parse_hf_overrides(value: str) -> dict[str, Any]:
     return overrides
 
 
+async def _read_total_kv_blocks(clients: list[PAPServiceClient]) -> list[int]:
+    """Read each PA's fixed KV capacity once before the Gateway becomes ready."""
+    snapshots = await asyncio.wait_for(
+        asyncio.gather(*(get_prefill_kv_load(client) for client in clients)),
+        timeout=_CAPACITY_BOOTSTRAP_TIMEOUT_S,
+    )
+    if any(snapshot["total_kv_tokens"] == 0 for snapshot in snapshots):
+        raise RuntimeError("PAP PA reported zero KV capacity")
+    return [
+        snapshot["total_kv_tokens"] // max(1, snapshot["kv_block_size"])
+        for snapshot in snapshots
+    ]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     args = app.state.args
     reject_removed_pap_flags(os.environ)
-    if args.routing_policy not in {"dynamo", "session_round_robin"}:
-        raise ValueError(f"unsupported PAP routing policy: {args.routing_policy}")
-    if args.enable_pa_kv_migration and args.routing_policy != "dynamo":
-        raise ValueError("PA KV migration requires Dynamo routing")
     app.state.groups = parse_pap_groups(args.pap_groups)
     app.state.projections = parse_projection_instances(args.projections)
     app.state.pap_active_request_ids = set()
@@ -65,8 +77,6 @@ async def lifespan(app: FastAPI):
         group: _make_client(group.prefill_host, group.prefill_port, "prefill")
         for group in app.state.groups
     }
-    app.state.pap_load_tracker = PAPLoadTracker(app.state.prefill_clients)
-    await app.state.pap_load_tracker.start()
     app.state.pap_kv_migration = PAPKVCacheMigrationCoordinator(
         enabled=args.enable_pa_kv_migration,
         max_conversations=args.migration_max_conversations,
@@ -90,36 +100,24 @@ async def lifespan(app: FastAPI):
     )
     total_kv_blocks = args.dynamo_total_kv_blocks
     if total_kv_blocks is None:
-        total_kv_blocks = [
-            int(snapshot["total_kv_blocks"])
-            for snapshot in app.state.pap_load_tracker.snapshot().values()
-        ]
-    if args.routing_policy == "dynamo":
-        app.state.pap_dynamo_router = await PAPDynamoRouter.create(
-            app.state.groups,
-            event_endpoints=event_endpoints,
-            replay_endpoints=replay_endpoints,
-            site_packages=args.dynamo_site_packages,
-            model_name=args.dynamo_model_name,
-            block_size=args.prefix_block_size,
-            max_num_batched_tokens=args.dynamo_max_num_batched_tokens,
-            total_kv_blocks=total_kv_blocks,
-            prefill_load_scale=args.dynamo_prefill_load_scale,
+        total_kv_blocks = await _read_total_kv_blocks(
+            [app.state.prefill_clients[group] for group in app.state.groups]
         )
-    else:
-        app.state.pap_dynamo_router = PAPSessionRoundRobinRouter(
-            app.state.groups,
-            max_conversations=args.session_routing_max_conversations,
-        )
-    app.state.attention_clients = {}
-    for group in app.state.groups:
-        if isinstance(group.attention_port, int):
-            ports = (group.attention_port,)
-        else:
-            ports = group.attention_port
-        app.state.attention_clients[group] = [
-            _make_client(group.attention_host, port, "attention") for port in ports
-        ]
+    app.state.pap_dynamo_router = await PAPDynamoRouter.create(
+        app.state.groups,
+        event_endpoints=event_endpoints,
+        replay_endpoints=replay_endpoints,
+        site_packages=args.dynamo_site_packages,
+        model_name=args.dynamo_model_name,
+        block_size=args.prefix_block_size,
+        max_num_batched_tokens=args.dynamo_max_num_batched_tokens,
+        total_kv_blocks=total_kv_blocks,
+        prefill_load_scale=args.dynamo_prefill_load_scale,
+    )
+    app.state.attention_clients = {
+        group: _make_client(group.attention_host, group.attention_port, "attention")
+        for group in app.state.groups
+    }
     app.state.projection_clients = {
         projection: _make_client(projection.host, projection.port, "projection")
         for projection in app.state.projections
@@ -132,14 +130,9 @@ async def lifespan(app: FastAPI):
         await app.state.pap_kv_migration.shutdown()
         await app.state.pap_dynamo_router.shutdown()
         await app.state.pap_lifecycle_manager.shutdown()
-        attention_clients = [
-            client
-            for clients in app.state.attention_clients.values()
-            for client in clients
-        ]
         for client in [
             *app.state.prefill_clients.values(),
-            *attention_clients,
+            *app.state.attention_clients.values(),
             *app.state.projection_clients.values(),
         ]:
             await client.client.aclose()
@@ -158,47 +151,34 @@ async def chat_completions(request: Request):
     return await _handle_openai_request("/v1/chat/completions", request)
 
 
-@app.get("/health")
-async def health() -> dict[str, Any]:
+async def _runtime_stats() -> dict[str, Any]:
+    pair_counts = dict(sorted(app.state.pair_counts.items()))
     pending_route_requests = len(app.state.pap_pending_route_request_ids)
     active_requests = len(app.state.pap_active_request_ids)
     return {
-        "status": "ok",
-        "role": "multi-pap-proxy",
-        "groups": len(app.state.groups),
-        "projections": len(app.state.projections),
-        "routing_policy": app.state.args.routing_policy,
+        "pa_count": len(app.state.groups),
+        "projection_count": len(app.state.projections),
+        "total_requests": sum(pair_counts.values()),
         "inflight_requests": pending_route_requests + active_requests,
         "pending_route_requests": pending_route_requests,
         "active_requests": active_requests,
-        "pair_counts": dict(sorted(app.state.pair_counts.items())),
+        "pair_counts": pair_counts,
         "projection_admission": await app.state.projection_admission.snapshot(),
-        "load_tracker": app.state.pap_load_tracker.stats(),
         "prompt_tokenizer": {"enabled": app.state.pap_prompt_tokenizer.enabled},
         "dynamo_router": app.state.pap_dynamo_router.stats(),
         "kv_migration": app.state.pap_kv_migration.stats(),
         "lifecycle": app.state.pap_lifecycle_manager.stats(),
     }
+
+
+@app.get("/health")
+async def health() -> dict[str, Any]:
+    return {"status": "ok", "role": "multi-pap-proxy", **await _runtime_stats()}
 
 
 @app.get("/v1/pap/topology/stats")
 async def topology_stats() -> dict[str, Any]:
-    pair_counts = dict(sorted(app.state.pair_counts.items()))
-    pending_route_requests = len(app.state.pap_pending_route_request_ids)
-    return {
-        "pa_count": len(app.state.groups),
-        "projection_count": len(app.state.projections),
-        "routing_policy": app.state.args.routing_policy,
-        "total_requests": sum(pair_counts.values()),
-        "pending_route_requests": pending_route_requests,
-        "pair_counts": pair_counts,
-        "projection_admission": await app.state.projection_admission.snapshot(),
-        "load_tracker": app.state.pap_load_tracker.stats(),
-        "prompt_tokenizer": {"enabled": app.state.pap_prompt_tokenizer.enabled},
-        "dynamo_router": app.state.pap_dynamo_router.stats(),
-        "kv_migration": app.state.pap_kv_migration.stats(),
-        "lifecycle": app.state.pap_lifecycle_manager.stats(),
-    }
+    return await _runtime_stats()
 
 
 def parse_args() -> argparse.Namespace:
@@ -218,7 +198,6 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Comma-separated projection_host:projection_port entries",
     )
-    parser.add_argument("--pap-mode", default=os.environ.get("PAP_MODE", "pap"))
     parser.add_argument("--model", default=os.environ.get("PAP_MODEL_PATH"))
     parser.add_argument("--max-model-len", type=int)
     parser.add_argument(
@@ -273,17 +252,6 @@ def parse_args() -> argparse.Namespace:
         help="Keep pooled benchmark connections alive between conversation turns",
     )
     parser.add_argument(
-        "--routing-policy",
-        default=os.environ.get("PAP_ROUTING_POLICY", "dynamo"),
-        choices=("dynamo", "session_round_robin"),
-        help="PA routing policy",
-    )
-    parser.add_argument(
-        "--session-routing-max-conversations",
-        type=int,
-        default=int(os.environ.get("PAP_SESSION_ROUTER_MAX_CONVERSATIONS", "100000")),
-    )
-    parser.add_argument(
         "--enable-pa-kv-migration",
         action=argparse.BooleanOptionalAction,
         default=os.environ.get("PAP_ENABLE_PA_KV_MIGRATION", "0") == "1",
@@ -294,14 +262,8 @@ def parse_args() -> argparse.Namespace:
         default=int(os.environ.get("PAP_MIGRATION_MAX_CONVERSATIONS", "100000")),
     )
     args = parser.parse_args()
-    if args.routing_policy not in {"dynamo", "session_round_robin"}:
-        parser.error(f"unsupported PAP routing policy: {args.routing_policy}")
-    if args.session_routing_max_conversations <= 0:
-        parser.error("session routing conversation limit must be positive")
     if args.migration_max_conversations <= 0:
         parser.error("KV migration conversation limit must be positive")
-    if args.enable_pa_kv_migration and args.routing_policy != "dynamo":
-        parser.error("PA KV migration requires Dynamo routing")
     return args
 
 

@@ -8,9 +8,6 @@ from vllm.pap.config import (
     PAP_REMOVED_FLAGS,
     PAPAttentionKernelPolicy,
     PAPConfigError,
-    PAPMPSMode,
-    PAPOffloadKVTransport,
-    PAPRoutingPolicy,
     PAPRuntimeConfig,
 )
 
@@ -22,8 +19,6 @@ def test_runtime_config_defaults_to_the_single_projection_runtime() -> None:
     assert config.placement.prefill_devices == (0,)
     assert config.placement.attention_devices == (0,)
     assert config.placement.projection_devices == (1,)
-    assert config.offload_kv_transport is PAPOffloadKVTransport.CUDA_IPC
-    assert config.mps.mode is PAPMPSMode.STATIC
     assert config.attention.actor_id == "attention"
     assert config.attention.kernel_policy is PAPAttentionKernelPolicy.AUTO
 
@@ -47,7 +42,6 @@ def test_runtime_config_accepts_7pa1p_nvshmem_graph_topology() -> None:
 
     assert config.topology.pa_count == 7
     assert config.topology.projection_count == 1
-    assert config.routing_policy is PAPRoutingPolicy.DYNAMO
 
 
 def test_runtime_config_accepts_multiple_projections() -> None:
@@ -64,18 +58,6 @@ def test_runtime_config_accepts_multiple_projections() -> None:
     assert config.topology.projection_count == 2
 
 
-def test_runtime_config_accepts_dynamo_routing() -> None:
-    config = PAPRuntimeConfig.from_env({"PAP_ROUTING_POLICY": "dynamo"})
-
-    assert config.routing_policy is PAPRoutingPolicy.DYNAMO
-
-
-def test_runtime_config_accepts_session_round_robin_routing() -> None:
-    config = PAPRuntimeConfig.from_env({"PAP_ROUTING_POLICY": "session_round_robin"})
-
-    assert config.routing_policy is PAPRoutingPolicy.SESSION_ROUND_ROBIN
-
-
 @pytest.mark.parametrize(
     "policy",
     [
@@ -84,6 +66,7 @@ def test_runtime_config_accepts_session_round_robin_routing() -> None:
         "projection_affinity",
         "projection_sticky",
         "conversation_affinity",
+        "session_round_robin",
     ],
 )
 def test_runtime_config_rejects_retired_routing(policy) -> None:
@@ -103,29 +86,28 @@ def test_runtime_config_rejects_tensor_parallel_execution() -> None:
         )
 
 
-@pytest.mark.parametrize(
-    "name",
-    [
-        "PAP_OFFLOAD_EXEC_TRANSPORT",
-        "PAP_OFFLOAD_EXEC_TRACE",
-        "PAP_OFFLOAD_EXEC_TRACE_LAYER",
-        "PAP_PREFIX_CACHE_AUDIT",
-        "PAP_KV_LOCALITY_PROFILE",
-        "PAP_KV_LOCALITY_PROFILE_MIN_BATCH",
-        "PAP_NVSHMEM_GPU_GRAPH",
-        "PAP_NVSHMEM_SIGNAL_WAIT",
-        "PAP_DIRECT_MAILBOX_OUTPUT",
-        "PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND",
-    ],
-)
+@pytest.mark.parametrize("name", [spec.name for spec in PAP_REMOVED_FLAGS])
 def test_removed_execution_selectors_fail_closed(name: str) -> None:
     with pytest.raises(PAPConfigError, match=name):
         PAPRuntimeConfig.from_env({name: "1"})
 
 
-def test_runtime_config_rejects_non_cuda_ipc_kv_transport() -> None:
-    with pytest.raises(PAPConfigError, match="must be cuda_ipc"):
-        PAPRuntimeConfig.from_env({"PAP_OFFLOAD_KV_TRANSPORT": "nixl_mailbox"})
+def test_delivery_clients_apply_runtime_config_validation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Clients parse their settings through the same validated config sections."""
+    from vllm.pap.kv.control_client import DecodeCommitClient, LeaseReleaseClient
+    from vllm.pap.kv.decode_token_client import DecodeTokenClient
+
+    for prefix, client in (
+        ("PAP_DECODE_COMMIT", DecodeCommitClient),
+        ("PAP_LEASE_RELEASE", LeaseReleaseClient),
+        ("PAP_DECODE_TOKEN", DecodeTokenClient),
+    ):
+        monkeypatch.setenv(f"{prefix}_RETRY_INITIAL_SECONDS", "1.0")
+        monkeypatch.setenv(f"{prefix}_RETRY_MAX_SECONDS", "0.5")
+        with pytest.raises(PAPConfigError, match="retry maximum"):
+            client()
 
 
 def test_runtime_config_values_are_immutable() -> None:

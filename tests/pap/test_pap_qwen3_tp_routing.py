@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
-from vllm.pap.model.context import pap_endpoint_for_tp_rank
 from vllm.pap.model.projection_routing import (
     _pap_offload_exec_session_request_id,
     _pap_offload_exec_step_groups,
@@ -9,16 +8,6 @@ from vllm.pap.transport.binding import (
     _pap_bind_offload_exec_nvshmem_peer,
     _pap_cached_offload_exec_transport,
 )
-
-
-def test_pap_endpoint_for_tp_rank_selects_csv_entry() -> None:
-    assert (
-        pap_endpoint_for_tp_rank(
-            "http://127.0.0.1:8300,http://127.0.0.1:8301",
-            tp_rank=1,
-        )
-        == "http://127.0.0.1:8301"
-    )
 
 
 def test_projection_transport_identity_includes_tp_rank(monkeypatch) -> None:

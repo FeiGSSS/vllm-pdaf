@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -13,12 +12,9 @@ from typing import Any
 
 import httpx
 
-from vllm.pap.gateway.clients import PAPServiceClient, register_attention_handle
+from vllm.pap.gateway.clients import PAPServiceClient
 from vllm.pap.gateway.clients import request_headers as _headers
-from vllm.pap.gateway.lifecycle import (
-    PAPRequestLifecycle,
-    release_attention_sessions,
-)
+from vllm.pap.gateway.lifecycle import PAPRequestLifecycle
 from vllm.pap.gateway.observability import (
     _merge_prefill_cache_usage_sse_event,
     _pap_prefill_ipc_profile_enabled,
@@ -49,83 +45,6 @@ async def _post_json(
     )
     resp.raise_for_status()
     return resp.json()
-
-
-async def register_attention_handles(
-    attention_clients: list[PAPServiceClient],
-    *,
-    request_id: str,
-    conversation_id: str,
-    prefill_endpoint: str,
-    kv_transfer_params: dict[str, Any],
-    prefix_len: int | None,
-) -> list[dict[str, Any]]:
-    """Register the request with every Attention instance in its PA group."""
-    sessions = []
-    registered_attentions: list[PAPServiceClient] = []
-    try:
-        for attention in attention_clients:
-            sessions.append(
-                await register_attention_handle(
-                    attention,
-                    request_id=request_id,
-                    conversation_id=conversation_id,
-                    prefill_endpoint=prefill_endpoint,
-                    kv_transfer_params=kv_transfer_params,
-                    prefix_len=prefix_len,
-                )
-            )
-            registered_attentions.append(attention)
-    except BaseException:
-        cleanup_task = asyncio.create_task(
-            release_attention_sessions(registered_attentions, request_id)
-        )
-        try:
-            await asyncio.shield(cleanup_task)
-        except asyncio.CancelledError:
-            cleanup_task.add_done_callback(_log_registration_cleanup_failure)
-        raise
-    return sessions
-
-
-def _log_registration_cleanup_failure(task: asyncio.Task[None]) -> None:
-    try:
-        task.result()
-    except Exception:
-        logger.exception("PAP partial Attention registration cleanup failed")
-
-
-_cleanup_attention_sessions = release_attention_sessions
-
-
-async def _stream_projection(
-    client: PAPServiceClient,
-    endpoint: str,
-    payload: dict[str, Any],
-    request_id: str,
-):
-    profile = _pap_prefill_ipc_profile_enabled()
-    start = time.perf_counter() if profile else 0.0
-    async with client.client.stream(
-        "POST",
-        endpoint,
-        json=payload,
-        headers=_headers(request_id),
-    ) as resp:
-        resp.raise_for_status()
-        if profile:
-            logger.info(
-                "PAP proxy projection stream profile request_id=%s open_ms=%.3f",
-                request_id,
-                (time.perf_counter() - start) * 1000.0,
-            )
-        async for chunk in _stream_projection_response(
-            resp,
-            request_id,
-            start=start,
-            profile=profile,
-        ):
-            yield chunk
 
 
 async def open_projection_stream(
@@ -236,12 +155,9 @@ async def _stream_with_prefill_cache_usage(
 
 
 async def _stream_projection_with_cleanup(
-    client: PAPServiceClient,
-    endpoint: str,
-    payload: dict[str, Any],
     request_id: str,
     lifecycle: PAPRequestLifecycle,
-    opened_stream: OpenProjectionStream | None = None,
+    opened_stream: OpenProjectionStream,
     prefill_usage: _PrefillCacheUsage | None = None,
 ):
     """Stream Projection output and release the fixed PA lifecycle."""
@@ -249,23 +165,14 @@ async def _stream_projection_with_cleanup(
     pending = b""
     terminal_chunks: list[bytes] = []
     try:
-        if opened_stream is None:
-            projection_chunks = _stream_projection(
-                client,
-                endpoint,
-                payload,
-                request_id,
-            )
-        else:
-            projection_chunks = _stream_projection_response(
+        projection_chunks = _stream_with_prefill_cache_usage(
+            _stream_projection_response(
                 opened_stream.response,
                 request_id,
                 start=opened_stream.start,
                 profile=opened_stream.profile,
                 profile_origin=opened_stream.profile_origin,
-            )
-        projection_chunks = _stream_with_prefill_cache_usage(
-            projection_chunks,
+            ),
             prefill_usage,
         )
         async for chunk in projection_chunks:

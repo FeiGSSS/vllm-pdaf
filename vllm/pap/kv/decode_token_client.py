@@ -15,7 +15,7 @@ from typing import SupportsIndex, SupportsInt, TypeAlias, TypedDict, cast
 import httpx
 from typing_extensions import Buffer
 
-from vllm.pap.config import reject_removed_pap_flags
+from vllm.pap.config import PAPDecodeTokenConfig, reject_removed_pap_flags
 
 logger = logging.getLogger(__name__)
 
@@ -57,39 +57,24 @@ class DecodeTokenClient:
         retry_max_s: float | None = None,
     ) -> None:
         reject_removed_pap_flags(os.environ)
-        self.timeout_s = (
-            float(timeout_s)
-            if timeout_s is not None
-            else float(os.environ.get("PAP_DECODE_TOKEN_TIMEOUT", "0.2"))
-        )
+        config = PAPDecodeTokenConfig.from_env(os.environ)
+        self.flush_timeout_s = config.flush_timeout_s
+        self.timeout_s = float(timeout_s) if timeout_s is not None else config.timeout_s
         self.max_attempts = max(
-            1,
-            int(max_attempts)
-            if max_attempts is not None
-            else int(os.environ.get("PAP_DECODE_TOKEN_MAX_ATTEMPTS", "8")),
+            1, int(max_attempts) if max_attempts is not None else config.max_attempts
         )
         self.retry_initial_s = max(
             0.0,
             float(retry_initial_s)
             if retry_initial_s is not None
-            else float(
-                os.environ.get(
-                    "PAP_DECODE_TOKEN_RETRY_INITIAL_SECONDS",
-                    "0.05",
-                )
-            ),
+            else config.retry_initial_s,
         )
         self.retry_max_s = max(
             self.retry_initial_s,
-            float(retry_max_s)
-            if retry_max_s is not None
-            else float(os.environ.get("PAP_DECODE_TOKEN_RETRY_MAX_SECONDS", "0.5")),
+            float(retry_max_s) if retry_max_s is not None else config.retry_max_s,
         )
         capacity = max(
-            1,
-            int(queue_size)
-            if queue_size is not None
-            else int(os.environ.get("PAP_DECODE_TOKEN_QUEUE_SIZE", "1024")),
+            1, int(queue_size) if queue_size is not None else config.queue_size
         )
         self._queue: queue.Queue[_DecodeTokenQueueItem | None] = queue.Queue(capacity)
         self._pending_lock = threading.Lock()
@@ -166,7 +151,7 @@ class DecodeTokenClient:
 
     def flush_request(self, request_id: str, timeout_s: float | None = None) -> bool:
         if timeout_s is None:
-            timeout_s = float(os.environ.get("PAP_DECODE_TOKEN_FLUSH_TIMEOUT", "5.0"))
+            timeout_s = self.flush_timeout_s
         request_id = str(request_id)
         deadline = time.monotonic() + max(0.0, float(timeout_s))
         with self._pending_done:

@@ -92,8 +92,6 @@ class PAPProjectionScheduleState:
 
     remote_prefix_len: int
     remote_computed_tokens: int
-    allocate_external_computed_blocks: bool = False
-    allocate_local_slots: bool = False
 
 
 @dataclass(slots=True)

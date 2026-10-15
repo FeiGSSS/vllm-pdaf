@@ -64,28 +64,6 @@ class PAPStepTraceConfig:
         return cls(output, ring_steps, sample_steps, interval)
 
 
-class PAPOffloadKVTransport(str, Enum):
-    """Prefill-to-Attention KV transport."""
-
-    CUDA_IPC = "cuda_ipc"
-
-
-PAP_DEFAULT_OFFLOAD_KV_TRANSPORT = PAPOffloadKVTransport.CUDA_IPC
-
-
-class PAPRoutingPolicy(str, Enum):
-    """The supported PAP PA selection policy."""
-
-    DYNAMO = "dynamo"
-    SESSION_ROUND_ROBIN = "session_round_robin"
-
-
-class PAPMPSMode(str, Enum):
-    """PAP MPS resource partition modes."""
-
-    STATIC = "static"
-
-
 class PAPAttentionKernelPolicy(str, Enum):
     """Decode Attention kernel-selection policy."""
 
@@ -165,24 +143,6 @@ class PAPPlacement:
 
 
 @dataclass(frozen=True)
-class PAPMPSConfig:
-    """Static MPS partition expected by a PAP launcher."""
-
-    mode: PAPMPSMode
-    profile_id: str
-    prefill_chunks: int
-    attention_chunks: int
-    prefill_visible_sms: int
-    attention_visible_sms: int
-
-    def __post_init__(self) -> None:
-        if self.prefill_chunks < 1 or self.attention_chunks < 1:
-            raise PAPConfigError("PAP static MPS chunk counts must be positive")
-        if self.prefill_visible_sms < 1 or self.attention_visible_sms < 1:
-            raise PAPConfigError("PAP expected visible SM counts must be positive")
-
-
-@dataclass(frozen=True)
 class PAPDecodeCommitConfig:
     """Decode-commit delivery and acknowledgement policy."""
 
@@ -194,6 +154,59 @@ class PAPDecodeCommitConfig:
     retry_initial_s: float
     retry_max_s: float
     flush_timeout_s: float
+
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> PAPDecodeCommitConfig:
+        config = cls(
+            endpoint=_env_text(env, "PAP_DECODE_COMMIT_ENDPOINT", ""),
+            fail_closed=read_env_bool(
+                env,
+                "PAP_DECODE_COMMIT_FAIL_CLOSED",
+                False,
+            ),
+            timeout_s=read_env_float(
+                env,
+                "PAP_DECODE_COMMIT_TIMEOUT",
+                5.0,
+                minimum=0.0,
+            ),
+            queue_size=read_env_int(
+                env,
+                "PAP_DECODE_COMMIT_QUEUE_SIZE",
+                1024,
+                minimum=1,
+            ),
+            max_attempts=read_env_int(
+                env,
+                "PAP_DECODE_COMMIT_MAX_ATTEMPTS",
+                8,
+                minimum=1,
+            ),
+            retry_initial_s=read_env_float(
+                env,
+                "PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS",
+                0.05,
+                minimum=0.0,
+            ),
+            retry_max_s=read_env_float(
+                env,
+                "PAP_DECODE_COMMIT_RETRY_MAX_SECONDS",
+                0.5,
+                minimum=0.0,
+            ),
+            flush_timeout_s=read_env_float(
+                env,
+                "PAP_DECODE_COMMIT_FLUSH_TIMEOUT",
+                15.0,
+                minimum=0.0,
+            ),
+        )
+        _validate_retry_range(
+            "PAP decode commit",
+            config.retry_initial_s,
+            config.retry_max_s,
+        )
+        return config
 
 
 @dataclass(frozen=True)
@@ -207,6 +220,53 @@ class PAPDecodeTokenConfig:
     retry_max_s: float
     flush_timeout_s: float
 
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> PAPDecodeTokenConfig:
+        config = cls(
+            timeout_s=read_env_float(
+                env,
+                "PAP_DECODE_TOKEN_TIMEOUT",
+                0.2,
+                minimum=0.0,
+            ),
+            queue_size=read_env_int(
+                env,
+                "PAP_DECODE_TOKEN_QUEUE_SIZE",
+                1024,
+                minimum=1,
+            ),
+            max_attempts=read_env_int(
+                env,
+                "PAP_DECODE_TOKEN_MAX_ATTEMPTS",
+                8,
+                minimum=1,
+            ),
+            retry_initial_s=read_env_float(
+                env,
+                "PAP_DECODE_TOKEN_RETRY_INITIAL_SECONDS",
+                0.05,
+                minimum=0.0,
+            ),
+            retry_max_s=read_env_float(
+                env,
+                "PAP_DECODE_TOKEN_RETRY_MAX_SECONDS",
+                0.5,
+                minimum=0.0,
+            ),
+            flush_timeout_s=read_env_float(
+                env,
+                "PAP_DECODE_TOKEN_FLUSH_TIMEOUT",
+                5.0,
+                minimum=0.0,
+            ),
+        )
+        _validate_retry_range(
+            "PAP decode token",
+            config.retry_initial_s,
+            config.retry_max_s,
+        )
+        return config
+
 
 @dataclass(frozen=True)
 class PAPLeaseReleaseConfig:
@@ -219,6 +279,48 @@ class PAPLeaseReleaseConfig:
     retry_max_s: float
     lease_ttl_s: float
 
+    @classmethod
+    def from_env(cls, env: Mapping[str, str]) -> PAPLeaseReleaseConfig:
+        config = cls(
+            endpoint=_env_text(env, "PAP_LEASE_RELEASE_ENDPOINT", ""),
+            timeout_s=read_env_float(
+                env,
+                "PAP_LEASE_RELEASE_TIMEOUT",
+                5.0,
+                minimum=0.0,
+            ),
+            max_attempts=read_env_int(
+                env,
+                "PAP_LEASE_RELEASE_MAX_ATTEMPTS",
+                5,
+                minimum=1,
+            ),
+            retry_initial_s=read_env_float(
+                env,
+                "PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS",
+                0.05,
+                minimum=0.0,
+            ),
+            retry_max_s=read_env_float(
+                env,
+                "PAP_LEASE_RELEASE_RETRY_MAX_SECONDS",
+                0.5,
+                minimum=0.0,
+            ),
+            lease_ttl_s=read_env_float(
+                env,
+                "PAP_KV_LEASE_TTL_SECONDS",
+                300.0,
+                minimum=0.0,
+            ),
+        )
+        _validate_retry_range(
+            "PAP lease release",
+            config.retry_initial_s,
+            config.retry_max_s,
+        )
+        return config
+
 
 @dataclass(frozen=True)
 class PAPAttentionServiceConfig:
@@ -228,7 +330,6 @@ class PAPAttentionServiceConfig:
     local_rank: int
     storage_device: str | None
     prefill_wait_timeout_s: float
-    decode_kv_initial_capacity: int
     kernel_policy: PAPAttentionKernelPolicy = PAPAttentionKernelPolicy.AUTO
 
 
@@ -237,8 +338,6 @@ class PAPRuntimeFeatures:
     """Operational PAP controls that do not select core runtime paths."""
 
     decode_slot_plan_cache_limit: int
-    prefill_ipc_profile: bool
-    prefill_torch_profile: bool
 
 
 @dataclass(frozen=True)
@@ -252,206 +351,10 @@ class PAPRemovedFlag:
 
 PAP_REMOVED_FLAGS = (
     PAPRemovedFlag(
-        name="PAP_KV_LOCALITY_PROFILE",
-        replacement="the whole-step trace recorder's KV metadata",
-        experiment_id="PAP-20260905-REFACTOR-VALIDATION",
+        name="PAP_SESSION_ROUTER_MAX_CONVERSATIONS",
+        replacement="Dynamo PA selection",
+        experiment_id="PAP-20260909-SESSION-ROUND-ROBIN",
     ),
-    PAPRemovedFlag(
-        name="PAP_KV_LOCALITY_PROFILE_MIN_BATCH",
-        replacement="the whole-step trace recorder's KV metadata",
-        experiment_id="PAP-20260905-REFACTOR-VALIDATION",
-    ),
-    PAPRemovedFlag(
-        name="PAP_OFFLOAD_EXEC_TRACE",
-        replacement="PAP_PROJECTION_PA_TRACE_OUTPUT or PAP_DEFERRED_CUDA_TRACE",
-        experiment_id="PAP-20260905-REFACTOR-VALIDATION",
-    ),
-    PAPRemovedFlag(
-        name="PAP_OFFLOAD_EXEC_TRACE_LAYER",
-        replacement="the whole-step NVSHMEM trace recorder",
-        experiment_id="PAP-20260905-REFACTOR-VALIDATION",
-    ),
-    PAPRemovedFlag(
-        name="PAP_PREFIX_CACHE_AUDIT",
-        replacement="the active Gateway cached-token reporting and KV statistics",
-        experiment_id="PAP-20260905-REFACTOR-VALIDATION",
-    ),
-    PAPRemovedFlag(
-        name="PAP_CUDAGRAPH_COMPATIBLE",
-        replacement="the native Prefill hook and PAP whole-step Projection graph",
-        experiment_id="PAP-20260905-REFACTOR-VALIDATION",
-    ),
-    PAPRemovedFlag(
-        name="PAP_CUDAGRAPH_ROLE",
-        replacement="the service role, not the retired custom-op graph adapter",
-        experiment_id="PAP-20260905-REFACTOR-VALIDATION",
-    ),
-    PAPRemovedFlag(
-        name="PAP_ASYNC_DECODE_TOKEN",
-        replacement="unconditional asynchronous sampled-token delivery",
-        experiment_id="PAP-20260713-ASYNC-DECODE-TOKEN-D2H",
-    ),
-    PAPRemovedFlag(
-        name="PAP_ASYNC_DECODE_TOKEN_SYNC_ONLY_BARRIER",
-        replacement="no sampled-token timing barrier",
-        experiment_id="PAP-20260714-ASYNC-TTFT-ROOTCAUSE",
-    ),
-    PAPRemovedFlag(
-        name="PAP_PROJECTION_SYNC_ONLY_BARRIER",
-        replacement="no Projection timing barrier",
-        experiment_id="PAP-20260714-ASYNC-TTFT-ROOTCAUSE",
-    ),
-    PAPRemovedFlag(
-        name="PAP_PREFILL_SYNC_ONLY_BARRIER",
-        replacement="no Prefill timing barrier",
-        experiment_id="PAP-20260714-ASYNC-TTFT-ROOTCAUSE",
-    ),
-    PAPRemovedFlag(
-        name="PAP_PREFILL_KV_ASYNC",
-        replacement="unconditional safe asynchronous Prefill KV import",
-        experiment_id="PAP-20260714-REGISTRY-LOCK-SAFE-ASYNC",
-    ),
-    PAPRemovedFlag(
-        name="PAP_KV_HANDOFF_MODE",
-        replacement="sealed catalog and request manifest handoff",
-        experiment_id="PAP-20260714-SEAL-HANDOFF-KV",
-    ),
-    PAPRemovedFlag(
-        name="PAP_UNIFIED_KV",
-        replacement="Prefill-owned unified KV",
-        experiment_id="PAP-20260703-UNIFIED-KV",
-    ),
-    PAPRemovedFlag(
-        name="PAP_BATCHED_ROUTE_COPY",
-        replacement="batched route copy with input-driven fallback",
-        experiment_id="PAP-20260711-ROUTE-COPY",
-    ),
-    PAPRemovedFlag(
-        name="PAP_UNIFIED_MD_FAST_KEY",
-        replacement="unified metadata fast-key lookup",
-        experiment_id="PAP-20260712-METADATA-FAST-KEY",
-    ),
-    PAPRemovedFlag(
-        name="PAP_ATTENTION_DISPATCH_MODE",
-        replacement="the mandatory NVSHMEM Graph execution loop",
-        experiment_id="PAP-20260711-ATTENTION-COMBINE",
-    ),
-    PAPRemovedFlag(
-        name="PAP_ATTENTION_COMBINE_WAIT_US",
-        replacement="topology-derived combine wait",
-        experiment_id="PAP-20260711-ATTENTION-COMBINE",
-    ),
-    PAPRemovedFlag(
-        name="PAP_ATTENTION_ACTIVE_PEER_TRACKING",
-        replacement="topology-derived peer membership tracking",
-        experiment_id="PAP-20260711-ACTIVE-PEER",
-    ),
-    PAPRemovedFlag(
-        name="PAP_SHARED_PREFIX_ATTENTION_BACKEND",
-        replacement="PAP_ATTENTION_KERNEL_POLICY=auto or triton",
-        experiment_id="PAP-20260827-PAT-OR-TRITON",
-    ),
-    PAPRemovedFlag(
-        name="PAP_SHARED_PREFIX_CASCADE",
-        replacement="the PAT-or-Triton Attention policy",
-        experiment_id="PAP-20260827-PAT-OR-TRITON",
-    ),
-    PAPRemovedFlag(
-        name="PAP_SHARED_PREFIX_PAT_MIN_TOKENS",
-        replacement="physical KV reuse detection without a token threshold",
-        experiment_id="PAP-20260827-PAT-OR-TRITON",
-    ),
-    PAPRemovedFlag(
-        name="PAP_SHARED_PREFIX_PAT_CACHE_ENTRIES",
-        replacement="PAP_PAT_PLAN_CACHE_ENTRIES",
-        experiment_id="PAP-20260827-PAT-OR-TRITON",
-    ),
-    PAPRemovedFlag(
-        name="PAP_MPS_MODE",
-        replacement="the current static 80/12 MPS partition",
-        experiment_id="PAP-20260714-ASYNC-STATIC-BASELINE",
-    ),
-    PAPRemovedFlag(
-        name="PAP_DIAG_R1_PROJECTION_GATE_COUNT",
-        replacement="no diagnostic Projection gate",
-        experiment_id="PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
-    ),
-    PAPRemovedFlag(
-        name="PAP_DIAG_R1_COMMIT_GATE_COUNT",
-        replacement="no diagnostic decode-commit gate",
-        experiment_id="PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
-    ),
-    PAPRemovedFlag(
-        name="PAP_DIAG_DECODE_COMMIT_GATE_FILE",
-        replacement="unconditional decode-commit delivery",
-        experiment_id="PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
-    ),
-    PAPRemovedFlag(
-        name="PAP_DIAG_DECODE_COMMIT_GATE_TIMEOUT",
-        replacement="the normal decode-commit timeout and retry policy",
-        experiment_id="PAP-20260714-ASYNC-TTFT-STRICT-ISOLATION",
-    ),
-    PAPRemovedFlag(
-        name="PAP_RUNNER_MICROBATCH_COUNT",
-        replacement="one unsplit vLLM Projection scheduler batch",
-        experiment_id="PAP-20260724-SINGLE-PROJECTION-BATCH",
-    ),
-    PAPRemovedFlag(
-        name="PAP_ATTENTION_MAILBOX_PREFETCH",
-        replacement="the serial Attention receive loop",
-        experiment_id="PAP-20260701-ATTENTION-MAILBOX-PREFETCH",
-    ),
-) + tuple(
-    PAPRemovedFlag(
-        name=name,
-        replacement="the mandatory same-host NVSHMEM whole-step Graph transport",
-        experiment_id="PAP-20260821-NVSHMEM-GRAPH-MINIMAL-PROTOCOL",
-    )
-    for name in (
-        "PAP_OFFLOAD_EXEC_TRANSPORT",
-        "PAP_NVSHMEM_GPU_GRAPH",
-        "PAP_NVSHMEM_SIGNAL_WAIT",
-        "PAP_DIRECT_MAILBOX_OUTPUT",
-        "PAP_OFFLOAD_EXEC_DIRECT_QKV_SEND",
-        "PAP_ATTENTION_DISPATCH_QUEUE_SIZE",
-        "PAP_SAME_HOST",
-        "PAP_LOCAL_BATCHED_FANOUT",
-        "PAP_LOCAL_FAST_ASYNC_DOORBELL",
-        "PAP_LOCAL_FAST_BATCH_PLAN",
-        "PAP_LOCAL_FAST_BUFFER_BYTES",
-        "PAP_LOCAL_FAST_DOORBELL_DIR",
-        "PAP_LOCAL_FAST_DOORBELL_RECORD_BYTES",
-        "PAP_LOCAL_FAST_HOSTNAME",
-        "PAP_LOCAL_FAST_SLEEP_AFTER_US",
-        "PAP_LOCAL_FAST_SLEEP_US",
-        "PAP_LOCAL_FAST_SPIN_ITERS",
-        "PAP_LOCAL_FAST_STEP_PLAN_CACHE_LIMIT",
-        "PAP_LOCAL_FAST_STREAM_ORDERED",
-        "PAP_LOCAL_FAST_TRACE",
-        "PAP_LOCAL_FAST_YIELD_ITERS",
-        "PAP_NIXL_MAILBOX_ACTOR_ID",
-        "PAP_NIXL_MAILBOX_BATCH_PLAN",
-        "PAP_NIXL_MAILBOX_BUFFER_BYTES",
-        "PAP_NIXL_MAILBOX_CACHE_WRITE_XFER_HANDLES",
-        "PAP_NIXL_MAILBOX_CACHE_XFER_DLISTS",
-        "PAP_NIXL_MAILBOX_CACHE_XFER_HANDLES",
-        "PAP_NIXL_MAILBOX_CAPTURE_TELEMETRY",
-        "PAP_NIXL_MAILBOX_INLINE_POLL",
-        "PAP_NIXL_MAILBOX_INLINE_PUBLISH",
-        "PAP_NIXL_MAILBOX_MSGPACK_NOTIF",
-        "PAP_NIXL_MAILBOX_NUM_THREADS",
-        "PAP_NIXL_MAILBOX_PIGGYBACK_RECV_RELEASES",
-        "PAP_NIXL_MAILBOX_POLL_SECONDS",
-        "PAP_NIXL_MAILBOX_PUSH_WRITE_KINDS",
-        "PAP_NIXL_MAILBOX_RECV_SLOT_COUNT",
-        "PAP_NIXL_MAILBOX_RECV_SLOT_WAIT_SECONDS",
-        "PAP_NIXL_MAILBOX_SEND_SLOT_WAIT_SECONDS",
-        "PAP_NIXL_MAILBOX_SLOT_COUNT",
-        "PAP_NIXL_MAILBOX_SLOT_PROTOCOL",
-        "PAP_NIXL_MAILBOX_TRACE",
-        "PAP_NIXL_MAILBOX_XFER_POLL_SECONDS",
-        "PAP_NIXL_MAILBOX_ZERO_COPY_RECV",
-    )
 )
 
 
@@ -461,9 +364,6 @@ class PAPRuntimeConfig:
 
     topology: PAPTopology
     placement: PAPPlacement
-    routing_policy: PAPRoutingPolicy
-    offload_kv_transport: PAPOffloadKVTransport
-    mps: PAPMPSConfig
     features: PAPRuntimeFeatures
     attention: PAPAttentionServiceConfig
     decode_commit: PAPDecodeCommitConfig
@@ -555,38 +455,12 @@ class PAPRuntimeConfig:
             ),
         )
 
-        kv_transport = _parse_kv_transport(
-            _env_text(
-                env,
-                "PAP_OFFLOAD_KV_TRANSPORT",
-                PAP_DEFAULT_OFFLOAD_KV_TRANSPORT.value,
-            )
-        )
-        mps = PAPMPSConfig(
-            mode=PAPMPSMode.STATIC,
-            profile_id="static_80_12",
-            prefill_chunks=20,
-            attention_chunks=3,
-            prefill_visible_sms=80,
-            attention_visible_sms=12,
-        )
-
         features = PAPRuntimeFeatures(
             decode_slot_plan_cache_limit=read_env_int(
                 env,
                 "PAP_DECODE_SLOT_PLAN_CACHE_LIMIT",
                 256,
                 minimum=0,
-            ),
-            prefill_ipc_profile=read_env_bool(
-                env,
-                "PAP_PREFILL_IPC_PROFILE",
-                False,
-            ),
-            prefill_torch_profile=read_env_bool(
-                env,
-                "PAP_PREFILL_TORCH_PROFILE",
-                False,
             ),
         )
 
@@ -605,12 +479,6 @@ class PAPRuntimeConfig:
                 5.0,
                 minimum=0.0,
             ),
-            decode_kv_initial_capacity=read_env_int(
-                env,
-                "PAP_ATTENTION_DECODE_KV_INITIAL_CAPACITY",
-                128,
-                minimum=1,
-            ),
             kernel_policy=_parse_enum(
                 PAPAttentionKernelPolicy,
                 _env_text(env, "PAP_ATTENTION_KERNEL_POLICY", "auto"),
@@ -618,149 +486,13 @@ class PAPRuntimeConfig:
             ),
         )
 
-        decode_commit = PAPDecodeCommitConfig(
-            endpoint=_env_text(env, "PAP_DECODE_COMMIT_ENDPOINT", ""),
-            fail_closed=read_env_bool(
-                env,
-                "PAP_DECODE_COMMIT_FAIL_CLOSED",
-                False,
-            ),
-            timeout_s=read_env_float(
-                env,
-                "PAP_DECODE_COMMIT_TIMEOUT",
-                5.0,
-                minimum=0.0,
-            ),
-            queue_size=read_env_int(
-                env,
-                "PAP_DECODE_COMMIT_QUEUE_SIZE",
-                1024,
-                minimum=1,
-            ),
-            max_attempts=read_env_int(
-                env,
-                "PAP_DECODE_COMMIT_MAX_ATTEMPTS",
-                8,
-                minimum=1,
-            ),
-            retry_initial_s=read_env_float(
-                env,
-                "PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS",
-                0.05,
-                minimum=0.0,
-            ),
-            retry_max_s=read_env_float(
-                env,
-                "PAP_DECODE_COMMIT_RETRY_MAX_SECONDS",
-                0.5,
-                minimum=0.0,
-            ),
-            flush_timeout_s=read_env_float(
-                env,
-                "PAP_DECODE_COMMIT_FLUSH_TIMEOUT",
-                15.0,
-                minimum=0.0,
-            ),
-        )
-        _validate_retry_range(
-            "PAP decode commit",
-            decode_commit.retry_initial_s,
-            decode_commit.retry_max_s,
-        )
-
-        decode_token = PAPDecodeTokenConfig(
-            timeout_s=read_env_float(
-                env,
-                "PAP_DECODE_TOKEN_TIMEOUT",
-                0.2,
-                minimum=0.0,
-            ),
-            queue_size=read_env_int(
-                env,
-                "PAP_DECODE_TOKEN_QUEUE_SIZE",
-                1024,
-                minimum=1,
-            ),
-            max_attempts=read_env_int(
-                env,
-                "PAP_DECODE_TOKEN_MAX_ATTEMPTS",
-                8,
-                minimum=1,
-            ),
-            retry_initial_s=read_env_float(
-                env,
-                "PAP_DECODE_TOKEN_RETRY_INITIAL_SECONDS",
-                0.05,
-                minimum=0.0,
-            ),
-            retry_max_s=read_env_float(
-                env,
-                "PAP_DECODE_TOKEN_RETRY_MAX_SECONDS",
-                0.5,
-                minimum=0.0,
-            ),
-            flush_timeout_s=read_env_float(
-                env,
-                "PAP_DECODE_TOKEN_FLUSH_TIMEOUT",
-                5.0,
-                minimum=0.0,
-            ),
-        )
-        _validate_retry_range(
-            "PAP decode token",
-            decode_token.retry_initial_s,
-            decode_token.retry_max_s,
-        )
-
-        lease_release = PAPLeaseReleaseConfig(
-            endpoint=_env_text(env, "PAP_LEASE_RELEASE_ENDPOINT", ""),
-            timeout_s=read_env_float(
-                env,
-                "PAP_LEASE_RELEASE_TIMEOUT",
-                5.0,
-                minimum=0.0,
-            ),
-            max_attempts=read_env_int(
-                env,
-                "PAP_LEASE_RELEASE_MAX_ATTEMPTS",
-                5,
-                minimum=1,
-            ),
-            retry_initial_s=read_env_float(
-                env,
-                "PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS",
-                0.05,
-                minimum=0.0,
-            ),
-            retry_max_s=read_env_float(
-                env,
-                "PAP_LEASE_RELEASE_RETRY_MAX_SECONDS",
-                0.5,
-                minimum=0.0,
-            ),
-            lease_ttl_s=read_env_float(
-                env,
-                "PAP_KV_LEASE_TTL_SECONDS",
-                300.0,
-                minimum=0.0,
-            ),
-        )
-        _validate_retry_range(
-            "PAP lease release",
-            lease_release.retry_initial_s,
-            lease_release.retry_max_s,
-        )
+        decode_commit = PAPDecodeCommitConfig.from_env(env)
+        decode_token = PAPDecodeTokenConfig.from_env(env)
+        lease_release = PAPLeaseReleaseConfig.from_env(env)
 
         return cls(
             topology=topology,
             placement=placement,
-            routing_policy=_parse_enum(
-                PAPRoutingPolicy,
-                _env_text(env, "PAP_ROUTING_POLICY", "dynamo"),
-                "PAP_ROUTING_POLICY",
-            ),
-            offload_kv_transport=kv_transport,
-            mps=mps,
             features=features,
             attention=attention,
             decode_commit=decode_commit,
@@ -788,6 +520,13 @@ def reject_removed_pap_flags(environ: Mapping[str, str]) -> None:
                 f"{spec.name} was removed; use {spec.replacement}. "
                 f"Historical evidence: {spec.experiment_id}."
             )
+    routing_policy = _normalize_flag_value(environ.get("PAP_ROUTING_POLICY", "dynamo"))
+    if routing_policy != "dynamo":
+        raise PAPConfigError(
+            f"PAP_ROUTING_POLICY={routing_policy!r} was removed; PAP only uses "
+            "Dynamo routing. Historical evidence: "
+            "PAP-20260909-SESSION-ROUND-ROBIN."
+        )
 
 
 def _env_text(
@@ -889,16 +628,6 @@ def _parse_enum(enum_type: type[_EnumT], value: str, name: str) -> _EnumT:
     except ValueError as exc:
         choices = ", ".join(str(member.value) for member in enum_type)
         raise PAPConfigError(f"{name} must be one of {choices}, got {value!r}") from exc
-
-
-def _parse_kv_transport(value: str) -> PAPOffloadKVTransport:
-    normalized = _normalize_flag_value(value)
-    try:
-        return PAPOffloadKVTransport(normalized)
-    except ValueError as exc:
-        raise PAPConfigError(
-            f"PAP_OFFLOAD_KV_TRANSPORT must be cuda_ipc, got {value!r}"
-        ) from exc
 
 
 def _validate_topology_count(

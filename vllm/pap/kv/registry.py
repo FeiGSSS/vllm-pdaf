@@ -11,7 +11,7 @@ from typing import Any
 
 import torch
 
-from vllm.pap.config import PAPRuntimeConfig, read_env_float, read_env_int
+from vllm.pap.config import PAPRuntimeConfig
 from vllm.pap.kv.decode_commit import (
     DeferredDecodeCommit,
     DeferredDecodeTokenCommitter,
@@ -47,31 +47,18 @@ class PAPAttentionRegistry(
         *,
         runtime_config: PAPRuntimeConfig | None = None,
     ) -> None:
+        if runtime_config is None:
+            runtime_config = PAPRuntimeConfig.from_env()
         self.runtime_config = runtime_config
         self._lock = Lock()
         self._prefill_condition = Condition(self._lock)
-        if runtime_config is None:
-            self._decode_slot_plan_cache_limit_value = read_env_int(
-                os.environ, "PAP_DECODE_SLOT_PLAN_CACHE_LIMIT", 256, minimum=0
-            )
-            self._decode_token_flush_timeout_s = read_env_float(
-                os.environ, "PAP_DECODE_TOKEN_FLUSH_TIMEOUT", 5.0, minimum=0.0
-            )
-            self._prefill_wait_timeout_s = read_env_float(
-                os.environ, "PAP_ATTENTION_PREFILL_WAIT_TIMEOUT", 5.0, minimum=0.0
-            )
-        else:
-            self._decode_slot_plan_cache_limit_value = (
-                runtime_config.features.decode_slot_plan_cache_limit
-            )
-            self._decode_token_flush_timeout_s = (
-                runtime_config.decode_token.flush_timeout_s
-            )
-            self._prefill_wait_timeout_s = (
-                runtime_config.attention.prefill_wait_timeout_s
-            )
-            if storage_device is None:
-                storage_device = runtime_config.attention.storage_device
+        self._decode_slot_plan_cache_limit_value = (
+            runtime_config.features.decode_slot_plan_cache_limit
+        )
+        self._decode_token_flush_timeout_s = runtime_config.decode_token.flush_timeout_s
+        self._prefill_wait_timeout_s = runtime_config.attention.prefill_wait_timeout_s
+        if storage_device is None:
+            storage_device = runtime_config.attention.storage_device
         self._offload_exec_shape_defaults = (
             int(os.environ.get("PAP_OFFLOAD_EXEC_Q_SIZE", "0")),
             int(os.environ.get("PAP_OFFLOAD_EXEC_KV_SIZE", "0")),
@@ -215,8 +202,6 @@ class PAPAttentionRegistry(
     def _resolve_storage_device(
         storage_device: str | torch.device | None,
     ) -> torch.device:
-        if storage_device is None:
-            storage_device = os.environ.get("PAP_ATTENTION_STORAGE_DEVICE")
         if storage_device is None:
             storage_device = "cuda" if torch.cuda.is_available() else "cpu"
         device = torch.device(storage_device)

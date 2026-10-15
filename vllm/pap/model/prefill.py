@@ -18,7 +18,6 @@ from vllm.pap.kv.handoff import (
     register_prefill_kv_catalog,
 )
 from vllm.pap.mode import is_pap_request_id
-from vllm.pap.model.context import pap_endpoint_for_tp_rank
 from vllm.v1.attention.backends.utils import get_kv_cache_layout
 
 logger = init_logger(__name__)
@@ -179,7 +178,7 @@ class PAPPrefillKVPublisher:
                 default_endpoint=default_tcp_endpoint,
                 endpoint_by_request=tcp_endpoint_by_request,
             )
-            tcp_endpoint = str(pap_endpoint_for_tp_rank(tcp_endpoint))
+            tcp_endpoint = str(tcp_endpoint)
             eligible.append(
                 (req_index, request_id, str(prefill_kv_handle), tcp_endpoint)
             )

@@ -173,10 +173,6 @@ def create_app(
             "new_seq_len": request.new_seq_len,
         }
 
-    @app.post("/v1/pap/attention/decode-token")
-    async def record_decode_token(request: PAPDecodeTokenRequest) -> dict[str, Any]:
-        return record_one_decode_token(request)
-
     @app.post("/v1/pap/attention/decode-tokens")
     async def record_decode_tokens(
         request: PAPDecodeTokenBatchRequest,

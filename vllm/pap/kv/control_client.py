@@ -13,7 +13,11 @@ from collections.abc import Iterable
 
 import httpx
 
-from vllm.pap.config import reject_removed_pap_flags
+from vllm.pap.config import (
+    PAPDecodeCommitConfig,
+    PAPLeaseReleaseConfig,
+    reject_removed_pap_flags,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,36 +42,26 @@ class DecodeCommitClient:
         """Create a client that POSTs to *endpoint* (or
         ``PAP_DECODE_COMMIT_ENDPOINT`` env var)."""
         reject_removed_pap_flags(os.environ)
-        self.endpoint = endpoint or os.environ.get("PAP_DECODE_COMMIT_ENDPOINT", "")
-        self.timeout_s = (
-            float(timeout_s)
-            if timeout_s is not None
-            else float(os.environ.get("PAP_DECODE_COMMIT_TIMEOUT", "5.0"))
-        )
+        config = PAPDecodeCommitConfig.from_env(os.environ)
+        self.endpoint = endpoint or config.endpoint
+        self.fail_closed = config.fail_closed
+        self.flush_timeout_s = config.flush_timeout_s
+        self.timeout_s = float(timeout_s) if timeout_s is not None else config.timeout_s
         self.queue_size = (
-            int(queue_size)
-            if queue_size is not None
-            else int(os.environ.get("PAP_DECODE_COMMIT_QUEUE_SIZE", "1024"))
+            int(queue_size) if queue_size is not None else config.queue_size
         )
         self.max_attempts = max(
-            1,
-            int(max_attempts)
-            if max_attempts is not None
-            else int(os.environ.get("PAP_DECODE_COMMIT_MAX_ATTEMPTS", "8")),
+            1, int(max_attempts) if max_attempts is not None else config.max_attempts
         )
         self.retry_initial_s = max(
             0.0,
             float(retry_initial_s)
             if retry_initial_s is not None
-            else float(
-                os.environ.get("PAP_DECODE_COMMIT_RETRY_INITIAL_SECONDS", "0.05")
-            ),
+            else config.retry_initial_s,
         )
         self.retry_max_s = max(
             self.retry_initial_s,
-            float(retry_max_s)
-            if retry_max_s is not None
-            else float(os.environ.get("PAP_DECODE_COMMIT_RETRY_MAX_SECONDS", "0.5")),
+            float(retry_max_s) if retry_max_s is not None else config.retry_max_s,
         )
         self._queue: queue.Queue[dict] | None = None
         self._worker: threading.Thread | None = None
@@ -117,7 +111,7 @@ class DecodeCommitClient:
     ) -> None:
         """Enqueue a decode-commit notification without blocking on HTTP.
 
-        This method only raises when PAP_DECODE_COMMIT_FAIL_CLOSED is enabled
+        This method only raises when ``PAP_DECODE_COMMIT_FAIL_CLOSED`` is enabled
         and the local queue is full. Delivery failures are exposed by
         :meth:`flush_request`.
         """
@@ -169,12 +163,7 @@ class DecodeCommitClient:
             try:
                 self._queue.put_nowait(item)
             except queue.Full as exc:
-                if os.environ.get("PAP_DECODE_COMMIT_FAIL_CLOSED", "").lower() in {
-                    "1",
-                    "true",
-                    "yes",
-                    "on",
-                }:
+                if self.fail_closed:
                     raise RuntimeError("PAP decode commit queue is full") from exc
                 logger.warning(
                     "PAP decode commit queue full request_id=%s new_seq_len=%d",
@@ -198,7 +187,7 @@ class DecodeCommitClient:
     ) -> bool:
         """Wait for Prefill to accept all commits issued for *request_id*."""
         if timeout_s is None:
-            timeout_s = float(os.environ.get("PAP_DECODE_COMMIT_FLUSH_TIMEOUT", "15.0"))
+            timeout_s = self.flush_timeout_s
         deadline = time.monotonic() + max(0.0, float(timeout_s))
         request_id = str(request_id)
         with self._pending_done:
@@ -402,31 +391,21 @@ class LeaseReleaseClient:
         retry_initial_s: float | None = None,
         retry_max_s: float | None = None,
     ) -> None:
-        self.endpoint = endpoint or os.environ.get("PAP_LEASE_RELEASE_ENDPOINT")
-        self.timeout_s = (
-            float(timeout_s)
-            if timeout_s is not None
-            else float(os.environ.get("PAP_LEASE_RELEASE_TIMEOUT", "5.0"))
-        )
+        config = PAPLeaseReleaseConfig.from_env(os.environ)
+        self.endpoint = endpoint or config.endpoint
+        self.timeout_s = float(timeout_s) if timeout_s is not None else config.timeout_s
         self.max_attempts = max(
-            1,
-            int(max_attempts)
-            if max_attempts is not None
-            else int(os.environ.get("PAP_LEASE_RELEASE_MAX_ATTEMPTS", "5")),
+            1, int(max_attempts) if max_attempts is not None else config.max_attempts
         )
         self.retry_initial_s = max(
             0.0,
             float(retry_initial_s)
             if retry_initial_s is not None
-            else float(
-                os.environ.get("PAP_LEASE_RELEASE_RETRY_INITIAL_SECONDS", "0.05")
-            ),
+            else config.retry_initial_s,
         )
         self.retry_max_s = max(
             self.retry_initial_s,
-            float(retry_max_s)
-            if retry_max_s is not None
-            else float(os.environ.get("PAP_LEASE_RELEASE_RETRY_MAX_SECONDS", "0.5")),
+            float(retry_max_s) if retry_max_s is not None else config.retry_max_s,
         )
 
     @property

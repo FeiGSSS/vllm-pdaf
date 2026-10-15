@@ -6,34 +6,10 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-from typing import Any
 
 import httpx
 
 from vllm.pap.gateway.clients import PAPServiceClient
-from vllm.pap.gateway.payloads import build_projection_kv_unaware_payload
-
-PortSpec = int | tuple[int, ...]
-
-
-def _parse_port_spec(value: str) -> PortSpec:
-    if "|" not in value:
-        return int(value)
-    ports = tuple(int(part) for part in value.split("|") if part)
-    if not ports:
-        raise argparse.ArgumentTypeError(f"invalid empty ranked port spec {value!r}")
-    return ports
-
-
-def _format_ranked_endpoints(
-    host: str,
-    ports: PortSpec,
-    *,
-    scheme: str,
-) -> str:
-    if isinstance(ports, int):
-        return f"{scheme}{host}:{ports}"
-    return ",".join(f"{scheme}{host}:{port}" for port in ports)
 
 
 @dataclass(frozen=True)
@@ -41,8 +17,8 @@ class PAPGroup:
     prefill_host: str
     prefill_port: int
     attention_host: str
-    attention_port: PortSpec
-    attention_tcp_port: PortSpec | None = None
+    attention_port: int
+    attention_tcp_port: int | None = None
 
     @property
     def prefill_base_url(self) -> str:
@@ -50,21 +26,13 @@ class PAPGroup:
 
     @property
     def attention_base_url(self) -> str:
-        return _format_ranked_endpoints(
-            self.attention_host,
-            self.attention_port,
-            scheme="http://",
-        )
+        return f"http://{self.attention_host}:{self.attention_port}"
 
     @property
     def attention_tcp_endpoint(self) -> str | None:
         if self.attention_tcp_port is None:
             return None
-        return _format_ranked_endpoints(
-            self.attention_host,
-            self.attention_tcp_port,
-            scheme="tcp://",
-        )
+        return f"tcp://{self.attention_host}:{self.attention_tcp_port}"
 
 
 @dataclass(frozen=True)
@@ -104,10 +72,8 @@ def parse_pap_groups(spec: str) -> list[PAPGroup]:
                 prefill_host=parts[0],
                 prefill_port=int(parts[1]),
                 attention_host=parts[2],
-                attention_port=_parse_port_spec(parts[3]),
-                attention_tcp_port=None
-                if len(parts) == 4
-                else _parse_port_spec(parts[4]),
+                attention_port=int(parts[3]),
+                attention_tcp_port=None if len(parts) == 4 else int(parts[4]),
             )
         )
     if not groups:
@@ -126,28 +92,6 @@ def parse_projection_instances(spec: str) -> list[ProjectionInstance]:
     if not projections:
         raise argparse.ArgumentTypeError("at least one Projection instance is required")
     return projections
-
-
-def build_projection_payload_for_group(
-    req_data: dict[str, Any],
-    kv_transfer_params: dict[str, Any],
-    group: PAPGroup,
-    *,
-    prompt_token_ids: list[int],
-    prompt_text: str | None = None,
-    pap_prefill_kv_handle: str | None = None,
-    pap_attention_kv_installed: bool = False,
-) -> dict[str, Any]:
-    return build_projection_kv_unaware_payload(
-        req_data,
-        kv_transfer_params,
-        prompt_token_ids=prompt_token_ids,
-        prompt_text=prompt_text,
-        pap_attention_endpoint=group.attention_base_url,
-        pap_attention_tcp_endpoint=group.attention_tcp_endpoint,
-        pap_prefill_kv_handle=pap_prefill_kv_handle,
-        pap_attention_kv_installed=pap_attention_kv_installed,
-    )
 
 
 def select_projection_for_group(

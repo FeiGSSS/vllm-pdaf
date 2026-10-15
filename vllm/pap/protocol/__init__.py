@@ -6,12 +6,10 @@ from vllm.pap.protocol.descriptors import (
     PAPCudaIPCTensorHandle,
     PAPOffloadExecBatchDescriptor,
     PAPOffloadExecDescriptor,
-    PAPOffloadExecTransport,
     PAPOffloadExecTransportClosed,
     PAPPrefillKVCacheCatalogDescriptor,
     PAPPrefillKVSessionManifest,
     PAPTensorTransport,
-    pap_offload_exec_trace_id,
 )
 from vllm.pap.protocol.models import (
     PAPAttentionRegistration,
@@ -32,12 +30,10 @@ __all__ = [
     "PAPCudaIPCTensorHandle",
     "PAPOffloadExecBatchDescriptor",
     "PAPOffloadExecDescriptor",
-    "PAPOffloadExecTransport",
     "PAPOffloadExecTransportClosed",
     "PAPPrefillKVCacheCatalogDescriptor",
     "PAPPrefillKVSessionManifest",
     "PAPTensorTransport",
     "deserialize_tensor_bundle",
-    "pap_offload_exec_trace_id",
     "serialize_tensor_bundle",
 ]

@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from vllm.pap.mode import is_pap_request_id
-from vllm.pap.model.context import pap_endpoint_for_tp_rank
 
 _PAP_STEP_GROUPS_KEY = "_pap_qwen3_offload_exec_step_groups"
 
@@ -55,9 +54,7 @@ def _pap_offload_exec_step_groups(
     step_groups: list[_PAPOffloadExecStepGroup] = []
     routed_req_indices: set[int] = set()
     for route_group in route_groups:
-        attention_endpoint = pap_endpoint_for_tp_rank(
-            route_group.get("attention_endpoint")
-        )
+        attention_endpoint = route_group.get("attention_endpoint")
         if not attention_endpoint:
             raise RuntimeError(
                 "PAP NVSHMEM OFFLOAD_EXEC requires pap_attention_endpoint"

@@ -4,10 +4,9 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Protocol
+from typing import Any
 
 import pybase64 as base64
 
@@ -72,12 +71,6 @@ def _decode_ipc_value(value: Any) -> Any:
     if value_type == "torch_typed_storage_type" and set(value) == {_IPC_VALUE_TYPE}:
         return torch.storage.TypedStorage
     raise ValueError(f"unsupported CUDA IPC metadata tag: {value_type!r}")
-
-
-def pap_offload_exec_trace_id(value: str) -> str:
-    """Short stable id for correlating Projection and Attention trace lines."""
-
-    return hashlib.sha1(value.encode("utf-8")).hexdigest()[:16]
 
 
 class PAPTensorTransport(str, Enum):
@@ -422,18 +415,3 @@ class PAPPrefillKVSessionManifest:
 
 class PAPOffloadExecTransportClosed(RuntimeError):
     """Raised when a transport receive loop is intentionally stopped."""
-
-
-class PAPOffloadExecTransport(Protocol):
-    """Projection<->Attention NVSHMEM Graph transport."""
-
-    transport: PAPTensorTransport
-
-    @property
-    def local_agent_metadata(self) -> bytes: ...
-
-    def bind_peer(self, peer_agent_metadata: bytes) -> None: ...
-
-    def stop_receiving(self) -> None: ...
-
-    def close(self) -> None: ...

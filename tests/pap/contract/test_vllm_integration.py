@@ -80,8 +80,6 @@ def test_scheduler_adapter_owns_projection_metadata_validation() -> None:
     assert state is not None
     assert state.remote_prefix_len == 10
     assert state.remote_computed_tokens == 9
-    assert not state.allocate_external_computed_blocks
-    assert not state.allocate_local_slots
 
     request.kv_transfer_params = {"pap_projection_kv_unaware": True}
     with pytest.raises(ValueError, match="pap_remote_prefix_len"):

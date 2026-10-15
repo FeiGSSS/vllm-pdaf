@@ -25,9 +25,8 @@ is a separately registered derivative; old salted fixtures remain unchanged.
 
 ## PAP selectors
 
-The default selector is Dynamo. The optional `session_round_robin` selector
-keeps a conversation on its initial PA and does not use the native Dynamo
-index. The official Dynamo DP/PD baseline environment is unchanged.
+PAP uses only the native Dynamo selector. The official Dynamo DP/PD baseline
+environment is unchanged.
 
 ```bash
 rustup toolchain install 1.94.1 --profile minimal
@@ -104,6 +103,32 @@ TCP remains an available transport. Successful validation or agent creation
 does **not** prove GPU payloads used CUDA IPC. Preserve the transfer audit and
 worker logs with the result; a bandwidth floor alone also cannot identify the
 transport or explain poor performance. DP8 does not transfer KV between workers.
+
+## Host NVIDIA driver
+
+Ubuntu `unattended-upgrades` upgrades NVIDIA driver packages from
+`noble-updates`/`noble-security`. The new user-space libraries are installed
+immediately, while the loaded kernel module stays old until a reload or reboot.
+Every new CUDA/NVML client then fails with `Driver/library version mismatch`.
+L20B hit this on 2026-05-22, 2026-07-24 and 2026-10-11.
+
+Exclude the driver from automatic upgrades on every PAP host:
+
+```bash
+sudo tee /etc/apt/apt.conf.d/51-no-nvidia-auto <<'EOF'
+Unattended-Upgrade::Package-Blacklist { "nvidia-"; "libnvidia-"; "xserver-xorg-video-nvidia"; };
+EOF
+```
+
+Upgrade drivers manually and on both hosts of a cross-host experiment. To load
+a newly installed module without rebooting, stop every GPU client first:
+
+```bash
+sudo systemctl stop gdm3 nvidia-persistenced nvidia-dcgm-exporter nvidia-dcgm
+sudo rmmod nvidia_drm nvidia_modeset nvidia_uvm nvidia
+sudo modprobe -a nvidia nvidia_uvm nvidia_modeset nvidia_drm
+sudo systemctl start nvidia-persistenced nvidia-dcgm nvidia-dcgm-exporter gdm3
+```
 
 ## NVSHMEM (PAP attention–projection)
 

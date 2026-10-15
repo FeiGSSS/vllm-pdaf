@@ -98,28 +98,3 @@ def pap_tensor_parallel_rank() -> int:
     if raw_rank is not None:
         return int(raw_rank)
     return int(get_tensor_model_parallel_rank())
-
-
-def pap_endpoint_for_tp_rank(value: Any, *, tp_rank: int | None = None) -> Any:
-    """Select the endpoint assigned to one tensor-parallel rank."""
-    if value is None:
-        return None
-    rank = pap_tensor_parallel_rank() if tp_rank is None else int(tp_rank)
-    if isinstance(value, str):
-        parts = [part.strip() for part in value.split(",") if part.strip()]
-        if len(parts) <= 1:
-            return value
-        if rank >= len(parts):
-            raise RuntimeError(
-                f"PAP endpoint list has {len(parts)} ranks, but TP rank is {rank}"
-            )
-        return parts[rank]
-    if isinstance(value, (list, tuple)):
-        if len(value) <= 1:
-            return value[0] if value else None
-        if rank >= len(value):
-            raise RuntimeError(
-                f"PAP endpoint list has {len(value)} ranks, but TP rank is {rank}"
-            )
-        return value[rank]
-    return value

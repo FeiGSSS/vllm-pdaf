@@ -42,13 +42,10 @@ Formal workload settings belong to each E2E experiment's `experiment.env`.
 Shared runners intentionally provide no canonical request rate, concurrency,
 or duration.
 
-`PAP_ROUTING_POLICY` and `--routing-policy` accept `dynamo` or
-`session_round_robin`. The latter assigns new conversations round-robin and
-keeps later turns on the same PA. It requires explicit conversation IDs and a
-positive `PAP_SESSION_ROUTER_MAX_CONVERSATIONS`; reaching that bound fails the
-request instead of evicting a binding. Other policy values fail before startup.
+PAP always routes with Dynamo. `PAP_ROUTING_POLICY` values other than `dynamo`
+fail before startup.
 
-With Dynamo routing, `PAP_ENABLE_PA_KV_MIGRATION=1` enables same-host prefix-KV
+`PAP_ENABLE_PA_KV_MIGRATION=1` enables same-host prefix-KV
 copy after a conversation changes PA. The source prefix is matched by full
 block hashes and pinned until the selected target finishes its Prefill load.
 The default `PAP_KV_MIGRATION_EXPORT_MODE=snapshot` serves this lease through a

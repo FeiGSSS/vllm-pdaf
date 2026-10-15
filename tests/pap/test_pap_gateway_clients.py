@@ -31,7 +31,6 @@ def test_prefill_payload_can_attach_attention_import_params() -> None:
         pap_attention_endpoint="http://127.0.0.1:8300",
         pap_attention_tcp_endpoint="tcp://127.0.0.1:9300",
         pap_prefill_kv_handle="req-7",
-        pap_mode="pap",
     )
 
     assert payload["kv_transfer_params"]["pap_attention_endpoint"] == (
@@ -41,7 +40,6 @@ def test_prefill_payload_can_attach_attention_import_params() -> None:
         "tcp://127.0.0.1:9300"
     )
     assert payload["kv_transfer_params"]["pap_prefill_kv_handle"] == "req-7"
-    assert payload["kv_transfer_params"]["pap_mode"] == "pap"
 
 
 def test_build_projection_payload_strips_prefill_kv_transport() -> None:

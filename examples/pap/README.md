@@ -8,26 +8,23 @@ execution uses NVSHMEM inside a whole-step CUDA Graph. The default `local` mode
 uses same-host P2P; the cross-host correctness launcher uses IBGDA. Prefill--
 Attention KV sharing remains CUDA IPC, so each PA's Prefill and Attention stay
 on the same host and GPU.
-The current runtime testbed is the AIPerf matrix, validated through the
-owner-specific `vllm/pap/integration/` boundary. Same-host `xPAyP` and
-cross-host `7PA1P` have performance lanes. The cross-host `1PA1P` smoke isolates
-the transport correctness path. The validated multi-turn path reuses
-Prefill-owned KV through vLLM's native prefix cache; it does not keep an
-Attention session resident between turns.
+Same-host `xPAyP` and cross-host `7PA1P` have AIPerf performance lanes. The
+cross-host `1PA1P` smoke isolates the transport correctness path. The
+multi-turn path reuses Prefill-owned KV through vLLM's native prefix cache; it
+does not keep an Attention session resident between turns.
 
-See the [current development status](../../docs/design/pap/status.md) and
-[`docs/design/pap/`](../../docs/design/pap/README.md) for the canonical
-architecture, runtime, and validation boundary.
+See [`vllm/pap/README.md`](../../vllm/pap/README.md) for the source layout and
+runtime paths, and [`docs/design/pap/v026-port.md`](../../docs/design/pap/v026-port.md)
+for the integration principles.
 
 Roles:
 
 - **Prefill** runs normal vLLM prompt processing and owns prompt paged KV blocks.
 - **Attention** is an internal service colocated with Prefill. It opens
   Prefill paged KV through CUDA IPC and appends decode K/V directly to those
-  Prefill-owned blocks. The current path runs vLLM's SM-aware Triton
-  paged-decode specialization with one workspace shared by all layers in a
-  decode step. A payload-free step descriptor lets it prepare QKV-independent
-  state before layer-0 QKV arrives.
+  Prefill-owned blocks. It selects the PAT backend for physical KV reuse when
+  available and otherwise the Triton paged-decode backend. A payload-free step
+  descriptor lets it prepare QKV-independent state before layer-0 QKV arrives.
 - **Projection** runs the model decode path and sends current-token Q/K/V to
   Attention. It does not receive Prefill prompt KV bytes. PAP keeps each vLLM
   scheduler batch intact; requests for different PA groups are same-step
@@ -35,10 +32,9 @@ Roles:
 
 Each Attention session sends decode commits and lease releases back to the
 Prefill in its own PA group. The whole-step Graph path supports one Projection
-and one or more PA groups. `conversation_affinity` assigns a new conversation
-ID round-robin and pins later turns to that PA. Requests without a conversation
-ID use request-level round robin. PAP does not perform feedback-driven load
-balancing or PA-to-PA KV relocation. For each PA, the Gateway admits requests
+and one or more PA groups. Dynamo's KV-aware router selects a PA on every turn.
+`PAP_ENABLE_PA_KV_MIGRATION=1` copies the reusable
+prefix when a later turn moves to another same-host PA. For each PA, the Gateway admits requests
 from one Projection source at a time and switches sources only after that
 request wave drains. Separate PA groups continue independently.
 
@@ -106,31 +102,5 @@ colocates each Prefill with its Attention through an audited 80/12-SM static MPS
 partition. The business topology remains seven PA pairs and one Projection.
 The fixed workload contains 60 three-turn sessions and runs at concurrency 30.
 
-The current eight-GPU capacity comparison is driven by AIPerf. Every matrix
-point serves the same 128 conversations and 640 requests: five turns per
-conversation, randomized 8K initial input, a broad append distribution sampled
-around 1.4K tokens, randomized 16-64-token outputs, and deterministic
-think/tool delays. Conversation concurrency limits live sessions while
-preserving PA or Prefill ownership across all turns.
-
-The current PAP lane is 7PA1P. Historical matrices also contain 6PA2P. PD
-uses one-way P→D with 4P4D and 6P2D.
-Eight independent fused vLLM replicas with sticky conversation routing form
-the dense-model baseline. Run the current eager baseline with:
-
-```bash
-bash benchmarks/pap/aiperf/run_capacity_matrix.sh
-```
-
-The full default matrix is intentionally long. Use the point-selection and
-resume overrides documented in the
-[AIPerf testbed](../../benchmarks/pap/aiperf/README.md) when developing a
-single topology or concurrency point. The old fixed-length O256/O128 and
-12-conversation workloads remain historical evidence, not current defaults.
-
-Historical eager and piecewise results are recorded in the
-[automatic Projection-memory milestone](../../benchmarks/pap/experiments/PAP-20260722-AIPERF-PROJECTION-AUTO/report.md).
-The corrected async scheduling and step-control boundary is validated in the
-[step/control-overlap milestone](../../benchmarks/pap/experiments/PAP-20260724-STEP-OVERLAP/report.md).
-The rejected no-async treatment is retained as an archived
-[scheduler-overlap diagnostic](../../benchmarks/pap/experiments/PAP-20260724-SINGLE-PROJECTION-BATCH/report.md).
+The current DP/PD/PAP comparison is
+[`PAP-20260907-ALIGNED-C30`](../../benchmarks/pap/experiments/e2e/PAP-20260907-ALIGNED-C30/ARCHITECTURE_COMPARISON.md).

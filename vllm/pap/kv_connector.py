@@ -55,7 +55,6 @@ class PAPPrefillRequest:
 @dataclass(slots=True)
 class PAPPrefillConnectorMetadata(KVConnectorMetadata):
     requests: tuple[PAPPrefillRequest, ...]
-    finished_request_ids: tuple[str, ...]
 
 
 def _decode_query_len(vllm_config: VllmConfig) -> int:
@@ -459,8 +458,7 @@ class PAPPrefillConnector(KVConnectorBase_V1):
                     ),
                 )
             )
-        finished = tuple(str(req_id) for req_id in scheduler_output.finished_req_ids)
-        return PAPPrefillConnectorMetadata(tuple(requests), finished)
+        return PAPPrefillConnectorMetadata(tuple(requests))
 
     def request_finished(
         self, request: Request, block_ids: list[int]
