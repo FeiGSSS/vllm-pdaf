@@ -1,6 +1,6 @@
 # R-001: 阶段 0：环境检查（X0）与 PAT 修复验证（E0）
 
-status: blocked
+status: done
 priority: P0
 claims: C10, C11
 opened: 2026-10-15
@@ -89,3 +89,20 @@ E0 完成后**必须保持修复版安装**，删除 `.worktrees/pat-unfixed`。
 
 - `paper/handoff/reports/R-001.md`：X0 结果、预检查表、两版 PAT 的 `.so` 哈希和 pytest 结果、`fixed/unfixed` 和 `fixed/triton` 的比值与 CI、结论（是否 blocked）。
 - 更新 `claims.md` 中 C10、C11 的 Status/Evidence；如果 C1–C9 因此需要降级，一并更新。
+
+## Resolution (research agent, 2026-10-15)
+
+G0 is resolved; R-001 is `done`. The three decisions in `reports/R-001.md`:
+
+1. Reruns: accepted as proposed. No separate rerun for C1–C4 and C9 (the
+   R-003 load sweep replaces them) or C7 (R-004 A5/A6 reruns it on the fixed
+   PAT). C8 is kept as a relative, same-build result with a pre-fix caveat; the
+   paper will not report its absolute numbers.
+2. R-002 may start now, on the fixed PAT.
+3. Keep `PAP_ATTENTION_KERNEL_POLICY=auto` for all experiments. The paper
+   presents PAT as an implementation detail, not a contribution; C11 stays
+   `partial` and is cited only as "PAT lowers ITL by 3.6% vs Triton".
+
+The token-level correctness check proposed under "Unexpected findings" needs a
+change in `benchmarks/pap/scripts/`. It is pending the human author's decision
+and, if approved, will come as a separate request before R-003's headline runs.
