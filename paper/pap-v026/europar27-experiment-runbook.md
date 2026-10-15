@@ -1,6 +1,6 @@
 # PAP 论文实验与优化执行手册（Euro-Par 2027）
 
-日期：2026-10-15。基线代码：`feature/pap-v026` @ `e39d8058`（2026-10-15 清理后）。本分支 `claude/paper-experiment-plan-6llagm` 只在其上增加本文档，**不改任何运行时代码、脚本、配置或数据集**。
+日期：2026-10-15。基线代码：`feature/pap-v026` @ `9b814d13`（10-15 清理 `e39d8058` + 合入 PAT 修复 PR #1）。本分支 `claude/paper-experiment-plan-6llagm` 只在其上增加本文档，**不改任何运行时代码、脚本、配置或数据集**。
 
 读者：在 8×L20 服务器上执行实验的 agent。读完本文档即可开跑；每个实验都给出命令、矩阵、产出位置和通过/失败判据。执行完一个阶段后，按 §9 的格式回报。
 
@@ -15,12 +15,12 @@
    git fetch origin
    git checkout -B claude/paper-experiment-plan-6llagm origin/claude/paper-experiment-plan-6llagm
    ```
-   本分支的运行时代码与 `feature/pap-v026@e39d8058` 字节相同（`git diff e39d8058 -- vllm benchmarks third_party tests` 应为空），以此为准记录 source identity。
+   本分支的运行时代码与 `feature/pap-v026@9b814d13` 字节相同（`git diff 9b814d13 -- vllm benchmarks third_party tests` 应为空），以此为准记录 source identity。
 2. **不许改的东西**（要改先回报，等人确认）：`vllm/`、`third_party/`、`benchmarks/pap/scripts/`、`benchmarks/pap/tooling/`、已注册的 `benchmarks/pap/datasets/*`、`tests/`。不许合并任何 PR，不许 push 到 `feature/*` 分支。
 3. **可以新增的东西**（不需要再问）：
    - `benchmarks/pap/experiments/{e2e,microbench}/PAP-2026MMDD-<NAME>/` 下的新实验目录，遵守 `benchmarks/pap/experiments/README.md` 的约定（`README.md`、`experiment.env`/`requested.env`、薄 `run.sh`、`analyze.py`、`results/`；`runs/` 进 `.gitignore`）。
    - `benchmarks/pap/datasets/` 下**新的**数据集 ID（新目录 + manifest + 追加 `SHA256SUMS` 行），只能新增，不能改已有 ID。
-   - 本地临时 git worktree（例如 E0 用来编译修复版 PAT），不 push。
+   - 本地临时 git worktree（例如 E0 用来编译**未修复**的对照版 PAT），不 push。
 4. **结果分支**：所有实验目录和回报提交到新分支 `results/europar27`（从本分支切出），push 到 origin。不要往本分支 push，以免和文档修订冲突。
 5. **每次运行之前**提交该实验目录的 `experiment.env`/`run.sh`，然后用 `PAP_BENCH_REQUIRE_CLEAN_TRACKED_WORKTREE=1` 跑（已跟踪文件必须干净；7 月 L06 因脏工作区作废过）。
 6. **同期运行**：同一张图/表里比较的架构，必须在同一天按交错顺序跑（ABAB…），不复用 9 月归档做对比。原因见 §1.3：同样的代码，今天比 9 月慢 6–8%。
@@ -38,16 +38,16 @@
 | `d908915d` | 精简运行时：只保留 Dynamo PA 路由（删 session round-robin 和 `--routing-policy`，`PAP_ROUTING_POLICY≠dynamo` 直接报错）；删 Gateway load tracker（少一次整 prompt 的 block-hash）；每个 PA 只支持 1 个 Attention endpoint；删 GPU-resident dispatch、device graph launch；NVSHMEM bridge ABI 升到 11；配置解析统一 | ① 旧计划 E2c 第 1 步和 A6 的"粘性 RR 路由"在当前代码上**无法运行**，只能用 `c565ecb9` 的 worktree 做历史对照（§6.2）。② **每台机器都要用 `build_nvshmem_device_bridge.sh` 重新编译 bridge**，否则加载时被拒。③ TP>1 和多 Attention rank 已明确不在计划内，写进局限性 |
 | `e39d8058` | `PAP-20261015-CLEANUP-REGRESSION`：C30、7PA1P、迁移关闭，清理后/清理前各 2 次交错运行 | 清理本身无可测影响（TTFT −1.94%，95% CI −6.99%～+3.76%；ITL +0.88%，CI −1.03%～+2.86%）。但两个版本的 TTFT 都比 9 月参考值慢 6–8%，期间驱动从 595.84 升到 595.99 |
 
-### 1.2 PAT 修复（PR #1）仍未合入
+### 1.2 PAT 修复（PR #1）已于 10-15 合入
 
-- PR #1（`claude/project-thread-5pniu5`，`ae727afc`）仍是 open 状态，base 是旧的 `c565ecb9`。我在本地验证过它可以**无冲突地合并**到 `e39d8058`（`git merge-tree` 干净）。PR 只改了 `third_party/pat/csrc/prefix_tree.h` 和一个测试，Python 侧没有改动。
+- PR #1（`ae727afc`）已按用户决定合入 `feature/pap-v026`，合并提交 `9b814d13`。它只改了 `third_party/pat/csrc/prefix_tree.h` 和一个测试，Python 侧没有改动。**合入后必须重新编译 PAT**（§3.3），否则 `.venv` 里装的仍是旧扩展。
 - **PAT 在当前主路径上确实被用到。** `PAP-20261015-CLEANUP-REGRESSION` 的 `current_r1` 归档里，7 个 PA 的 `attention_fast_path_stats_<i>.json` 显示 `attention_kernel_pat_rebuilds` = 16/38/29/27/32/28/25，`triton_selections` = 18/12/16/17/20/14/18，其余约 1100–1290 步复用上一次的计划。也就是说，9 月以来所有 `auto` 策略下的 PAP 数字都可能受这个 bug 影响。所以 E0 仍然是 P0。
 
 ### 1.3 旧计划条目的处理（相对 `paper/experiment-plan.md` §8.5）
 
 | 旧条目 | 现在的处理 | 原因 |
 | --- | --- | --- |
-| E0 PAT 修复 + 主表重跑 + Triton 对照 | **保留，P0**，改成不合并 PR 也能跑（§3） | PAT 确实在用；合并 PR 需要你决定 |
+| E0 PAT 修复 + 主表重跑 + Triton 对照 | **保留，P0**；修复已合入，未修复版从 `e39d8058` 编译作对照（§3） | PAT 确实在用 |
 | E2a PD 基线审计 | **缩小**。DP8/PD 已开 prefix caching 和 chunked prefill（`run_dynamo_workload.sh:512–572`），decode 的 CUDA Graph capture 已到 128（`ALIGNED-C30/results/common.env`）。只剩调参（§4.2） | 审计项一半已经能从代码确认 |
 | E2e PD KV 传输开销 | **保留，P0**。现成工具：`tooling/analyze_dynamo_ttft.py` 能把 TTFT 拆成路由/Prefill/handoff/Decode 并汇总 NIXL 传输；`tooling/nixl_read_write_probe.py` 可以直接做点对点微基准（§4.1） | 无需写代码 |
 | E2b 重放 L07 | **保留，P0**，补上数据集的生成方法（§4.3） | L07 原文件带 `cache_salt`，而当前 PAP 的 Dynamo 集成会拒绝显式 salt，必须先派生无 salt 版本 |
@@ -191,18 +191,24 @@ for t in <归档>.tar.gz; do d=$(mktemp -d); tar xzf "$t" -C "$d"
 
 把结果写成一张表放进 E0 的 README，说明每次运行里 PAT 被选中的程度。
 
-### 3.3 编译修复版 PAT（不合并 PR、不 push）
+### 3.3 编译两版 PAT
+
+修复已合入当前分支。未修复版只作为 E0 的对照，从合并前的 `e39d8058` 编译：
 
 ```bash
-git worktree add .worktrees/patfix HEAD
-git -C .worktrees/patfix merge --no-edit origin/claude/project-thread-5pniu5   # 只在本地生成合并提交
-# 先记录当前（未修复）PAT 的 .so 的 sha256，然后：
-PAP_PAT_SOURCE=$PWD/.worktrees/patfix/third_party/pat bash benchmarks/pap/scripts/build_pat_attention.sh
-.venv/bin/python -m pytest .worktrees/patfix/tests/pap/test_pap_attention_kernels.py -v
-#   预期：全部通过，包括新增的 test_pat_balancing_writes_each_query_split_exactly_once
+# 未修复版（块 A 之前）
+git worktree add .worktrees/pat-unfixed e39d8058
+PAP_PAT_SOURCE=$PWD/.worktrees/pat-unfixed/third_party/pat bash benchmarks/pap/scripts/build_pat_attention.sh
+find .venv -name '*prefix_attn*.so' -exec sha256sum {} \;
+.venv/bin/python -m pytest tests/pap/test_pap_attention_kernels.py -v   # 记录失败用例（预期新增的 split-rank 用例可能失败）
+
+# 修复版（块 B 之前，以及之后所有实验）
+bash benchmarks/pap/scripts/build_pat_attention.sh                      # 默认用当前分支的 third_party/pat
+find .venv -name '*prefix_attn*.so' -exec sha256sum {} \;
+.venv/bin/python -m pytest tests/pap/test_pap_attention_kernels.py -v   # 预期全部通过，含 test_pat_balancing_writes_each_query_split_exactly_once
 ```
 
-如果你（用户）之后合并了 PR #1，就直接用合并后的分支重新编译，这一节的 worktree 可以删掉。
+E0 完成后**必须保持修复版安装**，删除 `.worktrees/pat-unfixed`。
 
 **注意**：`build_pat_attention.sh` 会把扩展重装进共享的 `.venv`。修复版和未修复版不能同时存在，所以 E0 要按 §3.4 的顺序分块跑。每次 PAT 重装后都要记录 `.so` 的 sha256。
 
@@ -212,12 +218,12 @@ PAP_PAT_SOURCE=$PWD/.worktrees/patfix/third_party/pat bash benchmarks/pap/script
 
 | 块 | 已安装的 PAT | 运行顺序 |
 | --- | --- | --- |
-| A | 未修复（当前安装） | `unfixed-auto r1, triton r1, unfixed-auto r2, triton r2, unfixed-auto r3, triton r3` |
+| A | 未修复（`e39d8058` 编译） | `unfixed-auto r1, triton r1, unfixed-auto r2, triton r2, unfixed-auto r3, triton r3` |
 | B | 修复版 | `fixed-auto r1, triton r4, fixed-auto r2, triton r5, fixed-auto r3, triton r6` |
 
 共 18 次，约 1 机时。`triton` 不受 PAT 影响，用来检测块 A 和块 B 之间的时间漂移。
 
-**另外跑一次 kernel 级对比**：在修复版和未修复版上分别运行 `tests/pap/test_pap_attention_kernels.py`，记录失败用例。如果未修复版在某些 shape 上失败，就说明这个 bug 在实际测试里能触发。
+**kernel 级对比**：§3.3 里两次 pytest 的结果对照。如果未修复版在某些 shape 上失败，就说明这个 bug 在实际测试里能触发。
 
 ### 3.5 判据与分支
 
@@ -413,7 +419,7 @@ done
 | --- | --- |
 | `dynamo+migration` | 当前代码，`PAP_ENABLE_PA_KV_MIGRATION=1` |
 | `dynamo-only` | 当前代码，`PAP_ENABLE_PA_KV_MIGRATION=0` |
-| `sticky-rr` | 用 `c565ecb9` 的 worktree，按 `CLEANUP-REGRESSION` 的 `base` 做法：`git worktree add .worktrees/rr-base c565ecb904`，在该 worktree 里打上修复版 PAT（同 §3.3，用合并后的 `third_party/pat` 编译），用 ABI 10 的 bridge 前缀 `.local/nvshmem-3.3.24-cuda13-bridge-v10`，`PYTHONPATH=<worktree>`；路由用 `PAP_ROUTING_POLICY=session_round_robin`，设置 `PAP_SESSION_ROUTER_MAX_CONVERSATIONS=<会话数>`，并且必须设 `PAP_ENABLE_PA_KV_MIGRATION=0`（旧代码中迁移要求 Dynamo 路由，见该版本 `run_pap_workload.sh:396`）。参数名以该 worktree 里的 `run_pap_workload.sh` 和 `PAP-20260909-SESSION-ROUND-ROBIN` 的记录为准 |
+| `sticky-rr` | 用 `c565ecb9` 的 worktree，按 `CLEANUP-REGRESSION` 的 `base` 做法：`git worktree add .worktrees/rr-base c565ecb904`，共用 `.venv` 里的修复版 PAT（不在该 worktree 里重新编译），用 ABI 10 的 bridge 前缀 `.local/nvshmem-3.3.24-cuda13-bridge-v10`，`PYTHONPATH=<worktree>`；路由用 `PAP_ROUTING_POLICY=session_round_robin`，设置 `PAP_SESSION_ROUTER_MAX_CONVERSATIONS=<会话数>`，并且必须设 `PAP_ENABLE_PA_KV_MIGRATION=0`（旧代码中迁移要求 Dynamo 路由，见该版本 `run_pap_workload.sh:396`）。参数名以该 worktree 里的 `run_pap_workload.sh` 和 `PAP-20260909-SESSION-ROUND-ROBIN` 的记录为准 |
 
 **问题**：PAT 是共享 `.venv` 里的扩展。`sticky-rr` 用的是旧代码 + 修复版 PAT，可以共用同一个安装，只要 PAT 的 Python 接口没有变。冒烟时确认一次；如果不兼容，就三个变体都改用 `PAP_ATTENTION_KERNEL_POLICY=triton`，在 README 写明。
 
@@ -532,9 +538,8 @@ done
 
 ## 附：需要用户决定的事
 
-1. **是否合并 PR #1**（PAT 修复）到 `feature/pap-v026`。它和新 HEAD 无冲突。本手册默认不合并、在本地 worktree 编译修复版 PAT（§3.3）。合并之后流程更简单，E0 的结果也不受影响。
-2. **G1 之后的论文主线**：根据 E2b 和 E2e 的结果，三选一（反证消除 / 差距缩小 / 差距仍在）。
-3. §7.2 中有哪些代码方向要进入本轮。默认都不做。
+1. **G1 之后的论文主线**：根据 E2b 和 E2e 的结果，三选一（反证消除 / 差距缩小 / 差距仍在）。
+2. §7.2 中有哪些代码方向要进入本轮。默认都不做。
 
 ## 附：证据位置
 
