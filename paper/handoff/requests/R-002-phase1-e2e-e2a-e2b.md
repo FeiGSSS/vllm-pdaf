@@ -1,6 +1,6 @@
 # R-002: 阶段 1：PD 的 KV 传输开销（E2e）、基线调参（E2a）、L07 重放（E2b）
 
-status: accepted
+status: running
 priority: P0
 claims: C12, C13, C14
 opened: 2026-10-15
