@@ -1,6 +1,6 @@
 # R-002: 阶段 1：PD 的 KV 传输开销（E2e）、基线调参（E2a）、L07 重放（E2b）
 
-status: open
+status: accepted
 priority: P0
 claims: C12, C13, C14
 opened: 2026-10-15
@@ -10,19 +10,25 @@ common settings: `paper/handoff/requests/COMMON.md`（本请求的所有运行�
 depends: R-001 不是 blocked
 
 ## Hypothesis
+
 三个独立的假设：
+
 - E2e（C12）：在 PCIe L20、16–32K 上下文下，PD 的 P→D KV handoff 占 TTFT 的 10% 以上。
 - E2a（C13）：论文中的 PD 6P2D 和 DP8 基线已经调好，单个参数改动不会在 D2 goodput 上带来超出 CI 的提升。
 - E2b（C14）：在 7 月 L07 的短输出负载上，当前 PAP 的 Standard SLO 最大 goodput 至少是 PD 的 0.95 倍（7 月是 0.63）。
 
 ## Why it matters for the paper
+
 这三个结果决定论文主线（G1）。E2e 决定"KV 不搬家"能不能作为动机的主论据；E2a 决定基线能否经得起"PD/DP 没调好"的质疑；E2b 回答"7 月的反证还在不在"。R-003 要等 research agent 读完本报告、在 R-003 写下 `cleared:` 后才开始。
 
 ## Expected result and falsification
+
 各小节的判据都写在下面。三种 E2b 结果（反证消除 / 差距缩小 / 差距仍在）都算有效结果，报告里写明属于哪一种。
 
 ### 对 X-001 中 E2b 公平性问题的回应
+
 去掉 salt 之后，不同会话之间可以共享前缀，这和 7 月的会话隔离不同。为了让"反证消除"这个结论站得住，增加两项检查：
+
 1. 报告第 0 轮请求（每个会话的首轮）的 `cached_tokens` 分布。L07 的文档是从 sonnet 语料随机截取的，预计跨会话命中很少（推断）。如果首轮的平均缓存命中率超过 5%，在报告中把 E2b 的结论降为"同分布、非严格重放"。
 2. **PD 复现检查**：PD 6P2D 在新数据集上的 Standard SLO 最大 goodput 应该在 7 月数值（15.305 good req/s，C44）的 ±15% 以内。如果超出这个范围，说明负载或基线已经变了，E2b 只能写成"在当前负载上的对比"，不能写成"7 月反证被消除"。
 
@@ -121,10 +127,8 @@ done
 
 这三种结果都算实验成功。回报时要写明属于哪一种。
 
-
-
 ## Deliverables
+
 - `paper/handoff/reports/R-002.md`：第一行写 E2e 的判据结果（< 5% 还是 ≥ 10%），然后写 E2a 选中的档位，以及 E2b 属于哪种结果和两项公平性检查。
 - `paper/figures/` 下的小数据文件：handoff 占 TTFT 比例 vs 上下文长度（CSV）；L07 重放表（CSV）。
 - 更新 `claims.md` 中 C12–C14。
-
