@@ -45,9 +45,9 @@ requests use.
 | --- | --- | --- | --- |
 | C10 | The PAT split-rank bug has no measurable end-to-end effect: fixed vs unfixed PAT TTFT/ITL/throughput ratios all have 95% CIs containing zero. | refuted | R-001: fixed/unfixed ITL +2.9% [+1.3, +4.5], throughput −2.8% [−5.5, −0.1]; `e2e/PAP-20261015-PAT-FIX-E2E` |
 | C11 | PAT improves end-to-end PAP performance over Triton on the shared-prefix native-32K workload. | partial | R-001: fixed PAT vs Triton ITL −3.6% [−5.0, −2.2]; TTFT, throughput, D2 goodput not distinguishable |
-| C12 | On PCIe L20 with 16–32K contexts, PD's P→D KV handoff is at least 10% of TTFT (below 5% means "no KV movement" is not the main argument). | pending | R-002 (E2e) |
-| C13 | The PD 6P2D and DP8 baselines are tuned: no single-knob change improves D2 goodput beyond its CI. | pending | R-002 (E2a) |
-| C14 | On the July L07 short-output workload, current PAP reaches at least 0.95× PD's Standard-SLO max goodput (July: 0.63×). | pending | R-002 (E2b) |
+| C12 | On PCIe L20 with 16–32K contexts, PD's P→D KV handoff is at least 10% of TTFT (below 5% means "no KV movement" is not the main argument). | refuted | R-002 E2e: 6P2D handoff ≈3–4.5% of TTFT at 16–32K (≤7% full-prompt bytes), C30; 3→1 fan-in 3.0–3.3× slower per stream; `microbench/PAP-20261015-PD-KV-TRANSFER` |
+| C13 | The PD 6P2D and DP8 baselines are tuned: no single-knob change improves D2 goodput beyond its CI. | supported | R-002 E2a: no 6P2D/DP8 single-knob change beats baseline with CI excluding 0; `e2e/PAP-20261015-BASELINE-TUNING` |
+| C14 | On the July L07 short-output workload, current PAP reaches at least 0.95× PD's Standard-SLO max goodput (July: 0.63×). | supported | R-002 E2b: PAP/PD capacity 1.24 Strict, 1.36 Standard, 1.27 Relaxed (July 0.68/0.63/0.76); turn-0 cross-session hit 0; PD 0.885× July; `e2e/PAP-20261015-L07-REPLAY` |
 | C15 | On native-32K multi-turn, PAP 7PA1P with KV migration has the highest maximum sustainable D2 goodput among DP8, PD 6P2D and PD 4P4D. | pending | R-003 (E1) |
 | C16 | PAP's advantage over PD grows with input length and shrinks with output length (2×2 regime map). | pending | R-003 (E2d) |
 | C17 | Cross-PA Projection aggregation contributes to throughput: capping the Projection batch or splitting Projection across more GPUs lowers throughput. | pending | R-004 (A2) |
