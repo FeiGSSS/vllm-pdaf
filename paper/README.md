@@ -68,6 +68,31 @@ taken. Risky or questionable requests are not refused silently: the exp agent
 writes the concern in the report, sets `blocked` or `rejected`, and the
 research agent decides with the human author.
 
+### Queue and ordering
+
+`requests/` is a queue: the research agent may add requests at any time,
+including while the exp agent is running another one, so writing and
+experiments overlap. The GPU host runs one request at a time. When the exp
+agent is free, it picks the next request as follows:
+
+1. Only requests whose `depends:` line (if any) is satisfied are eligible. A
+   request that waits for the research agent carries an empty `cleared:` line
+   and is eligible once that line is filled in.
+2. Among eligible requests, the highest `priority` goes first (P0 > P1 > P2).
+3. Ties go to the lowest request number.
+
+The exp agent may interleave two eligible requests (for example, to reuse a
+service start) if it says so in both reports.
+
+### Changing a request
+
+A request in `open` may be edited freely by the research agent. Once it is
+`accepted` or later, its body is frozen. To change it, the research agent
+either opens a new request, or appends an `## Amendment YYYY-MM-DD` section to
+the end of the file. An amendment applies only after the exp agent appends
+`amendment acknowledged: YYYY-MM-DD` under it; runs started before that follow
+the original text. Each report lists the amendments it followed.
+
 ## Git conventions
 
 - `feature/pap-v026` is the only exchange branch. Do not create per-plan or
