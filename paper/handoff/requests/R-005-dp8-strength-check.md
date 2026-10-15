@@ -1,6 +1,6 @@
 # R-005: DP8 baseline strength check
 
-status: accepted
+status: done
 priority: P1
 claims: C13
 opened: 2026-10-15
