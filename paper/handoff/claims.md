@@ -33,3 +33,26 @@ with vLLM 0.26.0. Paths are relative to `benchmarks/pap/experiments/`.
 | G2 | All results use one model (Qwen3-8B), one GPU type (L20), one workload, two runs per arm; generality and variance are untested. | pending | — |
 | G3 | Cross-host PD over GPUDirect RDMA can fatal-reset the L20 host when a GPU receives ~28 GB/s inbound peer writes while computing; this limits cross-host RDMA experiments on this platform. | supported (platform issue) | `microbench/PAP-20260910-GDR-P2P-MINIMAL/README.md`, `microbench/PAP-20260915-P2P-PCIE-INGRESS/README.md` |
 | G4 | Current code after the 2026-10-15 cleanup matches its base within run-to-run noise (TTFT mean 5686 vs 5798 ms, without KV migration). | supported | `e2e/PAP-20261015-CLEANUP-REGRESSION/README.md` |
+
+## Claims under test (research agent, 2026-10-15)
+
+C1–C9 were measured before the PAT split-rank fix (`9b814d13`). R-001 decides
+whether they still stand; the C30 single-point results C1–C3 will be replaced
+by the R-003 load sweep. Thresholds below are the falsification criteria the
+requests use.
+
+| ID | Claim | Status | Evidence |
+| --- | --- | --- | --- |
+| C10 | The PAT split-rank bug has no measurable end-to-end effect: fixed vs unfixed PAT TTFT/ITL/throughput ratios all have 95% CIs containing zero. | pending | R-001 |
+| C11 | PAT improves end-to-end PAP performance over Triton on the shared-prefix native-32K workload. | pending | R-001 |
+| C12 | On PCIe L20 with 16–32K contexts, PD's P→D KV handoff is at least 10% of TTFT (below 5% means "no KV movement" is not the main argument). | pending | R-002 (E2e) |
+| C13 | The PD 6P2D and DP8 baselines are tuned: no single-knob change improves D2 goodput beyond its CI. | pending | R-002 (E2a) |
+| C14 | On the July L07 short-output workload, current PAP reaches at least 0.95× PD's Standard-SLO max goodput (July: 0.63×). | pending | R-002 (E2b) |
+| C15 | On native-32K multi-turn, PAP 7PA1P with KV migration has the highest maximum sustainable D2 goodput among DP8, PD 6P2D and PD 4P4D. | pending | R-003 (E1) |
+| C16 | PAP's advantage over PD grows with input length and shrinks with output length (2×2 regime map). | pending | R-003 (E2d) |
+| C17 | Cross-PA Projection aggregation contributes to throughput: capping the Projection batch or splitting Projection across more GPUs lowers throughput. | pending | R-004 (A2) |
+| C18 | Carving 12 SMs from each Prefill GPU for Attention is cheap: 80/12 raises TTFT by at most 10% relative to 84/8. | pending | R-004 (A4) |
+| C19 | At equal load, Dynamo routing with PA→PA KV migration gives lower TTFT than Dynamo routing alone and than sticky session round-robin. | pending | R-004 (A5/A6) |
+
+G1 (TTFT tail) is addressed by R-004 (E5); G2 (generality and variance) is
+partly addressed by R-003 (three runs per point, confidence intervals).

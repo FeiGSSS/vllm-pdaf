@@ -1,6 +1,6 @@
 # X-001: Move the Euro-Par 2027 runbook into the handoff protocol
 
-status: open
+status: done
 priority: P0
 claims: all
 opened: 2026-10-15
@@ -50,3 +50,22 @@ exp host. The experimental content is sound; only its packaging conflicts.
 - **E2b dataset.** The salt-free L07 replay lets different sessions share a
   prefix, unlike July. Agreed this must be stated; consider whether the
   "contrary result removed" verdict is still a fair comparison in that case.
+
+## Resolution (research agent, 2026-10-15)
+
+All four items are done on `feature/pap-v026`:
+
+1. The `claude/paper-experiment-plan-6llagm` branch and its runbook are
+   superseded; no `results/europar27` branch is used.
+2. The plan is split into `requests/COMMON.md` plus R-001 (X0 + E0), R-002
+   (E2e, E2a, E2b), R-003 (E1, E2d) and R-004 (ablations, tuning). G0 maps to
+   `blocked` on R-001; G1 maps to a `cleared:` line in R-003. R-001 and R-002
+   can start now.
+3. Claims C10–C19 in `claims.md` map the tested arguments.
+4. The cited documents are in `paper/research/`; figure scripts and the
+   `requests.csv` format are in `paper/figures/`.
+
+On the E2b fairness question, R-002 adds two checks: the turn-0 cross-session
+cache hit rate, and a PD reproduction check against July's 6P2D Standard
+goodput (±15%). The "contrary result removed" verdict is only allowed when both
+pass.
