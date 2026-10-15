@@ -1,6 +1,6 @@
 # R-003: 阶段 2：负载扫描（E1）与负载区间 2×2（E2d-lite）
 
-status: open
+status: accepted
 priority: P0
 claims: C15, C16
 opened: 2026-10-15
@@ -11,13 +11,16 @@ depends: R-002 done；research agent 在本文件写 `cleared:` 行之后开始�
 cleared: 2026-10-15 research agent. R-002 读完：C12 被推翻（handoff 只占 TTFT 3–4.5%），C14 成立（L07 上 PAP/PD 1.24–1.36×）。主线按 experiment-plan 预设分支改为“Decode 侧容量与负载下的 ITL + 多轮放置”，不再以“省掉 KV 传输时间”为主论据。E1/E2d 的设计不变；额外要求：每个负载点报告 ITL P95，PD 运行保留 `ttft_breakdown.json` 并按负载报告每次传输耗时（检验 3→1 fan-in 是否在 C40–C60 出现）。
 
 ## Hypothesis
+
 - E1（C15）：在 native-32K 多轮负载上，PAP 7PA1P（迁移开）在 D2 SLO 下的最大可持续 goodput 高于 DP8、PD 6P2D 和 PD 4P4D。
 - E2d（C16）：PAP 相对 PD 的优势随输入变长而增大，随输出变长而缩小。
 
 ## Why it matters for the paper
+
 E1 用"负载扫描 + 最大可持续 goodput + CI"取代 9 月 C30 单点的主结果（C1–C3 将由它替换），并补上重复次数和置信区间（G2 的一部分）。E2d 是新颖性主张"什么时候划算"的核心证据（`paper/research/novelty-assessment.md` §3）。
 
 ## Expected result and falsification
+
 E1 的判据是数据有效，不是 PAP 获胜；PAP 输的点照实报告。E2d 的假设不成立时也要照实回报，论文会按实测的区间写。
 
 ## Suggested setup
@@ -53,6 +56,7 @@ E1 的判据是数据有效，不是 PAP 获胜；PAP 输的点照实报告。E2
 共 72 次。低并发点慢（C10 时 720 个请求约 12–15 分钟，推断），平均每次约 8 分钟，合计约 10 机时。找到每个架构 D2 下的拐点（最后一个可行点）后，拐点和下一档补到 5 次，再加约 16 次。E2a 选出更好的档位时，6P2D 和 DP8 就用那一档。
 
 **产出**：`e2e/PAP-<date>-LOAD-SWEEP/`，包括：
+
 - 吞吐–延迟曲线数据（x = 实际 req/s，y = TTFT 和 ITL 的 P50/P99，带 CI）；
 - D1–D4 下的最大可行 goodput 表，带 CI；
 - SLO 缩放曲线：D2 三个阈值同乘 0.5–2.0，每个架构的最大可行 goodput；
@@ -77,10 +81,8 @@ E1 的判据是数据有效，不是 PAP 获胜；PAP 输的点照实报告。E2
 **产出**：`e2e/PAP-<date>-REGIME-2X2/`，一张 2×2 的 PAP/PD 和 PAP/DP8 最大 goodput 比值表（带 CI，四格都填），以及每格的 bytes 账：PD 每请求搬的 KV 字节 vs PAP 每请求搬的激活字节（= 737,280 × 输出 token 数）。
 **判据**：四格都要有有效数据。分析假设（推断）：输出越长，PAP 的激活字节越接近 PD 的 KV 字节，PAP 的优势会缩小或反转；输入越长，PAP 的优势越大。不管实测是否符合这个假设，都照实回报。
 
-
-
 ## Deliverables
+
 - `paper/handoff/reports/R-003.md`。
 - `paper/figures/`：吞吐–延迟曲线数据、D1–D4 最大可行 goodput 表、SLO 缩放曲线、每轮 TTFT 表、2×2 区间比值表（都是小 CSV/JSON）。
 - 更新 `claims.md` 中 C15、C16，以及因 E1 而变化的 C1–C3、C6、C9。
-
