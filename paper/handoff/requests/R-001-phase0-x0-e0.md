@@ -1,6 +1,6 @@
 # R-001: 阶段 0：环境检查（X0）与 PAT 修复验证（E0）
 
-status: open
+status: accepted
 priority: P0
 claims: C10, C11
 opened: 2026-10-15
@@ -8,17 +8,21 @@ from: research agent
 common settings: `paper/handoff/requests/COMMON.md`（本请求的所有运行都遵守）
 
 ## Hypothesis
+
 PAT 的 split-rank 冲突（PR #1，已合入 `9b814d13`）对 PAP 的端到端性能没有可测影响：修复前后 TTFT、ITL、吞吐比值的 95% CI 都包含 0。
 
 ## Why it matters for the paper
+
 9 月以来所有 PAP 数字（C1–C3、C7、C8）都在 `auto` 策略下跑，PAT 确实被选中（每个 PA 有 16–38 次 PAT 计划重建，见 COMMON §1.2）。这个请求决定这些旧数字是否还能用，也决定 PAT 能不能当作贡献（C11）。之后所有请求都在修复版 PAT 上运行。
 
 ## Expected result and falsification
+
 支持：`fixed-auto` vs `unfixed-auto` 的三个比值 CI 都包含 0。证伪：任何一个不包含 0 → 设 `status: blocked`，报告哪些旧结果需要重跑，暂停 R-002 及之后的请求。
 
 ## Suggested setup
 
 ### X0
+
 先按 COMMON §2 做前置检查和冒烟，结果写进 `e2e/PAP-<date>-X0-SMOKE/`。
 
 ### E0 目的
@@ -81,9 +85,7 @@ E0 完成后**必须保持修复版安装**，删除 `.worktrees/pat-unfixed`。
 **产出**：`experiments/e2e/PAP-<date>-PAT-FIX-E2E/`，内容包括 README、`requests.csv`、`summary.json`、每块 PAT 的 `.so` 哈希、预检查表。
 **通过**：18 次运行都有效；pytest 结果已记录。
 
-
-
 ## Deliverables
+
 - `paper/handoff/reports/R-001.md`：X0 结果、预检查表、两版 PAT 的 `.so` 哈希和 pytest 结果、`fixed/unfixed` 和 `fixed/triton` 的比值与 CI、结论（是否 blocked）。
 - 更新 `claims.md` 中 C10、C11 的 Status/Evidence；如果 C1–C9 因此需要降级，一并更新。
-
