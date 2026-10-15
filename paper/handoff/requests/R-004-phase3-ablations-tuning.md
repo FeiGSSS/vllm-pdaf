@@ -1,6 +1,6 @@
 # R-004: 阶段 3：机制、消融与配置调优
 
-status: open
+status: accepted
 priority: P1
 claims: C17, C18, C19, G1
 opened: 2026-10-15
@@ -10,6 +10,7 @@ common settings: `paper/handoff/requests/COMMON.md`（本请求的所有运行�
 depends: R-001 done（不依赖 G1，可以和 R-003 交错；它使用 R-003 的 s240 数据集，所以在该数据集注册之后开始）
 
 ## Hypothesis
+
 - A2（C17）：Projection 跨 PA 聚合是吞吐的来源之一：限制 Projection batch 上限，或者把 Projection 拆到更多卡上，吞吐会下降。
 - A5/A6（C19）：在相同负载下，"Dynamo 路由 + KV 迁移"的 TTFT 低于"只用 Dynamo 路由"和"粘性 RR"。
 - A4（C18）：从 Prefill 卡切出 12 个 SM 做 Attention，代价不大：和 84/8 相比，80/12 的 TTFT 增加不超过 10%。
@@ -17,9 +18,11 @@ depends: R-001 done（不依赖 G1，可以和 R-003 交错；它使用 R-003 �
 - O1–O3：只改环境变量就能改善 PAP 的 TTFT。
 
 ## Why it matters for the paper
+
 A2 和 A4 分别支撑"跨 PA 聚合 Projection"和"Attention 切片几乎免费"两条论点；A5/A6 支撑多轮放置的主张，也是最接近 AMPD/PPD 的对照；E5 回答 G1 中的 TTFT 尾部问题。
 
 ## Expected result and falsification
+
 每个小节的判据都在下面。O1–O3 中如果有一档更好，只写建议，不重跑 R-003；改不改默认值由 research agent 和用户决定。
 
 ## Suggested setup
@@ -83,7 +86,6 @@ A2 和 A4 分别支撑"跨 PA 聚合 Projection"和"Attention 切片几乎免费
 
 **产出**：`e2e/PAP-<date>-TTFT-BREAKDOWN/`，包括 P50/P99 请求的 TTFT 分段堆叠表、每个 PA 的排队长度和请求数，以及对比 DP8 的算力账（PAP Prefill 共 7 × 80 = 560 SM，DP8 共 8 × 92 = 736 SM）。共 6 次，约 0.6 机时。
 
-
 ### 优化方向
 
 #### 配置调优（P1，约 2 机时，可以直接做）
@@ -109,10 +111,8 @@ A2 和 A4 分别支撑"跨 PA 聚合 Projection"和"Attention 切片几乎免费
 | AMPD 式 PD 基线（会话绑定到持有 KV 的 D，增量 prefill 在 D 上本地执行） | `paper/research/novelty-assessment.md` §5 列为冲更高级别会议时的必做项 | Euro-Par 预算内不做，用 §6.2 的 `sticky-rr` 近似 |
 | 多轮更深的负载（≥ 6 轮） | 真实 agentic 会话远超 3 轮；当前 native-32K 只能放 3–4 轮 | 可以只加数据集、不改代码；先评估 PA 显存够不够 |
 
-
-
 ## Deliverables
+
 - `paper/handoff/reports/R-004.md`：每个小节一段结论，外加对"需要改代码的方向"的可行性评估（不实施）。
 - `paper/figures/`：Projection 单步时间 vs batch、放置三方对比的每轮 TTFT、MPS 切分表、TTFT 分段堆叠表。
 - 更新 `claims.md` 中 C17–C19 和 G1。
-
