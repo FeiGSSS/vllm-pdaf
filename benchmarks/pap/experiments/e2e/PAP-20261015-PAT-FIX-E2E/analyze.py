@@ -167,8 +167,10 @@ def load_run(root: Path) -> dict[str, Any]:
         "pat_so_sha256": launch.get("pat_so_sha256"),
         "duration_s": duration_s,
         "records": records,
-        "pat_rebuilds": [s["attention_kernel_pat_rebuilds"] for s in stats],
-        "triton_selections": [s["attention_kernel_triton_selections"] for s in stats],
+        "pat_rebuilds": [s.get("attention_kernel_pat_rebuilds", 0) for s in stats],
+        "triton_selections": [
+            s.get("attention_kernel_triton_selections", 0) for s in stats
+        ],
         "migrations": read_json(root / "routing_audit.json")["kv_migration"][
             "attempts"
         ],
