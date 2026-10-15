@@ -42,6 +42,7 @@ current implementation with old parameters.
 
 | Record | Current entry point / status |
 | --- | --- |
+| E2E `PAP-20261015-CLEANUP-REGRESSION` | `run.sh` with `current` or `base`; same-day A/B of the code cleanup at C30 7PA1P |
 | E2E `PAP-20260907-ALIGNED-C30-7P1D` | Two audited 7P1D runs at concurrency 30; complete raw records and offline verifier |
 | E2E `PAP-20260909-DYNAMO-CROSS-HOST-PD` | Cross-host Dynamo 7P1D routing, KV handoff, TTFT, and lease diagnosis |
 | E2E `PAP-20260909-KV-MIGRATION-ARCHITECTURE-C30` | Aligned single-host DP/PD comparison with PAP PA KV migration enabled |
@@ -51,6 +52,19 @@ current implementation with old parameters.
 | Micro `PAP-20260824-ATTENTION-LATENCY-SURFACE` | `run.sh` + `experiment.env`; kernel workload matrix |
 | Micro `PAP-20260905-DYNAMO-CACHE-SALT` | Direct `probe.py` CLI documented in its README; CPU compatibility diagnosis, not serving performance |
 | Micro `PAP-20260905-DYNAMO-OWNER-LIFETIME` | Direct `probe.py` CLI documented in its README; CPU lifecycle diagnosis with binary identity and raw observations |
+| E2E `PAP-20260907-ALIGNED-DP-PD-PAP` | Concurrency-60 DP8 / PD / PAP runs used for the concurrency-sensitivity comparison; `verify.py` |
+| E2E `PAP-20260909-SESSION-ROUND-ROBIN` | Historical: the session round-robin router it compared was later removed |
+| E2E `PAP-20260909-DYNAMO-PA-KV-MIGRATION` | `run.sh` + `verify.py`; same-host PA KV migration versus prefix recomputation |
+| E2E `PAP-20260909-KV-SNAPSHOT-EXPORT-C30` | Allocator-synchronized snapshot export that replaced the EngineCore-queue export |
+| E2E `PAP-20260909-CROSS-HOST-KV-MIGRATION-C30` | Same-host versus cross-host PAP with KV migration |
+| E2E `PAP-20260909-DYNAMO-PA-MIGRATION-DIAGNOSIS` | Diagnosis of increased cross-host PA migration |
+| E2E `PAP-20260908-CROSS-HOST-NVSHMEM-IBGDA` | Cross-host IBGDA whole-step Graph bring-up report |
+| E2E `PAP-20260910-CROSS-HOST-PD-MATRIX` | `run.sh` with per-split env files for cross-host Dynamo PD |
+| E2E `PAP-20260910-PCIE-NUMA-DIAG` | Host PCIe fatal-reset and NUMA placement diagnosis campaigns |
+| Micro `PAP-20260910-GDR-P2P-MINIMAL` | `run.sh`; minimal GPUDirect peer-DMA reproducer for the PCIe fatal reset |
+| E2E `PAP-20260909-DYNAMO-CROSS-HOST-HASH-FENCE` | Historical: the KV consistency fence it evaluated was later removed |
+| E2E `PAP-20260906-NATIVE32K-DIAGNOSIS` | Historical native-32K serving diagnosis |
+| Micro `PAP-20260905-RESEARCH-DIAGNOSIS` | Historical architecture research diagnosis |
 | E2E `PAP-20260824-DYNAMO-ARCH-BASELINES` | Historical architecture comparison |
 | E2E `PAP-20260824-QWEN3-131K-YARN-7PA1P` | Historical context-extension validation |
 | E2E `PAP-20260824-V026-PORTING` | Historical vLLM integration validation |
