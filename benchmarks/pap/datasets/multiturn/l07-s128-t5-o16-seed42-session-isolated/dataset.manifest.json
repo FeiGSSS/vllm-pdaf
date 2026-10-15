@@ -1,0 +1,31 @@
+{
+  "dataset_id": "multiturn/l07-s128-t5-o16-seed42-session-isolated",
+  "format": "multi-turn",
+  "purpose": "Replay of July L07 (PAP-20260729-RESEARCH-L07) on the current runtime without cache_salt (R-002 E2b, X-002 option 1).",
+  "source_generation": {
+    "tool": "benchmarks/pap/datasets/tools/generate_multiturn_dataset.py",
+    "command": "generate_multiturn_dataset.py --model /data/ssd1/llm-models/Qwen3-8B --corpus /home/fei/research/PD/refer_codes/vllm/benchmarks/sonnet_4x.txt --sessions 128 --turns 5 --document-tokens 4096 --document-tokens-median 4000 --document-tokens-min 2048 --document-tokens-max 5632 --append-tokens 1100 --append-tokens-median 400 --append-tokens-min 4 --append-tokens-max 2125 --output-tokens 16 --output-tokens-median 15 --output-tokens-min 8 --output-tokens-max 32 --random-seed 42 --sampled-mean-tolerance 0.40 --max-model-len 32768 --think-time-ms 1000 --tool-time-ms 300 --tool-every 3 --session-prefix pap-pd-dp-s128-t5-seed42",
+    "parameters_from": "origin/feature/pap:benchmarks/pap/aiperf/run_capacity_matrix.sh lines 20-68",
+    "generation_manifest": "generation.manifest.json",
+    "output_sha256": "da5e293693b72204bc0691191f29c136a45e0ee493f936aae6d30e7795500444"
+  },
+  "derivation": {
+    "tool": "benchmarks/pap/datasets/tools/prefix_session_header.py",
+    "change": "Prepend 'Session <NNN> (<session_id>).\\n' to each session's first turn.",
+    "reason": "Every first-turn document is a prefix of the same corpus text (pairwise common prefix median 3614 of 4023 tokens). July isolated sessions with cache_salt, which PAP's Dynamo integration rejects; a distinct first line makes every chained block hash session-specific.",
+    "verified_cross_session_shared_blocks_turn0": 0,
+    "verified_max_common_prefix_tokens_turn0": 7
+  },
+  "july_reference": {
+    "sha256": "b694ba148a0789e4056a6c3f21fe1f3cbaf3d2c3a2eff2d4d663553f1a2546ed",
+    "available_on_host": false,
+    "relation": "Same generator parameters and seed; sampled append mean 697.338 matches the L07 report. Not byte-compared (original file not found). July carried cache_salt per turn; this file instead isolates sessions by a header line (about 10 extra tokens per session)."
+  },
+  "output": "benchmarks/pap/datasets/multiturn/l07-s128-t5-o16-seed42-session-isolated/dataset.jsonl",
+  "output_sha256": "caafaa5fc9a171b64bd25660af2d51f52af8896d8c8d49ccbf061991d16f4e54",
+  "observed": {
+    "sessions": 128,
+    "turns_per_session": 5,
+    "requests": 640
+  }
+}

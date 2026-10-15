@@ -1,0 +1,202 @@
+{
+  "schema_version": 2,
+  "format": "aiperf_multi_turn_jsonl",
+  "session_prefix": "pap-pd-dp-s128-t5-seed42",
+  "sessions": 128,
+  "turns_per_session": 5,
+  "total_requests": 640,
+  "requested_document_tokens": 4096,
+  "requested_append_tokens": 1100,
+  "output_tokens": 16,
+  "delay_profile": {
+    "think_time_ms": 1000,
+    "tool_time_ms": 300,
+    "tool_every": 3,
+    "schedule_ms": [
+      0,
+      1000,
+      1000,
+      300,
+      1000
+    ],
+    "total_delay_per_session_ms": 3300
+  },
+  "prefix_cache_policy": "shared_across_sessions",
+  "distribution_semantics": "aiperf_lognormal_mean_median",
+  "random_seed": 42,
+  "sampled_mean_tolerance": 0.4,
+  "corpus": {
+    "source_tokens": 22276,
+    "required_tokens": 10975,
+    "repeat_to_fit": false,
+    "repeat_count": 1
+  },
+  "length_distributions": {
+    "document_content_tokens": {
+      "configured": {
+        "type": "lognormal",
+        "mean": 4096,
+        "median": 4000,
+        "min": 2048,
+        "max": 5632
+      },
+      "sampled": {
+        "count": 128,
+        "mean": 4005.562,
+        "median": 3949.0,
+        "stddev": 788.186,
+        "min": 2252,
+        "p90": 5031.3,
+        "p95": 5499.55,
+        "max": 5632
+      },
+      "sampled_mean_relative_error": 0.02208
+    },
+    "append_content_tokens": {
+      "configured": {
+        "type": "lognormal",
+        "mean": 1100,
+        "median": 400,
+        "min": 4,
+        "max": 2125
+      },
+      "sampled": {
+        "count": 512,
+        "mean": 697.338,
+        "median": 421.5,
+        "stddev": 699.472,
+        "min": 8,
+        "p90": 2125.0,
+        "p95": 2125.0,
+        "max": 2125
+      },
+      "sampled_mean_relative_error": 0.366056
+    },
+    "output_tokens": {
+      "configured": {
+        "type": "lognormal",
+        "mean": 16,
+        "median": 15,
+        "min": 8,
+        "max": 32
+      },
+      "sampled": {
+        "count": 640,
+        "mean": 16.436,
+        "median": 16.0,
+        "stddev": 5.512,
+        "min": 8,
+        "p90": 24.0,
+        "p95": 27.0,
+        "max": 32
+      },
+      "sampled_mean_relative_error": 0.02725
+    }
+  },
+  "actual_text_token_counts": {
+    "initial_user_text_tokens": {
+      "count": 128,
+      "mean": 4015.562,
+      "median": 3959.0,
+      "stddev": 788.186,
+      "min": 2262,
+      "p90": 5041.3,
+      "p95": 5509.55,
+      "max": 5642
+    },
+    "followup_user_text_tokens": {
+      "count": 512,
+      "mean": 711.324,
+      "median": 435.5,
+      "stddev": 699.468,
+      "min": 22,
+      "p90": 2139.0,
+      "p95": 2139.0,
+      "max": 2139
+    }
+  },
+  "estimated_input_sequence_tokens": {
+    "all_requests": {
+      "count": 640,
+      "mean": 5503.553,
+      "median": 5342.0,
+      "stddev": 1565.481,
+      "min": 2270,
+      "p90": 7592.2,
+      "p95": 8173.45,
+      "max": 11136
+    },
+    "by_turn": [
+      {
+        "turn_index": 0,
+        "count": 128,
+        "mean": 4023.562,
+        "median": 3967.0,
+        "stddev": 788.186,
+        "min": 2270,
+        "p90": 5049.3,
+        "p95": 5517.55,
+        "max": 5650
+      },
+      {
+        "turn_index": 1,
+        "count": 128,
+        "mean": 4765.461,
+        "median": 4679.0,
+        "stddev": 1055.487,
+        "min": 2344,
+        "p90": 6155.6,
+        "p95": 6604.7,
+        "max": 7592
+      },
+      {
+        "turn_index": 2,
+        "count": 128,
+        "mean": 5497.648,
+        "median": 5544.0,
+        "stddev": 1158.607,
+        "min": 2997,
+        "p90": 7047.0,
+        "p95": 7527.1,
+        "max": 7990
+      },
+      {
+        "turn_index": 3,
+        "count": 128,
+        "mean": 6256.438,
+        "median": 6413.0,
+        "stddev": 1293.269,
+        "min": 3424,
+        "p90": 7959.7,
+        "p95": 8418.4,
+        "max": 9527
+      },
+      {
+        "turn_index": 4,
+        "count": 128,
+        "mean": 6974.656,
+        "median": 6962.5,
+        "stddev": 1427.332,
+        "min": 4365,
+        "p90": 8875.5,
+        "p95": 9516.45,
+        "max": 11136
+      }
+    ],
+    "method": "tokenizer_chat_template_with_empty_assistant_placeholders"
+  },
+  "context_budget": {
+    "estimate_includes_current_output": true,
+    "max_estimated_request_tokens": 11148,
+    "max_model_len": 32768,
+    "headroom_tokens": 21620
+  },
+  "validation": {
+    "status": "passed",
+    "all_requested_lengths_within_bounds": true,
+    "all_randomized_dimensions_non_degenerate": true,
+    "sampled_means_within_tolerance": true,
+    "context_budget_within_limit": true
+  },
+  "dataset_sha256": "da5e293693b72204bc0691191f29c136a45e0ee493f936aae6d30e7795500444"
+}

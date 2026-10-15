@@ -21,6 +21,7 @@ sha256sum --check SHA256SUMS
 | `agentic-code/s60-t3-half-seed42` | `mooncake-trace` | Short QPS scans: 60 sessions, three turns, halved lengths |
 | `agentic-code/s60-t3-native32k-stratified-seed42` | `mooncake-trace` | Native-32K QPS scans: 60 sessions, three turns, mean output below 100 tokens, and 15 final contexts in each 4K stratum from 16K through 32K |
 | `long-context/qwen3-8b-yarn131k-shared-prefix` | `multi-turn` | Qwen3 YaRN 131K validation; cross-session prefix sharing |
+| `multiturn/l07-s128-t5-o16-seed42-session-isolated` | `multi-turn` | Replay of July L07 (128 sessions, 5 turns, O16) without `cache_salt`; a per-session first line keeps sessions from sharing KV blocks |
 
 New workloads allow identical prefixes to be reused across conversations by
 default: the generator does not inject a per-session `cache_salt`. Conversation
