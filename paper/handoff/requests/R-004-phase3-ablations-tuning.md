@@ -1,6 +1,6 @@
 # R-004: 阶段 3：机制、消融与配置调优
 
-status: accepted
+status: done
 priority: P1
 claims: C17, C18, C19, G1
 opened: 2026-10-15
