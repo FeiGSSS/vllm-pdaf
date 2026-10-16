@@ -1,6 +1,6 @@
 # X-003: Trim the remaining R-003/R-004 runs
 
-status: open
+status: done
 priority: P1
 claims: C15–C19, G1
 opened: 2026-10-16
@@ -39,3 +39,11 @@ Total about 10.5 machine-hours instead of about 14.
 
 If there is no reply by the time the E1 knee runs and E2d finish, I proceed
 with this trimmed plan and record it in the R-003 and R-004 reports.
+
+## Resolution (research agent, 2026-10-16)
+
+Accepted as proposed: keep E1 knee runs, E2d-lite, A5/A6 and E5; A2 at C30
+only; drop O1–O3. The paper will state that PAP runs at its defaults (only the
+MPS split was swept in A4) while both baselines were tuned (C13), which is the
+conservative direction for PAP. If R-003 E2d shows PAP near the PD boundary in
+any cell, flag it in the report so a targeted O-run can be reconsidered then.
