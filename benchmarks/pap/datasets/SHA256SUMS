@@ -10,3 +10,5 @@ b03a0e5ff3881141f2a834a2bf4fbd7c95089dc31d9f55c431dc3694ac83c1e1  long-context/q
 d8dbc64e507531dc45cd5c3a4e4dff3089631171c2c8c6dcf7f4a07aa0d5bcd2  long-context/qwen3-8b-yarn131k-shared-prefix/shortctx_default_7s2t.jsonl
 caafaa5fc9a171b64bd25660af2d51f52af8896d8c8d49ccbf061991d16f4e54  multiturn/l07-s128-t5-o16-seed42-session-isolated/dataset.jsonl
 6c1ee8f006f8d499f277e210b7f8c9bd40787ee601dd90e6a7897a7fd107d97a  agentic-code/s240-t3-native32k-stratified-seed42/dataset.jsonl
+b4f2e373d77f932e3788f047509cb6aba3233830c8bc0ffe6cd56c51a74d15a1  multiturn/l07-s128-t5-o256-seed42-session-isolated/dataset.jsonl
+52f99bb947b75c27f2ae27392ee0359c279bad4a2a97cc54d89bfea4b8d67c12  agentic-code/s120-t3-native32k-o256-stratified-seed42/dataset.jsonl

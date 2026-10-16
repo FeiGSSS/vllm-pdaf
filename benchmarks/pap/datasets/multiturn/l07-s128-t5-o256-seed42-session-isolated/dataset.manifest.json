@@ -1,0 +1,27 @@
+{
+  "dataset_id": "multiturn/l07-s128-t5-o256-seed42-session-isolated",
+  "format": "multi-turn",
+  "purpose": "R-003 E2d-lite short-input, long-output cell: the O16 L07 replay with output length changed only.",
+  "source_generation": {
+    "tool": "benchmarks/pap/datasets/tools/generate_multiturn_dataset.py",
+    "command": "generate_multiturn_dataset.py --model /data/ssd1/llm-models/Qwen3-8B --corpus /home/fei/research/PD/refer_codes/vllm/benchmarks/sonnet_4x.txt --sessions 128 --turns 5 --document-tokens 4096 --document-tokens-median 4000 --document-tokens-min 2048 --document-tokens-max 5632 --append-tokens 1100 --append-tokens-median 400 --append-tokens-min 4 --append-tokens-max 2125 --output-tokens 256 --output-tokens-median 240 --output-tokens-min 128 --output-tokens-max 512 --random-seed 42 --sampled-mean-tolerance 0.40 --max-model-len 32768 --think-time-ms 1000 --tool-time-ms 300 --tool-every 3 --session-prefix pap-pd-dp-s128-t5-seed42",
+    "parameters_from": "origin/feature/pap:benchmarks/pap/aiperf/run_capacity_matrix.sh lines 20-68",
+    "generation_manifest": "generation.manifest.json",
+    "output_sha256": "aeed17ea587832a89f363509aad640c62978ac26dfb477997523f5ddf614e212"
+  },
+  "derivation": {
+    "tool": "benchmarks/pap/datasets/tools/prefix_session_header.py",
+    "change": "Prepend 'Session <NNN> (<session_id>).\\n' to each session's first turn.",
+    "reason": "Every first-turn document is a prefix of the same corpus text (pairwise common prefix median 3614 of 4023 tokens). July isolated sessions with cache_salt, which PAP's Dynamo integration rejects; a distinct first line makes every chained block hash session-specific.",
+    "verified_cross_session_shared_blocks_turn0": 0,
+    "verified_max_common_prefix_tokens_turn0": 7
+  },
+  "output": "benchmarks/pap/datasets/multiturn/l07-s128-t5-o256-seed42-session-isolated/dataset.jsonl",
+  "output_sha256": "b4f2e373d77f932e3788f047509cb6aba3233830c8bc0ffe6cd56c51a74d15a1",
+  "observed": {
+    "sessions": 128,
+    "turns_per_session": 5,
+    "requests": 640
+  },
+  "relation_to_o16": "Identical session ids, turn texts and delays to multiturn/l07-s128-t5-o16-seed42-session-isolated (verified); only output_length differs (mean 255.8)."
+}
