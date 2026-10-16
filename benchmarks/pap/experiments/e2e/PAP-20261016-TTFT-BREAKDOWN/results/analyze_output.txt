@@ -1,0 +1,16 @@
+noprofile-c40 {'ttft_ms_mean': 5759.5925936916665, 'ttft_ms_p50': 5678.250833, 'ttft_ms_p99': 11588.38764557998, 'joined': '1440/1440', 'pa_requests': {0: 208, 1: 214, 2: 207, 3: 212, 4: 209, 5: 197, 6: 193}, 'pa_requests_cv': 0.035026445035884694, 'pa_prefill_tokens_cv': 0.012625978118184661, 'tail_pa_requests': {0: 10, 1: 9, 2: 11, 3: 12, 4: 11, 5: 10, 6: 9}}
+  median (P45-P55)   n= 144 ttft=5676
+  tail (>= P95)      n=  72 ttft=10543
+  tail (>= P99)      n=  15 ttft=13338
+  all                n=1440 ttft=5760
+profile-c30 {'ttft_ms_mean': 3844.6896637812497, 'ttft_ms_p50': 3632.35437, 'ttft_ms_p99': 9274.205858129997, 'joined': '1440/1440', 'pa_requests': {0: 204, 1: 208, 2: 201, 3: 204, 4: 208, 5: 207, 6: 208}, 'pa_requests_cv': 0.012383718402865977, 'pa_prefill_tokens_cv': 0.009619280475202387, 'tail_pa_requests': {0: 11, 1: 11, 2: 9, 3: 9, 4: 13, 5: 10, 6: 9}}
+  median (P45-P55)   n= 144 ttft=3645 register=2 tokenization=29 routing=13 migration=2 prefill_payload=2 prefill=3412 readiness=2 projection_payload=2 admission=0 first_chunk=139 gateway_ttft=3599
+  tail (>= P95)      n=  72 ttft=8083 register=16 tokenization=254 routing=119 migration=0 prefill_payload=0 prefill=6777 readiness=2 projection_payload=2 admission=0 first_chunk=127 gateway_ttft=7297
+  tail (>= P99)      n=  15 ttft=10317 register=13 tokenization=167 routing=44 migration=0 prefill_payload=0 prefill=8114 readiness=2 projection_payload=2 admission=0 first_chunk=108 gateway_ttft=8449
+  all                n=1440 ttft=3845 register=6 tokenization=46 routing=22 migration=2 prefill_payload=2 prefill=3542 readiness=2 projection_payload=2 admission=0 first_chunk=138 gateway_ttft=3759
+profile-c40 {'ttft_ms_mean': 5771.764337590277, 'ttft_ms_p50': 5671.283010499999, 'ttft_ms_p99': 12158.841955719983, 'joined': '1440/1440', 'pa_requests': {0: 206, 1: 208, 2: 214, 3: 205, 4: 193, 5: 204, 6: 210}, 'pa_requests_cv': 0.02947914621776545, 'pa_prefill_tokens_cv': 0.012376295330330828, 'tail_pa_requests': {0: 11, 1: 11, 2: 7, 3: 9, 4: 9, 5: 17, 6: 8}}
+  median (P45-P55)   n= 144 ttft=5670 register=8 tokenization=34 routing=20 migration=1 prefill_payload=1 prefill=5397 readiness=4 projection_payload=4 admission=0 first_chunk=146 gateway_ttft=5611
+  tail (>= P95)      n=  72 ttft=10837 register=12 tokenization=92 routing=38 migration=0 prefill_payload=0 prefill=9522 readiness=2 projection_payload=2 admission=0 first_chunk=126 gateway_ttft=9794
+  tail (>= P99)      n=  15 ttft=13762 register=9 tokenization=63 routing=25 migration=0 prefill_payload=0 prefill=11497 readiness=2 projection_payload=2 admission=0 first_chunk=97 gateway_ttft=11694
+  all                n=1440 ttft=5772 register=9 tokenization=44 routing=21 migration=1 prefill_payload=1 prefill=5427 readiness=2 projection_payload=2 admission=0 first_chunk=146 gateway_ttft=5652
+profiling_overhead_ttft 0.0021132994566217533
