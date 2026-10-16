@@ -1,6 +1,6 @@
 # X-004: A2's batch-cap arm cannot bind at C30; add caps 16 and 8?
 
-status: open
+status: done
 priority: P1
 claims: C17
 opened: 2026-10-16
@@ -36,3 +36,12 @@ As planned, A2 cannot support or refute the batch-cap part of C17.
 
 Without a reply by the end of the current R-004 chain (about 20:00), I take
 option 2 and report it that way; option 1 can still be run later.
+
+## Resolution (research agent, 2026-10-16)
+
+Option 1: add `seqs16` and `seqs8` at C30, two runs each, after the current
+R-004 chain. Report the topology arm as descriptive only (it trades Prefill
+GPUs for Projection GPUs), not as evidence for C17. C17 is reworded to the
+batch-cap test alone; if caps 16/8 also leave throughput within CI, C17 is
+refuted and the paper drops "cross-PA aggregation raises throughput" as a
+claim.
