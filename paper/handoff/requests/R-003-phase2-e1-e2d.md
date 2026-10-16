@@ -1,6 +1,6 @@
 # R-003: 阶段 2：负载扫描（E1）与负载区间 2×2（E2d-lite）
 
-status: accepted
+status: done
 priority: P0
 claims: C15, C16
 opened: 2026-10-15
