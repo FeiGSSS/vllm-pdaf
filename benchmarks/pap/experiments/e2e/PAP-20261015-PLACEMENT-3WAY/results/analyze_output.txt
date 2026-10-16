@@ -1,0 +1,11 @@
+valid=18 invalid=1
+migration-c30 n=3 TTFT=3847 ITL=49.44 rps=3.611 D2=0.994
+dynamo-only-c30 n=3 TTFT=5349 ITL=45.86 rps=3.146 D2=0.987
+sticky-rr-c30 n=3 TTFT=4213 ITL=47.79 rps=3.504 D2=0.991
+migration-c50 n=3 TTFT=8077 ITL=52.74 rps=3.751 D2=0.800
+dynamo-only-c50 n=3 TTFT=10766 ITL=46.35 rps=3.187 D2=0.368
+sticky-rr-c50 n=3 TTFT=8418 ITL=51.90 rps=3.383 D2=0.744
+dynamo-only-c30/migration-c30: ttft_ms +39.06% [+35.84%,+42.31%]; itl_ms -7.23% [-7.72%,-6.74%]; e2e_ms +15.69% [+13.51%,+17.94%]; throughput_rps -12.89% [-13.38%,-12.29%]; D2_goodput_rps -13.50% [-14.35%,-12.57%]
+sticky-rr-c30/migration-c30: ttft_ms +9.52% [+6.63%,+12.49%]; itl_ms -3.33% [-3.82%,-2.85%]; e2e_ms +3.17% [+1.05%,+5.39%]; throughput_rps -2.98% [-3.82%,-2.13%]; D2_goodput_rps -3.25% [-4.39%,-2.09%]
+dynamo-only-c50/migration-c50: ttft_ms +33.30% [+31.22%,+35.38%]; itl_ms -12.12% [-12.79%,-11.43%]; e2e_ms +17.72% [+16.03%,+19.37%]; throughput_rps -15.04% [-15.79%,-14.06%]; D2_goodput_rps -60.88% [-62.88%,-57.89%]
+sticky-rr-c50/migration-c50: ttft_ms +4.23% [+1.37%,+7.17%]; itl_ms -1.59% [-2.41%,-0.77%]; e2e_ms +2.20% [+0.10%,+4.43%]; throughput_rps -9.83% [-27.42%,-0.35%]; D2_goodput_rps -16.12% [-31.96%,-6.73%]
