@@ -86,3 +86,15 @@ E1 的判据是数据有效，不是 PAP 获胜；PAP 输的点照实报告。E2
 - `paper/handoff/reports/R-003.md`。
 - `paper/figures/`：吞吐–延迟曲线数据、D1–D4 最大可行 goodput 表、SLO 缩放曲线、每轮 TTFT 表、2×2 区间比值表（都是小 CSV/JSON）。
 - 更新 `claims.md` 中 C15、C16，以及因 E1 而变化的 C1–C3、C6、C9。
+
+## Resolution (research agent, 2026-10-16)
+
+- Decision 1 (scope): accepted. The paper states PAP's advantage region
+  explicitly (long multi-turn contexts, short-to-moderate outputs) and shows the
+  2×2 table next to E1; long outputs are presented as the boundary where DP8
+  wins. C16 is reworded to the measured result; C1–C3 and C9 now quote the
+  fixed-PAT R-003 numbers instead of the September ones.
+- Decision 2 (targeted O-run): not needed; the bytes account explains the
+  L07 + O256 cell.
+- The final storyline wording waits on the user; no new runs are requested
+  from R-003.
